@@ -93,12 +93,12 @@
 //   The end-to-end fixture asserts an extension field's VALUE for the same reason.
 //
 // THIS SLICE'S DECLARED EXCLUSIONS — reported, never silent
-//   1. Tables whose AL name is ambiguous in the backup — two installed apps may each declare
-//      a table of the same name (namespaces make that legal; Base Application's
-//      "Dimension Set Entry" and Power BI Report embeddings' are the shipped example). The
-//      reader refuses the name, and so does this: picking whichever candidate has rows would
-//      be exactly the silent guess this feature exists to prevent. #2264 resolves it properly,
-//      by naming the owning app the runner's own closure already resolved.
+//   1. Same-named tables no app id can select. Two installed apps may each declare a table of
+//      the same name (Base Application's and Power BI Report embeddings' "Dimension Set
+//      Entry"). Each is read with `--app` set to the app owning the AL table id the catalog
+//      resolved it to (#2264); refused, per table and by reason, only when the owning app name
+//      matches no app, or several apps, in this run's closure, or one app owns two candidates.
+//      Picking whichever candidate has rows would be the silent guess this feature must not make.
 //   2. Value types this runner build cannot rebuild yet — refused per table by the mechanism,
 //      counted and reported here. This used to gate most of the data (every extended CRONUS
 //      table carries a Date somewhere), and no longer does: #2259 took Date/DateTime/Time/
@@ -150,7 +150,7 @@ internal static class TestDataProvisioner
         internal string Describe() =>
             $"[test-data] loaded {RowsHydrated} row(s) in {TablesHydrated} table(s) this run touched, "
             + $"from '{Path.GetFileName(BackupPath)}' company '{Company}'; "
-            + $"skipped {TablesSkippedAmbiguous} ambiguous by name, "
+            + $"skipped {TablesSkippedAmbiguous} sharing a name no app id could select, "
             + $"{TablesRefused} refused (unsupported value types or unknown columns), "
             + $"{TablesRefusedByReader} refused by the backup reader, "
             + $"{ColumnsFromUninstalledApps} extension column(s) dropped for apps this run does not install, "
@@ -164,7 +164,8 @@ internal static class TestDataProvisioner
     /// for every default run.</summary>
     private sealed record ArmedPlan(
         string Backup, string SymbolKey, IReadOnlyList<string> Symbols, string Company,
-        IReadOnlyDictionary<int, BackupTableEntry> ByTableId, int SkippedAmbiguous);
+        IReadOnlyDictionary<int, BackupTableEntry> ByTableId, int SkippedAmbiguous,
+        IReadOnlyDictionary<int, string> AmbiguousRefusals);
 
     private static ArmedPlan? _armed;
 
@@ -449,11 +450,11 @@ internal static class TestDataProvisioner
         var tablesOutput = BackupReaderTool.Run(SymbolArgs(new[] { "tables", backup }, symbols));
         var entries = BackupCatalog.ParseTables(tablesOutput);
 
-        var plan = BuildPlan(entries, company);
+        var plan = BuildPlan(entries, company, SymbolManifests(symbols));
         Console.Error.WriteLine(
             $"[test-data] backup '{backup}', company '{company}', {plan.Hydratable.Count} table(s) in scope "
             + $"({plan.ExtendedTableNames.Count} with table-extension data to merge, "
-            + $"{plan.SkippedAmbiguous} ambiguous by name); loading on first touch.");
+            + $"{plan.SkippedAmbiguous} sharing a name no app id could select); loading on first touch.");
 
         // BEFORE any hydration: prove the reader is actually merging. A run that got this
         // wrong would hydrate every extended table with its extension fields blank and report
@@ -464,16 +465,18 @@ internal static class TestDataProvisioner
         // table, so asking it again per table would buy nothing and cost two extra reader
         // invocations per loaded table. It stays here, at arm time, where it still runs before
         // any row is hydrated.
-        if (plan.ExtendedTableNames.Count > 0)
-            AssertMergeIsHonoured(backup, symbols, company,
-                plan.ExtendedTableNames.OrderBy(n => n, StringComparer.Ordinal).First());
+        if (plan.MergeProbe != null)
+            AssertMergeIsHonoured(backup, symbols, company, plan.MergeProbe.TableName, plan.MergeProbe.ReadAppId);
 
         var byTableId = new Dictionary<int, BackupTableEntry>();
         foreach (var e in plan.Hydratable)
             if (e.AlTableId != null)
                 byTableId[e.AlTableId.Value] = e;
 
-        _armed = new ArmedPlan(backup, symbolKey, symbols, company, byTableId, plan.SkippedAmbiguous);
+        foreach (var (tableId, reason) in plan.AmbiguousRefusals)
+            Console.Error.WriteLine($"[test-data] REFUSED table {tableId}: {reason}.");
+
+        _armed = new ArmedPlan(backup, symbolKey, symbols, company, byTableId, plan.SkippedAmbiguous, plan.AmbiguousRefusals);
         InstallLoader();
     }
 
@@ -512,6 +515,11 @@ internal static class TestDataProvisioner
     {
         var armed = _armed;
         if (armed == null) return;
+        if (armed.AmbiguousRefusals.TryGetValue(tableId, out var ambiguity))
+        {
+            _tableOutcome[tableId] = $"the backup's rows for it were not loaded — {ambiguity}";
+            return;
+        }
         if (!armed.ByTableId.TryGetValue(tableId, out var entry))
         {
             // #2240: recorded, not just skipped. "This backup's plan does not offer the table"
@@ -602,7 +610,8 @@ internal static class TestDataProvisioner
                 "read", backup, "--table", entry.TableName, "--company", company, "--format", "json",
                 // HYPHENATED. `--mergeExtensions` is accepted, ignored, and exits 0.
                 "--merge-extensions",
-            }, symbols);
+            }.Concat(entry.ReadAppId == null ? Array.Empty<string>() : new[] { "--app", entry.ReadAppId }).ToArray(),
+            symbols);
         var json = BackupReaderTool.Run(readArgs);
 
         List<IReadOnlyDictionary<string, System.Text.Json.JsonElement>> rows;
@@ -635,9 +644,10 @@ internal static class TestDataProvisioner
     /// two reads must differ.
     /// </summary>
     internal static void AssertMergeIsHonoured(
-        string backup, IReadOnlyList<string> symbols, string company, string probeTable)
+        string backup, IReadOnlyList<string> symbols, string company, string probeTable, string? appId = null)
     {
-        var head = new[] { "read", backup, "--table", probeTable, "--company", company, "--format", "json", "--top", "1" };
+        var head = new[] { "read", backup, "--table", probeTable, "--company", company, "--format", "json", "--top", "1" }
+            .Concat(appId == null ? Array.Empty<string>() : new[] { "--app", appId }).ToArray();
         var plain = ParseRows(BackupReaderTool.Run(SymbolArgs(head, symbols)));
         var merged = ParseRows(BackupReaderTool.Run(
             SymbolArgs(head.Append("--merge-extensions").ToArray(), symbols)));
@@ -697,45 +707,101 @@ internal static class TestDataProvisioner
     internal sealed record Plan(
         IReadOnlyList<BackupTableEntry> Hydratable,
         IReadOnlySet<string> ExtendedTableNames,
-        int SkippedAmbiguous);
+        int SkippedAmbiguous)
+    {
+        /// <summary>Why each refused same-named table was refused, by AL table id (#2264).</summary>
+        internal IReadOnlyDictionary<int, string> AmbiguousRefusals { get; init; } = new Dictionary<int, string>();
+
+        /// <summary>The planned table with companion rows that the once-per-run merge probe
+        /// reads, carrying its `--app` when its name is shared; null when there is none.</summary>
+        internal BackupTableEntry? MergeProbe { get; init; }
+    }
 
     /// <summary>
     /// Decide which tables this slice hydrates. Pure over the catalog so the exclusion rules
     /// are testable without a backup — they are the part a reader has to be able to check.
     /// </summary>
-    internal static Plan BuildPlan(IReadOnlyList<BackupTableEntry> entries, string company)
+    internal static Plan BuildPlan(
+        IReadOnlyList<BackupTableEntry> entries, string company, IReadOnlyList<AppManifest> closure)
     {
         var forCompany = entries.Where(e => string.Equals(e.Company, company, StringComparison.Ordinal)).ToList();
 
-        // Base tables whose $ext companion carries rows. Before #2261 these were excluded
-        // whole; now they are hydrated WITH the companion merged in, and this set is the
-        // per-table assertion that the merge actually ran.
-        var extendedBaseNames = forCompany
-            .Where(e => e.IsExtensionCompanion && e.RowCount > 0)
-            .Select(e => e.BaseTableName)
-            .ToHashSet(StringComparer.Ordinal);
-
-        // A (company, table name) appearing more than once is ambiguous (exclusion 1).
-        var nameCounts = forCompany
+        // Every candidate per (company, table name). More than one is a name two installed apps
+        // both declare (exclusion 1), which the reader will only read with `--app`.
+        var candidatesByName = forCompany
             .Where(e => !e.IsExtensionCompanion)
             .GroupBy(e => e.TableName, StringComparer.Ordinal)
-            .ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);
+            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
+
+        var appIdsByName = closure
+            .GroupBy(m => m.Name, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.Select(m => m.AppId).Distinct().ToList(), StringComparer.Ordinal);
 
         var hydratable = new List<BackupTableEntry>();
+        var refusals = new Dictionary<int, string>();
         var skippedAmbiguous = 0;
         foreach (var e in forCompany)
         {
             if (e.IsExtensionCompanion) continue;
             if (e.RowCount == 0) continue;
             if (e.AlTableId == null) continue;                 // not defined by this run's app closure
-            if (nameCounts.TryGetValue(e.TableName, out var n) && n > 1) { skippedAmbiguous++; continue; }
-            hydratable.Add(e);
+            var candidates = candidatesByName[e.TableName];
+            if (candidates.Count == 1) { hydratable.Add(e); continue; }
+
+            var reason = WhyTheOwningAppCannotBeSelected(e, candidates, appIdsByName, out var appId);
+            if (reason != null)
+            {
+                skippedAmbiguous++;
+                refusals[e.AlTableId.Value] = reason;
+                continue;
+            }
+            hydratable.Add(e with { ReadAppId = appId });
         }
-        // Only the tables actually in the plan can carry the requirement; keeping companions of
-        // excluded tables in the set would make it read as a claim about tables nobody reads.
-        var planned = hydratable.Select(e => e.TableName).ToHashSet(StringComparer.Ordinal);
-        extendedBaseNames.IntersectWith(planned);
-        return new Plan(hydratable, extendedBaseNames, skippedAmbiguous);
+
+        // Base tables whose $ext companion carries rows (#2261). A companion of a shared name is
+        // attributed by the AL table id the reader resolved it to; one it could not resolve is
+        // attributed to no base, since flagging the wrong candidate would point the merge probe
+        // at a table with no extension columns and fail a healthy run.
+        var extended = new HashSet<BackupTableEntry>();
+        foreach (var c in forCompany.Where(e => e.IsExtensionCompanion && e.RowCount > 0))
+        {
+            var bases = hydratable.Where(h => string.Equals(h.TableName, c.BaseTableName, StringComparison.Ordinal)).ToList();
+            if (bases.Count == 1 && candidatesByName[c.BaseTableName].Count == 1) extended.Add(bases[0]);
+            else if (c.AlTableId != null)
+                foreach (var b in bases.Where(b => b.AlTableId == c.AlTableId)) extended.Add(b);
+        }
+        return new Plan(hydratable, extended.Select(e => e.TableName).ToHashSet(StringComparer.Ordinal), skippedAmbiguous)
+        {
+            AmbiguousRefusals = refusals,
+            MergeProbe = extended
+                .OrderBy(e => e.TableName, StringComparer.Ordinal).ThenBy(e => e.AlTableId)
+                .FirstOrDefault(),
+        };
+    }
+
+    /// <summary>
+    /// Null when `--app &lt;id&gt;` selects exactly <paramref name="entry"/> among the same-named
+    /// <paramref name="candidates"/>, with that id in <paramref name="appId"/>; otherwise the
+    /// reason no selector can, which stays a refusal (#2264). The catalog names the owning app,
+    /// so the id comes from the closure's manifest of that name.
+    /// </summary>
+    private static string? WhyTheOwningAppCannotBeSelected(
+        BackupTableEntry entry, IReadOnlyList<BackupTableEntry> candidates,
+        IReadOnlyDictionary<string, List<Guid>> appIdsByName, out string? appId)
+    {
+        appId = null;
+        var prefix = $"table '{entry.TableName}' appears {candidates.Count} times in this company";
+        if (entry.AppName == null || !appIdsByName.TryGetValue(entry.AppName, out var ids))
+            return $"{prefix}, and its owning app '{entry.AppName}' matches no app this run resolved, "
+                + "so there is no app id to select it with";
+        if (ids.Count > 1)
+            return $"{prefix}, and {ids.Count} apps this run resolved are named '{entry.AppName}', "
+                + "so the owning app id cannot be chosen";
+        if (candidates.Count(c => string.Equals(c.AppName, entry.AppName, StringComparison.Ordinal)) > 1)
+            return $"{prefix}, more than once owned by the app '{entry.AppName}', so an app selector "
+                + "cannot separate them";
+        appId = ids[0].ToString("D");
+        return null;
     }
 
     /// <summary>
@@ -837,6 +903,14 @@ internal static class TestDataProvisioner
         foreach (var a in apps)
             (hasSymbolReference(a) ? keep : skipped).Add(a);
         return (keep, skipped);
+    }
+
+    /// <summary>The manifests of exactly the packages handed to the reader as symbols — the
+    /// apps whose names the catalog's resolution column can carry.</summary>
+    private static IReadOnlyList<AppManifest> SymbolManifests(IReadOnlyList<string> symbols)
+    {
+        var handed = symbols.ToHashSet(StringComparer.Ordinal);
+        return BcCompiler.ResolvedDeps().Where(d => handed.Contains(d.AppPath)).Select(d => d.Manifest).ToList();
     }
 
     private static string[] SymbolArgs(IReadOnlyList<string> head, IReadOnlyList<string> symbols)

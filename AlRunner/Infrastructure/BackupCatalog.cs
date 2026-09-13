@@ -37,6 +37,11 @@ internal sealed record BackupTableEntry(
 
     /// <summary>The base table an extension companion belongs to.</summary>
     internal string BaseTableName => IsExtensionCompanion ? TableName[..^"$ext".Length] : TableName;
+
+    /// <summary>The app id a `read` must pass as `--app`, set by the plan only when another
+    /// installed app declares a table of the same name in the same company (#2264). The
+    /// catalog carries the owning app's NAME, never its id, so this is not parsed here.</summary>
+    internal string? ReadAppId { get; init; }
 }
 
 internal static class BackupCatalog
