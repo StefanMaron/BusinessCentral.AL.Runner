@@ -5358,7 +5358,7 @@ return strictExitCode ? computedExitCode : 0;
                 catch (Exception ex)
                 {
                     return ServerRunResult.Failure(2, moduleName,
-                        $"reused module's registry replay failed ({ex.Message}: {ownReplay.EnumRegistrySidecar}) "
+                        $"reused module's registry replay failed: {ex.Message} "
                         + "— its enum, page, report, xmlport and query metadata would be missing (#3250)", fileHashes);
                 }
             }
@@ -5626,21 +5626,25 @@ return strictExitCode ? computedExitCode : 0;
                     // #3250: capture what a later request reusing this module from another
                     // directory must replay. The probe re-reads AL text only on a compile, which
                     // has just read all of it; a HIT reuses the cache gate's answer.
+                    OwnBundleRegistryReplay ownReplayCapture;
                     try
                     {
                         bool declaresQuery = cacheGateDeclaresQuery ?? BcCompiler.BundleDeclaresQuery(allPaths);
-                        DependencyLoader.RecordOwnBundleReplay(bundleId.AppId, asm, CaptureOwnBundleReplay(
+                        ownReplayCapture = CaptureOwnBundleReplay(
                             bundleId.AppId, moduleName, sidecarPath,
                             declaresQuery ? BcCompiler.BundleQuerySymbolsPathFor(moduleName) : null,
-                            querySidecarPath));
+                            querySidecarPath);
                     }
                     catch (Exception ex)
                     {
+                        // Recorded, not dropped: with nothing recorded a later reuse cannot tell
+                        // this module from one LoadAll registered, and runs without replaying.
+                        ownReplayCapture = OwnBundleRegistryReplay.Failed(ex.Message);
                         Console.Error.WriteLine(
                             $"  [server] {moduleName}: could not capture the registry replay for a later "
-                            + $"cross-bundle reuse of this module ({ex.Message}); that reuse would run "
-                            + "without this bundle's enum/page/report/xmlport/query metadata (#3250).");
+                            + $"cross-bundle reuse of this module ({ex.Message}); that reuse will refuse (#3250).");
                     }
+                    DependencyLoader.RecordOwnBundleReplay(bundleId.AppId, asm, ownReplayCapture);
                 }
             }
 

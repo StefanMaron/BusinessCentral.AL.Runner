@@ -169,9 +169,11 @@ public sealed class ServerCrossBundleReuseRegistryReplayTests
         packagePaths = Array.Empty<string>(),
     });
 
-    private static async Task<(List<string> Lines, string StdErr)> RunSessionAsync(string dirA, string dirB, IEnumerable<string> args, string label)
+    private static async Task<(List<string> Lines, string StdErr)> RunSessionAsync(
+        string dirA, string dirB, IEnumerable<string> args, string label,
+        IReadOnlyDictionary<string, string>? env = null, Action? betweenRequests = null)
     {
-        await using var server = await CliServer.StartAsync(args);
+        await using var server = await CliServer.StartAsync(args, extraEnv: env);
 
         var lines1 = await server.SendRequestStreamingAsync(Req(dirA), TimeSpan.FromSeconds(240));
         var joined1 = string.Join(" | ", lines1);
@@ -181,6 +183,7 @@ public sealed class ServerCrossBundleReuseRegistryReplayTests
         Assert.True(d1.GetProperty("passed").GetInt32() == 3 && d1.GetProperty("failed").GetInt32() == 0,
             $"[{label}] request 1 (directory A) must pass all three tests: {joined1}");
 
+        betweenRequests?.Invoke();
         var mark = server.StdErrMark;
         var lines2 = await server.SendRequestStreamingAsync(Req(dirB), TimeSpan.FromSeconds(240));
         // Without the reuse line the request did not exercise #3250 at all — a green would be
@@ -235,6 +238,75 @@ public sealed class ServerCrossBundleReuseRegistryReplayTests
         try
         {
             AssertRequest2(await RunSessionAsync(dirA, dirB, new[] { "--no-cache" }, "no-cache"), "no-cache");
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    private static void AssertRequest2Refused((List<string> Lines, string StdErr) run, string expectedReason, string label)
+    {
+        var (lines2, stderr2) = run;
+        var joined2 = string.Join(" | ", lines2);
+        Assert.Contains(ReuseLine, stderr2, StringComparison.Ordinal);
+        var (_, d2) = ProtocolV2Streaming.Split(lines2);
+        // A refusal, not a run: no test may execute against a module missing its metadata.
+        Assert.True(d2.GetProperty("exitCode").GetInt32() != 0 && d2.GetProperty("passed").GetInt32() == 0,
+            $"[{label}] request 2 must refuse the reuse: {joined2}");
+        // Read from the parsed summary: the raw JSON escapes the apostrophe in the message.
+        var errors = d2.TryGetProperty("compilationErrors", out var groups) && groups.ValueKind == JsonValueKind.Array
+            ? string.Join(" | ", groups.EnumerateArray().SelectMany(g => g.GetProperty("errors").EnumerateArray()).Select(e => e.GetString()))
+            : "";
+        Assert.Contains("reused module's registry replay failed", errors, StringComparison.Ordinal);
+        Assert.Contains(expectedReason, errors, StringComparison.Ordinal);
+    }
+
+    [SkippableFact]
+    public async Task ReusedModule_WhoseRecordedSidecarIsGone_RefusesWithANamedReason()
+    {
+        TestArtifacts.SkipIfMissing();
+        var root = TestScratch.Dir("al-runner-server-reuse-replay-3250-gone");
+        var dirA = Path.Combine(root, "checkout-a");
+        var dirB = Path.Combine(root, "checkout-b");
+        var cache = Path.Combine(root, "cache");
+        WriteBundle(dirA);
+        WriteBundle(dirB);
+        try
+        {
+            // Cold: request 1 is a MISS that writes the cache entry, and that entry's sidecar is
+            // what the replay records. Deleting it between the requests is the missing-file case.
+            var run = await RunSessionAsync(dirA, dirB, new[] { "--cache", cache }, "gone", betweenRequests: () =>
+            {
+                var sidecars = Directory.EnumerateFiles(cache, "*.enum-registry.json", SearchOption.AllDirectories).ToList();
+                Assert.NotEmpty(sidecars);
+                foreach (var f in sidecars) File.Delete(f);
+            });
+            AssertRequest2Refused(run, "the registry snapshot recorded for the reused module is gone", "gone");
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    [SkippableFact]
+    public async Task ReusedModule_WhoseCaptureFailed_RefusesInsteadOfRunningWithoutReplay()
+    {
+        TestArtifacts.SkipIfMissing();
+        const string injected = "injected capture failure 3250";
+        var root = TestScratch.Dir("al-runner-server-reuse-replay-3250-capturefail");
+        var dirA = Path.Combine(root, "checkout-a");
+        var dirB = Path.Combine(root, "checkout-b");
+        WriteBundle(dirA);
+        WriteBundle(dirB);
+        try
+        {
+            // Request 1 still passes — a failed capture only matters to a later reuse — and
+            // request 2 must refuse rather than read "no replay recorded" as nothing to replay.
+            var run = await RunSessionAsync(dirA, dirB, new[] { "--no-cache" }, "capture-failed",
+                env: new Dictionary<string, string> { ["AL_RUNNER_TEST_FAIL_OWN_BUNDLE_REPLAY_CAPTURE"] = injected });
+            AssertRequest2Refused(run, injected, "capture-failed");
         }
         finally
         {

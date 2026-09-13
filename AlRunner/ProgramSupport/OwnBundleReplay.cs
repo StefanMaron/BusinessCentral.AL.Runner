@@ -7,6 +7,8 @@ namespace AlRunner;
 // when it is handed back.
 internal static partial class ProgramSupport
 {
+    private const string InjectCaptureFailureEnvVar = "AL_RUNNER_TEST_FAIL_OWN_BUNDLE_REPLAY_CAPTURE";
+
     /// <summary>
     /// The replay for a module just loaded from <paramref name="moduleName"/>. Prefers the
     /// AL-output cache's own sidecars when they are on disk; otherwise (no cache, NOKEY, a
@@ -21,6 +23,11 @@ internal static partial class ProgramSupport
     internal static OwnBundleRegistryReplay CaptureOwnBundleReplay(
         Guid appId, string moduleName, string? cacheEnumSidecar, string? querySymbolsJson, string? cacheQuerySidecar)
     {
+        // Test-only seam, same family and gating as AL_RUNNER_TEST_FAIL_COMPANY_INIT: no shipped
+        // path sets it, and a capture failure has no other deterministic trigger. Its value
+        // becomes the exception message.
+        if (Environment.GetEnvironmentVariable(InjectCaptureFailureEnvVar) is { Length: > 0 } injected)
+            throw new IOException(injected);
         string? dir = null;
         string ScratchDir() => dir ??= AlRunner.Infrastructure.PerProcessScratch.Dir(
             "al-runner-own-bundle-replay", $"{moduleName}-{appId:N}");
@@ -57,15 +64,22 @@ internal static partial class ProgramSupport
     /// </summary>
     internal static int ApplyOwnBundleReplay(OwnBundleRegistryReplay replay)
     {
+        if (replay.CaptureFailure != null || replay.EnumRegistrySidecar == null)
+            throw new InvalidOperationException(
+                $"capturing the registries failed when the module was loaded: {replay.CaptureFailure}");
         if (!File.Exists(replay.EnumRegistrySidecar))
             throw new FileNotFoundException(
-                "the registry snapshot recorded for the reused module is gone", replay.EnumRegistrySidecar);
+                $"the registry snapshot recorded for the reused module is gone: {replay.EnumRegistrySidecar}",
+                replay.EnumRegistrySidecar);
         int replayed = LoadEnumRegistrySidecar(replay.EnumRegistrySidecar);
         if (replay.QuerySymbolsJson != null)
         {
+            // The fallback when BC's captured query document is missing, as on the cache-HIT
+            // branch (#4040).
             if (!File.Exists(replay.QuerySymbolsJson))
                 throw new FileNotFoundException(
-                    "the query symbols recorded for the reused module are gone", replay.QuerySymbolsJson);
+                    $"the query symbols recorded for the reused module are gone: {replay.QuerySymbolsJson}",
+                    replay.QuerySymbolsJson);
             AlRunner.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(replay.QuerySymbolsJson);
         }
         return replayed;

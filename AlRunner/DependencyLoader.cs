@@ -1423,6 +1423,11 @@ public sealed class DependencyLoader
 /// <c>BcRuntime.ResetForNewBundleReload</c>. <see cref="EnumRegistrySidecar"/> is the
 /// <c>.enum-registry.json</c> shape, which carries the enum, report, report-layout, page,
 /// xmlport and object-metadata registries; <see cref="QuerySymbolsJson"/> is null for a bundle
-/// that declares no query.
+/// that declares no query. <see cref="CaptureFailure"/> is set, and the paths are null, when
+/// capturing failed: a reuse must refuse rather than read it as "nothing to replay", which is
+/// what a module <c>LoadAll</c> registered looks like.
 /// </summary>
-internal sealed record OwnBundleRegistryReplay(string EnumRegistrySidecar, string? QuerySymbolsJson);
+internal sealed record OwnBundleRegistryReplay(string? EnumRegistrySidecar, string? QuerySymbolsJson, string? CaptureFailure = null)
+{
+    internal static OwnBundleRegistryReplay Failed(string reason) => new(null, null, reason);
+}
