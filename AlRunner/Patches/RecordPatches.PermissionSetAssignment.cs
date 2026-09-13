@@ -109,9 +109,8 @@
 //   seed. IsSuper must answer true in both, or codeunit 9002 refuses a `User.Modify` that every
 //   real BC test tier allows. The Access-Control arm is checked FIRST, so wherever the row does
 //   exist it — not this fact — is what answers.
-//   AlRunner#3174 tracks the one reader this fix cannot reach:
-//   NavUserAccountHelper.IsUserSuperInAllCompanies is `Session.Permissions.IsSuperForAllCompanies`
-//   with no Ncl hop in it at all, so no rewrite of Ncl can answer it.
+//   NavUserAccountHelper.IsUserSuperInAllCompanies has no Ncl hop in its body; it is answered
+//   by IsUserSuperInAllCompanies below, reached from NavDotNetPatches.InvokeReflectedMember (#3174).
 //
 // PRECOMPILED-DLL RESPECT
 //   `PermissionManagement` is in Ncl.dll — the runtime engine, ours to rewrite per
@@ -157,6 +156,33 @@ public static partial class RecordPatches
     public static ValueTask<bool> PermissionManagement_IsPermissionSetAssignedAsync(
         NavSession session, Guid userSecurityId, PermissionSetKey permissionSet, string companyName)
         => new(IsPermissionSetAssignedCore(session, userSecurityId, permissionSet, companyName));
+
+    /// <summary>
+    /// <c>NavUserPermissions.IsSuperForAllCompanies</c> for the session's own user, reached from
+    /// <c>NavUserAccountHelper.IsUserSuperInAllCompanies</c> via NavDotNetPatches (#3174). Mirrors
+    /// BC's getter in order: effective test permissions in use → false; NAV admin user → true;
+    /// otherwise the all-companies SUPER assignment, answered by the same core as
+    /// <c>IsPermissionSetAssigned</c> so the two can never disagree about one user.
+    /// BC's permission-system-disabled arm (a SQL setting) has no runner state and is not modelled.
+    /// </summary>
+    internal static bool IsUserSuperInAllCompanies(NavSession session)
+    {
+        // BC reads session.TestExecution unguarded; a session with no test execution has no
+        // effective permissions to be in use.
+        if (session.TestExecution != null && NavTestExecution.UseEffectivePermissions(session))
+            return false;
+
+        NavUser? user;
+        try { user = session.User; }
+        catch (NullReferenceException) { user = null; } // no Authenticator: no user, as IsSkeletonSessionUser
+        if (user == null)
+            return false;
+        if (user.IsNavAdminUser)
+            return true;
+
+        return IsPermissionSetAssignedCore(
+            session, user.Id, new PermissionSetKey(SuperRoleId, Guid.Empty, PermissionScope.System), string.Empty);
+    }
 
     private static bool IsPermissionSetAssignedCore(
         NavSession session, Guid userSecurityId, PermissionSetKey permissionSet, string companyName)

@@ -876,8 +876,15 @@ reads back true, grant something else and it reads back false.
 
 Entitlements are not modeled at all, so a permission set that a real tier would report as
 assigned *via an entitlement* rather than via `Access Control` reads as not assigned here.
-`NavUserAccountHelper.IsUserSuperInAllCompanies` still raises, because its body has no Ncl hop
-the runner can rewrite — AlRunner#3174.
+`NavUserAccountHelper.IsUserSuperInAllCompanies` (reachable from an OnPrem app's `DotNet`
+variable) reads the same null cache with no Ncl method in its body, so the runner answers it at
+`NavDotNet`'s reflective invoke instead (AlRunner#3174). The answer follows the order of
+`NavUserPermissions.IsSuperForAllCompanies` as read from the BC 28.4 decompile: `false` while
+effective test permissions are in use (`Permissions Mock`), `true` for a NAV admin user,
+otherwise the all-companies SUPER row answered exactly as `IsSuper` is above. BC's "permission
+system disabled" setting is not modelled. **No service tier has checked this decision, and no
+test pins it**: the corpus CI cannot compile a `DotNet` test (AlRunner#4014), and the runner's own
+tests cover only the invoke redirect, not which branch answers.
 
 ### `Record "Time Zone"` — ids follow the HOST, so they are IANA ids on Linux
 
