@@ -271,4 +271,9 @@ gh issue comment <N> --body-file /tmp/body.md
 `--body "…"` for prose containing backticks, `$`, or `!`. If you must inline it, re-read the
 posted text before trusting it.
 
+**And pick a delimiter the text cannot contain.** A heredoc ends at the first line equal to its
+delimiter, *including one inside the content*, so a body whose own example shows a heredoc
+terminates early and the shell then parses the remainder as commands. Measured composing the
+very PR that added this section. Writing the file from Python has neither problem.
+
 History: docs/incidents/CLAUDE.md.md
