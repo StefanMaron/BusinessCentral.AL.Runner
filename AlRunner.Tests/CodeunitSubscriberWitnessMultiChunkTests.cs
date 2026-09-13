@@ -2,11 +2,16 @@
 // RecordPatches.RegisterCodeunitSubscriberWitness (#4090).
 //
 // WHAT IS BEING PINNED
-//   One app's codeunits are spread across several R2R chunks, so the witness for that app is
-//   assembled by SEVERAL registrations against ONE app path. The merge must WIDEN: a later
-//   chunk adds what it saw and never drops what an earlier one saw. RegisterCodeunitSubscriberWitness
-//   states that invariant in a comment and implements it with an AddOrUpdate whose update arm
-//   UnionWith-es both sets.
+//   A witness for ONE app path can be built by MORE THAN ONE registration. The merge must
+//   WIDEN: the second registration adds what it saw and never drops what the first saw.
+//   RegisterCodeunitSubscriberWitness states that invariant in a comment and implements it with
+//   an AddOrUpdate whose update arm UnionWith-es both sets.
+//
+//   WHAT REACHES THE UPDATE ARM, precisely — not the chunk layout. DependencyLoader
+//   .RegisterAppAssemblies is called once per app and WitnessCodeunitSubscribers unions ALL of
+//   that app's assemblies into one pair of sets before a single AddOrUpdate, so five chunks
+//   still make ONE registration. The update arm is reached when one app path is registered
+//   TWICE: the loader plus the on-demand route, a reload, or two spellings of the same path.
 //
 // WHY IT NEEDED ITS OWN FIXTURE
 //   Every test #4078 shipped registers exactly ONCE per app path, so the update arm never ran.
@@ -20,14 +25,17 @@
 //   absent, and that reads as one of the 174 honest absences #4078 already accepts. Nothing
 //   counts it as a regression.
 //
-// THE SCALE, MEASURED RATHER THAN ASSUMED
-//   Microsoft_Base Application_28.1.49838.53910.app carries FIVE R2R chunks. All five carry
-//   Codeunit<N> types: 205 / 335 / 322 / 356 / 355 distinct ids, 1,573 in total, and every id
-//   appears in exactly ONE chunk — a clean partition, no overlap. So on Base Application the
-//   merge is not an edge case but the only route to a complete witness: a replace would keep
-//   whichever chunk registered last, about 355 of 1,573 ids, and silently return the other ~77%
-//   to the unknown state. (#4078's own measurements ran against System Application, which ships
-//   as a SINGLE chunk — which is exactly why they never drove this path.)
+// WHY A PARTIAL VIEW IS BADLY INCOMPLETE, MEASURED RATHER THAN ASSUMED
+//   Microsoft_Base Application_28.1.49838.53910.app carries FIVE R2R chunks, all bearing
+//   Codeunit<N> types: 226 / 353 / 348 / 383 / 380 distinct ids, 1,690 in total, every id in
+//   exactly ONE chunk — a clean partition, no overlap. Derived twice independently; an earlier
+//   revision of this header said 1,573, which did not reproduce.
+//
+//   That is not a claim about how many registrations happen (see above — one app, one
+//   registration). It bounds what is LOST if a witness is ever built from a partial view: the
+//   largest chunk is 383 of 1,690, so a view missing the rest leaves ~77% in the unknown state.
+//   That is why the merge must never become a replace. (#4078's own measurements ran against
+//   System Application, which ships as a SINGLE chunk, so nothing there could drive this path.)
 
 using AlRunner.Patches;
 using Xunit;
