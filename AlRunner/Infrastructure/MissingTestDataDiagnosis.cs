@@ -141,7 +141,7 @@ internal static class MissingTestDataDiagnosis
         var evidence = AlRunner.Patches.RecordPatches.ClassifySeededSingletonField(census.TableId, fieldName);
         if (evidence != AlRunner.Patches.RecordPatches.SeededSingletonEvidence.SeededBlank) return null;
 
-        var what = $"[test-data] {where} holds only the row the runner's install seeding created, "
+        var what = $"[test-data] {where} appears to hold only the row the runner's install seeding created, "
                  + $"and '{fieldName}' is still blank in it";
         if (!TestDataOptions.Enabled)
             return what + ", so this failure may be missing setup data rather than a bug in the code "

@@ -100,6 +100,18 @@ public sealed class MissingTestDataSeededSingletonTests : IDisposable
             keys { key(PK; "Primary Key") { Clustered = true; } }
         }
 
+        // Its own table, so the Modify below cannot leak into another test's seeded row.
+        table 62456 "Seeded Blank Written Setup"
+        {
+            DataClassification = SystemMetadata;
+            fields
+            {
+                field(1; "Primary Key"; Code[10]) { }
+                field(2; "Credit Memo Nos."; Code[20]) { }
+            }
+            keys { key(PK; "Primary Key") { Clustered = true; } }
+        }
+
         codeunit 62450 "Seeded Singleton Install"
         {
             Subtype = Install;
@@ -111,6 +123,7 @@ public sealed class MissingTestDataSeededSingletonTests : IDisposable
                 SeededBlank: Record "Seeded Blank Setup";
                 SeededFilled: Record "Seeded Filled Setup";
                 SeededBlankOther: Record "Seeded Blank Other Setup";
+                SeededBlankWritten: Record "Seeded Blank Written Setup";
             begin
                 if not SeededBlank.Get() then begin
                     SeededBlank.Init();
@@ -124,6 +137,10 @@ public sealed class MissingTestDataSeededSingletonTests : IDisposable
                 if not SeededBlankOther.Get() then begin
                     SeededBlankOther.Init();
                     SeededBlankOther.Insert();
+                end;
+                if not SeededBlankWritten.Get() then begin
+                    SeededBlankWritten.Init();
+                    SeededBlankWritten.Insert();
                 end;
             end;
         }
@@ -176,6 +193,18 @@ public sealed class MissingTestDataSeededSingletonTests : IDisposable
                 Setup.Modify();
                 Setup.Get();
                 Setup.TestField("Invoice Nos.");
+            end;
+
+            [Test]
+            procedure SeededBlankSetInDbButClearedInMemory_TestField()
+            var
+                Setup: Record "Seeded Blank Written Setup";
+            begin
+                Setup.Get();
+                Setup."Credit Memo Nos." := 'DB-VALUE';
+                Setup.Modify();
+                Setup."Credit Memo Nos." := '';
+                Setup.TestField("Credit Memo Nos.");
             end;
 
             [Test]
@@ -258,14 +287,14 @@ public sealed class MissingTestDataSeededSingletonTests : IDisposable
         var seeded = BlockFor(output, "SeededBlankSingleton_TestField");
         Assert.Contains("NavTestFieldException: Invoice Nos. must have a value in Seeded Blank Setup",
             seeded, StringComparison.Ordinal);
-        Assert.Contains($"[test-data] 'Seeded Blank Setup' (table {SeededBlankTableId}) holds only the row "
+        Assert.Contains($"[test-data] 'Seeded Blank Setup' (table {SeededBlankTableId}) appears to hold only the row "
             + "the runner's install seeding created, and 'Invoice Nos.' is still blank in it, so this "
             + "failure may be missing setup data", seeded, StringComparison.Ordinal);
         Assert.Contains("Pass --test-data", seeded, StringComparison.Ordinal);
         Assert.Contains("or set 'Invoice Nos.' in the test's own setup", seeded, StringComparison.Ordinal);
 
         var other = BlockFor(output, "SeededBlankOther_TestField");
-        Assert.Contains($"[test-data] 'Seeded Blank Other Setup' (table {SeededBlankOtherTableId}) holds only "
+        Assert.Contains($"[test-data] 'Seeded Blank Other Setup' (table {SeededBlankOtherTableId}) appears to hold only "
             + "the row the runner's install seeding created, and 'Credit Memo Nos.' is still blank in it",
             other, StringComparison.Ordinal);
         Assert.DoesNotContain($"table {SeededBlankTableId}", other, StringComparison.Ordinal);
@@ -279,6 +308,13 @@ public sealed class MissingTestDataSeededSingletonTests : IDisposable
         Assert.Contains("NavTestFieldException: Invoice Nos. must have a value in Seeded Filled Setup",
             testBlanked, StringComparison.Ordinal);
         Assert.DoesNotContain("[test-data]", testBlanked, StringComparison.Ordinal);
+
+        // The stored row holds DB-VALUE; only the in-memory record is blank. BC's TestField reads
+        // the in-memory record, so the store's own field has to be checked too.
+        var clearedInMemory = BlockFor(output, "SeededBlankSetInDbButClearedInMemory_TestField");
+        Assert.Contains("NavTestFieldException: Credit Memo Nos. must have a value in Seeded Blank Written Setup",
+            clearedInMemory, StringComparison.Ordinal);
+        Assert.DoesNotContain("[test-data]", clearedInMemory, StringComparison.Ordinal);
 
         // The seeded row really is the install seed's: its Description is blank.
         Assert.Contains("seeded-blank description=[]", BlockFor(output, "ReportSeededBlankDescription"),
@@ -317,7 +353,7 @@ public sealed class MissingTestDataSeededSingletonTests : IDisposable
         Assert.DoesNotContain("[test-data]", fromBackup, StringComparison.Ordinal);
 
         var stillSeeded = BlockFor(output, "SeededBlankOther_TestField");
-        Assert.Contains($"[test-data] 'Seeded Blank Other Setup' (table {SeededBlankOtherTableId}) holds only "
+        Assert.Contains($"[test-data] 'Seeded Blank Other Setup' (table {SeededBlankOtherTableId}) appears to hold only "
             + "the row the runner's install seeding created, and 'Credit Memo Nos.' is still blank in it "
             + "although --test-data is on: the plan built from", stillSeeded, StringComparison.Ordinal);
         Assert.DoesNotContain("Pass --test-data", stillSeeded, StringComparison.Ordinal);
