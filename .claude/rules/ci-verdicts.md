@@ -310,6 +310,35 @@ log first (`gh run view <id> --log-failed`, or `mcp__github__get_job_logs` with
 that run. A second, independent run is what section 5's flake standard needs; "Getting a second
 run of the same commit" has the routes.
 
+### A job log prints the `run:` block AS SOURCE, so grepping finds the script
+
+Before any stdout, an Actions log echoes the step's script. Every line of it is a match for
+anything the script mentions — a loop's `echo`, a `::warning::` it *might* emit, a command it
+*might* run — so `grep -c` counts intent, not execution.
+
+The tell is the **`[36;1m` colour escape** wrapping the echoed source (visible only with
+`--allow-escape-sequences`, which you need anyway):
+
+```
+[36;1m  echo "main moved while pushing; recomputing (attempt $attempt of 5)"[0m
+```
+
+Measured three times in one session, on three unrelated questions:
+
+| the grep | what it seemed to show | what was true |
+|---|---|---|
+| `attempt N of 5` in a retry loop | one iteration ran | **zero** ran — the loop aborted before the first |
+| `::warning::Run-TestsInBcContainer` | the failure was caught and downgraded | the `catch` **never fired**; a discarded return value was the cause |
+| a `verdict-needed` guard's own text | the guard had evaluated | the block was echoed, not run |
+
+Each reading was plausible and each one had a count behind it. **Filter the escape out, or match
+on output the script cannot contain** — a timestamped result line, a summary, an `##[error]`:
+
+```bash
+gh api repos/<o>/<r>/actions/jobs/<id>/logs --allow-escape-sequences \
+  | command grep -v $'\x1b\[36;1m' | command grep -E "<pattern>"
+```
+
 ### An empty log fetch is a refusal, not an empty log
 
 Both recipes print **nothing at all** for some jobs, and neither says "refused" where a caller
