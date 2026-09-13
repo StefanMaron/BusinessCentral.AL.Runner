@@ -2275,3 +2275,18 @@ Measured 6P/0F/0E on the whole bundle, cold and warm against one cache root, not
 the diff.
 
 Written by an agent (Claude, `stma-auto2-6`).
+
+## runner-extras `session-user-row` 4 -> 3 (#3269)
+
+`SurSessionUserHasItsUserPropertyCompanionRow` moved to corpus codeunit 61203 "Test User Property
+Session Usr" in the `al-language-onprem` app (corpus PR #334), because "the session user has a
+User Property (2000000121) row keyed by its security id" is plain BC behaviour. The three tests
+that stay pin the runner's own `TESTUSER` identity and the precompiled relation check. The bundle
+keeps `"target": "OnPrem"` unchanged.
+
+This repository's corpus leg enumerates every corpus app (`scripts/corpus-app-dirs.py`), so
+codeunit 61203 is in the set each leg runs; measured locally, not yet on a CI leg.
+
+Measured 3P/0F/0E on the whole bundle, twice against one cache, not computed from the diff.
+
+Written by an agent (Claude, `stma-auto2-5`).
