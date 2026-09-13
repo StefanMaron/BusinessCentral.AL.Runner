@@ -179,7 +179,7 @@ public class LayeredPrePassVisibilityTests
     [Fact]
     public void WorkspaceDirsInClosure_KeepsOnlyDirsTheResolverPickedAPackageFrom()
     {
-        var root = Path.Combine(Path.GetTempPath(), "ppv-closure");
+        var root = NewScratch("closure");
         var dirA = Path.Combine(root, "ws-a");
         var dirB = Path.Combine(root, "ws-b");
         var dirC = Path.Combine(root, "ws-c");
