@@ -162,6 +162,14 @@ nobody gave the new head. Measured on #3978: armed at exit 2 with 0 failing, two
 `Failed: 2, Passed: 5506` twenty minutes later, and the coordinator found it only by sweeping.
 **Disarm before dispatching the repair**, then re-arm on a fresh verdict.
 
+**`tools/armed-prs.py` is that re-read, as one command with no arguments.** It lists the armed
+set and reports only the PRs that are failing or whose verdict could not be read; a PR whose
+checks are still running is the ordinary armed state and stays quiet. Exit 0 nothing to do,
+1 something is failing, **3 a verdict could not be read** — which is not "fine", because nobody
+measured it. It reports and never disarms: the repair sequence above stays the coordinator's
+call. Timings that justify a tool over the sweep alone: two armed PRs sat red for **12 and 119
+minutes** on a night with nineteen armed at once (#4006).
+
 Arm **only** when all of these hold. Any one missing means report it to the coordinator instead:
 
 - **The PR is on a branch this loop owns.** Check the **branch prefix**, never the author field
