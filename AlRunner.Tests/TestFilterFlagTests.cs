@@ -41,6 +41,7 @@ public sealed class TestFilterFlagTests : IDisposable
     private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
 
     private readonly string _root;
+    private string? _jobsRoot;
 
     public TestFilterFlagTests()
     {
@@ -52,6 +53,7 @@ public sealed class TestFilterFlagTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch { }
+        if (_jobsRoot != null) try { Directory.Delete(_jobsRoot, recursive: true); } catch { }
     }
 
     /// <summary>
@@ -125,11 +127,14 @@ public sealed class TestFilterFlagTests : IDisposable
     }
 
     private (string output, int exit) RunRunner(params string[] extraArgs)
+        => RunRunnerOn(new[] { _root }, extraArgs);
+
+    private (string output, int exit) RunRunnerOn(string[] bundles, params string[] extraArgs)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
         args.Append(" --strict");
-        args.Append($" \"{_root}\"");
+        foreach (var b in bundles) args.Append($" \"{b}\"");
         foreach (var a in extraArgs) args.Append($" {a}");
         var psi = new ProcessStartInfo
         {
@@ -250,21 +255,147 @@ public sealed class TestFilterFlagTests : IDisposable
     }
 
     /// <summary>
-    /// Negative: a filter matching neither codeunit id nor any method name excludes
-    /// everything and still exits 0 — proves the filter can produce an empty result set
-    /// rather than silently falling back to "run all" when nothing matches.
+    /// Negative: a filter matching neither codeunit id nor any method name runs nothing and
+    /// fails the run with exit 6 naming the pattern (#4055). It used to exit 0 with
+    /// "0 total", so a typo in the pattern read as a clean run. Also proves the filter
+    /// does not fall back to "run all" when nothing matches.
     /// </summary>
     [SkippableFact]
-    public void TestFlag_NoMatch_RunsNeitherCodeunit()
+    public void TestFlag_NoMatch_RunsNeitherCodeunit_AndFailsWithExit6()
     {
         TestArtifacts.SkipIfMissing();
 
         var (output, exit) = RunRunner("--test NoSuchTestExists");
 
-        Assert.Equal(0, exit);
+        Assert.Equal(6, exit);
         Assert.DoesNotContain("Codeunit62142.AlphaCheck", output);
         Assert.DoesNotContain("Codeunit62143.BetaCheck", output);
         Assert.Contains("Tests:         0 total", output);
+        Assert.Contains("--test 'NoSuchTestExists' selected no test in this run", output);
+        Assert.DoesNotContain("interior '*'", output);
+    }
+
+    /// <summary>
+    /// #4055: the audit counts what the PATTERN selected, not what ran. `Alpha` selects
+    /// AlphaCheck and --exclude-test then removes it, so 0 tests run — that is an exclusion, not
+    /// a typo, and must stay exit 0 with no "selected no test" line. A count that never
+    /// increments would report this run as exit 6.
+    /// </summary>
+    [SkippableFact]
+    public void TestFlag_MatchRemovedByExcludeTest_IsNotANoMatch()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var (output, exit) = RunRunner("--test Alpha", "--exclude-test Codeunit62142.AlphaCheck");
+
+        Assert.True(exit == 0, output);
+        Assert.DoesNotContain("PASS  Codeunit62142.AlphaCheck", output);
+        Assert.DoesNotContain("Codeunit62143.BetaCheck", output);
+        Assert.Contains("Tests:         0 total", output);
+        Assert.DoesNotContain("selected no test", output);
+    }
+
+    /// <summary>
+    /// #4055, the same property under --jobs: each worker's reported count, not its test total,
+    /// is what the parent sums.
+    /// </summary>
+    [SkippableFact]
+    public void Jobs_MatchRemovedByExcludeTest_IsNotANoMatch()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (alpha, beta) = WriteTwoBundles();
+
+        var (output, exit) = RunRunnerOn(new[] { alpha, beta },
+            "--jobs 2", "--test Alpha", "--exclude-test Codeunit62146.AlphaOnly");
+
+        Assert.True(exit == 0, output);
+        Assert.Contains("jobs: 2 bundle(s) across 2 worker process(es)", output);
+        Assert.DoesNotContain("PASS  Codeunit62146.AlphaOnly", output);
+        Assert.DoesNotContain("selected no test", output);
+    }
+
+    /// <summary>
+    /// #4055: an interior '*' is matched literally, so `Alpha*Check` selects nothing even
+    /// though "AlphaCheck" exists. The failure message says why, which is the part a user
+    /// cannot work out from "0 total".
+    /// </summary>
+    [SkippableFact]
+    public void TestFlag_InteriorWildcard_SelectsNothing_AndSaysItIsLiteral()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var (output, exit) = RunRunner("--test \"Alpha*Check\"");
+
+        Assert.Equal(6, exit);
+        Assert.DoesNotContain("Codeunit62142.AlphaCheck", output);
+        Assert.Contains("--test 'Alpha*Check' selected no test in this run", output);
+        Assert.Contains("an interior '*' is matched literally", output);
+    }
+
+    /// <summary>
+    /// #4055 under --jobs: the zero is about the invocation, not one shard. Two bundles in
+    /// two worker processes; `Alpha` matches only the first. Before the parent/worker split a
+    /// worker judging its own shard would exit 6 and the parent's worst-of-workers would fail
+    /// a legitimate run. A pattern matching in NO shard still fails with 6.
+    /// </summary>
+    [SkippableFact]
+    public void Jobs_PatternMatchingOneShardOnly_Passes_AndMatchingNoShard_Fails()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (alpha, beta) = WriteTwoBundles();
+
+        var (okOutput, okExit) = RunRunnerOn(new[] { alpha, beta }, "--jobs 2", "--test Alpha");
+        Assert.True(okExit == 0, okOutput);
+        Assert.Contains("jobs: 2 bundle(s) across 2 worker process(es)", okOutput);
+        Assert.Contains("Codeunit62146.AlphaOnly", okOutput);
+        Assert.DoesNotContain("selected no test", okOutput);
+
+        var (noOutput, noExit) = RunRunnerOn(new[] { alpha, beta }, "--jobs 2", "--test NoSuchTestExists");
+        Assert.True(noExit == 6, noOutput);
+        Assert.Contains("jobs: 2 bundle(s) across 2 worker process(es)", noOutput);
+        Assert.Contains("--test 'NoSuchTestExists' selected no test in this run", noOutput);
+    }
+
+    private (string alpha, string beta) WriteTwoBundles()
+    {
+        // Outside _root: _root is itself a bundle, and nesting these would add them to it.
+        _jobsRoot = TestScratch.Dir("al-runner-test-filter-jobs");
+        var alpha = Path.Combine(_jobsRoot, "alpha");
+        var beta = Path.Combine(_jobsRoot, "beta");
+        foreach (var (dir, id, guid, name, method) in new[]
+                 {
+                     (alpha, 62146, "b2c3d4e5-f6a7-8901-2345-67890abcde46", "TF Jobs Alpha", "AlphaOnly"),
+                     (beta, 62147, "b2c3d4e5-f6a7-8901-2345-67890abcde47", "TF Jobs Beta", "BetaOnly"),
+                 })
+        {
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
+            {
+              "id": "{{guid}}",
+              "name": "{{name}}",
+              "publisher": "AL Runner",
+              "version": "1.0.0.0",
+              "dependencies": [],
+              "platform": "1.0.0.0",
+              "idRanges": [ { "from": 62140, "to": 62149 } ],
+              "runtime": "14.0"
+            }
+            """);
+            File.WriteAllText(Path.Combine(dir, "Test.Codeunit.al"), $$"""
+            codeunit {{id}} "{{name}}"
+            {
+                Subtype = Test;
+
+                [Test]
+                procedure {{method}}()
+                begin
+                    if 1 + 1 <> 2 then
+                        Error('sanity');
+                end;
+            }
+            """);
+        }
+        return (alpha, beta);
     }
 
     /// <summary>

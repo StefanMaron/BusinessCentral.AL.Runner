@@ -64,9 +64,10 @@ al-runner [OPTIONS] <bundle-dir>...
 | `3` | A bundle could not compile. |
 | `4` | A suite's test or app-group count did not match its declared baseline (`--count-baseline`), or a declared suite produced no bucket (`--count-baseline-require-all`). |
 | `5` | An expectations entry matched no test in this run (`--expectations-require-match`). |
+| `6` | `--test PATTERN` selected no test in the whole invocation (#4055). Under `--jobs` the workers' counts are summed; not applied in `--watch` or `--server`. |
 
 A run can hold several of these at once, and reports the most fundamental: **`3` > `2` > `4` >
-`1` > `5`**. `3`, `2` and `4` all say *the run did not measure what it claims to*, so the
+`6` > `1` > `5`**. `3`, `2`, `4` and `6` all say *the run did not measure what it claims to*, so the
 report cannot be read at face value; `1` and `5` are statements about the AL it did measure.
 That is why a count-baseline mismatch outranks a test failure (#3350) — a consumer who sees
 only `1` fixes the failing test, sees green, and never learns that a bundle stopped being

@@ -4445,6 +4445,30 @@ if (expectationsRequireMatch)
     }
 }
 
+// ── --test selection audit (#4055): a pattern that selects nothing is exit 6, not a clean
+// 0-test run. Judged for the invocation: under --jobs the worker only reports its count and the
+// parent decides (TestSelectionAudit). A bundle that did not compile or execute, a sliced
+// resume attempt or a lost carry file makes the zero unattributable, so those stand down.
+bool testSelectionEmpty = false;
+if (testFilter != null && !watchMode && !willResume && !carryIncomplete)
+{
+    var selected = executor.FilterSelectedCount + carriedResults.Sum(b => (long)b.Tests.Count);
+    if (AlRunner.Infrastructure.TestSelectionAudit.IsWorker)
+        Console.Error.WriteLine(AlRunner.Infrastructure.TestSelectionAudit.FormatWorkerLine(selected));
+    else if (selected == 0 && allResults.All(b => b.Tests.Count == 0))
+    {
+        if (allResults.Any(b => b.Stage is BucketStage.CompileFailed or BucketStage.ExecuteFailed || b.CompileErrors.Count > 0))
+            Console.Error.WriteLine(
+                $"test-selection: --test '{testFilter}' selected no test, not judged: a bundle did not "
+                + "compile or execute, so its tests were never offered to the pattern.");
+        else
+        {
+            testSelectionEmpty = true;
+            Console.Error.WriteLine("test-selection: " + AlRunner.Infrastructure.TestSelectionAudit.Describe(testFilter));
+        }
+    }
+}
+
 // Computed once regardless of --no-strict-exit: needed both as the process exit code
 // and as the "exitCode" field in --output-json, which reports the real outcome even
 // when the process itself exits 0 for JSON-only consumers.
@@ -4499,8 +4523,9 @@ int computedExitCode = 0;
         // so the mismatch was invisible in the exit code. A consumer told only "1" fixes the
         // failing test, sees green, and never learns three tests' worth of coverage vanished.
         : (countBaselineMismatch ? 4             // #1880: suite's count didn't exactly match its baseline
+        : (testSelectionEmpty ? 6                // #4055: --test selected no test; nothing was measured
         : (failed + errored > 0 ? 1              // at least one test failed
-        : (expectationsMatchFailure ? 5 : 0)));  // #3123: an expectations entry matched no test
+        : (expectationsMatchFailure ? 5 : 0))));  // #3123: an expectations entry matched no test
 }
 
 // Set when the --output-json document is owed to stdout, printed after the output writes
