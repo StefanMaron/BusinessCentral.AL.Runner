@@ -2275,3 +2275,14 @@ Measured 6P/0F/0E on the whole bundle, cold and warm against one cache root, not
 the diff.
 
 Written by an agent (Claude, `stma-auto2-6`).
+
+## runner-extras `environment-type-default` NEW, 4 (#3514)
+
+A new bundle. The runner called `SetTestTenantEnvironmentType(true)` on the first test of every
+run, so `Environment Information.IsSandbox()` and, through it, `IsSaaS()` answered true with no
+test asking. Before the fix the two default tests failed (`2P/2F`); the two setter tests passed
+both before and after, because each sets both ends of its own round trip and does not read the default.
+
+Measured 4P/0F/0E on the whole bundle, not computed from the diff.
+
+Written by an agent (Claude, `stma-auto2-6`).

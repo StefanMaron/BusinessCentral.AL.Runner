@@ -1562,9 +1562,7 @@ public sealed class TestExecutor
         // called, cheap even when perTestCoverage was never requested.
         AlRunner.Infrastructure.AlCoverageTracker.BeginTest($"{codeunit}.{m.Name}");
         // Enter BC's own "in test" scope for the duration of this test (mirrors
-        // NavTestExecution.EnterTestCodeunit/LeaveTestCodeunit) — see BcRuntime.EnterTestExecutionScope
-        // for why: it's what makes NavTenantSettingsHelper.IsSandbox()/IsProduction() (Codeunit 457
-        // "Environment Information") report a sandbox during test execution, exactly like real BC.
+        // NavTestExecution.EnterTestCodeunit/LeaveTestCodeunit) — see BcRuntime.EnterTestExecutionScope.
         BcRuntime.EnterTestExecutionScope(instance, m);
         // #3480: BC handles TransactionModel::None BEFORE the body, not after it (the
         // pre-body EndTransaction loop in NavTestCodeunit.ExecuteTestMethodAsync), so the body

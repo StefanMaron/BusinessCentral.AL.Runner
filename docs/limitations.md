@@ -817,6 +817,28 @@ mutation-checked: removing the `ClearRecord` reset reds 60766 arm 3, removing th
 hook reds 60775's `PartialLoad_ReadOmittedField_JitLoadsRealValue`, and reinstating the
 requested-set fallback reds 60766 arm 2.
 
+<a id="environment-type"></a>
+### Environment type — the tenant is Production and not SaaS unless a test says otherwise
+
+`Environment Information.IsSandbox()` and `IsSaaS()` answer `false` by default: the runner's
+tenant carries BC's `NavTenantSettings` default, `EnvironmentType = Production`, and System
+Application's `IsSaaS()` is `IsSandbox() or <membership entitlement>`. A test moves them the same
+way it does on a service tier — `Library - Permissions.SetTestTenantEnvironmentType(true)`
+(`NavTenantSettingsHelper.SetTestTenantEnvironmentType`, honoured only while a test runs) or
+`Environment Info Test Library.SetTestabilitySandbox` / `SetTestabilitySoftwareAsAService`.
+
+Until #3514 the runner called `SetTestTenantEnvironmentType(true)` itself on the first test of
+every run, on the belief that BC's test harness does. No service-tier assembly calls it
+(`NavUserAccount.dll` defines it; nothing else in the 27.0 or 28.4 artifacts references it), so
+every test saw a sandbox and therefore SaaS, and Base Application's SaaS guards refused (the
+User Card's "Creating users is not allowed in the online environment").
+
+**This is where the runner and the al-language corpus tier differ on purpose.** The corpus CI
+configures its tenant as a Sandbox (`MsDyn365Bc.On.Linux` `scripts/entrypoint.sh` sets
+`TenantEnvironmentType=Sandbox`, and the Windows nightly defaults to a sandbox artifact), so a
+corpus test cannot pin the runner's default; `tests/runner-extras/environment-type-default` does.
+`IsOnPrem()` is unrelated to both: it is `ApplicationIdentifier() = 'NAV'`.
+
 ### `TestPage.Edit()` on a page declaring `Editable = false` — refused by name, not by NRE
 
 <a id="testpage-page-mode-no-edit-action"></a>
