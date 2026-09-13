@@ -154,7 +154,8 @@ internal static class TestDataProvisioner
             + $"{TablesRefused} refused (unsupported value types or unknown columns), "
             + $"{TablesRefusedByReader} refused by the backup reader, "
             + $"{ColumnsFromUninstalledApps} extension column(s) dropped for apps this run does not install, "
-            + $"{ColumnsNotInThisBuild} column(s) dropped that this build's AL tables have no field for.";
+            + $"{ColumnsNotInThisBuild} column(s) dropped that this build's AL tables have no field for; "
+            + "the `timestamp` (SQL rowversion) column is not hydrated (#4123).";
     }
 
     private static Summary? _lastSummary;
@@ -668,10 +669,11 @@ internal static class TestDataProvisioner
     }
 
     /// <summary>
-    /// Project the reader's JSON array into one dictionary per row, keyed by the AL field
-    /// NAME the reader emitted. BC's own bookkeeping columns are dropped here (they carry no
-    /// AL field the runner will insert into — see RecordPatches.TestDataHydration's header);
-    /// every remaining key must resolve against the target metatable, or the table is refused.
+    /// Project the reader's JSON array into one dictionary per row, keyed by AL field NAME.
+    /// The reader emits BC's platform columns under their SQL names (`$systemId`, …); those are
+    /// re-keyed onto the AL fields that hold them, and `timestamp` is dropped (#2260; see
+    /// RecordPatches.TestDataHydration's header). A key the target metatable has no field for is
+    /// dropped and counted there, never silently.
     /// </summary>
     internal static List<IReadOnlyDictionary<string, JsonElement>> ParseRows(string json)
     {
@@ -682,8 +684,10 @@ internal static class TestDataProvisioner
             var row = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
             foreach (var prop in element.EnumerateObject())
             {
-                if (RecordPatches.TestDataSystemColumnNames.Contains(prop.Name)) continue;
-                row[prop.Name] = prop.Value.Clone();
+                if (prop.Name == RecordPatches.TestDataTimestampColumnName) continue;
+                var key = RecordPatches.TestDataSystemColumns.TryGetValue(prop.Name, out var system)
+                    ? system.FieldName : prop.Name;
+                row[key] = prop.Value.Clone();
             }
             rows.Add(row);
         }

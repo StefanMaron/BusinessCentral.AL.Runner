@@ -8,7 +8,7 @@
   "dependencies": [],
   "platform": "1.0.0.0",
   "application": "27.0.0.0",
-  "idRanges": [ { "from": 64400, "to": 64409 } ],
+  "idRanges": [ { "from": 64400, "to": 64419 } ],
   "runtime": "14.0",
   "features": []
 }

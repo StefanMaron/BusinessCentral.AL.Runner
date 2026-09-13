@@ -104,13 +104,17 @@
 //      leaves it None. So the guard lives once per run, in TestDataProvisioner, where it is
 //      answered by the reader instead of by our own metadata.
 //
-// WHAT IS DELIBERATELY NOT HYDRATED, AND IS SAID OUT LOUD
-//   BC's system columns (`timestamp`, `$systemId`, `$systemCreatedAt`, `$systemCreatedBy`,
-//   `$systemModifiedAt`, `$systemModifiedBy`) carry no AL field id in the reader's schema
-//   output, so mapping them back to AL fields 2000000000-2000000004 would rest on a
-//   convention no service tier has confirmed here. They are left at the field's own BC
-//   default (NavValue.CreateNavValueFromObject(field, null), i.e. what Record.Init() gives)
-//   and reported in the hydration summary. See the issue for the follow-up.
+// BC'S PLATFORM COLUMNS (issue #2260)
+//   The reader emits them by SQL name, and ParseRows re-keys them onto their AL fields
+//   (TestDataSystemColumns): `$systemId` is field 2000000000 SystemId — the column
+//   NavSqlSystemIdHelper adds for it — and `$systemCreatedAt`…`$systemModifiedBy` are the audit
+//   fields 2000000001-2000000004, whose NCLMetaField.SqlColumnName is "$s" + FieldName.Substring(1).
+//   Values go through the Guid and DateTime cases below, like any other column. Trap: do NOT
+//   derive `$systemId` from SqlColumnName — FieldIsAuditField excludes 2000000000, and the
+//   runner's metatable answers `SystemId` for it (measured on all 77 tables the fixture loads).
+//   `timestamp` (the SQL rowversion, field 0) is NOT hydrated, and the summary says so: how the
+//   in-memory store maintains field 0 across a restored value and later inserts is unmeasured
+//   (#4123).
 using AlRunner.Infrastructure;
 using System.Reflection;
 using System.Text.Json;
@@ -129,11 +133,20 @@ internal sealed class TestDataHydrationRefusal : Exception
 
 public static partial class RecordPatches
 {
-    /// <summary>Column names the reader emits for BC's own bookkeeping. See the file header
-    /// for why they are excluded rather than mapped.</summary>
-    internal static readonly IReadOnlySet<string> TestDataSystemColumnNames =
-        new HashSet<string>(StringComparer.Ordinal)
-        { "timestamp", "$systemId", "$systemCreatedAt", "$systemCreatedBy", "$systemModifiedAt", "$systemModifiedBy" };
+    /// <summary>The reader's SQL name for each platform field it emits, and the field that holds
+    /// it (#2260). See the file header for the citations.</summary>
+    internal static readonly IReadOnlyDictionary<string, (int FieldNo, string FieldName)> TestDataSystemColumns =
+        new Dictionary<string, (int FieldNo, string FieldName)>(StringComparer.Ordinal)
+        {
+            ["$systemId"] = (2000000000, "SystemId"),
+            ["$systemCreatedAt"] = (2000000001, "SystemCreatedAt"),
+            ["$systemCreatedBy"] = (2000000002, "SystemCreatedBy"),
+            ["$systemModifiedAt"] = (2000000003, "SystemModifiedAt"),
+            ["$systemModifiedBy"] = (2000000004, "SystemModifiedBy"),
+        };
+
+    /// <summary>The SQL rowversion column. Not hydrated — see the file header.</summary>
+    internal const string TestDataTimestampColumnName = "timestamp";
 
     /// <summary>The outcome of one table's hydration: how many rows landed, how many merged
     /// columns belonged to an app this run does not have installed, and how many named a
@@ -231,7 +244,7 @@ public static partial class RecordPatches
     /// <summary>
     /// Insert <paramref name="rows"/> into <paramref name="tableId"/>'s in-memory store.
     /// <paramref name="rows"/> is one dictionary per row, keyed by the AL field NAME the
-    /// reader emitted (BC's system columns already dropped by the caller).
+    /// reader emitted (BC's platform columns already re-keyed, and `timestamp` dropped, by the caller).
     ///
     /// A key that resolves to a field of the target NCLMetaTable — the metatable the row is
     /// actually inserted into — is hydrated. A key that does not is dropped and counted, in
@@ -352,7 +365,7 @@ public static partial class RecordPatches
             var metadata = (INavValueMetadata)field;
             if (!row.TryGetValue(field.FieldName, out var json))
             {
-                // No stored value for this field in the backup: a FlowField, a system column
+                // No stored value for this field in the backup: a FlowField, the rowversion
                 // (see the file header), or a field this app version added. BC's own default
                 // for the field's type — the same value Record.Init() produces — not a guess
                 // at what the source "probably" held.

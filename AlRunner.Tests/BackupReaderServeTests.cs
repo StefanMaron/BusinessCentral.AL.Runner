@@ -101,7 +101,7 @@ public sealed class BackupReaderServeTests
     {
         // The same two rows in both wire shapes, including a null, a number, a string with a
         // control character (the reader escapes U+0002 in date formulas) and a system column
-        // ParseRows is required to drop.
+        // ParseRows re-keys onto its AL field.
         const string serve = """
             {"id":3,"ok":true,
              "headers":["Code","Description","Discount _","Blocked","Due Date Calculation","$systemId"],
@@ -136,8 +136,9 @@ public sealed class BackupReaderServeTests
         Assert.Equal(JsonValueKind.Null, fromServe[0]["Blocked"].ValueKind);
         Assert.Equal("10\u0002", fromServe[0]["Due Date Calculation"].GetString());
         Assert.Equal(1, fromServe[1]["Blocked"].GetInt32());
-        // The system column is dropped by ParseRows on both paths.
+        // The system column is keyed by its AL field on both paths (#2260).
         Assert.False(fromServe[0].ContainsKey("$systemId"));
+        Assert.Equal("BF49D1DB-D953-F111-8E26-7CED8D9E4094", fromServe[0]["SystemId"].GetString());
     }
 
     [Fact]
