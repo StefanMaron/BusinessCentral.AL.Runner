@@ -18,7 +18,7 @@
 // A FALSE POSITIVE IS WORSE THAN NO MESSAGE
 //   Telling somebody their genuine bug is a missing-data problem sends them down the wrong path
 //   — the same failure #2240 describes, just pointing the other way. So the explanation fires
-//   only on EVIDENCE, never on a text pattern alone. Two things must both hold:
+//   only on EVIDENCE, never on a text pattern alone. Both of these must hold:
 //
 //     1. The failure NAMES a table, and the name comes from a typed source, not from parsing
 //        prose:
@@ -31,9 +31,14 @@
 //        lives in Microsoft.Dynamics.Nav.Language.dll and every shipped culture has its own —
 //        so matching on it would be a guess that silently stops working off en-US.
 //
-//     2. That table is GENUINELY EMPTY in the in-memory store right now, summed across every
-//        DataAccessSource that materialised it (RecordPatches.TryCensusTable). If the census
-//        cannot see the table, the answer is "I don't know" and nothing is said.
+//     2. One of two shapes of store evidence:
+//          - that table is GENUINELY EMPTY in the in-memory store right now, summed across every
+//            DataAccessSource that materialised it (RecordPatches.TryCensusTable); or
+//          - #2277: a TestField failure on a table holding ONE row that the install baseline
+//            shows the runner's install seeding created with that field blank, still blank
+//            (RecordPatches.ClassifySeededSingletonField). A row the test inserted, a seeded
+//            value the test cleared, and a --test-data backup row all get nothing.
+//        If the store or baseline cannot be read, the answer is "I don't know" and nothing is said.
 //
 //   The negative case this buys is the important one, and it is the one the proving tests lead
 //   with: a `Rec.Get('NOPE')` against a table that HAS rows produces exactly the same exception
