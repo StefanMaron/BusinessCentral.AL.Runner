@@ -40,9 +40,11 @@
 //
 //   That costs nothing on any path the runner drives today, and this is measured rather than
 //   assumed: in BC 28.1's Ncl, SavePersonalization has NO callers at all, and SaveConfiguration
-//   is called only from NavConfigurationDesignerExtension and NavConfigurationImporterExtension
-//   — the in-client designer and its importer, neither reachable from a headless AL test. If a
-//   future path does reach one, it will say so by name instead of silently succeeding.
+//   is called only from NavConfigurationDesignerExtension and NavConfigurationImporterExtension.
+//   One subclass IS reachable from AL: NavConfigurationCopyExtension, behind Base Application's
+//   "Conf./Personalization Mgt".CopyProfile. BC runs it inside a catch (Exception) that would
+//   swallow this refusal, so that path is refused earlier, at NavDesignerALFunctions.CopyProfile
+//   (DesignerProfileCopyPatches, #2324 / #4124).
 using System;
 using System.Collections.Generic;
 using Microsoft.Dynamics.Nav.Apps.MetadataDeltas;
