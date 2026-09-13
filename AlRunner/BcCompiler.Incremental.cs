@@ -1450,7 +1450,8 @@ public sealed partial class BcCompiler
 
     private static NavCA.CompilationOptions RadCompilationOptions(ManifestCompilerInputs manifestInputs) => new(
         continueBuildOnError: true,
-        target: NavCA.CompilationTarget.OnPrem,
+        // #2316: must match Emit()'s target, or a fast-path cycle skips AL0296 for a Cloud app.
+        target: manifestInputs.EffectiveTarget,
         generateOptions: NavCA.CompilationGenerationOptions.Code | NavCA.CompilationGenerationOptions.Navigation,
         compilerFeatures: manifestInputs.CompilerFeatures,
         contextSensitiveHelpUrl: manifestInputs.ContextSensitiveHelpUrl);
