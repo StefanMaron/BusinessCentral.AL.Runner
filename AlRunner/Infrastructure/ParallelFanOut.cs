@@ -321,6 +321,7 @@ internal static class ParallelFanOut
                          Environment.GetEnvironmentVariable("AL_RUNNER_EMIT_TIMEOUT_SEC"),
                          Environment.GetEnvironmentVariable("AL_RUNNER_TEST_TIMEOUT_SEC")))
                 psi.Environment[kv.Key] = kv.Value;
+            psi.Environment[TestSelectionAudit.WorkerEnvVar] = "1";
             if (viaDotnet && asm != null) psi.ArgumentList.Add(asm);
             foreach (var a in childArgs) psi.ArgumentList.Add(a);
 
@@ -334,6 +335,8 @@ internal static class ParallelFanOut
 
         var worst = 0;
         long tests = 0, failures = 0, errors = 0, skipped = 0, notRun = 0, partial = 0;
+        long selected = 0;
+        var selectionUnreported = false;
         for (var i = 0; i < procs.Count; i++)
         {
             var (p, junit, so, se) = procs[i];
@@ -348,6 +351,10 @@ internal static class ParallelFanOut
 
             var c = JUnitCounts.Read(junit);
             tests += c.Tests; failures += c.Failures; errors += c.Errors; skipped += c.Skipped;
+
+            var shardSelected = TestSelectionAudit.ReadWorkerLines(stderr);
+            if (shardSelected == null) selectionUnreported = true;
+            else selected += shardSelected.Value;
 
             var exit = killed ? ExitCodeForKilledWorker(c) : p.ExitCode;
             if (exit > worst) worst = exit;
@@ -391,8 +398,26 @@ internal static class ParallelFanOut
                                "ran, but the tests the lost suites declare are MISSING from the totals");
         Console.WriteLine("=================================================================");
 
+        // #4055: the workers only reported what --test selected; the verdict is the run's.
+        // A shard that did not report, or any exit above "tests ran", leaves the zero unattributable.
+        var testFilter = LastValueOf(originalArgs, "--test", "--filter");
+        if (testFilter != null && selected == 0 && tests == 0 && !selectionUnreported
+            && notRun == 0 && partial == 0 && (worst == 0 || worst == 5))
+        {
+            Console.Error.WriteLine("test-selection: " + TestSelectionAudit.Describe(testFilter));
+            worst = TestSelectionAudit.ExitCode;
+        }
+
         ScratchDirs.Release(tempDir);
         return worst;
+    }
+
+    private static string? LastValueOf(IReadOnlyList<string> args, params string[] flags)
+    {
+        string? value = null;
+        for (var i = 0; i + 1 < args.Count; i++)
+            if (flags.Contains(args[i])) value = args[++i];
+        return value;
     }
 
     /// <summary>
