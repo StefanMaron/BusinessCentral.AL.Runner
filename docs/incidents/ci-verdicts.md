@@ -146,3 +146,42 @@ attempt. GitHub Actions concurrency is scoped per account, not per repository, s
 shared with every other repo and agent using the same account, not just this one. Nobody
 bypasses a red required check. The recipes above are for finding out whether a failure is
 real, not for making it go away.
+
+## 5b. The inherited red: a rebase, not a re-run (2026-09-13, #4092)
+
+Two corpus/runner pairs merged within an hour, each correctly ordered:
+
+| corpus PR | added | runner fix | merged |
+|---|---|---|---|
+| #336 | `TestPrecompiledReportLayouts.al`, codeunit 60974 | #4035 (`4d59608e`) | 01:21:23Z |
+| #337 | `TestReportNestedLinkImplicitParent.al`, codeunit 60224 | #4036 (`8908e999`) | 02:07:45Z |
+
+Corpus #336 merged at 01:21:19Z and its runner fix at 01:21:23Z — **four seconds apart**, which
+is the pair landing in one step as `bc-behavior-tests-go-upstream.md` step 5 requires. Thirteen
+open pull requests went red anyway, created between 20:59Z and 00:38Z, i.e. all before the pair.
+So the exposure is not the gap between the two merges (what #3922 measured) but the in-flight
+population at the moment the pair lands. A zero-length window bounds nothing.
+
+**What made the diagnosis tractable** was reading the failing codeunits off the leg log rather
+than sizing the failure by leg count. Twelve PRs failed on 60974 across three legs; one (#4056)
+failed on 60224 across two. Those counts are indistinguishable from an ordinary red, and the two
+groups needed different fix commits. Corpus #336's own body predicted the shape exactly —
+*"Before its fix it failed 4 of these 5 tests"* — and the legs reported exactly four.
+
+**The patch-id measurement.** Thirteen PRs were rebased and checked with `git patch-id --stable`
+over `git diff origin/main...HEAD`, before and after:
+
+- twelve returned an identical id;
+- **#4056 returned a different one** (`33e86914` → `d92dc3c5`), with the same 9 files and the
+  same 304 insertions / 10 deletions. Diffing the two diffs' `^[+-]` lines, excluding the
+  `+++`/`---` headers, gave **zero differing lines**. Only hunk *context* had moved, because
+  `main` advanced underneath — and `patch-id` hashes context.
+
+So identity is conclusive in the safe direction and a difference is not conclusive in the unsafe
+one. The rule records the resolution (diff the diffs) rather than this derivation.
+
+**Two PRs in the same sweep were red for their own reasons** and had to be kept out of the
+rebase batch: #4053 (four undeclared `[install-trigger]` sites, `Failed: 1, Passed: 5641`) and
+#4078 (`IsFixtureItem` had no arm for a walk whose item type the PR itself changed,
+`Failed: 2, Passed: 5692`). Both were found by the same per-codeunit / per-step read that
+identified the inherited ones; a bulk "rebase everything red" would have shipped both defects.

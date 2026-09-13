@@ -426,6 +426,33 @@ flake and go fix it. **Nobody bypasses a red required check**, and re-rolling CI
 failure will not recur is not sanctioned by any mechanism; Actions concurrency is scoped per
 account, so each attempt spends the whole account's shared queue (corpus PR #145).
 
+### A third possibility: the red is inherited, and the remedy is a REBASE, not a re-run
+
+Before treating a red as yours or as a flake, ask whether your branch is simply missing a fix
+that `main` already has. The corpus is **resolved per run, not pinned** (#3737), so a merged
+corpus commit reaches every open branch on its next run, while the runner fix it needs reaches a
+branch only by being *in* it. A PR that branched before that fix runs the new corpus test
+against old runner code — indefinitely, because re-running measures the same pair again.
+
+**The signature is a failing codeunit that matches no open runner PR**, shared across several
+unrelated PRs:
+
+```bash
+command grep -E "^\S+Z *FAIL " <leg.log> | command grep -oE "Codeunit[0-9]+" | sort | uniq -c
+git merge-base --is-ancestor <fix-merge-commit> <pr-head>   # false => needs a rebase
+```
+
+Then confirm the rebase preserved what a reviewer already read, so a standing verdict still
+applies. `git patch-id --stable` over `git diff origin/main...HEAD` is the cheap first check —
+but **`patch-id` hashes hunk context, so a changed id means "look", not "the content moved".**
+Resolve a difference by diffing the two diffs' added and removed lines directly; equal there is
+equal. Measured on thirteen PRs in one sweep: twelve identical, one changed id whose
+added/removed lines differed in **zero** places (#4092).
+
+Do not size this by leg count or failure count — they look like an ordinary red. One PR in that
+same sweep had a different failing codeunit and needed separate treatment, which only the
+per-codeunit read distinguished.
+
 ### Deliberately not in `tools/ci-wait.py`
 
 `ci-wait.py` answers "has this PR's required check reported a verdict on its current head", a
