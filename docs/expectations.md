@@ -147,6 +147,11 @@ tests/expectations/
   accept-<area>.json      ← run-level conditions this project accepts (#3561)
 ```
 
+The prefix and every entry's `Mode` must agree, and a file name with none of these
+prefixes is refused: `AlRunner.Tests/ExpectationFilePrefixTests.cs` checks the shipped
+directory (#3114). The loader does not, because `--expectations` also loads a project's
+own manifest, whose file names are not this repository's convention to impose.
+
 One file per area. Sharding matches Microsoft's
 `ALAppExtensions/Build/DisabledTests/` convention so anyone familiar with the
 BC ecosystem recognises the shape — we extend the schema with extra fields

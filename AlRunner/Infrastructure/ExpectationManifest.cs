@@ -413,6 +413,74 @@ public sealed class ExpectationManifest
         return new ExpectationManifest(entries);
     }
 
+    /// <summary>
+    /// The file-name prefix each mode lives under in <c>tests/expectations/</c> (#3114). A
+    /// repository convention, checked by <c>ExpectationFilePrefixTests</c> over the shipped
+    /// directory — never by <see cref="LoadFromDirectory"/>, which also loads a user's own
+    /// manifest whose file names are not ours to dictate.
+    /// </summary>
+    public static IReadOnlyList<(string Prefix, ExpectationMode Mode)> FilePrefixes { get; } = new[]
+    {
+        ("oos-", ExpectationMode.ExpectOos),
+        ("known-gaps-", ExpectationMode.ExpectFailKnownGap),
+        ("divergence-", ExpectationMode.ExpectDivergence),
+        ("disabled-", ExpectationMode.Skip),
+        ("accept-", ExpectationMode.AcceptPartialCompanyInit),
+    };
+
+    /// <summary>The mode a manifest file name promises, or null when it carries no recognised
+    /// <c>&lt;prefix&gt;&lt;area&gt;.json</c> shape.</summary>
+    public static ExpectationMode? ModeForFileName(string fileName)
+    {
+        if (!fileName.EndsWith(".json", StringComparison.Ordinal)) return null;
+        var stem = fileName[..^".json".Length];
+        foreach (var (prefix, mode) in FilePrefixes)
+            if (stem.StartsWith(prefix, StringComparison.Ordinal) && stem.Length > prefix.Length)
+                return mode;
+        return null;
+    }
+
+    /// <summary>
+    /// Every disagreement between a file's prefix and the entries it holds, one message each. An
+    /// unrecognised name is a violation even when the file is empty; a recognised prefix on an
+    /// empty file is not; a missing directory has nothing to disagree.
+    /// </summary>
+    public static IReadOnlyList<string> FilePrefixViolations(string manifestDir)
+    {
+        var violations = new List<string>();
+        if (!Directory.Exists(manifestDir)) return violations;
+
+        var byFile = LoadFromDirectory(manifestDir).Entries.ToLookup(e => e.SourceFile);
+        var known = string.Join(", ", FilePrefixes.Select(p => $"{p.Prefix}<area>.json"));
+        foreach (var path in Directory.EnumerateFiles(manifestDir, "*.json").OrderBy(p => p))
+        {
+            var name = Path.GetFileName(path);
+            var promised = ModeForFileName(name);
+            if (promised == null)
+            {
+                violations.Add($"{name}: no recognised prefix, so nothing says which Mode it may hold "
+                    + $"(expected one of {known})");
+                continue;
+            }
+            foreach (var e in byFile[name])
+                if (e.Mode != promised.Value)
+                    violations.Add($"{name}: {e.CodeunitName}.{e.Method} has Mode={ModeName(e.Mode)} but the "
+                        + $"file name promises {ModeName(promised.Value)}; move the entry to "
+                        + $"{FilePrefixes.First(p => p.Mode == e.Mode).Prefix}<area>.json");
+        }
+        return violations;
+    }
+
+    private static string ModeName(ExpectationMode mode) => mode switch
+    {
+        ExpectationMode.ExpectOos => "expect-oos",
+        ExpectationMode.ExpectFailKnownGap => "expect-fail-known-gap",
+        ExpectationMode.ExpectDivergence => "expect-divergence",
+        ExpectationMode.Skip => "skip",
+        ExpectationMode.AcceptPartialCompanyInit => "accept-partial-company-init",
+        _ => throw new InvalidOperationException($"Unhandled ExpectationMode: {mode}"),
+    };
+
     private static List<ExpectationEntry> LoadFile(string path, string relName)
     {
         var raw = File.ReadAllText(path);
