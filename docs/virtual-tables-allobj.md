@@ -155,3 +155,44 @@ Subtype and is indistinguishable from the pre-fix behaviour.
 
 The BC-behaviour claim is adjudicated upstream in corpus codeunit 60802
 `"Test AllObj Virtual Table"`.
+
+## App group visibility
+
+Issue #2279. One runner process can compile and run several app groups: every app group under
+one bundle root, every bundle on one command line, and every `sourcePaths` entry of one
+`--server` request. The parsed-object registries behind `EnumerateKnownAlObjects` hold all of
+them at once, because source dirs are registered for the whole bundle before any app group
+runs, and resetting them per group breaks record access on app-defined tables (see
+`BcRuntime.ResetForNewBundleReload`).
+
+So the three object-inventory tables filter at insert time instead:
+
+| table | populator |
+|---|---|
+| AllObj (2000000038) | `PopulateAllObjVirtualTable` |
+| AllObjWithCaption (2000000058) | `PopulateAllObjWithCaptionVirtualTable` |
+| Table Metadata (2000000136) | `PopulateTableMetadataVirtualTable` |
+
+An object is left out when **both** of these hold:
+
+1. Its declaring app is known. `RecordSourceObjectOwners` records, for every source file the
+   runner parses, the app whose nearest `app.json` owns that file.
+2. That app is not the executing app group and not in its declared dependency closure.
+   The executing app group is the app id of `BcRuntime.CurrentTestAssembly`; the closure
+   follows each source app's `app.json` `dependencies` transitively.
+
+An object with no recorded owner is always listed. That covers precompiled dependency `.app`
+objects and platform objects, which this filter has no evidence about. Objects of a precompiled
+`.app` registered by a different bundle in the same process are therefore not filtered here.
+
+Table Metadata's cached row list (`EnumerateKnownTableMetadata`) stays process-wide; the filter
+runs on the way into each store, so one group's filtered view is never cached for another.
+
+Each store is pinned to the app group that first populated it (`PinInventoryScope`). The
+"already inserted" sets are add-only, so if a store were handed out to a second app group its
+rows would still carry the first group's objects. That case refuses with an
+`app-group-visibility` shape gap rather than answering with the wrong inventory. In measured
+CLI and `--server` runs each app group gets a fresh store, so the refusal has not fired.
+
+Proven by `tests/runner-extras/app-group-visibility-{a,b,c}` (C depends on A, so A's table is
+visible to C and B's is not) and `AlRunner.Tests/AppGroupObjectVisibilityTests`.
