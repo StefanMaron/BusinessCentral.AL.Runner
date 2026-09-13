@@ -90,7 +90,10 @@
 //      That argument holds only for a column that truly names no field: a column the reader
 //      named by SQL name (`Routing No_` for Item."Routing No.", a same-app tableextension
 //      field) is mapped through NCLMetaField.SqlColumnName first, and only an unmatched or
-//      ambiguous one is dropped (#2273; BuildTestDataSqlColumnAliases).
+//      ambiguous one is dropped (#2273; BuildTestDataSqlColumnAliases). Measured on 28.1.49838.53910,
+//      that includes `Allow Gaps in Nos_`: the metatable DOES carry field 11 (Business
+//      Foundation's tableextension 309 declares it ObsoleteState = Removed), so it maps; the
+//      "compiled out" reading above no longer describes this build.
 //      One refusal remains, for the mismatch the old rule was aimed at: a row shape that
 //      shares NO column with the table. Dropping every column of that would insert rows made
 //      entirely of defaults.

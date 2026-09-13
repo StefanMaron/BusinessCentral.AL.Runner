@@ -9,10 +9,12 @@
 //
 // `Allow Gaps in Nos.` is ObsoleteState = Removed / ObsoleteTag '27.0' (Business Foundation's
 // NoSeriesLineObsolete.TableExt.al, behind `#if not CLEANSCHEMA27`). The shipped
-// SymbolReference.json still declares it, so the reader names it, while the compiled app this
-// runner loads has no such field. A column absent from the target NCLMetaTable cannot be read
-// by ANY AL code in this run — it is not addressable — so dropping it hides nothing a test
-// could observe, while refusing the table hands AL an empty table it silently believes.
+// SymbolReference.json still declares it. On 28.1.49838.53910 the runner's metatable carries it
+// too (field 11), so its SQL-named column now maps rather than drops (#2273,
+// TestDataSqlNamedColumnTests); the name is kept below as a stand-in for a column that names no
+// field. A column absent from the target NCLMetaTable cannot be read by ANY AL code in this
+// run — it is not addressable — so dropping it hides nothing a test could observe, while
+// refusing the table hands AL an empty table it silently believes.
 using AlRunner.Patches;
 using Xunit;
 
