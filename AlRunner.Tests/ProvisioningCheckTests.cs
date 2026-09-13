@@ -1610,6 +1610,19 @@ public sealed class ProvisioningCheckTests : IDisposable
         Assert.False(CanDefer(roots, Array.Empty<string>()));
     }
 
+    /// <summary>The explicit root on disk, so only the implicit names are missing: the root
+    /// itself, not the missing list, is what must refuse the deferral.</summary>
+    [Fact]
+    public void CanDeferPlatformApps_ExplicitBaseApplicationRootPresent_ImplicitMissing_DoesNotDefer()
+    {
+        var dir = Path.Combine(_dir, "defer-explicit-present");
+        Directory.CreateDirectory(dir);
+        WriteR2RApp(dir, "baseapp.app", Guid.NewGuid().ToString(), "Base Application", "Microsoft", "28.1.49838.53910");
+        var roots = ImplicitMicrosoftRoots().Append(
+            new DependencyRef(Guid.NewGuid(), "Base Application", "Microsoft", new Version(27, 0, 0, 0), Optional: true)).ToArray();
+        Assert.False(CanDefer(roots, new[] { dir }));
+    }
+
     [Fact]
     public void CanDeferPlatformApps_TestToolkitRoot_DoesNotDefer()
     {

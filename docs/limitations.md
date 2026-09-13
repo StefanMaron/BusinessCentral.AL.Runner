@@ -596,6 +596,36 @@ app BC references, so narrowing them would refuse objects BC accepts. The cost i
 direction: an app that uses a Base Application or System Application object without declaring
 `application` compiles here and fails with `AL0185` on BC.
 
+### Platform-apps deferral
+
+An app.json `application` or `platform` floor makes the runner require the Microsoft platform
+apps (`Application`, `System`) — a ~116 MB download on a machine that has none, or exit 2 under
+`--no-auto-provision`. The manifest cannot say whether the AL uses them: `standalone-suites`
+declares `"dependencies": []` and still names `Temp Blob`, `Cryptography Management` and
+`AllObj` (#2232).
+
+So when that floor is the **only** Microsoft need and the apps are not on disk, the runner first
+runs the whole invocation in a child process without them. **Only an exit-0 attempt is the
+verdict.** Its output is replayed, followed by a `[provision] ran without the Microsoft platform
+apps …` line. Any other result is discarded and the run goes on exactly as before — download, or
+refuse. A compile error, a failing test and a count-baseline mismatch all count as not green,
+because an AL test can fail *because* the apps are absent (`RecordRef.Open(18)` raises
+`no NCLMetaTable for table 18` without them).
+
+Not deferred: an explicit Microsoft dependency, a test-toolkit need, a symbol-only platform app
+in the cache, an unreadable package, `--server`, `--watch`, `--tdd` and `--no-strict-exit`
+(which hides the exit code the verdict depends on).
+
+What the green attempt cannot see is a Microsoft subscriber that changes a result on AL that names
+no Microsoft object. Measured on BC 28.1 (#2232): insert, modify and delete of a custom table leave
+`Change Log Entry` at the same count with the apps loaded, and six of the fixture sets #2232 listed
+pass the same number of tests with and without them. That is a measurement of those shapes, not a
+proof for every subscriber the Base Application declares.
+
+Cost: a bundle that does need the apps pays one extra attempt on a cold run —
+`standalone-suites` reached its refusal in 3.3 s, attempt included. A bundle that compiles and
+has a failing test runs them in the attempt too. Once the apps are on disk nothing is deferred.
+
 ### Why no real SA implementations
 
 The moment the runner ships a re-implementation of an SA codeunit, it inherits the burden of staying faithful to the real System Application across every BC version. Your tests would be asserting against the runner's reimplementation rather than against BC. This has happened once (MockImage was reverted in #1502 for exactly this reason).
