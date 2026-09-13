@@ -354,6 +354,15 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// The <c>HelpLink</c> BC's emitter writes on every request page. Deliberately a second
+    /// copy of the literal in <c>RecordPatches.NclMetaQueryBuilder.cs</c> rather than a shared
+    /// constant: the two rest on separate measurements (7 of 7 queries there, 660 of 660
+    /// reports here), and sharing one would make a future measurement that splits them look
+    /// like a refactor rather than a finding.
+    /// </summary>
+    private const string RequestPageHelpLink = "https://learn.microsoft.com/dynamics365/business-central/";
+
+    /// <summary>
     /// The <c>&lt;RequestPage&gt;</c> subtree (#3808). Written for a report whose symbol file
     /// states a <c>RequestPage</c> node — 660 of 660 across Base Application and System
     /// Application at 28.1.49838.53910, including all 24 declaring <c>UseRequestPage = 0</c>.
@@ -370,9 +379,10 @@ public static partial class RecordPatches
     /// <para>BC takes <c>val.FirstChild</c>, not a child found by name, so the
     /// <c>PageDefinition</c> must be the FIRST child of <c>&lt;RequestPage&gt;</c>.</para>
     ///
-    /// <para><c>HelpLink</c> is written unconditionally (#4057) and the four
-    /// <c>*TranslationKey</c> members deliberately are not — a translation key is a pair of
-    /// compiler-computed content hashes with no symbol-file source. See
+    /// <para><c>HelpLink</c> is written unconditionally (#4057); the four
+    /// <c>*TranslationKey</c> members BC also states here are deliberately not. That is a SCOPE
+    /// decision on translations, NOT a claim that they are underivable — they are derivable,
+    /// and <c>TranslationKeysAreDerivable_NotAPermanentLimit</c> pins it. See
     /// docs/report-metadata-from-bc.md#request-page.</para>
     ///
     /// <para>ONLY THE FRAME IS DERIVED, and that is the whole shape rather than a shortfall:
@@ -392,15 +402,6 @@ public static partial class RecordPatches
     /// 660 reports state a control tree, 2,938 nodes, 1,891 SourceExpression values, 247 of
     /// them record-qualified. See docs/report-metadata-from-bc.md#request-page.</para>
     /// </summary>
-    /// <summary>
-    /// The <c>HelpLink</c> BC's emitter writes on every request page. Deliberately a second
-    /// copy of the literal in <c>RecordPatches.NclMetaQueryBuilder.cs</c> rather than a shared
-    /// constant: the two rest on separate measurements (7 of 7 queries there, 660 of 660
-    /// reports here), and sharing one would make a future measurement that splits them look
-    /// like a refactor rather than a finding.
-    /// </summary>
-    private const string RequestPageHelpLink = "https://learn.microsoft.com/dynamics365/business-central/";
-
     private static void WriteRequestPageXml(XmlWriter w, BcAppSymbolCache.ReportSymbol report)
     {
         if (!report.HasRequestPage) return;
