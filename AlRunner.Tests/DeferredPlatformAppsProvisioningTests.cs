@@ -69,7 +69,7 @@ public sealed class DeferredPlatformAppsProvisioningTests
         return dir;
     }
 
-    private static (string Output, int Exit) RunIsolated(string bundleDir, string scratchRoot)
+    private static (string Output, int Exit) RunIsolated(string bundleDir, string scratchRoot, params string[] extraArgs)
     {
         var realServiceTierDir = RealServiceTierDir();
         TestArtifacts.SkipIf(!Directory.Exists(realServiceTierDir),
@@ -84,6 +84,7 @@ public sealed class DeferredPlatformAppsProvisioningTests
         // Never created: a genuinely cold platform-apps search set.
         args.Append($" --package-cache \"{Path.Combine(isolatedHome, "no-such-package-cache")}\"");
         args.Append(" --no-auto-provision");
+        foreach (var a in extraArgs) args.Append($" {a}");
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet",
@@ -186,6 +187,28 @@ public sealed class DeferredPlatformAppsProvisioningTests
             Assert.Contains(RefusalText, output);
             Assert.DoesNotContain("DPA-DELIBERATE-FAILURE-2232", output);
             Assert.DoesNotContain(DeferredGreenNote, output);
+        });
+    }
+
+    /// <summary>--no-strict-exit makes a red run exit 0, so an attempt under it cannot report
+    /// "not green" and must not be made at all. Asserted on the messages: the refusal's own exit
+    /// code bypasses the strict-exit mapping today, and may not tomorrow.</summary>
+    [SkippableFact]
+    public void RealFloor_FailingTest_NoStrictExit_IsNotDeferred()
+    {
+        TestArtifacts.SkipIfMissing();
+        WithScratch("al-runner-2232-nostrict", scratch =>
+        {
+            var bundle = WriteBundle(Path.Combine(scratch, "bundle"), 61986, """
+                Row."No." := 1; Row.Insert();
+                Error('DPA-DELIBERATE-FAILURE-2232');
+                """);
+
+            var (output, exit) = RunIsolated(bundle, scratch, "--no-strict-exit");
+
+            Assert.Contains(RefusalText, output);
+            Assert.DoesNotContain(DeferredGreenNote, output);
+            Assert.DoesNotContain("DPA-DELIBERATE-FAILURE-2232", output);
         });
     }
 }

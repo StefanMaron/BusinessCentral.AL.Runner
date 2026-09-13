@@ -1819,8 +1819,8 @@ if (!provisionSubcommand)
                 attempt.Replay();
                 Console.Error.WriteLine(
                     $"[provision] ran without the Microsoft platform apps this bundle's app.json floor declares ({missingList}): " +
-                    "none are on disk, and every bundle compiled and passed without them. A bundle that uses them fails that " +
-                    "attempt and is provisioned as before (#2232).");
+                    "none are on disk, and the run passed without them. A bundle that uses them does not pass that attempt " +
+                    "and is provisioned as before (#2232).");
                 return 0;
             }
             Console.Error.WriteLine(

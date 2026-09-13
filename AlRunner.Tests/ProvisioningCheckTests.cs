@@ -1623,6 +1623,18 @@ public sealed class ProvisioningCheckTests : IDisposable
         Assert.False(CanDefer(roots, new[] { dir }));
     }
 
+    /// <summary>An unreadable package leaves its dependency edges unknown, so "only the floor
+    /// needs the apps" cannot be established.</summary>
+    [Fact]
+    public void CanDeferPlatformApps_UnreadablePackage_DoesNotDefer()
+    {
+        var dir = Path.Combine(_dir, "defer-unreadable");
+        Directory.CreateDirectory(dir);
+        File.WriteAllBytes(Path.Combine(dir, "Microsoft_Broken.app"),
+            new byte[] { 0x4E, 0x41, 0x56, 0x58, 0x08, 0x00, 0x00, 0x00, 0xFF });
+        Assert.False(CanDefer(ImplicitMicrosoftRoots(), new[] { dir }));
+    }
+
     [Fact]
     public void CanDeferPlatformApps_TestToolkitRoot_DoesNotDefer()
     {
