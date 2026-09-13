@@ -1252,13 +1252,22 @@ internal static partial class ProgramSupport
             var symbolsPath = Path.Combine(dir, $"{group.AppId:N}.symbols.json");
             try
             {
+                // #2672: the same reuse as RunLayeredPrePass/BuildSiblingSourceDeps (#2669). Keyed
+                // on SuiteDir, not AppId — two suites in one tree can share an app id (above).
+                // The fast path only describes this app's OWN surface; the app group compile
+                // below is still a full Emit, so an error it would raise still surfaces there.
+                var version = group.Version ?? new Version(1, 0, 0, 0);
                 using (BcCompiler.ScopeCurrentAppIdentity(
-                           group.AppId.Value, group.Publisher ?? "AlRunner",
-                           group.Version ?? new Version(1, 0, 0, 0)))
-                    new BcCompiler().EmitDepSymbols(
+                           group.AppId.Value, group.Publisher ?? "AlRunner", version))
+                {
+                    GetDepSymbolCompiler(group.SuiteDir).EmitDepSymbolsIncremental(
                         group.Paths, group.ModuleName, group.AppId.Value,
-                        group.Publisher ?? "AlRunner", group.Version ?? new Version(1, 0, 0, 0),
-                        symbolsPath, group.SuiteDir);
+                        group.Publisher ?? "AlRunner", version,
+                        symbolsPath, group.SuiteDir, out var tookFastPath, out var fallbackReason);
+                    Console.WriteLine(tookFastPath
+                        ? $"[sibling-symbols] {group.ModuleName} {version}: RAD incremental (fast path)"
+                        : $"[sibling-symbols] {group.ModuleName} {version}: full compile ({fallbackReason})");
+                }
                 // The dependency closure this app compiled against, so BC's ReferenceManager can
                 // link types from it that appear in the sibling's public surface — same reason as
                 // the source-dep sidecar (#1546); without it those types are __MissingTypeSymbol__.
