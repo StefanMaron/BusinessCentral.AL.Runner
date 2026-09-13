@@ -299,13 +299,18 @@ BC takes `val.FirstChild`, not a child located by name, so the `PageDefinition` 
 ### What BC emits, and how stable it is
 
 Measured on the ground-truth documents for report 9810 across four BC builds — 27.5.46862.53931,
-28.1.49838.53910, 28.1.49838.54308 and 28.4.53241.54407. That is **two distinct `Ncl.dll`
-binaries**, not four independent measurements. All four subtrees are identical:
+28.1.49838.53910, 28.1.49838.54308 and 28.4.53241.54407. Those are **four distinct `Ncl.dll`
+binaries**, so they are four independent measurements: `sha256` `affa03c9…`, `49b11d9b…`,
+`6f2cf682…` and `108b8c6b…`, re-derived with `sha256sum` at #4057. This paragraph previously
+said "two distinct binaries, not four independent measurements", which **understated** the
+population — the safe direction, and still wrong. All four subtrees are identical:
 
 ```xml
 <RequestPage>
-  <PageDefinition MetadataVersion="130000" ID="0" Name="Change Password" …>
-    <Properties ReportID="9810" PageType="ReportProcessingOnly" … Editable="1">
+  <PageDefinition MetadataVersion="130000" ID="0" Name="Change Password"
+                  CaptionTranslationKey="Report … - RequestPage … - Property 2879900210">
+    <Properties ReportID="9810" PageType="ReportProcessingOnly"
+                HelpLink="https://learn.microsoft.com/dynamics365/business-central/" … Editable="1">
       <SourceObject />
     </Properties>
     <Content>
@@ -337,6 +342,42 @@ Two fields are stated and deliberately **not** read, because BC's document disag
 | `Name` | the literal `"RequestOptionsPage"` on all 660 | the **report's** name (`Change Password`) |
 
 Copying the node's own `Name` is the natural move and is wrong on every report.
+
+### `HelpLink` is written; the four translation keys are not (#4057)
+
+Emitting the subtree let BC's reader build a real `MetaPageDefinition`, which let the
+metadata-equivalence differ reach six members it could not see behind a null
+`RequestPageDefinition`. They split two ways, and the split is a measurement rather than a
+preference.
+
+**`HelpLink` is a defect and is fixed.** BC writes it as an attribute on `<Properties>`, and the
+same constant on all four binaries above. It is a genuine AL-declarable page property — 6 System
+Application *pages* declare their own — but **0 of 660 reports state it**, at the report level or
+on their `RequestPage` node, so AL never overrides it here and the constant is the only value this
+subtree ever takes. `WriteRequestPageXml` now writes it unconditionally. The same literal is
+written for queries by `RecordPatches.NclMetaQueryBuilder.cs`; the two are deliberately separate
+constants, because they rest on separate populations (7 of 7 queries, 660 of 660 reports) and a
+future measurement that splits them should read as a finding rather than a refactor.
+
+**The four `*TranslationKey` members stay declared, as `outOfScope`** — the same kind, reason and
+`Doc` pointer as the seven `TranslationKey.*` entries that predate them:
+`MetaPageDefinition.CaptionTranslationKey`, and `AboutTextTranslationKey`,
+`AboutTitleTranslationKey` and `InstructionalTextTranslationKey` on `MetaPageProperties`.
+
+The reason is the owner's scope decision on translations, **not** a claim that the value cannot be
+produced. That distinction is load-bearing and already pinned by a test: the keys are *computed*
+from names rather than stored, by BC's own `LanguageKeyHelper.ConstructObjectHash`, and
+`TranslationKeysAreDerivable_NotAPermanentLimit` reproduces 2,153 of 2,153 of them. The
+`Property 2879900210` component of this very report's key is that hash of the literal `"Caption"`.
+So calling these a permanent limit of the symbol file would be the wrong reason — the one the
+allowlist's own header records as having been wrong twice already — and
+`The_checked_in_allowlist_claims_no_permanent_symbol_file_limit` fails any entry that tries.
+
+**`AboutTitle` / `AboutText` are deliberately not folded in.** Unlike the keys, the *text* is
+stated at the RequestPage level on 225 and 224 reports, so it is derivable. Report 9810 states
+neither, so the harness's current population — one report — cannot adjudicate whether writing them
+closes anything. Settling it needs a ground-truth bundle containing a report that states them;
+tracked separately rather than guessed here.
 
 ### Why the control tree is not transcribed
 
