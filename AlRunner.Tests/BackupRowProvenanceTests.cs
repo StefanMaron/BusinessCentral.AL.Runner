@@ -21,19 +21,13 @@ namespace AlRunner.Tests;
 /// <para>Corpus codeunit 61202 (StefanMaron/BusinessCentral.AL.Language.Tests#197) has since
 /// measured 2000000001 on seven BC OnPrem legs and found it empty, so the projection is gone
 /// and with it both the ambiguity and the refusal: the only rows that table can hold now are a
-/// backup's, and those are exactly the rows a baseline SHOULD carry across a boundary.
-/// <c>IsProjectionOwnedSystemTableId</c> was deleted — it was defined as "2000000001 with no
-/// backup behind it", which now describes an empty table rather than a projection.</para>
+/// backup's, and those are exactly the rows a baseline SHOULD carry across a boundary.</para>
 ///
-/// <para>WHAT SURVIVES, AND WHY IT IS NOT DEAD CODE. The recorder does.
-/// <c>TestDataProvisioner.LoadOnDemand</c> is the only writer that can put rows into these
-/// tables and it is the only place that fact exists; nothing downstream of a store can
-/// reconstruct it. Issue #3236 is its named consumer — the same wrong-shaped question,
-/// <c>ProviderHasAnyRow</c>, still decides whether Object Metadata's (2000000071) #2771 payload
-/// refusal is armed, and an install-baseline restore replaying that table's synthesised rows
-/// disarms it. These tests drive the recorder's own entry points, the ones production uses,
-/// because the end-to-end path needs a BC database backup and CI has none. The inverted
-/// baseline claim IS driven end to end, in ObjectSystemTableEmptyRowSetTests.</para>
+/// <para>The recorder survives, and <c>IsProjectionOwnedSystemTableId</c> came back for Object
+/// Metadata (2000000071) under #3236: the install-baseline capture leaves that table out unless a
+/// backup owns its rows. The replay it prevents is driven end to end in
+/// tests/runner-extras/object-metadata-baseline-replay; the backup-owned rows need a BC database
+/// backup CI does not have, so they are pinned here at the predicate.</para>
 ///
 /// <para>Shares the process-global install-baseline statics with
 /// InstallBaselineAppendConcurrencyTests and TestDataBaselineAppendTests, so it joins their
@@ -187,6 +181,36 @@ public sealed class BackupRowProvenanceTests : IDisposable
         var ex = Assert.Throws<InvalidOperationException>(
             () => RecordPatches.AppendBaselineTable(new object(), AllObjTableId, new object(), Rows("X")));
         Assert.Contains("self-populating virtual table", ex.Message);
+    }
+
+    /// <summary>
+    /// #3236, the three configurations the issue names. Object Metadata with no backup behind it
+    /// holds only the runner's synthesis, so the capture must leave it out — covering both the
+    /// in-process replay and a disk file written by such a run. Once a backup owns its rows
+    /// (a --test-data load, or the process that wrote a disk-cache HIT's file) it is captured.
+    /// </summary>
+    [Fact]
+    public void ObjectMetadata_IsProjectionOwned_ExactlyWhileNoBackupOwnsItsRows()
+    {
+        Assert.True(RecordPatches.IsProjectionOwnedSystemTableId(ObjectMetadataTableId));
+
+        // A backup that loaded some OTHER table says nothing about this one.
+        RecordPatches.NoteBackupContributedRows(OrdinaryTableId);
+        Assert.True(RecordPatches.IsProjectionOwnedSystemTableId(ObjectMetadataTableId));
+
+        RecordPatches.NoteBackupContributedRows(ObjectMetadataTableId);
+        Assert.False(RecordPatches.IsProjectionOwnedSystemTableId(ObjectMetadataTableId));
+    }
+
+    /// <summary>The negative side: nothing else the capture walks is skipped by it. Object
+    /// (2000000001) has no projection since #3071, and an ordinary table's rows are install
+    /// output.</summary>
+    [Fact]
+    public void NoOtherTable_IsProjectionOwned()
+    {
+        Assert.False(RecordPatches.IsProjectionOwnedSystemTableId(ObjectTableId));
+        Assert.False(RecordPatches.IsProjectionOwnedSystemTableId(OrdinaryTableId));
+        Assert.False(RecordPatches.IsProjectionOwnedSystemTableId(AllObjTableId));
     }
 
     /// <summary>

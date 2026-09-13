@@ -234,19 +234,11 @@ public static partial class RecordPatches
     // #3184 is the same again one file over. Per-run derived state that the reload path did not
     // know it owned is the recurring defect here, not a one-off.
     //
-    // KNOWN, TRACKED, AND NOT FIXED HERE: issue #3236. The reload clear above bounds the
-    // LIFETIME of this flag; it does not make the way the flag is DERIVED correct. The arm
-    // condition is ProviderHasAnyRow(), a property of the store — and an install-baseline
-    // restore replays this projection's OWN synthesised rows into a brand-new provider, where
-    // the populate runs again (it runs on every access, and its once-guard is keyed on the
-    // provider), reads its own replayed output as somebody else's rows, and arms the flag over
-    // synthesised data. That is exactly the wrong-shaped question #2875 removed for Object
-    // (2000000001); RecordPatches.BackupRowProvenance.cs's header argues it in full, and
-    // TestDataProvisioner.cs's NoteBackupContributedRows call site repeats it at the writer.
-    // It is not fixed here because neither available predicate is complete on its own —
-    // BackupOwnsRowsFor() is right for the replay case and wrong for an install-baseline
-    // DISK-cache hit, where the backup's rows are restored in a process whose on-demand loader
-    // never ran. #3236 has the table and the suggested direction.
+    // The arm condition, ProviderHasAnyRow(), is a property of the store, so it is right only
+    // while no install-baseline restore can replay the runner's OWN synthesised rows into it.
+    // CaptureInstallBaselineSnapshot guarantees that by leaving the table out unless a backup
+    // owns its rows (IsProjectionOwnedSystemTableId, #3236). Capture a synthesised 2000000071
+    // again and this flag arms over synthesised data.
     private static volatile bool _objectMetadataRowsAreReal;
 
     /// <summary>

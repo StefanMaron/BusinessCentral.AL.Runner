@@ -1,0 +1,18 @@
+{
+  "id": "0e0669ab-b144-435a-b805-4819094ab5cd",
+  "name": "Runner Extras - Object Metadata Baseline Replay",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #3236: the #2771 refusal on Object Metadata's (2000000071) nine payload columns must survive a codeunit-boundary install-baseline restore.",
+  "description": "An install trigger that reads Object Metadata puts the runner's own synthesised rows into the store the install baseline captures. Before #3236 every boundary restore replayed those rows into a brand-new provider, the populate read them as rows somebody else supplied, and the payload columns answered blank instead of refusing. This suite pins the runner-side refusal, which no service tier can see (a tier has a real payload). Target is OnPrem because Object Metadata is Scope = OnPrem (AL0296).",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65580,
+      "to": 65589
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "OnPrem"
+}

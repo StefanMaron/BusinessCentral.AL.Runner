@@ -61,7 +61,10 @@ public static partial class RecordPatches
     // zero-length. A version-2 file is structurally readable under version-3 semantics right
     // up to the trailing-bytes check, which is exactly the "old file that still deserialises"
     // case the comment above says a cache cannot detect for itself.
-    internal const int InstallBaselineDiskSchemaVersion = 3;
+    // 3 -> 4 (#3236): same bytes, but a file may no longer carry Object Metadata (2000000071)
+    // unless a backup owned its rows; a version-3 file can hold the synthesised rows that
+    // disarm the payload refusal when restored.
+    internal const int InstallBaselineDiskSchemaVersion = 4;
 
     // Pool-entry kinds. Kind is stored per DISTINCT NavValue instance, not per row slot.
     private const byte KindBytes = 1;       // NavValue.GetBytes() + NavValue.CreateNavValueFromBytes
