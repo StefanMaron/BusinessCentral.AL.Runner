@@ -152,6 +152,12 @@ public sealed class TestExecutor
     /// </summary>
     public string? TestFilter { get; set; }
     /// <summary>
+    /// Test methods <see cref="TestFilter"/> accepted, summed over every <see cref="Run"/> call on
+    /// this instance. Counted at selection, before --exclude-test, skip entries or instantiation,
+    /// so zero means the pattern matched nothing (#4055).
+    /// </summary>
+    public long FilterSelectedCount { get; private set; }
+    /// <summary>
     /// Optional exact-match test allowlist in the same "{Codeunit}.{Method}" key shape
     /// ServerProtocol emits on the wire. Null = unchanged behaviour (no exact allowlist).
     /// Applied after <see cref="TestFilter"/>, so callers can combine a coarse substring
@@ -748,6 +754,9 @@ public sealed class TestExecutor
             scanMs += stageSw.ElapsedMilliseconds;
             if (!isTestCu) continue;
             if (filter != null && !CodeunitMatchesFilter(t, filter)) continue;
+            if (filter != null)
+                FilterSelectedCount += t.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                    .Count(m => IsTestMethod(m) && MethodMatchesFilter(t.Name, m.Name, filter));
 
             // W-8b A-prime: this assembly may contain AL [EventSubscriber] codeunits whose
             // classes weren't in AppDomain when PopulateNclMetadataCache initially ran
