@@ -500,6 +500,8 @@ public sealed class PhaseLogIntegrationTests : IDisposable
     {
         "install-seed-arm-event-subscribers", "install-seed-user-row", "install-seed-company-row",
         "install-seed-published-application-row",
+        // #3233 — inside the run turn, next to install-seed-access-control-row.
+        "install-seed-active-session-row",
     };
 
     /// <summary>

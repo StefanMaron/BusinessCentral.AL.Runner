@@ -1,0 +1,24 @@
+{
+  "id": "a1b2c3d4-e5f6-4708-9a1b-2c3d4e5f6110",
+  "name": "Runner Tests Fixture - Active Session Table",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Regression test: Active Session (2000000110) must carry the reading session's row (#3233).",
+  "description": "Proves Record \"Active Session\" answers the runner's own session, read back from the same state ServiceInstanceId(), SessionId(), UserId() and UserSecurityId() answer from. The BC-behaviour claim is adjudicated upstream by \"Test Active Session Table\" in StefanMaron/BusinessCentral.AL.Language.Tests.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "idRanges": [
+    {
+      "from": 70580,
+      "to": 70599
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

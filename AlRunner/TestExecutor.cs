@@ -703,6 +703,12 @@ public sealed class TestExecutor
         // call is the one that re-decides after an adoption moved the session onto another id.
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-access-control-row"))
             AlRunner.Patches.RecordPatches.EnsureAccessControlSuperRowSeeded();
+        // #3233: the session's Active Session row. After the User seed (its "User SID" is the id
+        // an adoption settled on) and deliberately NOT in the dep-company window above: the
+        // login instant and unique id are this process's, and a disk-cached snapshot would
+        // replay another process's.
+        using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-active-session-row"))
+            AlRunner.Patches.RecordPatches.EnsureActiveSessionRowSeeded();
         // Genuinely per-app-group — the bundle's own Install codeunits (if any) are never
         // shared across app groups, so this always runs fresh, cache or no cache. Last of the
         // install-seed steps since #3757: everything a service tier has in place before an
