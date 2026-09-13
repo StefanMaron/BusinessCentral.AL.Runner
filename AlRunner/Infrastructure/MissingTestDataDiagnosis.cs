@@ -18,7 +18,7 @@
 // A FALSE POSITIVE IS WORSE THAN NO MESSAGE
 //   Telling somebody their genuine bug is a missing-data problem sends them down the wrong path
 //   — the same failure #2240 describes, just pointing the other way. So the explanation fires
-//   only on EVIDENCE, never on a text pattern alone. Two things must both hold:
+//   only on EVIDENCE, never on a text pattern alone. Both of these must hold:
 //
 //     1. The failure NAMES a table, and the name comes from a typed source, not from parsing
 //        prose:
@@ -31,9 +31,14 @@
 //        lives in Microsoft.Dynamics.Nav.Language.dll and every shipped culture has its own —
 //        so matching on it would be a guess that silently stops working off en-US.
 //
-//     2. That table is GENUINELY EMPTY in the in-memory store right now, summed across every
-//        DataAccessSource that materialised it (RecordPatches.TryCensusTable). If the census
-//        cannot see the table, the answer is "I don't know" and nothing is said.
+//     2. One of two shapes of store evidence:
+//          - that table is GENUINELY EMPTY in the in-memory store right now, summed across every
+//            DataAccessSource that materialised it (RecordPatches.TryCensusTable); or
+//          - #2277: a TestField failure on a table holding ONE row that the install baseline
+//            shows the runner's install seeding created with that field blank, still blank
+//            (RecordPatches.ClassifySeededSingletonField). A row the test inserted, a seeded
+//            value the test cleared, and a --test-data backup row all get nothing.
+//        If the store or baseline cannot be read, the answer is "I don't know" and nothing is said.
 //
 //   The negative case this buys is the important one, and it is the one the proving tests lead
 //   with: a `Rec.Get('NOPE')` against a table that HAS rows produces exactly the same exception
@@ -97,11 +102,14 @@ internal static class MissingTestDataDiagnosis
     internal static string? Explain(Exception? ex)
     {
         if (ex == null) return null;
-        if (!TryNameTable(ex, out var census)) return null;
-        if (census.Rows != 0) return null;                       // the table HAS data — not this
+        if (!TryNameTable(ex, out var census, out var testFieldName)) return null;
         if (census.TableId >= FirstVirtualTableId) return null;   // see FirstVirtualTableId
 
         var where = $"'{census.TableName}' (table {census.TableId})";
+        if (census.Rows == 1 && testFieldName != null)
+            return ExplainSeededBlankField(census, testFieldName, where);
+        if (census.Rows != 0) return null;                       // the table HAS data — not this
+
         if (!TestDataOptions.Enabled)
             return $"[test-data] {where} has no rows in this run, so this failure may be missing "
                  + "setup data rather than a bug in the code under test. The runner starts from an "
@@ -121,6 +129,32 @@ internal static class MissingTestDataDiagnosis
     }
 
     /// <summary>
+    /// #2277: a TestField failure on a table holding ONE row. Explained only when the install
+    /// baseline shows the runner's install seeding created that row with the field blank and it
+    /// is still blank; a row the test inserted, a field the test blanked, a backup-owned row, or
+    /// anything unreadable says nothing. Worded as a possibility, because a test that deletes the
+    /// seeded row and inserts an identical blank one is indistinguishable from here.
+    /// </summary>
+    private static string? ExplainSeededBlankField(
+        AlRunner.Patches.RecordPatches.StoredTableCensus census, string fieldName, string where)
+    {
+        var evidence = AlRunner.Patches.RecordPatches.ClassifySeededSingletonField(census.TableId, fieldName);
+        if (evidence != AlRunner.Patches.RecordPatches.SeededSingletonEvidence.SeededBlank) return null;
+
+        var what = $"[test-data] {where} appears to hold only the row the runner's install seeding created, "
+                 + $"and '{fieldName}' is still blank in it";
+        if (!TestDataOptions.Enabled)
+            return what + ", so this failure may be missing setup data rather than a bug in the code "
+                 + "under test. Pass --test-data to load a company out of the BC backup that ships "
+                 + $"inside the artifact, or set '{fieldName}' in the test's own setup.";
+
+        var outcome = TestDataProvisioner.TableOutcome(census.TableId)
+                      ?? "the on-demand loader was never asked for this table";
+        return what + $" although --test-data is on: {outcome}. So this failure may be missing setup "
+             + "data rather than a bug in the code under test.";
+    }
+
+    /// <summary>
     /// Resolve the failure to exactly one table the store can answer for. Ordered by how strong
     /// the evidence is: an id the runner itself recorded, then a table name BC put on a typed
     /// property. Anything else is not evidence and returns false.
@@ -132,9 +166,11 @@ internal static class MissingTestDataDiagnosis
     /// diagnosis too, and exactly the failure #2240 exists to explain went unexplained whenever
     /// it happened inside a page trigger.</para>
     /// </summary>
-    private static bool TryNameTable(Exception ex, out AlRunner.Patches.RecordPatches.StoredTableCensus census)
+    private static bool TryNameTable(Exception ex, out AlRunner.Patches.RecordPatches.StoredTableCensus census,
+                                     out string? testFieldName)
     {
         census = default!;
+        testFieldName = null;
         for (var e = ex; e != null; e = Next(e))
         {
             if (e.Data[TableIdDataKey] is int taggedId
@@ -144,7 +180,10 @@ internal static class MissingTestDataDiagnosis
             if (e is Microsoft.Dynamics.Nav.Types.NavTestFieldException testField
                 && !string.IsNullOrWhiteSpace(testField.TableName)
                 && AlRunner.Patches.RecordPatches.TryCensusTableByName(testField.TableName, out census))
+            {
+                testFieldName = string.IsNullOrWhiteSpace(testField.FieldName) ? null : testField.FieldName;
                 return true;
+            }
         }
         return false;
 
