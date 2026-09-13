@@ -160,7 +160,11 @@ public static class InstallTriggerRunner
     {
         using var installPass = EnterInstallPass();
         foreach (var asm in asms)
-            foreach (var cu in Scan(asm))
+        {
+            var installing = Scan(asm);
+            if (installing.Count == 0) continue;
+            using var installContext = InstallExecutionContext.Enter(asm);
+            foreach (var cu in installing)
             {
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 var instance = cu.Ctor.Invoke(new object[] { BcRuntime.RootTreeStub! });
@@ -188,6 +192,7 @@ public static class InstallTriggerRunner
                 }
                 PerfTrace.Log($"InstallTrigger {cu.Type.Name} ({asm.GetName().Name}) {sw.ElapsedMilliseconds}ms");
             }
+        }
     }
 
     internal static void InvokeTrigger(InstallCodeunit cu, object instance, MethodInfo? trigger, string name)

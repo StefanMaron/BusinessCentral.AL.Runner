@@ -713,6 +713,21 @@ public static partial class NclCecilRewrite
                     ReplaceBodyWithHelper(asm.MainModule, mCaller, h);
                 }
             }
+
+            // NavSession.GetCurrentModuleExecutionContext resolves "which module" through
+            // OwningApp metadata the runner does not have; route it through the same stack walk
+            // as ALGetCurrentModuleInfo above (#4049).
+            var navSessionType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavSession");
+            var mModuleCtx = navSessionType?.Methods.FirstOrDefault(x =>
+                x.Name == "GetCurrentModuleExecutionContext" && x.Parameters.Count == 0 && !x.IsStatic);
+            if (mModuleCtx == null)
+                throw new InvalidOperationException(
+                    "[Cecil] NavSession.GetCurrentModuleExecutionContext() not found; "
+                    + "Session.GetCurrentModuleExecutionContext would answer Normal inside install triggers (#4049)");
+            ReplaceBodyWithHelper(asm.MainModule, mModuleCtx,
+                typeof(AlRunner.Patches.NavAppModuleInfoPatches).GetMethod(
+                    nameof(AlRunner.Patches.NavAppModuleInfoPatches.NavSession_GetCurrentModuleExecutionContext),
+                    BindingFlags.Public | BindingFlags.Static)!);
         }
 
         // ── ALSession.ALStartSessionAsyncImpl → BcRuntime.ALSession_ALStartSessionAsyncImpl ──
