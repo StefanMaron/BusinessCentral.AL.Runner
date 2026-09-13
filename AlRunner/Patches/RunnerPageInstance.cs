@@ -3235,6 +3235,17 @@ internal sealed partial class RunnerPageInstance
     private static Type? FindPageType(int pageId)
     {
         var name = "Page" + pageId;
+        // #4100: the loading bundle's own modules first — a foreign workspace's same-id
+        // Page{id} is not a stale generation, so the scan below would let it answer.
+        foreach (var own in BcRuntime.CurrentBundleAssemblies())
+        {
+            try
+            {
+                var t = AlRunner.Infrastructure.AssemblyTypeIndex.For(own).FindFirst(name, typeof(NavForm).IsAssignableFrom);
+                if (t != null) return t;
+            }
+            catch { }
+        }
         // Metadata-backed lookup — see AlRunner/Infrastructure/AssemblyTypeIndex.cs.
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
