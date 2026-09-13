@@ -87,6 +87,10 @@
 //      IS the metadata every AL statement in this run resolves field access against, so a
 //      column absent from it is unaddressable here and its absence cannot change an answer AL
 //      can read.
+//      That argument holds only for a column that truly names no field: a column the reader
+//      named by SQL name (`Routing No_` for Item."Routing No.", a same-app tableextension
+//      field) is mapped through NCLMetaField.SqlColumnName first, and only an unmatched or
+//      ambiguous one is dropped (#2273; BuildTestDataSqlColumnAliases).
 //      One refusal remains, for the mismatch the old rule was aimed at: a row shape that
 //      shares NO column with the table. Dropping every column of that would insert rows made
 //      entirely of defaults.
@@ -148,9 +152,51 @@ public static partial class RecordPatches
     internal readonly record struct TestDataColumnPlan(
         IReadOnlyList<string> Mapped,
         IReadOnlyList<string> FromUninstalledApps,
-        IReadOnlyList<string> NotInThisBuild)
+        IReadOnlyList<string> NotInThisBuild,
+        IReadOnlyDictionary<string, string> MappedBySqlName)
     {
-        internal bool CanHydrate => Mapped.Count > 0 || (FromUninstalledApps.Count == 0 && NotInThisBuild.Count == 0);
+        internal bool CanHydrate => Mapped.Count > 0 || MappedBySqlName.Count > 0
+            || (FromUninstalledApps.Count == 0 && NotInThisBuild.Count == 0);
+    }
+
+    private static readonly IReadOnlyDictionary<string, string> NoSqlAliases =
+        new Dictionary<string, string>(StringComparer.Ordinal);
+
+    /// <summary>
+    /// SQL column name -> AL field name, for every field whose BC-computed
+    /// <see cref="NCLMetaField.SqlColumnName"/> differs from its AL name (#2273).
+    ///
+    /// The backup reader names a column of a same-app tableextension field (Item."Routing No.",
+    /// declared by Base Application's own tableextension "Mfg. Item" and stored in the Item table
+    /// itself) by its SQL name, `Routing No_`. That field IS in this run's metatable, so the
+    /// column is not "absent from this build" and dropping it blanks a value AL reads.
+    /// The SQL name is BC's own answer, not a re-implementation of its escaping.
+    ///
+    /// A SQL name two fields claim is left out, so it stays dropped-and-counted rather than being
+    /// assigned to either. A field whose getter throws (it dereferences parent/app state the
+    /// runner's metadata may not carry) contributes no alias, which is the pre-#2273 answer.
+    /// </summary>
+    internal static IReadOnlyDictionary<string, string> BuildTestDataSqlColumnAliases(
+        IEnumerable<(string FieldName, Func<string?> SqlColumnName)> fields)
+    {
+        var aliases = new Dictionary<string, string>(StringComparer.Ordinal);
+        var ambiguous = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (fieldName, sqlColumnName) in fields)
+        {
+            string? sql;
+            try { sql = sqlColumnName(); }
+            catch (Exception) { continue; }
+            if (string.IsNullOrEmpty(sql) || string.Equals(sql, fieldName, StringComparison.Ordinal)) continue;
+            if (ambiguous.Contains(sql)) continue;
+            if (aliases.TryGetValue(sql, out var existing) && !string.Equals(existing, fieldName, StringComparison.Ordinal))
+            {
+                aliases.Remove(sql);
+                ambiguous.Add(sql);
+                continue;
+            }
+            aliases[sql] = fieldName;
+        }
+        return aliases;
     }
 
     /// <summary>
@@ -176,17 +222,34 @@ public static partial class RecordPatches
     /// </summary>
     internal static TestDataColumnPlan PlanTestDataColumns(
         IReadOnlySet<string> fieldNames, IEnumerable<string> columnNames)
+        => PlanTestDataColumns(fieldNames, columnNames, NoSqlAliases);
+
+    /// <summary>
+    /// As above, but a bare column that is not an AL field name and equals a field's SQL column
+    /// name (<see cref="BuildTestDataSqlColumnAliases"/>) is mapped onto that field, never
+    /// dropped. An AL-name column for the same field wins; the SQL-name duplicate is then
+    /// dropped and counted.
+    /// </summary>
+    internal static TestDataColumnPlan PlanTestDataColumns(
+        IReadOnlySet<string> fieldNames, IEnumerable<string> columnNames,
+        IReadOnlyDictionary<string, string> sqlColumnAliases)
     {
+        var distinct = columnNames.Distinct(StringComparer.Ordinal).ToList();
+        var present = new HashSet<string>(distinct, StringComparer.Ordinal);
         var mapped = new List<string>();
+        var bySqlName = new Dictionary<string, string>(StringComparer.Ordinal);
         var fromUninstalledApps = new List<string>();
         var notInThisBuild = new List<string>();
-        foreach (var name in columnNames.Distinct(StringComparer.Ordinal))
+        foreach (var name in distinct)
         {
             if (fieldNames.Contains(name)) mapped.Add(name);
             else if (BackupCatalog.TryParseUnresolvedExtensionColumn(name, out _, out _)) fromUninstalledApps.Add(name);
+            else if (sqlColumnAliases.TryGetValue(name, out var field) && fieldNames.Contains(field)
+                     && !present.Contains(field))
+                bySqlName[name] = field;
             else notInThisBuild.Add(name);
         }
-        return new TestDataColumnPlan(mapped, fromUninstalledApps, notInThisBuild);
+        return new TestDataColumnPlan(mapped, fromUninstalledApps, notInThisBuild, bySqlName);
     }
 
     /// <summary>
@@ -294,7 +357,13 @@ public static partial class RecordPatches
         // metatable's own field names, so a dropped column is simply never asked for.
         var plan = PlanTestDataColumns(
             (IReadOnlySet<string>)new HashSet<string>(fieldByName.Keys, StringComparer.Ordinal),
-            rows.SelectMany(r => r.Keys));
+            rows.SelectMany(r => r.Keys),
+            BuildTestDataSqlColumnAliases(
+                fieldByName.Values.Select(f => (f.FieldName, (Func<string?>)(() => f.SqlColumnName)))));
+        if (plan.MappedBySqlName.Count > 0)
+            rows = rows.Select(r => (IReadOnlyDictionary<string, JsonElement>)r.ToDictionary(
+                kv => plan.MappedBySqlName.TryGetValue(kv.Key, out var field) ? field : kv.Key,
+                kv => kv.Value, StringComparer.Ordinal)).ToList();
         if (!plan.CanHydrate)
             throw new TestDataHydrationRefusal(
                 $"table {tableId} '{tableNameForDiagnostics}': not one of the backup's "
