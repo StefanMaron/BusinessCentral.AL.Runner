@@ -126,7 +126,8 @@ which wraps it in a probe table and parses it with BC's parser. That work happen
 `bc-symbols` cache misses. A warm read skips it.
 
 **Verdict: too small to change.** On the Base Application the relation parse costs at most
-about a third of a second, measured on its own including parser JIT. It was too small to see
+about 2.5 G instructions, measured on its own including parser JIT. That is about 8% of the
+30.5 G a whole cold read of the same app costs. It was too small to see
 inside a whole cold `BcAppSymbolCache.Parse`, even with instruction counts. The keyed tree cache from #2588 already
 removes most repeat parses.
 
@@ -150,8 +151,9 @@ Read the rows this way:
   cache already de-duplicates by text, and adding another memo here would save nothing.
 - **Inside the real cold read, the difference cannot be separated from noise.** The paired
   instruction deltas for the last two rows were -0.35, 0.14, 0.03, 6.55 and 1.57 G, on about
-  30 G per process. The isolated row is the upper bound. It includes JIT-compiling BC's parser,
-  and the real read has already paid that for `CalcFormula`.
+  30 G per process. The isolated row is the upper bound. It includes JIT-compiling BC's parser.
+  A likely reason the real read shows less is that its `CalcFormula` parse has already paid
+  that JIT, but that was not measured.
 - **The cost is paid once per cache root and app content hash.** A warm read is a `bc-symbols`
   cache HIT and never reaches the parser. The honest scale is the whole cold read of the same
   app, measured above at about 2.2 s.
