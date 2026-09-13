@@ -130,6 +130,7 @@ public static partial class RecordPatches
 
         var ordinals = EnsureAllObjObjectTypeOrdinals(allObjMetaTable);
         var done = _aovPopulatedByProvider.GetValue(provider, static _ => new ConcurrentDictionary<(int, int), byte>());
+        var visibleApps = PinInventoryScope(provider, "AllObj (virtual table 2000000038)");
 
         // #3117: built on FIRST ACTUAL INSERT, not on entry. PopulateAllObjVirtualTable runs on
         // every AllObj data-access handout, but `done` makes all but the first few handouts
@@ -153,7 +154,7 @@ public static partial class RecordPatches
         foreach (var (kind, id, name, _, _) in EnumerateKnownAlObjects())
         {   // AllObj has no caption column; the shared inventory carries one for
             // AllObjWithCaption (2000000058), which reads the same rows.
-            if (id <= 0) continue;
+            if (id <= 0 || IsHiddenFromCurrentAppGroup(kind, id, visibleApps)) continue;
             var normalized = NormalizeObjectTypeName(kind);
             if (!ordinals.TryGetValue(normalized, out var typeOrdinal))
                 // This AL object kind has no column in THIS BC version's AllObj option

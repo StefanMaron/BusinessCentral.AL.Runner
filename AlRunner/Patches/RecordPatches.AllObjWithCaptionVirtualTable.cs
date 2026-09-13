@@ -96,12 +96,13 @@ public static partial class RecordPatches
         // than an assumption.
         var ordinals = EnsureAllObjWithCaptionObjectTypeOrdinals(metaTable);
         var done = _awcPopulatedByProvider.GetValue(provider, static _ => new ConcurrentDictionary<(int, int), byte>());
+        var visibleApps = PinInventoryScope(provider, "AllObjWithCaption (virtual table 2000000058)");
         // Built lazily after the `done` guard, as PopulateAllObjVirtualTable does (#3117).
         Dictionary<(string Kind, int Id), Guid>? ownerIndex = null;
 
         foreach (var (kind, id, name, caption, subtype) in EnumerateKnownAlObjects())
         {
-            if (id <= 0) continue;
+            if (id <= 0 || IsHiddenFromCurrentAppGroup(kind, id, visibleApps)) continue;
             var normalized = NormalizeObjectTypeName(kind);
             if (!ordinals.TryGetValue(normalized, out var typeOrdinal))
                 // This AL object kind has no ordinal in THIS BC version's option set.
