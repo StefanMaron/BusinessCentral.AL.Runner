@@ -2275,3 +2275,14 @@ Measured 6P/0F/0E on the whole bundle, cold and warm against one cache root, not
 the diff.
 
 Written by an agent (Claude, `stma-auto2-6`).
+
+## runner-extras: four app groups MOVED OUT, -4 tests (#4079)
+
+`tableext-eviction-field-trigger-timing` (2), `tableext-eviction-field-trigger-timing-dep` (0),
+`tableext-eviction-subscriber-timing` (2) and `tableext-eviction-subscriber-timing-dep` (0) moved
+to `tests/runner-extras-tableext-eviction/`, which `bc-tests.yml` runs as four ordered bundles in
+its own step. In the combined run they were one bundle with everything else, so the eviction they
+pin never happened and both pairs passed with the purge mutated out. The tests are not lost: they
+run in the new step, which has no baseline key and fails unless both eviction markers appear.
+
+Written by an agent (Claude, `stma-auto2-1`).
