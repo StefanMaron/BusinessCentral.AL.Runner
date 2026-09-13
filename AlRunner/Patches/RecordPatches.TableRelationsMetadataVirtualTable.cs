@@ -1,8 +1,8 @@
 // RecordPatches.TableRelationsMetadataVirtualTable — the "Table Relations Metadata" system
 // virtual table (2000000141) is served by BC's OWN TableRelationDataProvider, through the same
 // GetBcVirtualDataAccess factory bind Integer and Date use (RecordPatches.IntegerVirtualTable.cs).
-// See docs/virtual-tables-table-relations-metadata.md for how the rows are computed and why the
-// first key field needs the runner's table inventory (#4088).
+// Before #4088 the table fell through to an empty temp store, so Base Application's
+// "Config. Template Management".GetLookupParameters read IsEmpty() = true and never opened a lookup.
 using System.Reflection;
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
@@ -73,7 +73,7 @@ public static partial class RecordPatches
         {
             var args = new object?[] { id, null, false, 0 };
             if (!(bool)_trmTryGetMetaTable!.Invoke(nclMetadata, args)!) continue;
-            if (args[1] is not NCLMetaTable meta || meta.ObsoleteState.ToString() == "Removed") continue;
+            if (args[1] is not NCLMetaTable meta || meta.ObsoleteState == Microsoft.Dynamics.Nav.Types.Metadata.ObsoleteState.Removed) continue;
             var row = _trmCreateEntry!.Invoke(provider, new object?[]
             {
                 NavInteger.Create(id), NavText.Create(meta.TableName), null, null, null, null, null,
