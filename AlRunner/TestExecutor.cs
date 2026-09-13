@@ -1581,9 +1581,7 @@ public sealed class TestExecutor
         // #2502: this test's Random() sequence depends only on the run seed and its own identity.
         AlRunner.Infrastructure.RunSeed.BeginTest(codeunit, m.Name);
         // Enter BC's own "in test" scope for the duration of this test (mirrors
-        // NavTestExecution.EnterTestCodeunit/LeaveTestCodeunit) — see BcRuntime.EnterTestExecutionScope
-        // for why: it's what makes NavTenantSettingsHelper.IsSandbox()/IsProduction() (Codeunit 457
-        // "Environment Information") report a sandbox during test execution, exactly like real BC.
+        // NavTestExecution.EnterTestCodeunit/LeaveTestCodeunit) — see BcRuntime.EnterTestExecutionScope.
         BcRuntime.EnterTestExecutionScope(instance, m);
         // #3480: BC handles TransactionModel::None BEFORE the body, not after it (the
         // pre-body EndTransaction loop in NavTestCodeunit.ExecuteTestMethodAsync), so the body
