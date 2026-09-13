@@ -165,6 +165,11 @@ them at once, because source dirs are registered for the whole bundle before any
 runs, and resetting them per group breaks record access on app-defined tables (see
 `BcRuntime.ResetForNewBundleReload`).
 
+**This is a runner model, not measured BC behaviour.** On a real tenant AllObj is tenant-wide
+and lists every installed app's objects, related or not. The runner treats each app group as its
+own tenant holding that group and its declared dependencies, because unrelated app groups sharing
+one runner process is not a state a service tier has.
+
 So the three object-inventory tables filter at insert time instead:
 
 | table | populator |
@@ -175,8 +180,12 @@ So the three object-inventory tables filter at insert time instead:
 
 An object is left out when **both** of these hold:
 
-1. Its declaring app is known. `RecordSourceObjectOwners` records, for every source file the
-   runner parses, the app whose nearest `app.json` owns that file.
+1. Its owning app group is known. The run loops call `RegisterAppGroupSourceDirs` with each
+   suite's source dirs before parsing, and `RecordSourceObjectOwners` gives every object in a
+   file the app group whose registered dir contains it (the longest match). It is **not** the
+   nearest `app.json`: a suite compiles a sub-folder carrying its own `app.json` into itself, and
+   that app group's objects must stay listed for it. A dir shared by two groups, and a
+   `(kind, id)` declared by two different groups, have no owner and are always listed.
 2. That app is not the executing app group and not in its declared dependency closure.
    The executing app group is the app id of `BcRuntime.CurrentTestAssembly`; the closure
    follows each source app's `app.json` `dependencies` transitively.
