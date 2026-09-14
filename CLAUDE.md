@@ -230,6 +230,22 @@ identical from the outside:
 |---|---|---|
 | `grep -E` (the shell function) | rejects the flag, exits **0**, prints nothing | no matches |
 | `rg` without `--hidden` | skips dot-directories entirely | no matches |
+| `gh <thing> list --limit N` | returns the first N and says nothing | the thing does not exist |
+
+The third is the one that bites a *check* rather than a search, so it reaches a decision.
+Measured 2026-09-14: this repository had **164** labels, and `gh label list --limit 100 |
+grep -c 'blocked-by: corpus-verdict'` answered **0** for a label that exists — an agent nearly
+created a duplicate on that reading. The count moves; the mechanism does not, so re-derive it
+with the paginated form below rather than trusting the figure. `--limit` is a cap, never a page: there is no second page and no
+warning. Ask the API, which paginates:
+
+```bash
+gh api repos/<owner>/<repo>/labels --paginate --jq '.[].name'
+```
+
+The same shape applies to every `gh ... list --limit`: a `--limit 100` over 200 open issues is
+a silent half-answer, and `?per_page=1 --jq '.total_count'` is how you ask "how many" rather
+than "show me some" (`ci-verdicts.md`, the paged-count trap).
 
 This bites harder here than in most repos, because nearly everything that governs agent
 behaviour lives under `.claude/` — `rules/`, `skills/`, `agents/`, `hooks/`, `commands/`. So
