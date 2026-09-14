@@ -29,25 +29,32 @@
 //   independently and that equality would let a comparison of one column against the other
 //   silently succeed.
 //
-//   A real service tier says otherwise. BusinessCentral.AL.Language.Tests#187 put the question
-//   to all eight OnPrem legs, BC 27.0 through 28.4:
+//   A real service tier said otherwise on the route this corpus publishes through. Corpus
+//   #187 put the question to all eight OnPrem legs, BC 27.0 through 28.4, and every leg
+//   reported the two columns EQUAL for a freshly published app; the first revision of that
+//   test asserted they differ — the runner's belief — and it was the one assertion of eighteen
+//   that failed upstream. So the two-salt design was not a safety measure, it was a divergence.
 //
-//       Test Published App Sys Table.PublishedApplication_ThisApp_PackageIdIsItsRuntimePackageId
+//   EQUALITY IS A PROPERTY OF THE PUBLISH ROUTE, NOT OF BC (corpus #283, #285; #3482).
+//   The corpus has since REMOVED that equality test, and the citation this comment used to
+//   carry — PublishedApplication_ThisApp_PackageIdIsItsRuntimePackageId — names a test that no
+//   longer exists. BC's rule reuses the package id as the runtime package id only for a
+//   developer-extension publish; every other route mints a fresh GUID. bc-linux publishes
+//   through the dev endpoint and BcContainerHelper does not, so one rule gives two answers
+//   decided by the route rather than by the tier (measured on a live container in
+//   MsDyn365Bc.On.Linux#69). A corpus test cannot assert either branch universally, so what
+//   upstream asserts now is only that both columns are populated:
 //
-//   Every leg reported the two columns EQUAL for a freshly published app. The first revision of
-//   that test asserted they differ — the runner's belief — and it was the one assertion of
-//   eighteen that failed upstream.
+//       Test Published App Sys Table.PublishedApplication_ThisApp_BothPackageColumnsAreNonBlank
 //
-//   So the two-salt design was not a safety measure, it was a divergence that answered "no" to
-//   a cross-column comparison a real tier answers "yes" to. What actually discriminates is the
-//   value differing BETWEEN apps, which is unchanged and is pinned upstream by
-//   PublishedApplication_TwoApps_DoNotShareEitherPackageId. One derived GUID per app therefore
-//   keeps every property the ownership check needs AND matches what BC reports.
-//
-//   What this deliberately does NOT claim: that a real tier keeps them equal forever. An app
-//   republished over an earlier version can carry a runtime package id minted by the later
-//   publish while its package id still comes from the compile. The runner has no republish, so
-//   "freshly published" is the only state it can be in, and that is the state upstream measured.
+//   WHY ONE SALT STAYS ANYWAY. The property the ownership check actually needs is that the
+//   value differs BETWEEN apps, which is pinned upstream by
+//   PublishedApplication_TwoApps_DoNotShareEitherPackageId — green on both tiers, and true
+//   under either branch of the rule, because distinct apps have distinct package ids either
+//   way. The runner has no publish step and no republish, so it is not modelling a route at
+//   all; one derived GUID per app keeps every property the check needs and matches what this
+//   corpus's own tier reports. What it does NOT claim is that a real tier keeps the two equal
+//   in general — under Publish-NAVApp it does not.
 //
 // WHAT THESE ARE
 //   A deterministic function of the app id, so:

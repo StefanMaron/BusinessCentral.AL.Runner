@@ -49,15 +49,22 @@ public class AppPackageIdentityTests
     public void TheTwoColumnsCarryOneGuidForOneApp()
     {
         // This test used to assert the opposite, on the reading that "real BC assigns Package
-        // ID and Runtime Package ID independently". A real service tier disagreed:
-        // BusinessCentral.AL.Language.Tests#187's
-        // PublishedApplication_ThisApp_PackageIdIsItsRuntimePackageId passed on all eight
-        // OnPrem legs, BC 27.0 through 28.4, with the two columns EQUAL for a freshly published
-        // app (AlRunner#3066). The runner matches that rather than diverging from it.
+        // ID and Runtime Package ID independently". A real service tier disagreed on the route
+        // this corpus publishes through: corpus #187 measured the two columns EQUAL on all
+        // eight OnPrem legs, BC 27.0 through 28.4 (AlRunner#3066).
         //
-        // Pinned here as well as upstream because this is where the two-salt design would come
-        // back: the upstream test can only see the ids the runner puts on ONE app's row, and
-        // it takes a service tier to run at all.
+        // That equality is a property of the PUBLISH ROUTE, not of BC (#3482). BC reuses the
+        // package id as the runtime package id only for a developer-extension publish; every
+        // other route mints a fresh GUID. So the corpus has since removed its equality test --
+        // the name it used to carry no longer exists upstream -- and asserts only that both
+        // columns are populated. AppPackageIdentity.cs has the full derivation.
+        //
+        // This assertion stays, and is now the ONLY place the one-GUID choice is pinned. It is
+        // a claim about the runner, not about BC: the runner has no publish step, so it models
+        // no route, and one derived GUID per app keeps every property the ownership check needs
+        // -- that property being difference BETWEEN apps, which upstream still pins with
+        // PublishedApplication_TwoApps_DoNotShareEitherPackageId, green on both tiers and true
+        // under either branch of BC's rule.
         Assert.Equal(AppPackageIdentity.PackageIdFor(AppA), AppPackageIdentity.RuntimePackageIdFor(AppA));
 
         // And equality within a row must not have been bought by making the value constant —
