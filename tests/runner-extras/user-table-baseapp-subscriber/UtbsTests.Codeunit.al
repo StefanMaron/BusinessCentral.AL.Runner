@@ -45,10 +45,10 @@
 // type and must insert and modify cleanly. Without those controls a broken build that refused
 // every User write would look green here.
 //
-// UtbsSaaSIsThePrecondition is not an assertion about what BC ought to report -- it is the
-// precondition the two raising tests rest on, asserted separately so that if the runner ever
-// stops presenting itself as SaaS the failure names that cause instead of looking like a
-// subscriber-dispatch regression.
+// The runner's tenant is not SaaS by default (#3514), so every test switches SaaS on through
+// "Environment Info Test Library".SetTestabilitySoftwareAsAService, the toolkit seam Microsoft's
+// own tests use. UtbsSaaSIsThePrecondition asserts that switch took, so a regression in it names
+// that cause instead of looking like a subscriber-dispatch regression.
 codeunit 65641 "UTBS Tests"
 {
     Subtype = Test;
@@ -56,6 +56,13 @@ codeunit 65641 "UTBS Tests"
 
     var
         Assert: Codeunit "UTBS Assert";
+
+    local procedure EnableSaaS()
+    var
+        EnvironmentInfoTestLibrary: Codeunit "Environment Info Test Library";
+    begin
+        EnvironmentInfoTestLibrary.SetTestabilitySoftwareAsAService(true);
+    end;
 
     local procedure SupportedLicenceTypeErrorFragment(): Text
     begin
@@ -67,6 +74,7 @@ codeunit 65641 "UTBS Tests"
 
     local procedure NewUser(var User: Record User; UserName: Code[50]; LicenseType: Option)
     begin
+        EnableSaaS();
         Clear(User);
         User.Init();
         User."User Security ID" := CreateGuid();
@@ -81,9 +89,10 @@ codeunit 65641 "UTBS Tests"
     begin
         // Base App codeunit 418's ValidateLicenseTypeOnSaaS exits without raising unless this is
         // true, so the two raising tests below would silently become vacuous if it ever changed.
+        EnableSaaS();
         Assert.IsTrue(
           EnvironmentInformation.IsSaaS(),
-          'the runner presents itself as SaaS; codeunit 418 raises only under SaaS, so the ' +
+          'SetTestabilitySoftwareAsAService(true) makes the runner SaaS; codeunit 418 raises only under SaaS, so the ' +
           'licence-type tests in this suite mean nothing without it');
     end;
 
