@@ -420,6 +420,14 @@ more; what a second run can still change is the corpus itself, so a runner PR wh
 predates a corpus merge is measured against the older corpus. Read the `corpus: <sha> (<ref>)`
 line the legs print before arming, and re-run rather than carrying an old verdict forward.
 
+**Merging the CORPUS PR is the direction this paragraph does not cover, and "citing" is the
+wrong key there.** A runner PR declaring `Corpus-NA:` is paired with a corpus PR and names it
+nowhere, so "does any open runner PR cite this one?" answers empty for a pair that exists.
+Before merging a corpus PR, read its own body for the runner issue it was written for and check
+that issue for an open PR closing it — the recipe is in `al-language-submodule.md` §
+"Finding the pair from the CORPUS side, where no citation points back" (#4168). Measured on
+corpus #350, whose pair #4141 even said in prose that the two were unlinked.
+
 **A push restarts the matrix, so a non-blocking finding waits for the gating leg.** A reviewer's
 "worth fixing eventually" item on a PR whose required BC legs are mid-flight costs ~15 minutes of
 matrix, and that cost is invisible while you are reading a trivial diff. Push it when the legs
