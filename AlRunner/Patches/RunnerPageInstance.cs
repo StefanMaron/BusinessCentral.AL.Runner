@@ -173,13 +173,20 @@ internal sealed partial class RunnerPageInstance
             catch (Exception ex)
             {
                 var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
-                // Loud, not fatal, for the same reason GetOrCreateExtensionInstance is: the page
-                // still works, this extension's triggers do not, and saying so beats a silent
-                // no-op. `[warn]` - see the tag note in TryCreate.
+                // Loud, not fatal: the page still works and only the BC-raised half of this
+                // extension's triggers is lost. Say exactly that much — the message used to
+                // claim "the page triggers it declares will not run", which is measurably wrong:
+                // FindTrigger reaches an extension's control and action triggers through
+                // GetOrCreateExtensionInstance, a path that never consults NavForm.pageExtensions,
+                // so those still run after this failure. What a failed RegisterPageExtension
+                // loses is the PageExtensions.ForEachAsync pass at the end of each
+                // NavForm.RaiseOn<trigger>Async — the page-level triggers.
+                // `[warn]` - see the tag note in TryCreate.
                 Console.Out.WriteLine(
                     $"[warn] RunnerPageInstance: pageextension {extensionId} on page {_pageId}: could "
-                    + $"not bind it to the page ({inner.GetType().Name}: {inner.Message}); the page "
-                    + "triggers it declares will not run");
+                    + $"not bind it to the page ({inner.GetType().Name}: {inner.Message}); BC raises "
+                    + "its page-level triggers (OnOpenPage, OnAfterGetRecord, ...) over the bound "
+                    + "extensions, so those will not run");
             }
         }
     }
