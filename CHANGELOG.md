@@ -198,6 +198,7 @@ All notable changes to this project are documented here. Format based on
 - **integer-vt:** judge a half-open range against the base window, not the envelope-widened span
 
 ### Documentation
+- **ci-verdicts:** the floor debounce is a growing green streak, not one stale run
 - **orchestrating:** --match-head-commit needs the full SHA, and fails quietly without it
 - **orchestrating:** point the corpus merge at the corpus-side pairing check
 - **nav:** gh list --limit truncates silently, so a grep over it reads as absent
