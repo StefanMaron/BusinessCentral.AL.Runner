@@ -433,7 +433,6 @@ public static partial class RecordPatches
         // walk-up per source directory per cycle (measured in #3226's PR body).
         _owningAppByDir.Clear();
         ResetAppGroupObjectVisibilityForReload();
-        _manifestSymbolsByDir.Clear();   // same reason, for app.json preprocessorSymbols (#4071)
 
 
         _metaFormCache.Clear();

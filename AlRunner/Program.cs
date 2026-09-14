@@ -2778,21 +2778,26 @@ foreach (var bundle in bundles)
     // tests/runner-extras bundle).
     using (AlRunner.Infrastructure.PhaseLog.Stage("register-source-dirs"))
     {
-        var dirsToRegister = new List<string>();
+        // #2279: which app group compiles each dir, for the object-inventory tables.
+        // Registered from the SAME SuiteRegistrationDirs list SourceDirsWithCompileManifest
+        // pairs with a manifest below, so the two views cannot drift apart.
         foreach (var suite in suites)
         {
             // #3735: exactly what the compile reads. Deriving it a second time here is what let
             // a page or table under test/ or app2/ compile and never be parsed — see
             // ProgramSupport.SuiteRegistrationDirs.
-            var suiteDirs = SuiteRegistrationDirs(suite, bucketRoot);
-            // #2279: which app group compiles each dir, for the object-inventory tables.
-            AlRunner.Patches.RecordPatches.RegisterAppGroupSourceDirs(suite, suiteDirs);
-            dirsToRegister.AddRange(suiteDirs);
+            AlRunner.Patches.RecordPatches.RegisterAppGroupSourceDirs(
+                suite, SuiteRegistrationDirs(suite, bucketRoot));
         }
-        AlRunner.Patches.RecordPatches.AddSourceDirs(dirsToRegister);
 
         // #3735: exactly the folders the compile reads (ProgramSupport.SuiteRegistrationDirs),
         // each with the app.json that compile reads (#4071).
+        //
+        // This is the ONLY AddSourceDirs call for these dirs, and it must stay that way.
+        // AddSourceDirs de-dups on the directory and keeps the FIRST registration
+        // (`if (_sourceDirs.Contains(dir)) continue;`), so an earlier plain-overload call
+        // over the same dirs wins and this manifest-carrying one becomes a silent no-op —
+        // every #if branch then resolves against a guessed app.json with nothing failing.
         AlRunner.Patches.RecordPatches.AddSourceDirs(
             SourceDirsWithCompileManifest(suites, bucketRoot, bundleAbs, bundledMode));
     }
