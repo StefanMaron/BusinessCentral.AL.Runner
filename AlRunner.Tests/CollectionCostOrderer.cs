@@ -277,6 +277,14 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // already near enough to the 60s freshness threshold that a rounded-down low
             // value would satisfy the gate while leaving the tail in place.
             ["LayeredSourceChainTests"] = 90,
+            // #2237: added by PR #4083, which introduces the layered pre-pass. Measured 78.6s
+            // on the BC 28.4 leg of run 34898586907, where it was absent from this table, fell
+            // back to UnmeasuredWeightSeconds and tripped the >= 75s staleness gate. ONE leg,
+            // not a range: a pull request runs three BC legs (.github/pr-bc-versions.txt) and
+            // only 28.4 crossed the reporting band, so there is no observed maximum to carry
+            // here yet. Re-measure from a main run, which runs all eight, and raise this if a
+            // slower leg shows one.
+            ["LayeredPrePassVisibilityTests"] = 78,
             // #2239: 6 tests, several spawning 2 real runner subprocesses each (a cold +
             // warm pair, for the HIT/MISS gating proof) against RecordTriggerXRec — each
             // spawn pays a full cold AL emit+compile. Absent from this table on its first
