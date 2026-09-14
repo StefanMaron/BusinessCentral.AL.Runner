@@ -84,5 +84,6 @@ A pageextension adding a global-bound control to a page used as a **subpage part
 by this. `RunnerPageInstance.Adopt` / `AdoptFromHost` wrap a form BC's `NavForm.GetPart` already
 built and initialised, and deliberately do not re-drive `SetSourceTable` — re-registering every
 source expression throws `ArgumentException("An item with the same key has already been added")`.
-So there is no "before the metadata load" left to bind at for that form. Tracked separately;
-measured with a fourth arm that was removed from this suite because it needs a different fix.
+So there is no "before the metadata load" left to bind at for that form. Tracked by **#4181**,
+which carries the measured trace and the reproducer; the arm that measured it was removed from
+this suite because it needs a different fix.
