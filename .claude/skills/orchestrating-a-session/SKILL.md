@@ -299,6 +299,18 @@ within minutes when other loops and outside contributors push. Pass `--match-hea
 merge refuses rather than quietly taking a commit nobody reviewed - a SHA in one brief had a red
 verdict attached by the time the review finished.
 
+**Pass the FULL 40-character SHA to `--match-head-commit`.** An abbreviated one is rejected by
+the GraphQL layer (`Could not coerce value "ca0f311d" to GitObjectID`), and the failure wears
+the shape of a success: nothing merges, nothing is armed, and `gh` still leaves `$?` at 0 in a
+pipeline, so a loop reading the exit code reports "armed" about a PR that is untouched. The
+PR's own state is the check, as everywhere else on this page:
+
+```bash
+head=$(gh pr view <N> --repo <owner>/<repo> --json headRefOid --jq .headRefOid)
+gh pr merge <N> --repo <owner>/<repo> --squash --delete-branch --auto --match-head-commit "$head"
+gh pr view <N> --repo <owner>/<repo> --json state,autoMergeRequest   # re-read; this is the check
+```
+
 One session's sample, and review time scales with PR size. Re-measure with `tools/agent-cost.py`
 rather than treating the ratio as settled.
 
