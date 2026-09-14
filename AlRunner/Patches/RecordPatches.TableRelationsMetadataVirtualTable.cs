@@ -108,11 +108,17 @@ public static partial class RecordPatches
             && m.GetParameters()[0].ParameterType == typeof(int));
         if (getFieldNos == null || getRelationNos == null || getConditionNos == null || createEntry == null
             || nclMetadata == null || getBounds == null || tryGet == null)
-            throw new InvalidOperationException(
-                "TableRelationDataProvider does not expose the shape the Table Relations Metadata "
-                + "rewrite drives (GetFieldNos/GetRelationNos/GetConditionNos/CreateNewTableRelationEntry, "
-                + "NclMetadata, Range.GetInclusiveIntegerBounds, NCLMetadata.TryGetMetaTableById(int, out, bool, int)) — "
-                + "BC shape changed; see #4088.");
+            // BcShapeGapException, not InvalidOperationException: NavMethodScope_AssertError
+            // rethrows only this type, so an `asserterror` around a driver hitting this refusal
+            // would otherwise SWALLOW it and PASS — where real BC runs the call and returns, so
+            // the asserterror fails. Swallowing does not merely hide the gap, it inverts the
+            // result (#2946).
+            throw new BcShapeGapException(
+                Surface, "TableRelationDataProvider",
+                "BC does not expose the shape the Table Relations Metadata rewrite drives "
+                + "(GetFieldNos/GetRelationNos/GetConditionNos/CreateNewTableRelationEntry, "
+                + "NclMetadata, Range.GetInclusiveIntegerBounds, "
+                + "NCLMetadata.TryGetMetaTableById(int, out, bool, int)) — see #4088");
         _trmBufferType = createEntry.ReturnType;
         _trmGetFieldNos = getFieldNos;
         _trmGetRelationNos = getRelationNos;
