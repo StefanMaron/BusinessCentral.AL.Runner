@@ -63,6 +63,7 @@ treating it as free is how two agents claim one issue. On a zero result for an i
 about to claim, confirm it a second way before believing it — the body carries the declaration
 immediately even when the parse has not caught up:
 
+<!-- Recipe-pinned-by: tools/test_closing_ref_confirm_recipe.py -->
 ```bash
 gh pr list --repo <owner>/<repo> --state open --limit 100 --json number,body \
   --jq '.[] | select(.body | test("(?i)closes +#<N>\\b")) | .number'
