@@ -334,6 +334,7 @@ Measured three times in one session, on three unrelated questions:
 Each reading was plausible and each one had a count behind it. **Filter the escape out, or match
 on output the script cannot contain** — a timestamped result line, a summary, an `##[error]`:
 
+<!-- Recipe-pinned-by: tools/test_log_source_echo_filter_recipe.py -->
 ```bash
 gh api repos/<o>/<r>/actions/jobs/<id>/logs --allow-escape-sequences \
   | command grep -v $'\x1b\[36;1m' | command grep -E "<pattern>"
