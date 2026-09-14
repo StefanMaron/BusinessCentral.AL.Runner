@@ -25,6 +25,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **provisioning:** refuse a cross-major BC selection on single-build installs, in --precompile too
 - **expectations:** declare the nine corpus failures holding main red as known gaps
 - **transactions:** Report.Run commit point in default-model tests
 - **record:** a User saved by a page's CurrPage.Update gets its User Property row
