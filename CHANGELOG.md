@@ -25,6 +25,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **ci-wait:** a merged runner fix is an inherited red, not the PR's own failure
 - **environment:** stop making every test a sandbox, so IsSaaS is false by default
 - **allobj:** index the owning app of source-compiled extension, enum and permission set objects
 - **testpage:** allow a page-driven row Insert under TransactionModel::None, as BC does
