@@ -25,6 +25,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **expectations:** declare the nine corpus failures holding main red as known gaps
 - **transactions:** Report.Run commit point in default-model tests
 - **record:** a User saved by a page's CurrPage.Update gets its User Property row
 - **testpage:** insert a part's pending New() row when the page closes through OK().Invoke()
