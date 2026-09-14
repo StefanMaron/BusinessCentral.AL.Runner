@@ -48,3 +48,29 @@ an otherwise-correct rebase. Hence the tool and the preflight check.
     rest, and name the open issue holding the remainder. Measured 2026-09-06: the corpus tip
     was 15 commits ahead with three predecessors gated on open PRs, and pinning the tip gave
     11 failures.
+
+## A corpus PR merged ahead of its pair, found by the wrong question (2026-09-14, #4168)
+
+I merged corpus PR #350 while runner PR #4141, its pair, was open. `main` gained codeunit 60984
+asserting `IsSandbox()` implies `IsSaaS()`, against a runner that forces `IsSandbox()` true
+(`MetadataPatches.cs:79`, `SetTestTenantEnvironmentType(true)`) while `isSaaSConfig` stays false.
+#4141 removes that call; without it the assertion cannot hold.
+
+**The check I ran was clean and answered a different question.** Before merging I confirmed no
+open runner PR carried a `Corpus-PR:` line naming #350 — true, and irrelevant: #4141 declares
+`Corpus-NA:` ("no corpus literal can pin it"), so it names no corpus PR anywhere. The pair was
+real and invisible to a citation-keyed search. #350's own body names runner issue #3514, which
+#4141 closes; the link existed in the other direction the whole time.
+
+**Why this shape recurs rather than being a one-off.** `Corpus-NA:` is written precisely when an
+author believes no corpus test can pin the behaviour. That belief is the one most likely to be
+overturned later by someone writing such a test — and when they do, the runner PR still carries
+the declaration saying no corpus PR exists. So the population of `Corpus-NA:` runner PRs is
+enriched for exactly the pairs a citation search cannot see.
+
+#350's four tests were sound and are worth having: every assertion is about agreement between
+predicates rather than a literal, which is why they are green on all eight cloud legs and on the
+Windows nightly. The defect was the ordering, not the tests.
+
+Cost: `main` acquires a fourth failing suite on top of the three tracked by #4167, and clears
+only when #4141 lands.
