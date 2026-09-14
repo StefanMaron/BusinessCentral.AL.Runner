@@ -1,5 +1,11 @@
 // Issue #2296 — the runner's synthetic session user must exist as a row in User (2000000120).
 //
+// LEAVE-BEHIND (#3269): SurSessionUserHasItsUserPropertyCompanionRow moved upstream to corpus
+// codeunit 61203 "Test User Property Session Usr" (al-language-onprem app), because "the session
+// user has a User Property (2000000121) row" is plain BC behaviour. The three tests below stay:
+// they pin the runner's own TESTUSER / {C0A1BDFA-...} identity, and the precompiled relation
+// check the runner seed must satisfy without switching validation off.
+//
 // RUNNER-MECHANISM claim. "The session user is a row in the User table, so a TableRelation to
 // User.'User Security ID' resolves for UserSecurityId()" is plain BC behaviour and is asserted
 // UPSTREAM, in the al-language corpus, where a real BC service tier adjudicates it. What is
@@ -56,23 +62,6 @@ codeunit 65591 "SUR Tests"
         // Format() of an Option FIELD answers the member name, while Format() of an option
         // MEMBER reference answers its ordinal, so the literal is the one that compares.
         Assert.AreEqual('Enabled', Format(UserRec.State), 'User.State');
-    end;
-
-    [Test]
-    procedure SurSessionUserHasItsUserPropertyCompanionRow()
-    var
-        UserProperty: Record "User Property";
-    begin
-        // BC's platform creates a User Property row alongside every User (#2355 reproduces
-        // that as a prepend on NavRecord's AL insert entry point). The session user must not
-        // be the one User in the database without one, which is what seeding it straight at
-        // the data provider -- the way the Company row's seed does -- would have produced.
-        Assert.IsTrue(
-            UserProperty.Get(UserSecurityId()),
-            'the session user must have the User Property row BC creates with every User');
-        Assert.AreEqual(
-            RunnerUserSid, Format(UserProperty."User Security ID"),
-            'User Property."User Security ID"');
     end;
 
     [Test]
