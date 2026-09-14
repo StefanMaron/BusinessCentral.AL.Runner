@@ -633,6 +633,13 @@ public class WriteTransactionTestBoundaryTests
     /// <para><c>D_</c> is the arm that makes the rest prove something: the test BODY must still
     /// be refused. Without it every assertion here would also pass if the bracket simply
     /// disabled the no-transaction scope outright.</para>
+    ///
+    /// <para><c>F_</c> and <c>I_</c> split the Modify-path note between them, because
+    /// <c>NoteRecordWrite</c> has two AL-observable effects and one red does not say which is
+    /// covered. <c>F_</c> reads the write-transaction flag; <c>I_</c> reads the rollback
+    /// snapshot, which <c>RecordPatches.NoteTransactionWrite</c> skips for anything that is not
+    /// a <c>NavRecord</c> — so <c>NoteRecordWrite(null)</c> keeps <c>F_</c> green and reds
+    /// <c>I_</c> alone.</para>
     /// </summary>
     [SkippableFact]
     public void UnderTransactionModelNone_APageDrivenRowInsertAndModifyMayWrite()
@@ -851,13 +858,90 @@ public class WriteTransactionTestBoundaryTests
                 if Probe."Text Field" <> 'ROW-MODIFIED-DEFAULT-MODEL' then
                     Error('TXR6 FAIL: the page edit must have landed, got [%1]', Probe."Text Field");
             end;
+
+            // Seeds I_'s row under the default model, so the platform commits it at the
+            // boundary and I_'s own commit point starts clean. See I_'s comment for why the
+            // seed cannot live inside I_ itself.
+            [Test]
+            procedure H_SeedsTheRowTheRollbackArmOpensOn()
+            var
+                Probe: Record "TXR Probe";
+            begin
+                Probe."Entry No." := 9424;
+                Probe."Text Field" := 'SEED';
+                Probe.Insert();
+
+                if not Database.IsInWriteTransaction() then
+                    Error('TXR7 FAIL: an uncommitted Insert must open a write transaction inside the test that made it');
+            end;
+
+            // The FOURTH effect of NoteRecordWrite, and the only one the arms above cannot
+            // see. NoteRecordWrite refuses a write with no transaction, bumps the row
+            // version, sets the write-transaction flag, and takes the per-table rollback
+            // snapshot through RecordPatches.NoteTransactionWrite.
+            //
+            // That last call opens with `if (record is not NavRecord rec) return;`, so passing
+            // anything that is not a NavRecord — null included — still satisfies the guard,
+            // still bumps the row version and still sets the flag, and SILENTLY skips the
+            // snapshot. F_ above reads the flag, so it cannot tell the two apart.
+            //
+            // The snapshot is what an asserterror rolls back to: NoteTransactionWriteForTable
+            // captures the table's pre-write image lazily, once per (source, table) since the
+            // last commit point. No snapshot means no pre-write image, so the rollback has
+            // nothing to restore and the page's edit survives an error that must have undone
+            // it.
+            //
+            // The page's Modify must be the FIRST write to this table since the commit point,
+            // which is what makes the arm discriminate. NoteTransactionWriteForTable captures
+            // the pre-write image ONCE per (source, table) per commit point, so any AL write
+            // to "TXR Probe" earlier in this same test would take the snapshot itself and mask
+            // a missing one on the page path. The seed row is therefore written by the
+            // PREVIOUS test (H_ below seeds it, declaration order is the fixture) and
+            // committed at the boundary, exactly as the B_/C_ pair does.
+            [Test]
+            [TransactionModel(TransactionModel::AutoRollback)]
+            procedure I_APageRowModifyIsRolledBackByAnUnrelatedError()
+            var
+                Probe: Record "TXR Probe";
+                Card: TestPage "TXR Card";
+            begin
+                if not Probe.Get(9424) then
+                    Error('TXR7 FAIL: the previous test''s seed row must be visible here');
+                if Probe."Text Field" <> 'SEED' then
+                    Error('TXR7 FAIL: the seed row must carry its seeded value, got [%1]', Probe."Text Field");
+
+                // The first and only write to this table in this test, and it goes through
+                // the page.
+                Card.OpenEdit();
+                Card.GoToKey(9424);
+                Card."Text Field".SetValue('PAGE-EDIT');
+                Card.Close();
+
+                Clear(Probe);
+                if not Probe.Get(9424) then
+                    Error('TXR7 FAIL: the row must exist after the page edited it');
+                if Probe."Text Field" <> 'PAGE-EDIT' then
+                    Error('TXR7 FAIL: the page edit must have landed before the error, got [%1]', Probe."Text Field");
+
+                // Unrelated error: rolls back every uncommitted write since the commit point.
+                // The page's Modify is the only one, so the field must read its pre-write
+                // value again. With the snapshot skipped there is no pre-write image and the
+                // edit survives — the exact failure NoteRecordWrite(null) produces.
+                asserterror Error('boom');
+
+                Clear(Probe);
+                if not Probe.Get(9424) then
+                    Error('TXR7 FAIL: the committed seed row must survive the rollback');
+                if Probe."Text Field" <> 'SEED' then
+                    Error('TXR7 FAIL: a page-driven row Modify must be covered by the rollback snapshot; expected [SEED], got [%1]', Probe."Text Field");
+            end;
         }
         """);
 
         var (output, exitCode) = RunRunner(root);
 
         Assert.True(exitCode == 0,
-            $"Expected all six tests to pass (exit 0); got exit {exitCode}.\n{output}");
+            $"Expected all eight tests to pass (exit 0); got exit {exitCode}.\n{output}");
         Assert.DoesNotContain("FAIL", output);
         Assert.Contains("PASS  Codeunit62554.A_APageRowInsertMayWriteUnderNone", output);
         Assert.Contains("PASS  Codeunit62554.B_SeedsTheRowTheModifyArmOpensOn", output);
@@ -865,5 +949,7 @@ public class WriteTransactionTestBoundaryTests
         Assert.Contains("PASS  Codeunit62554.D_TheTestBodyItselfIsStillRefused", output);
         Assert.Contains("PASS  Codeunit62554.E_ADefaultModelTestAfterwardsCanStillWrite", output);
         Assert.Contains("PASS  Codeunit62554.F_APageRowModifyOpensTheWriteTransaction", output);
+        Assert.Contains("PASS  Codeunit62554.H_SeedsTheRowTheRollbackArmOpensOn", output);
+        Assert.Contains("PASS  Codeunit62554.I_APageRowModifyIsRolledBackByAnUnrelatedError", output);
     }
 }
