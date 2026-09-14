@@ -201,6 +201,7 @@ All notable changes to this project are documented here. Format based on
 - **integer-vt:** judge a half-open range against the base window, not the envelope-widened span
 
 ### Documentation
+- **ci-verdicts:** a job log echoes the run: block as source, so grep counts it
 - **claiming:** closingIssuesReferences lags PR creation, so an empty read is not free
 - **ci-verdicts:** the floor debounce is a growing green streak, not one stale run
 - **orchestrating:** --match-head-commit needs the full SHA, and fails quietly without it
