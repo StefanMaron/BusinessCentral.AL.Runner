@@ -111,6 +111,7 @@ Both are intended. The header states the cost the design accepts: *"if the licen
 re-reports those as failures forever and everyone learns to ignore it."* Measured on run `34736501961`
 (corpus `6aaac721`, BC 28.4.53241.54606): both jobs `success`, and its own summary reads
 
+<!-- Recipe-unpinned: quoted OUTPUT, not a command -- this block is the nightly's own summary text, reproduced so a reader recognises it; there is nothing here to execute -->
 ```
 **3383 passed, 5 failed, 0 skipped, 3388 total.**
 ```
