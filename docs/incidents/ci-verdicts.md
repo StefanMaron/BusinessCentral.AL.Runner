@@ -264,3 +264,38 @@ evidence; the run that measured the SHA is.
 
 Found while verifying, for the fourth time in one session, that main's red was still the same
 nine and not something new.
+
+## The `run:` block is echoed as source, and a grep counts it (2026-09-13)
+
+Three instances in one session, on three unrelated questions, each producing a plausible count
+that meant the opposite of what it looked like.
+
+**1. A retry loop that never retried** (#3231 / PR #4120). `grep -c "attempt .* of 5"` on the
+failing job returned **1**, read as "one iteration executed". The step had run 0.6 seconds and
+executed **zero** iterations; the single hit was the loop body echoed as source. The real defect
+was larger than filed — the loop aborted before its first iteration, so the retry mechanism had
+never functioned at all.
+
+**2. A `catch` that never fired** (PR #4109). The nightly's job concludes `success` over five
+real BC failures, and the rule first attributed that to a `catch` downgrading the throw to a
+`::warning::`. `grep -c "Run-TestsInBcContainer for"` returned **1**. Filtered, it returns
+**0**: the hit was the `Write-Host "::warning::..."` line inside the echoed script. The actual
+mechanism is `-returnTrueIfAllPassed | Out-Null` — a returned `$false` nobody reads.
+
+**3. A guard credited with running.** Same shape, on a `verdict-needed` block.
+
+Measured on both surviving logs:
+
+```
+                              raw grep   filtered
+retry loop, "attempt N of 5"      1          0
+nightly,  "Run-TestsInBc..."      1          0
+```
+
+**What makes it dangerous is that 1 is a believable answer.** A zero invites a second look; a
+one reads as confirmation. And the escape is invisible unless you fetch with
+`--allow-escape-sequences`, which is separately mandatory for these logs — so the same flag that
+makes the log readable is what makes the trap visible.
+
+The filter (`grep -v $'\x1b\[36;1m'`) was executed against both logs above before being written
+into the rule, per #3955.
