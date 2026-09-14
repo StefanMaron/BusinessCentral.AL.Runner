@@ -691,22 +691,38 @@ def codeunits_in_patch(patch: str) -> set[str]:
     return out
 
 
-def corpus_codeunit_to_pr(open_prs=None) -> dict[str, str]:
-    """{corpus codeunit id: open runner PR number that fixes it}.
+def corpus_codeunit_to_pr(open_prs=None) -> dict[str, tuple[str, str]]:
+    """{corpus codeunit id: (runner PR number, "OPEN" | "MERGED")}.
 
-    Mechanical, with no guessing anywhere in it: an open runner PR declares
+    Mechanical, with no guessing anywhere in it: a runner PR declares
     `Corpus-PR: <url>` (the linkage gate makes the line's shape exact), and that
     corpus PR's patch names the codeunits it changes. Raises on a failed read;
     the caller degrades that to `unavailable`.
+
+    **Recently MERGED runner PRs are included, not only open ones** (#4165). A
+    codeunit whose fix has already landed is still an inherited red -- the branch
+    simply predates the fix -- and the remedy is a rebase rather than a wait
+    (`ci-verdicts.md` "The same red, one phase later"). Mapping open PRs alone put
+    that case in the UNMATCHED bucket, whose summary line warns it "may be this
+    PR's own failure": the misreading is toward blaming the PR, which is the
+    expensive direction. Measured on #4003, where four `Codeunit60988` failures
+    were read as the PR's own defect and a reviewer was dispatched to find it.
     """
     if open_prs is None:
         rc, out = gh(["pr", "list", "--repo", REPO, "--state", "open", "--limit", "100",
-                      "--json", "number,body"])
+                      "--json", "number,body,state"])
         if rc != 0:
             raise RuntimeError("could not list open pull requests")
         open_prs = json.loads(out)
+        # Merged PRs from the last few days: a branch older than the fix inherits
+        # its red exactly like one waiting on an open PR.
+        rc, out = gh(["pr", "list", "--repo", REPO, "--state", "merged", "--limit", "60",
+                      "--json", "number,body,state"])
+        if rc != 0:
+            raise RuntimeError("could not list merged pull requests")
+        open_prs = list(open_prs) + json.loads(out)
 
-    mapping: dict[str, str] = {}
+    mapping: dict[str, tuple[str, str]] = {}
     for pr in open_prs:
         body = pr.get("body") or ""
         for m in re.finditer(
@@ -716,11 +732,29 @@ def corpus_codeunit_to_pr(open_prs=None) -> dict[str, str]:
                           f"/pulls/{m.group(1)}/files", "--jq", ".[].patch"])
             if rc != 0:
                 continue
+            state = "MERGED" if (pr.get("state") or "").upper() == "MERGED" else "OPEN"
             for cu in codeunits_in_patch(out):
                 # First writer wins, and ties are reported rather than resolved:
-                # two open PRs claiming one codeunit is itself worth seeing.
-                mapping.setdefault(cu, str(pr.get("number")))
+                # two PRs claiming one codeunit is itself worth seeing. Open PRs
+                # are listed first, so an open fix outranks a merged one.
+                mapping.setdefault(cu, (str(pr.get("number")), state))
     return mapping
+
+
+def log_can_carry_codeunits(log: str) -> bool:
+    """Could this log carry `FAIL Codeunit<id>` lines at all?
+
+    A BC leg prints per-test PASS/FAIL lines; the aggregate `BC test matrix
+    passed` job prints only which legs failed. Distinguishing them is what
+    keeps "no corpus failures here" apart from "this log never had any"
+    (`guards-need-a-third-state.md`). The tell is any per-test line at all --
+    a PASS, a FAIL, or a harness summary -- not the absence of one pattern.
+    """
+    return bool(
+        re.search(r"^\S+Z\s+(PASS|FAIL)\s+\S", log, re.M)
+        or re.search(r"\d+\s+total,\s*\d+\s+passed", log)
+        or re.search(r"\d+P/\d+F/\d+E", log)
+    )
 
 
 def inherited_red_lines(log: str, pr_map_fetch=None) -> list[str]:
@@ -730,8 +764,25 @@ def inherited_red_lines(log: str, pr_map_fetch=None) -> list[str]:
         return ["inherited-red check: unavailable (the failing log could not be read, "
                 "which is a refusal -- NOT zero corpus failures)"]
     if not counts:
+        # THIRD STATE, not a negative finding (#4165). A log with no `FAIL
+        # Codeunit<id>` lines may be a leg that genuinely had no corpus
+        # failures -- or a log that could never carry one. The aggregate
+        # `BC test matrix passed` job is the common case: it reports which
+        # legs failed and contains no test output at all, so reading its
+        # silence as "not inherited" is a confident wrong answer. Measured on
+        # PR #4166, where the aggregate was the fetched log and the three BC
+        # legs beneath it carried 3x Codeunit60589 + 6x Codeunit60982.
+        if not log_can_carry_codeunits(log):
+            return ["inherited-red check: UNAVAILABLE -- this log carries no per-test "
+                    "output (an aggregate job reports which legs failed, not what "
+                    "failed in them), so it cannot answer whether the red is "
+                    "inherited. Read a BC leg's own log:",
+                    "  gh api repos/<o>/<r>/actions/runs/<run-id>/jobs --paginate \\",
+                    "    --jq '.jobs[]|select(.conclusion==\"failure\")|\"\\(.id) \\(.name)\"'"]
         return ["inherited-red check: no corpus `FAIL Codeunit<id>` lines in this log, "
-                "so this failure is not the resolved-corpus window (#3922)"]
+                "so this failure is not the resolved-corpus window (#3922). "
+                "That is a statement about CORPUS codeunits only -- it does not "
+                "say the failure is this PR's own (#4165)"]
 
     try:
         mapping = (pr_map_fetch or corpus_codeunit_to_pr)()
@@ -740,23 +791,37 @@ def inherited_red_lines(log: str, pr_map_fetch=None) -> list[str]:
         mapping, map_why = {}, f"{type(exc).__name__} while reading open pull requests"
 
     lines = ["", "--- failing corpus codeunits (#3922: is this red mine?) ---"]
-    unmatched = []
+    unmatched: list[str] = []
+    merged_matches: list[str] = []
     for cu in sorted(counts):
-        pr = mapping.get(cu)
-        if pr:
-            lines.append(f"  Codeunit{cu}  x{counts[cu]}  <- open runner PR #{pr} fixes this")
+        match = mapping.get(cu)
+        if match:
+            pr, state = match
+            if state == "MERGED":
+                merged_matches.append(cu)
+                lines.append(f"  Codeunit{cu}  x{counts[cu]}  <- runner PR #{pr} "
+                             "fixes this and has MERGED: rebase, do not wait")
+            else:
+                lines.append(f"  Codeunit{cu}  x{counts[cu]}  <- open runner PR #{pr} fixes this")
         else:
             unmatched.append(cu)
-            why = "no open runner PR declares a corpus PR touching it"
+            why = "no open or recently merged runner PR declares a corpus PR touching it"
             lines.append(f"  Codeunit{cu}  x{counts[cu]}  <- UNMATCHED: {why}")
 
     if map_why:
         lines.append(f"  (the codeunit -> runner-PR match is unavailable: {map_why}; "
                      "the counts above still stand)")
     elif not unmatched:
-        lines.append("  every failing codeunit has an open runner PR -- this red is "
-                     "INHERITED from the resolved-corpus window, not this PR's. Rebase "
-                     "once they land; a re-run reproduces it and destroys the log.")
+        if merged_matches:
+            lines.append("  every failing codeunit has a runner PR, and "
+                         f"{len(merged_matches)} of them have already MERGED -- this red "
+                         "is INHERITED and the remedy is a REBASE now, not a wait. A "
+                         "re-run measures the same old code against the same new corpus "
+                         "and reproduces it forever.")
+        else:
+            lines.append("  every failing codeunit has an open runner PR -- this red is "
+                         "INHERITED from the resolved-corpus window, not this PR's. Rebase "
+                         "once they land; a re-run reproduces it and destroys the log.")
     else:
         lines.append(f"  {len(unmatched)} codeunit(s) UNMATCHED -- do NOT read this as "
                      "inherited. An unmatched codeunit may be this PR's own failure.")
