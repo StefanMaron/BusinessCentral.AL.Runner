@@ -270,6 +270,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **navapp:** drop the runner-extras GetModuleInfo unknown-id test now that the corpus asserts it
 - **guards:** declare AppGroupObjectVisibility's refusal site
 - **rename:** rename a Base Application record referenced by precompiled TableRelations
 - **metadata:** conditional TableRelation arms on precompiled fields
