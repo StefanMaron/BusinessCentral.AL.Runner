@@ -123,5 +123,5 @@ rather than sending someone looking again. And the remedy is not a flag on the s
 paginated API form, which has no cap.
 
 The generalisation is the part worth keeping: every `gh ... list --limit` is exposed, including
-`gh issue list --limit 100` against a 223-issue queue. Any count taken from a capped listing is
+`gh issue list --limit 100` against a queue of more than 100. Any count taken from a capped listing is
 wrong in the direction that looks clean.
