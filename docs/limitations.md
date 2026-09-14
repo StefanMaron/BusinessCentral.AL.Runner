@@ -1835,8 +1835,16 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
     NULL in any column type
     ([#2268](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2268)). Each
     mirrors BC's own SQL-cell reader case for case.
-  - BC's system columns (`SystemId`, `SystemCreatedAt`, …) are not hydrated —
-    [#2260](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2260).
+  - TableFilter values are still refused: BC's reader has a case for them, but no table in the
+    shipped demo data stores one, so the shape the backup reader emits has never been measured
+    and the codec will not invent it —
+    [#2271](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2271).
+  - BC's platform fields `SystemId`, `SystemCreatedAt`, `SystemCreatedBy`, `SystemModifiedAt`
+    and `SystemModifiedBy` carry the backup's values
+    ([#2260](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2260)), so
+    `GetBySystemId` finds a hydrated row. The `timestamp` (SQL rowversion) column is not
+    hydrated, and the summary line says so —
+    [#4123](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4123).
   - A table whose AL name is declared by two installed apps in the same company is refused
     rather than guessed at —
     [#2264](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2264).
