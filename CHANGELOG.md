@@ -198,6 +198,7 @@ All notable changes to this project are documented here. Format based on
 - **integer-vt:** judge a half-open range against the base window, not the envelope-widened span
 
 ### Documentation
+- **corpus:** the Windows nightly's conclusion is wrong in both directions
 - **tdd:** a mutation can land, execute, and still change nothing
 - **ci-verdicts:** the same-tree recipe needs rev-parse --verify -q
 - a double-quoted --body silently deletes backticked spans
