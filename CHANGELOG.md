@@ -198,6 +198,7 @@ All notable changes to this project are documented here. Format based on
 - **integer-vt:** judge a half-open range against the base window, not the envelope-widened span
 
 ### Documentation
+- **ci-verdicts:** the same-tree recipe needs rev-parse --verify -q
 - a double-quoted --body silently deletes backticked spans
 - **orchestrating:** a transport error arms nothing and still exits 0
 - **ci-verdicts:** the inherited red is a rebase, not a re-run
