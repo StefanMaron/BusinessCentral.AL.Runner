@@ -174,6 +174,23 @@ A `cancelled` conclusion — on an older `headSha`, or on a run of the same work
 run has replaced — is **not this push's verdict**, whatever its individual jobs say. Two runs of
 one workflow on one SHA is normal (#2726).
 
+**Counting the returned page is not counting the queue.** `?per_page=100` caps the array at
+100, so `[.workflow_runs[]] | length` — or a `group_by` over it — answers *"what is on the page I
+fetched"*. The response carries the real figure:
+
+```bash
+gh api "repos/<o>/<r>/actions/runs?per_page=1&status=queued" --jq '.total_count'
+```
+
+Measured during #4110: a paged read reported ~81 queued across three separate comments while
+`total_count` said **433**, and the paged number *moved* between reads — as the mix on page one
+turned over, not as the queue changed. A "76 → 40, it is draining" was page turnover, and it was
+published as recovery.
+
+**The tell is a count that brushes its own page size.** Anything near 100 from a `per_page=100`
+query is a paging artefact until `total_count` says otherwise. The SHA-filtered recipes above are
+safe from this — one commit never has 100 runs — but a status- or repo-wide count is not.
+
 `head_sha` needs the **full** 40-character SHA. An abbreviated one returns `"workflow_runs": []`
 — a false negative that reads exactly like "no runs for this commit".
 
