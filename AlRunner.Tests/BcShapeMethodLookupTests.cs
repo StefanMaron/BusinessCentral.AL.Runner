@@ -319,13 +319,18 @@ public sealed class BcShapeMethodLookupTests
     // the other passes an explicit signature, which this scan never counted. A deletion moves
     // only this counter: BcInternalsNullForgivingGuardTests' `converted` is computed from the
     // source rather than hardcoded, so it needs no matching edit here.
+    //
+    // 70 -> 69 by #4141, a deletion like #3927's: NavTenantSettingsHelper.SetTestTenantEnvironmentType
+    // was resolved name-only in MetadataPatches.cs to force sandbox during tests, and #3514 found no
+    // service-tier assembly calls it, so the whole seam went. One GetMethod site left the diff and the
+    // count fell by ONE. A deletion moves only this counter, per the note above.
 
     /// <summary>
     /// Every remaining name-only method lookup that could reach a Microsoft-shipped type. Lower
     /// it as sites are converted; it may never rise. On a mismatch the assertion prints the
     /// per-file breakdown, which is the number to put here.
     /// </summary>
-    private const int NameOnlyBcTypedMethodLookups = 70;
+    private const int NameOnlyBcTypedMethodLookups = 69;
 
     /// <summary>The floor is not cosmetic: a scan that silently narrowed to a handful of files
     /// would report a small number and read as progress. AlRunner/ holds ~195 sources.</summary>
