@@ -751,6 +751,9 @@ public class WriteTransactionTestBoundaryTests
             // The page-driven row MODIFY: the other half of FlushRow(). The observable is the
             // row's own field read back through a FRESH Record, so this measures the page's
             // Modify rather than the TestPage's in-memory view.
+            //
+            // #3586's SECOND finding is the F_ arm below, not this one: this arm passed before
+            // the fix too, because nothing on the ModifyAsync path ever consulted the guard.
             [Test]
             [TransactionModel(TransactionModel::None)]
             procedure C_APageRowModifyMayWriteUnderNone()
@@ -808,18 +811,59 @@ public class WriteTransactionTestBoundaryTests
                 if not Database.IsInWriteTransaction() then
                     Error('TXR5 FAIL: a default-model test after the None tests must still be able to write');
             end;
+
+            // #3586's SECOND half: a page-driven row Modify must REACH the write-time note, the
+            // way the other four AL writes do. It did not — the note is Cecil-prepended onto
+            // the AL-lowered names only, and FlushPendingModify calls ModifyAsync rather than
+            // ALModifyAsync (deliberately, for the xRec contract), so this write passed no
+            // check because it skipped one.
+            //
+            // Database.IsInWriteTransaction() is the AL-visible consequence, and it is the arm
+            // that makes the Modify half falsifiable at all: under None the answer is "allow"
+            // either way, so no None arm can tell a reachable guard from an absent one. Under
+            // the DEFAULT model an uncommitted write must leave the write transaction open,
+            // which is exactly what the note sets.
+            [Test]
+            procedure F_APageRowModifyOpensTheWriteTransaction()
+            var
+                Probe: Record "TXR Probe";
+                Card: TestPage "TXR Card";
+            begin
+                // Its own row, seeded and committed by the platform at the previous boundary,
+                // so this arm measures the page's Modify and not its own seeding Insert.
+                if not Probe.Get(9421) then
+                    Error('TXR6 FAIL: the row seeded earlier must still be visible here');
+
+                if Database.IsInWriteTransaction() then
+                    Error('TXR6 FAIL: this test must not start inside a write transaction left by an earlier one');
+
+                Card.OpenEdit();
+                Card.GoToKey(9421);
+                Card."Text Field".SetValue('ROW-MODIFIED-DEFAULT-MODEL');
+                Card.Close();
+
+                if not Database.IsInWriteTransaction() then
+                    Error('TXR6 FAIL: a page-driven row Modify must open the write transaction, as every other AL write does');
+
+                Clear(Probe);
+                if not Probe.Get(9421) then
+                    Error('TXR6 FAIL: the row must still exist after the page edited it');
+                if Probe."Text Field" <> 'ROW-MODIFIED-DEFAULT-MODEL' then
+                    Error('TXR6 FAIL: the page edit must have landed, got [%1]', Probe."Text Field");
+            end;
         }
         """);
 
         var (output, exitCode) = RunRunner(root);
 
         Assert.True(exitCode == 0,
-            $"Expected all five tests to pass (exit 0); got exit {exitCode}.\n{output}");
+            $"Expected all six tests to pass (exit 0); got exit {exitCode}.\n{output}");
         Assert.DoesNotContain("FAIL", output);
         Assert.Contains("PASS  Codeunit62554.A_APageRowInsertMayWriteUnderNone", output);
         Assert.Contains("PASS  Codeunit62554.B_SeedsTheRowTheModifyArmOpensOn", output);
         Assert.Contains("PASS  Codeunit62554.C_APageRowModifyMayWriteUnderNone", output);
         Assert.Contains("PASS  Codeunit62554.D_TheTestBodyItselfIsStillRefused", output);
         Assert.Contains("PASS  Codeunit62554.E_ADefaultModelTestAfterwardsCanStillWrite", output);
+        Assert.Contains("PASS  Codeunit62554.F_APageRowModifyOpensTheWriteTransaction", output);
     }
 }

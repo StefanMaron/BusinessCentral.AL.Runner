@@ -758,18 +758,37 @@ internal partial class LiveNavTestPage
         // to succeed and quietly went nowhere; and both trigger flags on, because a page write
         // runs the table's OnModify and the global-trigger hook exactly like Rec.Modify(true).
         //
-        // #3586: bracketed for the same reason InsertPendingRow is — BC's NavForm.ModifyAsync()
-        // opens Session.BeginTransaction() and closes it with EndTransaction(commit) in a
-        // finally, around RaiseOnModifyRecordAsync and the write. It also closes the hole that
-        // issue found: ModifyAsync is deliberately NOT the AL-lowered ALModifyAsync (see the
-        // xRec contract above), so this path reaches no write-time guard at all and would miss
-        // any future one placed there. The verdict is unchanged either way — corpus 60878
-        // Test13d measured a page-driven row Modify under TransactionModel::None on a real
-        // service tier and BC allows it — so this makes the guard REACHABLE without moving the
-        // answer. Observably equivalent on the same terms as the Insert bracket above.
+        // #3586, the hole this issue found alongside the refused Insert: ModifyAsync is
+        // deliberately NOT the AL-lowered ALModifyAsync (the xRec contract above), and the
+        // write-time note is Cecil-prepended onto the AL-lowered names ONLY —
+        // NclCecilRewrite.Records.cs prepends NoteRecordWrite to
+        // {ALModifyAsync, ALDeleteAsync, ALRenameAsync, DeleteAllAsync, ModifyAllAsync} and
+        // NoteRecordInsertWrite to ALInsertAsync. ModifyAsync is on neither list, so this
+        // write reached no guard at all: it did not pass a check, it skipped one. That also
+        // silently skipped the row-version bump, the write-transaction flag and the rollback
+        // snapshot that NoteRecordWrite takes, so a page-driven Modify was invisible to
+        // Database.IsInWriteTransaction() and to the AutoRollback snapshot.
+        //
+        // Calling the note explicitly puts this path behind the same guard as the other four
+        // writes WITHOUT changing the entry point, so the xRec contract above is untouched.
+        // Observably equivalent: NoteRecordWrite is exactly what the prepend on ALModifyAsync
+        // would have run, and it runs once, before the write, which is where the prepend sits.
+        //
+        // The answer it now gives is "allow": corpus 60878 Test13d measured a page-driven row
+        // Modify under TransactionModel::None on a real service tier and BC permits it, so the
+        // transaction bracket below is what keeps this reachable guard satisfied — the same
+        // bracket, for the same reason, as InsertPendingRow's. BC's NavForm.ModifyAsync() opens
+        // Session.BeginTransaction() and closes it with EndTransaction(commit) in a finally
+        // around RaiseOnModifyRecordAsync and the write.
+        //
+        // Trap for a later editor: the bracket and the note are a PAIR. Remove the bracket and
+        // this Modify starts being refused under None, which is the divergence #3586 fixed;
+        // remove the note and the bracket becomes unfalsifiable, because nothing on this path
+        // reads the counter.
         AlRunner.Patches.ALDatabasePatches.EnterRunTransaction();
         try
         {
+            AlRunner.Patches.ALDatabasePatches.NoteRecordWrite(record);
             record.ModifyAsync(DataError.ThrowError, true, true).GetAwaiter().GetResult();
         }
         finally
