@@ -67,9 +67,10 @@ gh pr list --repo StefanMaron/BusinessCentral.AL.Runner --state open --limit 100
 ```
 
 Measured (#4168): corpus PR #350 was merged on a clean citation search while runner PR #4141 —
-which closes the issue #350's own body names — sat open. `main` gained a suite asserting
-`IsSandbox()` implies `IsSaaS()` while still forcing `IsSandbox()` true with `isSaaSConfig`
-false, the precise disagreement the pair existed to fix.
+whose target issue is the one #350's own body names — sat open. Those tests happened to pass
+against the unfixed runner, so nothing broke; the citation search was still blind to the pair,
+which is the property that matters. The three codeunits on #4167 are the same mistake where the
+tests did depend on the unlanded fix.
 
 ## The corpus default branch is `master`, not `main`
 

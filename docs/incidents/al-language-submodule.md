@@ -51,10 +51,18 @@ an otherwise-correct rebase. Hence the tool and the preflight check.
 
 ## A corpus PR merged ahead of its pair, found by the wrong question (2026-09-14, #4168)
 
-I merged corpus PR #350 while runner PR #4141, its pair, was open. `main` gained codeunit 60984
-asserting `IsSandbox()` implies `IsSaaS()`, against a runner that forces `IsSandbox()` true
-(`MetadataPatches.cs:79`, `SetTestTenantEnvironmentType(true)`) while `isSaaSConfig` stays false.
-#4141 removes that call; without it the assertion cannot hold.
+I merged corpus PR #350 while runner PR #4141, its pair, was open.
+
+**The outcome was harmless, and that is not the same as the merge being correct.** I predicted
+`main` would redden on codeunit 60984, reasoning that `MetadataPatches.cs:79`
+(`SetTestTenantEnvironmentType(true)`) forces `IsSandbox()` true while `isSaaSConfig` stays
+false, so `IsSaaS() = IsSandbox() && isSaaSConfig` would be false and the new
+`IsSandbox()`-implies-`IsSaaS()` assertion could not hold. Run `34819290176`, the first to
+resolve the post-merge corpus, measured **4 PASS, 0 FAIL** on that codeunit. The chain came
+from a comment describing an internal seam; the test calls System Application's `Environment
+Information` (codeunit 457), and the relationship holds through that path. Reading the code and
+reasoning about what must follow lost to one run, as `ask-the-corpus-before-claiming-bc-behavior.md`
+says it should.
 
 **The check I ran was clean and answered a different question.** Before merging I confirmed no
 open runner PR carried a `Corpus-PR:` line naming #350 — true, and irrelevant: #4141 declares
@@ -72,5 +80,7 @@ enriched for exactly the pairs a citation search cannot see.
 predicates rather than a literal, which is why they are green on all eight cloud legs and on the
 Windows nightly. The defect was the ordering, not the tests.
 
-Cost: `main` acquires a fourth failing suite on top of the three tracked by #4167, and clears
-only when #4141 lands.
+Cost this time: none — the tests passed. The process defect is what the rule change addresses,
+because the same mistake against a corpus PR whose tests *do* depend on an unlanded fix is
+exactly how the three codeunits on #4167 got there. A check that happens to be harmless on the
+instance that exposed it is still the check that needs fixing.
