@@ -1,0 +1,18 @@
+{
+  "id": "3d9a7c14-6e52-4b08-9f37-c81a2e46d5b3",
+  "name": "Runner Extras - PageExtension Control Source Expression",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #4145: a TestPage could not find a control a pageextension declares bound to the EXTENSION's own global variable -- NavTestFieldNotFoundException -- because NavForm.CallInitializeComponentExtensionMethod, where each NavFormExtension.InitializeComponent registers the extension's source expressions, sat behind the narrow per-instance opt-in and so never ran during the page constructor.",
+  "description": "The BC-behaviour half of this claim is upstream: corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#359 (codeunit 60978, PageExtControl_*) measured a real service tier on all 8 cloud legs and established that BC finds BOTH controls a pageextension declares in one addlast(Content) block -- one bound to an extension global, one bound to a SourceTable field. That pair is what separated this issue's two candidate causes: the Rec-bound arm being found rules out 'the page metadata does not carry extension controls'. This suite is the runner-side mechanism test the require-tests gate needs, and it pins the runner-INTERNAL consequence of the guard widening: the SAME Cecil-guarded method must run during the constructor for a form the runner is about to drive, exactly as InitializeForm already does since #4114.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65980,
+      "to": 65999
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}
