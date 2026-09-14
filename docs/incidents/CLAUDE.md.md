@@ -108,3 +108,20 @@ output. The remedy in the rule — a quoted heredoc to a file, then `--body-file
 the neighbouring hazards (`$` expansion, `!` history), and is what every long body in this
 session already used; the failure came from the one that was written inline because it was
 "short".
+
+## `gh list --limit N` answered 0 for a label that exists (2026-09-14, #4170)
+
+An agent checking whether `blocked-by: corpus-verdict` already existed ran
+`gh label list --limit 100 | grep -c 'corpus-verdict'`, got `0`, and nearly created a duplicate.
+The repository had 164 labels at the time; `--limit` is a cap, not a page, so the label was
+simply outside the first 100 and nothing said so.
+
+Two things make this worse than the `grep -E` and `rg --hidden` members of the same class.
+It bites an existence **check** rather than a search, so the false negative reaches a decision
+rather than sending someone looking again. And the remedy is not a flag on the same command:
+`--limit 300` happens to work today and silently breaks at 301 labels, so the fix is the
+paginated API form, which has no cap.
+
+The generalisation is the part worth keeping: every `gh ... list --limit` is exposed, including
+`gh issue list --limit 100` against a 223-issue queue. Any count taken from a capped listing is
+wrong in the direction that looks clean.
