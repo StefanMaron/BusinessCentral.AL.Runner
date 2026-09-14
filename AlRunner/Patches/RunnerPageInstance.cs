@@ -66,7 +66,20 @@ internal sealed partial class RunnerPageInstance
         typeof(Microsoft.Dynamics.Nav.Runtime.Extensions.NavFormExtension).GetProperty(
             "ParentObject", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
 
-    private RunnerPageInstance(object form, object owner, NavRecord? record, int pageId, System.Collections.IDictionary sourceExpressions)
+    // Kept at exactly five parameters: AlRunner.Tests binds this ctor by its exact type list
+    // (TestPageOptionValueEnumCaptionTests.BuildPage), so an extra parameter — optional or not —
+    // makes the lookup fail with "RunnerPageInstance private ctor not found".
+    private RunnerPageInstance(
+        object form, object owner, NavRecord? record, int pageId,
+        System.Collections.IDictionary sourceExpressions)
+        : this(form, owner, record, pageId, sourceExpressions, boundExtensions: null)
+    {
+    }
+
+    private RunnerPageInstance(
+        object form, object owner, NavRecord? record, int pageId,
+        System.Collections.IDictionary sourceExpressions,
+        Dictionary<int, object?>? boundExtensions)
     {
         _form = form;
         _owner = owner;
@@ -74,7 +87,20 @@ internal sealed partial class RunnerPageInstance
         _pageId = pageId;
         _sourceExpressions = sourceExpressions;
         _expressionValuesAtOpen = SnapshotExpressionValues(sourceExpressions);
-        RegisterPageExtensionsOnTheForm();
+
+        if (boundExtensions != null)
+        {
+            // Already bound, BEFORE the metadata load, by the caller — which is the only point at
+            // which a pageextension's OnMetadataLoaded can still register its controls' source
+            // expressions (#4145). Adopt those instances rather than binding again: BC's
+            // RegisterPageExtension also writes a pageExtensionsById dictionary keyed on the
+            // extension's object number, so a second bind throws ArgumentException.
+            foreach (var kv in boundExtensions) _extensionInstances[kv.Key] = kv.Value;
+        }
+        else
+        {
+            RegisterPageExtensionsOnTheForm();
+        }
     }
 
     /// <summary>
@@ -95,9 +121,25 @@ internal sealed partial class RunnerPageInstance
     /// extension's <c>(NavForm, NavRecord)</c> ctor.</para>
     /// </summary>
     private void RegisterPageExtensionsOnTheForm()
+        => RegisterPageExtensionsOnTheForm(_form, _record, _pageId, _extensionInstances);
+
+    /// <summary>
+    /// The body of <see cref="RegisterPageExtensionsOnTheForm()"/>, callable with no
+    /// <see cref="RunnerPageInstance"/> in hand.
+    /// </summary>
+    /// <remarks>
+    /// It has to be, because the binding must happen BEFORE the page's metadata load, and the
+    /// instance is not constructed until after it (#4145). See docs/pageextension-binding.md.
+    /// </remarks>
+    private static void RegisterPageExtensionsOnTheForm(
+        object form, NavRecord? record, int pageId, Dictionary<int, object?> instanceCache)
     {
-        var extensionIds = RecordPatches.GetPageExtensionIdsForPage(_pageId);
+        var extensionIds = RecordPatches.GetPageExtensionIdsForPage(pageId);
         if (extensionIds.Count == 0) return;
+
+        var _pageId = pageId;
+        var _form = form;
+        var _record = record;
 
         if (_record == null)
         {
@@ -125,7 +167,7 @@ internal sealed partial class RunnerPageInstance
 
         foreach (var extensionId in extensionIds)
         {
-            var instance = GetOrCreateExtensionInstance(extensionId);
+            var instance = GetOrCreateExtensionInstance(extensionId, _form, _record, _pageId, instanceCache);
             if (instance == null) continue;
             try { register.Invoke(_form, new[] { instance }); }
             catch (Exception ex)
@@ -303,6 +345,15 @@ internal sealed partial class RunnerPageInstance
             // RegisterSourceExpression, …) check this and no-op for anyone else.
             RunnerFormInit.MarkRealInit(form);
 
+            // BEFORE SetSourceTable, which is what raises the page's OnMetadataLoaded. That is
+            // where a pageextension's AL-emitted OnMetadataLoaded issues its
+            // RegisterSourceExpression calls, so an extension bound after it registers nothing and
+            // a control it declares bound to its OWN global is unresolvable (#4145). The binding
+            // itself is unchanged and still the one #290 added for trigger dispatch — only its
+            // timing moves. See docs/pageextension-binding.md.
+            var boundExtensions = new Dictionary<int, object?>();
+            RegisterPageExtensionsOnTheForm(form, record, pageId, boundExtensions);
+
             // ONE call. SetSourceTable funnels through NavForm.EnsureMetadataLoaded ->
             // InitializeFromMetadata, which binds the record, resolves the controls against
             // the source table and runs the page's own OnMetadataLoaded — the step that
@@ -329,7 +380,7 @@ internal sealed partial class RunnerPageInstance
                 Console.Out.WriteLine(
                     $"[RunnerPageInstance] page {pageId}: built, {expressions.Count} source expression(s): "
                     + string.Join(", ", expressions.Keys.Cast<object>().Select(k => k?.ToString())));
-            return new RunnerPageInstance(form, parent, record, pageId, expressions);
+            return new RunnerPageInstance(form, parent, record, pageId, expressions, boundExtensions);
         }
         catch (Exception ex)
         {
@@ -2898,6 +2949,10 @@ internal sealed partial class RunnerPageInstance
     /// own base-class ctor, before any AL-emitted code runs.
     /// </summary>
     private object? GetOrCreateExtensionInstance(int extensionId)
+        => GetOrCreateExtensionInstance(extensionId, _form, _record, _pageId, _extensionInstances);
+
+    private static object? GetOrCreateExtensionInstance(
+        int extensionId, object _form, NavRecord? _record, int _pageId, Dictionary<int, object?> _extensionInstances)
     {
         if (_extensionInstances.TryGetValue(extensionId, out var cached)) return cached;
 
