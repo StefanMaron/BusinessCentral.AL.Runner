@@ -246,7 +246,7 @@ if (args[0] == "--precompile")
 }
 
 // ── --emit-app subcommand (debug tool: emit a bundle dir as a .app in-process) ──
-// Usage: --emit-app <bundleDir> <outPath> [--package-cache PATH ...]
+// Usage: --emit-app <bundleDir> <outPath>
 if (args[0] == "--emit-app")
 {
     return RunEmitApp(args.Skip(1).ToArray());
@@ -339,13 +339,16 @@ bool bundledMode = true;
 string? alCacheDir;
 try
 {
-    alCacheDir = Path.Combine(
-        AlRunner.Infrastructure.AlRunnerPaths.UserHome,
-        ".cache", "al-runner", "al-out");
+    alCacheDir = Path.Combine(AlRunner.Infrastructure.CacheRoots.DefaultRoot, "al-out");
 }
-catch (InvalidOperationException ex)
+catch (Exception ex) when (ex is InvalidOperationException or IOException or ArgumentException)
 {
-    Console.Error.WriteLine(ex.Message);
+    // #2768: an AL_RUNNER_CACHE_ROOT that cannot be rooted lands here too, not just #2114's HOME.
+    var cacheRootEnv = Environment.GetEnvironmentVariable(AlRunner.Infrastructure.CacheRoots.CacheRootEnvVar);
+    Console.Error.WriteLine(string.IsNullOrWhiteSpace(cacheRootEnv)
+        ? ex.Message
+        : AlRunner.Infrastructure.CacheRoots.BuildUnusableCacheRootMessage(
+            AlRunner.Infrastructure.CacheRoots.CacheRootEnvVar, cacheRootEnv, ex.Message));
     return 2;
 }
 // #1821/#2555: mirrors alCacheDir for the OTHER caches CacheRoots redirects — set by an
@@ -630,6 +633,17 @@ for (int i = 0; i < args.Length; i++)
         testTimeoutSeconds = parsedTimeout;
         continue;
     }
+    if (args[i] == "--seed" && i + 1 < args.Length)
+    {
+        var rawSeed = args[++i];
+        if (!AlRunner.Infrastructure.RunSeed.TryParse(rawSeed, out var parsedSeed))
+        {
+            Console.Error.WriteLine($"--seed: '{rawSeed}' is not a whole number.");
+            return 2;
+        }
+        AlRunner.Infrastructure.RunSeed.Set(parsedSeed);
+        continue;
+    }
     if (args[i] == "--preprocessor-symbols" && i + 1 < args.Length)
     {
         foreach (var raw in args[++i].Split(','))
@@ -687,6 +701,9 @@ if (serverMode && watchMode)
     Console.Error.WriteLine("--server and --watch are mutually exclusive (both stay warm in-process; pick one).");
     return 2;
 }
+// #2502: resolve the run seed before anything can spawn a child, so every process shares it.
+try { _ = AlRunner.Infrastructure.RunSeed.Value; }
+catch (InvalidOperationException seedProblem) { Console.Error.WriteLine(seedProblem.Message); return 2; }
 // #2403: every file-producing flag's parent directory is created HERE, before the run,
 // because all three writers open their file only after it finishes — so a missing
 // directory used to cost the whole run (measured: 103s and 834 classified results, lost
@@ -1327,11 +1344,9 @@ var shippedVariants = AlRunner.Infrastructure.EngineVariants.Discover(AppContext
 try
 {
     AlRunner.Infrastructure.BcArtifacts.SelectVersion(bcVersionArg, artifactPathArg);
-    // Consistency guard: the engine DLLs baked into bin/ are built for a fixed BC
-    // major.minor; if the selected version's major.minor differs, dependency symbols
-    // and the engine can disagree — fail loud rather than crash deep in BC. Patch-level
-    // skew (28.1.x build vs 28.1.y cache) is tolerated.
-    AlRunner.Infrastructure.BcArtifacts.VerifyEngineConsistency(AppContext.BaseDirectory);
+    // Consistency guard: a single-build runner refuses a BC major it was not built for.
+    // --precompile applies the same guard (SiblingCompile.RunPrecompile).
+    AlRunner.Infrastructure.BcArtifacts.VerifyEngineConsistency(shippedVariants.Count);
     // #2008's root cause: VerifyEngineConsistency only catches a MAJOR mismatch (Ncl.dll's
     // own AssemblyVersion is always major.0.0.0, so it cannot see a same-major
     // different-minor selection). The auto-select default path above already warns about
@@ -1456,9 +1471,14 @@ if (alCacheDir != null)
     }
     catch (Exception ex)
     {
+        // Name what supplied the root: the flag, the #2768 variable, or neither.
+        var fromCacheRootEnv = cacheRootOverride == null && !string.IsNullOrWhiteSpace(
+            Environment.GetEnvironmentVariable(AlRunner.Infrastructure.CacheRoots.CacheRootEnvVar));
         Console.Error.WriteLine(AlRunner.Infrastructure.CacheRoots.BuildUnusableCacheRootMessage(
-            cacheRootOverride != null ? "--cache" : "the default AL-output cache directory",
-            alCacheDir, ex.Message));
+            cacheRootOverride != null ? "--cache"
+                : fromCacheRootEnv ? AlRunner.Infrastructure.CacheRoots.CacheRootEnvVar
+                : "the default AL-output cache directory",
+            fromCacheRootEnv ? AlRunner.Infrastructure.CacheRoots.DefaultRoot : alCacheDir, ex.Message));
         return 2;
     }
 }
@@ -1623,6 +1643,15 @@ void FlushDeferredStartupLines()
 {
     foreach (var deferredLine in deferredStartupLines) deferredLine();
     deferredStartupLines.Clear();
+}
+
+// A loop inside a catch/finally in <Main>$ makes the JIT compile all of Main FullOpts, in every
+// process generation. Keep handler loops in helpers like this one; HandlerLoopJitTierGuardTests
+// pins it. See docs/startup-cost.md#main-jit-tier.
+static void WriteRemainingInnerExceptions(AggregateException flat)
+{
+    foreach (var inner in flat.InnerExceptions.Skip(1))
+        Console.Error.WriteLine($"  → {inner.GetType().Name}: {inner.Message}");
 }
 
 // --jobs: fan out across worker processes (#2280). Deliberately placed HERE, after the
@@ -2749,10 +2778,15 @@ foreach (var bundle in bundles)
     {
         var dirsToRegister = new List<string>();
         foreach (var suite in suites)
+        {
             // #3735: exactly what the compile reads. Deriving it a second time here is what let
             // a page or table under test/ or app2/ compile and never be parsed — see
             // ProgramSupport.SuiteRegistrationDirs.
-            dirsToRegister.AddRange(SuiteRegistrationDirs(suite, bucketRoot));
+            var suiteDirs = SuiteRegistrationDirs(suite, bucketRoot);
+            // #2279: which app group compiles each dir, for the object-inventory tables.
+            AlRunner.Patches.RecordPatches.RegisterAppGroupSourceDirs(suite, suiteDirs);
+            dirsToRegister.AddRange(suiteDirs);
+        }
         AlRunner.Patches.RecordPatches.AddSourceDirs(dirsToRegister);
     }
 
@@ -2841,7 +2875,8 @@ foreach (var bundle in bundles)
         // chain them into the compiler. Only sibling-dependency TARGETS are compiled here —
         // this is an extra compile per app, and most bundles (the corpus: one app) have none.
         using (AlRunner.Infrastructure.PhaseLog.Stage("sibling-symbols"))
-            EmitSiblingSymbols(appGroups, bundleAbs, bundleResolvedDeps);
+            EmitSiblingSymbols(appGroups, bundleAbs, bundleResolvedDeps,
+                announcePath: watchMode || AlRunner.Log.Verbose);
 
         var loadedAssemblies = new List<Assembly>();
         // SetTestAssembly re-runs its full body (incl. NavAppResourcePatches.RegisterTestAssembly)
@@ -3489,8 +3524,7 @@ foreach (var bundle in bundles)
                 Console.Error.WriteLine($"<bundled>: EMIT-FAIL — {rootEx.GetType().Name}: {rootEx.Message}");
                 if (rootEx.StackTrace is { } st) Console.Error.WriteLine(st);
                 if (flat.InnerExceptions.Count > 1)
-                    foreach (var inner in flat.InnerExceptions.Skip(1))
-                        Console.Error.WriteLine($"  → {inner.GetType().Name}: {inner.Message}");
+                    WriteRemainingInnerExceptions(flat);
                 bundleErrors.Add($"<bundled>: EMIT-FAIL: {rootEx.Message.Split('\n')[0]}");
             }
             catch (Exception ex)
@@ -3934,6 +3968,12 @@ foreach (var bundle in bundles)
                 // is consistent whichever compile boundary --isolation chose.
                 using (AlRunner.Infrastructure.PhaseLog.AppStage("set-test-assembly"))
                 {
+                    // #2279: the suite is the app group here, so its assembly carries the suite's own
+                    // app identity, as the bundled loop's SetCurrentBundleInfo gives each app group.
+                    if (AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(Path.Combine(suite, "app.json"))
+                            is { } suiteIdentity && suiteIdentity.AppId != Guid.Empty)
+                        BcRuntime.SetCurrentBundleInfo(suiteIdentity.AppId, suiteIdentity.Name,
+                            suiteIdentity.Publisher, suiteIdentity.Version.ToString());
                     BcRuntime.SetTestAssembly(asm);
                     BcRuntime.RegisterTestAssemblyInfo(asm);
                 }
@@ -4107,8 +4147,7 @@ if (watchUi)
     }
     finally
     {
-        foreach (var w in watchers) { w.EnableRaisingEvents = false; w.Dispose(); }
-        signal.Dispose();
+        WatchSource.DisposeWatch(signal, watchers);
     }
     if (!changed) return 0;
     PaintWatchRunning(); // flip the header to "⟳ running…" while the next cycle compiles
@@ -4445,6 +4484,30 @@ if (expectationsRequireMatch)
     }
 }
 
+// ── --test selection audit (#4055): a pattern that selects nothing is exit 6, not a clean
+// 0-test run. Judged for the invocation: under --jobs the worker only reports its count and the
+// parent decides (TestSelectionAudit). A bundle that did not compile or execute, a sliced
+// resume attempt or a lost carry file makes the zero unattributable, so those stand down.
+bool testSelectionEmpty = false;
+if (testFilter != null && !watchMode && !willResume && !carryIncomplete)
+{
+    var selected = executor.FilterSelectedCount + carriedResults.Sum(b => (long)b.Tests.Count);
+    if (AlRunner.Infrastructure.TestSelectionAudit.IsWorker)
+        Console.Error.WriteLine(AlRunner.Infrastructure.TestSelectionAudit.FormatWorkerLine(selected));
+    else if (selected == 0 && allResults.All(b => b.Tests.Count == 0))
+    {
+        if (allResults.Any(b => b.Stage is BucketStage.CompileFailed or BucketStage.ExecuteFailed || b.CompileErrors.Count > 0))
+            Console.Error.WriteLine(
+                $"test-selection: --test '{testFilter}' selected no test, not judged: a bundle did not "
+                + "compile or execute, so its tests were never offered to the pattern.");
+        else
+        {
+            testSelectionEmpty = true;
+            Console.Error.WriteLine("test-selection: " + AlRunner.Infrastructure.TestSelectionAudit.Describe(testFilter));
+        }
+    }
+}
+
 // Computed once regardless of --no-strict-exit: needed both as the process exit code
 // and as the "exitCode" field in --output-json, which reports the real outcome even
 // when the process itself exits 0 for JSON-only consumers.
@@ -4499,13 +4562,16 @@ int computedExitCode = 0;
         // so the mismatch was invisible in the exit code. A consumer told only "1" fixes the
         // failing test, sees green, and never learns three tests' worth of coverage vanished.
         : (countBaselineMismatch ? 4             // #1880: suite's count didn't exactly match its baseline
+        : (testSelectionEmpty ? 6                // #4055: --test selected no test; nothing was measured
         : (failed + errored > 0 ? 1              // at least one test failed
-        : (expectationsMatchFailure ? 5 : 0)));  // #3123: an expectations entry matched no test
+        : (expectationsMatchFailure ? 5 : 0))));  // #3123: an expectations entry matched no test
 }
 
 // Set when the --output-json document is owed to stdout, printed after the output writes
 // below have had their say on computedExitCode. See the branch that sets it.
 bool printJsonOutput = false;
+// #2502: the value that reproduces this run's Random() sequences. stdout is the JSON document in --output-json mode.
+(outputJson ? Console.Error : Console.Out).WriteLine($"seed: {AlRunner.Infrastructure.RunSeed.Value}");
 if (outputJson && willResume)
 {
     // The final attempt prints the whole run. If Rerun then fails to START that attempt it
@@ -5385,6 +5451,7 @@ return strictExitCode ? computedExitCode : 0;
             // #3735: same one function as the CLI loop above, computed once and used for both
             // the compile's paths and the registration — they are the same set by construction.
             var suitePaths = SuiteRegistrationDirs(suite, bucketRoot);
+            AlRunner.Patches.RecordPatches.RegisterAppGroupSourceDirs(suite, suitePaths);
             dirsToRegister.AddRange(suitePaths);
             allPaths.AddRange(suitePaths);
         }

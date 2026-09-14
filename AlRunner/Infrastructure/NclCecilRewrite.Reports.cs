@@ -701,7 +701,8 @@ public static partial class NclCecilRewrite
         // bypass the Session.Company.SharedObjects deref by calling NavForm 2-arg ctor
         // directly, which assigns masterPage and runs the rest of NavForm init using
         // `parent` (the report instance) as the ITreeObject. RequestPageBase.Parent is
-        // left null — not observable by AL tests; if needed later, set it explicitly.
+        // left null, and NavReportSync.BindRequestPageOpenedByBc depends on that shape (#4067):
+        // it falls back to the compiled CurrReport field. Setting Parent here is safe for it.
         {
             var requestPageBaseT = asm.MainModule.Types
                 .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.RequestPageBase");
@@ -988,6 +989,15 @@ public static partial class NclCecilRewrite
                     ?? throw new InvalidOperationException(
                         "RunnerFormInit.ShouldRegisterSourceExpressions not found — do not commit"));
 
+                // InitializeForm gets its own gate too: it is the constructor-time call that raises
+                // OnInit, and the instance mark is only set after the constructor returns (#4114).
+                var shouldInitializeRef = asm.MainModule.ImportReference(
+                    typeof(AlRunner.Patches.RunnerFormInit).GetMethod(
+                        nameof(AlRunner.Patches.RunnerFormInit.ShouldInitializeForm),
+                        BindingFlags.Public | BindingFlags.Static)
+                    ?? throw new InvalidOperationException(
+                        "RunnerFormInit.ShouldInitializeForm not found — do not commit"));
+
                 int rewrites = 0;
                 foreach (var m in navFormT.Methods)
                 {
@@ -995,7 +1005,7 @@ public static partial class NclCecilRewrite
                     bool target = false;
                     var guardRef = shouldRunRef;
                     if (m.Name == "CallInitializeComponentExtensionMethod" && m.Parameters.Count == 0) target = true;
-                    else if (m.Name == "InitializeForm" && m.Parameters.Count == 0 && m.ReturnType.FullName == "System.Void") target = true;
+                    else if (m.Name == "InitializeForm" && m.Parameters.Count == 0 && m.ReturnType.FullName == "System.Void") { target = true; guardRef = shouldInitializeRef; }
                     else if (m.Name == "RegisterSourceExpression") { target = true; guardRef = shouldRegisterRef; }
                     if (!target) continue;
                     // NEVER rewrite an async ValueTask body (CoreCLR segfault risk).

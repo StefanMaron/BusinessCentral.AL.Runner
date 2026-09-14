@@ -146,3 +146,156 @@ attempt. GitHub Actions concurrency is scoped per account, not per repository, s
 shared with every other repo and agent using the same account, not just this one. Nobody
 bypasses a red required check. The recipes above are for finding out whether a failure is
 real, not for making it go away.
+
+## 5b. The inherited red: a rebase, not a re-run (2026-09-13, #4092)
+
+Two corpus/runner pairs merged within an hour, each correctly ordered:
+
+| corpus PR | added | runner fix | merged |
+|---|---|---|---|
+| #336 | `TestPrecompiledReportLayouts.al`, codeunit 60974 | #4035 (`4d59608e`) | 01:21:23Z |
+| #337 | `TestReportNestedLinkImplicitParent.al`, codeunit 60224 | #4036 (`8908e999`) | 02:07:45Z |
+
+Corpus #336 merged at 01:21:19Z and its runner fix at 01:21:23Z — **four seconds apart**, which
+is the pair landing in one step as `bc-behavior-tests-go-upstream.md` step 5 requires. Thirteen
+open pull requests went red anyway, created between 20:59Z and 00:38Z, i.e. all before the pair.
+So the exposure is not the gap between the two merges (what #3922 measured) but the in-flight
+population at the moment the pair lands. A zero-length window bounds nothing.
+
+**What made the diagnosis tractable** was reading the failing codeunits off the leg log rather
+than sizing the failure by leg count. Twelve PRs failed on 60974 across three legs; one (#4056)
+failed on 60224 across two. Those counts are indistinguishable from an ordinary red, and the two
+groups needed different fix commits. Corpus #336's own body predicted the shape exactly —
+*"Before its fix it failed 4 of these 5 tests"* — and the legs reported exactly four.
+
+**The patch-id measurement.** Thirteen PRs were rebased and checked with `git patch-id --stable`
+over `git diff origin/main...HEAD`, before and after:
+
+- twelve returned an identical id;
+- **#4056 returned a different one** (`33e86914` → `d92dc3c5`), with the same 9 files and the
+  same 304 insertions / 10 deletions. Diffing the two diffs' `^[+-]` lines, excluding the
+  `+++`/`---` headers, gave **zero differing lines**. Only hunk *context* had moved, because
+  `main` advanced underneath — and `patch-id` hashes context.
+
+So identity is conclusive in the safe direction and a difference is not conclusive in the unsafe
+one. The rule records the resolution (diff the diffs) rather than this derivation.
+
+**Two PRs in the same sweep were red for their own reasons** and had to be kept out of the
+rebase batch: #4053 (four undeclared `[install-trigger]` sites, `Failed: 1, Passed: 5641`) and
+#4078 (`IsFixtureItem` had no arm for a walk whose item type the PR itself changed,
+`Failed: 2, Passed: 5692`). Both were found by the same per-codeunit / per-step read that
+identified the inherited ones; a bulk "rebase everything red" would have shipped both defects.
+
+## The same-tree recipe printed "same tree" for a commit git had never seen (2026-09-13, PR #4140)
+
+§5's "same code means the same tree" check shipped as:
+
+```bash
+[ "$(git rev-parse <sha1>^{tree})" = "$(git rev-parse <sha2>^{tree})" ] && echo "same tree"
+```
+
+`git rev-parse` on a SHA the clone does not have **echoes the argument back on stdout** and exits
+128. The `[ ]` therefore compares two echoed strings, and the `fatal:` lands on stderr where a
+`$( )` capture never sees it. Both directions reproduce:
+
+- **false positive** — the same unknown SHA twice prints `same tree`, for a commit git has never
+  heard of;
+- **false negative** — a shallow clone with two byte-identical trees prints nothing when one SHA
+  is unfetched. That is this section's *actual* use case: judging a flake across two CI run SHAs,
+  routinely on branches nobody fetched.
+
+`git rev-parse --verify -q` collapses both: it prints nothing and fails rather than echoing.
+
+Found by a reviewer on PR #4140, which is the PR that *added a guard for exactly this class* —
+the recipe had been declared "unpinnable, the comparison itself is `git rev-parse` equality with
+nothing to get subtly wrong", and the act of writing that declaration is what put a reviewer in
+front of it. The declaration was wrong and the mechanism surfaced it on its first use.
+
+Same shape as the three-dot `origin/main...HEAD` recipe that founded #3955: valid bash, exit 0,
+a plausible answer to a different question.
+
+## A paged count reported as a queue depth (2026-09-13, #4110)
+
+Through a six-hour Actions stall I reported the backlog three times from
+
+```bash
+gh api ".../actions/runs?per_page=100" --jq '[.workflow_runs[]|.status]|group_by(.)|...'
+```
+
+giving 74, 75, 81, 90. Every one was the composition of **page one**, capped at 100 by the query.
+The real figure, from the same response:
+
+```
+per_page=1 &status=queued  -> total_count: 438
+per_page=100&status=queued -> [.workflow_runs[]]|length: 100     <- pinned at the page size
+```
+
+Two consequences, and the second is the expensive one:
+
+- the depth was understated roughly five-fold;
+- the number **moved between reads** — 76 → 40 at one point — as the status mix on page one turned
+  over. I published that as "the queue is draining", which it was not.
+
+The tell was present in every reading and I did not look at it: **a count that brushes its own
+page size**. 90 out of a 100-row page is a paging artefact until `total_count` says otherwise.
+
+The SHA-filtered recipes in this rule are not exposed to it — one commit never accumulates 100
+runs — and that exemption was verified rather than assumed: `head_sha=<main>` returns
+`paged=25 total=25`.
+
+Same class as the `[36;1m` source echo recorded above: a correct instrument answering a question
+nobody asked, returning a plausible number that nothing downstream contradicts.
+
+## The floor debounce as an unbounded green streak (2026-09-14, #4178)
+
+Checking whether `main` had recovered, a workflow listing filtered to `main-verdict-floor.yml`
+showed **eight consecutive `success` runs over seven hours**, all on `917bbbf2`. Every one had
+`floor-matrix: skipped`; the conclusive run for that SHA was the `failure` beneath them, red on
+the nine codeunits tracked by #4167.
+
+The debounce is correct — it keys on the SHA already having a conclusive run and declines to
+re-measure. What makes it misleading is the interaction with a red `main` nobody has fixed: that
+SHA stays put, so the skips never stop and the green streak grows without bound.
+
+The rule's original example was one skip after one failure, which reads as a transient. The
+shape that actually occurs is a growing run of greens, and a streak is far likelier to be read
+as recovery than a single green is. Hence the addition: the LENGTH of the green run is not
+evidence; the run that measured the SHA is.
+
+Found while verifying, for the fourth time in one session, that main's red was still the same
+nine and not something new.
+
+## The `run:` block is echoed as source, and a grep counts it (2026-09-13)
+
+Three instances in one session, on three unrelated questions, each producing a plausible count
+that meant the opposite of what it looked like.
+
+**1. A retry loop that never retried** (#3231 / PR #4120). `grep -c "attempt .* of 5"` on the
+failing job returned **1**, read as "one iteration executed". The step had run 0.6 seconds and
+executed **zero** iterations; the single hit was the loop body echoed as source. The real defect
+was larger than filed — the loop aborted before its first iteration, so the retry mechanism had
+never functioned at all.
+
+**2. A `catch` that never fired** (PR #4109). The nightly's job concludes `success` over five
+real BC failures, and the rule first attributed that to a `catch` downgrading the throw to a
+`::warning::`. `grep -c "Run-TestsInBcContainer for"` returned **1**. Filtered, it returns
+**0**: the hit was the `Write-Host "::warning::..."` line inside the echoed script. The actual
+mechanism is `-returnTrueIfAllPassed | Out-Null` — a returned `$false` nobody reads.
+
+**3. A guard credited with running.** Same shape, on a `verdict-needed` block.
+
+Measured on both surviving logs:
+
+```
+                              raw grep   filtered
+retry loop, "attempt N of 5"      1          0
+nightly,  "Run-TestsInBc..."      1          0
+```
+
+**What makes it dangerous is that 1 is a believable answer.** A zero invites a second look; a
+one reads as confirmation. And the escape is invisible unless you fetch with
+`--allow-escape-sequences`, which is separately mandatory for these logs — so the same flag that
+makes the log readable is what makes the trap visible.
+
+The filter (`grep -v $'\x1b\[36;1m'`) was executed against both logs above before being written
+into the rule, per #3955.

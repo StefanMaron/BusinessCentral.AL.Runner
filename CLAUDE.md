@@ -230,6 +230,22 @@ identical from the outside:
 |---|---|---|
 | `grep -E` (the shell function) | rejects the flag, exits **0**, prints nothing | no matches |
 | `rg` without `--hidden` | skips dot-directories entirely | no matches |
+| `gh <thing> list --limit N` | returns the first N and says nothing | the thing does not exist |
+
+The third is the one that bites a *check* rather than a search, so it reaches a decision.
+Measured 2026-09-14: this repository had **164** labels, and `gh label list --limit 100 |
+grep -c 'blocked-by: corpus-verdict'` answered **0** for a label that exists — an agent nearly
+created a duplicate on that reading. The count moves; the mechanism does not, so re-derive it
+with the paginated form below rather than trusting the figure. `--limit` is a cap, never a page: there is no second page and no
+warning. Ask the API, which paginates:
+
+```bash
+gh api repos/<owner>/<repo>/labels --paginate --jq '.[].name'
+```
+
+The same shape applies to every `gh ... list --limit`: a `--limit 100` over 200 open issues is
+a silent half-answer, and `?per_page=1 --jq '.total_count'` is how you ask "how many" rather
+than "show me some" (`ci-verdicts.md`, the paged-count trap).
 
 This bites harder here than in most repos, because nearly everything that governs agent
 behaviour lives under `.claude/` — `rules/`, `skills/`, `agents/`, `hooks/`, `commands/`. So
@@ -248,5 +264,32 @@ One more empty-looking answer that is not: **`mise` prints a banner on stdout**,
 `x=$(gh ... )` captures `mise ~/.config/mise/config.toml tools: gh@2.100.0` alongside — or
 instead of — the value you wanted. **Filter a capture to the shape you expect**
 (`| command grep -E '^[0-9]+$'`) rather than testing whether it is non-empty.
+
+**3c. Writing markdown through `--body "..."` silently deletes your backticked spans.**
+
+A double-quoted shell string evaluates backticks as command substitution, so every `` `code
+span` `` in prose becomes the *output* of running it — usually empty, plus a `command not
+found` on stderr that no reader of the posted text ever sees. Measured on a live issue comment
+(#4110): a run id and a timestamp vanished, leaving `Reading the oldest queued run's jobs (,
+queued since ):` published, while `gh` exited 0 and printed the comment URL.
+
+This is the same family as the two traps above — the command succeeds, and the loss is visible
+only on a re-read — and it is worse in one way: the damage is public before you notice.
+
+```bash
+cat > /tmp/body.md <<'MDEOF'      # quoted delimiter: NO substitution at all
+... `code spans` and $vars stay literal ...
+MDEOF
+gh issue comment <N> --body-file /tmp/body.md
+```
+
+**Write any markdown body to a file through a quoted heredoc and pass `--body-file`.** Never
+`--body "…"` for prose containing backticks, `$`, or `!`. If you must inline it, re-read the
+posted text before trusting it.
+
+**And pick a delimiter the text cannot contain.** A heredoc ends at the first line equal to its
+delimiter, *including one inside the content*, so a body whose own example shows a heredoc
+terminates early and the shell then parses the remainder as commands. Measured composing the
+very PR that added this section. Writing the file from Python has neither problem.
 
 History: docs/incidents/CLAUDE.md.md

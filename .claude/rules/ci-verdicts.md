@@ -66,10 +66,28 @@ recovered" would invert the truth on identical code. **Check the `floor-matrix` 
 before reading a floor run as a verdict** — `gh api repos/<o>/<r>/actions/runs/<id>/jobs --jq
 '.jobs[]|"\(.name): \(.conclusion)"'` — and treat `skipped` as "no new measurement", never as green.
 
+**It is not one stale run: the skips continue for as long as the SHA sits there.** The debounce
+keys on the SHA already having a conclusive run, and a red `main` that nobody has fixed keeps
+that SHA, so every subsequent 30-minute floor run reports `success` with `floor-matrix: skipped`.
+Measured on `917bbbf2`: **eight consecutive `success` runs over seven hours**, every one of them
+skipped, while the conclusive run for that SHA was the `failure` beneath them. A workflow listing
+filtered to that workflow shows eight greens in a row on a `main` that has been red the whole
+time, so the length of the green streak is not evidence of anything — the run that measured the
+SHA is.
+
 **Beside every verdict it prints one line about `main` itself** — `main floor: RED on 8b6885f4
-(main-verdict-floor.yml, 1h ago)` (#3679), so a PR branched during a red window is visible as
-inheriting a failure it did not cause. It is a report: it never changes the exit code, and a
-read that did not happen prints `unavailable`, never a verdict.
+(main-verdict-floor.yml, 1h ago, 6 commits behind main)` (#3679, #4111), so a PR branched during
+a red window is visible as inheriting a failure it did not cause. It is a report: it never
+changes the exit code, and a read that did not happen prints `unavailable`, never a verdict.
+
+**Read the distance, not only the age** (#4111): the age says when the verdict was taken, the
+distance says what it still covers. A correct green about a `main` eight merges back is still
+not a verdict about the commit under suspicion — measured live at filing, `GREEN on d50d41fd`
+beside a true distance of 8. Three spellings, and the third is deliberately not either of the
+first two: `on main's current head`, `N commits behind main`, and `distance unknown: <why>` when
+the comparison could not be read. The count comes from GitHub's compare API rather than a local
+`git rev-list`, because a stale worktree under-reports — the direction that makes a stale verdict
+look current.
 
 **And one line per corpus PR the body cites** — `corpus PR #226: NOT-MERGEABLE (head 321ac71a)`
 (#3674), from `.github/scripts/corpus_pr_state.py`, the same module `pr-gate.yml`'s
@@ -165,6 +183,23 @@ A `cancelled` conclusion — on an older `headSha`, or on a run of the same work
 run has replaced — is **not this push's verdict**, whatever its individual jobs say. Two runs of
 one workflow on one SHA is normal (#2726).
 
+**Counting the returned page is not counting the queue.** `?per_page=100` caps the array at
+100, so `[.workflow_runs[]] | length` — or a `group_by` over it — answers *"what is on the page I
+fetched"*. The response carries the real figure:
+
+```bash
+gh api "repos/<o>/<r>/actions/runs?per_page=1&status=queued" --jq '.total_count'
+```
+
+Measured during #4110: a paged read reported ~81 queued across three separate comments while
+`total_count` said **433**, and the paged number *moved* between reads — as the mix on page one
+turned over, not as the queue changed. A "76 → 40, it is draining" was page turnover, and it was
+published as recovery.
+
+**The tell is a count that brushes its own page size.** Anything near 100 from a `per_page=100`
+query is a paging artefact until `total_count` says otherwise. The SHA-filtered recipes above are
+safe from this — one commit never has 100 runs — but a status- or repo-wide count is not.
+
 `head_sha` needs the **full** 40-character SHA. An abbreviated one returns `"workflow_runs": []`
 — a false negative that reads exactly like "no runs for this commit".
 
@@ -212,6 +247,7 @@ advisory on purpose** — `Required-context list must match the live branch rule
 repository for something no author can fix. So a red tick is not by itself proof the merge is
 blocked — ask the ruleset:
 
+<!-- Recipe-unpinned: reads the live branch ruleset from api.github.com; check_required_contexts.py is the executable half -->
 ```bash
 gh api repos/StefanMaron/BusinessCentral.AL.Runner/rules/branches/main \
   --jq '[.[]|select(.type=="required_status_checks")
@@ -274,6 +310,36 @@ log first (`gh run view <id> --log-failed`, or `mcp__github__get_job_logs` with
 that run. A second, independent run is what section 5's flake standard needs; "Getting a second
 run of the same commit" has the routes.
 
+### A job log prints the `run:` block AS SOURCE, so grepping finds the script
+
+Before any stdout, an Actions log echoes the step's script. Every line of it is a match for
+anything the script mentions — a loop's `echo`, a `::warning::` it *might* emit, a command it
+*might* run — so `grep -c` counts intent, not execution.
+
+The tell is the **`[36;1m` colour escape** wrapping the echoed source (visible only with
+`--allow-escape-sequences`, which you need anyway):
+
+```
+[36;1m  echo "main moved while pushing; recomputing (attempt $attempt of 5)"[0m
+```
+
+Measured three times in one session, on three unrelated questions:
+
+| the grep | what it seemed to show | what was true |
+|---|---|---|
+| `attempt N of 5` in a retry loop | one iteration ran | **zero** ran — the loop aborted before the first |
+| `::warning::Run-TestsInBcContainer` | the failure was caught and downgraded | the `catch` **never fired**; a discarded return value was the cause |
+| a `verdict-needed` guard's own text | the guard had evaluated | the block was echoed, not run |
+
+Each reading was plausible and each one had a count behind it. **Filter the escape out, or match
+on output the script cannot contain** — a timestamped result line, a summary, an `##[error]`:
+
+<!-- Recipe-pinned-by: tools/test_log_source_echo_filter_recipe.py -->
+```bash
+gh api repos/<o>/<r>/actions/jobs/<id>/logs --allow-escape-sequences \
+  | command grep -v $'\x1b\[36;1m' | command grep -E "<pattern>"
+```
+
 ### An empty log fetch is a refusal, not an empty log
 
 Both recipes print **nothing at all** for some jobs, and neither says "refused" where a caller
@@ -335,8 +401,19 @@ point; two commits with different trees are not the same code however closely re
 (corpus PR 2639). Confirm the trees match before comparing across commits:
 
 ```bash
-[ "$(git rev-parse <sha1>^{tree})" = "$(git rev-parse <sha2>^{tree})" ] && echo "same tree"
+a=$(git rev-parse --verify -q "<sha1>^{tree}") &&
+b=$(git rev-parse --verify -q "<sha2>^{tree}") &&
+[ "$a" = "$b" ] && echo "same tree"
 ```
+<!-- Recipe-unpinned: takes two commit SHAs of real runs; the comparison itself is git rev-parse equality with nothing to get subtly wrong -->
+
+**`--verify -q` is not optional, and the plain form fails in BOTH directions.** Without it,
+`git rev-parse` on a SHA this clone does not have **echoes the argument back on stdout** and
+exits 128, so the `[ ]` compares two echoed strings and the `fatal:` goes to stderr where a
+capture never sees it. Measured: the same unknown SHA twice prints **`same tree` for a commit
+git has never heard of**; and in a shallow clone, two commits with byte-identical trees print
+*nothing* when one SHA is unfetched — the false negative, which is this section's actual use
+case, since it judges flakes across CI run SHAs on branches you have not fetched.
 
 ### A red you inherited from the corpus is not a flake — count it per codeunit
 
@@ -370,6 +447,38 @@ command grep -E "^\S+Z *FAIL " <leg.log> | command grep -oE "Codeunit[0-9]+" | s
 
 **A docs-only PR going green beside a red BC-leg PR points at the corpus** — docs-only PRs run
 no legs, so they flow through the window untouched.
+
+### The same red, one phase later: the fix has MERGED and your branch predates it
+
+The section above covers a failing codeunit matched to an **open** runner PR — the fix has not
+landed, so you wait. This is the next phase of the same mechanism: **the fix has merged, and your
+branch does not contain it.** Waiting then achieves nothing, and a re-run reproduces the failure
+forever because it measures the same old code against the same new corpus.
+
+It does not change what an **unmatched** codeunit means — that warning stands exactly as above.
+What it adds is that a match against a *merged* runner PR is still a match, and its remedy is a
+rebase rather than a wait:
+
+```bash
+git merge-base --is-ancestor <that-PR's-merge-commit> <pr-head>   # false => rebase
+```
+
+Measured on #4092: corpus PR #336 and runner PR #4035 merged **four seconds apart** — the pair
+landing in one step, as `bc-behavior-tests-go-upstream.md` step 5 asks — and twelve open PRs went
+red on codeunit 60974 regardless, every one created before the pair. So the exposed population is
+each PR **already in flight** when a pair lands, not the gap between the two merges; a
+zero-length window bounds nothing.
+
+Then confirm the rebase preserved what a reviewer already read, so a standing verdict still
+applies. `git patch-id --stable` over `git diff origin/main...HEAD` is the cheap first check —
+but **`patch-id` hashes hunk context, so a changed id means "look", not "the content moved".**
+Resolve a difference by diffing the two diffs' added and removed lines; equal there is equal.
+Measured across thirteen rebases: twelve identical ids, one changed id whose added/removed lines
+differed in **zero** places.
+
+**A bulk rebase hides a real defect.** In that sweep of fifteen red PRs, two were red for their
+own reasons — `Failed: 1, Passed: 5641` and `Failed: 2, Passed: 5692` — and only the per-codeunit
+read separated them from the twelve. Rebasing everything red would have shipped both.
 
 ### Getting a second run of the same commit without `gh run rerun`
 

@@ -74,25 +74,40 @@ internal static class TestArtifacts
 
     internal static string LegacyCacheDir(string home) => Path.Combine([home, .. LegacyCacheRelative]);
 
+    /// <summary>
+    /// The runner-owned artifacts root this machine actually uses: <paramref name="home"/>'s
+    /// standard cache, or <c>AL_RUNNER_ARTIFACTS_ROOT</c> when set — resolved by the runner's own
+    /// <see cref="AlRunner.Infrastructure.BcArtifacts.ResolveArtifactsRoot"/>, so the gate cannot
+    /// look somewhere the runner and the build do not (#2768).
+    /// </summary>
+    internal static string ArtifactsRootIn(string? home, string? artifactsRootEnv)
+        => AlRunner.Infrastructure.BcArtifacts.ResolveArtifactsRoot(
+            artifactsRootEnv,
+            () => string.IsNullOrEmpty(home) ? throw new InvalidOperationException("no home directory") : home);
+
+    private static string? ArtifactsRootEnv => Environment.GetEnvironmentVariable(
+        AlRunner.Infrastructure.BcArtifacts.ArtifactsRootEnvVar);
+
     /// <summary>True when BC artifacts are provisioned on this machine.</summary>
-    internal static bool Present() => PresentIn(HomeDir());
+    internal static bool Present() => PresentIn(HomeDir(), ArtifactsRootEnv);
 
     /// <summary>
     /// <see cref="Present"/> against an explicit home directory, so the detection itself is
     /// testable against a constructed layout rather than only against whatever the current
     /// machine happens to have.
     /// </summary>
-    internal static bool PresentIn(string? home)
-    {
-        if (string.IsNullOrEmpty(home)) return false;
+    internal static bool PresentIn(string? home) => PresentIn(home, artifactsRootEnv: null);
 
+    internal static bool PresentIn(string? home, string? artifactsRootEnv)
+    {
         // Legacy full-sandbox cache: presence of the sandbox root is enough — the version
         // dirs underneath are what Program.cs scans.
-        if (Directory.Exists(LegacyCacheDir(home))) return true;
+        if (!string.IsNullOrEmpty(home) && Directory.Exists(LegacyCacheDir(home))) return true;
 
         // What CI provisions. The ROOT alone is not provisioning: the download step creates
         // artifacts/<version>/, and an empty (or wiped) root carries no service-tier DLLs.
-        var standard = StandardCacheDir(home);
+        if (string.IsNullOrEmpty(home) && string.IsNullOrWhiteSpace(artifactsRootEnv)) return false;
+        var standard = ArtifactsRootIn(home, artifactsRootEnv);
         return Directory.Exists(standard) && Directory.EnumerateDirectories(standard).Any();
     }
 
@@ -101,14 +116,17 @@ internal static class TestArtifacts
     /// point: the defect this replaces was a gate looking somewhere nobody populates, and a
     /// reason that lists its candidates makes that visible the first time it is wrong.
     /// </summary>
-    internal static string MissingReason(string? home)
+    internal static string MissingReason(string? home) => MissingReason(home, artifactsRootEnv: null);
+
+    internal static string MissingReason(string? home, string? artifactsRootEnv)
     {
-        if (string.IsNullOrEmpty(home))
+        if (string.IsNullOrEmpty(home) && string.IsNullOrWhiteSpace(artifactsRootEnv))
             return "BC artifacts not provisioned: no home directory (HOME unset and no user profile), "
                  + "so neither artifact cache could be probed.";
 
-        return $"BC artifacts not provisioned: no version directory under '{StandardCacheDir(home)}' "
-             + $"and no '{LegacyCacheDir(home)}'. Provision with "
+        var legacy = string.IsNullOrEmpty(home) ? "(no home directory)" : LegacyCacheDir(home);
+        return $"BC artifacts not provisioned: no version directory under '{ArtifactsRootIn(home, artifactsRootEnv)}' "
+             + $"and no '{legacy}'. Provision with "
              + "`dotnet build AlRunner.slnx -p:AllowBcArtifactDownload=true` "
              + "(see .github/workflows/bc-tests.yml).";
     }
@@ -118,7 +136,7 @@ internal static class TestArtifacts
     /// The caller must be a <c>[SkippableFact]</c>/<c>[SkippableTheory]</c>;
     /// TestArtifactsGateTests.EveryTestThatCanSkipIsDeclaredSkippable enforces that.
     /// </summary>
-    internal static void SkipIfMissing() => SkipIfMissingIn(HomeDir(), RunningOnCi);
+    internal static void SkipIfMissing() => SkipIfMissingIn(HomeDir(), ArtifactsRootEnv, RunningOnCi);
 
     /// <summary>
     /// <see cref="SkipIfMissing"/> against an explicit environment.
@@ -127,10 +145,13 @@ internal static class TestArtifacts
     /// for why a visible skip is not enough there.
     /// </summary>
     internal static void SkipIfMissingIn(string? home, bool runningOnCi)
-    {
-        if (PresentIn(home)) return;
+        => SkipIfMissingIn(home, artifactsRootEnv: null, runningOnCi);
 
-        var reason = MissingReason(home);
+    internal static void SkipIfMissingIn(string? home, string? artifactsRootEnv, bool runningOnCi)
+    {
+        if (PresentIn(home, artifactsRootEnv)) return;
+
+        var reason = MissingReason(home, artifactsRootEnv);
         if (runningOnCi) Assert.Fail(CiMissingArtifactsMessage(reason));
         throw new SkipException(reason);
     }

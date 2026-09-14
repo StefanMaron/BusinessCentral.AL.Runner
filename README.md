@@ -234,9 +234,11 @@ symptom and not the cause. The runner prints the error it was reported in place 
 `[testpage]` note under the failure. What AL sees is unchanged: `asserterror` and
 `GetLastErrorText` still read only BC's message.
 
-Environment variables: `AL_RUNNER_VERBOSE=1`, `AL_RUNNER_SHOW_PASS=1`, `AL_RUNNER_TRACE_NRE=1` (logs every first-chance NRE before AL `asserterror` swallows it), `AL_RUNNER_BCBAK` (path to the `bcbak` backup reader used by `--test-data`), `AL_RUNNER_ARTIFACTS_ROOT` (see below).
+Environment variables: `AL_RUNNER_VERBOSE=1`, `AL_RUNNER_SHOW_PASS=1`, `AL_RUNNER_TRACE_NRE=1` (logs every first-chance NRE before AL `asserterror` swallows it), `AL_RUNNER_BCBAK` (path to the `bcbak` backup reader used by `--test-data`), `AL_RUNNER_ARTIFACTS_ROOT`, `AL_RUNNER_CACHE_ROOT` and `AL_RUNNER_SYMBOLS_ROOT` (see below).
 
 `AL_RUNNER_ARTIFACTS_ROOT=DIR` moves the BC artifact cache off the home directory — useful when it has to sit on a different volume, or on a mounted path on a CI runner. `DIR` is the root the per-version subdirectories live under (default `~/.local/share/al-runner/artifacts`), so `--bc-version`, latest-in-cache defaulting and provisioning keep working. That is what makes it different from `--artifact-path`, which pins one version's engine directory and skips version selection entirely. A relative value is resolved against the current directory. The build reads it too, so a relocated cache stays buildable from source. Moving `$HOME` instead would relocate every other runner path (`~/.cache/al-runner`, `~/.bcartifacts.cache`, `~/.local/share/al-runner/symbols`) along with it.
+
+The two runner-owned siblings have their own variables, resolved the same way (blank means the default, a relative value is resolved against the current directory): `AL_RUNNER_CACHE_ROOT=DIR` moves `~/.cache/al-runner` — the AL-output cache and every named cache beside it — while `--cache` and `--no-cache` still win for the run they are passed to, and a `DIR` that cannot be created exits 2 naming the variable. `AL_RUNNER_SYMBOLS_ROOT=DIR` moves the curated symbols tree `~/.local/share/al-runner/symbols`, which the runner only reads. `~/.bcartifacts.cache` is VS Code's AL-extension cache, not the runner's, so it has no variable.
 
 ## Test Corpus
 
@@ -265,9 +267,10 @@ table is a copy and the CLI is the authority.
 | `3` | A bundle could not compile |
 | `4` | `--count-baseline`: a suite's test or app-group count did not exactly match its declared baseline, or under `--count-baseline-require-all` a declared suite produced no bucket |
 | `5` | `--expectations-require-match`: an expectations entry matched no test in this run |
+| `6` | `--test PATTERN` selected no test in this run (under `--jobs`, summed across workers; not applied in `--watch`/`--server`) |
 
 When a run holds several of these at once it reports the most fundamental, in the order
-**`3` > `2` > `4` > `1` > `5`**. The boundary that matters is between `3`/`2`/`4` — *this
+**`3` > `2` > `4` > `6` > `1` > `5`**. The boundary that matters is between `3`/`2`/`4`/`6` — *this
 report cannot be trusted, because the run did not measure what it claims to* — and `1`/`5`,
 which are statements about the AL the run did measure. So a run that both fails a test and
 measured the wrong number of tests reports `4`: fixing the failing test would otherwise turn

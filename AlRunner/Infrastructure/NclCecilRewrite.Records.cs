@@ -1290,25 +1290,29 @@ public static partial class NclCecilRewrite
             Console.Error.WriteLine("[Cecil] Prepended StampSystemFieldsOnInsert → NavRecord.ALInsertAsync(DataError,bool,bool)");
         }
 
-        // ── NavRecord.ALInsertAsync(DataError, bool, bool) — User system-table insert arm ──
+        // ── NavRecord.InsertAsync(DataError, bool, bool, bool) — User system-table insert arm ──
         // On a real tier, SystemTableTriggers.OnBeforeInsertAsync's `case 2000000120:` arm
         // refuses a duplicate user name / Windows SID (#2983) and then inserts the matching
-        // User Property (2000000121) row for every User it accepts — and BC's own
-        // UserManagement.DirectSetUserFieldValue then Gets that row with the RAISING error
-        // level. The runner bypasses BC's trigger dispatch on insert, so none of it ran. Same
-        // prepend shape as AssignAutoIncrement / StampSystemFieldsOnInsert above; a no-op for
-        // every table but User. See AlRunner/Patches/UserTableTriggerPatches.cs and issues
-        // #2355 / #2983.
+        // User Property (2000000121) row for every User it accepts. The runner bypasses BC's
+        // trigger dispatch on insert, so this prepend stands in for it; a no-op for every
+        // table but User. See AlRunner/Patches/UserTableTriggerPatches.cs, #2355 / #2983.
+        //
+        // InsertAsync(4), NOT ALInsertAsync(3): BC's arm sits in the data layer, and two
+        // routes reach it — ALInsertAsync(3) (AL Rec.Insert) and NavForm.SaveRecordAsync
+        // (CurrPage.Update / SaveRecord on a new record), which calls InsertAsync(4) directly.
+        // Prepending ALInsertAsync(3) missed the page route (#4121, corpus 61204). Both
+        // routes funnel through InsertAsync(4); it has no overrides (bc284).
         {
             var navRecord = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord")
                 ?? throw new InvalidOperationException("NavRecord type not found in Ncl");
-            var alInsert3 = navRecord.Methods.FirstOrDefault(m =>
-                m.Name == "ALInsertAsync"
-                && m.Parameters.Count == 3
+            var insert4 = navRecord.Methods.FirstOrDefault(m =>
+                m.Name == "InsertAsync"
+                && m.Parameters.Count == 4
                 && m.Parameters[0].ParameterType.Name == "DataError"
                 && m.Parameters[1].ParameterType.MetadataType == Mono.Cecil.MetadataType.Boolean
-                && m.Parameters[2].ParameterType.MetadataType == Mono.Cecil.MetadataType.Boolean)
-                ?? throw new InvalidOperationException("NavRecord.ALInsertAsync(DataError,bool,bool) not found");
+                && m.Parameters[2].ParameterType.MetadataType == Mono.Cecil.MetadataType.Boolean
+                && m.Parameters[3].ParameterType.MetadataType == Mono.Cecil.MetadataType.Boolean)
+                ?? throw new InvalidOperationException("NavRecord.InsertAsync(DataError,bool,bool,bool) not found");
 
             var helperMi = typeof(AlRunner.Patches.UserTableTriggerPatches).GetMethod(
                 nameof(AlRunner.Patches.UserTableTriggerPatches.OnBeforeUserInsert),
@@ -1316,13 +1320,13 @@ public static partial class NclCecilRewrite
                 ?? throw new InvalidOperationException("UserTableTriggerPatches.OnBeforeUserInsert not found");
             var helperRef = asm.MainModule.ImportReference(helperMi);
 
-            var body = alInsert3.Body;
+            var body = insert4.Body;
             var il = body.GetILProcessor();
             var firstOriginal = body.Instructions[0];
             il.InsertBefore(firstOriginal, il.Create(OpCodes.Ldarg_0));
             il.InsertBefore(firstOriginal, il.Create(OpCodes.Call, helperRef));
             if (body.MaxStackSize < 1) body.MaxStackSize = 1;
-            Console.Error.WriteLine("[Cecil] Prepended OnBeforeUserInsert → NavRecord.ALInsertAsync(DataError,bool,bool)");
+            Console.Error.WriteLine("[Cecil] Prepended OnBeforeUserInsert → NavRecord.InsertAsync(DataError,bool,bool,bool)");
         }
 
         // ── NavRecord.ALDeleteAsync(DataError, bool, bool) — User system-table delete arm ──

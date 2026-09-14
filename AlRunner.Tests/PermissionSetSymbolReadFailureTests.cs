@@ -16,9 +16,9 @@
 //        "does not exist" — a WRONG answer, not a missing one.
 //
 //   Site 2's warning did not even reach the user: Log's default-verbosity filter drops lines
-//   starting with a `[Component]` tag, and `[RecordPatches]` matches it. Measured by
-//   VanishedApp_WarningSurvivesLogsDefaultFilter below, which drives the REAL filter rather
-//   than re-implementing its regex.
+//   starting with a `[Component]` tag, and `[RecordPatches]` matches it. Both
+//   *_SurvivesLogsDefaultFilter tests below drive the REAL filter, each against a
+//   `[RecordPatches]` control line written through the same writer.
 //
 // WHICH FAILURES ARE STILL TOLERATED, AND WHY
 //   Exactly the distinction #2712 already settled for the table-symbol read in
@@ -90,7 +90,7 @@ public sealed class PermissionSetSymbolReadFailureTests : IDisposable
     private const string AppGuid = "b1b0d3e4-3031-4a31-9a31-000000003031";
 
     // Object ids process-wide unique among AlRunner.Tests statics: 939xx is taken by the
-    // #2712 / warm-reload / eviction tests, so this file uses 94100-94102.
+    // #2712 / warm-reload / eviction tests, so this file uses 94100-94104.
     private static string SymbolReference(int permissionSetId, string roleId, bool poison)
     {
         // The root "AppId" is the ONLY difference: a string (parseable) or a number (throws in
@@ -243,10 +243,9 @@ public sealed class PermissionSetSymbolReadFailureTests : IDisposable
     [Fact]
     public void VanishedApp_WarningSurvivesLogsDefaultFilter()
     {
-        // The skip above is only honest if the user is TOLD. This drives Log's REAL filter
-        // (Log.Install wraps whatever Console.Error currently is) rather than re-implementing
-        // its regex, because the bug being guarded against is precisely a tag that the regex
-        // eats — `[RecordPatches]` did, which is why the pre-fix warning was invisible.
+        // The skip above is only honest if the user is TOLD, by BOTH sites. Drives Log's REAL
+        // filter rather than its regex; the `[RecordPatches]` control line through the same
+        // writer is what shows the filter was live, so the warnings survived it (#3191).
         var appPath = Path.Combine(_root, "vanishing2.app");
         WriteApp(appPath, SymbolReference(94104, "BUG3031 VANISH2", poison: false));
         RecordPatches.ResetForReload();
@@ -266,6 +265,8 @@ public sealed class PermissionSetSymbolReadFailureTests : IDisposable
             Log.Install();            // wrap `captured` in the same FilteredWriter users get
             InvokeBuildKnownAppNameIndex();
             DrainKnownPermissionSets();
+            // The control: the tag the pre-#3031 warning used, through the same writer.
+            Console.Error.WriteLine($"[RecordPatches] control line: {appPath}");
             Console.Error.Flush();
             text = captured.ToString();
         }
@@ -276,11 +277,11 @@ public sealed class PermissionSetSymbolReadFailureTests : IDisposable
             Log.Verbose = savedVerbose;
         }
 
-        Assert.Contains("vanishing2.app", text);
-        Assert.Contains("[warn]", text);
-        // The specific claim: a `[Component]`-tagged line would NOT have survived. Proven by
-        // pushing one through the very same writer and finding it absent.
-        Console.Error.Flush();
+        // Each site's warning reaches the terminal, naming the .app ...
+        var lines = text.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Contains(lines, l => l.StartsWith("[warn] Aggregate Permission Set:") && l.Contains("vanishing2.app"));
+        Assert.Contains(lines, l => l.StartsWith("[warn] Metadata Permission Set:") && l.Contains("vanishing2.app"));
+        // ... and the control line, written through the very same writer, does not.
         Assert.DoesNotContain("[RecordPatches]", text);
     }
 

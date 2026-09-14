@@ -33,10 +33,11 @@
 //   Issue #2355. Measured on Microsoft's Tests-SINGLESERVER bucket, BC 28.1.49838.53910.
 //
 // WHY A PREPEND, AND WHY THIS ENTRY POINT
-//   NavRecord.ALInsertAsync(DataError, bool, bool) is the single async entry point every AL
-//   `Insert()` surface funnels through — the same one AssignAutoIncrement and
-//   StampSystemFieldsOnInsert are already prepended to. Running BEFORE the user row is
-//   written matches BC, whose own companion insert happens in OnBEFOREInsert.
+//   NavRecord.InsertAsync(DataError, bool, bool, bool) is where every insert route meets:
+//   AL `Insert()` (via ALInsertAsync) and a page's CurrPage.Update / SaveRecord on a new
+//   record (NavForm.SaveRecordAsync calls it directly). BC's arm is in the data layer, so it
+//   runs on both; a prepend on ALInsertAsync alone missed the page route (#4121). Running
+//   BEFORE the user row is written matches BC's OnBEFOREInsert.
 //
 //   The companion insert itself goes through ALInsert, which re-enters this prepend with
 //   table 2000000121 and returns immediately — the table check below is what bounds it.
@@ -124,7 +125,7 @@ public static class UserTableTriggerPatches
     private const string TenantReportLayoutUserIdFieldName = "User ID";  // Tenant Rep. Layout 5
 
     /// <summary>
-    /// Prepended to NavRecord.ALInsertAsync(DataError, bool, bool). A no-op for every table
+    /// Prepended to NavRecord.InsertAsync(DataError, bool, bool, bool). A no-op for every table
     /// but User (2000000120); for that one it runs BC's
     /// SystemTableTriggers.OnBeforeInsertAsync `case 2000000120:` arm in BC's own order —
     /// the uniqueness refusals first, then the User Property companion row.

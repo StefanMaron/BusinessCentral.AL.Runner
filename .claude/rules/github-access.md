@@ -19,6 +19,7 @@ success on work it never did.
 ```bash
 command -v gh >/dev/null 2>&1 && echo "gh available" || echo "use mcp__github__* tools"
 ```
+<!-- Recipe-unpinned: its answer IS the environment under test; a box with gh cannot measure the gh-less branch -->
 
 - **`gh` available** → use it. Pass `--repo StefanMaron/BusinessCentral.AL.Runner`
   on every command.

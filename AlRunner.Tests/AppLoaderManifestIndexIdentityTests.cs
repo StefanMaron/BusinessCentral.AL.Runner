@@ -50,7 +50,7 @@ public sealed class AppLoaderManifestIndexIdentityTests
     /// </summary>
     private static byte[] BuildApp(
         Guid appId, string name, string publisher, string version,
-        Guid depId, string depName, bool symbolReference, int padBytes)
+        Guid depId, string depName, bool symbolReference, int padBytes, byte padFill = 0)
     {
         var xml = $"""
             <?xml version="1.0" encoding="utf-8"?>
@@ -63,25 +63,54 @@ public sealed class AppLoaderManifestIndexIdentityTests
             </Package>
             """;
 
+        var entries = new List<(string, byte[])> { ("NavxManifest.xml", Encoding.UTF8.GetBytes(xml)) };
+        if (symbolReference) entries.Add(("SymbolReference.json", "{}"u8.ToArray()));
+        if (padBytes > 0) entries.Add(("pad.bin", Enumerable.Repeat(padFill, padBytes).ToArray()));
+        return Navx(StoredZip(entries.ToArray()));
+    }
+
+    /// <summary>
+    /// A zip of STORED entries under one fixed timestamp. The fixed timestamp matters to the
+    /// central-directory arms (#4050): with <c>CreateEntry</c>'s default of "now", two packages
+    /// built a second apart differ in every entry's DOS time, and an arm meant to show that the
+    /// CRC-32 alone separates them would pass on the timestamp instead.
+    /// </summary>
+    private static byte[] StoredZip(params (string Name, byte[] Data)[] entries)
+    {
         using var ms = new MemoryStream();
         using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
         {
-            using (var s = zip.CreateEntry("NavxManifest.xml", CompressionLevel.NoCompression).Open())
-                s.Write(Encoding.UTF8.GetBytes(xml));
-            if (symbolReference)
-                using (var s = zip.CreateEntry("SymbolReference.json", CompressionLevel.NoCompression).Open())
-                    s.Write("{}"u8);
-            if (padBytes > 0)
-                using (var s = zip.CreateEntry("pad.bin", CompressionLevel.NoCompression).Open())
-                    s.Write(new byte[padBytes]);
+            foreach (var (name, data) in entries)
+            {
+                var entry = zip.CreateEntry(name, CompressionLevel.NoCompression);
+                entry.LastWriteTime = new DateTimeOffset(2020, 1, 1, 0, 0, 0, TimeSpan.Zero);
+                using var s = entry.Open();
+                s.Write(data);
+            }
         }
-        var zipBytes = ms.ToArray();
+        return ms.ToArray();
+    }
 
+    /// <summary>The 8-byte NAVX header (magic + zip offset 8), then the zip.</summary>
+    private static byte[] Navx(byte[] zipBytes)
+    {
         var result = new byte[8 + zipBytes.Length];
         result[0] = (byte)'N'; result[1] = (byte)'A'; result[2] = (byte)'V'; result[3] = (byte)'X';
         BitConverter.TryWriteBytes(result.AsSpan(4, 4), (uint)8);
         zipBytes.CopyTo(result, 8);
         return result;
+    }
+
+    /// <summary>The central directory's bytes, located the way a reader locates them: the EOCD
+    /// record's size and offset fields, relative to the zip's start.</summary>
+    private static (int Start, byte[] Bytes) CentralDirectory(byte[] app)
+    {
+        int zipStart = BitConverter.ToInt32(app, 4);
+        int eocd = app.Length - 22; // no zip comment in anything these tests build
+        Assert.Equal(0x06054b50u, BitConverter.ToUInt32(app, eocd));
+        int cdSize = BitConverter.ToInt32(app, eocd + 12);
+        int cdStart = zipStart + BitConverter.ToInt32(app, eocd + 16);
+        return (cdStart, app.AsSpan(cdStart, cdSize).ToArray());
     }
 
     /// <summary>
@@ -396,16 +425,219 @@ public sealed class AppLoaderManifestIndexIdentityTests
         });
     }
 
+    // ── #4050: the identity is the package's central directory, not all of its bytes ──
+    //
+    // Hashing every byte of every scanned package cost ~4.2G instructions on a warm trivial run
+    // (#4050). The central directory records every entry's name, sizes and CRC-32, and the index
+    // payload is a function of entry names plus two entries' contents, so a directory-level
+    // identity still separates the #2987 pairs above. These arms pin the cases that argument
+    // rests on, each constructed so the ONLY difference the directory can see is the one named.
+
+    [Fact]
+    public void CentralDirectoriesDifferingOnlyInTheManifestsCrc32_AreTwoPackages()
+    {
+        WithCacheRoot(cacheRoot =>
+        {
+            var dir = NewDir("manifest-identity-crc-only-");
+            var appPath = Path.Combine(dir, "Pkg.app");
+            var stamp = new DateTime(2023, 2, 3, 4, 5, 6, DateTimeKind.Utc);
+            var depId = new Guid("88888888-8888-8888-8888-888888888888");
+            var appIdA = new Guid("a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1");
+            var appIdB = new Guid("b2b2b2b2-b2b2-b2b2-b2b2-b2b2b2b2b2b2");
+            var bytesA = BuildApp(appIdA, "Same", "Pub", "1.0.0.0", depId, "Dep", true, 64);
+            var bytesB = BuildApp(appIdB, "Same", "Pub", "1.0.0.0", depId, "Dep", true, 64);
+
+            // The construction, asserted: same length, and central directories that differ
+            // ONLY inside the first record's CRC-32 field (offset 16, 4 bytes) — NavxManifest.xml's.
+            Assert.Equal(bytesA.Length, bytesB.Length);
+            var (cdStartA, cdA) = CentralDirectory(bytesA);
+            var (cdStartB, cdB) = CentralDirectory(bytesB);
+            Assert.Equal(cdStartA, cdStartB);
+            Assert.Equal(cdA.Length, cdB.Length);
+            var differing = Enumerable.Range(0, cdA.Length).Where(i => cdA[i] != cdB[i]).ToArray();
+            Assert.NotEmpty(differing);
+            Assert.All(differing, i => Assert.InRange(i, 16, 19));
+            Assert.Equal(bytesA[^22..], bytesB[^22..]); // the EOCD record alone cannot tell them apart
+
+            File.WriteAllBytes(appPath, bytesA);
+            File.SetLastWriteTimeUtc(appPath, stamp);
+            Assert.Equal(appIdA, AppLoader.ReadManifest(appPath)!.AppId);
+
+            SimulateProcessRestart();
+            File.WriteAllBytes(appPath, bytesB);
+            File.SetLastWriteTimeUtc(appPath, stamp);
+
+            var served = AppLoader.ReadManifest(appPath);
+            Assert.Equal(appIdB, served!.AppId);
+            Assert.Equal(2, AppLoader.ManifestParseInvocationCountForTests(appPath));
+            Assert.Equal(2, IndexEntries(cacheRoot).Length);
+        });
+    }
+
+    [Fact]
+    public void R2rShapedPackage_NestedManifestDiffers_SameOuterLengthAndMtime_ServesTheNewIdentity()
+    {
+        WithCacheRoot(cacheRoot =>
+        {
+            var dir = NewDir("manifest-identity-nested-");
+            var appPath = Path.Combine(dir, "Pkg.app");
+            var stamp = new DateTime(2024, 7, 8, 9, 10, 11, DateTimeKind.Utc);
+            var depId = new Guid("99999999-9999-9999-9999-999999999999");
+            var appIdA = new Guid("c3c3c3c3-c3c3-c3c3-c3c3-c3c3c3c3c3c3");
+            var appIdB = new Guid("d4d4d4d4-d4d4-d4d4-d4d4-d4d4d4d4d4d4");
+
+            // Microsoft's R2R layout: no NavxManifest.xml in the outer archive; the manifest is
+            // inside the nested .app, which the outer directory sees as ONE entry.
+            byte[] Outer(Guid inner) => Navx(StoredZip(
+                ("readytorunappmanifest.json", "{}"u8.ToArray()),
+                ("inner.app", BuildApp(inner, "Nested", "Microsoft", "28.0.0.0", depId, "Dep", true, 128)),
+                ("[Content_Types].xml", "<Types/>"u8.ToArray())));
+            var bytesA = Outer(appIdA);
+            var bytesB = Outer(appIdB);
+            Assert.Equal(bytesA.Length, bytesB.Length);
+            Assert.NotEqual(bytesA, bytesB);
+
+            File.WriteAllBytes(appPath, bytesA);
+            File.SetLastWriteTimeUtc(appPath, stamp);
+            var metaA = AppLoader.ReadPackageMeta(appPath);
+            Assert.Equal(appIdA, metaA.Manifest!.AppId);
+            Assert.True(metaA.HasSymbolReference);
+
+            SimulateProcessRestart();
+            File.WriteAllBytes(appPath, bytesB);
+            File.SetLastWriteTimeUtc(appPath, stamp);
+
+            var metaB = AppLoader.ReadPackageMeta(appPath);
+            Assert.Equal(appIdB, metaB.Manifest!.AppId);
+            Assert.True(metaB.HasSymbolReference);
+            Assert.Equal(2, IndexEntries(cacheRoot).Length);
+        });
+    }
+
+    [Fact]
+    public void SameManifest_DifferentNonManifestEntryBytes_IsIndexedAsASecondPackage()
+    {
+        WithCacheRoot(cacheRoot =>
+        {
+            var dir = NewDir("manifest-identity-pad-content-");
+            var appPath = Path.Combine(dir, "Pkg.app");
+            var stamp = new DateTime(2025, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+            var appId = new Guid("e5e5e5e5-e5e5-e5e5-e5e5-e5e5e5e5e5e5");
+            var depId = new Guid("12121212-1212-1212-1212-121212121212");
+            var bytesA = BuildApp(appId, "Pad", "Pub", "1.0.0.0", depId, "Dep", true, 256, padFill: 0x00);
+            var bytesB = BuildApp(appId, "Pad", "Pub", "1.0.0.0", depId, "Dep", true, 256, padFill: 0x5A);
+            Assert.Equal(bytesA.Length, bytesB.Length);
+            Assert.NotEqual(bytesA, bytesB);
+
+            File.WriteAllBytes(appPath, bytesA);
+            File.SetLastWriteTimeUtc(appPath, stamp);
+            Assert.Equal(appId, AppLoader.ReadManifest(appPath)!.AppId);
+
+            SimulateProcessRestart();
+            File.WriteAllBytes(appPath, bytesB);
+            File.SetLastWriteTimeUtc(appPath, stamp);
+            Assert.Equal(appId, AppLoader.ReadManifest(appPath)!.AppId);
+
+            // The identity does not decide which entries matter to the payload: any entry's bytes
+            // changing makes it a different package, reparsed and indexed on its own.
+            Assert.Equal(2, AppLoader.ManifestParseInvocationCountForTests(appPath));
+            Assert.Equal(2, IndexEntries(cacheRoot).Length);
+        });
+    }
+
+    [Fact]
+    public void Identity_ReadsTheCentralDirectory_NotTheEntryData()
+    {
+        var dir = NewDir("manifest-identity-bytes-read-");
+        var appPath = Path.Combine(dir, "Big.app");
+        const int pad = 8 * 1024 * 1024;
+        File.WriteAllBytes(appPath, BuildApp(
+            new Guid("f6f6f6f6-f6f6-f6f6-f6f6-f6f6f6f6f6f6"), "Big", "Pub", "1.0.0.0",
+            new Guid("13131313-1313-1313-1313-131313131313"), "Dep", true, pad, padFill: 0x33));
+
+        using var counting = new CountingStream(File.OpenRead(appPath));
+        var identity = AppLoader.ComputeManifestIndexIdentityCore(
+            counting, static () => throw new InvalidOperationException("must not fall back to the full-content hash"));
+
+        Assert.StartsWith("zipcd-", identity);
+        Assert.InRange(counting.BytesRead, 1, 70_000);
+    }
+
+    [Fact]
+    public void NeaRuntimePackage_FallsBackToTheFullContentHash()
+    {
+        var dir = NewDir("manifest-identity-nea-");
+        var appPath = Path.Combine(dir, "Runtime.app");
+        // The directory of a runtime package lives inside an RC4 layer, so there is no plain
+        // central directory to read: the identity is the full-content hash, as before #4050.
+        // The body ENDS in bytes shaped like an empty zip's EOCD record, so a reader that skipped
+        // the .NEA check would find a "directory" in RC4 output and key on it.
+        var payload = new byte[4096];
+        new Random(4050).NextBytes(payload);
+        byte[] fakeEocd = [0x50, 0x4B, 0x05, 0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0];
+        byte[] nea = [0x2E, 0x4E, 0x45, 0x41, 0x00, 0x00, 0x00, 0x01, .. payload, .. fakeEocd];
+        File.WriteAllBytes(appPath, Navx(nea));
+
+        using var s = File.OpenRead(appPath);
+        Assert.Equal("sha256-full", AppLoader.ComputeManifestIndexIdentityCore(s, static () => "sha256-full"));
+        Assert.Equal(
+            "sha256-" + RunnerFingerprint.ComputeContentHash(appPath) + ".json",
+            Path.GetFileName(AppLoader.ManifestIndexPathForTests(appPath)));
+    }
+
+    [Fact]
+    public void FullContentFallback_UnknownHash_StaysTheRefusedSentinel_AndPublishesNothing()
+    {
+        Assert.Equal("sha256-abc123", AppLoader.FullContentIdentity("abc123"));
+        Assert.Equal(RunnerFingerprint.UnknownContentHash, AppLoader.FullContentIdentity(RunnerFingerprint.UnknownContentHash));
+        Assert.Equal(RunnerFingerprint.UnknownContentHash, AppLoader.FullContentIdentity(""));
+
+        WithCacheRoot(cacheRoot =>
+        {
+            var dir = NewDir("manifest-identity-fallback-unknown-");
+            var depId = new Guid("14141414-1414-1414-1414-141414141414");
+            var pathA = Path.Combine(dir, "A.app");
+            var pathB = Path.Combine(dir, "B.app");
+            File.WriteAllBytes(pathA, BuildApp(new Guid("1a1a1a1a-1a1a-1a1a-1a1a-1a1a1a1a1a1a"), "AAA", "Pub", "1.0.0.0", depId, "Dep", true, 0));
+            File.WriteAllBytes(pathB, BuildApp(new Guid("1b1b1b1b-1b1b-1b1b-1b1b-1b1b1b1b1b1b"), "BBB", "Pub", "1.0.0.0", depId, "Dep", true, 0));
+
+            // The default provider's fallback half, with the full-content hash unavailable.
+            static string Unreadable(string _) => AppLoader.FullContentIdentity(RunnerFingerprint.UnknownContentHash);
+            Assert.Equal("AAA", AppLoader.ReadManifestCore(pathA, Unreadable)!.Name);
+            Assert.Equal("BBB", AppLoader.ReadManifestCore(pathB, Unreadable)!.Name);
+            Assert.Empty(IndexEntries(cacheRoot));
+        });
+    }
+
+    private sealed class CountingStream(Stream inner) : Stream
+    {
+        public long BytesRead { get; private set; }
+        public override bool CanRead => true;
+        public override bool CanSeek => inner.CanSeek;
+        public override bool CanWrite => false;
+        public override long Length => inner.Length;
+        public override long Position { get => inner.Position; set => inner.Position = value; }
+        public override int Read(byte[] buffer, int offset, int count)
+        { var n = inner.Read(buffer, offset, count); BytesRead += n; return n; }
+        public override int Read(Span<byte> buffer)
+        { var n = inner.Read(buffer); BytesRead += n; return n; }
+        public override long Seek(long offset, SeekOrigin origin) => inner.Seek(offset, origin);
+        public override void Flush() { }
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        protected override void Dispose(bool disposing) { if (disposing) inner.Dispose(); base.Dispose(disposing); }
+    }
+
     // ── the entry-name convention ────────────────────────────────────────────────
 
     /// <summary>
-    /// A pre-#2987 stat-keyed entry name is also 64 lowercase hex characters plus
-    /// <c>.json</c> — indistinguishable from a content hash by shape. The <c>sha256-</c>
-    /// prefix is what makes a warm pre-fix cache directory unreadable as a content-keyed one
-    /// rather than silently misread (#2955's convention).
+    /// Entries are named for the scheme that produced the identity. <c>zipcd-</c> (#4050) is a
+    /// hash of the package's central directory; <c>sha256-</c> is the full-content hash #2987
+    /// introduced and which a package without a plain directory still uses. A scheme prefix is
+    /// what keeps an entry written under one from being read as the other.
     /// </summary>
     [Fact]
-    public void IndexEntryName_CarriesTheSha256Prefix()
+    public void IndexEntryName_CarriesTheCentralDirectoryScheme()
     {
         WithCacheRoot(cacheRoot =>
         {
@@ -420,8 +652,7 @@ public sealed class AppLoaderManifestIndexIdentityTests
             var entries = IndexEntries(cacheRoot);
             Assert.Single(entries);
             var name = Path.GetFileName(entries[0]);
-            Assert.StartsWith("sha256-", name);
-            Assert.Equal("sha256-" + RunnerFingerprint.ComputeContentHash(appPath) + ".json", name);
+            Assert.Matches("^zipcd-[0-9a-f]{64}\\.json$", name);
             Assert.Equal(entries[0], AppLoader.ManifestIndexPathForTests(appPath));
         });
     }

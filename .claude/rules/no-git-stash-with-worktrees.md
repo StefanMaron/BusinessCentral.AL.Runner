@@ -43,12 +43,18 @@ because the deletions are committed; and the same-tree check (`ci-verdicts.md` �
 `git merge-tree --write-tree` also keeps the other PR's files, so the damage is a wrong *diff*
 rather than a merge that reverts anything.
 
+<!-- Recipe-pinned-by: tools/test_stale_origin_main_diff_recipe.py -->
 **`git diff --stat origin/main...HEAD` does NOT catch it — use two dots.** Three-dot diffs
 against the **merge base**, and a soft reset moves the merge base back with it, so re-added
-content reads as insertions and the command prints a clean `1 file changed`. Measured in four
-scratch repositories (both stale-ref orderings × `--soft`/`--hard`), and reproduced
-independently: three-dot `1 file changed, 1 insertion(+)`; two-dot
-`2 files changed, 1 insertion(+), 50 deletions(-)`.
+content reads as insertions and the command prints a clean `1 file changed`: three-dot
+`1 file changed, 1 insertion(+)`; two-dot `2 files changed, 1 insertion(+), 50 deletions(-)`.
+
+**Only one ordering of three discriminates, so reproduce that one.** Where the branch was
+built, what `reset --soft` targeted and what `origin/main` held at read time are three
+independent choices; `tools/test_stale_origin_main_diff_recipe.py` executes all eight and
+**six show the two forms agreeing**. The numbers above are the ordering where they differ
+(branch built before the other PR, reset to the stale ref, `origin/main` fresh at read).
+A run that picked an ordering without checking would have reported either form fine.
 
 So: **`git fetch origin main` immediately before any command naming `origin/main` as a base** —
 `reset`, `rebase`, `merge-tree`, `diff` — and read **`git diff --stat origin/main..HEAD`**, two

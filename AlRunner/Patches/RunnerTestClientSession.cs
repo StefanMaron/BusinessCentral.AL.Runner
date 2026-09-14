@@ -55,6 +55,12 @@ public sealed class RunnerTestClientSession : ITestClientSession
         if (RequestPageTestPage.TryGetFor(form) is { } requestPage)
             return requestPage;
 
+        // Unbound, but still a request page: BC's own report engine opened it (the async
+        // Report.Run entry points precompiled AL calls, #4067). Never fall through to the page
+        // surface below — PageIdOf answers the REPORT's id, which can name an unrelated page.
+        if (form is RequestPageBase requestPageForm)
+            return AlRunner.NavReportSync.BindRequestPageOpenedByBc(requestPageForm, requestPageForm.Parent);
+
         var pageId = PageIdOf(form);
 
         // A page with no SourceTable is ordinary, legal AL — the StandardDialog shape, whose

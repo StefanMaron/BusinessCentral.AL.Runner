@@ -64,9 +64,10 @@ al-runner [OPTIONS] <bundle-dir>...
 | `3` | A bundle could not compile. |
 | `4` | A suite's test or app-group count did not match its declared baseline (`--count-baseline`), or a declared suite produced no bucket (`--count-baseline-require-all`). |
 | `5` | An expectations entry matched no test in this run (`--expectations-require-match`). |
+| `6` | `--test PATTERN` selected no test in the whole invocation (#4055). Under `--jobs` the workers' counts are summed; not applied in `--watch` or `--server`. |
 
 A run can hold several of these at once, and reports the most fundamental: **`3` > `2` > `4` >
-`1` > `5`**. `3`, `2` and `4` all say *the run did not measure what it claims to*, so the
+`6` > `1` > `5`**. `3`, `2`, `4` and `6` all say *the run did not measure what it claims to*, so the
 report cannot be read at face value; `1` and `5` are statements about the AL it did measure.
 That is why a count-baseline mismatch outranks a test failure (#3350) — a consumer who sees
 only `1` fixes the failing test, sees green, and never learns that a bundle stopped being
@@ -78,4 +79,7 @@ discovered.
 name. `AL_RUNNER_BCBAK` points at the backup reader used by `--test-data`.
 `AL_RUNNER_ARTIFACTS_ROOT` moves the Business Central artifact cache off your
 home directory, which is useful when it has to live on another volume or on a CI
-runner's mounted path.
+runner's mounted path. `AL_RUNNER_CACHE_ROOT` does the same for the runner's cache
+tree (`~/.cache/al-runner`; `--cache` and `--no-cache` still take precedence), and
+`AL_RUNNER_SYMBOLS_ROOT` for the curated symbols tree
+(`~/.local/share/al-runner/symbols`).

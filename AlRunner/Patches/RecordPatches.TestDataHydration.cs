@@ -58,10 +58,10 @@
 //   actually stores one (Job Queue Entry."Job Timeout" = 43200000, a JSON number of
 //   milliseconds).
 //
-//   Still refused, and named when it is: TableFilter (BC's reader has a case — 504 raw bytes —
-//   but no CRONUS table stores one, so the shape the backup reader emits for it has never been
-//   measured here, #2271), and any column name that is not an AL field of the target table.
-//   Removing nine reasons to refuse did not remove the ability to.
+//   TableFilter followed (#2271): the reader emits its varbinary(504) cell as "0x" + hex,
+//   measured on Permission."Security Filter", so every case BC's reader has is now transcribed.
+//   Still refused, and named when it is: a type that reader has no case for, and any column
+//   name that is not an AL field of the target table.
 //
 // TABLE-EXTENSION FIELDS (issue #2261)
 //   BC splits an extended table across the base table and a `<table>$ext` companion. The
@@ -87,6 +87,13 @@
 //      IS the metadata every AL statement in this run resolves field access against, so a
 //      column absent from it is unaddressable here and its absence cannot change an answer AL
 //      can read.
+//      That argument holds only for a column that truly names no field: a column the reader
+//      named by SQL name (`Routing No_` for Item."Routing No.", a same-app tableextension
+//      field) is mapped through NCLMetaField.SqlColumnName first, and only an unmatched or
+//      ambiguous one is dropped (#2273; BuildTestDataSqlColumnAliases). Measured on 28.1.49838.53910,
+//      that includes `Allow Gaps in Nos_`: the metatable DOES carry field 11 (Business
+//      Foundation's tableextension 309 declares it ObsoleteState = Removed), so it maps; the
+//      "compiled out" reading above no longer describes this build.
 //      One refusal remains, for the mismatch the old rule was aimed at: a row shape that
 //      shares NO column with the table. Dropping every column of that would insert rows made
 //      entirely of defaults.
@@ -104,13 +111,17 @@
 //      leaves it None. So the guard lives once per run, in TestDataProvisioner, where it is
 //      answered by the reader instead of by our own metadata.
 //
-// WHAT IS DELIBERATELY NOT HYDRATED, AND IS SAID OUT LOUD
-//   BC's system columns (`timestamp`, `$systemId`, `$systemCreatedAt`, `$systemCreatedBy`,
-//   `$systemModifiedAt`, `$systemModifiedBy`) carry no AL field id in the reader's schema
-//   output, so mapping them back to AL fields 2000000000-2000000004 would rest on a
-//   convention no service tier has confirmed here. They are left at the field's own BC
-//   default (NavValue.CreateNavValueFromObject(field, null), i.e. what Record.Init() gives)
-//   and reported in the hydration summary. See the issue for the follow-up.
+// BC'S PLATFORM COLUMNS (issue #2260)
+//   The reader emits them by SQL name, and ParseRows re-keys them onto their AL fields
+//   (TestDataSystemColumns): `$systemId` is field 2000000000 SystemId — the column
+//   NavSqlSystemIdHelper adds for it — and `$systemCreatedAt`…`$systemModifiedBy` are the audit
+//   fields 2000000001-2000000004, whose NCLMetaField.SqlColumnName is "$s" + FieldName.Substring(1).
+//   Values go through the Guid and DateTime cases below, like any other column. Trap: do NOT
+//   derive `$systemId` from SqlColumnName — FieldIsAuditField excludes 2000000000, and the
+//   runner's metatable answers `SystemId` for it (measured on all 77 tables the fixture loads).
+//   `timestamp` (the SQL rowversion, field 0) is NOT hydrated, and the summary says so: how the
+//   in-memory store maintains field 0 across a restored value and later inserts is unmeasured
+//   (#4123).
 using AlRunner.Infrastructure;
 using System.Reflection;
 using System.Text.Json;
@@ -129,11 +140,20 @@ internal sealed class TestDataHydrationRefusal : Exception
 
 public static partial class RecordPatches
 {
-    /// <summary>Column names the reader emits for BC's own bookkeeping. See the file header
-    /// for why they are excluded rather than mapped.</summary>
-    internal static readonly IReadOnlySet<string> TestDataSystemColumnNames =
-        new HashSet<string>(StringComparer.Ordinal)
-        { "timestamp", "$systemId", "$systemCreatedAt", "$systemCreatedBy", "$systemModifiedAt", "$systemModifiedBy" };
+    /// <summary>The reader's SQL name for each platform field it emits, and the field that holds
+    /// it (#2260). See the file header for the citations.</summary>
+    internal static readonly IReadOnlyDictionary<string, (int FieldNo, string FieldName)> TestDataSystemColumns =
+        new Dictionary<string, (int FieldNo, string FieldName)>(StringComparer.Ordinal)
+        {
+            ["$systemId"] = (2000000000, "SystemId"),
+            ["$systemCreatedAt"] = (2000000001, "SystemCreatedAt"),
+            ["$systemCreatedBy"] = (2000000002, "SystemCreatedBy"),
+            ["$systemModifiedAt"] = (2000000003, "SystemModifiedAt"),
+            ["$systemModifiedBy"] = (2000000004, "SystemModifiedBy"),
+        };
+
+    /// <summary>The SQL rowversion column. Not hydrated — see the file header.</summary>
+    internal const string TestDataTimestampColumnName = "timestamp";
 
     /// <summary>The outcome of one table's hydration: how many rows landed, how many merged
     /// columns belonged to an app this run does not have installed, and how many named a
@@ -148,9 +168,51 @@ public static partial class RecordPatches
     internal readonly record struct TestDataColumnPlan(
         IReadOnlyList<string> Mapped,
         IReadOnlyList<string> FromUninstalledApps,
-        IReadOnlyList<string> NotInThisBuild)
+        IReadOnlyList<string> NotInThisBuild,
+        IReadOnlyDictionary<string, string> MappedBySqlName)
     {
-        internal bool CanHydrate => Mapped.Count > 0 || (FromUninstalledApps.Count == 0 && NotInThisBuild.Count == 0);
+        internal bool CanHydrate => Mapped.Count > 0 || MappedBySqlName.Count > 0
+            || (FromUninstalledApps.Count == 0 && NotInThisBuild.Count == 0);
+    }
+
+    private static readonly IReadOnlyDictionary<string, string> NoSqlAliases =
+        new Dictionary<string, string>(StringComparer.Ordinal);
+
+    /// <summary>
+    /// SQL column name -> AL field name, for every field whose BC-computed
+    /// <see cref="NCLMetaField.SqlColumnName"/> differs from its AL name (#2273).
+    ///
+    /// The backup reader names a column of a same-app tableextension field (Item."Routing No.",
+    /// declared by Base Application's own tableextension "Mfg. Item" and stored in the Item table
+    /// itself) by its SQL name, `Routing No_`. That field IS in this run's metatable, so the
+    /// column is not "absent from this build" and dropping it blanks a value AL reads.
+    /// The SQL name is BC's own answer, not a re-implementation of its escaping.
+    ///
+    /// A SQL name two fields claim is left out, so it stays dropped-and-counted rather than being
+    /// assigned to either. A field whose getter throws (it dereferences parent/app state the
+    /// runner's metadata may not carry) contributes no alias, which is the pre-#2273 answer.
+    /// </summary>
+    internal static IReadOnlyDictionary<string, string> BuildTestDataSqlColumnAliases(
+        IEnumerable<(string FieldName, Func<string?> SqlColumnName)> fields)
+    {
+        var aliases = new Dictionary<string, string>(StringComparer.Ordinal);
+        var ambiguous = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (fieldName, sqlColumnName) in fields)
+        {
+            string? sql;
+            try { sql = sqlColumnName(); }
+            catch (Exception) { continue; }
+            if (string.IsNullOrEmpty(sql) || string.Equals(sql, fieldName, StringComparison.Ordinal)) continue;
+            if (ambiguous.Contains(sql)) continue;
+            if (aliases.TryGetValue(sql, out var existing) && !string.Equals(existing, fieldName, StringComparison.Ordinal))
+            {
+                aliases.Remove(sql);
+                ambiguous.Add(sql);
+                continue;
+            }
+            aliases[sql] = fieldName;
+        }
+        return aliases;
     }
 
     /// <summary>
@@ -176,17 +238,34 @@ public static partial class RecordPatches
     /// </summary>
     internal static TestDataColumnPlan PlanTestDataColumns(
         IReadOnlySet<string> fieldNames, IEnumerable<string> columnNames)
+        => PlanTestDataColumns(fieldNames, columnNames, NoSqlAliases);
+
+    /// <summary>
+    /// As above, but a bare column that is not an AL field name and equals a field's SQL column
+    /// name (<see cref="BuildTestDataSqlColumnAliases"/>) is mapped onto that field, never
+    /// dropped. An AL-name column for the same field wins; the SQL-name duplicate is then
+    /// dropped and counted.
+    /// </summary>
+    internal static TestDataColumnPlan PlanTestDataColumns(
+        IReadOnlySet<string> fieldNames, IEnumerable<string> columnNames,
+        IReadOnlyDictionary<string, string> sqlColumnAliases)
     {
+        var distinct = columnNames.Distinct(StringComparer.Ordinal).ToList();
+        var present = new HashSet<string>(distinct, StringComparer.Ordinal);
         var mapped = new List<string>();
+        var bySqlName = new Dictionary<string, string>(StringComparer.Ordinal);
         var fromUninstalledApps = new List<string>();
         var notInThisBuild = new List<string>();
-        foreach (var name in columnNames.Distinct(StringComparer.Ordinal))
+        foreach (var name in distinct)
         {
             if (fieldNames.Contains(name)) mapped.Add(name);
             else if (BackupCatalog.TryParseUnresolvedExtensionColumn(name, out _, out _)) fromUninstalledApps.Add(name);
+            else if (sqlColumnAliases.TryGetValue(name, out var field) && fieldNames.Contains(field)
+                     && !present.Contains(field))
+                bySqlName[name] = field;
             else notInThisBuild.Add(name);
         }
-        return new TestDataColumnPlan(mapped, fromUninstalledApps, notInThisBuild);
+        return new TestDataColumnPlan(mapped, fromUninstalledApps, notInThisBuild, bySqlName);
     }
 
     /// <summary>
@@ -231,7 +310,7 @@ public static partial class RecordPatches
     /// <summary>
     /// Insert <paramref name="rows"/> into <paramref name="tableId"/>'s in-memory store.
     /// <paramref name="rows"/> is one dictionary per row, keyed by the AL field NAME the
-    /// reader emitted (BC's system columns already dropped by the caller).
+    /// reader emitted (BC's platform columns already re-keyed, and `timestamp` dropped, by the caller).
     ///
     /// A key that resolves to a field of the target NCLMetaTable — the metatable the row is
     /// actually inserted into — is hydrated. A key that does not is dropped and counted, in
@@ -294,7 +373,13 @@ public static partial class RecordPatches
         // metatable's own field names, so a dropped column is simply never asked for.
         var plan = PlanTestDataColumns(
             (IReadOnlySet<string>)new HashSet<string>(fieldByName.Keys, StringComparer.Ordinal),
-            rows.SelectMany(r => r.Keys));
+            rows.SelectMany(r => r.Keys),
+            BuildTestDataSqlColumnAliases(
+                fieldByName.Values.Select(f => (f.FieldName, (Func<string?>)(() => f.SqlColumnName)))));
+        if (plan.MappedBySqlName.Count > 0)
+            rows = rows.Select(r => (IReadOnlyDictionary<string, JsonElement>)r.ToDictionary(
+                kv => plan.MappedBySqlName.TryGetValue(kv.Key, out var field) ? field : kv.Key,
+                kv => kv.Value, StringComparer.Ordinal)).ToList();
         if (!plan.CanHydrate)
             throw new TestDataHydrationRefusal(
                 $"table {tableId} '{tableNameForDiagnostics}': not one of the backup's "
@@ -352,7 +437,7 @@ public static partial class RecordPatches
             var metadata = (INavValueMetadata)field;
             if (!row.TryGetValue(field.FieldName, out var json))
             {
-                // No stored value for this field in the backup: a FlowField, a system column
+                // No stored value for this field in the backup: a FlowField, the rowversion
                 // (see the file header), or a field this app version added. BC's own default
                 // for the field's type — the same value Record.Init() produces — not a guess
                 // at what the source "probably" held.
@@ -668,12 +753,32 @@ public static partial class RecordPatches
                 return CreateOrRefuse(() => new NavRecordId(buffer), Refuse);
             }
 
+            case NavNclType.NavTableFilter:
+            {
+                // BC:
+                //   byte[] a = new byte[504];
+                //   reader.GetBytes(columnIndex, 0L, a, 0, a.Length);
+                //   return new NavTableFilter(a);
+                //
+                // The buffer is load-bearing: NavTableFilter(byte[]) throws unless handed
+                // exactly 504 bytes, and GetBytes leaves a short cell's tail zero. The bytes are
+                // not parsed here — NavTableFilter.EnsureBinaryParsed does that lazily, as in BC.
+                // An all-zero cell is NOT swapped for NavTableFilter.Default; BC constructs
+                // unconditionally and IsZeroOrEmpty answers true for it anyway. Measured wire
+                // shape (#2271): Permission."Security Filter", nine cells of "0x" + 1,008 zeros.
+                var stored = ParseTestDataHexBytes(json, Refuse);
+                if (stored.Length > NavTableFilter.ByteSize)
+                    throw new TestDataHydrationRefusal(Refuse(
+                        $"the backup holds {stored.Length} bytes, more than the "
+                        + $"{NavTableFilter.ByteSize} BC reads into a TableFilter"));
+                var buffer = new byte[NavTableFilter.ByteSize];
+                Array.Copy(stored, buffer, stored.Length);
+                return CreateOrRefuse(() => new NavTableFilter(buffer), Refuse);
+            }
+
             default:
-                // TableFilter/…
-                // Not "unsupported forever" — unproven. BC's reader has a TableFilter case
-                // (504 raw bytes), but no table in the shipped CRONUS data stores one, so the
-                // shape the backup reader emits for it has never been measured here and this
-                // codec will not invent one. See #2271.
+                // NavSqlCommand.CreateNavValueFromReader's own default throws
+                // NotSupportedException; every case it has is transcribed above.
                 throw new TestDataHydrationRefusal(Refuse(
                     "this runner build cannot yet rebuild that AL type from a backup value"));
         }

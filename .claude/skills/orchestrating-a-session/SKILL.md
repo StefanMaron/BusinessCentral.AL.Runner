@@ -162,6 +162,14 @@ nobody gave the new head. Measured on #3978: armed at exit 2 with 0 failing, two
 `Failed: 2, Passed: 5506` twenty minutes later, and the coordinator found it only by sweeping.
 **Disarm before dispatching the repair**, then re-arm on a fresh verdict.
 
+**`tools/armed-prs.py` is that re-read, as one command with no arguments.** It lists the armed
+set and reports only the PRs that are failing or whose verdict could not be read; a PR whose
+checks are still running is the ordinary armed state and stays quiet. Exit 0 nothing to do,
+1 something is failing, **3 a verdict could not be read** — which is not "fine", because nobody
+measured it. It reports and never disarms: the repair sequence above stays the coordinator's
+call. Timings that justify a tool over the sweep alone: two armed PRs sat red for **12 and 119
+minutes** on a night with nineteen armed at once (#4006).
+
 Arm **only** when all of these hold. Any one missing means report it to the coordinator instead:
 
 - **The PR is on a branch this loop owns.** Check the **branch prefix**, never the author field
@@ -236,6 +244,25 @@ produce it, because it skips the mutation on a mergeable PR — does not follow,
 mergeable" there means *as cached at fetch time*, and the gap between the two reads is the race.
 `--auto` on a settled-green PR still merges on the spot (#3095); that is not in question.
 
+**A second cause reaches the same exit-0-but-unarmed state, and its fix is the opposite one.**
+The race above is a *clean-status* one, cleared by re-running **without** `--auto`. During an
+API degradation the call instead fails in transport — a bare **GraphQL 502 or 500** — and `gh`
+still exits 0 with the PR neither merged nor armed. There the state is *not* clean, so dropping
+`--auto` would be wrong; a plain retry of the same command takes. Measured three times on
+2026-09-13 while `gh pr create` was also failing with 502s and the REST endpoint was healthy.
+
+Telling them apart is cheap **when there is a message at all**: the clean-status error names
+`enablePullRequestAutoMerge`, a transport error names an HTTP status. But a degraded endpoint
+also returns an **empty body**, which parses as nothing — measured minutes later on this same
+outage, where two `gh api ... -X POST` calls produced `unexpected end of JSON input` from the
+*parser* rather than any status from GitHub, and the third attempt succeeded. So the absence of
+a recognisable error is not evidence of the clean-status race.
+
+When in doubt, retry the same command once and re-read; if it is the clean-status race, the
+retry fails the same way and *then* you drop `--auto`. **Retrying is the safe default**, because
+it cannot merge anything: the wrong guess costs one call, while dropping `--auto` on a PR that
+is not clean asks GitHub to merge on unpassed checks.
+
 **So the exit code is not the check — the PR's state is.** After any `gh pr merge`, re-read it:
 
 ```bash
@@ -271,6 +298,18 @@ pile-up is obvious it is already too deep to clear in one fresh batch.
 within minutes when other loops and outside contributors push. Pass `--match-head-commit` so a
 merge refuses rather than quietly taking a commit nobody reviewed - a SHA in one brief had a red
 verdict attached by the time the review finished.
+
+**Pass the FULL 40-character SHA to `--match-head-commit`.** An abbreviated one is rejected by
+the GraphQL layer (`Could not coerce value "ca0f311d" to GitObjectID`), and the failure wears
+the shape of a success: nothing merges, nothing is armed, and `gh` still leaves `$?` at 0 in a
+pipeline, so a loop reading the exit code reports "armed" about a PR that is untouched. The
+PR's own state is the check, as everywhere else on this page:
+
+```bash
+head=$(gh pr view <N> --repo <owner>/<repo> --json headRefOid --jq .headRefOid)
+gh pr merge <N> --repo <owner>/<repo> --squash --delete-branch --auto --match-head-commit "$head"
+gh pr view <N> --repo <owner>/<repo> --json state,autoMergeRequest   # re-read; this is the check
+```
 
 One session's sample, and review time scales with PR size. Re-measure with `tools/agent-cost.py`
 rather than treating the ratio as settled.
@@ -392,6 +431,14 @@ merge, resolves `master` (#3737). There is no pin and no count-baseline line to 
 more; what a second run can still change is the corpus itself, so a runner PR whose verdict
 predates a corpus merge is measured against the older corpus. Read the `corpus: <sha> (<ref>)`
 line the legs print before arming, and re-run rather than carrying an old verdict forward.
+
+**Merging the CORPUS PR is the direction this paragraph does not cover, and "citing" is the
+wrong key there.** A runner PR declaring `Corpus-NA:` is paired with a corpus PR and names it
+nowhere, so "does any open runner PR cite this one?" answers empty for a pair that exists.
+Before merging a corpus PR, read its own body for the runner issue it was written for and check
+that issue for an open PR closing it — the recipe is in `al-language-submodule.md` §
+"Finding the pair from the CORPUS side, where no citation points back" (#4168). Measured on
+corpus #350, whose pair #4141 even said in prose that the two were unlinked.
 
 **A push restarts the matrix, so a non-blocking finding waits for the gating leg.** A reviewer's
 "worth fixing eventually" item on a PR whose required BC legs are mid-flight costs ~15 minutes of

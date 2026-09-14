@@ -20,6 +20,10 @@ back through ordinary AL `Record` calls with the right values.
   and a DB NULL. The load-bearing assertion is the Blob's CONTENT: a BC Blob column stores
   BC's container (four magic bytes + raw Deflate), not the field's bytes, so a codec that
   stored it verbatim would still give a blob with `HasValue` = true and a plausible length.
+- `TestDataSystemFields.Codeunit.al` (#2260) — `SystemId` and the audit fields
+  (`SystemCreatedAt`, `SystemCreatedBy`, `SystemModifiedAt`, `SystemModifiedBy`). Customer 10000
+  is the subject because its created and modified instants differ, so a mapping that sends one
+  column to the wrong field fails; `GetBySystemId` is asserted both ways.
 
 - `TestDataSameAppExtensionColumns.Codeunit.al` (#2273, #2301) — a column the base table's own
   AL field list does not name, because BC stores a tableextension's fields in the base table
@@ -30,6 +34,11 @@ back through ordinary AL `Record` calls with the right values.
   is the failure in the form Microsoft's Tests-SINGLESERVER hit it: ~220 of its tests failed with
   "You cannot assign new numbers from the number series CONT" against a backup where that series
   has 99,977 numbers left.
+
+- `TestDataSameNamedTable.Codeunit.al` (#2264) — "Dimension Set Entry", a name Base Application
+  and Power BI Report embeddings both use in one company. Before #2264 the runner refused the
+  name; now the candidate the closure resolves (480) is read with `--app` set to its owning app.
+  The assertion is the exact count (89) plus one row's values.
 
 **CI does not run this bundle, and that is deliberate.** It only passes with `--test-data`
 and a BC sandbox backup on the machine (~1 GB, shipped inside the sandbox artifact). CI runs

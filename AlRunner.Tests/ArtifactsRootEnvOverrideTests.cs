@@ -251,7 +251,8 @@ public sealed class ArtifactsRootEnvOverrideTests
     public void Cli_RunsARealSuite_OutOfARelocatedArtifactsRoot()
     {
         TestArtifacts.SkipIfMissing();
-        var provisioned = TestArtifacts.StandardCacheDir(TestArtifacts.HomeDir()!);
+        var provisioned = TestArtifacts.ArtifactsRootIn(TestArtifacts.HomeDir(),
+            Environment.GetEnvironmentVariable(BcArtifacts.ArtifactsRootEnvVar));
         // The gate is also satisfied by the legacy BcContainerHelper layout, which is not the
         // tree this test relocates — so require the runner-owned one specifically.
         TestArtifacts.SkipIf(!Directory.Exists(provisioned),

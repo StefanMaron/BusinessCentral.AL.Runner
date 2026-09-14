@@ -1,0 +1,6 @@
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  AlRunner.Provisioning -> /repo/AlRunner.Provisioning/bin/Debug/net8.0/AlRunner.Provisioning.dll
+  AlRunner.QueryJoin -> /repo/AlRunner.QueryJoin/bin/Debug/net8.0/AlRunner.QueryJoin.dll
+  AlRunner -> /repo/AlRunner/bin/Debug/net8.0/al-runner.dll
+/repo/AlRunner.Tests/BcEngineCollection.cs(334,35): error CS0127: Since 'BcEngineReadinessGuard.AssertReadyOnCi(bool, string?, bool)' returns void, a return keyword must not be followed by an object expression [/repo/AlRunner.Tests/AlRunner.Tests.csproj]

@@ -65,6 +65,19 @@ internal static partial class ProgramSupport
             AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir,
             AlRunner.Infrastructure.BcArtifacts.SelectedVersion.ToString());
 
+        // #4031: the bundle run's engine-major guard, before the shadow hop or the Ncl rewrite
+        // can act on a selection this build cannot run.
+        try
+        {
+            AlRunner.Infrastructure.BcArtifacts.VerifyEngineConsistency(
+                AlRunner.Infrastructure.EngineVariants.Discover(AppContext.BaseDirectory).Count);
+        }
+        catch (InvalidOperationException ex)
+        {
+            Console.Error.WriteLine($"BC version selection failed: {ex.Message}");
+            return 2;
+        }
+
         // #2156 (found while adding #2152's proving test for this subcommand): --precompile
         // dispatches before the main run flow's own "Cecil-rewrite Ncl.dll in place" step ever
         // runs (that block lives much further down in Main, past the `--precompile` early
@@ -273,24 +286,27 @@ internal static partial class ProgramSupport
     }
 
     // ── --emit-app subcommand ──────────────────────────────────────────────────
-    // Usage: --emit-app <bundleDir> <outPath> [--package-cache PATH ...]
+    // Usage: --emit-app <bundleDir> <outPath>
     // Emits the bundle dir as a real NAVX .app package using PackageModuleOutputter.
     // Useful as a standalone debug tool and as the core of the layered pre-pass.
     internal static int RunEmitApp(string[] args)
     {
         if (args.Length < 2)
         {
-            Console.Error.WriteLine("Usage: al-runner --emit-app <bundleDir> <outPath> [--package-cache PATH ...]");
+            Console.Error.WriteLine("Usage: al-runner --emit-app <bundleDir> <outPath>");
+            return 2;
+        }
+        // #4032: the packager reads only app.json and *.al, so any further argument would be
+        // accepted and ignored. Refuse before the identity read, which also exits 2.
+        if (args.Length > 2)
+        {
+            Console.Error.WriteLine(args[2] == "--package-cache"
+                ? "--emit-app: --package-cache has no effect (--emit-app packages app.json and the *.al sources and reads no package cache); remove it."
+                : $"--emit-app: unexpected argument '{args[2]}'. Usage: al-runner --emit-app <bundleDir> <outPath>");
             return 2;
         }
         var bundleDir = Path.GetFullPath(args[0]);
         var outPath = Path.GetFullPath(args[1]);
-        var caches = new List<string>();
-        for (int i = 2; i < args.Length; i++)
-        {
-            if ((args[i] == "--package-cache") && i + 1 < args.Length)
-                caches.Add(args[++i]);
-        }
 
         var appJsonPath = Path.Combine(bundleDir, "app.json");
         var identity = AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(appJsonPath);
@@ -1209,7 +1225,8 @@ internal static partial class ProgramSupport
     /// </summary>
     internal static void EmitSiblingSymbols(
         List<AlRunner.AppGroup> appGroups, string bundleAbs,
-        IReadOnlyList<(AlRunner.AppManifest Manifest, string AppPath)> bundleResolvedDeps)
+        IReadOnlyList<(AlRunner.AppManifest Manifest, string AppPath)> bundleResolvedDeps,
+        bool announcePath)
     {
         BcCompiler.SetSiblingSymbolsDir(null);
         // Not a dictionary: two suites in the same tree can (and in tests/runner-extras do)
@@ -1252,13 +1269,25 @@ internal static partial class ProgramSupport
             var symbolsPath = Path.Combine(dir, $"{group.AppId:N}.symbols.json");
             try
             {
+                // #2672: the same reuse as RunLayeredPrePass/BuildSiblingSourceDeps (#2669). Keyed
+                // on SuiteDir, not AppId — two suites in one tree can share an app id (above).
+                // The fast path only describes this app's OWN surface; the app group compile
+                // below is still a full Emit, so an error it would raise still surfaces there.
+                var version = group.Version ?? new Version(1, 0, 0, 0);
                 using (BcCompiler.ScopeCurrentAppIdentity(
-                           group.AppId.Value, group.Publisher ?? "AlRunner",
-                           group.Version ?? new Version(1, 0, 0, 0)))
-                    new BcCompiler().EmitDepSymbols(
+                           group.AppId.Value, group.Publisher ?? "AlRunner", version))
+                {
+                    GetDepSymbolCompiler(group.SuiteDir).EmitDepSymbolsIncremental(
                         group.Paths, group.ModuleName, group.AppId.Value,
-                        group.Publisher ?? "AlRunner", group.Version ?? new Version(1, 0, 0, 0),
-                        symbolsPath, group.SuiteDir);
+                        group.Publisher ?? "AlRunner", version,
+                        symbolsPath, group.SuiteDir, out var tookFastPath, out var fallbackReason);
+                    // --watch or --verbose only: a one-shot run has no baseline, so it would print
+                    // "full compile (no incremental baseline yet ...)" for every sibling on every run.
+                    if (announcePath)
+                        Console.WriteLine(tookFastPath
+                            ? $"[sibling-symbols] {group.ModuleName} {version}: RAD incremental (fast path)"
+                            : $"[sibling-symbols] {group.ModuleName} {version}: full compile ({fallbackReason})");
+                }
                 // The dependency closure this app compiled against, so BC's ReferenceManager can
                 // link types from it that appear in the sibling's public surface — same reason as
                 // the source-dep sidecar (#1546); without it those types are __MissingTypeSymbol__.

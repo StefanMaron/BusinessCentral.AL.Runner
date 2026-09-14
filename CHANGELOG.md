@@ -7,6 +7,12 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **test-data:** explain a setup singleton whose only row is still blank
+- **paths:** relocation knobs for the symbols cache and ~/.cache/al-runner
+- **tools:** report armed pull requests that are not green
+- **cli:** reproducible Random() via a per-test derived seed and --seed
+- **ci-wait:** the main floor line reports its distance, not only its age
+- **ci-wait:** name the corpus codeunits in a red leg and match each to the open runner PR that fixes it
 - **metadata:** track extension contributions addressably by the extension's own id
 - **provisioning:** content-verify the service-tier and platform-apps entry guards
 - **provisioning:** classify an artifact directory before a consumer opens it
@@ -19,6 +25,63 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **test-data:** hydrate SystemId and the audit fields from the backup's $system columns
+- **provisioning:** refuse a cross-major BC selection on single-build installs, in --precompile too
+- **expectations:** declare the nine corpus failures holding main red as known gaps
+- **transactions:** Report.Run commit point in default-model tests
+- **record:** a User saved by a page's CurrPage.Update gets its User Property row
+- **testpage:** insert a part's pending New() row when the page closes through OK().Invoke()
+- **metadata:** resolve a precompiled table's relation and CalcFormula target names in its own app's scope
+- **testpage:** apply SubPageLink filters in the Link filter group 4
+- **record:** honor SetAutoCalcFields on successful Get
+- **testpage:** action Enabled bound to a page variable set in OnInit reads false
+- **report:** precompiled REPORT.Run hands the request-page handler a page surface
+- **test-data:** hydrate TableFilter columns from the backup instead of refusing them
+- **cli:** a --test pattern that selects no test fails the run instead of exiting 0
+- **allobj:** AllObj and Table Metadata in one app group list another app group's objects
+- **isolation:** ResetSingleInstanceCache leaks the instance and its keep-alive handle into the session tree
+- **test-data:** disambiguate same-named tables by owning app instead of refusing them
+- **cli:** --emit-app refuses --package-cache instead of ignoring it
+- **server:** reload a sibling source dependency's page code on edit
+- **metadata:** derive the codeunit <Methods> subtree where the loaded assembly proves it complete
+- **test-data:** map a backup column named by its SQL name onto its field instead of dropping it
+- **permissions:** IsUserSuperInAllCompanies NREs on the skeleton session's null Permissions
+- **startup:** fail loudly when NavEnvironment's static constructor fails, instead of crashing in the skeleton fallback
+- **watch:** replay report/report-layout/enum metadata on RAD fast paths
+- **report-metadata:** write BC's default HelpLink on the emitted RequestPage subtree
+- **server:** two workspaces declaring the same page id can both build its TestPage in one process
+- **ci:** start every sync-changelog retry attempt from a clean tree
+- **guards:** scan DocumentServiceProviderScopeGuardTests's own source too
+- **server:** clear superseded unresolved table relations
+- **testpage:** no blank new-row line on a lookup / declared non-editable list re-enabled in OnOpenPage
+- **session:** StartSession returns false during the install pass, as BC does
+- **count-baseline:** fail when a declared suite produced no bucket
+- **testpage:** insert a new page record when focus moves to a non-key control
+- **watch:** parse incremental cycles with the same preprocessor symbols as a full build
+- **metadata:** derive the RequestPage subtree for report metadata
+- **watch:** compile incremental cycles under the app.json target, so AL0296 fires there too
+- **reports:** a precompiled report's nested data item joins its parent when no DataItemLinkReference is stated
+- **hook:** a grep over dotnet test output is not a source lookup
+- **server:** replay enum-registry and query-symbol sidecars on cross-bundle module reuse
+- **metadata:** read BC's own platform-field metadata instead of the ctor defaults
+- **claim:** split the claim recipe so add and remove labels cannot race
+- **provisioning:** print the explicit --bc-version engine-minor warning once per invocation
+- **provision:** platform-app sub-step targets the engine's build, not the CDN's latest
+- **server:** recompile a sibling source dependency when its source changes
+- **scan:** a directory symlink loop no longer multiplies scan results
+- **server:** affectedOnly test selection alternates between narrow and full run on repeated edits
+- **report:** Base App report 1306 resolves no valid layout
+- **precompile:** select the per-BC-minor engine variant before --precompile runs
+- **preflight:** derive expected decompiler contexts from bc-versions.txt
+- **server:** execute the replaced dependency codeunit after a package is recompiled in --server
+- **tools:** isolate scratch git repositories in tests from the global signing config
+- **metadata:** keep Object Metadata payload refusal armed across install-baseline replays
+- **session:** seed the runner session's row in Active Session (2000000110)
+- **testpage:** RunObject action on a dialog page with no handler raises BC's exception
+- **virtual-tables:** AllObjWithCaption reports the owning app like AllObj
+- **log:** classify every hyphenated component tag and gate the one chatter site
+- **ci:** accept prose after a Part of number and read suffixed issue branches, in both readers
+- **cli:** an unlinked working directory no longer crashes the expectations auto-probe
 - **guard:** the metadata-equivalence allowlist's cited issues must be open
 - **session:** StartSession validates its timeout argument as BC does
 - **ci:** make the Part-of release job print its decision and stop racing add against remove
@@ -138,6 +201,25 @@ All notable changes to this project are documented here. Format based on
 - **integer-vt:** judge a half-open range against the base window, not the envelope-widened span
 
 ### Documentation
+- **ci-verdicts:** a job log echoes the run: block as source, so grep counts it
+- **claiming:** closingIssuesReferences lags PR creation, so an empty read is not free
+- **ci-verdicts:** the floor debounce is a growing green streak, not one stale run
+- **orchestrating:** --match-head-commit needs the full SHA, and fails quietly without it
+- **orchestrating:** point the corpus merge at the corpus-side pairing check
+- **nav:** gh list --limit truncates silently, so a grep over it reads as absent
+- **corpus:** finding the pair from the corpus side, where no citation points back
+- **ci-verdicts:** counting the returned page is not counting the queue
+- **corpus:** the Windows nightly's conclusion is wrong in both directions
+- **tdd:** a mutation can land, execute, and still change nothing
+- **ci-verdicts:** the same-tree recipe needs rev-parse --verify -q
+- a double-quoted --body silently deletes backticked spans
+- **orchestrating:** a transport error arms nothing and still exits 0
+- **ci-verdicts:** the inherited red is a rebase, not a re-run
+- **rules:** a number that travels is the fifth way a measurement misleads
+- **cache:** move BcAppSymbolCache's CacheVersion history to docs/
+- **skill:** re-read every armed PR's verdict on each sweep
+- **page:** ParseMemberNames needs no systemaction or fileuploadaction entries
+- **impl-agent:** say so when you push to a PR you did not open
 - **scope:** record MockAzureKeyVaultSecretProvider as an unobtainable DotNet type
 - 87879acb rewrote 15 rules, not 14
 - drop the 3 KB rule-size figure; the shape is the bar
@@ -189,6 +271,25 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **navapp:** drop the runner-extras GetModuleInfo unknown-id test now that the corpus asserts it
+- **guards:** declare AppGroupObjectVisibility's refusal site
+- **rename:** rename a Base Application record referenced by precompiled TableRelations
+- **metadata:** conditional TableRelation arms on precompiled fields
+- **watch:** EmitSiblingSymbols reuses the dep-symbol compiler and takes the RAD fast path
+- **permissions:** make the vanished-app warning test prove what its comment claims
+- **guards:** make a local unbootstrapped engine run a visible skip, not a false mutation RED
+- **rules:** execute a rule's detection recipe against the defect it claims to detect
+- **guards:** discover the refusal-count file set instead of hard-coding it
+- **cache:** identify packages for the app-manifests index without hashing every byte
+- **startup:** keep loops out of exception handlers so Main is JIT-compiled at Tier0
+- **runner-extras:** make the tableext eviction suites actually evict on every leg
+- **symbols:** measure cold-read cost of re-parsing precompiled TableRelations
+- **install-baseline:** pin the dependency-set component of the install-baseline cache key
+- **events:** index per-construction subscriber lookups by table and drop the per-call GetAssemblies() gate
+- **sidecar:** measure round-trip coverage of the five sibling metadata registries
+- **runner-extras:** renumber the app-group pairs that define the same object id
+- **expectations:** tests/expectations file prefix and entry Mode must agree
+- **expectations:** declare the corpus tests that arrived before their runner fixes
 - **testpage:** pin the RunPageLink count-mismatch refusal in LinksFromSymbols
 - **metadata:** pin what the codeunit method table is made of, and why the symbol file cannot supply it
 - **enum-sidecar:** drive the SaveSidecar/LoadSidecar round trip for Extensible and both implementation fallbacks

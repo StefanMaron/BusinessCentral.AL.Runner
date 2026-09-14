@@ -48,3 +48,39 @@ an otherwise-correct rebase. Hence the tool and the preflight check.
     rest, and name the open issue holding the remainder. Measured 2026-09-06: the corpus tip
     was 15 commits ahead with three predecessors gated on open PRs, and pinning the tip gave
     11 failures.
+
+## A corpus PR merged ahead of its pair, found by the wrong question (2026-09-14, #4168)
+
+I merged corpus PR #350 while runner PR #4141, its pair, was open.
+
+**The outcome was harmless, and that is not the same as the merge being correct.** I predicted
+`main` would redden on codeunit 60984, reasoning that `MetadataPatches.cs:79`
+(`SetTestTenantEnvironmentType(true)`) forces `IsSandbox()` true while `isSaaSConfig` stays
+false, so `IsSaaS() = IsSandbox() && isSaaSConfig` would be false and the new
+`IsSandbox()`-implies-`IsSaaS()` assertion could not hold. Run `34819290176`, the first to
+resolve the post-merge corpus, measured **4 PASS, 0 FAIL** on that codeunit. The chain came
+from a comment describing an internal seam; the test calls System Application's `Environment
+Information` (codeunit 457), and the relationship holds through that path. Reading the code and
+reasoning about what must follow lost to one run, as `ask-the-corpus-before-claiming-bc-behavior.md`
+says it should.
+
+**The check I ran was clean and answered a different question.** Before merging I confirmed no
+open runner PR carried a `Corpus-PR:` line naming #350 — true, and irrelevant: #4141 declares
+`Corpus-NA:` ("no corpus literal can pin it"), so it names no corpus PR anywhere. The pair was
+real and invisible to a citation-keyed search. #350's own body names runner issue #3514, which
+#4141 closes; the link existed in the other direction the whole time.
+
+**Why this shape recurs rather than being a one-off.** `Corpus-NA:` is written precisely when an
+author believes no corpus test can pin the behaviour. That belief is the one most likely to be
+overturned later by someone writing such a test — and when they do, the runner PR still carries
+the declaration saying no corpus PR exists. So the population of `Corpus-NA:` runner PRs is
+enriched for exactly the pairs a citation search cannot see.
+
+#350's four tests were sound and are worth having: every assertion is about agreement between
+predicates rather than a literal, which is why they are green on all eight cloud legs and on the
+Windows nightly. The defect was the ordering, not the tests.
+
+Cost this time: none — the tests passed. The process defect is what the rule change addresses,
+because the same mistake against a corpus PR whose tests *do* depend on an unlanded fix is
+exactly how the three codeunits on #4167 got there. A check that happens to be harmless on the
+instance that exposed it is still the check that needs fixing.

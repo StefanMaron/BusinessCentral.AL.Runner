@@ -893,6 +893,57 @@ jobs:
               --isolation disabled \
               --strict
 
+      - name: Run tableextension-eviction suites as ordered bundles
+        # A THIRD invocation because the hazard these suites pin (#2463, #2510) only exists when a
+        # dep app's install builds a table's NCLMetaTable BEFORE a later bundle parses a
+        # tableextension on it. The combined runner-extras step above is one bundle: every app is
+        # parsed before any install runs, so nothing is ever evicted and both suites passed with
+        # the purge mutated out (#4079). Order comes from the ARGUMENT LIST — passing the root
+        # directory instead collapses the four apps back into one bundle and reproduces #4079.
+        #
+        # --verbose because the `[TableExt] evicted` line is a [Component] log, hidden otherwise.
+        # The marker check is the execution guard: tests green with no eviction is the defect,
+        # so it fails with its own message rather than passing. See
+        # tests/runner-extras-tableext-eviction/README.md. No --count-baseline, as above.
+        if: ${{ always() && hashFiles('tests/runner-extras-tableext-eviction/**/*.al') != '' }}
+        run: |
+          root=tests/runner-extras-tableext-eviction
+          rc=0
+          dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
+              "$root/tableext-eviction-field-trigger-timing-dep" \
+              "$root/tableext-eviction-field-trigger-timing" \
+              "$root/tableext-eviction-subscriber-timing-dep" \
+              "$root/tableext-eviction-subscriber-timing" \
+              --package-cache "$HOME/.al-runner/platform-apps" \
+              --strict \
+              --verbose > tableext-eviction.log 2>&1 || rc=$?
+          command grep -E '^(PASS|FAIL|ERROR) |→ [0-9]+P/|\[TableExt\] evicted' tableext-eviction.log || true
+          if [ "$rc" -ne 0 ]; then
+            tail -40 tableext-eviction.log
+            echo "::error::tableextension-eviction suites failed (exit $rc)"
+            exit "$rc"
+          fi
+          missing=0
+          for id in 65270 65520; do
+            if ! command grep -qE "^\[TableExt\] evicted stale NCLMetaTable $id " tableext-eviction.log; then
+              echo "::error::no '[TableExt] evicted stale NCLMetaTable $id' line: the tests passed but the eviction they exist to exercise never ran, so they proved nothing (#4079). Check the bundle order above."
+              missing=1
+            fi
+          done
+          # The markers print at parse time, so they appear even when no test runs. With no
+          # --count-baseline here, these PASS lines are what catches a suite whose tests vanished.
+          for t in \
+              Codeunit65277.ValidateAfterTableExtEviction_FieldTriggerStillFires \
+              Codeunit65277.UnrelatedRecordWithoutEviction_FieldTriggerFiresNormally \
+              Codeunit65527.SubscribersFireAfterTableExtEviction \
+              Codeunit65527.UnrelatedRecordWithoutEviction_SubscribersFireNormally; do
+            if ! command grep -qE "^PASS +${t//./\\.}( |$)" tableext-eviction.log; then
+              echo "::error::no 'PASS $t' line: the eviction ran but this test did not pass in this step, so nothing asserted on it (#4079)."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
       - name: Phase-log report (runner-extras)
         # The step with the most to say: 25 app groups in ONE process (down from 38 —
         # see #1847, which folded 16 standalone-with-no-hazard suites into

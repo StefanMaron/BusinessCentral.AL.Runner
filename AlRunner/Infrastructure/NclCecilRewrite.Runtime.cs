@@ -831,6 +831,37 @@ public static partial class NclCecilRewrite
                          "NavSession", "Guid", "PermissionSetKey", "String"),
                 H(recordPatches, "PermissionManagement_IsPermissionSetAssignedAsync"));
 
+            // ── NavDotNet.Invoke<T>: the reflective MethodInfo.Invoke (#3174) ──────────────
+            // NavUserAccountHelper.IsUserSuperInAllCompanies is `Session.Permissions
+            // .IsSuperForAllCompanies` — no Ncl hop in its body, and Permissions is null here.
+            // AL reaches it only through this call site, so the one `callvirt
+            // MethodBase::Invoke(object, object[])` is redirected to a static with the same
+            // stack shape that answers that one member and invokes every other unchanged.
+            // Imports one memberRef (the helper); adds nothing else to Ncl.
+            {
+                var navDotNetT = nclMod.GetType(Rt + "NavDotNet")
+                    ?? throw new InvalidOperationException("[Cecil] NavDotNet not found — Ncl shape changed; do not commit");
+                var invokeT = navDotNetT.Methods.SingleOrDefault(mm =>
+                        mm.Name == "Invoke" && mm.HasGenericParameters && mm.Parameters.Count == 6 && mm.HasBody)
+                    ?? throw new InvalidOperationException("[Cecil] NavDotNet.Invoke<T>(6 params) not found — Ncl shape changed; do not commit");
+                var reflectiveInvokes = invokeT.Body.Instructions.Where(i =>
+                        i.OpCode == OpCodes.Callvirt && i.Operand is MethodReference mr
+                        && mr.Name == "Invoke" && mr.DeclaringType.FullName == "System.Reflection.MethodBase"
+                        && mr.Parameters.Count == 2)
+                    .ToList();
+                if (reflectiveInvokes.Count != 1)
+                    throw new InvalidOperationException(
+                        $"[Cecil] NavDotNet.Invoke<T> has {reflectiveInvokes.Count} MethodBase.Invoke(object, object[]) "
+                        + "call sites, expected 1 — Ncl shape changed; do not commit (#3174)");
+                var redirect = nclMod.ImportReference(
+                    typeof(AlRunner.Patches.NavDotNetPatches).GetMethod(
+                        nameof(AlRunner.Patches.NavDotNetPatches.InvokeReflectedMember),
+                        BindingFlags.Public | BindingFlags.Static)
+                    ?? throw new InvalidOperationException("[Cecil] NavDotNetPatches.InvokeReflectedMember not found — do not commit"));
+                invokeT.Body.GetILProcessor().Replace(reflectiveInvokes[0], Instruction.Create(OpCodes.Call, redirect));
+                Console.Error.WriteLine("[Cecil] Redirected NavDotNet.Invoke<T> MethodBase.Invoke → NavDotNetPatches.InvokeReflectedMember (#3174)");
+            }
+
             // ── PermissionManagement.GetEffectivePermissionForObjectAsync (#2382) ────────
             // The SAME null as its sibling above, one method over: the real body ends in
             // `session.Permissions.GetEffectivePermissionForObject(...)`. It made
@@ -2031,6 +2062,38 @@ public static partial class NclCecilRewrite
         }
 
         RewriteExecutionSchedulerThreadToBackground(asm.MainModule);
+        RewriteNoSeedRandomizeToRunSeed(asm.MainModule);
+    }
+
+    /// <summary>
+    /// #2502 — <c>ALSystemNumeric.ALRandomize()</c> is <c>Session.Random = new Random()</c>.
+    /// Only the <c>newobj Random::.ctor()</c> is swapped for <see cref="RunSeed.CreateRandomizeRandom"/>;
+    /// BC's own session setter stays. The one imported memberRef is the same forwarding shape as
+    /// <c>NCLEnumMetadata.Create(int)</c> → <c>BcRuntime.NCLEnumMetadata_CreateByIdAlAware</c>.
+    /// <c>ALRandomize(int)</c> and <c>ALRandom(int)</c> are not touched.
+    /// </summary>
+    private static void RewriteNoSeedRandomizeToRunSeed(ModuleDefinition nclMod)
+    {
+        var numericT = nclMod.GetType("Microsoft.Dynamics.Nav.Runtime.ALSystemNumeric")
+            ?? throw new InvalidOperationException(
+                "[Cecil] ALSystemNumeric not found — Ncl shape changed; do not commit");
+        var randomize = numericT.Methods.FirstOrDefault(m =>
+                m.Name == "ALRandomize" && m.IsStatic && m.HasBody && m.Parameters.Count == 0)
+            ?? throw new InvalidOperationException(
+                "[Cecil] ALSystemNumeric.ALRandomize() not found — Ncl shape changed; do not commit");
+        var ctorCalls = randomize.Body.Instructions.Where(i => i.OpCode == OpCodes.Newobj
+            && i.Operand is MethodReference mr
+            && mr.DeclaringType.FullName == "System.Random"
+            && mr.Parameters.Count == 0).ToList();
+        if (ctorCalls.Count != 1)
+            throw new InvalidOperationException(
+                $"[Cecil] ALSystemNumeric.ALRandomize(): expected one `new Random()`, found {ctorCalls.Count} — Ncl shape changed; do not commit");
+        var helper = typeof(RunSeed).GetMethod(nameof(RunSeed.CreateRandomizeRandom),
+            BindingFlags.Public | BindingFlags.Static)
+            ?? throw new InvalidOperationException("[Cecil] RunSeed.CreateRandomizeRandom not found");
+        ctorCalls[0].OpCode = OpCodes.Call;
+        ctorCalls[0].Operand = nclMod.ImportReference(helper);
+        Console.Error.WriteLine("[Cecil] Rewrote ALSystemNumeric.ALRandomize() → Session.Random = RunSeed.CreateRandomizeRandom() (#2502)");
     }
 
     /// <summary>
@@ -2140,6 +2203,8 @@ public static partial class NclCecilRewrite
         // See the RewriteNcl block below for the detail. Additive: does not touch
         // NavForm.GetPart (#2600) or the page-background-task routing (#2628).
         set.Add("Microsoft.Dynamics.Nav.Runtime.Media.NavMediaFactory::ProcessMediaObject/3");
+        // #2502: the no-argument overload only; ALRandomize(int) stays BC's own.
+        set.Add("Microsoft.Dynamics.Nav.Runtime.ALSystemNumeric::ALRandomize/0");
     }
 
 }

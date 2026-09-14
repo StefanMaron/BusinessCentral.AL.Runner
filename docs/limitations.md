@@ -876,8 +876,15 @@ reads back true, grant something else and it reads back false.
 
 Entitlements are not modeled at all, so a permission set that a real tier would report as
 assigned *via an entitlement* rather than via `Access Control` reads as not assigned here.
-`NavUserAccountHelper.IsUserSuperInAllCompanies` still raises, because its body has no Ncl hop
-the runner can rewrite — AlRunner#3174.
+`NavUserAccountHelper.IsUserSuperInAllCompanies` (reachable from an OnPrem app's `DotNet`
+variable) reads the same null cache with no Ncl method in its body, so the runner answers it at
+`NavDotNet`'s reflective invoke instead (AlRunner#3174). The answer follows the order of
+`NavUserPermissions.IsSuperForAllCompanies` as read from the BC 28.4 decompile: `false` while
+effective test permissions are in use (`Permissions Mock`), `true` for a NAV admin user,
+otherwise the all-companies SUPER row answered exactly as `IsSuper` is above. BC's "permission
+system disabled" setting is not modelled. **No service tier has checked this decision, and no
+test pins it**: the corpus CI cannot compile a `DotNet` test (AlRunner#4014), and the runner's own
+tests cover only the invoke redirect, not which branch answers.
 
 ### `Record "Time Zone"` — ids follow the HOST, so they are IANA ids on Linux
 
@@ -1529,7 +1536,7 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
 <a id="runtime-shape-gaps"></a>
 
 - **Runtime shape gaps outside the virtual tables — the runner refuses rather than answering
-  a shape it cannot produce.** 14 further guards raise `RunnerOutOfScopeException` with the
+  a shape it cannot produce.** 15 further guards raise `RunnerOutOfScopeException` with the
   reason anchor `not-yet-implemented`, so an AL `[TryFunction]` cannot absorb one into `false`
   ([#2966](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2966)). The number
   counts refusal **call sites**, which is the rule the original nine were counted under; it is
@@ -1550,6 +1557,11 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
     context or request (`RunnerModalDispatch.cs`);
   - **report construction**, when the runner cannot build the report object at all to run it
     or its request page (`NavReportSync.cs`);
+  - a **request page opened by BC's own report engine** (the async `Report.Run` entry points
+    compiled dependency code calls) whose owner is not a report, so the runner cannot tell
+    which data items and built-in actions the `[RequestPageHandler]` is driving
+    (`NavReportSync.BindRequestPageOpenedByBc`,
+    [#4067](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4067));
   - a **report's data-item loop**, when neither metadata source describes the report and its
     data items therefore carry a MetaDataItem synthesized from their name alone
     (`NavReportSync.RefuseLoopOverSynthesizedDataItems`,
@@ -1818,7 +1830,8 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   - Date, DateTime, Time and DateFormula values are rebuilt
     ([#2259](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2259)), as are
     Blob, Media, MediaSet, RecordId and Duration
-    ([#2270](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2270)) and a DB
+    ([#2270](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2270)), TableFilter
+    ([#2271](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2271)) and a DB
     NULL in any column type
     ([#2268](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2268)). Each
     mirrors BC's own SQL-cell reader case for case.
@@ -1826,8 +1839,12 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
     shipped demo data stores one, so the shape the backup reader emits has never been measured
     and the codec will not invent it —
     [#2271](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2271).
-  - BC's system columns (`SystemId`, `SystemCreatedAt`, …) are not hydrated —
-    [#2260](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2260).
+  - BC's platform fields `SystemId`, `SystemCreatedAt`, `SystemCreatedBy`, `SystemModifiedAt`
+    and `SystemModifiedBy` carry the backup's values
+    ([#2260](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2260)), so
+    `GetBySystemId` finds a hydrated row. The `timestamp` (SQL rowversion) column is not
+    hydrated, and the summary line says so —
+    [#4123](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4123).
   - A table whose AL name is declared by two installed apps in the same company is refused
     rather than guessed at —
     [#2264](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2264).
@@ -1874,7 +1891,10 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   1 ambiguous by name, 293 companion columns dropped for apps outside the closure. All 12
   remaining refusals are a bare column the backup holds that this build's AL table has no
   field for ([#2273](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2273)) —
-  none is a value type any more.
+  none is a value type any more. The one table skipped as ambiguous by name, Base Application's
+  `Dimension Set Entry` (89 rows), is read with `--app` since
+  [#2264](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2264): measured on the
+  same backup, the fixture's `Dimension Set Entry` count went from 0 to 89.
 
 <a id="precompiled-xmlport-node-schema"></a>
 

@@ -309,7 +309,10 @@ internal partial class LiveNavTestPage
                 {
                     var keyFieldNo = primaryKey.KeyFieldsList[i].FieldNo;
                     record.ClearFieldValue(keyFieldNo);
-                    if (TryGetSingleFilterValue(record, keyFieldNo, out var fromFilter))
+                    // Group 0 or the Link group 4, where a part's SubPageLink lives (#4156);
+                    // BC's InitRecordFromFilters combines every group.
+                    if (TryGetSingleFilterValue(record, keyFieldNo, out var fromFilter)
+                        || TryGetSingleFilterValueInGroup(record, keyFieldNo, LinkFilterGroup, out fromFilter))
                         record.SetFieldValue(keyFieldNo, fromFilter);
                 }
         }
@@ -360,6 +363,19 @@ internal partial class LiveNavTestPage
         // corpus arms stayed green. Only moving the parent between two draft lines separates
         // "once per row" from "once per page".
         _newRowLineRecordStarted = false;
+    }
+
+    /// <summary><c>PredefinedFilterGroupNo.Link</c> (internal to Ncl): the group a SubPageLink lands in.</summary>
+    private protected const int LinkFilterGroup = 4;
+
+    /// <summary><see cref="TryGetSingleFilterValue"/> read in <paramref name="filterGroup"/>, restoring the
+    /// record's current group afterwards.</summary>
+    private protected static bool TryGetSingleFilterValueInGroup(NavRecord record, int fieldNo, int filterGroup, out NavValue value)
+    {
+        var saved = record.ALFilterGroup;
+        record.ALFilterGroup = filterGroup;
+        try { return TryGetSingleFilterValue(record, fieldNo, out value); }
+        finally { record.ALFilterGroup = saved; }
     }
 
     /// <summary>The one value a field's current filter selects, or false when the filter is

@@ -1,0 +1,26 @@
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+[xUnit.net 00:00:02.18]     AlRunner.Tests.BcEngineReadinessGuardTests.AssertReadyOnCi_Throws_WhenNotReadyOnCi [FAIL]
+[xUnit.net 00:00:02.19]     AlRunner.Tests.BcEngineReadinessGuardTests.AssertReadyOnCi_DoesNothing_WhenNotReadyButOffCi [FAIL]
+  Failed AlRunner.Tests.BcEngineReadinessGuardTests.AssertReadyOnCi_Throws_WhenNotReadyOnCi [1 ms]
+  Error Message:
+   Assert.NotNull() Failure: Value is null
+  Stack Trace:
+     at AlRunner.Tests.BcEngineReadinessGuardTests.AssertReadyOnCi_Throws_WhenNotReadyOnCi() in /_/AlRunner.Tests/BcEngineReadinessGuardTests.cs:line 88
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+  Failed AlRunner.Tests.BcEngineReadinessGuardTests.AssertReadyOnCi_DoesNothing_WhenNotReadyButOffCi [2 ms]
+  Error Message:
+   Assert.Null() Failure: Value is not null
+Expected: null
+Actual:   Xunit.Sdk.FailException: BcEngineBootstrap.Ready is false on a CI leg where BC artifacts are provisioned and the Cecil cache is pre-warmed before `dotnet test` runs (see the 'Warm the Ncl Cecil rewrite cache' and 'Generate .runsettings for in-process BC engine tests' steps in .github/workflows/bc-tests.yml). That combination means the DOTNET_STARTUP_HOOKS wiring that makes BcEngineBootstrap's [ModuleInitializer] run before VSTest's own DiaSession (see AlRunner.Tests/EngineStartupHook.cs) has silently stopped taking effect — issue #1813 all over again — and every test in the bc-engine-serial collection is now executing NOTHING while this leg still reports green. SkipReason: BC artifacts not provisioned
+   at Xunit.Assert.Fail(String message) in /_/src/xunit.assert/Asserts/FailAsserts.cs:line 38
+   at AlRunner.Tests.BcEngineReadinessGuard.AssertReadyOnCi(Boolean ready, String skipReason, Boolean runningOnCi) in /_/AlRunner.Tests/BcEngineCollection.cs:line 336
+   at AlRunner.Tests.BcEngineReadinessGuardTests.<>c.<AssertReadyOnCi_DoesNothing_WhenNotReadyButOffCi>b__5_0() in /_/AlRunner.Tests/BcEngineReadinessGuardTests.cs:line 107
+   at Xunit.Record.Exception(Action testCode) in /_/src/xunit.core/Record.cs:line 25
+  Stack Trace:
+     at AlRunner.Tests.BcEngineReadinessGuardTests.AssertReadyOnCi_DoesNothing_WhenNotReadyButOffCi() in /_/AlRunner.Tests/BcEngineReadinessGuardTests.cs:line 106
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+
+Failed!  - Failed:     2, Passed:     1, Skipped:     0, Total:     3, Duration: 17 ms - AlRunner.Tests.dll (net8.0)

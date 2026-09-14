@@ -51,6 +51,8 @@ public sealed class LogHyphenatedTagContractTests
         // [source-dep] is the source-sibling twin of the exempt [layered] progress lines, and
         // CacheRootsIsolationTests asserts `[source-dep] WROTE` in a default-verbosity run.
         new("AlRunner/ProgramSupport/SiblingCompile.cs", "source-dep", Kind.Loud),
+        // [sibling-symbols] names the symbol-compile path per sibling; only --watch reuses a baseline (#2672).
+        new("AlRunner/ProgramSupport/SiblingCompile.cs", "sibling-symbols", Kind.OptIn, Gate: @"\bannouncePath\b"),
         new("AlRunner/Infrastructure/AlCoverageSourceMap.cs", "source-map", Kind.Loud),
         new("AlRunner/Infrastructure/MissingTestDataDiagnosis.cs", "test-data", Kind.Loud),
         new("AlRunner/Infrastructure/TestDataNormalization.cs", "test-data", Kind.Loud),

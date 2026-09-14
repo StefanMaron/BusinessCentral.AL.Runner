@@ -293,6 +293,22 @@ public static class ALDatabasePatches
     }
 
     /// <summary>
+    /// Whether <c>Report.Run</c> / <c>Report.RunModal</c> enters a transaction world — BC's
+    /// guard in <c>NavReport.RunReportCoreAsync</c> (Ncl 28.4), with TransactionType ordinals
+    /// (UpdateNoLocks = 0):
+    /// <c>(UseRequestForm || (current != report &amp;&amp; report != UpdateNoLocks))
+    /// &amp;&amp; (!InTest || model != AutoRollback)</c>. Corpus 60040 "Test TxModel Report Run"
+    /// pins both consequences — refused with a pending write, otherwise the report's own
+    /// writes commit (#2904).
+    /// </summary>
+    internal static bool ReportRunEntersTransactionWorld(bool useRequestForm, int reportTransactionType)
+    {
+        bool typeDiffers = ALDatabase_GetCurrentTransactionType() != reportTransactionType
+                           && reportTransactionType != 0;
+        return (useRequestForm || typeDiffers) && !CurrentTestIsAutoRollback();
+    }
+
+    /// <summary>
     /// BC's TransactionManager PUSH of the nested logical transaction a GUARDED
     /// <c>Codeunit.Run</c> opens — the counterpart of <see cref="EndGuardedRunTransaction"/>.
     /// Call before invoking the guarded run's OnRun, for BOTH the instance form

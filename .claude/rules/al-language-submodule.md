@@ -43,6 +43,35 @@ bump as the thing to get right is the **merge order**: a runner PR asserting BC 
 merges after the corpus PR it cites, and the coordinator merges the pair in one step
 (`orchestrating-a-session`).
 
+### Finding the pair from the CORPUS side, where no citation points back
+
+Before merging a corpus PR, ask whether an open runner PR needs to land with it. **"No open
+runner PR cites this one" does not answer that question**, and it is the check that feels like
+it does.
+
+A runner PR that declares `Corpus-NA:` is paired with a corpus PR and names it nowhere, so a
+search keyed on `Corpus-PR:` returns nothing for a pair that exists. That is not a rare shape:
+`Corpus-NA:` is what an author writes when they believe no corpus test can pin the behaviour,
+which is exactly the belief a later corpus PR overturns by writing one.
+
+Read the **corpus PR's own body** for the runner issue it was written for, then check that
+issue for an open PR closing it:
+
+<!-- Recipe-unpinned: both halves are live cross-repository GitHub reads -- the corpus PR's body and the runner repo's open-PR list. There is no offline input that reproduces "this corpus PR's paired runner PR is still open"; a fixture would pin the jq, not the question. -->
+```bash
+gh pr view <corpus-PR> --repo StefanMaron/BusinessCentral.AL.Language.Tests --json body \
+  --jq '.body' | command grep -oE "BusinessCentral\.AL\.Runner(#|/issues/)[0-9]+"
+gh pr list --repo StefanMaron/BusinessCentral.AL.Runner --state open --limit 100 \
+  --json number,closingIssuesReferences \
+  --jq '.[]|select(.closingIssuesReferences[]?.number == <N>)|.number'
+```
+
+Measured (#4168): corpus PR #350 was merged on a clean citation search while runner PR #4141 —
+whose target issue is the one #350's own body names — sat open. Those tests happened to pass
+against the unfixed runner, so nothing broke; the citation search was still blind to the pair,
+which is the property that matters. The three codeunits on #4167 are the same mistake where the
+tests did depend on the unlanded fix.
+
 ## The corpus default branch is `master`, not `main`
 
 Target `master` on a corpus PR. `gh pr create` with no explicit `--base` picks it up correctly;

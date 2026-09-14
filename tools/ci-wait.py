@@ -39,7 +39,7 @@ Usage
 Beside every verdict it prints one more line -- the newest conclusive matrix
 verdict for `main` itself (#3679):
 
-    main floor: RED on 8b6885f4 (main-verdict-floor.yml, 1h ago)
+    main floor: RED on 8b6885f4 (main-verdict-floor.yml, 1h ago, 6 commits behind main)
 
 A pull request branched during a red window inherits a failure it did not cause,
 and that was invisible here. The line is a REPORT: it never changes the exit
@@ -375,6 +375,66 @@ def fetch_floor_runs(branch: str = "main"):
     return out, ""
 
 
+def fetch_distance_behind_main(sha: str, branch: str = "main"):
+    """(n, reason): how many commits `branch` has that `sha` does not.
+
+    Read from GitHub's compare API rather than from a local
+    `git rev-list --count <sha>..origin/main`, because this tool runs from
+    worktrees of varying freshness (ci-verdicts.md, "Run it from a tree you
+    have fetched") and a stale worktree UNDER-reports the distance. That is the
+    dangerous direction: under-reporting makes a stale verdict look current,
+    which is the defect this exists to remove (#4111). The API answers about
+    the remote's `main` whatever the local checkout holds.
+
+    `ahead_by` with `sha` as base and `branch` as head, NOT `behind_by`: the
+    field names describe the HEAD relative to the BASE, so `behind_by` here
+    counts commits the measured commit has that `main` does not -- 0 on a
+    healthy repository, and so a reassuring zero for an eight-commit-stale
+    verdict. Verified against `git rev-list --count <sha>..origin/main`, which
+    returned the same 5 that `ahead_by` did.
+
+    A count that cannot be established returns None and a reason, never 0
+    (guards-need-a-third-state.md): 0 is the healthy case and must stay
+    readable as reassurance.
+    """
+    rc, body = gh(["api", f"repos/{REPO}/compare/{sha}...{branch}",
+                   "--jq", "{ahead_by: .ahead_by, status: .status}"])
+    if rc != 0:
+        return None, f"could not compare {sha[:8]} with {branch}"
+    try:
+        got = json.loads(body)
+    except Exception:
+        # A 404 body ("Not Found") parses, so this is a malformed answer rather
+        # than the force-push case, which falls through to the check below.
+        return None, f"unreadable comparison of {sha[:8]} with {branch}"
+    if not isinstance(got, dict):
+        return None, f"unexpected comparison shape for {sha[:8]}"
+    n = got.get("ahead_by")
+    if not isinstance(n, int):
+        # The commit is gone (force-pushed away) or unrelated to the branch.
+        return None, f"{sha[:8]} is not reachable from {branch}"
+    return n, ""
+
+
+def _distance_phrase(sha: str, distance_fetch) -> str:
+    """The distance clause for the floor line, or its third state.
+
+    Three spellings, and the third must never be either of the first two:
+    `on main's current head` (a genuine zero, the reassuring common case),
+    `N commit(s) behind main`, and `distance unknown: <why>`.
+    """
+    fetch = distance_fetch or fetch_distance_behind_main
+    try:
+        n, why = fetch(sha)
+    except Exception as exc:  # a report may never raise into a verdict
+        n, why = None, f"{type(exc).__name__} while comparing with main"
+    if n is None:
+        return f"distance unknown: {why or 'the comparison could not be read'}"
+    if n == 0:
+        return "on main's current head"
+    return f"{n} commit{'' if n == 1 else 's'} behind main"
+
+
 def fetch_runs_for_sha(sha: str):
     """(runs, reason): EVERY workflow run GitHub has for one commit.
 
@@ -419,7 +479,8 @@ def _commit_order(run: dict) -> str:
 
 
 def floor_verdict(runs: list[dict] | None, reason: str = "",
-                  now: float | None = None, sha_fetch=None) -> str:
+                  now: float | None = None, sha_fetch=None,
+                  distance_fetch=None) -> str:
     """One line: the newest conclusive matrix verdict for `main`.
 
     Two steps, because they answer different questions: `runs` (a recent window)
@@ -452,8 +513,12 @@ def floor_verdict(runs: list[dict] | None, reason: str = "",
     red = [r for r in same if r.get("conclusion") == "failure"]
     decider = max(red or same, key=_commit_order)
     state = "RED" if red else "GREEN"
+    # The age says when the verdict was taken; the distance says what it covers.
+    # Without it a correct verdict about a `main` eight merges back reads
+    # exactly like one about the current head (#4111).
     return (f"main floor: {state} on {sha[:8] or '<unknown sha>'} "
-            f"({_workflow_file(decider)}, {_age_of(decider.get('updated_at'), now)})")
+            f"({_workflow_file(decider)}, {_age_of(decider.get('updated_at'), now)}, "
+            f"{_distance_phrase(sha, distance_fetch)})")
 
 
 def print_floor_verdict() -> None:

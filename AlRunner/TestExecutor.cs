@@ -152,6 +152,12 @@ public sealed class TestExecutor
     /// </summary>
     public string? TestFilter { get; set; }
     /// <summary>
+    /// Test methods <see cref="TestFilter"/> accepted, summed over every <see cref="Run"/> call on
+    /// this instance. Counted at selection, before --exclude-test, skip entries or instantiation,
+    /// so zero means the pattern matched nothing (#4055).
+    /// </summary>
+    public long FilterSelectedCount { get; private set; }
+    /// <summary>
     /// Optional exact-match test allowlist in the same "{Codeunit}.{Method}" key shape
     /// ServerProtocol emits on the wire. Null = unchanged behaviour (no exact allowlist).
     /// Applied after <see cref="TestFilter"/>, so callers can combine a coarse substring
@@ -358,6 +364,25 @@ public sealed class TestExecutor
          + AlRunner.Patches.RecordPatches.RegisteredBcAppSymbolStateKey()
          + AlRunner.Infrastructure.TestDataOptions.CacheIdentity();
 
+    // Kept out of Run: a loop inside a catch makes the JIT compile the whole caller FullOpts
+    // (see docs/startup-cost.md#main-jit-tier; HandlerLoopJitTierGuardTests pins it).
+    private static Type[] LoadableTypesAfterPartialLoadFailure(ReflectionTypeLoadException ex)
+    {
+        var types = ex.Types.Where(t => t != null).ToArray()!;
+        var reasons = ex.LoaderExceptions
+            .Where(e => e != null)
+            .Select(e => e!.Message)
+            .Distinct()
+            .Take(10)
+            .ToList();
+        Console.Error.WriteLine(
+            $"[test-exec] WARNING: {ex.LoaderExceptions.Length} type(s) in the test assembly " +
+            $"failed to load; continuing with {types.Length} loadable type(s). Causes:");
+        foreach (var r in reasons)
+            Console.Error.WriteLine($"    {r}");
+        return types!;
+    }
+
     /// <summary>
     /// Runs every [Test] method in <paramref name="assembly"/>. When
     /// <paramref name="onTestComplete"/> is supplied it fires synchronously right
@@ -401,18 +426,7 @@ public sealed class TestExecutor
             // one or more of the requested types". Surface the concrete loader failures (per
             // .claude/rules/loud-failures.md) and continue with the types that DID load — a
             // test codeunit that itself references the missing type will simply not appear.
-            types = ex.Types.Where(t => t != null).ToArray()!;
-            var reasons = ex.LoaderExceptions
-                .Where(e => e != null)
-                .Select(e => e!.Message)
-                .Distinct()
-                .Take(10)
-                .ToList();
-            Console.Error.WriteLine(
-                $"[test-exec] WARNING: {ex.LoaderExceptions.Length} type(s) in the test assembly " +
-                $"failed to load; continuing with {types.Length} loadable type(s). Causes:");
-            foreach (var r in reasons)
-                Console.Error.WriteLine($"    {r}");
+            types = LoadableTypesAfterPartialLoadFailure(ex);
         }
         typeSw.Stop();
         // #2801: Assembly.GetTypes() has no defined order, and this loop's order IS the
@@ -748,6 +762,9 @@ public sealed class TestExecutor
             scanMs += stageSw.ElapsedMilliseconds;
             if (!isTestCu) continue;
             if (filter != null && !CodeunitMatchesFilter(t, filter)) continue;
+            if (filter != null)
+                FilterSelectedCount += t.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                    .Count(m => IsTestMethod(m) && MethodMatchesFilter(t.Name, m.Name, filter));
 
             // W-8b A-prime: this assembly may contain AL [EventSubscriber] codeunits whose
             // classes weren't in AppDomain when PopulateNclMetadataCache initially ran
@@ -1561,6 +1578,8 @@ public sealed class TestExecutor
         // uses on the wire (see AlCoverageTracker.BeginTest's doc comment) — always
         // called, cheap even when perTestCoverage was never requested.
         AlRunner.Infrastructure.AlCoverageTracker.BeginTest($"{codeunit}.{m.Name}");
+        // #2502: this test's Random() sequence depends only on the run seed and its own identity.
+        AlRunner.Infrastructure.RunSeed.BeginTest(codeunit, m.Name);
         // Enter BC's own "in test" scope for the duration of this test (mirrors
         // NavTestExecution.EnterTestCodeunit/LeaveTestCodeunit) — see BcRuntime.EnterTestExecutionScope
         // for why: it's what makes NavTenantSettingsHelper.IsSandbox()/IsProduction() (Codeunit 457

@@ -93,6 +93,38 @@ having been asked.** Do not re-dispatch to see whether it clears: two identical 
 minutes apart are a deterministic fault, and another attempt spends an hour of the account's
 shared Actions queue reproducing it.
 
+**And the conclusion lies in BOTH directions, so read the run's own summary, never
+`conclusion`.** A `success` conclusion can sit directly above real BC failures, and **two
+independent mechanisms put it there** — only the second explains the conclusion itself:
+
+- the workflow is **deliberately not a required status context** (its header says so in
+  capitals), so a red never blocks a merge;
+- the test step **never fails in the first place**: `Run-TestsInBcContainer` is called with
+  `-returnTrueIfAllPassed`, so a failing test makes it **return `$false`** rather than throw —
+  and the call is piped to `| Out-Null`, which discards that return value. The job therefore
+  succeeds. There is a `catch` beside it, but it covers a genuine exception and **does not fire
+  on failing tests**: measured on run `34736501961`, whose summary reports five failures and
+  whose log contains **zero** `::warning::Run-TestsInBcContainer` lines. Do not go looking for a
+  warning to detect swallowed failures — there is none.
+
+Both are intended. The header states the cost the design accepts: *"if the license drifts, it
+re-reports those as failures forever and everyone learns to ignore it."* Measured on run `34736501961`
+(corpus `6aaac721`, BC 28.4.53241.54606): both jobs `success`, and its own summary reads
+
+<!-- Recipe-unpinned: quoted OUTPUT, not a command -- this block is the nightly's own summary text, reproduced so a reader recognises it; there is nothing here to execute -->
+```
+**3383 passed, 5 failed, 0 skipped, 3388 total.**
+```
+
+with five named failures underneath, two of them the very claim the runner PR reading that run
+was trying to settle. Both directions were measured the same night — a `failure` that ran
+nothing (`Import-Module BcContainerHelper` finding no module, 22 s, corpus #343) and this
+`success` over five real failures.
+
+The summary block is the verdict: it prints the headline counts, a row per failure with the
+message measured on that run, and the exact BC build and artifact URL it used. `conclusion`
+tells you whether the workflow completed, which is a different question from what BC answered.
+
 **It adjudicates; it does not gate.** The nightly takes 1-2 hours and is deliberately not a
 required status context, so the corpus's own required legs remain the merge gate either way
 (`verify-execution-not-the-tick.md` § "Which legs were ever going to run it").

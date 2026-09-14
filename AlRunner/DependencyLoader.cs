@@ -222,6 +222,8 @@ public sealed class DependencyLoader
                     // LoadedAppEntry.Assemblies. Handing back only the cached primary here
                     // would put every app group after the first back into the pre-fix state.
                     list.AddRange(existing.AllAssemblies);
+                    // #4100: still one of this bundle's modules, for the page type finder.
+                    foreach (var reused in existing.AllAssemblies) BcRuntime.NoteCurrentBundleAssembly(reused);
                     continue;
                 }
             }

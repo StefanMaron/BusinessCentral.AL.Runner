@@ -29,7 +29,13 @@ public static partial class RecordPatches
 
     internal static Type? FindRecordType(int id)
     {
-        if (_recordTypeCache.TryGetValue(id, out var cached)) return cached;
+        // A hit can be resolved before this request's dependency modules load and retire their
+        // previous generation, so a cached type is re-checked rather than trusted (#4099).
+        if (_recordTypeCache.TryGetValue(id, out var cached))
+        {
+            if (!BcRuntime.IsStaleBundleAssembly(cached.Assembly)) return cached;
+            _recordTypeCache.TryRemove(new KeyValuePair<int, Type>(id, cached));
+        }
         var name = $"Record{id}";
         // Prefer the current test assembly: on a server reload of the same bundle
         // a same-named Record<id> from the previous assembly is still loaded (.NET
@@ -44,6 +50,8 @@ public static partial class RecordPatches
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
             if (asm == preferred) continue;
+            // A previous server/watch generation of a dependency module (#1901, #4099).
+            if (BcRuntime.IsStaleBundleAssembly(asm)) continue;
             var hit = FindRecordTypeIn(asm, name);
             if (hit != null) { _recordTypeCache[id] = hit; return hit; }
         }
@@ -974,10 +982,7 @@ public static partial class RecordPatches
             return null;
         }
 
-        ParsedTable? Resolve(string name) =>
-            _parsedTables.Values.FirstOrDefault(t =>
-                string.Equals(t.TableName, name, StringComparison.OrdinalIgnoreCase))
-            ?? TryPopulateParsedTableByName(name);
+        ParsedTable? Resolve(string name) => ResolveTableNameInDeclaringScope(name, referencingTable);
 
         var relationObjects = new List<object>();
         foreach (var arm in arms)
@@ -1505,18 +1510,10 @@ public static partial class RecordPatches
     {
         if (_tMetaCalcFormula == null || _tMetaFilter == null || _tFilterType == null) return null;
 
-        // Resolve source table by name
-        var srcTable = _parsedTables.Values.FirstOrDefault(t =>
-            string.Equals(t.TableName, cf.SourceTableName, StringComparison.OrdinalIgnoreCase));
-        if (srcTable == null)
-        {
-            // Lazily materialise the source table from the BC .app symbol index by name.
-            // Base App FlowFields commonly reference a sibling Base App table that wasn't
-            // parsed yet when this table was built (e.g. Purchase Line "Matched Order Lines"
-            // → "Matched Order Line"). Without this the formula falls back to the null
-            // EmptyFormula, which later throws on EmptyFormula.SourceField (table 0).
-            srcTable = TryPopulateParsedTableByName(cf.SourceTableName);
-        }
+        // By name, in the declaring app's scope (#4106); on a miss this lazily materialises the
+        // table from the .app symbol index, so a Base App FlowField naming a sibling not parsed
+        // yet ("Matched Order Lines" -> "Matched Order Line") still gets a real formula.
+        var srcTable = ResolveTableNameInDeclaringScope(cf.SourceTableName, parentTable);
         if (srcTable == null)
         {
             Console.Error.WriteLine($"[RecordPatches] BuildMetaCalcFormula: source table '{cf.SourceTableName}' not found in parsed tables");

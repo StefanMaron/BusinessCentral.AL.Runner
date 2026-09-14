@@ -403,6 +403,9 @@ public static partial class RecordPatches
         // says it is avoiding, and the same shape as #2478 and #2755 in this same reset path.
         _objectRefConstIds.Clear();
         _fieldTriggersWiredTables.Clear();
+        // #4100: BC's page-definition cache keys on (owner package id, page id) and the runner
+        // supplies no owner, so every bundle's page N shares one key.
+        RunnerMetaApplicationObjectLoader.Instance.ResetMetaObjectCache();
         _parsedPages.Clear();
         _parsedPageExtensions.Clear();
         _parsedReports.Clear();
@@ -428,6 +431,7 @@ public static partial class RecordPatches
         // this one only re-reads the declarations, not who owns them. Cost: one app.json
         // walk-up per source directory per cycle (measured in #3226's PR body).
         _owningAppByDir.Clear();
+        ResetAppGroupObjectVisibilityForReload();
         _metaFormCache.Clear();
         // #1957: the "already (successfully|un-)loaded" bookkeeping is a statement about
         // the NCLMetaForm instances _metaFormCache.Clear() just discarded — it must go
@@ -544,6 +548,8 @@ public static partial class RecordPatches
         // "Metadata Permission Set" row carries the declaring app's id, only knowable from
         // the app.json that owns the file (#2357).
         TryParsePermissionSetFile(text, filePath);
+        // #2279: which app group each object belongs to, for the object-inventory tables.
+        if (filePath != null) RecordSourceObjectOwners(text, filePath);
     }
 
     /// <summary>
@@ -1195,6 +1201,8 @@ public static partial class RecordPatches
     {
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
+            // A previous server/watch generation of this module (#1901, #4099).
+            if (BcRuntime.IsStaleBundleAssembly(asm)) continue;
             try
             {
                 var t = AlRunner.Infrastructure.AssemblyTypeIndex.For(asm).FindFirst(name);

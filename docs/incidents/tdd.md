@@ -205,3 +205,61 @@ where, and "somewhere" is exactly what a reader infers as "everywhere".
 Generalises past enums and codeunits: wherever a derivation feeds both an equivalence projection
 and an AL-observable surface — pages, queries, reports, permission sets — those are two
 observables and each owes its own red.
+
+
+## A red from the engine-bootstrap guard reads as a caught regression (2026-09-12, #3948 / #3957)
+
+`BcEngineUnbootstrappedGuard` (`AlRunner.Tests/BcEngineCollection.cs`) fails a `bc-engine-serial`
+test on a box that has BC artifacts but never ran `tools/engine-test-bootstrap.sh`. That is
+deliberate (#3078, #3835): the skip it replaced printed `Failed: 0, Passed: 0` and exit 0, a
+**false green**. The same design produces a **false red** during a mutation check.
+
+An agent running #3948's premise mutation — destroy a sidecar write, see whether the suite notices
+— got `Failed: 18, Passed: 163`, which reads as "already covered, close the issue". All 18 failed in
+under 1 ms with `REFUSING TO SKIP`. After a Release build, the bootstrap and
+`--settings engine.runsettings`, the same mutation gave `Failed: 0, Passed: 181, Skipped: 0` —
+nothing noticed, the opposite conclusion. Four more agents hit the guard locally the same day on
+`BcEngineReadinessGuardTests.Ready_IsTrue_WhenArtifactsAreProvisioned`, reproduced here at `bb66be98`
+as `Failed: 1, Passed: 3, Total: 4` with `[1 ms]`.
+
+Unlike the build break above, this shape **prints a `Total:` line**, so the missing-summary tell
+does not catch it.
+
+**Neither tell the issue proposed is enough on its own.** Inverting the guard's own
+`IsRecoverableLocally` check and running `BcEngineUnbootstrappedGuardTests` gave
+`Failed: 9, Passed: 20` — a genuine mutation RED — with five failures at `[< 1 ms]` and two
+carrying `REFUSING TO SKIP` under `Actual:`. What separates the two is where the text sits: the
+guard's failure puts it on the **first line** of `Error Message:`; a test asserting over the guard
+puts it inside an assertion's `Actual:`. `tools/mutation-verdict.py` keys on that, and
+`tools/test_mutation_verdict.py` holds both recordings; keying on the whole failure block instead
+reds exactly those two checks.
+
+## The mutation that landed, executed, and changed nothing (2026-09-13, PR #4003)
+
+A reviewer's first mutation on #4003 duplicated an `insertRow` call, expecting the
+`Company.Count()` assertion to go red. All 4 tests stayed green — the shape that reads as
+"this assertion proves nothing".
+
+It was not. An AL probe printed `company count = 1`: BC's provider `Insert` **refuses** a
+duplicate primary key — it returns `false` and adds no row, and the first row's payload
+survives while the second call's is discarded. `Insert(true)` behaves the same. So inserting
+the same company twice yields one row.
+
+The precision matters, and a reviewer supplied it against the first wording of this entry
+("primary-key idempotent"). Rejection and idempotence are indistinguishable through `Count()`
+and quite different through the return value: a reader taking "idempotent" literally would
+conclude that *no* observable moved and stop looking, when in fact the cheapest available
+diagnostic had moved all along. The mutation reached the code,
+compiled, and executed; the *system* absorbed it. A second mutation seeding a **distinct**
+company produced `Failed: 1, Passed: 3` with an `Assert` failure and the other three green, so
+the test discriminates exactly as intended.
+
+This is distinct from the two mechanisms already recorded (#3895): there the mutation never
+reached the code at all — a heredoc collapsed a backslash, and an incremental build skipped
+`CoreCompile`. Here every step of the landing check passes. What fails is the assumption that a
+changed *source* implies a changed *observable*.
+
+Caught only because the reviewer applied step 2 to the property rather than to the file. Had it
+been reported as found, a sound test would have been recorded as weak, and the natural follow-up
+— strengthening a test that needed nothing — would have been wasted work resting on a wrong
+belief about the provider.

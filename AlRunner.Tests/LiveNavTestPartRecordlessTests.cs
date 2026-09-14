@@ -83,7 +83,7 @@ public sealed class LiveNavTestPartRecordlessTests
     [Fact]
     public void RecordlessLinkedPart_CursorMove_StillRefusesNamingTheLink()
     {
-        var part = RecordlessPart([new SubPageLinkEntry(1, Microsoft.Dynamics.Nav.Types.Metadata.FilterType.FIELD, 1, "")]);
+        var part = RecordlessPart([new SubPageLinkEntry(1, Microsoft.Dynamics.Nav.Types.Metadata.FilterType.FIELD, 1, "", 4)]);
 
         var ex = Assert.Throws<RunnerOutOfScopeException>(() => part.MoveFirst());
 

@@ -194,8 +194,8 @@ internal static partial class BcAppSymbolCache
     /// same property.</para>
     ///
     /// <para><b>261</b> tableextension fields across the platform packages carry a
-    /// TableRelation, of which <b>260</b> gain one here — the gate below excludes exactly one,
-    /// <c>Customer."Ship-to Filter"</c> (5903, a FlowFilter). #3177 was filed with 154, which
+    /// TableRelation, and all of them are read here — including the one FlowFilter among them,
+    /// <c>Customer."Ship-to Filter"</c> (5903), since #2789. #3177 was filed with 154, which
     /// is the <b>Base Application share</b>, not an older count: the other 107 are in Business
     /// Foundation, an equally precompiled dependency read through this same loop. The total does
     /// NOT drift with the BC version — measured 154 + 107 = 261 identically on 28.1 and 28.4
@@ -267,22 +267,9 @@ internal static partial class BcAppSymbolCache
                 // Both properties, independently: ValidateTableRelation = 0 turns the CHECK off
                 // while leaving the relation itself readable, so reading only the first would
                 // switch validation on wholesale for fields BC does not validate.
-                //
-                // Gated on field class to match the table loop, whose reason is that a
-                // FlowFilter's TableRelation is a lookup hint for the filter's own UI rather
-                // than a stored value's referential constraint, and that RelationArms also feeds
-                // the reverse index NCLMetaTable_ComputeReferencingRelations builds for rename
-                // propagation, which filters on table id rather than field class. Note the
-                // blast radius here is NOT the 204 fields #2528 cites on the table path: across
-                // the platform packages this gate excludes exactly ONE extension field,
-                // Customer."Ship-to Filter" (5903, FlowFilter), so 260 of the 261 gain relations.
-                // It is kept anyway because the point of the change is that the two loops read
-                // the property the same way; ungated they would disagree again, in the other
-                // direction, over that one field.
+                // Every field class, exactly as the table loop reads it (#2789).
                 props.TryGetValue("TableRelation", out var tableRelation);
-                var relationArms = (!isFlowField && !isFlowFilter)
-                    ? RecordPatches.TryParseRelationArmsText(tableRelation, fieldName)
-                    : null;
+                var relationArms = RecordPatches.TryParseRelationArmsText(tableRelation, fieldName);
                 var relationValidate = !(props.TryGetValue("ValidateTableRelation", out var vtr)
                     && (vtr == "0" || vtr.Equals("false", StringComparison.OrdinalIgnoreCase)));
                 // #3545 — read exactly as the base-table loop reads them, for the same reason

@@ -64,11 +64,37 @@ wearing the shape of a caught regression. Measured twice on one guard in one hou
 agent and its coordinator independently. Prefer mutating a **value** the assertion reads over
 editing code structure, and read the error text before believing a red.
 
+**Trap: a red from the engine-bootstrap guard prints `Total:` and reads as a caught regression.**
+On a box with BC artifacts but no `tools/engine-test-bootstrap.sh` run, every `bc-engine-serial`
+test fails before doing any work, so the missing-`Total:` tell above does not fire: #3948's
+premise mutation read `Failed: 18` and meant `Failed: 0` once bootstrapped. Sub-millisecond
+durations and the text `REFUSING TO SKIP` are not enough either, because a mutation of the guard
+itself produces both and is a genuine red. Pipe the run through `tools/mutation-verdict.py` before
+believing a red: exit 1 is a real one, 4 a build break, 5 the engine guard, 3 unmeasured (#3957;
+`docs/incidents/tdd.md`).
+
 **Trap: a failed mutation and a working guard look identical.** Measured twice in one session
 (#3895): a backslash edit that a heredoc collapsed, so the file never changed; and a
 `-p:` override whose build was incremental and skipped `CoreCompile`, reporting the clean
 number. A failed *search* returns nothing and looks like a finding; a failed *mutation* returns
 green and looks like the system working.
+
+**Trap: a mutation can LAND, EXECUTE, and still change nothing — because the system absorbs
+it.** The traps above are mutations that never reached the code. This one reaches it and runs,
+and the green is still not about your test. Measured in review of #4003: duplicating an
+`insertRow` call left all 4 tests passing, which reads as "the `Company.Count()` assertion proves
+nothing". An AL probe printed `company count = 1` — BC's provider `Insert` **refuses a
+duplicate primary key**, returning `false` rather than adding a row, so the second call was a
+genuine no-op *for the row count* and no second row ever existed. Note what that leaves: a
+rejected operation and an idempotent one are indistinguishable through `Count()` and quite
+different through the **return value**, which did move and would have diagnosed this more
+cheaply than the probe did. A mutation
+seeding a *distinct* company gave `Failed: 1, Passed: 3`, and the test was sound all along.
+
+So step 2's landing check is necessary and not sufficient: confirm the mutation changed the
+**observable the assertion reads**, not merely the source. Prefer mutating a value the assertion
+consumes over duplicating or removing a call whose effect the system may deduplicate, clamp,
+cache or ignore.
 
 **Trap: a filter that matches nothing is a silent pass.** `dotnet test --filter
 "FullyQualifiedName~SomeTests"` prints `No test matches the given testcase filter` and **exits

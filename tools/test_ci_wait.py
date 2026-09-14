@@ -1797,6 +1797,152 @@ finally:
 
 
 # --------------------------------------------------------------------------
+# #4111 -- the floor line's DISTANCE, not just its age.
+#
+# The line named the commit measured and how long ago, so a real, correct
+# verdict about a `main` eight merges back rendered identically to one about
+# the current head. Measured live while #4111 was filed: `GREEN on d50d41fd`
+# beside `git rev-list --count d50d41fd..origin/main` -> 8.
+#
+# The distance is read from GitHub's compare API rather than from the local
+# `origin/main`, because ci-wait.py runs from worktrees of varying freshness
+# and a stale one UNDER-reports -- the direction that makes a stale verdict
+# look current, which is the whole defect. The PR body weighs the two.
+#
+# Third state (guards-need-a-third-state.md): a distance that could not be read
+# must not print `0 commits behind`, the one wrong answer shaped exactly like
+# the healthy case. It gets its own spelling, and the healthy case stays
+# truthful and reassuring when it is genuinely true.
+# --------------------------------------------------------------------------
+
+def _line_d(runs, reason="", per_sha=None, distance=None):
+    """floor_verdict with the distance read faked, so no test touches the network."""
+    def _fetch(sha):
+        if per_sha is not None:
+            return per_sha
+        return [r for r in (runs or []) if r.get("head_sha") == sha], ""
+
+    def _dist(sha):
+        return distance if distance is not None else (0, "")
+    return cw.floor_verdict(runs, reason, _NOW, sha_fetch=_fetch, distance_fetch=_dist)
+
+
+_ok_runs = [_fr("main-verdict-floor.yml", "success", "d50d41fd0000", "2026-09-09T11:48:00Z")]
+
+# The reported case: eight commits behind, and the line says so.
+_far = _line_d(_ok_runs, distance=(8, ""))
+check("#4111: the floor line reports how far behind main the measured commit is",
+      "8 commits behind main" in _far, _far)
+check("#4111: ...alongside the verdict and the age it already carried",
+      _far.startswith("main floor: GREEN on d50d41fd") and "12m ago" in _far, _far)
+
+# ...and the singular reads as English, not as `1 commits`.
+_one = _line_d(_ok_runs, distance=(1, ""))
+check("#4111: a distance of one is worded in the singular",
+      "1 commit behind main" in _one and "1 commits" not in _one, _one)
+
+# The healthy case must stay truthful AND reassuring -- it is the common one.
+_cur = _line_d(_ok_runs, distance=(0, ""))
+check("#4111: a verdict on main's current head says so, not '0 commits behind'",
+      "current head" in _cur and "0 commits" not in _cur, _cur)
+
+# THE THIRD STATE. A distance that could not be established is never spelled
+# as the healthy case, in either of its two wordings.
+_unk = _line_d(_ok_runs, distance=(None, "the compare read failed"))
+check("#4111: an unreadable distance says so in the line",
+      "distance unknown" in _unk, _unk)
+check("#4111: ...and is NEVER spelled as the healthy case",
+      "0 commits behind" not in _unk and "current head" not in _unk, _unk)
+check("#4111: ...while the verdict it could read still prints",
+      _unk.startswith("main floor: GREEN on d50d41fd"), _unk)
+check("#4111: ...and names why it could not tell",
+      "compare read failed" in _unk, _unk)
+
+# A force-pushed-away SHA is the same third state, reached by a 404 rather than
+# by a network failure -- it must not degrade into a healthy-looking zero.
+_gone = _line_d(_ok_runs, distance=(None, "d50d41fd is not reachable from main"))
+check("#4111: a SHA unreachable from main is 'distance unknown', not zero",
+      "distance unknown" in _gone and "0 commits" not in _gone
+      and "not reachable" in _gone, _gone)
+
+
+# The report may never gate. A distance read that BLOWS UP is still not an
+# error: floor_verdict swallows it into the third state.
+def _boom_dist(sha):
+    raise RuntimeError("network")
+
+
+_exploded = cw.floor_verdict(_ok_runs, "", _NOW,
+                             sha_fetch=lambda s: (_ok_runs, ""),
+                             distance_fetch=_boom_dist)
+check("#4111: a distance read that raises degrades to unknown, never propagates",
+      "distance unknown" in _exploded and _exploded.startswith("main floor: GREEN"),
+      _exploded)
+
+# The distance is only meaningful beside a verdict: the unavailable and
+# no-conclusive-run lines must not sprout a distance for a commit they never named.
+_no_verdict = _line_d(None, "gh api failed", distance=(4, ""))
+check("#4111: an unavailable verdict carries no distance (there is no commit to measure)",
+      "behind main" not in _no_verdict and "current head" not in _no_verdict, _no_verdict)
+
+# The fetch half: it asks the compare API with the floor SHA as BASE and main as
+# HEAD, and reads `ahead_by`. `behind_by` is the trap -- with this base/head pair
+# it counts commits the floor SHA has that main does not, which is 0 on a healthy
+# repo and would print a reassuring zero for an eight-commit-stale verdict.
+_dcalls = []
+
+
+def _dist_gh(rc_out):
+    def _gh(args, attempts=4):
+        _dcalls.append(list(args))
+        return rc_out
+    return _gh
+
+
+_old_gh = cw.gh
+try:
+    _dcalls.clear()
+    cw.gh = _dist_gh((0, '{"ahead_by": 8, "behind_by": 0, "status": "ahead"}'))
+    _n, _why = cw.fetch_distance_behind_main("d50d41fd0000")
+    check("#4111: the distance read asks the compare API",
+          any("compare" in a[1] for a in _dcalls if len(a) > 1), repr(_dcalls))
+    check("#4111: ...with the measured sha as BASE and main as HEAD",
+          any("compare/d50d41fd0000...main" in a[1] for a in _dcalls if len(a) > 1),
+          repr(_dcalls))
+    check("#4111: ...and reads ahead_by -- the count of commits main has that it does not",
+          _n == 8 and not _why, f"{_n!r} {_why!r}")
+
+    # The third state at the fetch, not only at the line.
+    _dcalls.clear()
+    cw.gh = _dist_gh((1, "dial tcp: lookup api.github.com: no such host"))
+    _n, _why = cw.fetch_distance_behind_main("d50d41fd0000")
+    check("#4111: a failed compare read returns None and a reason, never 0",
+          _n is None and _why, f"{_n!r} {_why!r}")
+
+    _dcalls.clear()
+    cw.gh = _dist_gh((0, '{"message": "Not Found", "status": "404"}'))
+    _n, _why = cw.fetch_distance_behind_main("deadbeef0000")
+    check("#4111: a 404 (force-pushed away) returns None and a reason, never 0",
+          _n is None and _why, f"{_n!r} {_why!r}")
+
+    _dcalls.clear()
+    cw.gh = _dist_gh((0, "not json at all"))
+    _n, _why = cw.fetch_distance_behind_main("d50d41fd0000")
+    check("#4111: an unparseable compare body is a refusal, not a zero",
+          _n is None and _why, f"{_n!r} {_why!r}")
+
+    # A genuine zero IS an answer -- the tool must not confuse "identical" with
+    # "could not tell", or the reassuring case would never print.
+    _dcalls.clear()
+    cw.gh = _dist_gh((0, '{"ahead_by": 0, "behind_by": 0, "status": "identical"}'))
+    _n, _why = cw.fetch_distance_behind_main("d50d41fd0000")
+    check("#4111: a genuine zero is an answer, not a refusal",
+          _n == 0 and not _why, f"{_n!r} {_why!r}")
+finally:
+    cw.gh = _old_gh
+
+
+# --------------------------------------------------------------------------
 # ...and main() must actually print it, on every path that reached GitHub, with
 # the exit code unchanged. This used to be a substring COUNT over the source --
 # which counted the `def` line, so it tolerated four call sites out of five and

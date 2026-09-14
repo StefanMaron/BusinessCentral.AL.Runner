@@ -104,6 +104,7 @@ public static partial class BcRuntime
     private static FieldInfo? _fRecordImplementationMetaTable;          // RecordImplementation.metaTable
     private static FieldInfo? _fRecordImplementationMutableRecordBuffer; // RecordImplementation.mutableRecordBuffer
     private static MethodInfo? _mDataAccessTryGetByPrimaryKeyAsync;
+    private static MethodInfo? _mRecordImplementationCalcAutoCalcFieldsAsync; // RecordImplementation.CalcAutoCalcFieldsAsync(bool)
     private static PropertyInfo? _pMrbResultResult;     // MutableRecordBufferResult<bool>.Result
     private static PropertyInfo? _pMrbResultRecordBuffer;
 
@@ -443,6 +444,7 @@ public static partial class BcRuntime
     {
         var name = asm.GetName().Name;
         if (name != null) _latestGenerationByAssemblyName[name] = asm;
+        NoteCurrentBundleAssembly(asm);
         _retiredGenerations.TryRemove(asm, out _);
     }
 
@@ -452,6 +454,33 @@ public static partial class BcRuntime
     /// the name-keyed registry above cannot see a version bump as a new generation (#3974).
     /// </summary>
     private static readonly ConcurrentDictionary<Assembly, byte> _retiredGenerations = new();
+
+    // #4100: the assemblies registered since the last ResetForNewBundleReload, in order. A
+    // different workspace's module is not a stale generation, so IsStaleBundleAssembly cannot
+    // keep its same-id objects from answering; a finder asks this set first instead.
+    private static readonly List<Assembly> _currentBundleAssemblies = new();
+
+    /// <summary>Add <paramref name="asm"/> to <see cref="CurrentBundleAssemblies"/> without
+    /// re-registering its generation — for a dependency module reused as-is (#4100).</summary>
+    internal static void NoteCurrentBundleAssembly(Assembly asm)
+    {
+        lock (_currentBundleAssemblies)
+            if (!_currentBundleAssemblies.Contains(asm)) _currentBundleAssemblies.Add(asm);
+    }
+
+    /// <summary>
+    /// <see cref="CurrentTestAssembly"/>, then every other assembly registered for the bundle
+    /// now loading (its dependency modules), newest first. Empty before the first registration.
+    /// </summary>
+    internal static IReadOnlyList<Assembly> CurrentBundleAssemblies()
+    {
+        var ordered = new List<Assembly>();
+        if (_currentTestAssembly != null) ordered.Add(_currentTestAssembly);
+        lock (_currentBundleAssemblies)
+            for (var i = _currentBundleAssemblies.Count - 1; i >= 0; i--)
+                if (!ordered.Contains(_currentBundleAssemblies[i])) ordered.Add(_currentBundleAssemblies[i]);
+        return ordered;
+    }
 
     /// <summary>
     /// Mark <paramref name="asm"/> as no longer current, whatever its simple name; see
@@ -647,6 +676,7 @@ public static partial class BcRuntime
     public static void ResetForNewBundleReload()
     {
         _currentTestAssembly = null;
+        lock (_currentBundleAssemblies) _currentBundleAssemblies.Clear();
         // AL-output type caches that live on this partial class (CodeunitPatches,
         // XmlPortPatches). Their finders already prefer CurrentTestAssembly; the
         // caches just need dropping so the rebuild re-resolves against the new asm.
@@ -928,6 +958,22 @@ public static partial class BcRuntime
         Console.Error.WriteLine($"[BcRuntime] Ncl in AppDomain: Location='{ncl?.Location}' (empty = byte-array load OK)");
     }
 
+    // Kept out of ApplyAllPatches: a loop inside a catch makes the JIT compile the whole caller
+    // FullOpts (see docs/startup-cost.md#main-jit-tier; HandlerLoopJitTierGuardTests pins it).
+    private static void ReportNavEnvironmentCtorFailure(Exception ex)
+    {
+        var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
+        Console.Error.WriteLine("[BcRuntime] NavEnvironment ctor THREW — falling back to skeleton:");
+        Console.Error.WriteLine($"  {inner.GetType().FullName}: {inner.Message}");
+        var st = new System.Diagnostics.StackTrace(inner, fNeedFileInfo: true);
+        for (int fi = 0; fi < st.FrameCount; fi++)
+        {
+            var frame = st.GetFrame(fi);
+            var m = frame?.GetMethod();
+            Console.Error.WriteLine($"    [{fi}] IL+0x{frame?.GetILOffset():X4} native+0x{frame?.GetNativeOffset():X4}  {m?.DeclaringType?.FullName}.{m?.Name}({string.Join(",", m?.GetParameters().Select(p=>p.ParameterType.Name) ?? Array.Empty<string>())})");
+        }
+    }
+
     private static void ApplyAllPatches(Assembly navNcl)
     {
         var envType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavEnvironment")
@@ -1034,25 +1080,14 @@ public static partial class BcRuntime
             }
             catch (Exception ex)
             {
-                var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
-                Console.Error.WriteLine("[BcRuntime] NavEnvironment ctor THREW — falling back to skeleton:");
-                Console.Error.WriteLine($"  {inner.GetType().FullName}: {inner.Message}");
-                var st = new System.Diagnostics.StackTrace(inner, fNeedFileInfo: true);
-                for (int fi = 0; fi < st.FrameCount; fi++)
-                {
-                    var frame = st.GetFrame(fi);
-                    var m = frame?.GetMethod();
-                    Console.Error.WriteLine($"    [{fi}] IL+0x{frame?.GetILOffset():X4} native+0x{frame?.GetNativeOffset():X4}  {m?.DeclaringType?.FullName}.{m?.Name}({string.Join(",", m?.GetParameters().Select(p=>p.ParameterType.Name) ?? Array.Empty<string>())})");
-                }
+                ReportNavEnvironmentCtorFailure(ex);
             }
         }
         if (!ctorOk && instField != null)
-        {
-            var skel = RuntimeHelpers.GetUninitializedObject(envType);
-            var instLock = envType.GetField("lockObject", BindingFlags.NonPublic | BindingFlags.Instance);
-            if (instLock != null) instLock.SetValue(skel, new object());
-            instField.SetValue(null, skel);
-        }
+            AlRunner.Infrastructure.SkeletonFallback.InstallOrThrow(envType, instField,
+                "If the cause is WindowsIdentity.GetCurrent(), the loaded Microsoft.Dynamics.Nav.Ncl.dll lacks " +
+                "the Cecil rewrite that removes that call (NclCecilRewrite.Runtime.cs): this process loaded an " +
+                "un-rewritten copy. See #2064.");
         HookProperty(envType, "Instance", true, nameof(GetInstanceReplacement));
 
         // NavApplicationObjectBase.get_Session — real body is `=> session` (trivial readonly-field
@@ -2436,25 +2471,6 @@ public static partial class BcRuntime
 
         // NavSession.GetPermissionSet (both 3-arg overloads) is Cecil-owned (see
         // NclCecilRewrite.cs, Batch 8).
-
-        // ALSystemNumeric.ALRandomize/ALRandom — real impls reach NavCurrentThread.Session.Random
-        // (null on skeleton). Back with a process-static Random.
-        var alSysNumType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ALSystemNumeric");
-        if (alSysNumType != null)
-        {
-            var randomizeNoArg = alSysNumType.GetMethod("ALRandomize",
-                BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null);
-            if (randomizeNoArg != null)
-                Hook(randomizeNoArg, nameof(ALSystemNumeric_ALRandomize), "ALSystemNumeric.ALRandomize()");
-            var randomizeSeed = alSysNumType.GetMethod("ALRandomize",
-                BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(int) }, null);
-            if (randomizeSeed != null)
-                Hook(randomizeSeed, nameof(ALSystemNumeric_ALRandomize_Seed), "ALSystemNumeric.ALRandomize(int)");
-            var alRandom = alSysNumType.GetMethod("ALRandom",
-                BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(int) }, null);
-            if (alRandom != null)
-                Hook(alRandom, nameof(ALSystemNumeric_ALRandom), "ALSystemNumeric.ALRandom(int)");
-        }
 
         // NavDialog.ALOpen — UI dialog open NREs reaching Tree.Session on skeleton. No-op.
         var navDialogType2 = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavDialog");

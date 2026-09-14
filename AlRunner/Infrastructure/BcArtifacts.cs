@@ -159,15 +159,56 @@ public static class BcArtifacts
     /// when the caller typed it.</para>
     /// </summary>
     internal static string ResolveArtifactsRoot(string? envOverride, Func<string> userHome)
+        => ResolveRoot(envOverride, userHome, ArtifactsRoot_Rel);
+
+    /// <summary>The shared core of every home-rooted root with an environment override
+    /// (<see cref="ResolveArtifactsRoot"/>, <see cref="ResolveSymbolsRoot"/>,
+    /// <c>CacheRoots.ResolveDefaultRoot</c>): one convention, not three.</summary>
+    internal static string ResolveRoot(string? envOverride, Func<string> userHome, string homeRelative)
     {
         if (string.IsNullOrWhiteSpace(envOverride))
             // AlRunnerPaths.UserHome throws loudly (issue #2114) rather than silently handing
             // back a relative path when $HOME names a directory that does not exist.
-            return Path.Combine(userHome(), ArtifactsRoot_Rel);
+            return Path.Combine(userHome(), homeRelative);
 
         // TrimEndingDirectorySeparator leaves a filesystem ROOT ("/", a drive root) alone,
         // unlike a bare TrimEnd, which turns "/" into "" and hands back a relative path.
         return Path.TrimEndingDirectorySeparator(Path.GetFullPath(envOverride.Trim()));
+    }
+
+    /// <summary>
+    /// Environment variable that relocates the curated symbols tree (issue #2768), the sibling
+    /// of <see cref="ArtifactsRootEnvVar"/>: the directory the per-version symbol subdirectories
+    /// live under. Resolved exactly as the artifacts root is — see
+    /// <see cref="ResolveArtifactsRoot"/> for blank handling, absolutization and why the home
+    /// provider is lazy. Read-only to the runner: nothing here downloads into it.
+    /// </summary>
+    public const string SymbolsRootEnvVar = "AL_RUNNER_SYMBOLS_ROOT";
+
+    public const string SymbolsRoot_Rel = ".local/share/al-runner/symbols";
+
+    internal static string ResolveSymbolsRoot(string? envOverride, Func<string> userHome)
+        => ResolveRoot(envOverride, userHome, SymbolsRoot_Rel);
+
+    /// <summary>The curated symbols root (<c>~/.local/share/al-runner/symbols</c>, or
+    /// <see cref="SymbolsRootEnvVar"/> when set). Every reader of that tree goes through
+    /// <see cref="CuratedSymbolsDir"/>; <c>HomeRootedPathReadSiteGuardTests</c> holds it.</summary>
+    public static string SymbolsRootDir =>
+        ResolveSymbolsRoot(
+            Environment.GetEnvironmentVariable(SymbolsRootEnvVar),
+            static () => AlRunnerPaths.UserHome);
+
+    /// <summary>The highest version directory under <see cref="SymbolsRootDir"/> matching
+    /// <paramref name="versionPrefix"/> (major.minor), or null when there is none — the tree is
+    /// optional augmentation of the artifact dir, never required.</summary>
+    public static string? CuratedSymbolsDir(string versionPrefix)
+        => CuratedSymbolsDirIn(SymbolsRootDir, versionPrefix);
+
+    internal static string? CuratedSymbolsDirIn(string root, string versionPrefix)
+    {
+        if (!Directory.Exists(root)) return null;
+        try { return SelectArtifactVersionDir(root, versionPrefix); }
+        catch (InvalidOperationException) { return null; }
     }
 
     /// <summary>The per-user artifacts root (<c>~/.local/share/al-runner/artifacts</c>, or
@@ -560,33 +601,32 @@ public static class BcArtifacts
     }
 
     /// <summary>
-    /// Startup consistency check: the engine DLL (Ncl) baked into bin/ is built for a
-    /// specific BC version. If the selected artifact/dependency version has a different
-    /// MAJOR, the dependency symbols and the engine disagree at the API level — fail loud.
-    ///
-    /// We compare MAJOR only: BC pins its assembly version at <c>MAJOR.0.0.0</c>
-    /// regardless of the product/file version (the 28.1.x artifact ships Ncl with
-    /// AssemblyName.Version = 28.0.0.0), so minor/patch skew (28.1.x build vs 28.1.y
-    /// cache, or a 28.0-stamped assembly inside a 28.1 artifact) is expected and tolerated.
+    /// The refusal text when a single-build runner is asked to run a BC major other than the
+    /// one it was compiled against, or null when there is nothing to refuse. Minor skew is
+    /// tolerated here (#2008 warns about it separately).
     /// </summary>
-    public static void VerifyEngineConsistency(string binDir)
+    /// <remarks>
+    /// Reads the baked-in <see cref="EngineBuiltVersion"/>, never bin/Ncl.dll: the build
+    /// output does not ship Ncl.dll, and the shadow child's copy comes from the SELECTED
+    /// artifact, so its major always agrees with the selection (#4031). With variants shipped,
+    /// another major is served by swapping engines, so the variant resolver decides instead.
+    /// </remarks>
+    internal static string? DescribeEngineMajorMismatch(Version? engineBuild, Version selected, int shippedVariantCount)
     {
-        var ncl = Path.Combine(binDir, "Microsoft.Dynamics.Nav.Ncl.dll");
-        if (!File.Exists(ncl)) return; // nothing to compare against
+        if (engineBuild == null || shippedVariantCount > 0 || engineBuild.Major == selected.Major)
+            return null;
+        return $"BC engine/version mismatch: this binary was built for BC {engineBuild} " +
+            $"(engine major {engineBuild.Major}) but the selected BC version is {selected} " +
+            $"(major {selected.Major}). Rebuild with -p:_BCVersion={selected}, or select a " +
+            $"BC {engineBuild.Major}.x version.";
+    }
 
-        var engineVer = GetAssemblyNameWithRetry(ncl).Version;
-        if (engineVer == null) return;
-
-        var selected = SelectedVersion;
-        if (engineVer.Major != selected.Major)
-        {
-            throw new InvalidOperationException(
-                $"BC engine/version mismatch: this binary was built for engine major " +
-                $"{engineVer.Major} (bin Ncl.dll = {engineVer}) but the selected " +
-                $"BC version is {selected} (major {selected.Major}). Rebuild with " +
-                $"-p:_BCVersion={selected} or select major {engineVer.Major} " +
-                $"(--bc-version {engineVer.Major}).");
-        }
+    /// <summary>Throws <see cref="InvalidOperationException"/> carrying
+    /// <see cref="DescribeEngineMajorMismatch"/>'s text for the selected version.</summary>
+    public static void VerifyEngineConsistency(int shippedVariantCount)
+    {
+        var msg = DescribeEngineMajorMismatch(EngineBuiltVersion(), SelectedVersion, shippedVariantCount);
+        if (msg != null) throw new InvalidOperationException(msg);
     }
 
     /// <summary>
