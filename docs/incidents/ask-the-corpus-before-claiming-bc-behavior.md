@@ -76,3 +76,65 @@ a test asserting "nothing happens" records the patch as BC behaviour. That is no
 hypothetical: Patch #21 no-opped `NavOpenTaskPageAction.ShowForm` and blinded every route
 that opens a page through an action (#2986). It has since been fixed and the surface
 re-measured open on all eight legs, so it is a verdict again.
+
+## The nightly's conclusion is wrong in both directions (2026-09-13)
+
+Two instances the same night, opposite directions, both on `nightly-windows.yml`.
+
+**`failure` with no verdict.** Run `34734646263` on corpus PR #340's head concluded `failure`
+after **22 seconds**: `Import-Module BcContainerHelper` found no module file, so no container
+booted and no test ran. Of the last 60 nightly runs, 11 failed; I fetched logs for 7 and **all
+7 carried that identical message**, scheduled `master` runs included. Filed as corpus #343. The
+re-dispatch of the same head came back `success` in 39 minutes — a real boot — confirming the
+first was a no-verdict rather than Windows disagreeing.
+
+**`success` over five real failures.** Run `34736501961` (corpus `6aaac721`, BC
+28.4.53241.54606-W1): both jobs `success`, and the run's own summary reads *"3383 passed, 5
+failed, 0 skipped, 3388 total"* with five named failures — including
+`TxReportRun_Test04/05_...` failing with *"The following UI handlers were not executed:
+ConfirmRequestPageHandler"*, which was the exact BC claim a runner PR was trying to settle from
+that run.
+
+**This second one is not a defect.** `nightly-windows.yml` reports rather than gates by design,
+and its header states the reason: some failures are properties of the tier, not of BC, and
+*"if the license drifts, it re-reports those as failures forever and everyone learns to ignore
+it."* Gating on it would produce exactly the ignored-red it was written to avoid.
+
+What makes it worth recording is that the rule already warned about the `failure` direction
+(corpus #288) and said nothing about this one — and this is the more dangerous direction,
+because a green conclusion reads as adjudication and nobody opens the log to check. The
+remedy is the same in both cases and is now stated once: the summary block is the verdict;
+`conclusion` answers whether the workflow completed.
+
+Found by a reviewer agent on PR #4086, which had handed back before the nightly reported. The
+PR's author had already corrected the code at the current head by removing the
+`[HandlerFunctions]` — so the failures *confirmed* its BC claim — but nothing in the PR body
+recorded it, leaving a reader who found that run unable to reconstruct what happened.
+
+### Why the job succeeds, measured rather than read (2026-09-13, PR #4109)
+
+The first version of the rule section said the test step "catches the failure and downgrades it
+to a `::warning::`". A reviewer checked run `34736501961` and found **zero**
+`::warning::Run-TestsInBcContainer` lines in a run whose own summary reports five failures. I
+confirmed it: the single grep hit is the `run:` block echoed **as source**, carrying the
+`[36;1m` colour escape.
+
+The real mechanism is one line above the `catch`:
+
+```powershell
+Run-TestsInBcContainer ... -detailed -returnTrueIfAllPassed | Out-Null
+```
+
+`-returnTrueIfAllPassed` makes a failing suite **return `$false`** instead of throwing, and
+`| Out-Null` discards the return value. Nothing reads it, so PowerShell's success stream stays
+clean and the job concludes `success`. The `catch` is real and its justification is sound — it
+keeps one suite's failure from aborting the other — but it covers exceptions, which failing
+tests do not raise.
+
+Practical consequence, and the reason this is worth a paragraph: a reader who knows the job
+swallows failures will look for the warning that swallowed them. There is none, and its absence
+reads as "nothing was swallowed".
+
+The misattribution is itself an instance of the `[36;1m` trap this repository has now recorded
+three times in one session: an Actions log prints the `run:` block as source before any stdout,
+so grepping for a string that appears in the script finds the script.
