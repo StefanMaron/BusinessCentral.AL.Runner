@@ -2249,7 +2249,11 @@ check("#4165: an OPEN match is not relabelled as merged",
       "MERGED" not in _open_only, _open_only)
 
 # And the no-corpus-lines message must not be read as "not this PR's own".
-_nolines = cw.inherited_red_lines("no FAIL lines here at all", pr_map_fetch=_fake_map)
+# The fixture must be a real LEG log (it carries per-test output); a string with
+# no test lines at all is the #4165 UNAVAILABLE case, pinned separately below.
+_nolines = cw.inherited_red_lines(
+    "2026-01-01T00:00:00.0000000Z PASS  Codeunit60001.Fine (1ms)\n",
+    pr_map_fetch=_fake_map)
 check("#4165: 'no corpus FAIL lines' does not claim the failure is the PR's own",
       any("does not say" in l.lower() or "corpus codeunits only" in l.lower()
           for l in _nolines), "\n".join(_nolines))
@@ -2290,6 +2294,42 @@ check("#4165: corpus_codeunit_to_pr labels a MERGED runner PR as MERGED",
       _real.get("60976") == ("3985", "MERGED"), repr(_real))
 check("#4165: ...and an OPEN one as OPEN",
       _real.get("60989") == ("4004", "OPEN"), repr(_real))
+
+# --- #4165: an aggregate log cannot answer the question -----------------
+# The failure this pins: ci-wait fetches ONE failing check's log, and on a red
+# BC matrix that is often the aggregate "BC test matrix passed" job, which
+# reports which legs failed and carries no per-test output. Reading its silence
+# as "no corpus FAIL lines, so not the resolved-corpus window" is a confident
+# wrong answer. Measured on PR #4166: the aggregate was the fetched log while
+# the three BC legs under it carried 3x Codeunit60589 + 6x Codeunit60982.
+
+_AGGREGATE_LOG = (
+    "BC test matrix passed\tUNKNOWN STEP\t2026-09-14T07:47:36.1571470Z "
+    "fail-fast is off, so all failing legs are reported, not just the first.\n"
+    "BC test matrix passed\tUNKNOWN STEP\t2026-09-14T07:47:36.1589896Z "
+    "##[error]Process completed with exit code 1.\n"
+)
+
+check("#4165: an aggregate log is recognised as unable to carry codeunit lines",
+      not cw.log_can_carry_codeunits(_AGGREGATE_LOG))
+check("#4165: ...and a real BC leg log IS recognised as able to",
+      cw.log_can_carry_codeunits(_LOG_28), _LOG_28[:120])
+
+_agg = cw.inherited_red_lines(_AGGREGATE_LOG, pr_map_fetch=_fake_map)
+_aj = "\n".join(_agg)
+check("#4165: an aggregate log reports UNAVAILABLE, not a verdict",
+      "UNAVAILABLE" in _aj, _aj)
+check("#4165: ...and never claims the failure is outside the corpus window",
+      "not the resolved-corpus window" not in _aj, _aj)
+check("#4165: ...and sends the reader to a leg's own log",
+      "jobs" in _aj and "conclusion" in _aj, _aj)
+
+# The discriminating half: a leg log with genuinely zero corpus failures must
+# still get the real answer, not the refusal.
+_clean_leg = "2026-01-01T00:00:00.0000000Z PASS  Codeunit60001.SomethingPassed (1ms)\n"
+_cl = "\n".join(cw.inherited_red_lines(_clean_leg, pr_map_fetch=_fake_map))
+check("#4165: a leg with no corpus FAILs still gets the real answer, not UNAVAILABLE",
+      "UNAVAILABLE" not in _cl and "not the resolved-corpus window" in _cl, _cl)
 
 # A report may never raise and never gate.
 class _BoomMap:

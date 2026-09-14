@@ -741,6 +741,22 @@ def corpus_codeunit_to_pr(open_prs=None) -> dict[str, tuple[str, str]]:
     return mapping
 
 
+def log_can_carry_codeunits(log: str) -> bool:
+    """Could this log carry `FAIL Codeunit<id>` lines at all?
+
+    A BC leg prints per-test PASS/FAIL lines; the aggregate `BC test matrix
+    passed` job prints only which legs failed. Distinguishing them is what
+    keeps "no corpus failures here" apart from "this log never had any"
+    (`guards-need-a-third-state.md`). The tell is any per-test line at all --
+    a PASS, a FAIL, or a harness summary -- not the absence of one pattern.
+    """
+    return bool(
+        re.search(r"^\S+Z\s+(PASS|FAIL)\s+\S", log, re.M)
+        or re.search(r"\d+\s+total,\s*\d+\s+passed", log)
+        or re.search(r"\d+P/\d+F/\d+E", log)
+    )
+
+
 def inherited_red_lines(log: str, pr_map_fetch=None) -> list[str]:
     """The per-codeunit table, with the match where one exists. Never raises."""
     counts = failing_codeunits(log)
@@ -748,6 +764,21 @@ def inherited_red_lines(log: str, pr_map_fetch=None) -> list[str]:
         return ["inherited-red check: unavailable (the failing log could not be read, "
                 "which is a refusal -- NOT zero corpus failures)"]
     if not counts:
+        # THIRD STATE, not a negative finding (#4165). A log with no `FAIL
+        # Codeunit<id>` lines may be a leg that genuinely had no corpus
+        # failures -- or a log that could never carry one. The aggregate
+        # `BC test matrix passed` job is the common case: it reports which
+        # legs failed and contains no test output at all, so reading its
+        # silence as "not inherited" is a confident wrong answer. Measured on
+        # PR #4166, where the aggregate was the fetched log and the three BC
+        # legs beneath it carried 3x Codeunit60589 + 6x Codeunit60982.
+        if not log_can_carry_codeunits(log):
+            return ["inherited-red check: UNAVAILABLE -- this log carries no per-test "
+                    "output (an aggregate job reports which legs failed, not what "
+                    "failed in them), so it cannot answer whether the red is "
+                    "inherited. Read a BC leg's own log:",
+                    "  gh api repos/<o>/<r>/actions/runs/<run-id>/jobs --paginate \\",
+                    "    --jq '.jobs[]|select(.conclusion==\"failure\")|\"\\(.id) \\(.name)\"'"]
         return ["inherited-red check: no corpus `FAIL Codeunit<id>` lines in this log, "
                 "so this failure is not the resolved-corpus window (#3922). "
                 "That is a statement about CORPUS codeunits only -- it does not "
