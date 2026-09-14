@@ -18,9 +18,30 @@ public class SiblingParserSyntaxTreeTests
 {
     private static readonly Type RP = typeof(AlRunner.Patches.RecordPatches);
 
-    private static void Parse(string method, string source) =>
-        RP.GetMethod(method, BindingFlags.NonPublic | BindingFlags.Static)!
-          .Invoke(null, new object[] { source });
+    // Pass `source` as the first argument and let every OPTIONAL parameter take its declared
+    // default, because MethodInfo.Invoke does not apply C# default arguments — it matches the
+    // parameter count exactly and throws TargetParameterCountException otherwise. Adding an
+    // optional parameter to one of these parsers is source-compatible for every real caller and
+    // used to red three tests here for a reason that has nothing to do with what they assert
+    // (#4000 added `string? filePath = null` to TryParseObjectDeclFile). Keeping the padding
+    // here means a parser's optional-parameter list can grow without editing this file.
+    private static void Parse(string method, string source)
+    {
+        var mi = RP.GetMethod(method, BindingFlags.NonPublic | BindingFlags.Static)!;
+        var ps = mi.GetParameters();
+        var args = new object?[ps.Length];
+        args[0] = source;
+        for (var i = 1; i < ps.Length; i++)
+        {
+            Assert.True(ps[i].IsOptional,
+                $"{method} parameter '{ps[i].Name}' is REQUIRED and this helper has no value for "
+                + "it, so padding it with a default would invoke the parser with a value its "
+                + "caller never passes. Give the test an explicit argument instead.");
+            args[i] = ps[i].DefaultValue;
+        }
+
+        mi.Invoke(null, args);
+    }
 
     private static System.Collections.IDictionary Dict(string field) =>
         (System.Collections.IDictionary)RP

@@ -40,11 +40,17 @@ public static partial class RecordPatches
     // per-object-type (codeunit 50100 and enum 50100 may coexist).
     private static readonly Dictionary<(string Kind, int Id), ParsedAlObjectDecl> _parsedObjectDecls = new();
 
+    // (kind, id) → the app.json id of the app whose source declares it (#4000). Enums,
+    // enumextensions, permission sets and permissionsetextensions emit no CLR type, so the
+    // AllObj owner index cannot find their owner in an emitted assembly; this is where it
+    // reads it instead. Absent when the file has no path or no app.json above it.
+    private static readonly Dictionary<(string Kind, int Id), Guid> _parsedObjectDeclOwners = new();
+
     // Register()-time sweep folded into RecordPatches.ParseAllRegisteredSourceFiles (#1903)
     // — that shared loop calls TryParseObjectDeclFile alongside the other seven extractors,
     // one file read per file, instead of this file doing its own separate directory walk.
 
-    private static void TryParseObjectDeclFile(string text)
+    private static void TryParseObjectDeclFile(string text, string? filePath = null)
     {
         foreach (var obj in ParseAlObjects(text))
         {
@@ -54,6 +60,8 @@ public static partial class RecordPatches
             if (!ObjectDeclKinds.Contains(kind)) continue;
             if (ObjectIdOf(obj) is not int id) continue;
             var name = IdentText((obj as NavSyntax.ObjectSyntax)?.Name);
+            if (filePath != null && ResolveOwningApp(filePath) is { } owner)
+                _parsedObjectDeclOwners[(kind, id)] = owner.AppId;
             // Codeunits additionally carry the three object-level properties the
             // CodeUnit Metadata virtual table (2000000137) reports as real columns —
             // see RecordPatches.CodeunitMetadataVirtualTable.cs. Every other kind here
@@ -112,6 +120,9 @@ public static partial class RecordPatches
 
     /// <summary>Snapshot of every non-table/page/report/query/xmlport AL object declaration parsed from source.</summary>
     internal static IReadOnlyCollection<ParsedAlObjectDecl> ParsedObjectDecls => _parsedObjectDecls.Values;
+
+    /// <summary>The declaring app of each source-parsed declaration whose file has an app.json (#4000).</summary>
+    internal static IReadOnlyDictionary<(string Kind, int Id), Guid> ParsedObjectDeclOwners => _parsedObjectDeclOwners;
 
     /// <summary>
     /// The codeunit's declared <c>TestHttpRequestPolicy</c> as AL text, or null when it declares
