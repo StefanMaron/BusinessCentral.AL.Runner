@@ -40,6 +40,7 @@
         "object-system-table": { "tests": 3 },
         "page-enum-control-modal": { "tests": 4 },
         "pageext-action-dispatch": { "tests": 6 },
+        "pageext-control-source-expression": { "tests": 4 },
         "permission-set-assignment": { "tests": 8 },
         "precompiled-implicit-return-3347": { "tests": 4 },
         "precompiled-table-relation": { "tests": 10 },

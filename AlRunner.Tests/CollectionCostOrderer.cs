@@ -133,6 +133,16 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // that. That is also the real reason the two 60.9s entries below carry their
             // observed maximum: their LOW end across legs approaches 30, not 60.
             ["AlOutputCacheDoNotCacheTests"] = 64,
+            // #4096: added by PR #4132, which introduces this collection. Its first CI run
+            // measured 83.4s on the BC 27.5 leg, where it was absent from this table and the
+            // freshness gate failed the leg for exactly that -- so the guard is right and this
+            // is the one-line answer it asks for.
+            //
+            // Recorded at 83, rounded down, from ONE leg: the ceiling of that claim rather
+            // than a settled figure. What the value has to be right about is dispatch order
+            // (#2175), not precision -- it needs to sit well above UnmeasuredWeightSeconds
+            // (30) so the collection is scheduled early instead of becoming the #1887 tail.
+            ["TransitiveDependencyVisibilityTests"] = 83,
             // perf/boot-overhead: added with the on-disk install-baseline tier. Measured
             // 125.6s on the first CI run of that branch (BC 28.4 leg), where it was absent
             // from this table, fell back to UnmeasuredWeightSeconds and was dispatched at
