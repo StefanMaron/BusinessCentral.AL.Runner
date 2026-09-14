@@ -450,7 +450,14 @@ public sealed class BuiltMetadataCacheBundleBoundaryTests : IDisposable
                     BindingFlags.NonPublic | BindingFlags.Static)
                 ?? throw new InvalidOperationException(
                     "RecordPatches.ParseSourceFileIntoAllExtractors not found — this test drives that sweep.");
-        m.Invoke(null, new object?[] { File.ReadAllText(alFilePath), alFilePath });
+        // registeredDir is the third parameter since the per-dir manifest cache landed: it
+        // resolves the app.json whose preprocessorSymbols the parse runs under. AddSourceDirs
+        // passes the directory it was registered with, and this helper stands in for that
+        // route, so the file's own directory is what it would have passed.
+        m.Invoke(null, new object?[]
+        {
+            File.ReadAllText(alFilePath), alFilePath, Path.GetDirectoryName(alFilePath)!,
+        });
     }
 
     /// <summary>Read by reflection: no public surface reports it, and inferring "it was cleared"
