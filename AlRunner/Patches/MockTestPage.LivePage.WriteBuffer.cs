@@ -162,34 +162,55 @@ internal partial class LiveNavTestPage
     /// <summary>Write the started row, in BC's order. False when OnInsertRecord vetoed it.</summary>
     private bool InsertPendingRow()
     {
-        // AutoSplitKey, in BC's own order: SplitKey, then OnInsertRecord, then the record's
-        // Insert (NavForm.SaveRecordAsync / NavForm.InsertAsync(belowXRec) both do exactly
-        // this). Skipping it left the last primary-key field at its Init() default, so a page
-        // whose whole numbering scheme is AutoSplitKey — every editable line grid in BC —
-        // wrote its first row at line no. 0 and could not write a second one at all: the same
-        // key, so the insert failed on a duplicate. It is a no-op inside BC's own guard for a
-        // page that does not declare the property.
-        ProposeAutoSplitKey();
-        _page?.SplitKey();
-        // OnInsertRecord is the page's last word before the row exists, and its RETURN VALUE
-        // is a veto — a page can refuse the insert outright. Running it and discarding the
-        // answer would be worse than not running it: the row lands anyway, but now it also
-        // carries whatever the trigger wrote on its way to saying no.
-        if (_page != null && !_page.RaiseOnInsertRecord(false)) return false;
-        // runApplicationTrigger: true. Inserting a row from a page runs the table's OnInsert, the
-        // same as Rec.Insert(true) — that trigger is where a table assigns its number series,
-        // stamps its own derived fields, and enforces what it will not accept. Passing false
-        // wrote a row the table had never agreed to.
-        // Non-null: _pendingNewRow is only ever set true by InsertEmptyRow, which refuses by
-        // name first when the page has no record — see RequireRecord there.
-        _record!.ALInsertAsync(DataError.TrapError, true, false).GetAwaiter().GetResult();
-        // The row is now the page's own row, so it is also its own before-image — BC's
-        // NavForm.InsertAsync does exactly this, under exactly this guard
-        // (`if (SourceTable.HasBeenInserted) OldRecord.ALAssign(SourceTable)`). Without it the
-        // next write on the same page instance would compare against, and report as xRec, the
-        // blank row New() started (issue #3440).
-        if (_record!.HasBeenInserted) SnapshotBeforeImage();
-        return true;
+        // #3586: BC's NavForm.InsertAsync(belowXRec) opens Session.BeginTransaction() and
+        // closes it with Session.EndTransaction(commit) in a finally, around exactly the three
+        // steps below. So a page-driven row Insert carries its own transaction and is legal
+        // even when the CALLER holds none — which under TransactionModel::None is the whole
+        // test body (#3480). Without this bracket the runner refused a write BC allows, while
+        // allowing the page-driven Modify beside it: corpus 60878 Test13c and Test13d measured
+        // both on a real service tier and BC allows each.
+        //
+        // Observably equivalent: the counter grants a write nothing outside a None scope, where
+        // ThrowIfNoTransactionForWrite returns before reading it at all, and it changes no
+        // commit point — a separate question owned by NoteTransactionEnd and deliberately left
+        // alone here (#2413 measured that conflating the two is wrong). Same bracket, same
+        // reasoning, as the field-validate one in MockTestPage.Fields.cs (#3543).
+        AlRunner.Patches.ALDatabasePatches.EnterRunTransaction();
+        try
+        {
+            // AutoSplitKey, in BC's own order: SplitKey, then OnInsertRecord, then the record's
+            // Insert (NavForm.SaveRecordAsync / NavForm.InsertAsync(belowXRec) both do exactly
+            // this). Skipping it left the last primary-key field at its Init() default, so a page
+            // whose whole numbering scheme is AutoSplitKey — every editable line grid in BC —
+            // wrote its first row at line no. 0 and could not write a second one at all: the same
+            // key, so the insert failed on a duplicate. It is a no-op inside BC's own guard for a
+            // page that does not declare the property.
+            ProposeAutoSplitKey();
+            _page?.SplitKey();
+            // OnInsertRecord is the page's last word before the row exists, and its RETURN VALUE
+            // is a veto — a page can refuse the insert outright. Running it and discarding the
+            // answer would be worse than not running it: the row lands anyway, but now it also
+            // carries whatever the trigger wrote on its way to saying no.
+            if (_page != null && !_page.RaiseOnInsertRecord(false)) return false;
+            // runApplicationTrigger: true. Inserting a row from a page runs the table's OnInsert, the
+            // same as Rec.Insert(true) — that trigger is where a table assigns its number series,
+            // stamps its own derived fields, and enforces what it will not accept. Passing false
+            // wrote a row the table had never agreed to.
+            // Non-null: _pendingNewRow is only ever set true by InsertEmptyRow, which refuses by
+            // name first when the page has no record — see RequireRecord there.
+            _record!.ALInsertAsync(DataError.TrapError, true, false).GetAwaiter().GetResult();
+            // The row is now the page's own row, so it is also its own before-image — BC's
+            // NavForm.InsertAsync does exactly this, under exactly this guard
+            // (`if (SourceTable.HasBeenInserted) OldRecord.ALAssign(SourceTable)`). Without it the
+            // next write on the same page instance would compare against, and report as xRec, the
+            // blank row New() started (issue #3440).
+            if (_record!.HasBeenInserted) SnapshotBeforeImage();
+            return true;
+        }
+        finally
+        {
+            AlRunner.Patches.ALDatabasePatches.ExitRunTransaction();
+        }
     }
 
     /// <summary>
@@ -736,7 +757,25 @@ internal partial class LiveNavTestPage
         // trapping it turned "this page is not positioned on a row" into an edit that appeared
         // to succeed and quietly went nowhere; and both trigger flags on, because a page write
         // runs the table's OnModify and the global-trigger hook exactly like Rec.Modify(true).
-        record.ModifyAsync(DataError.ThrowError, true, true).GetAwaiter().GetResult();
+        //
+        // #3586: bracketed for the same reason InsertPendingRow is — BC's NavForm.ModifyAsync()
+        // opens Session.BeginTransaction() and closes it with EndTransaction(commit) in a
+        // finally, around RaiseOnModifyRecordAsync and the write. It also closes the hole that
+        // issue found: ModifyAsync is deliberately NOT the AL-lowered ALModifyAsync (see the
+        // xRec contract above), so this path reaches no write-time guard at all and would miss
+        // any future one placed there. The verdict is unchanged either way — corpus 60878
+        // Test13d measured a page-driven row Modify under TransactionModel::None on a real
+        // service tier and BC allows it — so this makes the guard REACHABLE without moving the
+        // answer. Observably equivalent on the same terms as the Insert bracket above.
+        AlRunner.Patches.ALDatabasePatches.EnterRunTransaction();
+        try
+        {
+            record.ModifyAsync(DataError.ThrowError, true, true).GetAwaiter().GetResult();
+        }
+        finally
+        {
+            AlRunner.Patches.ALDatabasePatches.ExitRunTransaction();
+        }
 
         // The write has landed, so the row IS the before-image from here on. BC gets this from
         // the client: SaveRecordAsync ends by raising UpdateRequest(RecordSaved), the client
