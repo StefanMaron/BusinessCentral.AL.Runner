@@ -610,4 +610,346 @@ public class WriteTransactionTestBoundaryTests
         Assert.Contains("PASS  Codeunit62544.D_TheTestBodyItselfIsStillRefused", output);
         Assert.Contains("PASS  Codeunit62544.E_ADefaultModelTestAfterwardsCanStillWrite", output);
     }
+
+    /// <summary>
+    /// Issue #3586, the row write a TestPage defers to <c>Close()</c> — the one surface
+    /// <c>FlushRow()</c> owns and #3543's field-validate bracket does not reach.
+    ///
+    /// BC's own bodies, decompiled from <c>Microsoft.Dynamics.Nav.Ncl.dll</c> (28.4): BOTH of
+    /// the page's row-write entry points open a transaction of their own and close it in a
+    /// <c>finally</c> — <c>NavForm.InsertAsync(belowXRec)</c> wraps <c>SplitKey()</c> +
+    /// <c>RaiseOnInsertRecordAsync</c> + the insert, and <c>NavForm.ModifyAsync()</c> wraps
+    /// <c>RaiseOnModifyRecordAsync</c>. So neither needs the CALLER to hold one, which is why
+    /// real BC allows both under <c>TransactionModel::None</c>.
+    ///
+    /// The BC claim is pinned upstream — corpus 60878 <c>Test13c</c> (row Insert) and
+    /// <c>Test13d</c> (row Modify), the PR body's <c>Corpus-PR:</c> line, green on all eight
+    /// cloud legs. This pins the runner's own bracket.
+    ///
+    /// <para>The arms deliberately mirror those two, because #3586's finding was an
+    /// ASYMMETRY: the runner refused the Insert and never checked the Modify. One arm cannot
+    /// show that — it reports one outcome with nothing to compare it against.</para>
+    ///
+    /// <para><c>D_</c> is the arm that makes the rest prove something: the test BODY must still
+    /// be refused. Without it every assertion here would also pass if the bracket simply
+    /// disabled the no-transaction scope outright.</para>
+    ///
+    /// <para><c>F_</c> and <c>I_</c> split the Modify-path note between them, because
+    /// <c>NoteRecordWrite</c> has two AL-observable effects and one red does not say which is
+    /// covered. <c>F_</c> reads the write-transaction flag; <c>I_</c> reads the rollback
+    /// snapshot, which <c>RecordPatches.NoteTransactionWrite</c> skips for anything that is not
+    /// a <c>NavRecord</c> — so <c>NoteRecordWrite(null)</c> keeps <c>F_</c> green and reds
+    /// <c>I_</c> alone.</para>
+    /// </summary>
+    [SkippableFact]
+    public void UnderTransactionModelNone_APageDrivenRowInsertAndModifyMayWrite()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var root = TestScratch.Dir("al-runner-writetx-none-rowwrite-3586");
+        Directory.CreateDirectory(root);
+
+        File.WriteAllText(Path.Combine(root, "app.json"), """
+        {
+          "id": "b3586000-0000-4000-8000-000000003586",
+          "name": "WriteTxNoneRowWrite3586",
+          "publisher": "Repro3586",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": 62550, "to": 62559 } ],
+          "runtime": "14.0"
+        }
+        """);
+
+        File.WriteAllText(Path.Combine(root, "TxnRowWrite.al"), """
+        table 62550 "TXR Probe"
+        {
+            DataClassification = SystemMetadata;
+
+            fields
+            {
+                field(1; "Entry No."; Integer) { }
+                field(2; "Text Field"; Text[100]) { }
+            }
+
+            keys
+            {
+                key(PK; "Entry No.") { Clustered = true; }
+            }
+        }
+
+        page 62553 "TXR Card"
+        {
+            PageType = Card;
+            SourceTable = "TXR Probe";
+            ApplicationArea = All;
+
+            layout
+            {
+                area(Content)
+                {
+                    group(General)
+                    {
+                        field("Entry No."; Rec."Entry No.") { ApplicationArea = All; }
+                        field("Text Field"; Rec."Text Field") { ApplicationArea = All; }
+                    }
+                }
+            }
+        }
+
+        codeunit 62554 "TXR Tests"
+        {
+            Subtype = Test;
+            TestPermissions = Disabled;
+
+            // Declaration order IS the fixture.
+
+            local procedure MarkerCount(EntryNo: Integer): Integer
+            var
+                Probe: Record "TXR Probe";
+            begin
+                Probe.Reset();
+                Probe.SetRange("Entry No.", EntryNo);
+                exit(Probe.Count());
+            end;
+
+            // The page-driven row INSERT: OpenNew() starts a row, SetValue fills it, and
+            // Close() is what flushes it (FlushPendingNewRow -> InsertPendingRow). This is
+            // the half the runner refused.
+            [Test]
+            [TransactionModel(TransactionModel::None)]
+            procedure A_APageRowInsertMayWriteUnderNone()
+            var
+                Card: TestPage "TXR Card";
+            begin
+                if MarkerCount(9420) <> 0 then
+                    Error('TXR1 FAIL: the row this arm inserts must not exist before it runs');
+                if Database.IsInWriteTransaction() then
+                    Error('TXR1 FAIL: a None test body must not start inside a write transaction');
+
+                Card.OpenNew();
+                Card."Entry No.".SetValue(9420);
+                Card.Close();
+
+                if MarkerCount(9420) <> 1 then
+                    Error('TXR1 FAIL: a page-driven row Insert from a None test must be able to write; got %1 row(s)', MarkerCount(9420));
+                if Database.IsInWriteTransaction() then
+                    Error('TXR1 FAIL: the transaction the page began must end with the page');
+            end;
+
+            // The modify arm needs a row to open on, and a None body cannot write one for
+            // itself (#3480). A default-model test writes it; the platform commits it at the
+            // boundary. Its OWN row, not the insert arm's, so it stays measurable even if the
+            // insert arm comes back refused.
+            [Test]
+            procedure B_SeedsTheRowTheModifyArmOpensOn()
+            var
+                Probe: Record "TXR Probe";
+            begin
+                Probe."Entry No." := 9421;
+                Probe."Text Field" := 'ROW-MODIFY-SEED';
+                Probe.Insert();
+
+                if not Database.IsInWriteTransaction() then
+                    Error('TXR2 FAIL: an uncommitted Insert must open a write transaction inside the test that made it');
+            end;
+
+            // The page-driven row MODIFY: the other half of FlushRow(). The observable is the
+            // row's own field read back through a FRESH Record, so this measures the page's
+            // Modify rather than the TestPage's in-memory view.
+            //
+            // #3586's SECOND finding is the F_ arm below, not this one: this arm passed before
+            // the fix too, because nothing on the ModifyAsync path ever consulted the guard.
+            [Test]
+            [TransactionModel(TransactionModel::None)]
+            procedure C_APageRowModifyMayWriteUnderNone()
+            var
+                Probe: Record "TXR Probe";
+                Card: TestPage "TXR Card";
+            begin
+                if Database.IsInWriteTransaction() then
+                    Error('TXR3 FAIL: a None test body must not start inside a write transaction');
+                if not Probe.Get(9421) then
+                    Error('TXR3 FAIL: the previous default-model test''s seed row must be visible here');
+                if Probe."Text Field" <> 'ROW-MODIFY-SEED' then
+                    Error('TXR3 FAIL: the seed row must carry its seeded value before the page edits it, got [%1]', Probe."Text Field");
+
+                Card.OpenEdit();
+                Card.GoToKey(9421);
+                Card."Text Field".SetValue('ROW-MODIFIED-UNDER-NONE');
+                Card.Close();
+
+                Clear(Probe);
+                if not Probe.Get(9421) then
+                    Error('TXR3 FAIL: the seed row must still exist after the page edited it');
+                if Probe."Text Field" <> 'ROW-MODIFIED-UNDER-NONE' then
+                    Error('TXR3 FAIL: a page-driven row Modify from a None test must be able to write, got [%1]', Probe."Text Field");
+                if Database.IsInWriteTransaction() then
+                    Error('TXR3 FAIL: the transaction the page began must end with the page');
+            end;
+
+            // The negative arm, and the reason the two above prove anything: the bracket must
+            // make the page's ROW WRITE legal WITHOUT reopening the test body itself.
+            [Test]
+            [TransactionModel(TransactionModel::None)]
+            procedure D_TheTestBodyItselfIsStillRefused()
+            var
+                Probe: Record "TXR Probe";
+            begin
+                Probe."Entry No." := 9422;
+                asserterror Probe.Insert();
+
+                if GetLastErrorText() <> 'A transaction must be started before changes can be made to the database.' then
+                    Error('TXR4 FAIL: expected BC''s no-transaction refusal, got [%1]', GetLastErrorText());
+                if MarkerCount(9422) <> 0 then
+                    Error('TXR4 FAIL: a refused write must not have written a row');
+            end;
+
+            // And the scope must not outlive the None tests that opened it.
+            [Test]
+            procedure E_ADefaultModelTestAfterwardsCanStillWrite()
+            var
+                Probe: Record "TXR Probe";
+            begin
+                Probe."Entry No." := 9423;
+                Probe.Insert();
+
+                if not Database.IsInWriteTransaction() then
+                    Error('TXR5 FAIL: a default-model test after the None tests must still be able to write');
+            end;
+
+            // #3586's SECOND half: a page-driven row Modify must REACH the write-time note, the
+            // way the other four AL writes do. It did not — the note is Cecil-prepended onto
+            // the AL-lowered names only, and FlushPendingModify calls ModifyAsync rather than
+            // ALModifyAsync (deliberately, for the xRec contract), so this write passed no
+            // check because it skipped one.
+            //
+            // Database.IsInWriteTransaction() is the AL-visible consequence, and it is the arm
+            // that makes the Modify half falsifiable at all: under None the answer is "allow"
+            // either way, so no None arm can tell a reachable guard from an absent one. Under
+            // the DEFAULT model an uncommitted write must leave the write transaction open,
+            // which is exactly what the note sets.
+            [Test]
+            procedure F_APageRowModifyOpensTheWriteTransaction()
+            var
+                Probe: Record "TXR Probe";
+                Card: TestPage "TXR Card";
+            begin
+                // Its own row, seeded and committed by the platform at the previous boundary,
+                // so this arm measures the page's Modify and not its own seeding Insert.
+                if not Probe.Get(9421) then
+                    Error('TXR6 FAIL: the row seeded earlier must still be visible here');
+
+                if Database.IsInWriteTransaction() then
+                    Error('TXR6 FAIL: this test must not start inside a write transaction left by an earlier one');
+
+                Card.OpenEdit();
+                Card.GoToKey(9421);
+                Card."Text Field".SetValue('ROW-MODIFIED-DEFAULT-MODEL');
+                Card.Close();
+
+                if not Database.IsInWriteTransaction() then
+                    Error('TXR6 FAIL: a page-driven row Modify must open the write transaction, as every other AL write does');
+
+                Clear(Probe);
+                if not Probe.Get(9421) then
+                    Error('TXR6 FAIL: the row must still exist after the page edited it');
+                if Probe."Text Field" <> 'ROW-MODIFIED-DEFAULT-MODEL' then
+                    Error('TXR6 FAIL: the page edit must have landed, got [%1]', Probe."Text Field");
+            end;
+
+            // Seeds I_'s row under the default model, so the platform commits it at the
+            // boundary and I_'s own commit point starts clean. See I_'s comment for why the
+            // seed cannot live inside I_ itself.
+            [Test]
+            procedure H_SeedsTheRowTheRollbackArmOpensOn()
+            var
+                Probe: Record "TXR Probe";
+            begin
+                Probe."Entry No." := 9424;
+                Probe."Text Field" := 'SEED';
+                Probe.Insert();
+
+                if not Database.IsInWriteTransaction() then
+                    Error('TXR7 FAIL: an uncommitted Insert must open a write transaction inside the test that made it');
+            end;
+
+            // The FOURTH effect of NoteRecordWrite, and the only one the arms above cannot
+            // see. NoteRecordWrite refuses a write with no transaction, bumps the row
+            // version, sets the write-transaction flag, and takes the per-table rollback
+            // snapshot through RecordPatches.NoteTransactionWrite.
+            //
+            // That last call opens with `if (record is not NavRecord rec) return;`, so passing
+            // anything that is not a NavRecord — null included — still satisfies the guard,
+            // still bumps the row version and still sets the flag, and SILENTLY skips the
+            // snapshot. F_ above reads the flag, so it cannot tell the two apart.
+            //
+            // The snapshot is what an asserterror rolls back to: NoteTransactionWriteForTable
+            // captures the table's pre-write image lazily, once per (source, table) since the
+            // last commit point. No snapshot means no pre-write image, so the rollback has
+            // nothing to restore and the page's edit survives an error that must have undone
+            // it.
+            //
+            // The page's Modify must be the FIRST write to this table since the commit point,
+            // which is what makes the arm discriminate. NoteTransactionWriteForTable captures
+            // the pre-write image ONCE per (source, table) per commit point, so any AL write
+            // to "TXR Probe" earlier in this same test would take the snapshot itself and mask
+            // a missing one on the page path. The seed row is therefore written by the
+            // PREVIOUS test (H_ below seeds it, declaration order is the fixture) and
+            // committed at the boundary, exactly as the B_/C_ pair does.
+            [Test]
+            [TransactionModel(TransactionModel::AutoRollback)]
+            procedure I_APageRowModifyIsRolledBackByAnUnrelatedError()
+            var
+                Probe: Record "TXR Probe";
+                Card: TestPage "TXR Card";
+            begin
+                if not Probe.Get(9424) then
+                    Error('TXR7 FAIL: the previous test''s seed row must be visible here');
+                if Probe."Text Field" <> 'SEED' then
+                    Error('TXR7 FAIL: the seed row must carry its seeded value, got [%1]', Probe."Text Field");
+
+                // The first and only write to this table in this test, and it goes through
+                // the page.
+                Card.OpenEdit();
+                Card.GoToKey(9424);
+                Card."Text Field".SetValue('PAGE-EDIT');
+                Card.Close();
+
+                Clear(Probe);
+                if not Probe.Get(9424) then
+                    Error('TXR7 FAIL: the row must exist after the page edited it');
+                if Probe."Text Field" <> 'PAGE-EDIT' then
+                    Error('TXR7 FAIL: the page edit must have landed before the error, got [%1]', Probe."Text Field");
+
+                // Unrelated error: rolls back every uncommitted write since the commit point.
+                // The page's Modify is the only one, so the field must read its pre-write
+                // value again. With the snapshot skipped there is no pre-write image and the
+                // edit survives — the exact failure NoteRecordWrite(null) produces.
+                asserterror Error('boom');
+
+                Clear(Probe);
+                if not Probe.Get(9424) then
+                    Error('TXR7 FAIL: the committed seed row must survive the rollback');
+                if Probe."Text Field" <> 'SEED' then
+                    Error('TXR7 FAIL: a page-driven row Modify must be covered by the rollback snapshot; expected [SEED], got [%1]', Probe."Text Field");
+            end;
+        }
+        """);
+
+        var (output, exitCode) = RunRunner(root);
+
+        Assert.True(exitCode == 0,
+            $"Expected all eight tests to pass (exit 0); got exit {exitCode}.\n{output}");
+        Assert.DoesNotContain("FAIL", output);
+        Assert.Contains("PASS  Codeunit62554.A_APageRowInsertMayWriteUnderNone", output);
+        Assert.Contains("PASS  Codeunit62554.B_SeedsTheRowTheModifyArmOpensOn", output);
+        Assert.Contains("PASS  Codeunit62554.C_APageRowModifyMayWriteUnderNone", output);
+        Assert.Contains("PASS  Codeunit62554.D_TheTestBodyItselfIsStillRefused", output);
+        Assert.Contains("PASS  Codeunit62554.E_ADefaultModelTestAfterwardsCanStillWrite", output);
+        Assert.Contains("PASS  Codeunit62554.F_APageRowModifyOpensTheWriteTransaction", output);
+        Assert.Contains("PASS  Codeunit62554.H_SeedsTheRowTheRollbackArmOpensOn", output);
+        Assert.Contains("PASS  Codeunit62554.I_APageRowModifyIsRolledBackByAnUnrelatedError", output);
+    }
 }
