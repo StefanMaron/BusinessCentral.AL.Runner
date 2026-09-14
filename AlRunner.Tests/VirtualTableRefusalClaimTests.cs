@@ -308,7 +308,7 @@ public sealed class VirtualTableRefusalClaimTests
             // asserterror and no expect-oos entry can absorb it). Counting both together would
             // make this number mean nothing. This assertion is about the RunnerOutOfScopeException
             // refusals #2945 corrected, so a *BcShapeGap( call is deliberately not one of them.
-            return Regex.Matches(src, @"throw (RecordPatches\.)?[A-Za-z]+(?<!Bc)ShapeGap\(").Count;
+            return CountRefusalSites(src);
         });
 
         // 51 in the sixteen populators + 3 in RecordPatches.cs's dispatch chain + 4 in
@@ -458,11 +458,54 @@ public sealed class VirtualTableRefusalClaimTests
         // point rather than new claims about the surface: this file's other guard, that each
         // surface anchor is spelled in exactly one file, still passes, because both go through
         // CodeunitMetadataShapeGap like every other refusal in that file.
-        // 79 was READ OUT of this test's own failure message ("Expected: 77, Actual: 79").
-        Assert.Equal(79, total);
+        //
+        // 79 -> 80 (#4058): no refusal was added. The site counter stopped requiring the literal
+        // `throw `, so it now sees NavAppExtraVirtualTable's MarkNavAppExtraBcProviderRefused,
+        // which CONSTRUCTS the refusal and captures it into an ExceptionDispatchInfo for every
+        // later handout to replay. It was always a refusal; nothing here could see it. Measured:
+        // before this change, replacing that factory call with `new InvalidOperationException(...)`
+        // left this file at `Failed: 0, Passed: 91`.
+        // 80 was READ OUT of this test's own failure message ("Expected: 79, Actual: 80").
+        Assert.Equal(80, total);
     }
 
-    private static readonly Regex RefusalSite = new(@"throw (RecordPatches\.)?[A-Za-z]+(?<!Bc)ShapeGap\(");
+    // A refusal SITE is a *call* to a `*ShapeGap(` factory, not only a `throw` of one (#4058).
+    //
+    // The regex used to require the literal `throw `, which made it blind to a refusal that is
+    // CONSTRUCTED and captured rather than thrown at the point it is decided. One such site is
+    // live: NavAppExtraVirtualTable's MarkNavAppExtraBcProviderRefused builds the exception into
+    // an ExceptionDispatchInfo so every later handout for that store replays it. It is a real
+    // refusal by every test that matters — same factory, same type, same anchor — and replacing
+    // its factory call with `new InvalidOperationException(...)` left this file at
+    // `Failed: 0, Passed: 91`, so nothing here could see it change.
+    //
+    // The (?<!Bc) is load-bearing and unchanged: see the comment in the counting test.
+    private static readonly Regex RefusalSite = new(@"(RecordPatches\.)?[A-Za-z]+(?<!Bc)ShapeGap\(");
+
+    /// <summary>
+    /// A factory DECLARATION, or an expression-bodied factory delegating to another factory —
+    /// neither is a refusal site. Both spell `*ShapeGap(`, so counting calls without excluding
+    /// them would add 48 declarations to the count and make the number mean nothing.
+    /// </summary>
+    private static readonly Regex FactoryDeclarationOrDelegation =
+        new(@"^\s*(///|internal|private|public|protected|static|=>\s*(RecordPatches\.)?[A-Za-z]+ShapeGap\()");
+
+    /// <summary>
+    /// Count the refusal sites in one source file: `*ShapeGap(` calls that are not factory
+    /// declarations or delegations. Read a changed number out of the failure message rather than
+    /// adding a delta by hand.
+    /// </summary>
+    private static int CountRefusalSites(string src)
+    {
+        var n = 0;
+        foreach (var line in src.Split('\n'))
+        {
+            if (FactoryDeclarationOrDelegation.IsMatch(line)) continue;
+            n += RefusalSite.Matches(line).Count;
+        }
+
+        return n;
+    }
 
     /// <summary>
     /// Files that raise the same refusals but sit outside the count above, each with its own
@@ -500,7 +543,7 @@ public sealed class VirtualTableRefusalClaimTests
         Assert.True(files.Count > 0, $"discovered no .cs files under {Path.Combine(RepoRoot, "AlRunner")}");
 
         var perFile = files
-            .Select(p => (Name: Path.GetFileName(p), Count: RefusalSite.Matches(File.ReadAllText(p)).Count))
+            .Select(p => (Name: Path.GetFileName(p), Count: CountRefusalSites(File.ReadAllText(p))))
             .Where(f => f.Count > 0)
             .ToList();
         var counted = new HashSet<string>(CoveredFiles.Concat(SiblingFiles), StringComparer.Ordinal);
