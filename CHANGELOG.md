@@ -25,6 +25,8 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **transactions:** Report.Run commit point in default-model tests
+- **record:** a User saved by a page's CurrPage.Update gets its User Property row
 - **testpage:** insert a part's pending New() row when the page closes through OK().Invoke()
 - **metadata:** resolve a precompiled table's relation and CalcFormula target names in its own app's scope
 - **testpage:** apply SubPageLink filters in the Link filter group 4
