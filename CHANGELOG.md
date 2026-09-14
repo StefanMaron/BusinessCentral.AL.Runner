@@ -195,6 +195,7 @@ All notable changes to this project are documented here. Format based on
 - **integer-vt:** judge a half-open range against the base window, not the envelope-widened span
 
 ### Documentation
+- **orchestrating:** a transport error arms nothing and still exits 0
 - **ci-verdicts:** the inherited red is a rebase, not a re-run
 - **rules:** a number that travels is the fifth way a measurement misleads
 - **cache:** move BcAppSymbolCache's CacheVersion history to docs/
