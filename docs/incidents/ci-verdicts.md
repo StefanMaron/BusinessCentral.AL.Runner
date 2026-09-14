@@ -245,3 +245,22 @@ runs — and that exemption was verified rather than assumed: `head_sha=<main>` 
 
 Same class as the `[36;1m` source echo recorded above: a correct instrument answering a question
 nobody asked, returning a plausible number that nothing downstream contradicts.
+
+## The floor debounce as an unbounded green streak (2026-09-14, #4178)
+
+Checking whether `main` had recovered, a workflow listing filtered to `main-verdict-floor.yml`
+showed **eight consecutive `success` runs over seven hours**, all on `917bbbf2`. Every one had
+`floor-matrix: skipped`; the conclusive run for that SHA was the `failure` beneath them, red on
+the nine codeunits tracked by #4167.
+
+The debounce is correct — it keys on the SHA already having a conclusive run and declines to
+re-measure. What makes it misleading is the interaction with a red `main` nobody has fixed: that
+SHA stays put, so the skips never stop and the green streak grows without bound.
+
+The rule's original example was one skip after one failure, which reads as a transient. The
+shape that actually occurs is a growing run of greens, and a streak is far likelier to be read
+as recovery than a single green is. Hence the addition: the LENGTH of the green run is not
+evidence; the run that measured the SHA is.
+
+Found while verifying, for the fourth time in one session, that main's red was still the same
+nine and not something new.

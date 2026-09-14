@@ -66,6 +66,15 @@ recovered" would invert the truth on identical code. **Check the `floor-matrix` 
 before reading a floor run as a verdict** — `gh api repos/<o>/<r>/actions/runs/<id>/jobs --jq
 '.jobs[]|"\(.name): \(.conclusion)"'` — and treat `skipped` as "no new measurement", never as green.
 
+**It is not one stale run: the skips continue for as long as the SHA sits there.** The debounce
+keys on the SHA already having a conclusive run, and a red `main` that nobody has fixed keeps
+that SHA, so every subsequent 30-minute floor run reports `success` with `floor-matrix: skipped`.
+Measured on `917bbbf2`: **eight consecutive `success` runs over seven hours**, every one of them
+skipped, while the conclusive run for that SHA was the `failure` beneath them. A workflow listing
+filtered to that workflow shows eight greens in a row on a `main` that has been red the whole
+time, so the length of the green streak is not evidence of anything — the run that measured the
+SHA is.
+
 **Beside every verdict it prints one line about `main` itself** — `main floor: RED on 8b6885f4
 (main-verdict-floor.yml, 1h ago, 6 commits behind main)` (#3679, #4111), so a PR branched during
 a red window is visible as inheriting a failure it did not cause. It is a report: it never
