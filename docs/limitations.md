@@ -580,6 +580,22 @@ type-default, and does nothing" until the 2026-09 audit, and that too was v1. A 
 DLL is not loaded fails loudly, naming the codeunit and the package it belongs to
 (`CodeunitPatches.BuildMissingCodeunitMessage`), rather than answering a default.
 
+### Which dependencies an app's AL can reference
+
+An app compiles against the apps its `app.json` declares (`dependencies`, plus the
+`application` and `platform` floors) and whatever those declared apps propagate with
+`"propagateDependencies": true` — the rule BC's compiler applies, measured with alc
+17.0.34.45391 (#4096). Referencing an object from an undeclared transitive dependency fails with
+`AL0185 ... is missing`, as it does on BC.
+
+**One deliberate difference:** the Microsoft platform apps — `Base Application`,
+`System Application`, `Business Foundation`, `Application` and `System` — stay visible to every
+app whether or not it declares them. The runner resolves the `application`/`platform` floors to
+whichever of those the package cache holds, which is not always the propagating `Application`
+app BC references, so narrowing them would refuse objects BC accepts. The cost is the other
+direction: an app that uses a Base Application or System Application object without declaring
+`application` compiles here and fails with `AL0185` on BC.
+
 ### Why no real SA implementations
 
 The moment the runner ships a re-implementation of an SA codeunit, it inherits the burden of staying faithful to the real System Application across every BC version. Your tests would be asserting against the runner's reimplementation rather than against BC. This has happened once (MockImage was reverted in #1502 for exactly this reason).
