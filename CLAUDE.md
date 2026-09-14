@@ -249,4 +249,31 @@ One more empty-looking answer that is not: **`mise` prints a banner on stdout**,
 instead of — the value you wanted. **Filter a capture to the shape you expect**
 (`| command grep -E '^[0-9]+$'`) rather than testing whether it is non-empty.
 
+**3c. Writing markdown through `--body "..."` silently deletes your backticked spans.**
+
+A double-quoted shell string evaluates backticks as command substitution, so every `` `code
+span` `` in prose becomes the *output* of running it — usually empty, plus a `command not
+found` on stderr that no reader of the posted text ever sees. Measured on a live issue comment
+(#4110): a run id and a timestamp vanished, leaving `Reading the oldest queued run's jobs (,
+queued since ):` published, while `gh` exited 0 and printed the comment URL.
+
+This is the same family as the two traps above — the command succeeds, and the loss is visible
+only on a re-read — and it is worse in one way: the damage is public before you notice.
+
+```bash
+cat > /tmp/body.md <<'MDEOF'      # quoted delimiter: NO substitution at all
+... `code spans` and $vars stay literal ...
+MDEOF
+gh issue comment <N> --body-file /tmp/body.md
+```
+
+**Write any markdown body to a file through a quoted heredoc and pass `--body-file`.** Never
+`--body "…"` for prose containing backticks, `$`, or `!`. If you must inline it, re-read the
+posted text before trusting it.
+
+**And pick a delimiter the text cannot contain.** A heredoc ends at the first line equal to its
+delimiter, *including one inside the content*, so a body whose own example shows a heredoc
+terminates early and the shell then parses the remainder as commands. Measured composing the
+very PR that added this section. Writing the file from Python has neither problem.
+
 History: docs/incidents/CLAUDE.md.md
