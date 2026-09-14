@@ -25,6 +25,8 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **environment:** stop making every test a sandbox, so IsSaaS is false by default
+- **allobj:** index the owning app of source-compiled extension, enum and permission set objects
 - **testpage:** allow a page-driven row Insert under TransactionModel::None, as BC does
 - **compiler:** a source-compiled app sees only the symbols of dependencies it declares
 - **testpage:** run a pageextension's InitializeComponent so its controls' source expressions register
