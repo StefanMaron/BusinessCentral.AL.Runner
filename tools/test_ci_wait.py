@@ -2199,7 +2199,12 @@ check("#3922: a codeunit merely mentioned in unchanged context is NOT claimed",
 # --- the report line ------------------------------------------------------
 
 def _fake_map(_open_prs=None):
-    return {"60976": "3985", "60989": "4004"}
+    return {"60976": ("3985", "OPEN"), "60989": ("4004", "OPEN")}
+
+
+def _merged_map(_open_prs=None):
+    """Both fixes have MERGED -- the #4165 phase: rebase, do not wait."""
+    return {"60976": ("3985", "MERGED"), "60989": ("4004", "MERGED")}
 
 
 _lines = cw.inherited_red_lines(_LOG_27 + "\n" + _LOG_28, pr_map_fetch=_fake_map)
@@ -2220,6 +2225,71 @@ check("#3922: a partial match is NOT reported as wholly inherited",
 _all_matched = cw.inherited_red_lines(_LOG_28, pr_map_fetch=_fake_map)
 check("#3922: every codeunit matched reports the red as inherited",
       any("inherit" in l.lower() for l in _all_matched), "\n".join(_all_matched))
+
+# --- #4165: the merged-fix phase -----------------------------------------
+# The failure this pins: mapping only OPEN runner PRs put a codeunit whose fix
+# had already merged into the UNMATCHED bucket, whose summary warns it "may be
+# this PR's own failure". The misreading is toward blaming the PR. Measured on
+# #4003, where four Codeunit60988 failures were read as its own defect.
+
+_merged = cw.inherited_red_lines(_LOG_28, pr_map_fetch=_merged_map)
+_mjoined = "\n".join(_merged)
+check("#4165: a codeunit whose fix MERGED is matched, never UNMATCHED",
+      "UNMATCHED" not in _mjoined, _mjoined)
+check("#4165: a merged match says so, so it is not read as a wait",
+      "MERGED" in _mjoined, _mjoined)
+check("#4165: the remedy named for a merged fix is a rebase, not waiting",
+      "rebase" in _mjoined.lower(), _mjoined)
+check("#4165: a merged-fix red is still reported as inherited",
+      any("inherit" in l.lower() for l in _merged), _mjoined)
+
+# The discriminating half: an OPEN match must still say "wait", not "rebase now".
+_open_only = "\n".join(cw.inherited_red_lines(_LOG_28, pr_map_fetch=_fake_map))
+check("#4165: an OPEN match is not relabelled as merged",
+      "MERGED" not in _open_only, _open_only)
+
+# And the no-corpus-lines message must not be read as "not this PR's own".
+_nolines = cw.inherited_red_lines("no FAIL lines here at all", pr_map_fetch=_fake_map)
+check("#4165: 'no corpus FAIL lines' does not claim the failure is the PR's own",
+      any("does not say" in l.lower() or "corpus codeunits only" in l.lower()
+          for l in _nolines), "\n".join(_nolines))
+
+# The tests above inject a fake map, so they pin the REPORTING half only. This
+# one drives the real `corpus_codeunit_to_pr`, which is where the OPEN/MERGED
+# label is computed -- without it, mutating that line leaves everything green
+# (measured while writing #4165).
+_real_prs = [
+    {"number": 3985, "state": "MERGED",
+     "body": "Corpus-PR: https://github.com/StefanMaron/"
+             "BusinessCentral.AL.Language.Tests/pull/336"},
+    {"number": 4004, "state": "OPEN",
+     "body": "Corpus-PR: https://github.com/StefanMaron/"
+             "BusinessCentral.AL.Language.Tests/pull/337"},
+]
+_PATCH_BY_CORPUS = {
+    "336": "+++ b/tests/al-language/report/TestX.al\n+codeunit 60976 \"T\"\n",
+    "337": "+++ b/tests/al-language/report/TestY.al\n+codeunit 60989 \"U\"\n",
+}
+_orig_gh = cw.gh
+
+
+def _stub_gh(args):
+    for k, v in _PATCH_BY_CORPUS.items():
+        if any(f"/pulls/{k}/files" in str(a) for a in args):
+            return 0, v
+    raise AssertionError(f"unexpected gh call: {args}")
+
+
+try:
+    cw.gh = _stub_gh
+    _real = cw.corpus_codeunit_to_pr(open_prs=_real_prs)
+finally:
+    cw.gh = _orig_gh
+
+check("#4165: corpus_codeunit_to_pr labels a MERGED runner PR as MERGED",
+      _real.get("60976") == ("3985", "MERGED"), repr(_real))
+check("#4165: ...and an OPEN one as OPEN",
+      _real.get("60989") == ("4004", "OPEN"), repr(_real))
 
 # A report may never raise and never gate.
 class _BoomMap:
