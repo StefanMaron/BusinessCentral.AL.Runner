@@ -25,6 +25,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **unit-tests:** record five absent collections at their observed maximum
 - **record:** serve the Query Metadata virtual table (2000000142) from BC's own provider
 - **enum:** resolve an interface Implementation supplied by a dependent app's enumextension
 - **provisioning:** a real application floor with no Microsoft references still forces a platform-apps download
