@@ -41,6 +41,7 @@
 // None of those are asserted by this file — they are BC's, and that is the point.
 using System.Collections;
 using System.Reflection;
+using Microsoft.Dynamics.Nav.Runtime;
 using AlRunner.Infrastructure;
 
 namespace AlRunner.Patches;
@@ -49,8 +50,22 @@ public static partial class RecordPatches
 {
     internal const int QueryMetadataVirtualTableId = 2000000142;
 
+    private static bool IsQueryMetadataVirtualTable(NCLMetaTable? table)
+        => table != null && table.TableId == QueryMetadataVirtualTableId;
+
+    /// <summary>
+    /// The DataAccess BC's own factory builds for 2000000142 — one over QueryDataProvider.
+    ///
+    /// <para>Without this branch the table falls through to the empty temp store every table
+    /// reaches by default, so the snapshot substitution below is necessary but not sufficient:
+    /// QueryDataProvider is never constructed, so nothing ever reads the snapshot. Both halves
+    /// are required, and neither shows up as a failure the other would explain.</para>
+    /// </summary>
+    internal static object GetQueryMetadataVirtualDataAccess(object dataAccessSource, NCLMetaTable table)
+        => GetBcVirtualDataAccess(dataAccessSource, table,
+            "every Record \"Query Metadata\" read would answer from an empty store");
+
     private static MethodInfo? _qmTryGetMetaQuery;
-    private static PropertyInfo? _qmNclMetadata;
     private static Type? _qmSnapshotOuter, _qmSnapshotInner, _qmEntryType, _qmObjectTypeEnum;
 
     /// <summary>
@@ -77,14 +92,13 @@ public static partial class RecordPatches
         if (ids.Count == 0) return outer;
 
         var inner = (IDictionary)Activator.CreateInstance(_qmSnapshotInner!)!;
-        var nclMetadata = _qmNclMetadata?.GetValue(self);
         foreach (var id in ids)
         {
             // Admitted by BC's own rule, not ours: an id must resolve through the metadata
             // cache to appear. An id the runner knows exists but cannot build metadata for is
             // skipped here rather than surfacing as a row whose every column would be empty —
             // and BC's own body would skip it too, via its catch (NavMetadataNotFoundException).
-            if (!QueryMetadataResolves(nclMetadata, id)) continue;
+            if (!QueryMetadataResolves(self, id)) continue;
             // Name is left empty: BC calls this walk with needNames:false for ObjectType.Query
             // and reads the name off NCLMetaQuery instead, so a name here would be dead weight
             // that could only disagree with the one the row actually carries.
@@ -104,7 +118,10 @@ public static partial class RecordPatches
         if (nclMetadata == null || _qmTryGetMetaQuery == null) return false;
         try
         {
-            var args = new object?[] { id, null, false };
+            // requireCompiled: false — the row reports declared metadata, which exists whether or
+            // not the query has been compiled. appGroupId: -1, BC's own default for "this group",
+            // passed explicitly because MethodInfo.Invoke does not apply C# defaults.
+            var args = new object?[] { id, null, false, -1 };
             return (bool)_qmTryGetMetaQuery.Invoke(nclMetadata, args)! && args[1] != null;
         }
         catch
@@ -130,9 +147,19 @@ public static partial class RecordPatches
         var entry = inner != null && inner.IsGenericType ? inner.GetGenericArguments().ElementAtOrDefault(1) : null;
         var objectTypeEnum = outer != null && outer.IsGenericType ? outer.GetGenericArguments().ElementAtOrDefault(0) : null;
 
-        var nclMetadataProp = t.GetProperty("NclMetadata", inst) != null ? t.GetProperty("NclMetadata", inst) : null;
+        // `self` IS the NCLMetadata instance — this helper replaces a method ON NCLMetadata —
+        // so TryGetMetaQueryById is bound on `t` directly. There is no NclMetadata property to
+        // hop through, and an earlier shape that looked for one bound nothing.
+        //
+        // FOUR parameters, not three: the signature is
+        // TryGetMetaQueryById(int queryId, out NCLMetaQuery, bool requireCompiled, int appGroupId).
+        // The last has a C# default, so BC's own decompiled call sites show three arguments and
+        // reading the arity off one of them binds NOTHING — the same trap as
+        // GetSnapshotOfAllObjects(int appGroupId = -1) itself, whose callers show no argument at
+        // all. MethodInfo.Invoke does not apply C# defaults, so the value is passed explicitly
+        // below. Sibling KeyVirtualTable binds its TryGetMetaTableById at 4 for the same reason.
         var tryGet = t.GetMethods(inst).FirstOrDefault(m =>
-            m.Name == "TryGetMetaQueryById" && m.GetParameters().Length == 3
+            m.Name == "TryGetMetaQueryById" && m.GetParameters().Length == 4
             && m.GetParameters()[0].ParameterType == typeof(int));
 
         if (outer == null || inner == null || entry == null || objectTypeEnum == null || tryGet == null)
@@ -143,13 +170,12 @@ public static partial class RecordPatches
                 Surface, "NCLMetadata",
                 "BC does not expose the shape the Query Metadata snapshot substitution drives "
                 + "(GetSnapshotOfAllObjects returning SortedList<ObjectType, SortedList<int, "
-                + "AllObjectSnapshotEntry>>, TryGetMetaQueryById(int, out, bool)) — see #4147");
+                + "AllObjectSnapshotEntry>>, TryGetMetaQueryById(int, out, bool, int)) — see #4147");
 
         _qmSnapshotOuter = outer;
         _qmSnapshotInner = inner;
         _qmEntryType = entry;
         _qmObjectTypeEnum = objectTypeEnum;
-        _qmNclMetadata = nclMetadataProp;
         _qmTryGetMetaQuery = tryGet;
     }
 }
