@@ -2413,6 +2413,151 @@ check("artifacts: ...without claiming 0 directories are 'all complete'",
       "all holding" not in _empty_root.summary,
       f"summary reads {_empty_root.summary!r}")
 
+# -------------------------------------------------- .NET SDK toolchain (#4200)
+# preflight's stated job is "is this box fit to run an autonomous cycle?", and it
+# answered yes on a box with no .NET SDK at all -- where `dotnet build`, `dotnet
+# test` and artifact provisioning each exit 127. The verdicts below are proven
+# against captured `dotnet --list-sdks` output, never against whatever SDK the box
+# running these tests happens to have; a suite that reads the live toolchain
+# passes for the wrong reason on a healthy box and cannot be made to fail.
+
+# Captured verbatim from `dotnet --list-sdks` on the reporting box (8.0 only) and
+# on a box that can build the solution.
+SDKS_8_ONLY = "8.0.425 [/usr/share/dotnet/sdk]\n"
+SDKS_MIXED = "8.0.130 [/usr/share/dotnet/sdk]\n10.0.111 [/usr/share/dotnet/sdk]\n"
+
+
+def _tc(status, sdks=(), error="", solution="AlRunner.slnx", floor=9):
+    return {"status": status, "sdks": list(sdks), "error": error,
+            "solution": solution, "floor": floor}
+
+
+print("preflight.py -- .NET SDK toolchain (#4200)")
+
+# Verdict 0: an SDK that can build the solution.
+_ok = pf.classify_toolchain(_tc("ok", sdks=["8.0.130", "10.0.111"]))
+check("toolchain: an SDK new enough for the .slnx PASSes",
+      _ok.status == "PASS", f"got {_ok.status}: {_ok.summary}")
+check("toolchain: ...and names the SDK versions it found, so the answer is attributable",
+      "10.0.111" in (_ok.summary + " " + " ".join(_ok.detail)),
+      f"summary={_ok.summary!r} detail={_ok.detail!r}")
+
+# Verdict 1: no SDK at all. This is a genuine FAIL, NOT the artifacts check's
+# "genuinely absent stays a pass" -- guards-need-a-third-state.md's constraint
+# turns on whether an in-repo remedy exists, and for a missing SDK none does.
+_none = pf.classify_toolchain(_tc("absent"))
+check("toolchain: no .NET SDK at all is a FAIL, not a legitimate-absent PASS",
+      _none.status == "FAIL", f"got {_none.status}: {_none.summary}")
+check("toolchain: ...and the remedy is installing an SDK, not an in-repo command",
+      "install" in (_none.remedy + " " + " ".join(_none.detail)).lower(),
+      f"remedy={_none.remedy!r}")
+
+# Verdict 3 -- the third state, proven to fire. An SDK IS present, so this is not
+# the absent case; it cannot build the solution FORMAT, so it is not the success
+# state either. Spelling it as either one is the defect this check exists to stop:
+# 8.0.x alone gives MSB4068 on a <Solution> element, naming neither the SDK nor
+# the solution format.
+_too_old = pf.classify_toolchain(_tc("too-old", sdks=["8.0.425"]))
+check("toolchain: an SDK present but too old for the .slnx is neither PASS nor the absent case",
+      _too_old.status == "FAIL" and _too_old.summary != _none.summary,
+      f"got {_too_old.status}: {_too_old.summary!r} vs absent {_none.summary!r}")
+check("toolchain: ...and names the SDK it DID find, so a typo is visible rather than inferred",
+      "8.0.425" in (_too_old.summary + " " + " ".join(_too_old.detail)),
+      f"summary={_too_old.summary!r} detail={_too_old.detail!r}")
+check("toolchain: ...and names MSB4068, the error the box would otherwise hit",
+      "MSB4068" in (_too_old.summary + " " + " ".join(_too_old.detail) + " " + _too_old.remedy),
+      f"detail={_too_old.detail!r}")
+check("toolchain: ...and names the solution format rather than only the SDK version",
+      ".slnx" in (_too_old.summary + " " + " ".join(_too_old.detail) + " " + _too_old.remedy),
+      f"detail={_too_old.detail!r}")
+
+# The fourth outcome, distinct from all three: `dotnet` exists and could not be
+# ASKED. Folding it into "absent" would send the reader to an install that is
+# already done; folding it into PASS is the shape the whole rule forbids.
+_unreadable = pf.classify_toolchain(_tc("unreadable", error="dotnet --list-sdks exited 134"))
+check("toolchain: an SDK list that could not be read is neither PASS nor absent",
+      _unreadable.status == "FAIL" and _unreadable.summary not in (_none.summary, _ok.summary),
+      f"got {_unreadable.status}: {_unreadable.summary!r}")
+check("toolchain: ...and says the measurement failed rather than that no SDK exists",
+      "dotnet --list-sdks exited 134" in
+      (_unreadable.summary + " " + " ".join(_unreadable.detail)),
+      f"summary={_unreadable.summary!r}")
+
+# ------------------------------------------------ parsing `dotnet --list-sdks`
+check("toolchain: a single 8.0 SDK parses to exactly that version",
+      pf.parse_list_sdks(SDKS_8_ONLY) == ["8.0.425"],
+      repr(pf.parse_list_sdks(SDKS_8_ONLY)))
+check("toolchain: a mixed list keeps both versions in order",
+      pf.parse_list_sdks(SDKS_MIXED) == ["8.0.130", "10.0.111"],
+      repr(pf.parse_list_sdks(SDKS_MIXED)))
+check("toolchain: the mise shim banner is not parsed as an SDK version",
+      pf.parse_list_sdks(BANNER + SDKS_MIXED) == ["8.0.130", "10.0.111"],
+      repr(pf.parse_list_sdks(BANNER + SDKS_MIXED)))
+check("toolchain: empty output parses to no SDKs rather than to a false answer",
+      pf.parse_list_sdks("") == [], repr(pf.parse_list_sdks("")))
+
+# The floor is a MAJOR comparison, and it must not be a string one: "10.0.111"
+# sorts BEFORE "9.0.0" lexically, which would report the newest SDK as too old.
+check("toolchain: 10.x clears a floor of 9 (a lexical compare would fail this)",
+      pf.sdk_meets_floor(["10.0.111"], 9) is True)
+check("toolchain: 9.0.318 clears a floor of 9",
+      pf.sdk_meets_floor(["9.0.318"], 9) is True)
+check("toolchain: 8.0.425 alone does NOT clear a floor of 9",
+      pf.sdk_meets_floor(["8.0.425"], 9) is False)
+check("toolchain: the highest SDK decides, not the first or the last listed",
+      pf.sdk_meets_floor(["10.0.111", "8.0.130"], 9) is True)
+check("toolchain: no SDKs at all does not clear the floor",
+      pf.sdk_meets_floor([], 9) is False)
+check("toolchain: an unparseable version is ignored rather than crashing the check",
+      pf.sdk_meets_floor(["not-a-version", "10.0.111"], 9) is True)
+
+# ------------------------- the floor is READ from global.json, not transcribed
+# Two copies agree until one is edited, and nothing says which. The pin in
+# global.json is the one CI resolves, so it is the one preflight must measure
+# against -- a hardcoded 9 here would go stale the day the pin moves.
+_gj = pf.global_json_floor('{"sdk": {"version": "9.0.100", "rollForward": "latestMajor"}}')
+check("toolchain: the floor is read out of global.json rather than hardcoded",
+      _gj == 9, f"got {_gj!r}")
+check("toolchain: a global.json that cannot be parsed yields no floor rather than a wrong one",
+      pf.global_json_floor("{not json") is None,
+      repr(pf.global_json_floor("{not json")))
+check("toolchain: a global.json with no sdk.version yields no floor",
+      pf.global_json_floor('{"sdk": {"rollForward": "latestMajor"}}') is None)
+
+# ------------- the artifacts check must not pass by naming an unrunnable remedy
+# The sharp half of #4200. `artifacts: absent` PASSes citing "a run provisions
+# what it needs" -- true in general, and false on a box with no SDK, because
+# provisioning IS a `dotnet run`. That is a remedy the missing prerequisite has
+# already removed, the shape agent_self_freshness.py's `detached` case exists to
+# avoid. The verdict stays a PASS (nothing is broken); what changes is that it
+# stops asserting a recovery path that cannot run.
+_absent_no_sdk = pf.classify_artifacts(_art("absent"), toolchain_ok=False)
+check("artifacts: with no usable SDK, the absent root no longer claims a run will provision it",
+      "a run provisions what it needs" not in
+      (_absent_no_sdk.summary + " " + " ".join(_absent_no_sdk.detail)),
+      f"detail={_absent_no_sdk.detail!r}")
+check("artifacts: ...and says provisioning needs the SDK, pointing at the toolchain check",
+      "toolchain" in (_absent_no_sdk.summary + " " + " ".join(_absent_no_sdk.detail)).lower(),
+      f"detail={_absent_no_sdk.detail!r}")
+check("artifacts: ...while a box WITH an SDK keeps the original reasoning",
+      "a run provisions what it needs" in
+      " ".join(pf.classify_artifacts(_art("absent"), toolchain_ok=True).detail))
+check("artifacts: ...and the toolchain argument defaults to the healthy reading",
+      pf.classify_artifacts(_art("absent")).detail ==
+      pf.classify_artifacts(_art("absent"), toolchain_ok=True).detail)
+
+# ------------------------------------------ ordering: before what it gates
+# A toolchain check that runs after the checks assuming a toolchain reports the
+# consequences before the cause, which is the ordering that cost the reporting
+# cycle three wrong turns.
+_names = pf.check_names_in_order()
+check("toolchain: the check runs before the artifacts check that depends on it",
+      "toolchain" in _names and _names.index("toolchain") < _names.index("artifacts"),
+      f"order={_names!r}")
+
+# -------------------------------------------------- END toolchain (#4200)
+
+
 # -------------------------------------------------- END artifacts probe (#3878)
 
 

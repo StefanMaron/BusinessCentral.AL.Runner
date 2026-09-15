@@ -49,6 +49,20 @@ tools/corpus-checkout.py
 
 ### Build
 
+**You need a .NET 9+ SDK, even though every project targets `net8.0`.** The two are
+different things and only the first is a floor: `AlRunner.slnx` is the newer solution
+format, whose `<Solution>` element an 8.0 SDK cannot parse. On an 8.0-only machine the
+build fails before compiling anything, with a message that names neither the SDK nor the
+solution format:
+
+```
+AlRunner.slnx(1,1): error MSB4068: The element <Solution> is unrecognized, or not supported in this context.
+```
+
+`global.json` pins that floor, so `dotnet` resolves a suitable SDK when one is installed
+and says so plainly when none is. `tools/preflight.py` checks it before anything that
+needs it, and `dotnet --list-sdks` is the one command that answers it directly.
+
 The build references the BC service-tier DLLs, which are not in the repo. The runner
 **never auto-downloads** them: on a fresh clone the build fails loud, naming the exact
 download command. Provision them once, either as part of the build:
