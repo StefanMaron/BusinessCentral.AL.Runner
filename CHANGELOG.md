@@ -25,6 +25,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **virtual-tables:** serve Table Relations Metadata (2000000141) from BC's own provider
 - **deps:** layered pre-pass feeds each impl only its declared dependency closure
 - **ci-wait:** a merged runner fix is an inherited red, not the PR's own failure
 - **environment:** stop making every test a sandbox, so IsSaaS is false by default
@@ -279,6 +280,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **session:** pin the runner's chosen GuiAllowed() and CompanyName() defaults
 - **expectations:** declare the one subpage pageextension-control arm corpus #360 leaves red
 - **witness:** drive the codeunit-witness multi-chunk widening invariant
 - **virtual-tables:** count refusal SITES, not only thrown ones, so a captured refusal has a count
