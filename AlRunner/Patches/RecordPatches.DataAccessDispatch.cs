@@ -226,6 +226,18 @@ public static partial class RecordPatches
                 return GetTableRelationsMetadataVirtualDataAccess(self, table);
             }
 
+            // ── Key system virtual table (2000000063) ────────────────────────────
+            // Served by BC's OWN KeyDataProvider, which reads NCLMetaTable.Keys — including the
+            // implicit SystemId key AL never declares. Before #4147 there was no branch, so every
+            // Record "Key" read answered from an empty temp store. Corpus codeunit 60936 pins the
+            // two things a hand-rolled builder gets wrong: four rows for three declared keys, and
+            // the implicit key's KeyFields reading '$systemId' rather than 'SystemId'.
+            // See RecordPatches.KeyVirtualTable.cs.
+            if (IsKeyVirtualTable(table))
+            {
+                return GetKeyVirtualDataAccess(self, table);
+            }
+
             // ── All Profile system virtual table (2000000178) ────────────────────────────
             // Virtual on the service tier too: AllProfileDataProvider's rows are every
             // profile every published app declares plus the tenant-owned ones. It is the

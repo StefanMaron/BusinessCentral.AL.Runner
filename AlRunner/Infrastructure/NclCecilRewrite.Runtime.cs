@@ -1017,6 +1017,18 @@ public static partial class NclCecilRewrite
                     "NCLMetaField", "ReadOnlyRecordBuffer", "Range", "SortOrder", "FilterFieldDictionary"),
                 H(recordPatches, "TableRelationDataProvider_GetValuesWithinRangeForKeyField"));
 
+            // ── KeyDataProvider.GetValuesWithinRangeForKeyField (2000000063) ──────────────
+            // The same defect one provider over, and for the same reason: key field 1 reaches
+            // NCLMetadata.GetSnapshotOfAllObjects, whose body this rewrite empties, so the Key
+            // table answered no rows for any table (#4147). Replaced rather than prepended
+            // because the switch returns the iterator. The helper forwards key field 2 to BC's
+            // own private GetKeysOnTable unchanged, so every key column — the implicit SystemId
+            // key included — stays BC's own. See RecordPatches.KeyVirtualTable.cs.
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "KeyDataProvider", "GetValuesWithinRangeForKeyField",
+                    "NCLMetaField", "ReadOnlyRecordBuffer", "Range", "SortOrder", "FilterFieldDictionary"),
+                H(recordPatches, "KeyDataProvider_GetValuesWithinRangeForKeyField"));
+
             // ── DataAccess.CountAsync — virtual Field table (2000000041) on-demand populate ──
             // Same gap, one table over. The Field table's rows for a given TableNo are built on
             // demand, and until #2792 the ONLY place that happened for a table nothing else had
