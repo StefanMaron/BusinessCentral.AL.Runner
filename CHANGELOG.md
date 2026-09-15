@@ -289,6 +289,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **enum:** serialise the AlEnumMetadataRegistry mutators, and enforce membership
 - **session:** pin the runner's chosen GuiAllowed() and CompanyName() defaults
 - **expectations:** declare the one subpage pageextension-control arm corpus #360 leaves red
 - **witness:** drive the codeunit-witness multi-chunk widening invariant
