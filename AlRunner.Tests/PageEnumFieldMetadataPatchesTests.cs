@@ -26,6 +26,7 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+[Collection(EnumMetadataRegistrySerialCollection.Name)]
 public sealed class PageEnumFieldMetadataPatchesTests : IDisposable
 {
     public PageEnumFieldMetadataPatchesTests()

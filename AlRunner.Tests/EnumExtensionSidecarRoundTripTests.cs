@@ -32,6 +32,7 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+[Collection(EnumMetadataRegistrySerialCollection.Name)]
 public sealed class EnumExtensionSidecarRoundTripTests : IDisposable
 {
     private readonly string _root;
