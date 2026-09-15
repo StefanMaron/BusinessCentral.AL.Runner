@@ -95,10 +95,50 @@ public static partial class RecordPatches
     private static readonly Dictionary<(object Source, int TableId), BaselineTable> _txCommitPoint = new();
 
     /// <summary>
-    /// Establish a commit point: everything written up to now survives a later rollback.
-    /// Called at each test-method boundary and from AL's <c>Commit()</c>.
+    /// Establish a commit point in the TOP-LEVEL tracker: everything written up to now
+    /// survives a later rollback to the commit point. Called at each test-method boundary,
+    /// from <see cref="NoteTransactionEnd"/>, and from a guarded run's own committing pop.
+    ///
+    /// Deliberately does NOT touch the open transaction-world scopes — see
+    /// <see cref="MarkExplicitCommitPoint"/> for the one caller that must.
     /// </summary>
     public static void MarkCommitPoint() => _txCommitPoint.Clear();
+
+    /// <summary>
+    /// AL's <c>Commit()</c> STATEMENT: a commit point in the top-level tracker AND in every
+    /// open transaction-world scope, so a later error inside a guarded <c>Codeunit.Run</c>
+    /// cannot undo work the <c>Commit()</c> already made durable.
+    ///
+    /// Observably equivalent to real BC: <c>Commit()</c> ends the session's write transaction
+    /// against the database, so no still-open logical scope has anything left to roll back
+    /// past it — <c>EndTransactionWorldAndTransaction(false)</c> aborts only what was written
+    /// after the commit. Citation: AlRunner#3773, whose reproducer (guarded run does
+    /// Insert + Commit + Error) answered <c>Count()=0</c> here and 1 on a service tier;
+    /// corpus codeunit 60217 <c>GuardedRun_InstanceForm_CommitThenError_KeepsCommittedRowOnly</c>,
+    /// <c>GuardedRun_StaticForm_CommitThenError_KeepsCommittedRowOnly</c> and
+    /// <c>GuardedRun_CommitThenError_ClearsTheCommittedKeys</c> pin both directions upstream.
+    ///
+    /// Clearing (rather than popping) each scope is the point: the scopes stay OPEN, so the
+    /// next write inside one re-snapshots from the post-commit state and an error after the
+    /// <c>Commit()</c> still rolls that later write back — which is what keeps AlRunner#2334's
+    /// "write then error, no commit" case rolling back.
+    ///
+    /// Trap: do not route <see cref="ALDatabasePatches.EndGuardedRunTransaction"/>'s
+    /// committing half here. NOT because an enclosing scope would lose writes to unrelated
+    /// tables -- it cannot hold any. PushTransactionWorldScope has exactly one caller,
+    /// BeginGuardedRunTransaction, and every one of ITS call sites (CodeunitPatches' two
+    /// spellings and NavReportSync) calls ThrowIfWriteTransactionStarted first, so an
+    /// enclosing scope is always empty while a nested one is open. The reason is that no
+    /// service tier has adjudicated nested-run durability: keeping the two entry points apart
+    /// leaves that question where AlRunner#3773's corpus arms left it, rather than answering
+    /// it here by implication.
+    /// </summary>
+    public static void MarkExplicitCommitPoint()
+    {
+        MarkCommitPoint();
+        foreach (var scope in _txScopeStack)
+            scope.Clear();
+    }
 
     /// <summary>
     /// Prepended ONLY to SessionTransactionExtensions.EndTransactionWorldAndTransaction(NavSession,
