@@ -587,8 +587,54 @@ def pr_body(pr: str) -> tuple[str | None, str]:
     return ("" if out.strip() == "null" else out), ""
 
 
-def corpus_state_lines(pr: str, body_fetch=None, module=_UNSET) -> list[str]:
-    """The corpus-PR line(s) for this PR. Always at least one, never raises."""
+def newest_conclusion(checks, name: str) -> str | None:
+    """The NEWEST conclusion for context `name` on this commit, or None. (#4206)
+
+    None means "no conclusion to compare": no such context, a read that failed,
+    or a run still in flight. It is deliberately not "" and not "success" --
+    an unfinished check read as a non-failure would report a stale gate as
+    CURRENT, which is the quiet direction.
+
+    Newest-wins, by check-run id. pr-gate.yml carries NO concurrency block by
+    design (see its header: a cancelled conclusion does not satisfy a required
+    context, #2726), so one head legitimately holds several runs of this
+    context and the older ones are exactly the stale conclusions this function
+    exists to see past. Id order is safe here where `ci-verdicts.md` warns it is
+    not: that warning is about two overlapping WORKFLOW runs, and these jobs are
+    seconds of Python whose superseded run has normally finished before its
+    replacement gets a runner.
+    """
+    if not checks:
+        return None
+    best_id, best = None, None
+    for c in checks:
+        if not isinstance(c, dict) or c.get("name") != name:
+            continue
+        if str(c.get("status") or "") != "completed":
+            continue
+        conclusion = c.get("conclusion")
+        if not conclusion:
+            continue
+        cid = c.get("id") or 0
+        if best_id is None or cid >= best_id:
+            best_id, best = cid, str(conclusion)
+    return best
+
+
+def corpus_state_lines(pr: str, body_fetch=None, module=_UNSET,
+                       checks=_UNSET) -> list[str]:
+    """The corpus-PR line(s) for this PR. Always at least one, never raises.
+
+    Since #4206 a second line may follow, when the gate's STORED conclusion on
+    this head disagrees with what the corpus PR says NOW. That disagreement is
+    invisible to every other instrument here: the gate is advisory, so no
+    required context is red and the verdict is GREEN, while the failing
+    non-required check makes `mergeStateStatus` UNSTABLE and
+    `enablePullRequestAutoMerge` refuses the merge.
+
+    `checks` is the check-run rollup for this head, already fetched by main().
+    `None` is a FAILED read and reports UNKNOWN, never STALE.
+    """
     if module is _UNSET:
         module = load_corpus_pr_state()
     if module is None:
@@ -604,15 +650,54 @@ def corpus_state_lines(pr: str, body_fetch=None, module=_UNSET) -> list[str]:
             return [f"corpus PR: UNREADABLE -- {refusal}"]
         if not entries:
             return ["corpus PR: none declared"]
-        return [module.format_line(entry) for entry in entries]
+        lines = [module.format_line(entry) for entry in entries]
+        lines.extend(_stale_gate_lines(module, entries, checks))
+        return lines
     except Exception as exc:  # a report may never break a verdict
         return [f"corpus PR: unavailable ({type(exc).__name__} while reading the "
                 "cited corpus PR)"]
 
 
-def print_corpus_pr_states(pr: str) -> None:
-    """Print the corpus line(s). Returns nothing, raises nothing, gates nothing."""
-    for line in corpus_state_lines(pr):
+def _stale_gate_lines(module, entries, checks) -> list[str]:
+    """The `corpus gate:` line, or []. Degrades silently on an older module.
+
+    A copy of corpus_pr_state.py predating #4206 -- the /tmp three-file recipe
+    in `ci-verdicts.md`, or an older checkout -- has neither member, and the
+    corpus line alone is the correct answer there rather than an exception.
+    """
+    verdict_fn = getattr(module, "stale_gate_verdict", None)
+    format_fn = getattr(module, "format_stale_line", None)
+    gate = getattr(module, "GATE_CONTEXT", None)
+    if not callable(verdict_fn) or not callable(format_fn) or not gate:
+        return []
+    conclusion = None if checks is _UNSET or checks is None \
+        else newest_conclusion(checks, gate)
+    verdict, why = verdict_fn(entries, conclusion)
+    if checks is None and verdict == "STALE":
+        # A rollup nobody could read is not evidence that a red tick is
+        # obsolete. guards-need-a-third-state.md: the refusal must not resolve
+        # toward the answer that clears a gate.
+        verdict, why = "UNKNOWN", ("the check-run rollup for this head could not be "
+                                   "read, so whether this gate's conclusion is still "
+                                   "true was never established")
+    line = format_fn(verdict, why)
+    return [line] if line else []
+
+
+def print_corpus_pr_states(pr: str, checks=_UNSET) -> None:
+    """Print the corpus line(s). Returns nothing, raises nothing, gates nothing.
+
+    `checks` is passed through only when `corpus_state_lines` accepts it. A
+    one-argument replacement is a real shape -- this suite substitutes one, and
+    so would an older copy of this tool pulled in beside a newer caller -- and a
+    REPORT may never raise. Falling back loses the stale-gate line and keeps the
+    corpus line, which is the pre-#4206 behaviour.
+    """
+    try:
+        lines = corpus_state_lines(pr, checks=checks)
+    except TypeError:
+        lines = corpus_state_lines(pr)
+    for line in lines:
         print(line)
 
 
@@ -1790,6 +1875,9 @@ def main() -> int:
     deadline = time.time() + args.timeout
     last = ""
     polled = False
+    # Seeded so the post-loop corpus line reports "rollup unread" instead of
+    # raising NameError when the loop breaks before the fetch below (#4206).
+    runs = None
     while not polled or time.time() < deadline:
         polled = True
         # ORDER MATTERS: the workflow-run list is read FIRST, the check-run
@@ -1837,7 +1925,7 @@ def main() -> int:
             # Beside the PR verdict, never instead of it: a red PR branched from
             # a red `main` is often not this PR failure to own (#3679).
             print_floor_verdict()
-            print_corpus_pr_states(args.pr)
+            print_corpus_pr_states(args.pr, checks=runs)
             if not args.no_log:
                 # The check-run `id` is NOT the Actions job id that `gh run view --job`
                 # wants; passing it fails with "could not find job". The job id is the
@@ -1874,7 +1962,7 @@ def main() -> int:
             for line in v.lines[1:]:
                 print(line)
             print_floor_verdict()
-            print_corpus_pr_states(args.pr)
+            print_corpus_pr_states(args.pr, checks=runs)
             return 3
 
         if v.code == 4:
@@ -1882,7 +1970,7 @@ def main() -> int:
             for line in v.lines[1:]:
                 print(line)
             print_floor_verdict()
-            print_corpus_pr_states(args.pr)
+            print_corpus_pr_states(args.pr, checks=runs)
             return 4
 
         if v.code == 0:
@@ -1891,7 +1979,7 @@ def main() -> int:
                 print(line)
             print("Confirm this SHA is still the PR head before reporting it.")
             print_floor_verdict()
-            print_corpus_pr_states(args.pr)
+            print_corpus_pr_states(args.pr, checks=runs)
             return 0
 
         if time.time() >= deadline:
@@ -1910,7 +1998,9 @@ def main() -> int:
         print(f"\nSTILL RUNNING after {args.timeout}s ({reason}). "
               "This is NOT a verdict -- call again; do not report a result.")
     print_floor_verdict()
-    print_corpus_pr_states(args.pr)
+    # `runs` is None when the loop broke before the rollup was read -- the
+    # failed-read answer, which reports UNKNOWN rather than STALE (#4206).
+    print_corpus_pr_states(args.pr, checks=runs)
     return 2
 
 

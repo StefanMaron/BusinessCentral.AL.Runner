@@ -2357,6 +2357,141 @@ finally:
 check("#3922: printing the table returns nothing (it cannot change an exit code)",
       _ret is None, repr(_ret))
 
+# ===========================================================================
+# The stale corpus gate (#4206)
+#
+# `A cited corpus PR must be able to merge` evaluates on push/edited/labeled and
+# not when the corpus PR moves, so under corpus-first merging its stored
+# `failure` outlives the condition. That red makes mergeStateStatus UNSTABLE and
+# `enablePullRequestAutoMerge` refuses -- while ci-wait.py prints GREEN (the
+# check is advisory, so no required context is red) AND prints the fresh
+# `MERGED` corpus line. Two instruments, both right, and the merge still
+# refused: measured on #4135/#348, #4202/#368 and #4203/#371 in one session.
+#
+# This line is the third instrument, and it is a REPORT: it never changes an
+# exit code, exactly like the floor line beside it.
+# ===========================================================================
+print("\nci-wait.py -- the stale corpus gate (#4206)")
+
+
+class _StaleStub(_CorpusStub):
+    """_CorpusStub plus the two members the stale read needs."""
+
+    GATE_CONTEXT = "A cited corpus PR must be able to merge"
+
+    def __init__(self, entries, why="", verdict=("CURRENT", "")):
+        super().__init__(entries, why=why)
+        self._verdict = verdict
+        self.seen = []
+
+    def stale_gate_verdict(self, entries, conclusion):
+        self.seen.append(conclusion)
+        return self._verdict
+
+    @staticmethod
+    def format_stale_line(verdict, why):
+        return "" if verdict == "CURRENT" else f"corpus gate: {verdict} -- {why}"
+
+
+_GATE = "A cited corpus PR must be able to merge"
+
+
+def _checks(conclusion):
+    return [{"name": _GATE, "status": "completed", "conclusion": conclusion,
+             "id": 1, "details_url": ""}]
+
+
+_stub = _StaleStub([_entry(371, "MERGED", "a" * 40)],
+                   verdict=("STALE", "corpus PR #371 is MERGED now; re-fire it"))
+_lines = cw.corpus_state_lines("4203",
+                               body_fetch=lambda pr: (f"Closes #1\n\nCorpus-PR: {_CORPUS_URL}", ""),
+                               module=_stub, checks=_checks("failure"))
+check("#4206: a stale gate adds a line BESIDE the corpus state, not instead of it",
+      len(_lines) == 2 and _lines[0].startswith("corpus PR #371")
+      and _lines[1].startswith("corpus gate: STALE"), repr(_lines))
+check("#4206: ...and the conclusion it compared is the gate's stored one",
+      _stub.seen == ["failure"], repr(_stub.seen))
+
+_stub = _StaleStub([_entry(371, "MERGED", "a" * 40)], verdict=("CURRENT", ""))
+_lines = cw.corpus_state_lines("4203",
+                               body_fetch=lambda pr: (f"Closes #1\n\nCorpus-PR: {_CORPUS_URL}", ""),
+                               module=_stub, checks=_checks("success"))
+check("#4206: a CURRENT gate prints no extra line -- a report naming every PR is ignored",
+      len(_lines) == 1, repr(_lines))
+
+_stub = _StaleStub([_entry(371, "MERGED", "a" * 40)],
+                   verdict=("UNKNOWN", "the gate has no stored conclusion yet"))
+_lines = cw.corpus_state_lines("4203",
+                               body_fetch=lambda pr: (f"Closes #1\n\nCorpus-PR: {_CORPUS_URL}", ""),
+                               module=_stub, checks=[])
+check("#4206: an UNKNOWN gate DOES print -- nobody measured it, and that is not 'fine'",
+      len(_lines) == 2 and _lines[1].startswith("corpus gate: UNKNOWN"), repr(_lines))
+check("#4206: with no check run at all the compared conclusion is None, not a string",
+      _stub.seen == [None], repr(_stub.seen))
+
+# The third state on the READ, distinct from the third state on the comparison.
+_stub = _StaleStub([_entry(371, "MERGED", "a" * 40)], verdict=("STALE", "should not be used"))
+_lines = cw.corpus_state_lines("4203",
+                               body_fetch=lambda pr: (f"Closes #1\n\nCorpus-PR: {_CORPUS_URL}", ""),
+                               module=_stub, checks=None)
+check("#4206: a FAILED check-run read never reports STALE -- an unread rollup is not "
+      "evidence that a red tick is obsolete",
+      len(_lines) == 2 and "UNKNOWN" in _lines[1] and "STALE" not in _lines[1], repr(_lines))
+
+# A module without the new members is what a /tmp three-file copy, or an older
+# checkout, hands us. It must degrade to the old single line, never raise.
+_lines = cw.corpus_state_lines("4203",
+                               body_fetch=lambda pr: (f"Closes #1\n\nCorpus-PR: {_CORPUS_URL}", ""),
+                               module=_CorpusStub([_entry(371, "MERGED", "a" * 40)]),
+                               checks=_checks("failure"))
+check("#4206: a corpus_pr_state.py predating this feature degrades to the corpus line "
+      "alone rather than raising", len(_lines) == 1, repr(_lines))
+
+# Newest-wins: pr-gate.yml has no concurrency block, so one commit legitimately
+# carries several runs of this context. Reading an older one inverts the answer.
+_older_first = [
+    {"name": _GATE, "status": "completed", "conclusion": "failure", "id": 1,
+     "details_url": ""},
+    {"name": _GATE, "status": "completed", "conclusion": "success", "id": 2,
+     "details_url": ""},
+]
+_stub = _StaleStub([_entry(371, "MERGED", "a" * 40)], verdict=("CURRENT", ""))
+cw.corpus_state_lines("4203",
+                      body_fetch=lambda pr: (f"Closes #1\n\nCorpus-PR: {_CORPUS_URL}", ""),
+                      module=_stub, checks=_older_first)
+check("#4206: with several runs of the gate on one head the NEWEST conclusion is compared "
+      "-- pr-gate.yml has no concurrency block, so several is the normal case",
+      _stub.seen == ["success"], repr(_stub.seen))
+
+# A run still in flight has conclusion null; comparing it as a conclusion would
+# read an unfinished check as 'not a failure', i.e. as CURRENT.
+_running = [{"name": _GATE, "status": "in_progress", "conclusion": None, "id": 3,
+             "details_url": ""}]
+_stub = _StaleStub([_entry(371, "MERGED", "a" * 40)], verdict=("UNKNOWN", "not reported"))
+cw.corpus_state_lines("4203",
+                      body_fetch=lambda pr: (f"Closes #1\n\nCorpus-PR: {_CORPUS_URL}", ""),
+                      module=_stub, checks=_running)
+check("#4206: a gate still running compares as None, so it cannot read as 'not failing'",
+      _stub.seen == [None], repr(_stub.seen))
+
+# Other contexts on the same commit must not be mistaken for this one.
+_other = [{"name": "BC test matrix passed", "status": "completed",
+           "conclusion": "failure", "id": 4, "details_url": ""}]
+_stub = _StaleStub([_entry(371, "MERGED", "a" * 40)], verdict=("UNKNOWN", "no conclusion"))
+cw.corpus_state_lines("4203",
+                      body_fetch=lambda pr: (f"Closes #1\n\nCorpus-PR: {_CORPUS_URL}", ""),
+                      module=_stub, checks=_other)
+check("#4206: a different context's failure is not read as this gate's",
+      _stub.seen == [None], repr(_stub.seen))
+
+# It is a report. Like the floor line, it may never move an exit code. Driven
+# through main() for all four verdicts, because the stale line is printed at
+# five call sites and a report that moved any of them would be the defect.
+for _code in (0, 1, 3, 4):
+    _rc, _text = _drive_main(_code)
+    check(f"#4206: the stale line cannot change a verdict -- exit {_code} stays {_code}",
+          _rc == _code, f"rc={_rc} for code={_code}")
+
 print()
 if FAILURES:
     print(f"FAILED: {len(FAILURES)} check(s): {', '.join(FAILURES)}")

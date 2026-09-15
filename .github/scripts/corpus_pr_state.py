@@ -69,6 +69,29 @@ withdrawn corpus PR reads as a merely-red one.
 computed, ask again", so it is retried here and only becomes UNREADABLE after the
 retries.
 
+THE STORED CONCLUSION GOES STALE, AND NOTHING RE-EVALUATES IT (#4206)
+--------------------------------------------------------------------
+This module is run by a STATUS CHECK, which evaluates on `push`, `edited` and
+`labeled` -- never when the corpus pull request it names changes state. The
+merge order makes that a systematic problem rather than a race: a runner PR
+asserting BC behaviour merges AFTER its corpus PR
+(bc-behavior-tests-go-upstream.md step 5), so the corpus PR merges after the
+runner PR's last push, and the stored `failure` outlives the condition it
+measured.
+
+The consequence is not a bad merge -- this check is advisory and out of the
+branch ruleset -- but a refused one. A failing NON-required check makes
+`mergeStateStatus` read UNSTABLE, and `enablePullRequestAutoMerge` refuses that
+with `Pull request is in unstable status`. Every instrument a coordinator reads
+says green: `tools/ci-wait.py` exits 0 because no REQUIRED context is red, and
+it prints `corpus PR #N: MERGED` from this module's own fresh read, in the same
+breath as GitHub refusing the merge.
+
+`stale_gate_verdict` below is the third instrument, comparing this module's
+fresh answer against the conclusion the gate STORED. Measured three times in one
+session: #4135/#348, #4202/#368, and #4203/#371 -- gate `failure` at 20:04:28Z,
+corpus PR merged 20:21:08Z, fresh `success` at 20:50:05Z after a body edit.
+
 WHY THE `Corpus-PR:` REGEX IS NOT IN THIS FILE
 ----------------------------------------------
 check_corpus_linkage.sh owns it, and owning it once is the point: the shape it
@@ -116,6 +139,12 @@ CORPUS_REPO = "StefanMaron/BusinessCentral.AL.Language.Tests"
 HERE = os.path.dirname(os.path.abspath(__file__))
 LINKAGE = os.path.join(HERE, "check_corpus_linkage.sh")
 
+# pr-gate.yml's job name for the check this module backs. Exported so callers
+# compare against the same string this module answers about, rather than each
+# spelling it themselves -- a typo in a caller's copy makes the stale read below
+# answer UNKNOWN forever, which is quiet (see stale_gate_verdict).
+GATE_CONTEXT = "A cited corpus PR must be able to merge"
+
 # A definite failure, a refusal, and a pass. Ordered so `max` over the codes a
 # body produced picks exit 1 over exit 3 over 0.
 _RANK = {"NONE": 0, "MERGED": 0, "MERGEABLE": 0, "UNREADABLE": 3,
@@ -138,6 +167,79 @@ def format_line(entry: Entry) -> str:
     where = f"head {head}" if head else "head unknown"
     tail = f" -- {entry.detail}" if entry.detail else ""
     return f"corpus PR #{entry.number}: {entry.state} ({where}){tail}"
+
+
+def stale_gate_verdict(entries, conclusion: str | None) -> tuple[str, str]:
+    """Is the STORED gate conclusion still true of the corpus PRs now? (#4206)
+
+    `A cited corpus PR must be able to merge` is a status check, so it evaluates
+    on `push`, `edited` and `labeled` and NOT when the corpus PR it names changes
+    state. Under corpus-first merging (bc-behavior-tests-go-upstream.md step 5)
+    the corpus PR merges AFTER the runner PR's last push, so the stored `failure`
+    outlives the condition that produced it -- and a failing NON-required check
+    makes `mergeStateStatus` read UNSTABLE, which `enablePullRequestAutoMerge`
+    refuses. The merge is then blocked by a tick whose subject has already
+    passed, while every instrument a coordinator reads says green.
+
+    Pure: it compares an answer already fetched against a conclusion already
+    read, and performs no I/O of its own. Three answers, per
+    guards-need-a-third-state.md:
+
+        STALE    every cited corpus PR is fine NOW and the stored tick is red.
+                 Re-firing the check will clear it.
+        CURRENT  the tick and the corpus PRs agree, or one corpus PR genuinely
+                 cannot merge -- so re-firing changes nothing.
+        UNKNOWN  the comparison did not happen: no stored conclusion, or a
+                 corpus PR nobody could read.
+
+    UNKNOWN outranks STALE deliberately. Calling a tick stale is an assertion
+    that the gate would pass if re-run, and an UNREADABLE corpus PR is precisely
+    the case where nobody established that -- resolving it toward STALE would
+    tell a coordinator to clear a gate on a measurement that never happened.
+    """
+    if not conclusion:
+        return "UNKNOWN", ("the gate has no stored conclusion on this head yet, so "
+                           "there is nothing to compare the corpus PR against")
+
+    entries = list(entries or [])
+    if any(e.state == "UNREADABLE" for e in entries):
+        bad = ", ".join(f"#{e.number}" for e in entries if e.state == "UNREADABLE")
+        return "UNKNOWN", (f"corpus PR {bad} could not be read, so whether this check's "
+                           f"{conclusion!r} is still true was never established")
+
+    if str(conclusion).lower() != "failure":
+        return "CURRENT", ""
+
+    # A red tick with nothing cited cannot be about a corpus PR at all.
+    if not entries:
+        return "CURRENT", ""
+
+    blocking = [e for e in entries if _RANK.get(e.state, 3) == 1]
+    if blocking:
+        # The red tick is telling the truth about at least one corpus PR, so a
+        # re-fire produces the same red. Saying STALE here would send a
+        # coordinator round a re-trigger loop that can never clear.
+        return "CURRENT", ""
+
+    now = ", ".join(f"#{e.number} is {e.state}" for e in entries)
+    return "STALE", (f"this check last concluded 'failure', but {now} now. It is a "
+                     "status check, so it does not re-evaluate when the corpus PR "
+                     "moves -- edit the body or apply a label to re-fire it")
+
+
+def format_stale_line(verdict: str, why: str) -> str:
+    """The line a caller prints for `stale_gate_verdict`, or "" for CURRENT.
+
+    CURRENT prints nothing on purpose. This line appears beside every verdict
+    tools/ci-wait.py gives, and a report that names every pull request is one
+    nobody reads -- the same reasoning tools/armed-prs.py applies to a still-
+    running armed PR.
+    """
+    if verdict == "STALE":
+        return (f"corpus gate: STALE -- {why}")
+    if verdict == "UNKNOWN":
+        return (f"corpus gate: UNKNOWN -- {why}")
+    return ""
 
 
 def _bash() -> str | None:
