@@ -198,6 +198,32 @@ public static class AlEnumMetadataRegistry
         _extByTargetId.Clear();
     }
 
+    /// <summary>
+    /// The id of the BASE enum registered under <paramref name="name"/>, or -1 when no
+    /// registered base enum carries that name (#4197).
+    ///
+    /// <para>Deliberately over <see cref="_byId"/> only, never <see cref="_extByTargetId"/>: an
+    /// enumextension's own Name is the EXTENSION object's name, not the enum's, so matching it
+    /// would attribute a second extension to whatever the first one happened to be called.</para>
+    ///
+    /// <para>Case-insensitive, because AL object names are, and a precompiled
+    /// <c>TargetObject</c> is copied from the extending app's source text rather than from the
+    /// target's declaration. Ambiguity resolves to the LOWEST id rather than to an arbitrary
+    /// dictionary order, so a run that does hold two same-named enums is at least deterministic;
+    /// bundle-wide enum-id collisions are quarantined upstream.</para>
+    /// </summary>
+    public static int ResolveBaseEnumIdByName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return -1;
+        int best = -1;
+        foreach (var entry in _byId.Values)
+        {
+            if (!string.Equals(entry.Name, name, StringComparison.OrdinalIgnoreCase)) continue;
+            if (best < 0 || entry.Id < best) best = entry.Id;
+        }
+        return best;
+    }
+
     public static int Count => _byId.Count;
 
     /// <summary>
