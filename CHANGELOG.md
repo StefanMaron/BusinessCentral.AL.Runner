@@ -214,6 +214,7 @@ All notable changes to this project are documented here. Format based on
 - **integer-vt:** judge a half-open range against the base window, not the envelope-widened span
 
 ### Documentation
+- **rules:** a reflection bind answering null is unmeasurable, not absent
 - **app-identity:** the cited corpus test was removed; equality is a publish-route property
 - **ci-verdicts:** a job log echoes the run: block as source, so grep counts it
 - **claiming:** closingIssuesReferences lags PR creation, so an empty read is not free
