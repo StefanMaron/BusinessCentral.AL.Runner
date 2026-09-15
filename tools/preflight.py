@@ -2688,6 +2688,217 @@ def engine_closure_files(path: str = ENGINE_CLOSURE_CS) -> tuple:
     return tuple(dict.fromkeys(re.findall(r'"([A-Za-z0-9_.]+\.dll)"', text)))
 
 
+# --------------------------------------------------------------------------
+# .NET SDK toolchain (#4200)
+# --------------------------------------------------------------------------
+# Everything below this check needs an SDK: `dotnet build`, `dotnet test`, and
+# provisioning, which is a `dotnet run`. Without one each exits 127, and preflight
+# used to report a fit box anyway -- 10 passed, 0 failed, exit 0 (#4200).
+#
+# The floor is a SOLUTION-FORMAT floor, not a target-framework one, which is why
+# the declared 8.0.x in CI looks right: the projects do target net8.0, and
+# AlRunner.slnx needs a 9+ SDK to be parsed at all. An 8.0-only box fails with
+# `error MSB4068: The element <Solution> is unrecognized`, which names neither the
+# SDK nor the solution format.
+#
+# The floor is READ from global.json rather than transcribed here. Two copies agree
+# until one is edited and nothing says which; global.json is the copy CI resolves,
+# so it is the one to measure against. SDK_FLOOR_FALLBACK applies only when the pin
+# cannot be read -- and that reading is itself reported, never silently defaulted.
+SDK_FLOOR_FALLBACK = 9
+SOLUTION_FILE = "AlRunner.slnx"
+
+
+def parse_list_sdks(text: str) -> list[str]:
+    """Versions out of `dotnet --list-sdks` ("8.0.425 [/usr/share/dotnet/sdk]").
+
+    strip_shim_banner first: mise prints its activation banner on STDOUT, so a
+    naive parse can take `mise ~/.config/mise/config.toml tools: gh@2.100.0` for a
+    version line. Anything that is not <digits>.<digits>... is dropped rather than
+    guessed at.
+    """
+    out: list[str] = []
+    for line in strip_shim_banner(text or "").splitlines():
+        m = re.match(r"^\s*(\d+(?:\.\d+)+)\s", line)
+        if m:
+            out.append(m.group(1))
+    return out
+
+
+def sdk_meets_floor(versions: Iterable[str], floor: int) -> bool:
+    """Does the HIGHEST installed SDK major reach `floor`?
+
+    Compared as an integer major. A string compare would put "10.0.111" before
+    "9.0.0" and report the newest SDK on the box as too old -- the failure mode
+    that makes this a named function with its own tests rather than an inline
+    `max()`.
+    """
+    best = -1
+    for v in versions:
+        head = str(v).split(".", 1)[0]
+        try:
+            best = max(best, int(head))
+        except ValueError:
+            continue  # an unparseable entry is not a reason to refuse the box
+    return best >= floor
+
+
+def global_json_floor(text: str) -> Optional[int]:
+    """The SDK major pinned by global.json, or None when it cannot be read.
+
+    None is deliberately not 0 and not SDK_FLOOR_FALLBACK: "the pin says 9" and
+    "there is no readable pin" are different findings, and the caller reports
+    which of the two it had.
+    """
+    try:
+        doc = json.loads(text)
+    except Exception:
+        return None
+    if not isinstance(doc, dict):
+        return None
+    version = (doc.get("sdk") or {}).get("version")
+    if not isinstance(version, str):
+        return None
+    try:
+        return int(version.split(".", 1)[0])
+    except ValueError:
+        return None
+
+
+def toolchain_reading(repo: str) -> dict:
+    """Ask the box what SDKs it has. Never raises.
+
+    Four outcomes:
+      ok          -- an SDK whose major reaches the floor
+      too-old     -- an SDK is present and none reaches the floor (the .slnx case)
+      absent      -- no `dotnet` on PATH at all
+      unreadable  -- `dotnet` exists and could not be asked (the third state)
+    """
+    floor, floor_source = SDK_FLOOR_FALLBACK, "the built-in fallback"
+    path = os.path.join(repo or ".", "global.json")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            pinned = global_json_floor(fh.read())
+        if pinned is not None:
+            floor, floor_source = pinned, "global.json"
+        else:
+            floor_source = "the built-in fallback (global.json is unreadable)"
+    except OSError:
+        floor_source = "the built-in fallback (no global.json)"
+
+    base = {"sdks": [], "error": "", "solution": SOLUTION_FILE,
+            "floor": floor, "floor_source": floor_source}
+    if not shutil.which("dotnet"):
+        return {**base, "status": "absent"}
+    r = run(["dotnet", "--list-sdks"], timeout=60)
+    if r.timed_out:
+        return {**base, "status": "unreadable", "error": "`dotnet --list-sdks` timed out"}
+    sdks = parse_list_sdks(r.out)
+    if not r.ok and not sdks:
+        detail = (r.err or r.out or "").strip().splitlines()
+        return {**base, "status": "unreadable",
+                "error": f"`dotnet --list-sdks` exited {r.rc}"
+                         + (f": {detail[0]}" if detail else "")}
+    if not sdks:
+        # `dotnet` resolved, answered cleanly, and listed nothing: a runtime-only
+        # install. Not "absent" (the binary is there) and not a broken measurement
+        # either -- there genuinely is no SDK, which is what the FAIL below says.
+        return {**base, "status": "absent",
+                "error": "`dotnet` is on PATH but lists no SDK (a runtime-only install)"}
+    return {**base, "status": "ok" if sdk_meets_floor(sdks, floor) else "too-old",
+            "sdks": sdks}
+
+
+def classify_toolchain(reading: dict) -> CheckResult:
+    """Turn an SDK reading into a verdict.
+
+    FAIL rather than WARN in all three unhappy branches, and that is the deliberate
+    departure from the artifacts check next door. guards-need-a-third-state.md's
+    constraint -- "a genuinely absent thing must stay a pass" -- turns on whether an
+    in-repo remedy exists. For artifacts one does: a run provisions what it needs.
+    For an SDK none does, so absence here is a box that cannot do any of the work,
+    not a box that has not started yet. Copying TestArtifacts.SkipIfMissingIn's
+    shape would put exactly the #4200 reading back on the exit-0 path.
+    """
+    status = reading.get("status")
+    sdks = reading.get("sdks") or []
+    floor = reading.get("floor", SDK_FLOOR_FALLBACK)
+    solution = reading.get("solution", SOLUTION_FILE)
+    listed = ", ".join(sdks)
+    install = (f"Install a .NET {floor}+ SDK (the projects still target net8.0; "
+               f"the floor is the SOLUTION format).\n"
+               f"  https://dotnet.microsoft.com/download/dotnet/{floor}.0")
+
+    if status == "ok":
+        return CheckResult(
+            name="toolchain", status="PASS",
+            summary=f"SDK {max(sdks, key=lambda v: _sdk_sort_key(v))} can build "
+                    f"{solution} (floor: {floor}+); installed: {listed}",
+            command="dotnet --list-sdks",
+            detail=[f"The floor comes from {reading.get('floor_source', 'the built-in fallback')}, "
+                    f"so it moves with the pin rather than with this file."],
+            data=reading)
+
+    if status == "too-old":
+        # The third state. An SDK IS present, so this is not the absent case; it
+        # cannot parse the solution, so it is not the success state. Both wrong
+        # answers would send the reader somewhere useless -- "install .NET" when it
+        # is installed, or nothing at all.
+        return CheckResult(
+            name="toolchain", status="FAIL",
+            summary=f"a .NET SDK is installed but none can build {solution}: "
+                    f"found {listed}, need {floor}+",
+            command=f"dotnet --list-sdks; dotnet build {solution}",
+            detail=[f"{solution} is the newer solution format and needs a {floor}+ SDK to be "
+                    f"parsed at all. An older SDK fails with `error MSB4068: The element "
+                    f"<Solution> is unrecognized`, which names neither the SDK nor the "
+                    f"solution format.",
+                    "This is NOT the same finding as 'no SDK': the box has one, and it is "
+                    "the wrong one, so `dotnet --version` looks healthy."],
+            remedy=install, data=reading)
+
+    if status == "unreadable":
+        # Deliberately NOT folded into "absent": that case's remedy is an install,
+        # which cannot fix a `dotnet` that is present and refusing to answer.
+        return CheckResult(
+            name="toolchain", status="FAIL",
+            summary=f"`dotnet` is on PATH but its SDK list could not be read: "
+                    f"{reading.get('error') or 'no detail'}",
+            command="dotnet --list-sdks",
+            detail=["This is not 'no SDK is installed' -- the measurement itself failed, so "
+                    "nothing here has been checked either way.",
+                    "Every check below assumes a working toolchain; none of them has been "
+                    "validated against this box."],
+            remedy="Fix the dotnet installation, then re-run preflight.", data=reading)
+
+    extra = reading.get("error") or ""
+    return CheckResult(
+        name="toolchain", status="FAIL",
+        summary="no .NET SDK on this box" + (f" -- {extra}" if extra else ""),
+        command="dotnet --list-sdks",
+        detail=["`dotnet build`, `dotnet test` and artifact provisioning each exit 127 "
+                "without one, so this box can build nothing, run no test, and provision "
+                "no BC artifacts.",
+                "A FAIL rather than a pass-with-a-remedy: unlike the artifacts root, there "
+                "is no in-repo command that fixes this, so nothing downstream recovers."],
+        remedy=install, data=reading)
+
+
+def _sdk_sort_key(version: str) -> tuple:
+    """Numeric ordering for an SDK version, so 10.0.111 outranks 9.0.318."""
+    parts = []
+    for piece in str(version).split("."):
+        try:
+            parts.append(int(piece))
+        except ValueError:
+            parts.append(-1)
+    return tuple(parts)
+
+
+def check_toolchain(repo: str) -> CheckResult:
+    return classify_toolchain(toolchain_reading(repo))
+
+
 ARTIFACT_CLOSURE_FILES = engine_closure_files()
 
 _VERSION_DIR_RE = re.compile(r"^\d+(\.\d+){1,3}$")
@@ -2744,12 +2955,20 @@ def artifacts_reading(root: str) -> dict:
             "broken": broken, "total": total, "error": "", "root": root}
 
 
-def classify_artifacts(reading: dict) -> CheckResult:
+def classify_artifacts(reading: dict, toolchain_ok: bool = True) -> CheckResult:
     """Turn an artifacts reading into a verdict.
 
     WARN rather than FAIL throughout: a broken artifact directory does not stop a
     cycle -- 11 healthy directories sat beside the two broken ones -- it just has
     to be VISIBLE, so nobody spends a third diagnosis re-deriving it.
+
+    `toolchain_ok` carries the toolchain check's verdict, because the absent branch
+    below PASSES BY NAMING A REMEDY (#4200). "A run provisions what it needs" is
+    true in general and false on a box with no usable SDK, since provisioning is a
+    `dotnet run` -- a remedy the missing prerequisite has already removed, the shape
+    agent_self_freshness.py's `detached` case exists to avoid. The verdict stays a
+    PASS either way; what changes is that it stops asserting a recovery path that
+    cannot run. It defaults True so every existing caller reads unchanged.
     """
     status, broken = reading["status"], reading["broken"]
     root = reading.get("root", "")
@@ -2775,7 +2994,12 @@ def classify_artifacts(reading: dict) -> CheckResult:
             name="artifacts", status="PASS",
             summary="no artifacts root on this box -- nothing provisioned yet",
             command="ls ~/.local/share/al-runner/artifacts",
-            detail=["Not an error: a run provisions what it needs."])
+            detail=["Not an error: a run provisions what it needs."] if toolchain_ok else
+                   ["Nothing is provisioned, and on this box nothing can be: provisioning "
+                    "is a `dotnet run`, and the toolchain check above says this box has no "
+                    "SDK that can run it.",
+                    "Still not an error in itself -- the artifacts root is genuinely absent, "
+                    "which is a legitimate state. Read the toolchain FAIL, not this line."])
     if status == "unreadable":
         # Deliberately NOT folded into "absent": that case sends the reader to
         # `provision`, which cannot fix a root it is unable to read.
@@ -2803,8 +3027,8 @@ def classify_artifacts(reading: dict) -> CheckResult:
         data=reading)
 
 
-def check_artifacts() -> CheckResult:
-    return classify_artifacts(artifacts_reading(artifacts_root_path()))
+def check_artifacts(toolchain_ok: bool = True) -> CheckResult:
+    return classify_artifacts(artifacts_reading(artifacts_root_path()), toolchain_ok)
 
 
 def check_corpus_checkout(repo: str) -> CheckResult:
@@ -3093,6 +3317,41 @@ def freshness_refusal(printer=None, *, remote_check: bool = True) -> Optional[in
     return None
 
 
+def check_names_in_order() -> list[str]:
+    """The order main() builds its checks in, read out of main()'s own source.
+
+    Read rather than transcribed, for the reason the artifact closure list is read
+    out of the C# (#3893): a second copy agrees until one is edited, and nothing
+    says which. A hand-written list here would let main() be reordered while the
+    ordering test kept passing -- which is the defect, not a test of it.
+
+    Ordering is load-bearing: the toolchain check must run before the checks that
+    assume a toolchain, so a box with no SDK reports the cause and not fifteen
+    consequences (#4200).
+    """
+    import inspect
+    body = inspect.getsource(main)
+    start = body.index("results = [")
+    end = body.index("]", start)
+    names: list[str] = []
+    # Three shapes appear in that list: `check_foo(...)`, a bare local holding an
+    # already-computed CheckResult (`toolchain`), and `name="..."` for the inline
+    # SKIP results. A regex that knew only the first silently dropped the
+    # toolchain entry -- caught by the ordering test, which is the point of it.
+    for m in re.finditer(
+            r"""(?:check_(\w+)\s*\(|name\s*=\s*["'](\w[\w-]*)["']|^\s{8}(\w+),\s*$)""",
+            body[start:end], re.MULTILINE):
+        name = m.group(1) or m.group(2) or m.group(3)
+        if name in ("space", "names_in_order"):
+            continue
+        names.append(name.replace("_", "-"))
+    # check_space is called twice with the label as its first argument; those two
+    # carry the name in the call rather than in the function, so read them directly.
+    for m in re.finditer(r"""check_space\(\s*["']([\w-]+)["']""", body[start:end]):
+        names.append(m.group(1))
+    return names
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     epilog = "exit codes:\n" + "\n".join(f"  {k}  {v}" for k, v in sorted(EXIT_MEANING.items()))
     ap = argparse.ArgumentParser(
@@ -3191,7 +3450,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     prs, pr_status = pr_map(slug)
     rows = collect_worktrees(repo, prs, measure=not args.no_sizes)
 
+    # BEFORE the checks that assume a toolchain: `dotnet build`, `dotnet test` and
+    # provisioning all need an SDK, so reporting them first describes consequences
+    # ahead of the cause (#4200). Its verdict is threaded into check_artifacts,
+    # whose absent branch would otherwise pass by naming a `dotnet run`.
+    toolchain = check_toolchain(repo)
     results = [
+        toolchain,
         check_space("disk-scratch", scratch_root, mounts, per_worker),
         check_space("disk-repo", repo, mounts, per_worker),
         check_memory(mem, per_worker),
@@ -3204,7 +3469,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         check_push(repo, identity),
         check_commit(repo),
         check_github(slug),
-        check_artifacts(),
+        check_artifacts(toolchain_ok=toolchain.status == "PASS"),
         check_corpus_checkout(repo),
         check_corpus(repo, args.with_corpus),
     ]

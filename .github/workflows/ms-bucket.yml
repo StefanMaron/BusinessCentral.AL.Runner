@@ -265,7 +265,26 @@ jobs:
       # resolution below, which has to run BEFORE the action can be given a version.
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: '8.0.x'
+          # Two SDKs, deliberately. The projects target net8.0, so 8.0.x stays; the
+          # SOLUTION is AlRunner.slnx, whose <Solution> element a 9+ SDK is needed to
+          # parse at all (global.json pins that floor). An 8.0-only runner fails with
+          # `error MSB4068: The element <Solution> is unrecognized`, naming neither
+          # the SDK nor the solution format (#4200).
+          #
+          # Declaring 9.0.x is what makes the build's requirement explicit rather than
+          # inherited: measured on the ubuntu24/20260907.300 image, `setup-dotnet`
+          # installed 8.0.425 and the image's own preinstalled 9.x/10.x SDKs — same
+          # /usr/share/dotnet — were what actually built the .slnx.
+          dotnet-version: |
+            8.0.x
+            9.0.x
+      - name: Which .NET SDKs does this runner have? (#4200)
+        # One line that turns MSB4068 into a diagnosis. Without it the build's real
+        # SDK requirement is invisible: the declared version is not necessarily the
+        # version doing the work, because `dotnet` resolves the highest installed SDK
+        # that satisfies global.json. If a future image drops the 9+ SDK, this step is
+        # what says so, beside an error message about an unrecognized XML element.
+        run: dotnet --list-sdks && dotnet --version
 
       - name: Resolve the BC build
         id: bc
