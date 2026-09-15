@@ -25,6 +25,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **transaction:** AL Commit() moves the rollback floor of every open guarded-run scope
 - **preflight:** state and check the .NET SDK requirement
 - **ci:** re-read the cited corpus PR at merge time instead of trusting a stale check run
 - **unit-tests:** record five absent collections at their observed maximum
