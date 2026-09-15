@@ -347,6 +347,41 @@ internal static partial class ProgramSupport
     }
 
     /// <summary>
+    /// Every folder <see cref="SuiteRegistrationDirs"/> registers, paired with the app.json the
+    /// COMPILE of that folder reads (#4071): <c>BcCompiler.ResolveManifestAppJson</c> over the
+    /// same (appRootDir, paths) the bundle loop hands <c>Emit</c>. Bundled, that is
+    /// <see cref="BuildAppGroups"/>' grouping: a suite whose app.json carries an identity is its
+    /// own group rooted at the suite; every other suite joins one group rooted at the bundle.
+    /// <c>--per-suite</c> compiles each suite rooted at itself. Pinned to BuildAppGroups by
+    /// SuiteCompileManifestTests. Trap: a folder shared by several suites (<c>_shared/</c>) is
+    /// registered once, under the first suite's manifest.
+    /// </summary>
+    internal static List<(string Dir, string? ManifestAppJsonPath)> SourceDirsWithCompileManifest(
+        List<string> suites, string? bucketRoot, string bundleAbs, bool bundledMode)
+    {
+        var perSuite = new List<(string Suite, List<string> Paths, bool Fallback)>();
+        var fallbackPaths = new List<string>();
+        foreach (var suite in suites)
+        {
+            var paths = SuiteRegistrationDirs(suite, bucketRoot);
+            var appJson = Path.Combine(suite, "app.json");
+            var fallback = bundledMode
+                && (!File.Exists(appJson) || AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(appJson) == null);
+            if (fallback) fallbackPaths.AddRange(paths);
+            perSuite.Add((suite, paths, fallback));
+        }
+        var fallbackManifest = AlRunner.BcCompiler.ResolveManifestAppJson(
+            Path.GetFullPath(bundleAbs), fallbackPaths.Distinct().ToList());
+        var result = new List<(string Dir, string? ManifestAppJsonPath)>();
+        foreach (var (suite, paths, fallback) in perSuite)
+        {
+            var manifest = fallback ? fallbackManifest : AlRunner.BcCompiler.ResolveManifestAppJson(Path.GetFullPath(suite), paths);
+            foreach (var dir in paths) result.Add((dir, manifest));
+        }
+        return result;
+    }
+
+    /// <summary>
     /// The folders <see cref="AlRunner.Patches.RecordPatches.AddSourceDirs"/> must be given for
     /// one suite: exactly the folders <see cref="CollectSuitePaths"/> compiles.
     /// <para>

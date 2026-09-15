@@ -133,6 +133,39 @@ public sealed class AlMemberSyntaxIndex
             .ToList();
     }
 
+    /// <summary>
+    /// <paramref name="source"/> with every inactive <c>#if</c> branch overwritten by spaces
+    /// (line breaks kept), under the options the compile of this file used:
+    /// <c>BcCompiler.BuildParseOptions</c> over <paramref name="manifestAppJsonPath"/>, the app.json
+    /// that compile read (null: none). For text scans that must see only what compiles (#4076).
+    /// Returns <paramref name="source"/> unchanged when the parse throws.
+    /// <para>Takes a path, not options or <c>ManifestCompilerInputs</c>, and never inlines: its
+    /// caller is Program's Main, and a BC CodeAnalysis value type named there loads that assembly
+    /// before --bc-version is parsed, selecting the newest provisioned BC (#4071 review).</para>
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    internal static string BlankInactivePreprocessorBranches(string source, string filePath, string? manifestAppJsonPath)
+    {
+        try
+        {
+            var parseOpts = BcCompiler.BuildParseOptions(BcCompiler.ReadManifestCompilerInputs(manifestAppJsonPath));
+            var root = NavSyntax.SyntaxTree.ParseObjectText(source, path: filePath, encoding: null!, parseOpts, default).GetRoot();
+            char[]? chars = null;
+            foreach (var trivia in root.DescendantTrivia(descendIntoTrivia: true))
+            {
+                if (trivia.Kind != NavCA.SyntaxKind.DisabledTextTrivia) continue;
+                chars ??= source.ToCharArray();
+                for (var i = trivia.FullSpan.Start; i < trivia.FullSpan.End; i++)
+                    if (chars[i] is not ('\r' or '\n')) chars[i] = ' ';
+            }
+            return chars is null ? source : new string(chars);
+        }
+        catch
+        {
+            return source;
+        }
+    }
+
     private static string NormalizePath(string path) => path.Replace('\\', '/');
 
     private static string MemberName(NavSyntax.MethodOrTriggerDeclarationSyntax member) =>
