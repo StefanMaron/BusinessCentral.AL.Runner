@@ -114,8 +114,9 @@ public static partial class RecordPatches
     /// past it — <c>EndTransactionWorldAndTransaction(false)</c> aborts only what was written
     /// after the commit. Citation: AlRunner#3773, whose reproducer (guarded run does
     /// Insert + Commit + Error) answered <c>Count()=0</c> here and 1 on a service tier;
-    /// corpus codeunit 60943 <c>Record_Insert_CommitInsideGuardedRun_*</c> pins both
-    /// directions upstream.
+    /// corpus codeunit 60217 <c>GuardedRun_InstanceForm_CommitThenError_KeepsCommittedRowOnly</c>,
+    /// <c>GuardedRun_StaticForm_CommitThenError_KeepsCommittedRowOnly</c> and
+    /// <c>GuardedRun_CommitThenError_ClearsTheCommittedKeys</c> pin both directions upstream.
     ///
     /// Clearing (rather than popping) each scope is the point: the scopes stay OPEN, so the
     /// next write inside one re-snapshots from the post-commit state and an error after the
@@ -123,9 +124,14 @@ public static partial class RecordPatches
     /// "write then error, no commit" case rolling back.
     ///
     /// Trap: do not route <see cref="ALDatabasePatches.EndGuardedRunTransaction"/>'s
-    /// committing half here. That pop has already removed its own scope and narrowed the
-    /// ENCLOSING scopes to just the keys it touched; clearing them wholesale would make an
-    /// enclosing scope's writes to unrelated tables durable too.
+    /// committing half here. NOT because an enclosing scope would lose writes to unrelated
+    /// tables -- it cannot hold any. PushTransactionWorldScope has exactly one caller,
+    /// BeginGuardedRunTransaction, and every one of ITS call sites (CodeunitPatches' two
+    /// spellings and NavReportSync) calls ThrowIfWriteTransactionStarted first, so an
+    /// enclosing scope is always empty while a nested one is open. The reason is that no
+    /// service tier has adjudicated nested-run durability: keeping the two entry points apart
+    /// leaves that question where AlRunner#3773's corpus arms left it, rather than answering
+    /// it here by implication.
     /// </summary>
     public static void MarkExplicitCommitPoint()
     {

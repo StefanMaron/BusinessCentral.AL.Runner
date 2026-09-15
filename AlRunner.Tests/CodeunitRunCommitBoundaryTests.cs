@@ -248,10 +248,12 @@ public class CodeunitRunCommitBoundaryTests
     ///
     /// <c>MarkExplicitCommitPoint</c> clears every scope on the stack, which is right for AL's
     /// <c>Commit()</c> statement and wrong for <c>EndGuardedRunTransaction</c>'s committing
-    /// half: that one has already popped its own scope and narrowed the enclosing scopes to
-    /// just the keys it touched, so clearing them wholesale would make an enclosing scope's
-    /// writes to unrelated tables durable too. Read off the runner's compiled IL rather than
-    /// its source, so a call reintroduced through a helper is caught as well.
+    /// half, which must leave that question to a service tier rather than answer it by
+    /// implication (see MarkExplicitCommitPoint's own note). Read off the runner's compiled IL
+    /// rather than its source, so a textual rename cannot hide the call. It pins DIRECT call
+    /// edges only: CallersOf walks each body's own Call/Callvirt instructions and does not
+    /// traverse, so routing EndGuardedRunTransaction through a helper that calls
+    /// MarkExplicitCommitPoint would still pass -- measured, not assumed.
     /// </summary>
     [Fact]
     public void OnlyTheAlCommitStatementClearsTheOpenTransactionWorldScopes()
