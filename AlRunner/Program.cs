@@ -1800,6 +1800,35 @@ if (!provisionSubcommand)
     // still be missing the whole test toolkit, which fails compiling any test bundle.
     var toolkitPresent = decision.TestComplete;
 
+    // #2232: a need that comes only from the app.json floor is tried without the platform apps
+    // first, in a captured child; only an exit-0 attempt is the verdict. Anything else falls
+    // through to the unchanged decision below. docs/limitations.md#platform-apps-deferral
+    if (!serverMode && !watchMode && !tddMode && strictExitCode
+        && AlRunner.Infrastructure.ProvisioningCheck.CanDeferPlatformApps(manifestDependencyRoots, decision, platformReport))
+    {
+        var missingList = string.Join(", ", decision.MissingPlatformApps);
+        if (Environment.GetEnvironmentVariable(AlRunner.Infrastructure.ProvisioningCheck.DeferredPlatformAppsEnvVar) == "1")
+        {
+            decision = decision with { ShouldDownloadPlatform = false };
+        }
+        else
+        {
+            var attempt = AlRunner.Infrastructure.DeferredPlatformAppsAttempt.Run(args);
+            if (attempt.ExitCode == 0)
+            {
+                attempt.Replay();
+                Console.Error.WriteLine(
+                    $"[provision] ran without the Microsoft platform apps this bundle's app.json floor declares ({missingList}): " +
+                    "none are on disk, and the run passed without them. A bundle that uses them does not pass that attempt " +
+                    "and is provisioned as before (#2232).");
+                return 0;
+            }
+            Console.Error.WriteLine(
+                $"[provision] an attempt without the platform apps ({missingList}) did not come out green (exit {attempt.ExitCode}); " +
+                "its output is discarded and the run proceeds with the apps this bundle's app.json declares.");
+        }
+    }
+
     if (decision.ShouldDownloadAny && !autoProvision)
     {
         // Issue #1996 acceptance criterion #10 / issue #2024: no download when the caller

@@ -1780,6 +1780,36 @@ public static class ProvisioningCheck
             needs.RequiredPlatformApps, missingPlatformApps);
     }
 
+    /// <summary>Set on the child process a deferred run spawns (#2232); its presence means
+    /// "this process IS the attempt without the platform apps".</summary>
+    public const string DeferredPlatformAppsEnvVar = "AL_RUNNER_DEFERRED_PLATFORM_APPS";
+
+    /// <summary>
+    /// Issue #2232: whether the platform-apps download this decision asks for may be deferred
+    /// to an attempt without them. True only when the need comes from nothing but the implicit
+    /// <c>Application</c>/<c>System</c> roots an app.json floor synthesises, because no manifest
+    /// signal can tell a floor the AL uses from one it does not (docs/limitations.md#platform-apps-deferral).
+    /// Every other shape keeps today's decision: an explicit Microsoft root, a test-toolkit need,
+    /// a symbol-only platform app, or an unreadable package whose edges are unknown.
+    /// </summary>
+    public static bool CanDeferPlatformApps(
+        IEnumerable<AlRunner.DependencyRef> manifestRoots,
+        ManifestProvisionDecision decision,
+        PlatformAppsReport legacySymbolOnlyReport)
+    {
+        static bool IsImplicitRootName(string name) =>
+            string.Equals(name, "Application", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(name, "System", StringComparison.OrdinalIgnoreCase);
+
+        if (!legacySymbolOnlyReport.Ok || !decision.ShouldDownloadPlatform) return false;
+        if (decision.NeedsTestApps || decision.ShouldDownloadTest) return false;
+        if (decision.UnreadablePackages.Count > 0) return false;
+        if (decision.MissingPlatformApps.Count == 0 || !decision.MissingPlatformApps.All(IsImplicitRootName)) return false;
+        return manifestRoots
+            .Where(r => string.Equals(r.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase))
+            .All(r => IsImplicitRootName(r.Name));
+    }
+
     /// <summary>
     /// Reads dependency roots from every path in <paramref name="appJsonPaths"/> via
     /// <paramref name="reader"/> (the caller's own app.json parser — kept as a delegate so
