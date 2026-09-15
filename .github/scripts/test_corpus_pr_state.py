@@ -345,6 +345,102 @@ _got, _why = cps.fetch_pull(226, run=_runner([(0, "not json at all")]), sleep=la
 check("an unparseable answer is a failed read, not an empty payload",
       _got is None and _why, f"{_got!r} {_why!r}")
 
+# ===========================================================================
+# The stale check run (#4206)
+#
+# `A cited corpus PR must be able to merge` is a status check, so it evaluates
+# on push/edited/labeled and NOT when the cited corpus PR changes state. Under
+# corpus-first merging the corpus PR merges AFTER the runner PR's last push, so
+# the stored conclusion stays `failure` for a condition that has just become
+# true -- and a failing non-required check makes mergeStateStatus UNSTABLE,
+# which `enablePullRequestAutoMerge` refuses.
+#
+# Measured on PR #4203 (the issue's third instance, both timestamps read from
+# the API): the gate ran at 20:04:40Z and concluded `failure`; corpus PR #371
+# merged at 20:21:08Z; a re-fire at 20:50:08Z concluded `success` and the PR
+# merged at 20:51:49Z. 46 minutes in which every instrument said green.
+# ===========================================================================
+print("\ncorpus_pr_state.py -- is the stored check run stale? (#4206)")
+
+check("the gate's context name is exported, so callers do not spell it themselves",
+      getattr(cps, "GATE_CONTEXT", None) == "A cited corpus PR must be able to merge",
+      repr(getattr(cps, "GATE_CONTEXT", None)))
+
+_MERGED = cps.Entry(371, "MERGED", "a" * 40, "a real BC service tier adjudicated this claim")
+_MERGEABLE = cps.Entry(371, "MERGEABLE", "a" * 40, "open, no conflict")
+_BAD = cps.Entry(371, "NOT-MERGEABLE", "a" * 40, "a required BC leg is red")
+_UNREADABLE = cps.Entry(371, "UNREADABLE", "", "GitHub would not answer")
+
+
+def _stale(entries, conclusion):
+    return cps.stale_gate_verdict(entries, conclusion)
+
+
+# --- the case the issue is about -------------------------------------------
+_verdict, _why = _stale([_MERGED], "failure")
+check("a MERGED corpus PR under a stored `failure` is STALE -- the exact shape "
+      "that refused #4135, #4202 and #4203",
+      _verdict == "STALE", f"{_verdict!r} {_why!r}")
+check("the stale line names the re-trigger, because that is the whole remedy",
+      _verdict == "STALE" and ("edit" in _why.lower() or "label" in _why.lower()),
+      repr(_why))
+
+_verdict, _why = _stale([_MERGEABLE], "failure")
+check("a MERGEABLE corpus PR under a stored `failure` is STALE too -- the corpus "
+      "PR went green after the gate ran", _verdict == "STALE", f"{_verdict!r} {_why!r}")
+
+# --- the cases that must NOT be called stale --------------------------------
+_verdict, _why = _stale([_BAD], "failure")
+check("a corpus PR that genuinely cannot merge is CURRENT, not stale -- the red "
+      "tick is telling the truth", _verdict == "CURRENT", f"{_verdict!r} {_why!r}")
+
+_verdict, _why = _stale([_MERGED], "success")
+check("a MERGED corpus PR under a stored `success` is CURRENT -- nothing to do",
+      _verdict == "CURRENT", f"{_verdict!r} {_why!r}")
+
+_verdict, _why = _stale([], "success")
+check("a body citing no corpus PR is CURRENT, never stale",
+      _verdict == "CURRENT", f"{_verdict!r} {_why!r}")
+
+# --- the third state (guards-need-a-third-state.md) -------------------------
+_verdict, _why = _stale([_UNREADABLE], "failure")
+check("an UNREADABLE corpus PR is UNKNOWN, never STALE -- claiming a red tick is "
+      "stale on a corpus PR nobody could read would clear a gate on no measurement",
+      _verdict == "UNKNOWN", f"{_verdict!r} {_why!r}")
+
+_verdict, _why = _stale([_MERGED], None)
+check("no stored conclusion at all is UNKNOWN, never CURRENT -- the check may "
+      "simply not have reported yet", _verdict == "UNKNOWN", f"{_verdict!r} {_why!r}")
+
+_verdict, _why = _stale([_MERGED], "")
+check("an empty stored conclusion is UNKNOWN, not a conclusion",
+      _verdict == "UNKNOWN", f"{_verdict!r} {_why!r}")
+
+# A mixed body: one corpus PR merged, one genuinely red. The red one is the
+# reason the gate fails, so the tick is CURRENT and re-firing would change
+# nothing. Getting this backwards would send a coordinator round a re-trigger
+# loop that can never clear.
+_verdict, _why = _stale([_MERGED, _BAD], "failure")
+check("one merged and one genuinely-red corpus PR is CURRENT -- the red one is "
+      "why the gate fails, and a re-fire cannot clear it",
+      _verdict == "CURRENT", f"{_verdict!r} {_why!r}")
+
+# UNKNOWN outranks STALE: an unreadable entry beside a merged one means the
+# gate's verdict cannot be attributed, so neither answer is established.
+_verdict, _why = _stale([_MERGED, _UNREADABLE], "failure")
+check("an unreadable entry beside a merged one is UNKNOWN, not STALE",
+      _verdict == "UNKNOWN", f"{_verdict!r} {_why!r}")
+
+# --- the reported line ------------------------------------------------------
+_line = cps.format_stale_line("STALE", "corpus PR #371 has merged since this check ran")
+check("the STALE line is prefixed so a reader can see it is about the tick, not "
+      "the corpus PR", "stale" in _line.lower() and "#371" in _line, repr(_line))
+check("a CURRENT verdict prints nothing -- a report that names every PR is ignored",
+      cps.format_stale_line("CURRENT", "") == "", repr(cps.format_stale_line("CURRENT", "")))
+check("an UNKNOWN verdict DOES print, because nobody measured it",
+      cps.format_stale_line("UNKNOWN", "GitHub would not answer") != "",
+      repr(cps.format_stale_line("UNKNOWN", "GitHub would not answer")))
+
 print()
 if FAILURES:
     print(f"FAILED: {len(FAILURES)} check(s): {', '.join(FAILURES)}")
