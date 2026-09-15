@@ -82,6 +82,23 @@ public static class NavAppModuleInfoPatches
         return true;
     }
 
+    // Cecil patch target: NavSession.GetCurrentModuleExecutionContext() (instance).
+    // Observably equivalent: BC's body is GetModuleExecutionContext(<owning app of the executing
+    // object>), and this keeps that, changing only how the owning app is found when BC's own
+    // lookup (CurrentMethodScope.ApplicationObject.GetOwningAppId) answers AppId.None — which it
+    // does for every runner-loaded object, having no OwningApp metadata. GetOwningAppId is internal;
+    // its first arm, the object's own AppId, is kept. The fallback is the same
+    // stack walk GetCurrentModuleInfo answers from, so the two agree on "which module" (#4049,
+    // corpus 60589 TestInstallExecCtx_ModuleContextIsInstallPerCompany).
+    public static Microsoft.Dynamics.Nav.Types.ExecutionContext NavSession_GetCurrentModuleExecutionContext(
+        Microsoft.Dynamics.Nav.Runtime.NavSession self)
+    {
+        var owning = self.CurrentMethodScope?.ApplicationObject?.AppId ?? System.Guid.Empty;
+        if (owning == System.Guid.Empty)
+            owning = AlRunner.BcRuntime.GetCurrentModuleFromCallStack().AppId;
+        return self.GetModuleExecutionContext(owning);
+    }
+
     // Cecil patch target: static bool ALNavApp.ALGetModuleInfo(DataError, Guid, ByRef<NavModuleInfo>)
     //
     // WHY: this is the BY-ID overload — AL's `NavApp.GetModuleInfo(appId, info)` — and it is

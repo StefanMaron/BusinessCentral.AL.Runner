@@ -37,7 +37,7 @@ codeunit 60711 "ITS Installer"
         //     and the INSTALL-RESULT row below would never be written.
         //   * BC skips StartSession while an install runs and returns false without writing
         //     SessionId (#3292; the BC half is pinned upstream by corpus codeunit 60449). The
-        //     runner models that with its own install-pass flag, so the worker must not run.
+        //     runner sets BC's install context around install triggers (#4049), so the worker must not run.
         // "ITS StartSession Outside Test" reads both back.
         SessionId := 777;
         Marker.Init();

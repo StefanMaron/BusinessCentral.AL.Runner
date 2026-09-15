@@ -1,11 +1,13 @@
-// The runner-side mechanism behind #3292: InstallTriggerRunner's install-pass flag, and
-// AlRunnerStartSession's refusal while it is set.
+// The runner-side mechanism behind #3292, after #4049: AlRunnerStartSession refuses while BC's own
+// NavSession.AppInstallationContext (or AppUpgradeContext) is set, and InstallExecutionContext sets
+// and clears that context around install triggers.
 //
 // The BC behaviour (StartSession during install returns false, leaves SessionId alone, runs no
-// worker) is pinned upstream by corpus codeunit 60449, and end to end through a real install
-// trigger by tests/runner-extras/install-trigger-seed. What only C# can pin is the scope's
-// lifetime: cleared on dispose, cleared when the install body throws, and nesting-safe. A flag
-// left latched would refuse every StartSession for the rest of the process.
+// worker) is pinned upstream by corpus codeunit 60449, end to end through a real install trigger by
+// tests/runner-extras/install-trigger-seed, and by InstallExecutionContextTests
+// (IecStartSessionInsideInstallWasRefused). What only C# can pin here is the scope's lifetime:
+// cleared on dispose, cleared when the install body throws, and cleared once. A context left set
+// would refuse every StartSession for the rest of the process.
 
 using System;
 using AlRunner;
@@ -15,9 +17,8 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-// Serial: the install-pass flag is process-wide, and so is the TestIsolation state the #2805 guard
-// reads first. Any class running an install pass or an AL test concurrently would change what
-// these assertions see.
+// Serial: the TestIsolation state the #2805 guard reads first is process-wide, and so is the
+// thread's NavCurrentThread.Session an install pass would set a context on.
 [CollectionDefinition(Name, DisableParallelization = true)]
 public sealed class InstallPassFlagSerialCollection
 {
@@ -27,33 +28,23 @@ public sealed class InstallPassFlagSerialCollection
 [Collection(InstallPassFlagSerialCollection.Name)]
 public sealed class StartSessionInstallPassTests
 {
-    // No loaded assembly declares this codeunit, so outside the install pass StartSession
-    // reaches dispatch and fails on lookup. That failure is the negative control: it shows the
-    // install-pass refusal, not the lookup, is what answers false inside the pass.
+    // No loaded assembly declares this codeunit, so outside an install StartSession reaches
+    // dispatch and fails on lookup — the negative control for the refusal.
     private const int NoSuchCodeunit = 1_999_999_999;
 
     [Fact]
-    public void InsideTheInstallPass_StartSessionReturnsFalse_AndLeavesSessionIdAlone()
+    public void NoSession_IsNotAnInstallOrUpgrade()
     {
-        int slot = 777;
-        var sessionId = new ByRef<int>(() => slot, v => slot = v);
-
-        bool result;
-        using (InstallTriggerRunner.EnterInstallPass())
-            result = BcRuntime.AlRunnerStartSession(
-                DataError.ThrowError, sessionId, NoSuchCodeunit, null, null);
-
-        Assert.False(result);
-        Assert.Equal(777, slot);
+        Assert.False(BcRuntime.IsInstallOrUpgradeInProgress(null));
     }
 
     [Fact]
-    public void OutsideTheInstallPass_StartSessionReachesDispatch()
+    public void OutsideAnInstall_StartSessionReachesDispatch()
     {
         int slot = 777;
         var sessionId = new ByRef<int>(() => slot, v => slot = v);
 
-        Assert.False(InstallTriggerRunner.InInstallPass);
+        Assert.False(BcRuntime.IsInstallOrUpgradeInProgress(NavCurrentThread.Session));
         var ex = Record.Exception(() => BcRuntime.AlRunnerStartSession(
             DataError.ThrowError, sessionId, NoSuchCodeunit, null, null));
 
@@ -62,31 +53,27 @@ public sealed class StartSessionInstallPassTests
     }
 
     [Fact]
-    public void TheFlag_IsClearedWhenTheInstallBodyThrows()
+    public void TheScope_ClearsWhenTheInstallBodyThrows()
     {
+        int clears = 0;
         Action installBody = () =>
         {
-            using (InstallTriggerRunner.EnterInstallPass())
-            {
-                Assert.True(InstallTriggerRunner.InInstallPass);
+            using (new InstallExecutionContext.Scope(() => clears++))
                 throw new InvalidOperationException("install trigger failed");
-            }
         };
         Assert.Throws<InvalidOperationException>(installBody);
 
-        Assert.False(InstallTriggerRunner.InInstallPass);
+        Assert.Equal(1, clears);
     }
 
     [Fact]
-    public void NestedScopes_KeepTheFlagUntilTheOutermostEnds_AndDoubleDisposeIsHarmless()
+    public void TheScope_ClearsOnce_AndDoubleDisposeIsHarmless()
     {
-        var outer = InstallTriggerRunner.EnterInstallPass();
-        var inner = InstallTriggerRunner.EnterInstallPass();
-        inner.Dispose();
-        inner.Dispose();
-        Assert.True(InstallTriggerRunner.InInstallPass);
-
-        outer.Dispose();
-        Assert.False(InstallTriggerRunner.InInstallPass);
+        int clears = 0;
+        var scope = new InstallExecutionContext.Scope(() => clears++);
+        Assert.Equal(0, clears);
+        scope.Dispose();
+        scope.Dispose();
+        Assert.Equal(1, clears);
     }
 }

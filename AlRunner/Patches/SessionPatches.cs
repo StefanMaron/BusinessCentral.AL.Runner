@@ -533,7 +533,8 @@ public static partial class BcRuntime
     /// merges — the divergence is real and is not fixed here.</para>
     ///
     /// <para>2. BC refuses StartSession during an install or upgrade. That arm lives in
-    /// <see cref="AlRunnerStartSession"/>, reading the runner's install-pass flag (#3292).</para>
+    /// <see cref="AlRunnerStartSession"/>, reading BC's <c>NavSession.AppInstallationContext</c>,
+    /// which the runner sets around install triggers (#3292, #4049).</para>
     /// </summary>
     public static System.Threading.Tasks.ValueTask<bool> ALSession_ALStartSessionAsyncImpl(
         Microsoft.Dynamics.Nav.Runtime.NavSession session,
@@ -555,6 +556,10 @@ public static partial class BcRuntime
     /// </summary>
     private static long? TimeoutMs(Microsoft.Dynamics.Nav.Runtime.NavDuration? timeout)
         => timeout?.Value;
+
+    /// <summary>BC's StartSession install/upgrade condition, read off the session (#3292).</summary>
+    internal static bool IsInstallOrUpgradeInProgress(Microsoft.Dynamics.Nav.Runtime.NavSession? session) =>
+        session != null && (session.AppInstallationContext != null || session.AppUpgradeContext != null);
 
     /// <summary>
     /// In-scope (§3.9) replacement entry point for every ALSession.ALStartSession overload.
@@ -609,10 +614,10 @@ public static partial class BcRuntime
 
         // #3292 — BC's install/upgrade refusal, next in BC's order: after the TestIsolation guard,
         // before the try (so no error under either errorLevel) and before sessionId is written.
-        // BC reads session.AppInstallationContext, which the runner never populates; its own
-        // install pass is InstallTriggerRunner, so that is the state read here. Corpus 60449.
-        // BC's AppUpgradeContext arm has no counterpart: the runner has no upgrade pass.
-        if (InstallTriggerRunner.InInstallPass)
+        // BC's own condition on BC's own fields: InstallExecutionContext sets AppInstallationContext
+        // around install triggers (#4049). Corpus 60449. The runner has no upgrade pass, so
+        // AppUpgradeContext is always null here; it is read because BC reads it.
+        if (IsInstallOrUpgradeInProgress(Microsoft.Dynamics.Nav.Runtime.NavCurrentThread.Session))
             return false;
 
         bool trap = errorLevel == Microsoft.Dynamics.Nav.Types.DataError.TrapError;
