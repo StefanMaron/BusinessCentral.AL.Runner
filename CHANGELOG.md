@@ -279,6 +279,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **expectations:** declare the one subpage pageextension-control arm corpus #360 leaves red
 - **witness:** drive the codeunit-witness multi-chunk widening invariant
 - **virtual-tables:** count refusal SITES, not only thrown ones, so a captured refusal has a count
 - **session-user-row:** move the User Property companion-row claim to the corpus
