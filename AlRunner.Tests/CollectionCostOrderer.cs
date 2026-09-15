@@ -143,6 +143,30 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // (#2175), not precision -- it needs to sit well above UnmeasuredWeightSeconds
             // (30) so the collection is scheduled early instead of becoming the #1887 tail.
             ["TransitiveDependencyVisibilityTests"] = 83,
+            // #4204: five collections absent from this table on run 35017043142's BC 28.4
+            // leg. FloorOnlyBundleEnumFieldTests at 76.4s crossed the >= 75s band and failed
+            // the leg; the other four sat in the >= 60s advisory band, and
+            // ServerCrossBundleReuseRegistryReplayTests at 73.4s was 1.6s short of failing the
+            // next slow leg the same way. Recorded together because they are one measurement.
+            //
+            // Recorded as each one's observed MAXIMUM, rounded down. That is what
+            // check-collection-weights.py's header depends on -- "MeasuredWeightSeconds records
+            // each collection's observed MAXIMUM, so median(observed / recorded) is normally
+            // BELOW 1.0 and the floor swallows it" -- so recording a low end would push this
+            // entry's ratio above 1.0 and weaken the load calibration for everyone. #2175's
+            // round-DOWN advice is about a low end near UnmeasuredWeightSeconds (30), where
+            // rounding down leaves dispatch order identical to being absent; it does not
+            // override the maximum convention #2498 names.
+            //
+            // FloorOnlyBundleEnumFieldTests is the only one measured twice (65.3s on the 27.5
+            // leg of the same run, 76.4s on 28.4 -- a 17% spread on one collection in one run,
+            // which is why it straddles the band at all). The other four are single-leg
+            // observations: a ceiling for that leg, not a settled figure.
+            ["FloorOnlyBundleEnumFieldTests"] = 76,
+            ["ServerCrossBundleReuseRegistryReplayTests"] = 73,
+            ["SuiteRootAlFilesTests"] = 71,
+            ["CacheGateProbeScopeTests"] = 60,
+            ["SiblingSymbolsAppRootManifestTests"] = 60,
             // perf/boot-overhead: added with the on-disk install-baseline tier. Measured
             // 125.6s on the first CI run of that branch (BC 28.4 leg), where it was absent
             // from this table, fell back to UnmeasuredWeightSeconds and was dispatched at
