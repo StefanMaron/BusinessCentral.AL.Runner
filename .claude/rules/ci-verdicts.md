@@ -94,11 +94,29 @@ look current.
 `A cited corpus PR must be able to merge` job runs. Same contract as the floor line: a report,
 never an exit code, `unavailable` on a read that did not happen and `UNREADABLE` on a malformed
 declaration. **That gate is a status check, so it evaluates on push, `edited` and `labeled` and
-not when the corpus PR moves** — a corpus PR that goes green or merges later leaves a stale red
-until something re-triggers it, and editing the body or applying `status: review-ready` is the
-cheap re-trigger. It is deliberately not in the branch ruleset (it reads `api.github.com`), so
-that stale red does not block a merge; the arming list in `orchestrating-a-session` is what
-holds out for `MERGED`.
+not when the corpus PR moves** — and corpus-first merging makes that systematic rather than
+rare: the corpus PR merges *after* the runner PR's last push, so the stored `failure` outlives
+its cause on every BC-behaviour fix. It is deliberately not in the branch ruleset (it reads
+`api.github.com`), and the arming list in `orchestrating-a-session` is what holds out for
+`MERGED`.
+
+**Not in the ruleset does not mean harmless: a stale red DOES refuse the merge** (#4206). A
+failing *non-required* check makes `mergeStateStatus` read `UNSTABLE`, which
+`enablePullRequestAutoMerge` refuses with `Pull request is in unstable status` — so nothing
+merges that should not, and nothing merges that should. Every instrument reads green while it
+happens: `ci-wait.py` exits 0 because no *required* context is red, and prints
+`corpus PR #N: MERGED` from its own fresh read in the same breath. Measured three times in one
+session — #4135/#348, #4202/#368, and #4203/#371, where the gate concluded `failure` at
+20:04:28Z, corpus #371 merged at 20:21:08Z, and a body edit at 20:50:05Z produced a fresh
+`success`: **46 minutes**.
+
+So `ci-wait.py` prints a third line when the gate's *stored* conclusion disagrees with what the
+corpus PR says *now* — `corpus gate: STALE`, with `UNKNOWN` when the corpus PR or the rollup
+could not be read, and nothing at all when they agree. `tools/armed-prs.py` reports a STALE gate
+even on an exit-0 verdict, and `--refire-stale-corpus-gate` clears it by toggling a label rather
+than pushing a commit, which would restart the BC matrix and re-arm auto-merge against an
+unreviewed head. **Only `STALE` is re-fired**: an `UNKNOWN` gate was never established as stale,
+and acting on it would clear a gate on a measurement nobody made.
 
 `ci-wait.py` reads the required contexts from the **live branch ruleset** on each invocation
 (`GET /repos/{owner}/{repo}/rules/branches/main`, which reports only *active* rulesets),

@@ -186,6 +186,21 @@ Arm **only** when all of these hold. Any one missing means report it to the coor
   (#3674). **Only `NONE` and `MERGED` arm.** `MERGEABLE` is a corpus PR still to merge: merge it
   first, in this same step, then re-read. Anything else means reporting that corpus PR's number
   instead of arming.
+
+  **Having merged the corpus PR in this step, the gate's stored tick is now stale, and it
+  refuses the merge you are about to make** (#4206). The gate does not re-evaluate when the
+  corpus PR moves, and a failing non-required check makes `mergeStateStatus` `UNSTABLE`, which
+  `enablePullRequestAutoMerge` refuses — while `ci-wait.py` reports GREEN and prints
+  `corpus PR #N: MERGED` beside it. It now also prints `corpus gate: STALE` when that is so;
+  clear it before arming, which costs seconds and moves no head:
+
+  ```bash
+  tools/armed-prs.py --refire-stale-corpus-gate   # every armed PR whose gate is STALE
+  ```
+
+  Never an empty commit: a push restarts the BC matrix and re-arms auto-merge against a head
+  nobody reviewed. And `corpus gate: UNKNOWN` is **not** a stale gate — nobody established what
+  it is, so read that corpus PR by hand rather than re-firing.
 - No *other* PR in the same batch conflicts with it. Where two do — historically two submodule pin bumps to
   different revisions, say — arm only the one that must merge first and report the ordering.
 - **The newest comment on the PR whose last line begins `Verdict:` reads `Verdict: MERGE` with a
