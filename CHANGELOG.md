@@ -25,6 +25,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **ci:** re-read the cited corpus PR at merge time instead of trusting a stale check run
 - **unit-tests:** record five absent collections at their observed maximum
 - **record:** serve the Query Metadata virtual table (2000000142) from BC's own provider
 - **enum:** resolve an interface Implementation supplied by a dependent app's enumextension
