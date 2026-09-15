@@ -86,6 +86,29 @@ feels. A missing *local* `origin/main` ref is deliberately excluded from `unvouc
 out with `fetch-depth 1`, so that ref never exists on any run while the remote answers fine,
 and conflating the two refused every CI run in the first version of that fix (#3296).
 
+### A reflection bind that answers null is unmeasurable, not absent
+
+**A `null` from a reflection lookup means "I could not find it", never "it is not needed" — so
+it refuses, and a fallback that proceeds without it is the success state wearing the third
+state's clothes.** The pull toward the wrong answer is real and it sounds like the constraint
+above: *a missing narrowing step is better than no table at all.* It is not, because the
+degraded answer is indistinguishable from the correct one at every call site.
+
+Measured (#4147, PR #4192): `DataHelper.PassesFieldFilters` is a **static extension method**,
+so binding it against the buffer type it appears to hang off answers `null` — BC's decompiled
+body reads `item2.PassesFieldFilters(...)`, which is extension-method syntax for
+`DataHelper.PassesFieldFilters(item2, ...)`. That null was treated as optional. Every row then
+passed through **unfiltered**: `Record.SetRange` narrowed nothing, `FindFirst` answered the
+page's first row for every query, and nothing threw — `rows=29 passes=NULL`, with four corpus
+arms reading `Actual:<0>`.
+
+**The trap is that the two null-producing causes are indistinguishable at the bind and have
+opposite remedies**: *BC renamed it* (refuse loudly, `BcShapeGapException`) and *I looked in the
+wrong place* (fix the lookup). Neither is "carry on without it". So bind BC members through
+`BcShape.FindMethod`, make the bind **required**, and read the member's real signature — a
+decompiled call site shows extension methods as instance calls, and `MethodInfo.Invoke` does not
+apply the C# defaults such a member usually declares.
+
 ## Writing one
 
 1. **Enumerate the ways the measurement can fail to happen**, separately from the ways the
