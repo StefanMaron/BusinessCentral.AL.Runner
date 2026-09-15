@@ -786,9 +786,9 @@ public static partial class NclCecilRewrite
                 m.Name == "GetSnapshotOfAllObjects" && m.Parameters.Count == 1)
                 ?? throw new InvalidOperationException("NCLMetadata.GetSnapshotOfAllObjects(int) not found");
 
-            // ReturnType is SortedList<ObjectType, SortedList<int, AllObjectSnapshotEntry>>
-            // — already a fully-bound GenericInstanceType in this assembly. Build a
-            // MethodReference for its parameterless ctor with DeclaringType = return type.
+            // Shape guard kept from the empty-list version: the helper BUILDS this type by
+            // reading its generic arguments off BC, so a changed return shape must refuse here
+            // rather than reach a helper that would construct the wrong dictionary.
             var returnType = getSnap.ReturnType;
             if (returnType is not Mono.Cecil.GenericInstanceType retGit
                 || !retGit.ElementType.FullName.StartsWith("System.Collections.Generic.SortedList`2"))
@@ -796,20 +796,26 @@ public static partial class NclCecilRewrite
                 throw new InvalidOperationException(
                     $"NCLMetadata.GetSnapshotOfAllObjects return shape changed (got {returnType.FullName}) — do not commit");
             }
-            var sortedListCtor = new MethodReference(".ctor", asm.MainModule.TypeSystem.Void, retGit)
-            {
-                HasThis = true,
-            };
 
-            var body = getSnap.Body;
-            body.Instructions.Clear();
-            body.Variables.Clear();
-            body.ExceptionHandlers.Clear();
-            var il = body.GetILProcessor();
-            il.Append(il.Create(OpCodes.Newobj, sortedListCtor));
-            il.Append(il.Create(OpCodes.Ret));
-            body.MaxStackSize = 1;
-            Console.Error.WriteLine("[Cecil] Replaced NCLMetadata.GetSnapshotOfAllObjects body → new SortedList<...>() (empty) in skeleton mode");
+            // #4147: was `return new SortedList<...>()` — EMPTY. That stood in for a real impl
+            // which NREs in skeleton mode (it locks a null allObjectIdsSnapshotSyncRoot and
+            // reads a BC System App resource the runner does not have), and empty was enough
+            // for the callers that existed when it was written.
+            //
+            // It is not enough for Query Metadata (2000000142): BC's QueryDataProvider iterates
+            // this snapshot for ObjectType.Query and builds every column of the row itself, so
+            // an empty snapshot means the table answers no rows at all. The helper returns the
+            // same type carrying ObjectType.Query ONLY, from the runner's own query inventory;
+            // every other object type stays absent, so the sixteen other callers — AllObj,
+            // Field, Table Metadata and the rest, which work today BECAUSE this is empty — see
+            // exactly what they see now. Widening it further is #4196.
+            ReplaceBodyWithHelper(asm.MainModule, getSnap,
+                typeof(AlRunner.Patches.RecordPatches).GetMethod(
+                    "NCLMetadata_GetSnapshotOfAllObjects",
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] helper RecordPatches.NCLMetadata_GetSnapshotOfAllObjects not found"));
+            Console.Error.WriteLine("[Cecil] Replaced NCLMetadata.GetSnapshotOfAllObjects body → runner query inventory (ObjectType.Query only)");
         }
 
         // ── RecordImplementation.CalcFieldsAsync(DataError, NCLMetaField[]) ───────
