@@ -25,6 +25,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **designer:** NavDesignerALFunctions.CopyProfile refuses by name instead of failing silently
 - **record:** serve the Page Action virtual table (2000000143) from BC's own provider
 - **record:** serve the Key virtual table (2000000063) from BC's own KeyDataProvider
 - **testpage:** apply a part's SubPageView, so it shows only the rows the view selects
