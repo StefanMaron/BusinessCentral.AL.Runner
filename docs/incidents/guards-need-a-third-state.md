@@ -83,3 +83,33 @@ Count them with care: the definition line matches too, so a bare `grep -c die_un
 answers **eight**. The first draft of this file said five and listed four; the correction said
 five when #3683 had just made it seven. Both slips were the same one — trusting a count over the
 enumeration.
+
+
+## The reflection-bind instance (#4147, PR #4192)
+
+Writing the Page Action (2000000143) virtual-table provider, the filter step bound
+`PassesFieldFilters` against the `ReadOnlyRecordBuffer` type, because BC's decompiled
+`PageActionDataProvider.GetValuesWithinRangeForKeyField` renders the call as
+`item2.PassesFieldFilters(nonPrimaryKeyFilters, session)`. The method is
+`internal static bool PassesFieldFilters(this IRecordBuffer recordBuffer, ...)` on `DataHelper`
+— an extension method — so the instance lookup answered null.
+
+The author's own comment at the time recorded the reasoning that made it a fallback rather than
+a refusal:
+
+> PassesFieldFilters is optional on purpose: if BC drops it, the read answers UNFILTERED rows
+> rather than none, and the filter is re-applied by the caller. Refusing here would turn a
+> narrowing step into a total outage of the table.
+
+The second clause is false — nothing re-applies it — and the first is the false-green direction.
+Symptom: all six corpus arms compiled and ran, two passed, and the four that failed reported
+`Actual:<0>` on four *different* columns (Indentation, Action Type, RunObjectID), which reads
+like a provider filling rows with zeros rather than like a filter that never ran. A debug print
+(`rows=29 passes=NULL session=ok filters=FilterFieldDictionary`) separated the two in one run;
+reasoning about the four assertions had pointed at the row builder instead.
+
+Two further facts the same bind needed, both from the member's real signature rather than from
+the call site: it takes **six** parameters, and `MethodInfo.Invoke` does not apply the three C#
+defaults (`includeFlowFields = true`, `checkAgainstOriginalAndModified = false`,
+`bothShouldPass = false`), so a five-argument invoke raises `TargetParameterCountException` at
+runtime. Passing all six explicitly with BC's own call-site values took the arms to 6/6.
