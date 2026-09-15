@@ -2713,6 +2713,9 @@ foreach (var bundle in bundles)
                     // Register any prebuilt bundle-root .app (with SymbolReference.json) so the
                     // generic NCLMetaQuery builder can read this bundle's own query column ids.
                     AlRunner.Patches.RecordPatches.RegisterBundleSymbolApps(depRootDir);
+                    // #4197 — every .app is registered now, so an enumextension still holding an
+                    // unresolved target enum is "never", not "not yet". Reports; never throws.
+                    AlRunner.Patches.RecordPatches.ReportUnresolvedPrecompiledEnumExtensions();
                     // Populate BcRuntime with this bundle's identity for the
                     // NavApp.GetCurrentModuleInfo polyfill shim. A parent-of-many-apps bundle
                     // has no identity of its own; each AppGroup sets its own below.
@@ -5492,6 +5495,9 @@ return strictExitCode ? computedExitCode : 0;
                 foreach (var (_, appPath) in ordered)
                     AlRunner.Patches.RecordPatches.AddBcAppPath(appPath);
                 AlRunner.Patches.RecordPatches.RegisterBundleSymbolApps(bucketRoot);
+                // #4197 — see the CLI path's note: last registration point, so unresolved here
+                // means unresolvable for this bundle.
+                AlRunner.Patches.RecordPatches.ReportUnresolvedPrecompiledEnumExtensions();
                 SetBundleInfoFromAppJson(appJsonPath);
                 bundleId = AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(appJsonPath);
                 if (bundleId != null)

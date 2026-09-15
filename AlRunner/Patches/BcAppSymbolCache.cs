@@ -78,7 +78,14 @@ internal static partial class BcAppSymbolCache
         // PageExtensionSymbol. Guarded by the v24 CacheVersion bump
         // (docs/bc-symbol-cache-versions.md#version-history), so null only ever means
         // "this .app declares none", never "an older payload".
-        List<PageExtensionSymbol>? PageExtensions = null);
+        List<PageExtensionSymbol>? PageExtensions = null,
+        // #4197 — enumextensions this .app declares, carried separately from Enums because the
+        // registry merges base and extension registrations on read and a mixed list would
+        // clobber the base. Trailing + optional for the same reason as PageExtensions: a
+        // payload written before this member deserialises as null. The SHAPE change re-keys
+        // the cache through PayloadShape, so no stale payload is ever read back
+        // (docs/bc-symbol-cache-versions.md, the #3809 precedent).
+        List<EnumExtensionSymbol>? EnumExtensions = null);
 
     /// <summary>
     /// One profile as SymbolReference.json states it. <c>ProfileId</c> is the profile object's
@@ -714,6 +721,28 @@ internal static partial class BcAppSymbolCache
         List<int>? DefaultImplementations = null, List<int>? UnknownImplementations = null,
         bool? Extensible = null);
 
+    /// <summary>
+    /// One <c>EnumExtensionTypes</c> entry: an enumextension's OWN values, never merged with the
+    /// base enum's (issue #4197). <paramref name="TargetEnumName"/> is the extended enum's NAME
+    /// with any <c>#&lt;appid&gt;#</c> module qualifier stripped — SymbolReference states a name
+    /// here, not an id, exactly as it does for every other *Extension kind
+    /// (<see cref="ExtensionTargetName"/>), so the consumer resolves it against the enums the
+    /// run holds.
+    ///
+    /// <para>Deliberately a separate record from <see cref="EnumSymbol"/> rather than a flag on
+    /// it: <c>AlEnumMetadataRegistry</c> keeps base and extension registrations in separate
+    /// dictionaries and merges on read (#1625, #2709), so an extension that reached
+    /// <c>Register</c> instead of <c>RegisterExtension</c> would clobber the base enum's slot.
+    /// The type is what stops that at the call site.</para>
+    ///
+    /// <para>No <c>DefaultImplementations</c>/<c>UnknownImplementations</c>/<c>Extensible</c>:
+    /// all three are properties of the BASE enum and an enumextension declares none, which is
+    /// why <c>RegisterExtension</c> takes none either.</para>
+    /// </summary>
+    internal sealed record EnumExtensionSymbol(int Id, string Name, string TargetEnumName,
+        List<string> Options, List<int> Indexes, List<List<int>> Implementations,
+        List<string?>? Captions = null);
+
     // Parsed query SymbolReference.json shape. A query is a tree of dataitems; the root
     // dataitem(s) live under the query's "Elements", nested dataitems under "DataItems".
     // Column/Filter Id is the BC-compiler-assigned column id baked into precompiled callers
@@ -770,7 +799,8 @@ internal static partial class BcAppSymbolCache
         List<ObjectSymbol>? Objects, List<ReportSymbol>? Reports, List<PageSymbol>? Pages,
         List<ProfileSymbol>? Profiles = null, string? AppId = null, string? AppName = null,
         List<PermissionSetSymbol>? PermissionSets = null,
-        List<PageExtensionSymbol>? PageExtensions = null);
+        List<PageExtensionSymbol>? PageExtensions = null,
+        List<EnumExtensionSymbol>? EnumExtensions = null);
 
     /// <summary>
     /// Parse a loose <c>SymbolReference.json</c> file (the raw module JSON, NOT a .app
@@ -783,6 +813,7 @@ internal static partial class BcAppSymbolCache
     {
         var tables = new Dictionary<int, ParsedTable>();
         var enums = new Dictionary<int, EnumSymbol>();
+        var enumExtensions = new Dictionary<int, EnumExtensionSymbol>();
         var queries = new Dictionary<int, QuerySymbol>();
         var objects = new Dictionary<(string, int), ObjectSymbol>();
         var reports = new Dictionary<int, ReportSymbol>();
@@ -791,13 +822,13 @@ internal static partial class BcAppSymbolCache
         var profiles = new Dictionary<string, ProfileSymbol>(StringComparer.OrdinalIgnoreCase);
         var permissionSets = new Dictionary<int, PermissionSetSymbol>();
         using var doc = JsonDocument.Parse(File.ReadAllText(jsonPath));
-        VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects, reports, pages, profiles, pageExtensions);
+        VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects, reports, pages, profiles, pageExtensions, enumExtensions);
         CollectPermissionSets(doc.RootElement, permissionSets);
         var (appId, appName) = ReadAppIdentity(doc.RootElement);
         return new AppSymbols(tables.Values.ToList(), enums.Values.ToList(), queries.Values.ToList(),
             objects.Values.ToList(), reports.Values.ToList(), pages.Values.ToList(),
             profiles.Values.ToList(), appId, appName, permissionSets.Values.ToList(),
-            pageExtensions.Values.ToList());
+            pageExtensions.Values.ToList(), enumExtensions.Values.ToList());
     }
 
     /// <summary>
@@ -930,7 +961,8 @@ internal static partial class BcAppSymbolCache
                 payload.Pages ?? new List<PageSymbol>(),
                 payload.Profiles ?? new List<ProfileSymbol>(), payload.AppId, payload.AppName,
                 payload.PermissionSets ?? new List<PermissionSetSymbol>(),
-                payload.PageExtensions ?? new List<PageExtensionSymbol>());
+                payload.PageExtensions ?? new List<PageExtensionSymbol>(),
+                payload.EnumExtensions ?? new List<EnumExtensionSymbol>());
         }
         catch (Exception ex)
         {
@@ -947,7 +979,7 @@ internal static partial class BcAppSymbolCache
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
-            var payload = new CachePayload(contentHash, symbols.Tables, symbols.Enums, symbols.Queries, symbols.Objects, symbols.Reports, symbols.Pages, symbols.Profiles, symbols.AppId, symbols.AppName, symbols.PermissionSets, symbols.PageExtensions);
+            var payload = new CachePayload(contentHash, symbols.Tables, symbols.Enums, symbols.Queries, symbols.Objects, symbols.Reports, symbols.Pages, symbols.Profiles, symbols.AppId, symbols.AppName, symbols.PermissionSets, symbols.PageExtensions, symbols.EnumExtensions);
             // #1809 follow-up: cachePath is content-keyed (hash of the .app file),
             // so two subprocesses parsing the same app concurrently used to race a
             // plain File.WriteAllText into the same path. TryRead already treats any
@@ -973,6 +1005,7 @@ internal static partial class BcAppSymbolCache
     {
         var tables = new Dictionary<int, ParsedTable>();
         var enums = new Dictionary<int, EnumSymbol>();
+        var enumExtensions = new Dictionary<int, EnumExtensionSymbol>();
         var queries = new Dictionary<int, QuerySymbol>();
         var objects = new Dictionary<(string, int), ObjectSymbol>();
         var reports = new Dictionary<int, ReportSymbol>();
@@ -984,7 +1017,7 @@ internal static partial class BcAppSymbolCache
         foreach (var json in ReadSymbolReferences(appPath))
         {
             using var doc = JsonDocument.Parse(json);
-            VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects, reports, pages, profiles, pageExtensions);
+            VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects, reports, pages, profiles, pageExtensions, enumExtensions);
             CollectPermissionSets(doc.RootElement, permissionSets);
             // The .app's own identity, stated once at the root of its SymbolReference.json.
             // First one wins: ReadSymbolReferences can yield more than one module for a
@@ -995,7 +1028,7 @@ internal static partial class BcAppSymbolCache
         return new AppSymbols(tables.Values.ToList(), enums.Values.ToList(), queries.Values.ToList(),
             objects.Values.ToList(), reports.Values.ToList(), pages.Values.ToList(),
             profiles.Values.ToList(), appId, appName, permissionSets.Values.ToList(),
-            pageExtensions.Values.ToList());
+            pageExtensions.Values.ToList(), enumExtensions.Values.ToList());
     }
 
     /// <summary>
@@ -1112,7 +1145,7 @@ internal static partial class BcAppSymbolCache
     /// reached through, or null at the root. It is the ONLY source for a codeunit's ALNamespace:
     /// the symbol file states no such property, and Microsoft's own packages put every object in
     /// the tree — System Application 28.1's top-level <c>Codeunits</c> array has length 0 (#3788).</param>
-    private static void VisitSymbolContainer(JsonElement container, Dictionary<int, ParsedTable> tables, Dictionary<int, EnumSymbol> enums, Dictionary<int, QuerySymbol> queries, Dictionary<(string, int), ObjectSymbol> objects, Dictionary<int, ReportSymbol> reports, Dictionary<int, PageSymbol> pages, Dictionary<string, ProfileSymbol> profiles, Dictionary<int, PageExtensionSymbol> pageExtensions, string? alNamespace = null)
+    private static void VisitSymbolContainer(JsonElement container, Dictionary<int, ParsedTable> tables, Dictionary<int, EnumSymbol> enums, Dictionary<int, QuerySymbol> queries, Dictionary<(string, int), ObjectSymbol> objects, Dictionary<int, ReportSymbol> reports, Dictionary<int, PageSymbol> pages, Dictionary<string, ProfileSymbol> profiles, Dictionary<int, PageExtensionSymbol> pageExtensions, Dictionary<int, EnumExtensionSymbol> enumExtensions, string? alNamespace = null)
     {
         // Flat (kind, id, name) sweep for AllObj. Independent of the typed parsing below
         // so a kind we do not model in depth still shows up as an existing object.
@@ -1186,6 +1219,23 @@ internal static partial class BcAppSymbolCache
             }
         }
 
+        // #4197 — an enumextension's own values, kept OUT of `enums` on purpose: the registry
+        // holds base and extension registrations in separate dictionaries and merges on read,
+        // so routing one through Register would clobber the base enum's slot (#1625, #2709).
+        // Keyed by the extension's own object id; several extensions may target one enum, and
+        // enum and enumextension object numbers live in separate AL namespaces, so this never
+        // collides with `enums`.
+        if (container.TryGetProperty("EnumExtensionTypes", out var enumExtensionTypes)
+            && enumExtensionTypes.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var enumExtensionType in enumExtensionTypes.EnumerateArray())
+            {
+                var parsed = TryParseEnumExtensionSymbol(enumExtensionType);
+                if (parsed != null)
+                    enumExtensions[parsed.Id] = parsed;
+            }
+        }
+
         if (container.TryGetProperty("Queries", out var queryArray) && queryArray.ValueKind == JsonValueKind.Array)
         {
             foreach (var q in queryArray.EnumerateArray())
@@ -1249,7 +1299,7 @@ internal static partial class BcAppSymbolCache
                 var childNamespace = string.IsNullOrWhiteSpace(segment)
                     ? alNamespace
                     : string.IsNullOrEmpty(alNamespace) ? segment!.Trim() : alNamespace + "." + segment!.Trim();
-                VisitSymbolContainer(ns, tables, enums, queries, objects, reports, pages, profiles, pageExtensions, childNamespace);
+                VisitSymbolContainer(ns, tables, enums, queries, objects, reports, pages, profiles, pageExtensions, enumExtensions, childNamespace);
             }
         }
     }
@@ -2438,23 +2488,45 @@ internal static partial class BcAppSymbolCache
     internal static EnumSymbol? ParseEnumSymbolForTest(JsonElement enumType)
         => TryParseEnumSymbol(enumType);
 
-    private static EnumSymbol? TryParseEnumSymbol(JsonElement enumType)
+    /// <summary>
+    /// <see cref="TryParseEnumExtensionSymbol"/> for AlRunner.Tests — same seam shape, and
+    /// same reason, as <see cref="ParseEnumSymbolForTest"/>.
+    /// </summary>
+    internal static EnumExtensionSymbol? ParseEnumExtensionSymbolForTest(JsonElement enumExtensionType)
+        => TryParseEnumExtensionSymbol(enumExtensionType);
+
+    /// <summary>
+    /// One <c>EnumExtensionTypes</c> entry → its own values (#4197). Shares
+    /// <see cref="ReadEnumValues"/> with the base-enum parser, so the Ordinal-absent-means-zero
+    /// rule (#3805), the comma-separated <c>Implementation</c> list and the per-value
+    /// <c>Caption</c> (#1775) are read identically on both — an extension's values are written
+    /// in exactly the same shape as a base enum's, measured on Base Application 28.4.
+    ///
+    /// <para>Null when the entry states no <c>TargetObject</c>/<c>Target</c>: an extension that
+    /// names nothing cannot be attributed to an enum, and registering it under a guess is the
+    /// clobber #2709 fixed. Absent is the one thing an extension symbol cannot legitimately be,
+    /// so this is a genuinely unreadable entry, not an empty one.</para>
+    /// </summary>
+    private static EnumExtensionSymbol? TryParseEnumExtensionSymbol(JsonElement enumExtensionType)
     {
-        if (!enumType.TryGetProperty("Id", out var idProp) || !idProp.TryGetInt32(out var id))
+        if (!enumExtensionType.TryGetProperty("Id", out var idProp) || !idProp.TryGetInt32(out var id))
             return null;
-        var name = enumType.TryGetProperty("Name", out var nameProp) ? nameProp.GetString() ?? string.Empty : string.Empty;
-        // #3594 — an enum with NO `Values` array is a real enum that declares no values, not an
-        // unreadable symbol. Extensible enums whose members all come from enumextensions are
-        // written exactly this way: measured on System Application 28.1, 3 of its 141 enums
-        // carry no `Values` at all, and enum 8889 "Email Connector" is one of them.
-        //
-        // Returning null here dropped those three from the registry entirely. That was latent
-        // for as long as nothing resolved an enum BY ID — the ordinal/caption consumers only
-        // ever ask about enums they already hold — and became observable the moment MetaField
-        // began stating EnumTypeId, because BC's own metadata names 8889 on five System
-        // Application tables and the runner then had no object under it. An empty value list is
-        // the faithful answer: the enum exists, and it has no members of its own.
-        var hasValues = enumType.TryGetProperty("Values", out var values)
+        var target = ExtensionTargetName("EnumExtension", enumExtensionType);
+        if (string.IsNullOrWhiteSpace(target)) return null;
+        var name = enumExtensionType.TryGetProperty("Name", out var nameProp) ? nameProp.GetString() ?? string.Empty : string.Empty;
+        var (options, indexes, implementations, captions) = ReadEnumValues(enumExtensionType);
+        return new EnumExtensionSymbol(id, name, target, options, indexes, implementations, captions);
+    }
+
+    /// <summary>
+    /// The <c>Values</c> array of a base enum or of an enumextension — one reader, because BC
+    /// writes the two identically (#4197). An absent array is a real enum/extension declaring
+    /// no values, not an unreadable one (#3594).
+    /// </summary>
+    private static (List<string> Options, List<int> Indexes, List<List<int>> Implementations, List<string?> Captions)
+        ReadEnumValues(JsonElement declaringType)
+    {
+        var hasValues = declaringType.TryGetProperty("Values", out var values)
                         && values.ValueKind == JsonValueKind.Array;
 
         var options = new List<string>();
@@ -2499,6 +2571,26 @@ internal static partial class BcAppSymbolCache
                 ? captionText
                 : null);
         }
+        return (options, indexes, implementations, captions);
+    }
+
+    private static EnumSymbol? TryParseEnumSymbol(JsonElement enumType)
+    {
+        if (!enumType.TryGetProperty("Id", out var idProp) || !idProp.TryGetInt32(out var id))
+            return null;
+        var name = enumType.TryGetProperty("Name", out var nameProp) ? nameProp.GetString() ?? string.Empty : string.Empty;
+        // #3594 — an enum with NO `Values` array is a real enum that declares no values, not an
+        // unreadable symbol. Extensible enums whose members all come from enumextensions are
+        // written exactly this way: measured on System Application 28.1, 3 of its 141 enums
+        // carry no `Values` at all, and enum 8889 "Email Connector" is one of them.
+        //
+        // Returning null here dropped those three from the registry entirely. That was latent
+        // for as long as nothing resolved an enum BY ID — the ordinal/caption consumers only
+        // ever ask about enums they already hold — and became observable the moment MetaField
+        // began stating EnumTypeId, because BC's own metadata names 8889 on five System
+        // Application tables and the runner then had no object under it. An empty value list is
+        // the faithful answer: the enum exists, and it has no members of its own.
+        var (options, indexes, implementations, captions) = ReadEnumValues(enumType);
         // Enum-level fallbacks. Both are written the same way a value's Implementation is —
         // a comma-separated list of codeunit ids, one per interface the enum implements.
         var enumProps = SymbolProperties(enumType);

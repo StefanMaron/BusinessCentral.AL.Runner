@@ -133,6 +133,12 @@ public static partial class RecordPatches
         // its own, and those ids go verbatim to NavQuery.GetColumnValueSafe. A wrong value read
         // out of a real row, not a crash — see BundleQuerySymbolsResetTests.
         _bcQuerySymbolJsonPaths.Clear();
+        // #4197: the pending enumextensions go with the paths that produced them. Every one is
+        // a per-bundle registration Program.cs re-adds immediately after the reset, so keeping
+        // them would carry bundle 1's unresolved extensions into bundle 2 — where the target
+        // enum genuinely may exist, and the extension would then register against a DIFFERENT
+        // bundle's enum of the same name. Same per-bundle reasoning as the two lists above.
+        _pendingPrecompiledEnumExtensions.Clear();
         InvalidateBcAppIndexes();
     }
 
@@ -488,6 +494,15 @@ public static partial class RecordPatches
                     enumSymbol.DefaultImplementations?.ToArray(),
                     enumSymbol.UnknownImplementations?.ToArray(),
                     enumSymbol.Extensible);
+            // #4197 — and its enumextensions, through RegisterExtension so they ACCUMULATE
+            // against the base enum's id instead of overwriting its slot (#1625, #2709). This
+            // ran for nothing at all before: the parser read only `EnumTypes`, so a precompiled
+            // app's enumextension values — and their per-value `Implementation` — were absent
+            // from the registry entirely, and `Impl := SomeEnum::ThatValue` fell through
+            // ALCompiler_ToInterfaceFromOption to NCLOptionMetadata.Default. Base Application
+            // 28.4.53241.54407 declares 44 such extensions, 172 values, 49 of them naming an
+            // implementation, over 33 distinct target enums.
+            RegisterPrecompiledEnumExtensions(appPath, symbols);
             // Invalidate the indexes so newly-added .app gets picked up on next miss.
             InvalidateBcAppIndexes();
         }
@@ -501,6 +516,87 @@ public static partial class RecordPatches
         // now rebuildable, so they are passed in rather than rediscovered through the symbol
         // index this method just invalidated.
         RetryUnresolvedCalcFormulaTables(registeredTableNames);
+    }
+
+    /// <summary>
+    /// Enumextensions read from a precompiled .app whose target enum was not registered yet when
+    /// that .app was read (#4197), keyed by the target enum NAME the symbol states. Program.cs
+    /// registers dependencies in resolution order, and an extension may legitimately be read
+    /// before its target: an app extending an enum declared by a SIBLING dependency is a normal
+    /// shape, and Base Application's own 44 extensions target enums in four different apps.
+    ///
+    /// <para>Dropping an unresolved extension would be exactly the silent gap this issue is
+    /// about, one ordering later — so they are held and retried whenever another .app registers
+    /// enums, and whatever is still unresolved at the end is REPORTED
+    /// (<see cref="ReportUnresolvedPrecompiledEnumExtensions"/>) rather than discarded quietly.</para>
+    ///
+    /// <para>Guarded by <c>_bcTableIndexLock</c>, like every other field this file accumulates
+    /// during registration.</para>
+    /// </summary>
+    private static readonly List<(string AppPath, Patches.BcAppSymbolCache.EnumExtensionSymbol Symbol)>
+        _pendingPrecompiledEnumExtensions = new();
+
+    /// <summary>
+    /// Register each enumextension a precompiled .app declares against the base enum id its
+    /// <c>TargetObject</c> names, retrying anything held from an earlier .app whose target has
+    /// since been registered. Caller holds <c>_bcTableIndexLock</c>.
+    ///
+    /// <para>Name→id, because that is what the symbol file states: all 44 of Base Application
+    /// 28.4.53241.54407's enumextension symbols carry <c>TargetObject</c> as a
+    /// <c>#&lt;appid&gt;#</c>-qualified NAME, never an id — the same spelling every other
+    /// *Extension kind uses (<c>BcAppSymbolCache.ExtensionTargetName</c>).</para>
+    /// </summary>
+    private static void RegisterPrecompiledEnumExtensions(string appPath, Patches.BcAppSymbolCache.AppSymbols symbols)
+    {
+        foreach (var ext in symbols.EnumExtensions ?? new List<Patches.BcAppSymbolCache.EnumExtensionSymbol>())
+            _pendingPrecompiledEnumExtensions.Add((appPath, ext));
+
+        // Retry the whole pending set, not just this .app's: the enums THIS .app just
+        // registered are exactly what can unblock one held from an earlier .app.
+        for (int i = _pendingPrecompiledEnumExtensions.Count - 1; i >= 0; i--)
+        {
+            var (_, ext) = _pendingPrecompiledEnumExtensions[i];
+            var targetId = AlRunner.AlEnumMetadataRegistry.ResolveBaseEnumIdByName(ext.TargetEnumName);
+            if (targetId < 0) continue;
+            AlRunner.AlEnumMetadataRegistry.RegisterExtension(
+                targetId,
+                ext.Name,
+                ext.Options.ToArray(),
+                ext.Indexes.ToArray(),
+                ext.Implementations.Select(v => v.ToArray()).ToArray(),
+                ext.Captions?.ToArray());
+            _pendingPrecompiledEnumExtensions.RemoveAt(i);
+        }
+    }
+
+    /// <summary>
+    /// Report any precompiled enumextension whose target enum never got registered (#4197).
+    /// Called once from Program.cs after every dependency has been registered, which is the
+    /// first moment "not yet" and "never" are distinguishable — the whole reason the pending
+    /// list exists rather than a refusal at read time.
+    ///
+    /// <para>Reported, not thrown: a dependency declaring an extension of an enum this run does
+    /// not load is a real configuration (a partial package cache), and the runner already
+    /// continues past that for every other object kind. What is NOT acceptable is silence,
+    /// which is the pre-fix behaviour for every one of these — so this goes through
+    /// ProvisionGapLog, which survives to the end of the run and is exempt from Log's
+    /// default-verbosity component filter (#2587, #2750).</para>
+    /// </summary>
+    internal static void ReportUnresolvedPrecompiledEnumExtensions()
+    {
+        List<(string AppPath, Patches.BcAppSymbolCache.EnumExtensionSymbol Symbol)> pending;
+        lock (_bcTableIndexLock)
+        {
+            if (_pendingPrecompiledEnumExtensions.Count == 0) return;
+            pending = _pendingPrecompiledEnumExtensions.ToList();
+        }
+        var detail = string.Join("; ", pending
+            .OrderBy(p => p.Symbol.Id)
+            .Select(p => $"enumextension {p.Symbol.Id} '{p.Symbol.Name}' -> enum '{p.Symbol.TargetEnumName}' "
+                         + $"({System.IO.Path.GetFileName(p.AppPath)})"));
+        AlRunner.Infrastructure.ProvisionGapLog.Report(
+            $"{pending.Count} precompiled enumextension(s) name a target enum this run never registered, so their "
+            + $"values are absent from that enum and casting one to its interface will not resolve: {detail}");
     }
 
     /// <summary>
