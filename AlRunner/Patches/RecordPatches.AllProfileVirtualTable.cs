@@ -216,7 +216,7 @@ public static partial class RecordPatches
     private static List<AllProfileRow> EnumerateKnownProfiles()
     {
         var rows = new Dictionary<(Guid, string), AllProfileRow>();
-        var (pageIdsByName, _) = BuildObjectIndexes();
+        var pageIdsByName = PageIdsByName();
         var unresolvedRoleCenters = new List<string>();
 
         int ResolveRoleCenter(string? name, string profileId)
