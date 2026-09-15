@@ -61,8 +61,27 @@ public static class SecurityFilteringPatches
         _fSecurityFiltering!.SetValue(
             recImpl, System.Enum.ToObject(_fSecurityFiltering.FieldType, filtering));
 
-        // InvalidateCurrentResultSetEnumerator() inlined — a mode change must not be served
-        // from a result set enumerated under the previous mode.
+        // A mode change must not be served from a result set enumerated under the previous mode.
+        InvalidateCurrentResultSetEnumerator(recImpl);
+    }
+
+    /// <summary>
+    /// BC's <c>RecordImplementation.InvalidateCurrentResultSetEnumerator()</c>, inlined:
+    /// <c>ResultSetEnumerator = null; resultSetReversed = false;</c>.
+    ///
+    /// <para>Internal because a SECOND replacement needs the same two writes and must not
+    /// re-derive them: <c>RecordImpl_InternalFindRecordWithoutCheckingValuesAsync</c> replaces a
+    /// BC body that calls this immediately before installing the record buffer, and omitting it
+    /// left <c>Next()</c> continuing from a stale FindSet enumerator instead of from the record
+    /// <c>Get</c> had just loaded (#4161). Two copies of a two-line reflection write would drift;
+    /// one owner cannot.</para>
+    ///
+    /// <para>Real BC continues from the Get'd record on every supported version — corpus
+    /// codeunit 60979 <c>FGN Tests</c>, 4 distinct PASS on all 8 cloud legs.</para>
+    /// </summary>
+    internal static void InvalidateCurrentResultSetEnumerator(object recImpl)
+    {
+        Resolve(recImpl.GetType());
         _pResultSetEnumerator?.SetValue(recImpl, null);
         _fResultSetReversed?.SetValue(recImpl, false);
     }
