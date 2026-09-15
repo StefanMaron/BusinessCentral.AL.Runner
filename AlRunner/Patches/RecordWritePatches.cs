@@ -365,6 +365,21 @@ public static partial class BcRuntime
             bool found = (bool)(_pMrbResultResult!.GetValue(resultObj) ?? false);
             if (found && useRecord)
             {
+                // BC's own body calls InvalidateCurrentResultSetEnumerator() HERE, immediately
+                // before assigning mutableRecordBuffer, and this replacement used to assign the
+                // buffer without it. The record moved and the enumerator did not, so a Next()
+                // after FindSet() then Get() continued walking the FindSet result set instead of
+                // going on from the record Get had just loaded (#4161): with rows 1..5,
+                // FindSet() then Get(4) then Next() landed on 2 rather than 5.
+                //
+                // Real BC lands on 5 on every supported version — corpus codeunit 60979
+                // FGN Tests, 4 distinct PASS on all 8 cloud legs (tools/corpus-pass-count.py,
+                // not read off the green ticks). Ordering matches BC's: invalidate, then assign.
+                //
+                // Reaches Get(key), Get(RecordId), GetBySystemId, RecordRef.Get and Find('=')
+                // through FindEqualsImpAsync, which all funnel through this one replacement.
+                AlRunner.Patches.SecurityFilteringPatches.InvalidateCurrentResultSetEnumerator(self);
+
                 var recBuffer = _pMrbResultRecordBuffer?.GetValue(resultObj);
                 _fRecordImplementationMutableRecordBuffer?.SetValue(self, recBuffer);
             }
