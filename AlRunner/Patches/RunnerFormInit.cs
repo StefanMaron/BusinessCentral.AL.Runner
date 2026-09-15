@@ -77,9 +77,40 @@ public static class RunnerFormInit
     /// session answers <c>IsCompanyOpen = true</c> so its company gate passes. Corpus codeunit
     /// 60488 "POI Tests" pins both the order and the once-per-instance count.</para>
     ///
-    /// <para>Request pages stay excluded, as in <see cref="ShouldResolveMasterPage"/>.</para>
+    /// <para><b>Request pages are NOT excluded here, and that is the one way this differs from
+    /// <see cref="ShouldResolveMasterPage"/>.</b> That method excludes them for a reason of its
+    /// own: its whole question is "does the runner have metadata to build a MasterPage from",
+    /// answered by a lookup keyed on a <b>page id</b>, and a request page has none to resolve by
+    /// — it is keyed by report (<c>RequestPageTestPage</c>, keyed on <c>reportId</c>
+    /// throughout). So admitting one there would resolve nothing.</para>
+    ///
+    /// <para><c>InitializeForm</c> asks nothing about page metadata. It is the constructor-time
+    /// call that raises OnInit, and BC raises OnInit on request pages too —
+    /// <c>NavForm.RaiseOnInitAsync</c> carries an explicit <c>if (IsRequestPage)</c> branch.
+    /// Delegating wholesale therefore inherited an exclusion whose justification does not reach
+    /// this method, and a request page's own OnInit never ran: a control bound to a global
+    /// assigned only there read blank in a [RequestPageHandler] (#4149).</para>
+    ///
+    /// <para>Real BC runs it on every supported version — corpus codeunit 60977
+    /// <c>RPI OnInit Tests</c>, 8 cloud legs. The companion arms in that codeunit are what make
+    /// a failure attributable: one reads a global assigned in the request page's OnOpenPage and
+    /// one reads the report's OnInitReport, so "OnInit specifically did not run" is
+    /// distinguishable from "no request-page trigger ran" and from "the report never
+    /// initialised".</para>
     /// </summary>
-    public static bool ShouldInitializeForm(object form) => ShouldResolveMasterPage(form);
+    public static bool ShouldInitializeForm(object form)
+    {
+        try
+        {
+            if (form == null) return false;
+            if (ShouldRunRealFormInit(form)) return true;
+            if (form is not Microsoft.Dynamics.Nav.Runtime.NavForm navForm) return false;
+            if (navForm.IsRequestPage) return true;
+            return AlPageMetadataRegistry.TryGet(navForm.FormId, out _)
+                   || RecordPatches.HasDependencyPageMetadata(navForm.FormId);
+        }
+        catch { return false; }
+    }
 
     /// <summary>
     /// Construct a page by reflection the way AL's own <c>new</c> would surface a failure: an
