@@ -325,6 +325,75 @@ internal partial class LiveNavTestPage
                         + "filtering it as any of the three would show the wrong rows rather than none");
             }
         }
+
+        AppendSubPageViewFilters(definition, partPageId, links);
         return links.ToArray();
+    }
+
+    /// <summary>
+    /// Append the part's <c>SubPageView</c> filters to <paramref name="links"/>, so the part
+    /// shows only the rows its view selects (#4188).
+    ///
+    /// <para>A view is NOT a link, and the type says so: <c>SubFormLink</c> is a
+    /// <c>List&lt;FilterDefinition&gt;</c> while <c>SubFormView</c> is a <c>ViewDefinition</c>,
+    /// carrying <c>TableFilters</c> (a <c>List&lt;FilterDefinition&gt;</c>) AND a
+    /// <c>Sorting</c>. Only the filters are handled here — see the Sorting note below.</para>
+    ///
+    /// <para><b>The view's filters land in the same group the LINK uses (4), not the group 2
+    /// BC's own <c>NavForm.ApplySourceTableView</c> uses.</b> That is measured, not inferred:
+    /// corpus codeunit 60938 <c>SPV Tests</c> reads <c>GetFilter</c> under groups 0, 2 and 4 and
+    /// answers <c>g0=|g2=|g4=KEEP</c> on all 8 cloud legs. Predicting it from
+    /// <c>ApplySourceTableView</c>'s <c>ALFilterGroup = 2</c> gave the wrong answer, because that
+    /// method applies a PAGE's own SourceTableView — <c>Ncl.dll</c> declares no member
+    /// referencing <c>SubFormView</c> at all, so the part path is not in that assembly.</para>
+    ///
+    /// <para>Nothing is hardcoded here regardless: each entry carries BC's own
+    /// <c>FilterDefinition.FilterGroup</c>, exactly as the SubPageLink entries above do.</para>
+    ///
+    /// <para><b>Sorting is deliberately not applied</b>, and that is a stated gap rather than an
+    /// oversight. <c>ApplySourceTableView</c> shows what it takes — <c>ALSetCurrentKey</c> /
+    /// <c>ALCurrentKeyIndex</c> from <c>KeyFields</c>, and <c>ALAscending</c> — and no corpus arm
+    /// pins any of it for a PART, so applying it here would be reasoning by analogy from the page
+    /// path, which is the exact mistake the filter group above records. #4188 tracks it.</para>
+    /// </summary>
+    private static void AppendSubPageViewFilters(
+        Microsoft.Dynamics.Nav.Types.Metadata.InfopartPageDefinition definition,
+        int partPageId,
+        List<SubPageLinkEntry> links)
+    {
+        var view = definition.SubFormView;
+        if (view?.TableFilters == null) return;
+
+        foreach (var filter in view.TableFilters)
+        {
+            // Same refusal as the link loop, for the same reason: DependencyPageMetadataXml
+            // deliberately writes FieldID 0 when it cannot resolve a field NAME to an id, so an
+            // unresolved field is the runner's own metadata gap and must not be filtered past.
+            if (filter.FieldID <= 0)
+                throw TestPageShapeGap.PartLink(
+                    $"TestPage part → page {partPageId} SubPageView ({filter.FilterType})",
+                    $"the part's own field this view filters could not be resolved "
+                    + $"(FieldID {filter.FieldID}, {filter.FilterType} '{filter.FilterValue}')");
+
+            switch (filter.FilterType)
+            {
+                // A view's filters are literals and expressions against the part's OWN table —
+                // there is no parent row to evaluate against, so FIELD cannot occur and is not
+                // silently treated as one of the other two.
+                case Microsoft.Dynamics.Nav.Types.Metadata.FilterType.CONST:
+                case Microsoft.Dynamics.Nav.Types.Metadata.FilterType.FILTER:
+                    links.Add(new SubPageLinkEntry(
+                        filter.FieldID, filter.FilterType, 0,
+                        filter.FilterValue ?? string.Empty, filter.FilterGroup));
+                    break;
+                default:
+                    throw new AlRunner.Infrastructure.BcShapeGapException(
+                        $"TestPage part → page {partPageId} SubPageView",
+                        "Microsoft.Dynamics.Nav.Types.Metadata.FilterType",
+                        $"holds {filter.FilterType} on field {filter.FieldID}, which a view cannot "
+                        + "express against the part's own table; filtering it as CONST or FILTER "
+                        + "would show the wrong rows rather than none");
+            }
+        }
     }
 }
