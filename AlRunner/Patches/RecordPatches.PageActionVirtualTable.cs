@@ -39,6 +39,7 @@ public static partial class RecordPatches
             "every Record \"Page Action\" read would answer from an empty store");
 
     private static MethodInfo? _paGetActions, _paToBuffer, _paGetBounds, _paPassesFieldFilters;
+    private static FieldInfo? _paSessionField;
     private static Type? _paBufferType;
 
     /// <summary>
@@ -147,9 +148,25 @@ public static partial class RecordPatches
 
     private static Assembly Ncl(object provider) => provider.GetType().Assembly;
 
+    /// <summary>
+    /// BC's own <c>session</c> field, bound once and REQUIRED. It is the ISortingRulesProvider
+    /// PassesFieldFilters reads, so a null here does not fail — it silently changes what a
+    /// filtered read answers, which is the same shape as binding PassesFieldFilters itself
+    /// against the wrong type (#4194). Walking up the hierarchy because the field is declared
+    /// on a base of PageActionDataProvider, not on the provider.
+    /// </summary>
     private static object? GetProviderSession(object provider)
-        => provider.GetType().GetField("session", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(provider)
-           ?? provider.GetType().BaseType?.GetField("session", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(provider);
+        => _paSessionField!.GetValue(provider);
+
+    private static FieldInfo? FindSessionField(Type? t)
+    {
+        for (; t != null; t = t.BaseType)
+        {
+            var f = t.GetField("session", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
+            if (f != null) return f;
+        }
+        return null;
+    }
 
     private static void EnsurePageActionReflection(object provider)
     {
@@ -180,7 +197,13 @@ public static partial class RecordPatches
             BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
             Surface, "PassesFieldFilters", Detail);
 
-        if (getActions == null || toBuffer == null || getBounds == null || bufferType == null || passes == null)
+        // Required, not best-effort: see FindSessionField's own note. A `?.` chain here would
+        // hand PassesFieldFilters a null sorting-rules provider and change what a filtered read
+        // answers, with nothing thrown — the defect class #4194 records.
+        var sessionField = FindSessionField(t);
+
+        if (getActions == null || toBuffer == null || getBounds == null || bufferType == null
+            || passes == null || sessionField == null)
             // BcShapeGapException, not InvalidOperationException: NavMethodScope_AssertError
             // rethrows only this type, so an `asserterror` around a driver hitting this refusal
             // would otherwise SWALLOW it and PASS — inverting the result rather than hiding it
@@ -189,12 +212,13 @@ public static partial class RecordPatches
                 Surface, "PageActionDataProvider",
                 "BC does not expose the shape the Page Action virtual-table rewrite drives "
                 + "(GetActions, ToReadOnlyRecordBuffer, Range.GetInclusiveIntegerBounds, "
-                + "DataHelper.PassesFieldFilters) — see #4147");
+                + "DataHelper.PassesFieldFilters, the provider's own session field) — see #4147");
 
         _paBufferType = bufferType;
         _paGetActions = getActions;
         _paToBuffer = toBuffer;
         _paGetBounds = getBounds;
         _paPassesFieldFilters = passes;
+        _paSessionField = sessionField;
     }
 }
