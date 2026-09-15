@@ -25,6 +25,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **requestpage:** run a request page's own OnInit, as BC does
 - **record:** invalidate the result-set enumerator on Get, so Next() continues from the got record
 - **virtual-tables:** serve Table Relations Metadata (2000000141) from BC's own provider
 - **deps:** layered pre-pass feeds each impl only its declared dependency closure
