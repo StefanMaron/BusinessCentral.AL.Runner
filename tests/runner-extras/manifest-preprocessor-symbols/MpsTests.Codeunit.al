@@ -1,4 +1,4 @@
-codeunit 65963 "MPS Tests"
+codeunit 65973 "MPS Tests"
 {
     Subtype = Test;
 
@@ -13,8 +13,8 @@ codeunit 65963 "MPS Tests"
     var
         AllObj: Record AllObjWithCaption;
     begin
-        AllObj.Get(AllObj."Object Type"::Page, 65960);
-        AssertEqual('MPS Defined Caption', AllObj."Object Caption", 'AllObjWithCaption."Object Caption" of page 65960');
+        AllObj.Get(AllObj."Object Type"::Page, 65970);
+        AssertEqual('MPS Defined Caption', AllObj."Object Caption", 'AllObjWithCaption."Object Caption" of page 65970');
     end;
 
     [Test]
@@ -23,10 +23,10 @@ codeunit 65963 "MPS Tests"
         AllObj: Record AllObj;
         OnlyDefined: Codeunit "MPS Only Defined";
     begin
-        AssertEqual('65961', Format(OnlyDefined.Touch()), 'MPS Only Defined.Touch()');
+        AssertEqual('65971', Format(OnlyDefined.Touch()), 'MPS Only Defined.Touch()');
         AllObj.SetRange("Object Type", AllObj."Object Type"::Codeunit);
-        AllObj.SetRange("Object ID", 65961);
-        AssertEqual('1', Format(AllObj.Count()), 'AllObj rows for codeunit 65961');
+        AllObj.SetRange("Object ID", 65971);
+        AssertEqual('1', Format(AllObj.Count()), 'AllObj rows for codeunit 65971');
     end;
 
     [Test]
@@ -35,7 +35,7 @@ codeunit 65963 "MPS Tests"
         AllObj: Record AllObj;
     begin
         AllObj.SetRange("Object Type", AllObj."Object Type"::Codeunit);
-        AllObj.SetRange("Object ID", 65962);
-        AssertEqual('0', Format(AllObj.Count()), 'AllObj rows for codeunit 65962');
+        AllObj.SetRange("Object ID", 65972);
+        AssertEqual('0', Format(AllObj.Count()), 'AllObj rows for codeunit 65972');
     end;
 }

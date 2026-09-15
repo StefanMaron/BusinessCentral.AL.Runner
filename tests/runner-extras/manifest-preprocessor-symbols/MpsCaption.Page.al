@@ -1,4 +1,4 @@
-page 65960 "MPS Caption Page"
+page 65970 "MPS Caption Page"
 {
 #if RUNNER_EXTRAS_MPS
     Caption = 'MPS Defined Caption';
