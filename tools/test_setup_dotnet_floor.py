@@ -43,7 +43,7 @@ SEARCH_DIRS = [
 
 # A `setup-dotnet` step, then its `dotnet-version:` -- either inline
 # (`dotnet-version: '8.0.x'`) or a block scalar listing one version per line.
-SETUP_DOTNET = re.compile(r"^\s*-?\s*uses:\s*\S*actions/setup-dotnet@", re.M)
+SETUP_DOTNET = re.compile(r"^[ \t]*-?[ \t]*uses:[ \t]*\S*actions/setup-dotnet@", re.M)
 VERSION_KEY = re.compile(r"^(\s*)dotnet-version:\s*(.*)$")
 VERSION_TOKEN = re.compile(r"(\d+)\.(?:\d+|x)")
 
@@ -73,16 +73,24 @@ def global_json_floor(text: str):
 def declared_majors(lines: list[str], start: int):
     """The SDK majors a `setup-dotnet` step at `lines[start]` declares.
 
-    Returns (majors, line_number). An empty list means the step declared no
-    parseable version -- distinct from declaring a too-low one, and reported as
-    such, because `setup-dotnet` with no version resolves from global.json and
-    is therefore correct rather than broken.
+    Returns (majors, line_number, status) where status is one of:
+      "declared"   -- a `dotnet-version:` was found and parsed
+      "absent"     -- the step has no `dotnet-version:` key at all
+      "unparsed"   -- the key is there and yielded no version token
+
+    The split is the whole point. "absent" is a legitimate pass: setup-dotnet
+    with no version resolves from global.json, which is by definition at the
+    floor. "unparsed" REFUSES -- a key whose value this scanner could not read
+    is a broken measurement, and folding it into the pass is how a guard reports
+    its success state for something nobody measured. The first draft of this
+    function did exactly that and stayed green through a three-site mutation.
     """
-    for i in range(start + 1, min(start + 60, len(lines))):
+    for i in range(start + 1, len(lines)):
         line = lines[i]
-        # Stop at the next step in the same list.
-        if re.match(r"^\s*-\s+(uses|name|run):", line) and i > start:
-            return [], -1
+        # Stop at the next step in the same list. Anchored with [ \t] rather than
+        # \s for the same reason SETUP_DOTNET is.
+        if re.match(r"^[ \t]*-[ \t]+(uses|name|run|with|shell):", line):
+            return [], -1, "absent"
         m = VERSION_KEY.match(line)
         if not m:
             continue
@@ -93,11 +101,11 @@ def declared_majors(lines: list[str], start: int):
                 body = lines[j]
                 if body.strip() and (len(body) - len(body.lstrip())) <= len(indent):
                     break
-                majors += [int(t) for t in VERSION_TOKEN.findall(body)]
+                majors += [int(tok) for tok in VERSION_TOKEN.findall(body)]
         else:
-            majors += [int(t) for t in VERSION_TOKEN.findall(rest)]
-        return majors, i + 1
-    return [], -1
+            majors += [int(tok) for tok in VERSION_TOKEN.findall(rest)]
+        return majors, i + 1, ("declared" if majors else "unparsed")
+    return [], -1, "absent"
 
 
 def sites():
@@ -114,8 +122,9 @@ def sites():
                 lines = text.splitlines()
                 for m in SETUP_DOTNET.finditer(text):
                     idx = text.count("\n", 0, m.start())
-                    majors, vline = declared_majors(lines, idx)
-                    found.append((os.path.relpath(path, ROOT), idx + 1, vline, majors))
+                    majors, vline, status = declared_majors(lines, idx)
+                    found.append((os.path.relpath(path, ROOT), idx + 1, vline,
+                                  majors, status))
     return found
 
 
@@ -147,11 +156,21 @@ def main() -> int:
         print("  action spelling produces, and it must not read as 'every site is fine'.")
         return 3
 
+    unparsed = [(p, l) for p, l, v, m, s in found if s == "unparsed"]
+    if unparsed:
+        print(f"UNMEASURABLE: {len(unparsed)} setup-dotnet site(s) declare a "
+              "`dotnet-version:` this guard could not parse:")
+        for path, step_line in unparsed:
+            print(f"  {path}:{step_line}")
+        print("  A version that cannot be read is not a version that satisfies the floor.")
+        return 3
+
     failures = []
-    for path, step_line, vline, majors in found:
-        if not majors:
-            # No version at all: setup-dotnet then resolves from global.json,
-            # which is by definition at the floor. Correct, not broken.
+    for path, step_line, vline, majors, status in found:
+        if status == "absent":
+            # No `dotnet-version:` at all: setup-dotnet then resolves from
+            # global.json, which is by definition at the floor. A legitimate
+            # absence, and per guards-need-a-third-state.md it stays a pass.
             continue
         if max(majors) < floor:
             failures.append(
@@ -174,5 +193,80 @@ def main() -> int:
     return 0
 
 
+# --------------------------------------------------------------------------
+# The refusal paths, driven in throwaway trees.
+#
+# A refusal path with no test is indistinguishable from a never-fire path,
+# which is the defect itself (guards-need-a-third-state.md). This ran for real
+# while the guard was written: the first draft folded an unparseable
+# `dotnet-version:` into the pass, and the three-site publish.yml mutation
+# stayed GREEN through it.
+#
+# The `control` case is the load-bearing one -- five refusals that fire for
+# everything prove nothing. It is what says the guard still passes a tree that
+# is actually fine.
+
+CASES = [
+    # (name, global.json text or None, write a site, make its version unreadable, want)
+    ("global.json absent",             None,                    True,  False, 3),
+    ("global.json unparseable",        "{ not json",            True,  False, 3),
+    ("global.json has no sdk.version", '{"sdk":{}}',            True,  False, 3),
+    ("zero sites found",               '{"sdk":{"version":"9.0.100"}}', False, False, 3),
+    ("dotnet-version unparseable",     '{"sdk":{"version":"9.0.100"}}', True,  True,  3),
+    ("control: a satisfying site",     '{"sdk":{"version":"9.0.100"}}', True,  False, 0),
+]
+
+
+def _self_test() -> int:
+    import shutil
+    import subprocess
+    import tempfile
+
+    failed = 0
+    for name, gj, with_site, unreadable, want in CASES:
+        tree = tempfile.mkdtemp()
+        try:
+            os.makedirs(os.path.join(tree, "tools"))
+            shutil.copy(os.path.abspath(__file__), os.path.join(tree, "tools"))
+            if gj is not None:
+                with open(os.path.join(tree, "global.json"), "w", encoding="utf-8") as fh:
+                    fh.write(gj)
+            wf = os.path.join(tree, ".github", "workflows")
+            os.makedirs(wf)
+            os.makedirs(os.path.join(tree, ".github", "actions"))
+            if with_site:
+                token = "not-a-version" if unreadable else "9.0.x"
+                with open(os.path.join(wf, "x.yml"), "w", encoding="utf-8") as fh:
+                    fh.write("jobs:\n  a:\n    steps:\n"
+                             "      - uses: actions/setup-dotnet@v5\n        with:\n"
+                             "          dotnet-version: |\n            " + token + "\n")
+            env = dict(os.environ, AL_RUNNER_SETUP_DOTNET_FLOOR_CHILD="1")
+            r = subprocess.run(
+                [sys.executable, os.path.join(tree, "tools", os.path.basename(__file__))],
+                capture_output=True, text=True, env=env, timeout=60)
+            ok = r.returncode == want
+            failed += not ok
+            first = (r.stdout + r.stderr).strip().splitlines()
+            print(f"{'ok  ' if ok else 'FAIL'} {name}: exit {r.returncode} (want {want})"
+                  f" | {first[0] if first else '<no output>'}")
+        finally:
+            shutil.rmtree(tree, ignore_errors=True)
+    print()
+    print(f"Total: {len(CASES)}, Errors: 0, Failed: {failed}, Passed: {len(CASES) - failed}")
+    return 1 if failed else 0
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    rc = main()
+    # The self-test runs on every invocation, not behind a flag: pr-gate.yml
+    # discovers this file by glob and runs it with no arguments, so a flag-gated
+    # self-test would gate nothing.
+    # A child spawned by _self_test must not run _self_test itself -- it would
+    # copy this file into a fresh tree and spawn another, without bound. The
+    # first draft did, and took the box to 52 live processes before being
+    # killed. The guard is the environment marker, not the recursion depth.
+    if rc == 0 and not os.environ.get("AL_RUNNER_SETUP_DOTNET_FLOOR_CHILD"):
+        print()
+        print("--- refusal paths ---")
+        rc = _self_test()
+    sys.exit(rc)

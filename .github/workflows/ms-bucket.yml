@@ -265,16 +265,9 @@ jobs:
       # resolution below, which has to run BEFORE the action can be given a version.
       - uses: actions/setup-dotnet@v5
         with:
-          # Two SDKs, deliberately. The projects target net8.0, so 8.0.x stays; the
-          # SOLUTION is AlRunner.slnx, whose <Solution> element a 9+ SDK is needed to
-          # parse at all (global.json pins that floor). An 8.0-only runner fails with
-          # `error MSB4068: The element <Solution> is unrecognized`, naming neither
-          # the SDK nor the solution format (#4200).
-          #
-          # Declaring 9.0.x is what makes the build's requirement explicit rather than
-          # inherited: measured on the ubuntu24/20260907.300 image, `setup-dotnet`
-          # installed 8.0.425 and the image's own preinstalled 9.x/10.x SDKs — same
-          # /usr/share/dotnet — were what actually built the .slnx.
+          # 8.0.x for the target framework, 9.0.x for the AlRunner.slnx solution
+          # format. Full reasoning at bc-tests.yml's first setup-dotnet site;
+          # tools/test_setup_dotnet_floor.py enforces the floor (#4200, #4211).
           dotnet-version: |
             8.0.x
             9.0.x
