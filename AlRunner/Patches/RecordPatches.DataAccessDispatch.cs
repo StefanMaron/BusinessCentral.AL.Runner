@@ -238,6 +238,16 @@ public static partial class RecordPatches
                 return GetKeyVirtualDataAccess(self, table);
             }
 
+            // ── Page Action system virtual table (2000000143) ────────────────────
+            // Served by BC's OWN PageActionDataProvider. Key field 2 forwards to BC's own
+            // GetActions, which reads the page definition rather than the object snapshot,
+            // so the nesting, the parent ids and the option encodings are all BC's own.
+            // See RecordPatches.PageActionVirtualTable.cs.
+            if (IsPageActionVirtualTable(table))
+            {
+                return GetPageActionVirtualDataAccess(self, table);
+            }
+
             // ── All Profile system virtual table (2000000178) ────────────────────────────
             // Virtual on the service tier too: AllProfileDataProvider's rows are every
             // profile every published app declares plus the tenant-owned ones. It is the
