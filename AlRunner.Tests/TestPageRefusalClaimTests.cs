@@ -420,7 +420,14 @@ public sealed class TestPageRefusalClaimTests
         // Lookup and Drilldown siblings it refuses when there is no AL page object to reach a
         // trigger through. Note what this 11th site is NOT — a control that simply declares no
         // OnAssistEdit stays silent, because BC's own ALAssistEdit raises nothing there either.
-        Assert.Equal(11, Regex.Matches(mock, @"throw TestPageShapeGap\.").Count);
+        //
+        // 11 -> 12 by #4188, which ADDED a refusal rather than removing one — the safe
+        // direction for this assertion, which exists to catch a deletion. A part's SubPageView
+        // filters are now applied, and an unresolved FieldID on one refuses by name exactly as
+        // the SubPageLink loop beside it already did: DependencyPageMetadataXml deliberately
+        // writes FieldID 0 when it cannot resolve a field NAME to an id, so filtering past it
+        // would show the wrong rows rather than none.
+        Assert.Equal(12, Regex.Matches(mock, @"throw TestPageShapeGap\.").Count);
         // 6: the SubPageLink FilterType site, the two evaluator-fault arms #3444 added - a
         // fault inside BC's own NavValueEvaluator, and a signature mismatch against it -
         // #3462's bind refusal, which claimed testpage-temporal-evaluator under
@@ -429,7 +436,12 @@ public sealed class TestPageRefusalClaimTests
         // NavDate/NavDateTime/NavTime, and a GetEvaluator that answers null for one that it
         // does. Both used to `return false`, which showed the AL author BC's own date-format
         // refusal for a spelling BC was never asked about.
-        Assert.Equal(6, Regex.Matches(mock, @"throw new AlRunner\.Infrastructure\.BcShapeGapException\(").Count);
+        //
+        // 6 -> 7 by #4188, also an ADDITION: a part's SubPageView cannot express a FIELD filter
+        // (there is no parent row to evaluate against), so a FilterType that is neither CONST
+        // nor FILTER refuses rather than being filtered as one of them — the same refusal the
+        // SubPageLink loop makes for a fourth kind, for the same reason.
+        Assert.Equal(7, Regex.Matches(mock, @"throw new AlRunner\.Infrastructure\.BcShapeGapException\(").Count);
 
         // 5 since #3731: a property whose value arrives as the EMPTY string is one the AL
         // compiler dropped (a procedure call in a client expression, AL0573). An ACTION's
