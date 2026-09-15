@@ -1,0 +1,10 @@
+[
+  {
+    "codeunitId": 60980,
+    "CodeunitName": "PXC Sub Tests",
+    "Method": "SubPageExtControl_BoundToExtensionGlobal_IsFoundAndReadsItsValue",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4181",
+    "Note": "Expected 'SUBEXTGLOBAL', got a NavTestFieldNotFoundException: a pageextension control on a subpage part, bound to a variable the pageextension declares, is not reachable through the host TestPage's part. Corpus PR #360 merged and the runner fix (issue #4181) has not; this entry exists so a red main does not wait on that fix, per al-language-submodule.md: a corpus merge that reds main is answered with a fix or a known-gap entry, never by waiting. Real BC finds it -- 3 distinct PASS on all 8 cloud legs of corpus run 34904889723, verified with tools/corpus-pass-count.py rather than read off the green ticks. ONE method named, not a wildcard: this codeunit's other two arms PASS on the runner (SubPageExtControl_BoundToRecField_IsFoundAndReadsItsValue and SubPageBaseControl_StillReadable), and that is the measurement that localises the gap -- the part's metadata DOES carry the extension's controls and the part IS reachable, so only the global-bound source expression is missing. A Method wildcard would claim those two as failures and drift the manifest the other way (#3737). Mechanism measured on #4181: RunnerFormInit.OnSubpagePartResolved forwards to RunnerPageInstance.EnsureRecordlessPartReifiedEagerly, which returns at its ResolvePageDeclaresSourceTableForAnyPage guard -- the part declares a SourceTable -- three lines before the EnsureMetadataLoaded that would bind anything. Remove this file when #4181 lands."
+  }
+]
