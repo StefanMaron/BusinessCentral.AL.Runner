@@ -79,16 +79,33 @@ public sealed class PageActionVirtualTableProviderTests
     }
 
     [Fact]
-    public void GetActions_StillTakesThePageNumberAndRange_AndIsWhatSuppliesTheRows()
+    public void GetActions_IsOneOfTheTwoShapesTheHelperBuildsArgumentsFor()
     {
         // Key field 2 forwards to this rather than rebuilding rows, which is what keeps BC's
         // own nesting, parent ids, option encodings and container auto-ids.
+        //
+        // ITS PARAMETER LIST DIFFERS ACROSS BC VERSIONS, and an earlier version of this test
+        // asserted only the 28.x shape — so it passed on a 28.x dev box while every 27.x CI leg
+        // threw TargetParameterCountException. Both shapes are pinned here, and a third would
+        // fail rather than being guessed at positionally.
         var m = Ncl.GetType(ProviderTypeName)!
             .GetMethod("GetActions", BindingFlags.Public | BindingFlags.Instance);
         Assert.True(m != null, "PageActionDataProvider.GetActions is gone — key field 2 has no owner.");
-        Assert.Equal(
-            new[] { "NavInteger", "Range", "Boolean" },
-            m!.GetParameters().Select(p => p.ParameterType.Name).ToArray());
+
+        var shape = m!.GetParameters().Select(p => p.ParameterType.Name).ToArray();
+        var known = new[]
+        {
+            new[] { "NavInteger", "Range", "Boolean" },                                     // 28.x
+            new[] { "NavInteger", "Range", "SortOrder", "FilterFieldDictionary", "Boolean" }, // 27.x
+        };
+        Assert.True(known.Any(k => k.SequenceEqual(shape)),
+            $"GetActions has an unrecognised shape [{string.Join(", ", shape)}]; "
+            + "BuildGetActionsArgs knows the 3-parameter (28.x) and 5-parameter (27.x) forms only.");
+
+        // The last parameter is includeCustomizations on both, and the helper passes false for
+        // it explicitly — MethodInfo.Invoke applies no C# defaults.
+        Assert.Equal("Boolean", shape[^1]);
+        Assert.True(m.GetParameters()[^1].IsOptional, "includeCustomizations is the optional trailing parameter.");
     }
 
     [Fact]

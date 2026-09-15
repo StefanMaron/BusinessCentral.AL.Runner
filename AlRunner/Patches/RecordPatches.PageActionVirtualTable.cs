@@ -104,10 +104,19 @@ public static partial class RecordPatches
         var pageNo = ReadBufferSlot(precedingKeyFieldValues, 1);
         if (pageNo == null) return list;
 
-        // includeCustomizations: false — BC's own default for this path. A customization-aware
-        // read goes through ApplyPageCustomizations, which this runner does not drive here; the
-        // corpus arms measure a page with no customizations, so nothing here claims otherwise.
-        var actions = (System.Collections.IEnumerable)_paGetActions!.Invoke(provider, new object?[] { pageNo, range, false })!;
+        // GetActions' PARAMETER LIST DIFFERS ACROSS BC VERSIONS, so the arguments are built from
+        // the bound method rather than hardcoded:
+        //   27.x  (NavInteger, Range, SortOrder, FilterFieldDictionary, bool includeCustomizations = false)
+        //   28.x  (NavInteger, Range, bool includeCustomizations = false)
+        // Passing 28.x's three positionally threw TargetParameterCountException on every 27.x
+        // leg while passing locally on a 28.x box — the two are different binaries
+        // (sha256 affa03c9… vs 49b11d9b…), so "it works here" measured one of them (#4147).
+        //
+        // includeCustomizations stays false on both: BC's own default for this path. A
+        // customization-aware read goes through ApplyPageCustomizations, which this runner does
+        // not drive here, and the corpus arms measure a page with no customizations.
+        var actions = (System.Collections.IEnumerable)_paGetActions!.Invoke(
+            provider, BuildGetActionsArgs(pageNo, range, sortOrder, nonPrimaryKeyFilters))!;
 
         var rows = new List<object>();
         foreach (var a in actions)
@@ -155,6 +164,28 @@ public static partial class RecordPatches
     /// against the wrong type (#4194). Walking up the hierarchy because the field is declared
     /// on a base of PageActionDataProvider, not on the provider.
     /// </summary>
+
+    /// <summary>
+    /// Arguments for BC's own <c>GetActions</c>, matched to the overload actually present.
+    /// MethodInfo.Invoke applies no C# defaults, so every parameter is supplied explicitly;
+    /// an unrecognised shape refuses rather than guessing a positional fit.
+    /// </summary>
+    private static object?[] BuildGetActionsArgs(object? pageNo, object range, object sortOrder, object filters)
+    {
+        var ps = _paGetActions!.GetParameters();
+        return ps.Length switch
+        {
+            // 28.x: (NavInteger pageNo, Range range, bool includeCustomizations = false)
+            3 => new object?[] { pageNo, range, false },
+            // 27.x: (NavInteger pageNo, Range range, SortOrder, FilterFieldDictionary, bool includeCustomizations = false)
+            5 => new object?[] { pageNo, range, sortOrder, filters, false },
+            _ => throw new BcShapeGapException(
+                "page-action-virtual-table", "PageActionDataProvider",
+                $"BC's GetActions takes {ps.Length} parameter(s) — this rewrite knows the 3-parameter "
+                + "(28.x) and 5-parameter (27.x) shapes only; see #4147"),
+        };
+    }
+
     private static object? GetProviderSession(object provider)
         => _paSessionField!.GetValue(provider);
 
