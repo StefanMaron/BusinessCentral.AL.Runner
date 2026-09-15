@@ -24,13 +24,22 @@
 // ObjectType.Query alone therefore fixes this table with no row-building whatsoever, and BC's
 // own bounds/binary-search/sort-order/obsolete-filter traversal keeps running unchanged.
 //
-// DELIBERATELY QUERY-ONLY. That same snapshot has 17 callers (#4196), six of which drive tables
-// the runner already serves correctly through hand-written populators — AllObj (2000000038),
-// AllObjWithCaption (2000000058), Field (2000000041), Table Metadata (2000000136), Page
-// Metadata (2000000138), Page Control Field (2000000139). Those work BECAUSE the snapshot is
-// empty and they never consult it. Filling it for every type is the consolidation #4196 tracks
-// and needs its own measurement; filling it for ObjectType.Query changes exactly one table,
-// because no other caller asks for that type.
+// DELIBERATELY QUERY-ONLY — and the reason is NOT the one it first appears to be. That snapshot
+// has TEN callers (measured with find_callers on Ncl.dll `6f2cf682…`; #4196's "17" is the count
+// for GetObjectNumberAndInfoWithinRange, a different method one level up). Three of them —
+// AllObjDataProvider, AllObjWithCaptionDataProvider, SystemObjectDataProvider — are
+// type-AGNOSTIC and WOULD see a Query entry if they ran.
+//
+// What actually protects AllObj (2000000038), AllObjWithCaption (2000000058), Field
+// (2000000041), Table Metadata (2000000136), Page Metadata (2000000138) and Page Control Field
+// (2000000139) is that the runner never hands out those BC providers at all: each goes through
+// a hand-written Populate* in RecordPatches. **The dispatch is the brace, not this restriction.**
+// Measured in review: widening this helper to ObjectType.Table left all four protected corpus
+// codeunits green, so the narrowing here is defensive rather than load-bearing.
+//
+// That distinction matters for #4196, where the restriction goes away and the dispatch becomes
+// the only thing holding those six tables — so the dispatch is what that work has to re-measure,
+// not this comment's type filter.
 //
 // WHAT THE CORPUS PINNED (corpus codeunit 60913, 6 arms, 16 legs green):
 //   - Caption falls back to the NAME when the query declares none (BC's own
@@ -99,9 +108,13 @@ public static partial class RecordPatches
             // skipped here rather than surfacing as a row whose every column would be empty —
             // and BC's own body would skip it too, via its catch (NavMetadataNotFoundException).
             if (!QueryMetadataResolves(self, id)) continue;
-            // Name is left empty: BC calls this walk with needNames:false for ObjectType.Query
-            // and reads the name off NCLMetaQuery instead, so a name here would be dead weight
-            // that could only disagree with the one the row actually carries.
+            // Name is left empty, and this is LOAD-BEARING rather than tidiness. BC calls this
+            // walk with needNames:false for ObjectType.Query and reads the name off
+            // NCLMetaQuery instead, so a name here could only disagree with the one the row
+            // carries — but more importantly, an empty name is what keeps this entry out of
+            // EnsureAllObjectNamesWillBeUnique's duplicate-name check, which skips on
+            // IsNullOrWhiteSpace. Populating it would enter these ids into a uniqueness scan
+            // they have never been part of.
             var entry = Activator.CreateInstance(_qmEntryType!, new object?[] { string.Empty, null, null, string.Empty });
             if (entry != null) inner[id] = entry;
         }
