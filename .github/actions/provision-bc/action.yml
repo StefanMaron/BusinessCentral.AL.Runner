@@ -22,7 +22,12 @@ runs:
     # AlRunner.csproj.) net8 SDK builds the runner and tools/DownloadArtifacts.
     - uses: actions/setup-dotnet@v5
       with:
-        dotnet-version: '8.0.x'
+        # 8.0.x for the target framework, 9.0.x for the SOLUTION format: the build
+        # below is `dotnet build AlRunner.slnx`. See .github/workflows/bc-tests.yml's
+        # first setup-dotnet site for why both are declared (#4200, #4211).
+        dotnet-version: |
+          8.0.x
+          9.0.x
 
     - name: Build (auto-downloads BC ${{ inputs.bc-version }} DLLs)
       shell: bash
