@@ -264,12 +264,54 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// Bind the three members <see cref="GetOrCreateAppOwner"/> needs. Split out of
+    /// <c>EnsurePermissionMetadataReflection</c> (#4147) because the Query Metadata virtual
+    /// table now sets an owning app too, and the rest of that method is permission-set
+    /// specific — calling it from the query builder would run a large amount of unrelated
+    /// setup, and NOT calling it left these three null, which is a NullReferenceException
+    /// inside <see cref="GetOrCreateAppOwner"/>'s null-forgiving dereference rather than a
+    /// named refusal (measured: every bucket EXEC-FAIL'd with a bare NRE).
+    /// </summary>
+    private static void EnsureAppOwnerReflection()
+    {
+        if (_ctorAppRuntimeMetadata != null) return;
+
+        var apps = AppDomain.CurrentDomain.GetAssemblies()
+                       .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Apps")
+                   ?? Assembly.Load("Microsoft.Dynamics.Nav.Apps");
+        _tAppRuntimeMetadata = apps.GetType("Microsoft.Dynamics.Nav.Apps.Runtime.NavAppRuntimeMetadata")
+            ?? throw PermissionMetadataBcShapeGap(
+                "NavAppRuntimeMetadata",
+                "type not found in Microsoft.Dynamics.Nav.Apps — an object's owning app cannot be supplied");
+        // The SHORTER of the two public constructors: same values minus the summaries and
+        // dependencies lists, which a synthesised owner has nothing truthful to put in.
+        _ctorAppRuntimeMetadata = _tAppRuntimeMetadata.GetConstructors()
+            .OrderBy(c => c.GetParameters().Length).FirstOrDefault()
+            ?? throw PermissionMetadataBcShapeGap(
+                "NavAppRuntimeMetadata",
+                "has no public constructor — an object's owning app cannot be supplied");
+        _tAppId = _ctorAppRuntimeMetadata.GetParameters()
+            .FirstOrDefault(p => p.ParameterType.Name == "AppId")?.ParameterType
+            ?? throw PermissionMetadataBcShapeGap(
+                "NavAppRuntimeMetadata..ctor",
+                "takes no AppId parameter — an object's owning app cannot be supplied");
+        _ctorAppId = _tAppId.GetConstructors().FirstOrDefault(c =>
+        {
+            var p = c.GetParameters();
+            return p.Length == 1 && p[0].ParameterType == typeof(Guid);
+        }) ?? throw PermissionMetadataBcShapeGap(
+            "AppId(Guid)",
+            "constructor not found — an object's owning app cannot be supplied");
+    }
+
+    /// <summary>
     /// One <c>NavAppRuntimeMetadata</c> per owning app, carrying what the runner genuinely
     /// knows. See the file banner for why Publisher/Version are left unset rather than
     /// invented.
     /// </summary>
     private static object GetOrCreateAppOwner(Guid appId, string appName)
     {
+        EnsureAppOwnerReflection();
         if (_appOwnerCache.TryGetValue(appId, out var cached)) return cached;
 
         var ps = _ctorAppRuntimeMetadata!.GetParameters();
@@ -376,33 +418,7 @@ public static partial class RecordPatches
                 "ObjectType",
                 $"value {PermissionSetObjectTypeOrdinal} is not PermissionSet in this BC build, so the slot index this file writes would be the wrong object type — BC's permission-set metadata inventory cannot be populated");
 
-        var apps = AppDomain.CurrentDomain.GetAssemblies()
-                       .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Apps")
-                   ?? Assembly.Load("Microsoft.Dynamics.Nav.Apps");
-        _tAppRuntimeMetadata = apps.GetType("Microsoft.Dynamics.Nav.Apps.Runtime.NavAppRuntimeMetadata")
-            ?? throw PermissionMetadataBcShapeGap(
-                "NavAppRuntimeMetadata",
-                "type not found in Microsoft.Dynamics.Nav.Apps — BC's permission-set metadata inventory cannot be populated");
-        // The SHORTER of the two public constructors: same values minus the summaries and
-        // dependencies lists, which a synthesised owner has nothing truthful to put in.
-        _ctorAppRuntimeMetadata = _tAppRuntimeMetadata.GetConstructors()
-            .OrderBy(c => c.GetParameters().Length).FirstOrDefault()
-            ?? throw PermissionMetadataBcShapeGap(
-                "NavAppRuntimeMetadata",
-                "has no public constructor — BC's permission-set metadata inventory cannot be populated");
-        _tAppId = _ctorAppRuntimeMetadata.GetParameters()
-            .FirstOrDefault(p => p.ParameterType.Name == "AppId")?.ParameterType
-            ?? throw PermissionMetadataBcShapeGap(
-                "NavAppRuntimeMetadata..ctor",
-                "takes no AppId parameter — BC's permission-set metadata inventory cannot be populated");
-        _ctorAppId = _tAppId.GetConstructors().FirstOrDefault(c =>
-        {
-            var p = c.GetParameters();
-            return p.Length == 1 && p[0].ParameterType == typeof(Guid);
-        }) ?? throw PermissionMetadataBcShapeGap(
-            "AppId(Guid)",
-            "constructor not found — BC's permission-set metadata inventory cannot be populated");
-
+        EnsureAppOwnerReflection();
         _permMetaReflectionReady = true;
     }
 

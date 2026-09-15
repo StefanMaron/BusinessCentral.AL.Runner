@@ -248,6 +248,19 @@ public static partial class RecordPatches
                 return GetPageActionVirtualDataAccess(self, table);
             }
 
+            // ── Query Metadata system virtual table (2000000142) ─────────────────
+            // Served by BC's OWN QueryDataProvider, which builds all 13 columns from the
+            // NCLMetaQuery the metadata cache resolves — including Caption falling back to
+            // Name, the API columns, and the declaring extension's app id. Before #4147 there
+            // was no branch, so every Record "Query Metadata" read answered from an empty
+            // temp store. The provider's key-field-1 walk reads the object snapshot, which is
+            // why this branch alone is not enough — see RecordPatches.QueryMetadataVirtualTable.cs.
+            // Corpus codeunit 60913 pins the three things a hand-rolled builder gets wrong.
+            if (IsQueryMetadataVirtualTable(table))
+            {
+                return GetQueryMetadataVirtualDataAccess(self, table);
+            }
+
             // ── All Profile system virtual table (2000000178) ────────────────────────────
             // Virtual on the service tier too: AllProfileDataProvider's rows are every
             // profile every published app declares plus the tenant-owned ones. It is the

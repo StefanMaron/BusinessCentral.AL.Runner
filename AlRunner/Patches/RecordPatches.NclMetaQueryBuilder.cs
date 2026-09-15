@@ -110,6 +110,21 @@ public static partial class RecordPatches
 
             var meta = _mCreateDynamicQuery.Invoke(null,
                 new object?[] { token, metaQuery, clrType, _baseAppGroup });
+            // #4147: give the query the owning app BC's own resolution would have found.
+            // MetadataDataProvider.GetAppId — which the Query Metadata (2000000142) row's
+            // "App ID" column comes from — reads `metaObject.OwningApp`, returning
+            // NavGuid.Default when it is null, so without this every row reports the EMPTY
+            // GUID rather than the declaring extension's id. The lazy behind that property
+            // cannot fill it here for the reason SetOwningApp's own doc comment records: the
+            // getter is gated on MetadataAppGroup.GroupId != 0 and the runner plants
+            // NavAppGroup.BaseGroup, whose GroupId IS 0.
+            //
+            // The id comes from the assembly the compiled Query{id} type lives in, which is
+            // the same per-assembly module identity NavApp.GetCurrentModuleInfo answers from
+            // (BcRuntime.GetModuleAppInfoFor) — so the row's App ID and an AL caller's own
+            // GetCurrentModuleInfo().Id cannot disagree, which is exactly what corpus 60913's
+            // Record_QueryMetadata_AppId_IsThisExtensionsOwnAppId compares.
+            if (meta != null) SetQueryOwningApp(meta, clrType);
             QLog($"BuildRealNCLMetaQuery({queryId}): built {(meta == null ? "NULL" : meta.GetType().Name)} clrType={clrType.FullName}");
             return meta;
         }
@@ -648,5 +663,29 @@ public static partial class RecordPatches
         // the first result column's slot.
         SetProp(col, "QueryColumnIndex", -1);
         GetList(dataItem, "QueryColumns").Add(col);
+    }
+
+    /// <summary>
+    /// Write the owning app of a built <c>NCLMetaQuery</c>, resolved from the assembly its
+    /// compiled <c>Query{id}</c> type was emitted into.
+    ///
+    /// <para>CLAIM — observably equivalent. BC's own <c>OwningApp</c> resolves through
+    /// <c>MetadataAppGroup.GetObjectOwner</c>, which finds the app declaring the object. The
+    /// emitted assembly IS that app here: one emitted assembly per app is the runner's module
+    /// model, and <see cref="BcRuntime.GetModuleAppInfoFor"/> is the same map
+    /// <c>NavApp.GetCurrentModuleInfo</c> answers from. A query whose assembly is not
+    /// registered keeps the null owner, so BC's own <c>NavGuid.Default</c> answer stands
+    /// rather than a guessed id being planted.</para>
+    ///
+    /// <para>Shares <c>SetOwningApp</c>/<c>GetOrCreateAppOwner</c> with
+    /// RecordPatches.PermissionMetadataPopulator.cs, where the same gap was closed for
+    /// permission sets (#3695); see SetOwningApp for why the field is written rather than the
+    /// property read.</para>
+    /// </summary>
+    private static void SetQueryOwningApp(object meta, Type clrType)
+    {
+        var info = BcRuntime.GetModuleAppInfoFor(clrType.Assembly);
+        if (info.AppId == Guid.Empty) return;
+        SetOwningApp(meta, info.AppId, info.Name);
     }
 }
