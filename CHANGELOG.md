@@ -25,6 +25,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **testpage:** apply a part's SubPageView, so it shows only the rows the view selects
 - **parse:** secondary AL parses and the declared-object census honor app.json preprocessorSymbols
 - **session:** GetExecutionContext answers Install inside an install trigger
 - **requestpage:** run a request page's own OnInit, as BC does
