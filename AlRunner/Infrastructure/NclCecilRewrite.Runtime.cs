@@ -1029,6 +1029,17 @@ public static partial class NclCecilRewrite
                     "NCLMetaField", "ReadOnlyRecordBuffer", "Range", "SortOrder", "FilterFieldDictionary"),
                 H(recordPatches, "KeyDataProvider_GetValuesWithinRangeForKeyField"));
 
+            // ── PageActionDataProvider.GetValuesWithinRangeForKeyField (2000000143) ───────
+            // Third instance of the same defect: key field 1 reaches
+            // GetObjectNumberAndInfoWithinRange(ObjectType.Page, ...) -> GetSnapshotOfAllObjects,
+            // which this rewrite empties, so the Page Action table answered no rows (#4147).
+            // The helper forwards field 2 to BC's own GetActions and projects through BC's own
+            // ToReadOnlyRecordBuffer. See RecordPatches.PageActionVirtualTable.cs.
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "PageActionDataProvider", "GetValuesWithinRangeForKeyField",
+                    "NCLMetaField", "ReadOnlyRecordBuffer", "Range", "SortOrder", "FilterFieldDictionary"),
+                H(recordPatches, "PageActionDataProvider_GetValuesWithinRangeForKeyField"));
+
             // ── DataAccess.CountAsync — virtual Field table (2000000041) on-demand populate ──
             // Same gap, one table over. The Field table's rows for a given TableNo are built on
             // demand, and until #2792 the ONLY place that happened for a table nothing else had
