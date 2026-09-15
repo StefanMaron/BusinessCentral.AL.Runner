@@ -341,7 +341,7 @@ public static partial class RecordPatches
             // Same (name → page id) index Table Metadata resolves LookupPageId/DrillDownPageId
             // against — one shared inventory, so a page name resolvable there is resolvable
             // here too, and the two tables can never disagree about which pages exist.
-            var (pageIdsByName, _) = BuildObjectIndexes();
+            var pageIdsByName = PageIdsByName();
             var unresolvedCardPages = new List<string>();
 
             int ResolveCardPage(string? name, int pageId)
