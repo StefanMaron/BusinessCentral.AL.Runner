@@ -83,7 +83,7 @@ public static class ALDatabasePatches
         if (CurrentTestIsAutoRollback() && CurrentCommitBehaviorName() != "Ignore")
             throw BuildTestExplicitCommitNotAllowed();
 
-        CommitWithoutTestExecutionGuard();
+        CommitWithoutTestExecutionGuard(isAlCommitStatement: true);
     }
 
     /// <summary>
@@ -98,7 +98,13 @@ public static class ALDatabasePatches
     /// test. Routing it through the refusal would break every guarded Codeunit.Run in such a
     /// test — a regression this split exists to prevent.</para>
     /// </summary>
-    private static void CommitWithoutTestExecutionGuard()
+    /// <param name="isAlCommitStatement">
+    /// True only for AL's own <c>Commit()</c> statement, which additionally moves the rollback
+    /// floor of every OPEN transaction-world scope (AlRunner#3773). False for
+    /// <see cref="EndGuardedRunTransaction"/>, whose own pop has already settled the scope
+    /// stack — see <see cref="RecordPatches.MarkExplicitCommitPoint"/>'s trap note.
+    /// </param>
+    private static void CommitWithoutTestExecutionGuard(bool isAlCommitStatement = false)
     {
         switch (CurrentCommitBehaviorName())
         {
@@ -110,8 +116,10 @@ public static class ALDatabasePatches
 
         System.Threading.Volatile.Write(ref _inWriteTransaction, false);
         // Everything written so far is now durable: a later AL error rolls back to HERE,
-        // not to the start of the test method.
-        RecordPatches.MarkCommitPoint();
+        // not to the start of the test method — and, for an AL Commit() statement, not to
+        // the entry of a guarded Codeunit.Run still open around it either.
+        if (isAlCommitStatement) RecordPatches.MarkExplicitCommitPoint();
+        else RecordPatches.MarkCommitPoint();
     }
 
     /// <summary>
