@@ -15,11 +15,15 @@
 // QueryDataProvider — is reachable from AL through this runner at all. That is a
 // structural property of two layers, and this file pins both:
 //
-//   1. THE DISPATCH. RecordPatches.DataAccessDispatch routes exactly four table ids to a
-//      BC provider (Key 2000000063, Page Action 2000000143, Query Metadata 2000000142,
-//      Table Relations Metadata 2000000141). Every other virtual table — including all
-//      six "protected" ones — is served by a hand-written Populate* over a temp store, so
-//      its BC provider is never constructed and its snapshot call never runs.
+//   1. THE DISPATCH. RecordPatches.DataAccessDispatch routes only six table ids to BC's own
+//      virtual-provider factory: the four that consume the object snapshot (Key 2000000063,
+//      Page Action 2000000143, Query Metadata 2000000142, Table Relations Metadata
+//      2000000141) plus Integer 2000000026 and Date 2000000007, which take that route but
+//      read no snapshot. Every other virtual table — including all six "protected" ones — is
+//      served by a hand-written Populate* over a temp store, so its BC provider is never
+//      constructed and its snapshot call never runs. That set is READ OUT OF THE COMPILED
+//      DISPATCH CHAIN below rather than listed, so adding a branch for a protected table
+//      fails this file instead of silently agreeing with it.
 //
 //   2. THE REWRITE LEVEL. Three of those four are Cecil-replaced at
 //      GetValuesWithinRangeForKeyField, which sits ONE LEVEL ABOVE
@@ -45,11 +49,14 @@
 // dispatch chain routes to a BC provider. What BC's providers compute is not in question
 // and is not asserted here — that is the corpus's job (codeunit 60913 for Query Metadata,
 // 60936 for Key). A corpus test cannot see a rewrite level or a dispatch branch.
+using System;
+using System.Collections.Generic;
 using System.Linq;
 using AlRunner.Infrastructure;
 using AlRunner.Patches;
 using Microsoft.Dynamics.Nav.Runtime;
 using Mono.Cecil;
+using Mono.Cecil.Cil;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -173,24 +180,90 @@ public class SnapshotConsumerReachabilityTests
     [MemberData(nameof(ProtectedTableIds))]
     public void ProtectedTablesAreNotRoutedToABcVirtualProvider(int tableId)
     {
-        Assert.DoesNotContain(tableId, BcVirtualProviderTableIds);
+        Assert.DoesNotContain(tableId, BcVirtualProviderTableIds());
     }
 
     /// <summary>
-    /// The four ids RecordPatches.DataAccessDispatch hands to BC's own GetVirtualDataAccess
-    /// factory. Integer (2000000026) and Date (2000000007) also take that route but consume
-    /// no object snapshot, so they are out of scope here and deliberately absent.
+    /// The table ids RecordPatches.GetDataAccessForTableCore actually hands to BC's own
+    /// virtual-provider factory, READ OUT OF THE COMPILED DISPATCH CHAIN rather than listed
+    /// here.
     ///
-    /// Adding an id to this list means a table gained a BC provider, which is exactly when
-    /// #4196's question needs re-measuring — so the list is asserted, not merely documented.
+    /// <para>An earlier version of this file declared the answer as a second literal list, so
+    /// the theory above compared one list in this file against another list in this file and
+    /// could not fail. A reviewer proved it by adding a real branch routing AllObj — one of the
+    /// protected six — to BC's factory and still getting 11 green (#4196). Deriving it from the
+    /// IL is what makes "a table gained a BC provider" an assertion instead of a comment.</para>
+    ///
+    /// <para>Reading the id off each <c>Is*VirtualTable</c> predicate rather than off the
+    /// dispatch body is deliberate: the dispatch compares through the predicate, so the constant
+    /// only ever appears in the predicate, and that is also the single place a table's id is
+    /// declared.</para>
     /// </summary>
-    private static readonly int[] BcVirtualProviderTableIds =
+    private static int[] BcVirtualProviderTableIds()
     {
-        RecordPatches.KeyVirtualTableId,
-        RecordPatches.PageActionVirtualTableId,
-        RecordPatches.QueryMetadataVirtualTableId,
-        RecordPatches.TableRelationsMetadataVirtualTableId,
-    };
+        using var runner = AssemblyDefinition.ReadAssembly(
+            typeof(RecordPatches).Assembly.Location);
+
+        var core = runner.MainModule
+            .GetType("AlRunner.Patches.RecordPatches")
+            ?.Methods.FirstOrDefault(m => m.Name == "GetDataAccessForTableCore");
+        Assert.NotNull(core);
+        Assert.True(core!.HasBody, "GetDataAccessForTableCore has no body to read");
+
+        var ids = new List<int>();
+        var ins = core.Body.Instructions;
+        for (var k = 0; k < ins.Count; k++)
+        {
+            if (ins[k].Operand is not MethodReference guard
+                || !guard.Name.StartsWith("Is")
+                || !(guard.Name.EndsWith("VirtualTable") || guard.Name.EndsWith("SystemTable")))
+                continue;
+
+            // Walk the guarded block forward to whichever comes first: BC's factory (this table
+            // is served by BC's own provider) or a runner populate / temp-store creation (it is
+            // not). Bounded so a guard whose block does neither cannot run into the next branch
+            // and inherit its answer.
+            var routed = false;
+            for (var j = k + 1; j < Math.Min(k + 60, ins.Count); j++)
+            {
+                if (ins[j].Operand is not MethodReference call) continue;
+                if (call.Name == "GetBcVirtualDataAccess"
+                    || (call.Name.StartsWith("Get") && call.Name.EndsWith("VirtualDataAccess")))
+                {
+                    routed = true;
+                    break;
+                }
+                if (call.Name.StartsWith("Populate") || call.Name.Contains("CreateTempDataAccess"))
+                    break;
+            }
+            if (!routed) continue;
+
+            var id = TableIdOf(guard.Resolve());
+            Assert.True(id > 0, $"could not read the table id {guard.Name} compares against");
+            ids.Add(id);
+        }
+
+        // Six today: the four snapshot consumers plus Integer (2000000026) and Date
+        // (2000000007), which take BC's factory too but consume no object snapshot.
+        Assert.NotEmpty(ids);
+        return ids.ToArray();
+    }
+
+    /// <summary>The constant an <c>Is*VirtualTable</c> predicate compares TableId against.</summary>
+    private static int TableIdOf(MethodDefinition? predicate)
+    {
+        if (predicate?.HasBody != true) return -1;
+        foreach (var i in predicate.Body.Instructions)
+        {
+            if (i.OpCode == OpCodes.Ldc_I4) return (int)i.Operand;
+            if (i.Operand is FieldReference fr)
+            {
+                var fd = fr.Resolve();
+                if (fd != null && fd.HasConstant && fd.Constant is int c) return c;
+            }
+        }
+        return -1;
+    }
 
     [Fact]
     public void OnlyQueryMetadataAmongTheSnapshotConsumersKeepsBcsOwnWalk()
