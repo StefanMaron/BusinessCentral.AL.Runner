@@ -293,6 +293,21 @@ public static partial class RecordPatches
                 return GetDateVirtualDataAccess(self, table);
             }
 
+            // -- Event Subscription system virtual table (2000000140) ---------------------
+            // Virtual on the service tier too: GetVirtualDataProvider routes it to
+            // EventSubscriptionDataProvider, whose rows come from
+            // NavGlobal.EventSubscriptionMetadata -- NOT from the object snapshot the three
+            // sibling tables in #4147 read, which is why this one needed a different fix
+            // (#4198). The registry is null on the skeleton tenant and is seeded from the
+            // runner's own scanned [NavEventSubscriber] inventory by
+            // EventSubscriberPatches.SeedSubscriptionMetadata; with it non-null, every row,
+            // filter and keyed Get is answered by Microsoft's own provider.
+            // See RecordPatches.EventSubscriptionVirtualTable.cs.
+            if (IsEventSubscriptionVirtualTable(table))
+            {
+                return GetEventSubscriptionVirtualDataAccess(self, table);
+            }
+
             // ── Report Layout List system virtual table (2000000234) ─────────────────────
             // Virtual on the service tier too (its rows are the layouts every published
             // app declares, plus tenant layouts). BC's own by-name layout resolution

@@ -1088,6 +1088,58 @@ private, empty store holding exactly what AL inserted
 
 ---
 
+### `Record "Event Subscription"` — served by BC's own provider; a codeunit publisher's row is unresolved
+
+<a id="event-subscription-virtual-table"></a>
+
+The `Event Subscription` system virtual table (2000000140) is answered by Microsoft's own
+`EventSubscriptionDataProvider`, reached through BC's `DataAccessSource.GetVirtualDataAccess`
+factory exactly as `Record Date` and `Record Integer` are. No row is built by the runner.
+
+Its rows come from `NavGlobal.EventSubscriptionMetadata`, **not** from the object snapshot the
+neighbouring metadata tables read — which is why the fix for it is a registry rather than a row
+projection ([#4198](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4198)). That
+registry is null on the runner's skeleton tenant, because the tenant is manufactured with
+`GetUninitializedObject` and so never runs a constructor. `EventSubscriberPatches` constructs
+BC's own `NavEventSubscriptionMetadata`, installs it, and appends the same
+`NavEventSubscription` objects the dispatch path already builds — one scanned
+`[NavEventSubscriber]` inventory feeding two registries.
+
+**A codeunit-published subscription registers but does not resolve.** BC's
+`NavEventSubscription` constructor resolves the publisher through `GetOriginalApplicationObject`,
+which reads `NCLMetadata`; the runner's cache holds tables only, so a codeunit publisher is not
+found and the constructor returns early. Measured on BC 28.1.49838.53910:
+
+| publisher | `Active` | `Event Type` | `Error Information` |
+|---|---|---|---|
+| a table | `Yes` | the real type (`Trigger`) | *(empty)* |
+| a codeunit | `No` | `Business` | `ErrorOriginalApplicationObjectNotFound` |
+
+`Business` there is BC's own fallback for "publishing method not found"
+(`NavEventSubscription.OriginalEventType` returns `NavEventType.Business` when
+`originalEventAttribute` is null), not a misprojection — and the same row reports the unresolved
+state truthfully in `Active` and `Error Information`. Only `Event Type` read in isolation
+misleads, where `Business` is indistinguishable from a genuine `[BusinessEvent]`.
+[#4218](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4218) tracks it.
+
+Dispatch is unaffected: codeunit events fire correctly through the `<EventName>_Scope` seeding,
+which does not consult `NCLMetadata`. This is an inventory-reporting gap only.
+
+**A multi-bundle run lists the previous bundle's subscriptions too.** The scan registries this
+table is seeded from are process-wide and are cleared only by `ResetForReload`, which
+`Program.cs` reaches in watch and server mode but not between the bundles of a one-shot
+multi-bundle invocation. Measured: two probe bundles run together, and bundle B saw bundle A's
+subscriber; run alone, each bundle is correct — as is every CI leg and every ordinary local
+invocation, which are single-bundle. A control arm in the same run confirmed `AllObj` does
+**not** list the other bundle's objects, so this is the table's own defect rather than the
+runner's process model. Three candidate scopes were measured and all three still contained the
+previous bundle (`RegisteredModules()`, `GetModuleAppInfoFor(...).AppId`,
+`CurrentBundleAssemblies()`), so the fix needs a per-bundle marker the runner does not currently
+keep. [#4222](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4222) tracks it.
+Dispatch is again unaffected: subscriber lookup is keyed on `(publisherId, eventMethodName)`.
+
+---
+
 ### `Record "Windows Language"` — the license and installed-resource columns are chosen values
 
 <a id="windows-language-virtual-table"></a>
