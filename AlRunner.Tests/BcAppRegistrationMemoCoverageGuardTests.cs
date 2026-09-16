@@ -30,13 +30,12 @@ namespace AlRunner.Tests;
 /// bind, an immutable lookup). A sweep over every <c>private static … Dictionary</c> would be
 /// noise, and a noisy guard gets suppressed — its own failure mode.
 ///
-/// So this keys on the REACH, not on the field's type. Every read of the registered .app
-/// symbol set funnels through exactly one walk,
+/// So this keys on the REACH, not on the field's type. The reach is
 /// <c>RecordPatches.EnumerateRegisteredBcAppSymbols</c> (RecordPatches.DependencyAppSymbolWalk.cs),
-/// which is the only method that enumerates <c>_bcAppPaths</c> and parses each entry. A static
-/// field ASSIGNED inside a method that reaches that walk is, by construction, holding state
-/// derived from the registration set — which is the precondition the whole #2888 family is
-/// about. Measured on the tree this landed against: <b>709</b> mutable statics under
+/// the walk that parses each registered .app's symbol file. A static field ASSIGNED inside a
+/// method that reaches it is, by construction, holding state derived from the registration set —
+/// which is the precondition the whole #2888 family is about. Measured on the tree this landed
+/// against: <b>709</b> mutable statics under
 /// <c>AlRunner/Patches</c>, of which this reach test selects <b>22</b> assignment sites, and
 /// exactly one of those was an offender. That is the signal-to-noise story, and
 /// <see cref="TheCandidatePopulation_StaysSmallEnoughToReadByHand"/> pins it so a future
@@ -51,12 +50,54 @@ namespace AlRunner.Tests;
 ///      almost every site discharges (<c>_knownQueryIds</c>, <c>_pageMetaRows</c>,
 ///      <c>_reportRows</c>, <c>_tableMetadataRows</c>, …), each alongside its own
 ///      <c>…BuiltFrom</c> companion, which the analysis selects too and which discharges with it.
-///   2. The field is dropped inside <c>InvalidateBcAppIndexes</c> itself — the single funnel
-///      both AddBcAppPath and ClearPerBundleBcAppPaths end in. <c>_bcSymbolQueryIndex</c>
-///      discharges this way, with no generation key at all.
+///   2. The field is dropped inside <c>InvalidateBcAppIndexes</c> itself — the funnel both
+///      REGISTRATION paths end in (AddBcAppPath and ClearPerBundleBcAppPaths).
+///      <c>_bcSymbolQueryIndex</c> discharges this way, with no generation key at all. Note
+///      this is the inner funnel: <c>ResetForReload</c> wraps it and drops more, which this
+///      guard does not read.
 ///
 /// Anything else is either a genuine process-lifetime exempt — on
 /// <see cref="AllowedProcessLifetimeStatics"/>, WITH the reason — or an offender.
+///
+/// What this guard does NOT cover — read this before trusting a green
+/// ------------------------------------------------------------------
+/// <b>This guard covers memos reachable from <see cref="RegistrationWalk"/>, discharged by the
+/// two funnels above. It is not a statement that every registration-derived memo is keyed.</b>
+/// A reader who concludes otherwise has made exactly the over-reading the old guard invited,
+/// and the point of this section is that the boundary is stated rather than implied.
+///
+/// <c>EnumerateRegisteredBcAppSymbols</c> is not the only walk over <c>_bcAppPaths</c>. Measured
+/// on the tree this landed against, <c>_bcAppPaths.ToArray()</c> appears at six live sites (a
+/// seventh is inside a comment), and two of them are walks this guard does not model:
+///
+///   * <c>BuildKnownAppNameIndex</c> (RecordPatches.AggregatePermissionSetVirtualTable.cs:301)
+///     builds a fresh local <c>Dictionary</c> and assigns no static, so it is correctly not a
+///     candidate and has nothing to discharge.
+///   * <c>EnumerateKnownPermissionSets</c> (RecordPatches.MetadataPermissionSetVirtualTable.cs:199)
+///     is the one that matters. It walks <c>_bcAppPaths.ToArray()</c> directly and contains
+///     <b>zero</b> references to <see cref="RegistrationWalk"/>, so nothing hanging off it is
+///     selected here. Three memoized statics do hang off it, in
+///     RecordPatches.PermissionMetadataPopulator.cs — <c>_permMetaPopulatedForCount</c>,
+///     <c>_permissionSetIdByName</c> and <c>_permissionSetNameById</c> — and the first is a
+///     genuine <c>.Count</c>-keyed latch (<c>if (known.Count == _permMetaPopulatedForCount)
+///     return;</c> at line 129), the exact ABA shape #2888 is about.
+///
+/// <b>Those three are not live defects</b>, and the reason is a third funnel rather than luck:
+/// <c>ResetPermissionSetMetadataForReload</c> (line 444 of that file) resets the latch to -1 and
+/// nulls both memos, and the reload entry point in RecordPatches.cs invokes it from line 465.
+/// The comment above that reset already names the ABA hazard in full — the code knows. What this
+/// guard cannot see is that discharge, because that reload entry point is an OUTER funnel:
+/// <see cref="ResetFunnel"/> is called from inside it, so a field dropped only by the outer one
+/// is invisible to <see cref="ResetFunnelDrops"/>.
+///
+/// <para>(That outer entry point is deliberately not spelled here as a qualified call.
+/// <c>ParserStaticsIsolationGuardTests</c> keys on that exact text to find classes driving the
+/// AL parse statics, and this class drives nothing — it reads source files off disk. Writing the
+/// qualified form in prose made this file fail that guard, which is #3064's lesson: a comment
+/// documenting compliance must not itself read as a violation.)</para>
+///
+/// Modelling the outer funnel is a real extension and deliberately not attempted here: it would
+/// have to follow the reset chain across files, and the narrow version earns its keep first.
 ///
 /// <para><b>The allowlist is deliberately empty today, and that is the finding.</b> Every one
 /// of the 22 selected sites discharges mechanically, so nothing needs an exemption. A first
@@ -77,7 +118,9 @@ public sealed class BcAppRegistrationMemoCoverageGuardTests
 
     private static string PatchesDir => Path.Combine(RepoRoot, "AlRunner", "Patches");
 
-    /// <summary>The one walk every read of the registered .app symbol set goes through.</summary>
+    /// <summary>The walk this guard keys its reach on: the one that parses each registered
+    /// .app's symbol file. NOT the only walk over <c>_bcAppPaths</c> — see the class header's
+    /// "What this guard does NOT cover".</summary>
     private const string RegistrationWalk = "EnumerateRegisteredBcAppSymbols";
 
     /// <summary>The monotonic generation counter <c>InvalidateBcAppIndexes</c> bumps.</summary>
@@ -123,10 +166,24 @@ public sealed class BcAppRegistrationMemoCoverageGuardTests
             : Array.Empty<string>();
 
     /// <summary>
-    /// The mutable static fields declared across the given sources. <c>readonly</c> is excluded:
-    /// a readonly field cannot be reassigned, so it cannot hold a memo that outlives an epoch —
-    /// a readonly COLLECTION whose contents change is caught through the assignment scan of
-    /// whatever mutates it, and through <see cref="ResetFunnelDrops"/> when it is cleared.
+    /// The mutable static fields declared across the given sources. <c>readonly</c> is excluded
+    /// because a readonly field cannot be reassigned, so it cannot hold a memo that survives an
+    /// epoch by being rebuilt-and-kept — the shape #4225 had and the one this guard is for.
+    ///
+    /// <para><b>A readonly COLLECTION whose CONTENTS outlive an epoch is a real gap here, and it
+    /// is not covered.</b> An earlier draft of this comment claimed such a case was "caught
+    /// through the <c>.Clear()</c> branch of the funnel scan"; that is false, and
+    /// <c>_parsedTables</c> (RecordPatches.cs:138) is the clearest counter-example — a
+    /// <c>readonly Dictionary</c> mutated in several methods that reach
+    /// <see cref="RegistrationWalk"/>, and cleared in <c>ResetForReload</c>
+    /// (RecordPatches.cs:330), <b>not</b> in <see cref="ResetFunnel"/>, whose drop set is exactly
+    /// the eight fields <see cref="ResetFunnelDrops"/> reads out of it. So the <c>.Clear()</c>
+    /// branch would not see it even if the field were selected, which it is not.</para>
+    ///
+    /// <para>Same root cause as the outer-funnel gap in this class's header: the guard models one
+    /// funnel, and prose that speaks as though it modelled all of them is the thing to avoid.
+    /// Recorded rather than quietly fixed, because widening to readonly collections means
+    /// selecting on mutation sites rather than assignments — a different analysis, not a flag.</para>
     /// </summary>
     internal static HashSet<string> MutableStaticFields(IEnumerable<(string Name, string Text)> sources)
     {
@@ -185,14 +242,20 @@ public sealed class BcAppRegistrationMemoCoverageGuardTests
     /// The candidate population: every static-field assignment inside a method that reaches
     /// <see cref="RegistrationWalk"/> directly or through one intermediate method.
     ///
-    /// <para><b>One hop, deliberately, and not a transitive closure.</b> A full closure over
-    /// this call graph pulls in most of <c>AlRunner/Patches</c> — every virtual table's row
-    /// handout eventually reaches the walk — and would select a population nobody can read,
-    /// which is the noise this guard is designed around. One hop covers the shape every known
-    /// instance has: a lazy memo whose builder calls an enumerator that walks the registered
-    /// .apps (#4225's <c>DependencyTableTypeName</c> -> <c>EnumerateBcAppTableSymbols</c> ->
-    /// the walk). A memo two hops out is not caught here, which is a stated limit rather than
-    /// an oversight — see the PR body.</para>
+    /// <para><b>One hop, deliberately.</b> One hop covers the shape every known instance has: a
+    /// lazy memo whose builder calls an enumerator that walks the registered .apps (#4225's
+    /// <c>DependencyTableTypeName</c> -> <c>EnumerateBcAppTableSymbols</c> -> the walk). A memo
+    /// two hops out is not caught here — a stated limit, not an oversight.</para>
+    ///
+    /// <para><b>The honest cost, measured with this same analysis rather than argued: two hops
+    /// selects 25 sites against one hop's 22.</b> An earlier draft claimed a closure would pull
+    /// in "most of <c>AlRunner/Patches</c>" and select a population nobody can read; that is not
+    /// what the measurement says, and the extra three are cheap. One hop is still the choice —
+    /// it is the smallest reach that covers every instance on record, and each widening has to
+    /// earn the allowlist entries it may force — but the argument for it is "three more sites
+    /// buy no known coverage", not "the alternative is unreadable". Widen it if a two-hop
+    /// instance ever turns up; the ceiling in
+    /// <see cref="TheCandidatePopulation_StaysSmallEnoughToReadByHand"/> has room.</para>
     /// </summary>
     internal static IReadOnlyList<Candidate> Candidates(IEnumerable<(string Name, string Text)> sources)
     {
@@ -310,7 +373,7 @@ public sealed class BcAppRegistrationMemoCoverageGuardTests
         Assert.True(candidates.Count > 0,
             "the reach analysis selected no candidates at all — a guard that examines nothing "
             + $"reports 'no offenders' for the same reason a clean tree does. Did {RegistrationWalk} "
-            + "get renamed, or did the walk stop being the single funnel?");
+            + "get renamed, or did it stop being the walk that parses registered .app symbols?");
 
         Assert.True(drops.Count > 0,
             $"{ResetFunnel} was found to drop nothing — discharge 2 is then dead and every field "
@@ -360,10 +423,10 @@ public sealed class BcAppRegistrationMemoCoverageGuardTests
     /// that happens is silent: someone widens the reach, the population triples, and the
     /// allowlist absorbs the difference one entry at a time until nobody reads it.
     ///
-    /// <para>Measured when this landed: 646 mutable statics under <c>AlRunner/Patches</c>, of
-    /// which the reach test selects 12 assignment sites — a population small enough to read by
-    /// hand, which is the property that makes the allowlist meaningful. The ceiling is
-    /// deliberately loose (it must not fail for an honest new memo) but far below the 646 a
+    /// <para>Measured when this landed: <b>709</b> mutable statics under <c>AlRunner/Patches</c>,
+    /// of which the reach test selects <b>22</b> assignment sites — a population small enough to
+    /// read by hand, which is the property that makes the allowlist meaningful. The ceiling is
+    /// deliberately loose (it must not fail for an honest new memo) but far below the 709 a
     /// type-keyed sweep would select.</para>
     /// </summary>
     [Fact]
@@ -383,7 +446,7 @@ public sealed class BcAppRegistrationMemoCoverageGuardTests
             + "statics: " + string.Join(", ", candidates.Select(c => $"{c.Field}{(c.ReadsEpoch ? "(epoch)" : "")}")));
 
         Assert.True(candidates.Count <= 40,
-            $"the reach analysis now selects {candidates.Count} assignment sites (it selected 12 "
+            $"the reach analysis now selects {candidates.Count} assignment sites (it selected 22 "
             + $"when this landed, out of {allStatics.Count} mutable statics). Past a few dozen "
             + "nobody reads the allowlist, and an unread allowlist is the noisy-sweep failure "
             + "this guard was designed to avoid. Narrow the reach rather than raising this bound:\n  "
