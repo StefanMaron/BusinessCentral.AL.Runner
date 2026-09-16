@@ -30,6 +30,16 @@ refuses. Those are two different causes here and they have opposite remedies:
 The same shape as tools/test_matrix_docs_drift.py's corpus-version claim, which SKIPs
 when the corpus is not checked out, and as TestArtifacts.SkipIfMissingIn.
 
+Ordering matters and is not an implementation detail: the prose check runs BEFORE
+the artifact check, because whether the document still states the claim is pure
+regex and needs no artifacts. Checking artifacts first made a deleted claim exit 0
+on CI -- the one machine where nothing else would catch it (found in review of
+PR #4240).
+
+Known limitation: a MISSPELLED build number degrades to SKIP, not a failure. From
+the filesystem "misspelled" and "not provisioned" are the same observation, and
+resolving it toward failure would red every box that simply lacks that version.
+
 Deliberately NOT asserting a total count of distinct binaries: which BC versions a
 box has provisioned is a property of the box, not of the repository, so a figure
 like "6 distinct" is unpinnable by construction. What IS pinnable is the claim the
@@ -111,6 +121,13 @@ def main():
     skipped = []
     checked = 0
 
+    # The prose check runs FIRST and needs no artifacts: whether CLAUDE.md still
+    # states the claim is pure regex over the document, so it is measurable on
+    # every box including CI. Returning early on an empty artifacts root -- as
+    # this guard did until review of PR #4240 -- made a DELETED claim exit 0 on
+    # exactly the machine where nothing else could catch it, while this file's
+    # own docstring promised 3. An unmeasurable verdict that only fires where the
+    # measurement was possible anyway is not a third state.
     for label, pattern, relation in CLAIMS:
         found = pattern.findall(doc)
         if not found:
@@ -165,11 +182,26 @@ def main():
                 )
             )
 
+    # A prose defect is reportable with no artifacts at all -- do it before any
+    # SKIP, so an empty box still refuses a claim that has gone missing.
+    if unmeasurable and not problems:
+        for line in unmeasurable:
+            print("UNMEASURABLE: %s" % line)
+        print()
+        print("Could not settle %d of %d claim(s) -- the prose no longer matches this"
+              % (len(unmeasurable), len(CLAIMS)))
+        print("guard's patterns, so nothing was measured for them.")
+        if not have:
+            print("(No BC artifacts under %s either, but that is not why: whether the"
+                  % root)
+            print(" document still STATES the claim needs no artifacts to check.)")
+        return EXIT_CANNOT_MEASURE
+
     if not have:
         print("  SKIP CLAUDE.md's binary-identity claims: no BC artifacts under %s" % root)
-        print("       -- nothing to compare against. This is the ordinary state on CI,")
-        print("       whose tools-tests job never provisions BC. Not a failure, and not")
-        print("       a claim that the document is right.")
+        print("       -- the claims are still stated correctly, but nothing here can")
+        print("       compare them against a file. This is the ordinary state on CI,")
+        print("       whose tools-tests job never provisions BC.")
         print("       Provision with: al-runner provision --bc-version <ver>")
         return EXIT_OK
 
@@ -189,14 +221,6 @@ def main():
         print("CLAUDE.md's binary-identity example disagrees with the artifacts on this box.")
         print("Fix the prose to match the hashes -- never the reverse (#4221).")
         return EXIT_DRIFTED
-
-    if unmeasurable:
-        print()
-        print("Could not settle %d of %d claim(s) -- the prose no longer matches this"
-              % (len(unmeasurable), len(CLAIMS)))
-        print("guard's patterns, so nothing was measured for them. %d checked and consistent."
-              % checked)
-        return EXIT_CANNOT_MEASURE
 
     if checked == 0:
         print("  SKIP every binary-identity claim: none of the builds CLAUDE.md names")
