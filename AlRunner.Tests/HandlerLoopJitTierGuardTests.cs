@@ -38,7 +38,32 @@ public sealed class HandlerLoopJitTierGuardTests
             string.Join("\n  ", scan.Offenders));
     }
 
-    [Fact]
+    /// <summary>
+    /// The last assertion here reads a fixture's IL SHAPE, and that shape is a property of the
+    /// build configuration rather than of the scanner. Measured on one commit, all four cells
+    /// (#4228):
+    ///
+    /// <code>
+    ///   SDK       config    TryCatchInsideLoop
+    ///   8.0.130   Debug     62 bytes: leave.s -> IL_0031 (forward, past the handler),
+    ///   10.0.111  Debug     then br.s -> IL_0007 as the back edge     => no leave-back-edge
+    ///   8.0.130   Release   37 bytes: leave.s -> IL_0004 twice        => leave IS the back edge
+    ///   10.0.111  Release
+    /// </code>
+    ///
+    /// Both SDKs agree in both configurations, so the SDK is NOT the variable -- in Debug,
+    /// Roslyn's sequence-point scaffolding splits the leave into a forward leave plus a plain
+    /// branch, and has always done so. CI builds Release (bc-tests.yml, `dotnet test -c Release`)
+    /// and tools/engine-test-bootstrap.sh pins CONFIG=Release, so the guard is measured where it
+    /// is meaningful; a local `dotnet test` defaults to Debug and is where this surfaced.
+    ///
+    /// So the last assertion SKIPS on a Debug build instead of refusing. That is the distinction
+    /// in guards-need-a-third-state.md -- a shape genuinely absent by construction in this
+    /// configuration is not a broken measurement, and reporting it as one sent a reader hunting a
+    /// Roslyn regression that does not exist. The three Offenders assertions above are
+    /// configuration-independent and keep running either way, so Debug still tests the scanner.
+    /// </summary>
+    [SkippableFact]
     public void Scanner_FlagsLoopsInHandlers_AndNotALeaveBackToTheLoopHead()
     {
         var scan = HandlerBackBranchScanner.Scan(typeof(HandlerLoopJitTierGuardTests).Assembly.Location);
@@ -53,6 +78,19 @@ public sealed class HandlerLoopJitTierGuardTests
         // A `leave` out of a catch back to an enclosing loop's head does not force FullOpts
         // (measured: Instrumented Tier0), so it must not be reported.
         Assert.DoesNotContain(scan.Offenders, o => o.StartsWith(Name(nameof(HandlerLoopShapes.TryCatchInsideLoop)) + " "));
+        // Debug splits the leave into a forward leave + a plain back branch, so there is no
+        // leave-back-edge to count and the assertion below would refuse for a reason that is not
+        // a defect. Read the configuration off this assembly rather than a preprocessor symbol,
+        // so the skip reflects what was actually built.
+        var optimizerDisabled = typeof(HandlerLoopJitTierGuardTests).Assembly
+            .GetCustomAttribute<DebuggableAttribute>()?.IsJITOptimizerDisabled == true;
+        Skip.If(optimizerDisabled,
+            "AlRunner.Tests was built Debug, where Roslyn emits `leave` forward past the handler "
+            + "and a separate `br` as the loop's back edge -- so TryCatchInsideLoop has no leave "
+            + "back to the loop head to count. Measured identical on SDK 8.0.130 and 10.0.111, so "
+            + "this is the configuration, not an SDK regression (#4228). CI builds Release, where "
+            + "this assertion runs; reproduce with `dotnet test -c Release`.");
+
         Assert.True(scan.LeaveBackBranchesByMethod.GetValueOrDefault(Name(nameof(HandlerLoopShapes.TryCatchInsideLoop))) > 0,
             "the TryCatchInsideLoop fixture no longer compiles to a leave back to the loop head, so it tests nothing");
     }
