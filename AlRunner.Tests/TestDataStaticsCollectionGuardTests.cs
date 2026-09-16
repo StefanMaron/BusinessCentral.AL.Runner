@@ -121,20 +121,9 @@ public sealed class TestDataStaticsCollectionGuardTests
                 var end = i + 1 < decls.Count ? decls[i + 1].Index : code.Length;
                 if (!Mutation.IsMatch(code[start..end])) continue;
 
-                // The attribute block runs back from the declaration to the nearest line
-                // carrying code — a previous class's closing brace, a using, the namespace.
-                // Deliberately NOT "back to the first blank line": stripping a /// doc comment
-                // leaves blank lines, so an attribute above a doc comment would be lost and the
-                // class reported as an offender it is not.
-                var before = code[..start].Split('\n').ToList();
-                if (before.Count > 0 && before[^1].Length == 0) before.RemoveAt(before.Count - 1);
-                var attrs = new List<string>();
-                for (var k = before.Count - 1; k >= 0; k--)
-                {
-                    if (before[k].AsSpan().IndexOfAny('{', '}', ';') >= 0) break;
-                    attrs.Add(before[k]);
-                }
-
+                // No attribute-block walk here any more: which collection a class joins is read
+                // by reflection in CollectionFacts(), so the source scan only has to answer
+                // "does this class's own body mutate a static".
                 found.Add(new Mutator(decls[i].Groups[1].Value, Path.GetFileName(path)));
             }
         }
@@ -163,16 +152,28 @@ public sealed class TestDataStaticsCollectionGuardTests
 
         foreach (var type in typeof(TestDataStaticsCollectionGuardTests).Assembly.GetTypes())
         {
+            // Walk the base chain for [Collection]: CollectionAttribute is Inherited=true and
+            // xunit honours that, but CustomAttributeData.GetCustomAttributes(type) returns
+            // DECLARED attributes only. A class inheriting its collection from a base would
+            // otherwise read as joining none -- a false offender. Census today is 0 such classes,
+            // so this is latent; the sibling CollectionNameOf walks BaseType for the same reason
+            // and this copy stopped one line short of it (found in review).
+            for (var t = type; t is not null && joined.ContainsKey(type.Name) == false; t = t.BaseType)
+            {
+                foreach (var data in CustomAttributeData.GetCustomAttributes(t))
+                {
+                    if (data.AttributeType != typeof(CollectionAttribute)) continue;
+                    if (data.ConstructorArguments.Count != 1) continue;
+                    if (data.ConstructorArguments[0].Value is string inherited) joined[type.Name] = inherited;
+                }
+            }
+
             foreach (var data in CustomAttributeData.GetCustomAttributes(type))
             {
                 if (data.ConstructorArguments.Count != 1) continue;
                 if (data.ConstructorArguments[0].Value is not string name) continue;
 
-                if (data.AttributeType == typeof(CollectionAttribute))
-                {
-                    joined[type.Name] = name;
-                }
-                else if (data.AttributeType == typeof(CollectionDefinitionAttribute)
+                if (data.AttributeType == typeof(CollectionDefinitionAttribute)
                          && data.NamedArguments.Any(
                              a => a.MemberName == nameof(CollectionDefinitionAttribute.DisableParallelization)
                                   && a.TypedValue.Value is true))
