@@ -19,8 +19,9 @@
 //
 // What these tests pin
 // --------------------
-// The lifetime of the memo across a registration-set change, and that memoizing changed no
-// answer. Every test asserts a CONCRETE subtype string in each epoch — "Temporary" versus
+// The lifetime of the memo across a registration-set change, that memoizing changed no answer,
+// and that a walk which THROWS publishes nothing (#3143) — a property that held for free while
+// every call rebuilt and becomes load-bearing the moment a map is kept. Every test asserts a CONCRETE subtype string in each epoch — "Temporary" versus
 // "CRM" versus "Normal" — so a green can never mean "the second .app was unreadable and null
 // was an honest answer", and a memo that merely returned some non-null value cannot pass.
 //
@@ -40,6 +41,7 @@
 using System.IO.Compression;
 using System.Reflection;
 using System.Text;
+using AlRunner.Infrastructure;
 using AlRunner.Patches;
 using Xunit;
 
@@ -83,13 +85,22 @@ public sealed class AllObjDependencyTableTypeMemoTests : IDisposable
     private const int NeverDeclaredTableId = 88124205;
     private const int ContestedTableId = 88124206;
     private const int SoleTableId = 88124207;
+    private const int UnreadableTableId = 88124208;
 
     private static readonly Type T = typeof(RecordPatches);
+
+    // Both arguments are passed explicitly. MethodInfo.Invoke does NOT apply a C# optional
+    // parameter's default — it throws TargetParameterCountException — so a helper written
+    // against the one-argument form silently stops compiling against reality the moment the
+    // production signature grows the `surface` parameter. Spelling the surface here also keeps
+    // this test honest about which walk it is standing in for. (Same note, same reason, as
+    // DependencyPageSymbolIndexMemoTests.)
+    private const string Surface = "tables (Table Metadata)";
 
     private static string? Subtype(int tableId) =>
         (string?)T.GetMethod("DependencyTableTypeName",
             BindingFlags.NonPublic | BindingFlags.Static)!
-            .Invoke(null, new object?[] { tableId });
+            .Invoke(null, new object?[] { tableId, Surface });
 
     /// <summary>
     /// One .app declaring the given tables, each with the given <c>TableType</c>. A null
@@ -298,18 +309,27 @@ public sealed class AllObjDependencyTableTypeMemoTests : IDisposable
     /// epoch key is removed proves only that it reacts to SOMETHING; pairing it with a case
     /// where the property does not apply, and requiring that case to stay GREEN under the same
     /// mutation, is what shows it is reacting to staleness rather than to the reset, the
-    /// re-registration, or the fixture. Measured when the epoch key was removed: the swap test
-    /// answers Expected Temporary / Actual Normal while this one stays GREEN.</para>
+    /// re-registration, or the fixture.</para>
     ///
-    /// <para>The first read is made to REBUILD rather than merely to read, which is what makes
-    /// this a control at all. The memo is process-global and this class runs its tests in one
-    /// process, so on a broken runner a sibling test's map is already published when this test
-    /// starts and this .app would never be walked — the read would answer null and this test
-    /// would red for a reason that has nothing to do with the property it exists to isolate.
-    /// Registering the .app and asserting a HIT on its own id before the churn is what rules
-    /// that out: on a broken runner the assert below fails first, loudly, instead of the
-    /// control silently becoming order-dependent. (It genuinely did, before that assert
-    /// existed: run alone it passed under the mutation, run with the class it failed.)</para>
+    /// <para>HOW FAR THAT ACTUALLY GOES, measured rather than asserted. Run ALONE under the
+    /// epoch-key mutation this test is GREEN, which is the discriminating result. Run WITH its
+    /// class under the same mutation it is RED, at the first assert below —
+    /// <c>Expected "Temporary" / Actual null</c>. So it discriminates in isolation and does not
+    /// discriminate in-class, and the in-class red is NOT the property: see the next
+    /// paragraph.</para>
+    ///
+    /// <para>The reason is that the memo is process-global and this class runs its tests in one
+    /// process. On a runner whose memo never invalidates, a sibling test's map is already
+    /// published when this test starts, so this test's own .app is never walked and the first
+    /// read answers null — a red about test ORDERING, not about staleness. That is unavoidable
+    /// here: a memo that ignores registration is definitionally unable to notice this fixture,
+    /// so no arrangement of this test can make it green in-class on a broken runner.</para>
+    ///
+    /// <para>The first read is therefore made to REBUILD rather than merely to read, and a HIT
+    /// on this test's own id is asserted BEFORE the churn. That does not rescue the control
+    /// in-class; what it buys is that the order-dependency fails LOUDLY at a named assert
+    /// instead of silently turning the test below it into one that passes for the wrong reason.
+    /// Keep it.</para>
     /// </summary>
     [Fact]
     public void ATableOnlyOneAppEverDeclares_IsUnaffectedByTheRegistrationChurn()
@@ -329,5 +349,61 @@ public sealed class AllObjDependencyTableTypeMemoTests : IDisposable
         RecordPatches.AddBcAppPath(WriteApp((SoleTableId, "Issue4225 Sole", "Temporary")));
 
         Assert.Equal("Temporary", Subtype(SoleTableId));
+    }
+
+    /// <summary>
+    /// The REFUSAL claim: an .app that becomes unreadable after registration makes the walk
+    /// throw <see cref="BcAppSymbolReadException"/>, and the NEXT call throws again rather than
+    /// answering from a short map the throwing build published.
+    ///
+    /// <para>MEMOIZING IS WHAT MAKES THIS LOAD-BEARING, which is why the arm is added by the
+    /// same change that adds the memo. Before it, every call rebuilt, so a walk that threw
+    /// part-way could not leave a short answer behind for anyone — the property held for free
+    /// and nothing needed to pin it. After it, a map published from inside the walk loop would
+    /// be stamped with the current epoch and served to every later caller, turning "this .app
+    /// cannot be read" into "this .app declares nothing" for the rest of the epoch. That is the
+    /// swallow #3143 rewrote these walks to prevent, and <c>loud-failures.md</c> forbids: a
+    /// blank Object Subtype on AllObjWithCaption would be a wrong answer wearing the shape of
+    /// an honest one.</para>
+    ///
+    /// <para>Throwing TWICE is the whole assertion, not a flourish. One throw only shows the
+    /// walk propagates; the second shows no partial map was published, which is the property
+    /// the production comment claims and the only one that distinguishes a correct publish from
+    /// a publish moved inside the loop. Measured against exactly that mutation (publish and
+    /// epoch stamp moved inside the walk): this arm answers
+    /// <c>Assert.Throws() Failure: No exception was thrown</c>, while all six of the other
+    /// tests in this class stay GREEN — they never register an unreadable .app, so nothing else
+    /// here can see it.</para>
+    ///
+    /// <para>Unlike the page-side model
+    /// (<c>DependencyPageSymbolIndexMemoTests.AnUnreadableAppRefusesNamingTheCallersSurface_AndKeepsRefusing</c>),
+    /// this asserts nothing about WHICH surface the message names:
+    /// <see cref="RecordPatches.DependencyTableTypeName"/> takes no caller-surface parameter,
+    /// so the walk names its own fixed surface and there is no per-caller claim to make.</para>
+    /// </summary>
+    [Fact]
+    public void AnUnreadableAppRefuses_AndKeepsRefusing()
+    {
+        RecordPatches.ResetForReload();
+        var appPath = WriteApp((UnreadableTableId, "Issue4225 Unreadable", "Temporary"));
+        RecordPatches.AddBcAppPath(appPath);
+
+        // Readable at registration, then corrupted underneath the runner — the shape #3143
+        // exists for. Rewriting the bytes also moves the content hash, so BcAppSymbolCache
+        // cannot serve an earlier parse from ProcessCache.
+        File.WriteAllText(appPath, "not a zip archive at all");
+
+        var lookup = T.GetMethod("DependencyTableTypeName",
+            BindingFlags.NonPublic | BindingFlags.Static)!;
+
+        var first = Assert.Throws<TargetInvocationException>(
+            () => lookup.Invoke(null, new object?[] { UnreadableTableId, Surface }));
+        Assert.IsType<BcAppSymbolReadException>(first.InnerException);
+
+        // Again — a partial map must not have been published by the throwing build. Without
+        // this second call the test passes against a memo that publishes from inside the loop.
+        var second = Assert.Throws<TargetInvocationException>(
+            () => lookup.Invoke(null, new object?[] { UnreadableTableId, Surface }));
+        Assert.IsType<BcAppSymbolReadException>(second.InnerException);
     }
 }

@@ -279,7 +279,7 @@ public static partial class RecordPatches
             // happens to be built here — see TryGetDependencyPageSymbol's `surface` parameter.
             "page" => TryGetDependencyPageSymbol(o.Id, "objects (AllObj)")?.PageType,
             "query" => TryGetQuerySymbol(o.Id)?.QueryType,
-            "table" => DependencyTableTypeName(o.Id),
+            "table" => DependencyTableTypeName(o.Id, "objects (AllObj)"),
             // ObjectSymbol.Subtype is populated for Codeunit only; null means the symbol file
             // stated none, which is Normal, which BC blanks.
             "codeunit" => o.Subtype,
@@ -324,8 +324,21 @@ public static partial class RecordPatches
     ///
     /// <para>Handed out SHARED and read-only: a caller that mutated it would corrupt every
     /// later lookup.</para>
+    ///
+    /// <para>TAKES THE CALLER'S SURFACE, and this is not cosmetic (#3143). The build now
+    /// happens underneath whichever walk asked first, so an .app that became unreadable after
+    /// registration must still raise BcAppSymbolReadException naming what the CALLER was
+    /// reading. Before this memo existed the point was moot — every call rebuilt, so a failing
+    /// build only ever happened under its own caller. Memoizing makes it reachable: AllObj's
+    /// walk reaches a `table` object, this build runs inside it, and a hardcoded surface would
+    /// make AllObj's refusal say "tables (Table Metadata)" instead of "objects (AllObj)".
+    /// Measured: DependencySymbolReadFailureTests
+    /// .SymbolReadFailsAfterRegistration_EveryWalkRefusesNamingTheAppAndSurface(walk:
+    /// "EnumerateBcAppObjects") fails exactly that way when the surface is not threaded
+    /// through. Same fix, and the same regression, as the page memo in PR #4223.</para>
     /// </summary>
-    private static string? DependencyTableTypeName(int tableId)
+    private static string? DependencyTableTypeName(
+        int tableId, string surface = "tables (Table Metadata)")
     {
         var epoch = BcAppRegistrationEpoch;
         if (_aovDependencyTableTypes is { } memo && _aovDependencyTableTypesBuiltFromEpoch == epoch)
@@ -338,7 +351,7 @@ public static partial class RecordPatches
                 return inner.TryGetValue(tableId, out var innerHit) ? innerHit : null;
 
             var map = new Dictionary<int, string?>();
-            foreach (var t in EnumerateBcAppTableSymbols())
+            foreach (var t in EnumerateBcAppTableSymbolsForSurface(surface))
                 // LAST wins — see the summary above. The indexer, not TryAdd.
                 map[t.TableId] = t.TableTypeName ?? (t.IsTableTypeTemporary ? "Temporary" : AlDefaultTableType);
 
