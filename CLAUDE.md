@@ -239,7 +239,7 @@ identical from the outside:
 | `grep -E` (the shell function) | rejects the flag, exits **0**, prints nothing | no matches |
 | `rg` without `--hidden` | skips dot-directories entirely | no matches |
 | `gh <thing> list --limit N` | returns the first N and says nothing | the thing does not exist |
-| `strings -el` on a .NET assembly | reads UTF-16 only, so **member names never match** | the member is unreferenced |
+| `strings -el` on a .NET assembly | reads UTF-16 only, so a **member name** matches only by luck | the member is unreferenced |
 
 The third is the one that bites a *check* rather than a search, so it reaches a decision.
 Measured 2026-09-14: this repository had **164** labels, and `gh label list --limit 100 |
@@ -265,6 +265,13 @@ assembly keeps the two in different heaps:
 Measured on `28.1.49838.53910/Microsoft.Dynamics.Nav.Ncl.dll`, for the metadata name
 `RunRequestPageAsync`: `strings -a -el` finds **0**, `strings -a` finds **4**. So an agent told to
 use `-el` and asked whether a *member* is referenced gets a clean zero and reads it as a finding.
+
+**A non-zero from `-el` is not a refutation of this, and does not rescue the method.** Of 38,100
+identifier-like `#Strings` names in that binary, **1,937 (5.1%)** also occur verbatim in `#US` --
+`ALDownloadFromStream` answers **1** under `-el` -- because some *literal* happens to spell the
+same text. That hit is never the metadata entry, so the count still says nothing about whether the
+member is referenced; it is a coincidence of spelling, and a scan that is right 95% of the time by
+accident is worse than one that is always wrong, because the failures look like data.
 
 **For "is this member referenced", read the `MemberReference` table, not bytes.** It answers a
 question no byte scan can: a `MemberReference` means this assembly **calls** the member, a
