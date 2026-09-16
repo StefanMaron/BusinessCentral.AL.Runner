@@ -375,25 +375,101 @@ public static partial class NclCecilRewrite
             ?? throw new InvalidOperationException("InvalidOperationException(string) ctor not found via reflection");
         var oosCtor = asm.MainModule.ImportReference(oosCtorInfo);
 
-        // NavReport.RunRequestPageAsync → throw OOS (request-page UI is out-of-scope)
+        // NavReport.RunRequestPageAsync → NavReportSync.AsyncRunRequestPage (#3505).
+        //
+        // These four used to throw out-of-scope unconditionally, which contradicted
+        // docs/scope.md §3.5.1 ("Running a request page is in scope; rendering one is not").
+        // The four SYNC overloads were already routed to NavReportSync's real seam
+        // (NclCecilRewrite.Reports.cs, §RunRequestPage); runner-compiled AL emits the sync
+        // call, so the corpus stayed green while PRECOMPILED Base Application — which emits
+        // the async call — hit the refusal on ordinary in-scope business logic.
+        //
+        // Observably equivalent: BC's sync overloads ARE
+        // `RunRequestPageAsync(…).AsTask().GetAwaiter().GetResult()` over these, so one seam
+        // is faithful to both by construction. Citation: corpus 60545 "Test Report
+        // RunRequestPage", green on a real service tier, plus the async arms this issue's
+        // corpus PR adds.
+        //
+        // Precompiled-DLL respect: no token shifts and no signature changes — each body is
+        // replaced in place and keeps its own `ValueTask<string>` return, so every R2R caller
+        // in the precompiled chain still binds the member it bound before
+        // (precompiled-dll-respect.md). Only the four kickoff/delegating bodies are touched;
+        // the compiler-generated `<RunRequestPageAsync>d__82.MoveNext` state machine is left
+        // alone, which is what the "never rewrite an async ValueTask body" caution is about.
+        //
+        // Four shapes, each mapped to the one managed entry point. The NavSession argument the
+        // static overloads carry is dropped deliberately: the seam resolves the session from
+        // BcRuntime.SkeletonSession, exactly as the sync statics already do.
+        //   static   (NavSession, int)          -> (null, arg1, null)
+        //   static   (NavSession, int, string)  -> (null, arg1, arg2)
+        //   instance ()                         -> (this, 0,    null)
+        //   instance (string)                   -> (this, 0,    arg1)
+        var asyncRunRequestPageRef = asm.MainModule.ImportReference(
+            typeof(AlRunner.NavReportSync).GetMethod(
+                nameof(AlRunner.NavReportSync.AsyncRunRequestPage),
+                new[] { typeof(object), typeof(int), typeof(string) })
+            ?? throw new InvalidOperationException(
+                "NavReportSync.AsyncRunRequestPage(object,int,string) not found — do not commit"));
+
         int runRequestPageRewroteCount = 0;
+        int runRequestPageRefusedCount = 0;
         foreach (var method in navReportType.Methods.Where(mm => mm.Name == "RunRequestPageAsync").ToList())
         {
             Console.Error.WriteLine($"[Cecil] Rewriting {method.FullName}");
+            var rpParams = method.Parameters;
+            bool isStatic = method.IsStatic;
+            // Only the four shapes above are understood. Anything else keeps a loud refusal
+            // rather than being silently mis-wired — the same discrimination the sync branch
+            // in NclCecilRewrite.Reports.cs makes, and for the same reason: a wrong argument
+            // mapping here would run SOME report, which is worse than refusing.
+            bool known =
+                (isStatic && rpParams.Count == 2
+                    && rpParams[1].ParameterType.FullName == "System.Int32")
+                || (isStatic && rpParams.Count == 3
+                    && rpParams[1].ParameterType.FullName == "System.Int32"
+                    && rpParams[2].ParameterType.FullName == "System.String")
+                || (!isStatic && rpParams.Count == 0)
+                || (!isStatic && rpParams.Count == 1
+                    && rpParams[0].ParameterType.FullName == "System.String");
+
             var body = method.Body;
             body.Instructions.Clear();
             body.Variables.Clear();
             body.ExceptionHandlers.Clear();
             var il = body.GetILProcessor();
-            il.Append(il.Create(OpCodes.Ldstr, "out-of-scope: NavReport.RunRequestPage — request-page-ui — see docs/scope.md#report-rendering"));
-            il.Append(il.Create(OpCodes.Newobj, oosCtor));
-            il.Append(il.Create(OpCodes.Throw));
-            body.MaxStackSize = 1;
+
+            if (!known)
+            {
+                il.Append(il.Create(OpCodes.Ldstr,
+                    "out-of-scope: NavReport.RunRequestPageAsync (unrecognised overload shape)"));
+                il.Append(il.Create(OpCodes.Newobj, oosCtor));
+                il.Append(il.Create(OpCodes.Throw));
+                body.MaxStackSize = 1;
+                runRequestPageRefusedCount++;
+                continue;
+            }
+
+            // arg 1: the report instance, or null for the static overloads
+            if (isStatic) il.Append(il.Create(OpCodes.Ldnull));
+            else il.Append(il.Create(OpCodes.Ldarg_0));
+            // arg 2: the report id (0 for the instance overloads — the instance IS the report).
+            // On the statics the id is arg1, because arg0 is the NavSession.
+            if (isStatic) il.Append(il.Create(OpCodes.Ldarg_1));
+            else il.Append(il.Create(OpCodes.Ldc_I4_0));
+            // arg 3: the parameters string, when the overload carries one
+            if (isStatic && rpParams.Count == 3) il.Append(il.Create(OpCodes.Ldarg_2));
+            else if (!isStatic && rpParams.Count == 1) il.Append(il.Create(OpCodes.Ldarg_1));
+            else il.Append(il.Create(OpCodes.Ldnull));
+            il.Append(il.Create(OpCodes.Call, asyncRunRequestPageRef));
+            il.Append(il.Create(OpCodes.Ret));
+            body.MaxStackSize = 3;
             runRequestPageRewroteCount++;
         }
         if (runRequestPageRewroteCount == 0)
             throw new InvalidOperationException("RunRequestPageAsync method not found in NavReport — Ncl shape changed; do not commit");
-        Console.Error.WriteLine($"[Cecil] Rewrote {runRequestPageRewroteCount} RunRequestPageAsync overload(s) → throw OOS");
+        Console.Error.WriteLine(
+            $"[Cecil] Rewrote {runRequestPageRewroteCount} RunRequestPageAsync overload(s) → NavReportSync.AsyncRunRequestPage"
+            + $" ({runRequestPageRefusedCount} unrecognised shape(s) → throw OOS)");
 
 
         RewriteNcl_Forms(asm);
