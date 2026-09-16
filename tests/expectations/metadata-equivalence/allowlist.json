@@ -738,7 +738,7 @@
     {
       "member": "PageDefinition.#methodsField.<presence>",
       "reason": "Page methods. SymbolReference.json carries a Methods array on 107 of the 235 pages measured, so this is a datum the runner has and does not read. Reclassified from a scope boundary to a gap: EmitPageXml emits no <Methods> element at all, and the values are present, typed and unambiguous in the symbol file the runner already parses for this page. Tracked on #3784. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
-      "issue": 3784
+      "issue": 4267
     },
     {
       "member": "PageDefinition.#triggersField.<presence>",
@@ -788,7 +788,7 @@
     {
       "member": "PageDefinition.Methods.<presence>",
       "reason": "Page methods. SymbolReference.json carries a Methods array on 107 of the 235 pages measured, so this is a datum the runner has and does not read. Reclassified from a scope boundary to a gap: EmitPageXml emits no <Methods> element at all, and the values are present, typed and unambiguous in the symbol file the runner already parses for this page. Tracked on #3784. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
-      "issue": 3784
+      "issue": 4267
     },
     {
       "member": "PageDefinition.Microsoft.Dynamics.Nav.Types.Metadata.IMetaPageDefinition.ActionContainers.<presence>",
@@ -804,7 +804,7 @@
     {
       "member": "PageDefinition.Microsoft.Dynamics.Nav.Types.Metadata.IMetaPageDefinition.Methods.<presence>",
       "reason": "Page methods. SymbolReference.json carries a Methods array on 107 of the 235 pages measured, so this is a datum the runner has and does not read. Reclassified from a scope boundary to a gap: EmitPageXml emits no <Methods> element at all, and the values are present, typed and unambiguous in the symbol file the runner already parses for this page. Tracked on #3784. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
-      "issue": 3784
+      "issue": 4267
     },
     {
       "member": "PageDefinition.Microsoft.Dynamics.Nav.Types.Metadata.IMetaPageDefinition.Triggers.<presence>",
