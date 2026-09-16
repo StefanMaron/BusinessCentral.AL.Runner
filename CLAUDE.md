@@ -178,14 +178,22 @@ three `Ncl.dll` byte-identical. Hash the artifact, or load the context, before c
 versions differ.
 
 **The mirror error is the commoner one: citing ONE binary under a version label that implies
-independence.** 27.0, 27.3 and 27.5 are one file (sha256 `affa03c9…`, 10716984 bytes); 28.4 is a
-different one (`6f2cf682…`, 11294560). So "measured on 27.5" and "27.0, 27.3 and 27.5 agree" are
-the same single measurement, the second wearing three labels — and nothing in the first phrasing
-looks like a claim about independence, which is why it passes review. **Cite the binaries you
-measured, not the versions**: a count re-run across the 27.x/28.x boundary is two measurements,
-and one anywhere inside 27.x is one. Measured twice: #3372 (the over-claim above) and #3859,
-where an agent deleted a stale waiver recording exactly this hazard and then made the error the
-waiver had described.
+independence.** The builds `27.0.38460.53934`, `27.3.44313.53909` and `27.5.46862.53931` are one
+file (sha256 `affa03c9…`, 10716984 bytes), so "measured on 27.5" and "27.0, 27.3 and 27.5 agree"
+can be the same single measurement wearing three labels — and nothing in the first phrasing looks
+like a claim about independence, which is why it passes review.
+
+**But the version label does not identify the binary either way, so neither does a `27.x`/`28.x`
+boundary.** A two-part version covers several builds and they are not all the same file: on this
+box `27.5.46862.48827` (`0a6ce45e…`) differs from `27.5.46862.53931` (`affa03c9…`), and three
+`28.4.53241` builds are three distinct binaries. So "one anywhere inside 27.x is one measurement"
+is false in both directions — two 27.5 results can be two binaries, and `28.0` through `28.4` can
+be one. **Cite the build, and the hash**: `27.5.46862.53931 (affa03c9)` is a measurement, `27.5`
+is not. `sha256sum` over the artifact directories is the whole check, and
+`tools/test_bc_binary_identity_claims.py` pins the counts this paragraph states against whatever
+is provisioned. Measured three times: #3372 (the over-claim above), #3859, where an agent deleted
+a stale waiver recording exactly this hazard and then made the error the waiver had described, and
+#4221, where this paragraph's own example was the wrong shape.
 
 
 **2d. A `private` member in another file is usually still reachable — the file is not the class.**
