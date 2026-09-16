@@ -181,8 +181,20 @@ public sealed class DepTableExtPlatformBaseBothShapesTests
     /// unchecked: inverting `!= ''` to `== ''` -- two characters -- and appending `&amp;&amp; false` both
     /// skipped the step with all six tests green, and `&amp;&amp; github.event_name == 'push'` is the
     /// realistic form of the second. A skipped step reports SUCCESS, so that is silent forever.
-    /// Pinning the whole expression is what closes it, and it subsumes the glob refusals rather
-    /// than replacing them: they still give the better message when the glob is what moved.
+    /// Pinning the whole expression closes the STEP-level shapes, and it subsumes the glob
+    /// refusals rather than replacing them: they still give the better message when the glob is
+    /// what moved.
+    ///
+    /// It does NOT close reachability in general, and review measured two shapes that still skip
+    /// this step with every test here green (#4255):
+    ///
+    ///   - `if: github.event_name == 'push'` on the enclosing JOB. The step's own `if:` is then
+    ///     byte-identical, so this pin sees nothing. The symmetry is the point: the same words at
+    ///     step level RED and at job level do not, and the job-level form is the likelier edit.
+    ///   - `continue-on-error: true` on the step. It runs, emits `::error::`, and the leg is green.
+    ///
+    /// The step-level assertions below catch what they can see; the two above are checked
+    /// separately because they are properties of the step's NEIGHBOURS, not of its condition.
     /// </summary>
     [Fact]
     public void OrderedBundleStep_IsReachable_ItsHashFilesGlobMatchesRealFiles()
@@ -269,6 +281,28 @@ public sealed class DepTableExtPlatformBaseBothShapesTests
             + "an edit here disables the whole step with nothing going red (#4255). If the change is "
             + "deliberate, update this expectation in the same commit and say why the step should "
             + "still run on a pull request.");
+
+        // Two shapes the expression pin cannot see, because they are not in the expression
+        // (#4255, found in review). Both leave the step's own `if:` byte-identical.
+        Assert.DoesNotContain("continue-on-error", step, StringComparison.Ordinal);
+
+        // The enclosing job's `if:`. A `github.event_name == 'push'` there skips this step on
+        // every pull request while the step's own condition is untouched -- the same words that
+        // RED at step level, invisible one level up.
+        // Locate the enclosing job by SHAPE (the last top-level `  <name>:` before the step),
+        // not by name: the job is called `test`, and hardcoding that would make a rename read as
+        // "no job-level if:" -- the silent direction.
+        var wf = Workflow();
+        var stepAt = wf.IndexOf(DepDir, StringComparison.Ordinal);
+        var jobs = Regex.Matches(wf, @"(?m)^  (?<name>[A-Za-z0-9_-]+):[ \t]*$")
+            .Where(m => m.Index < stepAt).ToList();
+        Assert.True(jobs.Count > 0,
+            "could not locate the job declaring the ordered-bundle step, so this test cannot tell "
+            + "whether a job-level `if:` skips it (#4255).");
+        var jobStart = jobs[^1].Index;
+        var stepsAt = wf.IndexOf("\n    steps:", jobStart, StringComparison.Ordinal);
+        Assert.True(stepsAt > jobStart, "the enclosing job has no `steps:` -- shape changed (#4255).");
+        Assert.DoesNotContain("\n    if:", wf[jobStart..stepsAt], StringComparison.Ordinal);
     }
 
     /// <summary>
