@@ -87,14 +87,102 @@ public static partial class RecordPatches
     /// wrong ones, and no AL-visible signal distinguished them. Now shares the one walk with
     /// the pageextension lookups below; see RecordPatches.DependencyAppSymbolWalk.cs.
     /// </summary>
-    private static BcAppSymbolCache.PageSymbol? TryGetDependencyPageSymbol(int pageId)
+    /// <param name="surface">
+    /// What the CALLER was reading, passed through to <see cref="EnumerateRegisteredBcAppSymbols"/>
+    /// so a <see cref="BcAppSymbolReadException"/> raised while the index is being built names the
+    /// caller's own surface. Memoizing under one fixed surface would have made every caller's
+    /// refusal say "pages and pageextensions (dependency page metadata)" — see the memo's remarks.
+    /// </param>
+    private static BcAppSymbolCache.PageSymbol? TryGetDependencyPageSymbol(
+        int pageId, string surface = "pages and pageextensions (dependency page metadata)")
+        => DependencyPageSymbolsById(surface).TryGetValue(pageId, out var page) ? page : null;
+
+    // #3774 — page id -> PageSymbol, memoized per registration epoch. The walk above ran ONCE
+    // PER CALL and DependencyObjectSubtype calls it once per enumerated `page` object, so the
+    // cost was O(objects x apps) file stats. Measurements: PR #4223.
+    //
+    // TRAP 1: the key is the EPOCH, never _bcAppPaths.Count — the registered set shrinks as
+    // well as grows, so a count cannot tell a set that lost N entries and gained N different
+    // ones from the one it was built against (#2888's ABA case). InvalidateBcAppIndexes bumps
+    // the epoch unconditionally as its last statement (RecordPatches.BcAppFallback.cs), and
+    // both registration funnels pass through it.
+    //
+    // TRAP 2: the epoch is the ONLY term, deliberately. Do NOT add _parsedPages.Count — the
+    // source-parsed pages are a different source this lookup does not consult (callers check
+    // IsPageParsed first), so that term would invalidate the memo on every bundle page parse
+    // for an index those pages never enter.
+    //
+    // TRAP 3: do not "simplify" this by having BcAppSymbolCache.Get consult ProcessCache by
+    // path to skip the stat. Get keys ProcessCache on the CONTENT HASH and
+    // RunnerFingerprint.ComputeFileContentHashMemoized keys on statx/(path,length,mtime), so
+    // the stat IS the key: keying on the path alone would replay symbols for an .app whose
+    // bytes changed underneath it. This fix stops ASKING rather than weakening the answer.
+    private static Dictionary<int, BcAppSymbolCache.PageSymbol>? _dependencyPageSymbolsById;
+    private static int _dependencyPageSymbolsBuiltFromEpoch = -1;
+    private static readonly object _dependencyPageSymbolsLock = new();
+
+    /// <summary>
+    /// Page id → the precompiled dependency <see cref="BcAppSymbolCache.PageSymbol"/> declaring
+    /// it, over the same walk <see cref="DependencyAppSymbols"/> performs, memoized per
+    /// registration epoch (#3774). Handed out SHARED and read-only: a caller that mutated it
+    /// would corrupt every later lookup.
+    ///
+    /// <para>FIRST WINS for a page id two registered .apps both declare, which is the order the
+    /// per-call walk answered in — <see cref="EnumerateRegisteredBcAppSymbols"/> yields in
+    /// registration order and the old loop returned on its first match, so preserving it keeps
+    /// this a pure memoization rather than a behaviour change. Reachable because AddBcAppPath
+    /// dedupes on the PATH only, so two .app files may each declare page N; pinned by
+    /// DependencyPageSymbolIndexMemoTests.WhenTwoAppsDeclareTheSamePageId_TheFirstRegisteredWins,
+    /// which reverses to Expected 111 / Actual 222 if this order is dropped.</para>
+    /// </summary>
+    private static Dictionary<int, BcAppSymbolCache.PageSymbol> DependencyPageSymbolsById(
+        string surface = "pages and pageextensions (dependency page metadata)")
     {
-        foreach (var symbols in DependencyAppSymbols())
-            foreach (var p in symbols.Pages)
-                if (p.Id == pageId)
-                    return p;
-        return null;
+        var epoch = BcAppRegistrationEpoch;
+        if (_dependencyPageSymbolsById is { } memo && _dependencyPageSymbolsBuiltFromEpoch == epoch)
+            return memo;
+
+        lock (_dependencyPageSymbolsLock)
+        {
+            epoch = BcAppRegistrationEpoch;
+            if (_dependencyPageSymbolsById is { } inner && _dependencyPageSymbolsBuiltFromEpoch == epoch)
+                return inner;
+
+            DependencyPageSymbolIndexBuildCountForTests++;
+            var index = new Dictionary<int, BcAppSymbolCache.PageSymbol>();
+            // The caller's surface, NOT DependencyAppSymbols()'s fixed one: an unreadable .app
+            // must raise BcAppSymbolReadException naming what the CALLER was reading, and this
+            // build now happens underneath whichever walk asked first. Pinned by
+            // DependencySymbolReadFailureTests.SymbolReadFailsAfterRegistration_* — which caught
+            // exactly this regression when the memo first landed (see PR #4223).
+            foreach (var (_, symbols) in EnumerateRegisteredBcAppSymbols(surface))
+                foreach (var p in symbols.Pages)
+                    // FIRST wins — see the summary above. TryAdd, not the indexer.
+                    index.TryAdd(p.Id, p);
+
+            // Reached only when the walk COMPLETED: EnumerateRegisteredBcAppSymbols throws out of
+            // the loop above on an unreadable .app, so a partial index is never published and the
+            // next caller retries rather than inheriting a short answer. That is the refusal
+            // DependencySymbolReadFailureTests asserts is repeatable, not one-shot.
+            //
+            // Index before stamp, both inside the lock, so a torn read cannot pair a NEW stamp
+            // with an OLDER index. Neither field is volatile, so this orders the writes rather
+            // than guaranteeing what an unsynchronized reader observes: the fast path may read a
+            // stale pair and rebuild, which costs a walk and never a wrong answer. Same shape as
+            // the ~10 sibling memos keyed on this epoch (Volatile.Read on the epoch itself).
+            _dependencyPageSymbolsById = index;
+            _dependencyPageSymbolsBuiltFromEpoch = epoch;
+            return index;
+        }
     }
+
+    /// <summary>
+    /// How many times the registered .apps have actually been WALKED for the page-symbol index,
+    /// as opposed to answered from the memo. A COUNT, never a duration — #3774's proving test
+    /// asserts that N lookups at one epoch cost one walk, which is the whole claim, and a
+    /// duration assertion could not distinguish a memo from a fast disk.
+    /// </summary>
+    internal static int DependencyPageSymbolIndexBuildCountForTests { get; private set; }
 
     /// <summary>
     /// The precompiled dependency <c>pageextension</c> with object id

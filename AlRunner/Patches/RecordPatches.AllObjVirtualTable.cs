@@ -274,7 +274,10 @@ public static partial class RecordPatches
     private static string? DependencyObjectSubtype(BcAppSymbolCache.ObjectSymbol o)
         => NormalizeObjectTypeName(o.Kind) switch
         {
-            "page" => TryGetDependencyPageSymbol(o.Id)?.PageType,
+            // The AllObj surface, so a .app that becomes unreadable mid-walk refuses naming
+            // what THIS walk was reading (#3143's contract) even when the page-symbol index
+            // happens to be built here — see TryGetDependencyPageSymbol's `surface` parameter.
+            "page" => TryGetDependencyPageSymbol(o.Id, "objects (AllObj)")?.PageType,
             "query" => TryGetQuerySymbol(o.Id)?.QueryType,
             "table" => DependencyTableTypeName(o.Id),
             // ObjectSymbol.Subtype is populated for Codeunit only; null means the symbol file
