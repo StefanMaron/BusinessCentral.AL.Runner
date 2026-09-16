@@ -26,6 +26,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **test:** strip string literals too, so the enum-registry guard stops naming itself
 - **guard:** a duplicated claim is unmeasurable, not a pass, in the partial-class counts
 - **test:** skip the leave-back-edge assertion on Debug, where that IL shape does not exist
 - **log:** make severity a class and ratchet every single-word component tag
