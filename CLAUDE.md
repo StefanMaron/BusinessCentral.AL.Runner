@@ -239,6 +239,7 @@ identical from the outside:
 | `grep -E` (the shell function) | rejects the flag, exits **0**, prints nothing | no matches |
 | `rg` without `--hidden` | skips dot-directories entirely | no matches |
 | `gh <thing> list --limit N` | returns the first N and says nothing | the thing does not exist |
+| `strings -el` on a .NET assembly | reads UTF-16 only, so **member names never match** | the member is unreferenced |
 
 The third is the one that bites a *check* rather than a search, so it reaches a decision.
 Measured 2026-09-14: this repository had **164** labels, and `gh label list --limit 100 |
@@ -250,6 +251,31 @@ warning. Ask the API, which paginates:
 ```bash
 gh api repos/<owner>/<repo>/labels --paginate --jq '.[].name'
 ```
+
+**The fourth row is the one whose corrective advice causes it.** "C# string literals are UTF-16,
+so `strings | grep` false-negatives on .NET assemblies; use `strings -a -el`" circulates in agent
+briefs here and is half right — and the wrong half is the half people reach for it with. A .NET
+assembly keeps the two in different heaps:
+
+| what | heap | encoding | the flag that finds it |
+|---|---|---|---|
+| **member / type / namespace names** | `#Strings` | **UTF-8** | `strings -a` |
+| **user string literals** (`"out-of-scope: ..."`) | `#US` | UTF-16 | `strings -a -el` |
+
+Measured on `28.1.49838.53910/Microsoft.Dynamics.Nav.Ncl.dll`, for the metadata name
+`RunRequestPageAsync`: `strings -a -el` finds **0**, `strings -a` finds **4**. So an agent told to
+use `-el` and asked whether a *member* is referenced gets a clean zero and reads it as a finding.
+
+**For "is this member referenced", read the `MemberReference` table, not bytes.** It answers a
+question no byte scan can: a `MemberReference` means this assembly **calls** the member, a
+`MethodDefinition` that it **defines** it. On PR #4224 that split was load-bearing — the `.app`
+chunk referencing `NavReport::RunRequestPageAsync` is also the one defining `RunReportRequestPage`,
+and only the table distinguishes them (#4229).
+
+The instrument for that is already set up here: the `mcp__bc-decompiler__*` tools (§ 2c), whose
+`find_callers` resolves through async state machines and whose `search_members` answers the
+definition side. Reach for those, or read the tables with `System.Reflection.Metadata`, rather
+than any `strings` form, whenever the question is about metadata rather than literal bytes.
 
 The same shape applies to every `gh ... list --limit`: a `--limit 100` over 200 open issues is
 a silent half-answer, and `?per_page=1 --jq '.total_count'` is how you ask "how many" rather
