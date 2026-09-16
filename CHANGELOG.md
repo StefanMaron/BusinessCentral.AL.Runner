@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **tools:** detect the unattributed-commit merge block before arming
 - **test-data:** explain a setup singleton whose only row is still blank
 - **paths:** relocation knobs for the symbols cache and ~/.cache/al-runner
 - **tools:** report armed pull requests that are not green
