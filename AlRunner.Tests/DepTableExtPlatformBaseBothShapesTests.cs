@@ -169,6 +169,12 @@ public sealed class DepTableExtPlatformBaseBothShapesTests
     /// this class green, because they all reason about the step's CONTENT and none about whether
     /// it runs. That is the same defect this file exists to fix, one level up -- the other tests
     /// prove the block works; this one proves it is reached.
+    ///
+    /// Note which red you are looking at. This test refuses shapes it cannot evaluate -- an `if:`
+    /// it cannot parse, a glob whose directory component is a pattern, a final segment with no
+    /// extension -- and those reds are about the PARSE, not about reachability. A benign reformat
+    /// of the `if:` (a folded scalar, say) reds here with "calls no hashFiles()", and the fix is to
+    /// teach this test the new shape, not to go looking for a skipped step.
     /// </summary>
     [Fact]
     public void OrderedBundleStep_IsReachable_ItsHashFilesGlobMatchesRealFiles()
@@ -191,9 +197,41 @@ public sealed class DepTableExtPlatformBaseBothShapesTests
             // skip -- and a skipped step reports SUCCESS.
             var star = glob.IndexOf('*');
             Assert.True(star > 0, $"unexpected hashFiles glob with no wildcard: {glob}");
-            var dir = Path.Combine(RepoRoot, glob[..glob.LastIndexOf('/', star)].Replace('/', Path.DirectorySeparatorChar));
-            var ext = glob[(glob.LastIndexOf('.') + 1)..];
 
+            var lastSlash = glob.LastIndexOf('/', star);
+            var dirPart = glob[..lastSlash];
+            var tailPart = glob[(lastSlash + 1)..];
+
+            // REFUSED, not approximated: a wildcard left of the last literal '/' means the
+            // directory itself is a pattern, and checking a literal ANCESTOR then answers a weaker
+            // question than the glob asks. Found in review -- `...-GONE*/**/*.al` left every test
+            // green while hashFiles() matched nothing and the step was skipped, because the check
+            // collapsed to "are there .al files under tests/runner-extras", which there are.
+            // Matching properly needs a glob engine this assembly does not reference, so this
+            // refuses instead: an unmeasurable shape must not report the success state
+            // (guards-need-a-third-state.md).
+            // The tail is everything after the last '/' BEFORE the first '*', so any further '/'
+            // in it means a directory level is itself a pattern -- `.../base-GONE*/**/*.al` has
+            // tail `base-GONE*/**/*.al`. Checking the literal ancestor then answers a weaker
+            // question than the glob asks, which is how that shape stayed green.
+            var wildcardDirs = tailPart.Split('/');
+            Assert.True(
+                wildcardDirs.Length <= 2 && !wildcardDirs[0].Contains('*', StringComparison.Ordinal)
+                    || wildcardDirs.SkipLast(1).All(seg => seg == "**"),
+                $"the step's `if:` tests hashFiles('{glob}'), where a DIRECTORY level is itself a "
+                + $"pattern ('{string.Join("/", wildcardDirs.SkipLast(1))}'). This test can only "
+                + "check a literal directory plus '**', so it cannot tell whether that glob matches "
+                + "anything -- and a glob matching nothing skips the step, which reports success. "
+                + "Use a literal directory here, or teach this test a real glob matcher (#4249).");
+
+            var dot = tailPart.LastIndexOf('.');
+            Assert.True(dot >= 0,
+                $"the step's `if:` tests hashFiles('{glob}'), whose final segment has no extension. "
+                + "This test matches on extension, so it cannot evaluate that glob -- same refusal "
+                + "as above rather than a guess (#4249).");
+            var ext = tailPart[(dot + 1)..];
+
+            var dir = Path.Combine(RepoRoot, dirPart.Replace('/', Path.DirectorySeparatorChar));
             Assert.True(Directory.Exists(dir),
                 $"the step's `if:` tests hashFiles('{glob}'), but '{dir}' does not exist, so it "
                 + "evaluates to '' and the step is SKIPPED -- which reports success (#4249).");
