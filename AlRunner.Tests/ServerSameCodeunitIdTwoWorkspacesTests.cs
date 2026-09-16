@@ -165,6 +165,16 @@ public sealed class ServerSameCodeunitIdTwoWorkspacesTests
         }
     }
 
+    /// <summary>
+    /// The ordering CONTROL, not a second arm of evidence. Against the unfixed runner this
+    /// passes (measured: Failed: 0, Passed: 1) while XThenB fails — when B loads first its
+    /// dependency module is already the only registered Codeunit64190, so the AppDomain scan
+    /// has nothing foreign to prefer and the defect cannot appear in this order.
+    ///
+    /// It earns its place by pinning that asymmetry: if this one ever starts failing too, the
+    /// defect has moved rather than widened. But only XThenB discriminates the fix, and a body
+    /// claiming "both orderings" as evidence would be counting a passenger (found in review).
+    /// </summary>
     [SkippableFact]
     public async Task BThenX_BothCallTheirOwnCodeunit_ColdThenWarm()
     {
