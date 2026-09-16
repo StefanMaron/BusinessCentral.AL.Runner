@@ -325,6 +325,9 @@ public static partial class EventSubscriberPatches
         SeedCodeunitEventScopeSentinels();
         SeedTableEventScopeSentinels();
         SeedObjectEventScopeSentinels();
+        // The Event Subscription virtual table's inventory (#4198). Same handles, different
+        // registry — see EventSubscriberPatches.SubscriptionMetadata.cs.
+        SeedSubscriptionMetadata();
     }
 
     private static readonly HashSet<Type> _seededScopeTypes = new();
@@ -498,6 +501,12 @@ public static partial class EventSubscriberPatches
             _byTableEventKey.Clear();
             _byObjectEventKey.Clear();
             _validateSubs.Clear();
+            // The subscription-metadata inventory is keyed on MethodInfo, so a reload of the
+            // same-identity bundle would otherwise skip every re-scanned subscriber as "already
+            // seeded" while BC's registry still held the PREVIOUS assembly's objects. The
+            // registry itself is cleared alongside, so the two cannot drift apart.
+            _subscriptionMetadataSeeded.Clear();
+            _subscriptionMetadataList?.Clear();
             _codeunitTypeCache.Clear();
             _tableTypeCache.Clear();
             _objectEventTypeCache.Clear();
