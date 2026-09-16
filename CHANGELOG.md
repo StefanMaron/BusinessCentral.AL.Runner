@@ -25,6 +25,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **reports:** NavReport.RunRequestPageAsync is rewritten to throw unconditionally, contradicting docs/scope.md 3.5.1
 - **virtual-tables:** Event Subscription (2000000140) registry gap
 - **test-data:** normalize the four blank No. Series setup fields Microsoft's DemoTool company sets
 - **report:** apply the transaction-world guard to RunRequestPage, Execute and Print
