@@ -25,6 +25,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **test-data:** normalize the four blank No. Series setup fields Microsoft's DemoTool company sets
 - **report:** apply the transaction-world guard to RunRequestPage, Execute and Print
 - **events:** preserve dynamic IsEventSubscribed results
 - **query:** merge query filters by field instead of appending a duplicate key
