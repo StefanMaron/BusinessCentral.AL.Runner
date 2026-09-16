@@ -1965,8 +1965,10 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   - BC's platform fields `SystemId`, `SystemCreatedAt`, `SystemCreatedBy`, `SystemModifiedAt`
     and `SystemModifiedBy` carry the backup's values
     ([#2260](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2260)), so
-    `GetBySystemId` finds a hydrated row. The `timestamp` (SQL rowversion) column is not
-    hydrated, and the summary line says so —
+    `GetBySystemId` finds a hydrated row. The `timestamp` (SQL rowversion) column carries the
+    backup's value too, decoded big-endian the way BC's own `NavSqlCommand` reader decodes it,
+    and the restored maximum seeds the runner's stamp counter so a row written after the restore
+    still outranks every restored row —
     [#4123](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4123).
   - A table whose AL name is declared by two installed apps in the same company is refused
     rather than guessed at —

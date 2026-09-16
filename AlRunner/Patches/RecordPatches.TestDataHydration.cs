@@ -119,9 +119,10 @@
 //   Values go through the Guid and DateTime cases below, like any other column. Trap: do NOT
 //   derive `$systemId` from SqlColumnName — FieldIsAuditField excludes 2000000000, and the
 //   runner's metatable answers `SystemId` for it (measured on all 77 tables the fixture loads).
-//   `timestamp` (the SQL rowversion, field 0) is NOT hydrated, and the summary says so: how the
-//   in-memory store maintains field 0 across a restored value and later inserts is unmeasured
-//   (#4123).
+//   `timestamp` (the SQL rowversion, field 0) IS hydrated (#4123). It needs its own branch for
+//   two reasons, neither optional: the reader emits it as HEX, which the NavBigInteger branch
+//   refuses outright; and the restored value has to seed RowVersionPatches' stamp counter, or
+//   the next row a test writes takes rowversion 1 and sorts before every restored row.
 using AlRunner.Infrastructure;
 using System.Reflection;
 using System.Text.Json;
@@ -152,8 +153,58 @@ public static partial class RecordPatches
             ["$systemModifiedBy"] = (2000000004, "SystemModifiedBy"),
         };
 
-    /// <summary>The SQL rowversion column. Not hydrated — see the file header.</summary>
+    /// <summary>The SQL rowversion column, as the reader emits it.</summary>
     internal const string TestDataTimestampColumnName = "timestamp";
+
+    /// <summary>The AL field-0 name the rowversion column is re-keyed onto (#4123).</summary>
+    internal const string TestDataRowVersionFieldName = "timestamp";
+
+    /// <summary>Whether this field is the SQL rowversion the reader emits as hex (#4123). The
+    /// row builder calls exactly this, so a test driving it drives the real decision rather than
+    /// a restatement of it.</summary>
+    internal static bool IsTestDataRowVersionField(int fieldNo, string fieldName)
+        => fieldNo == 0 && fieldName == TestDataRowVersionFieldName;
+
+    /// <summary>
+    /// Decode the reader's hex rowversion (`"0x000000000003FE14"`) to field 0's value.
+    ///
+    /// CLAIM: this is what an in-scope AL caller observes. BC's own reader does the same —
+    /// NavSqlCommand.CreateNavValueFromReader takes the SqlDataType.Timestamp branch, reads the
+    /// 8 bytes and calls NavBigInteger.Create(TimestampToInt64(bytes), bytes), so AL sees the
+    /// BIG-ENDIAN long. CITATION: decompiled BC 28.4 Microsoft.Dynamics.Nav.Ncl.dll, recorded on
+    /// #4123 with the worked example below.
+    ///
+    /// TRAP: a little-endian read is not self-revealing. BitConverter.ToInt64 on x86 turns this
+    /// same value into 1,512,649,823,377,948,672 — wrong by ~5.8 trillion, and still strictly
+    /// increasing WITHIN one restore, so every ordering assertion inside a single hydration
+    /// still passes. It only shows against a value from somewhere else.
+    /// </summary>
+    internal static long DecodeTestDataRowVersion(string hex)
+    {
+        if (string.IsNullOrEmpty(hex))
+            throw new ArgumentException("rowversion hex must not be empty", nameof(hex));
+        var span = hex.AsSpan();
+        if (span.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) span = span[2..];
+        if (span.Length == 0 || span.Length > 16)
+            throw new FormatException(
+                $"[RecordPatches] rowversion '{hex}' is not 1-16 hex digits — the reader's shape "
+                + "changed, and guessing a decode here would silently reorder every restored row");
+
+        long value = 0;
+        foreach (var c in span)
+        {
+            int d = c switch
+            {
+                >= '0' and <= '9' => c - '0',
+                >= 'a' and <= 'f' => c - 'a' + 10,
+                >= 'A' and <= 'F' => c - 'A' + 10,
+                _ => throw new FormatException(
+                    $"[RecordPatches] rowversion '{hex}' contains a non-hex character '{c}'"),
+            };
+            value = (value << 4) | (uint)d;   // most-significant digit first == big-endian
+        }
+        return value;
+    }
 
     /// <summary>The outcome of one table's hydration: how many rows landed, how many merged
     /// columns belonged to an app this run does not have installed, and how many named a
@@ -389,8 +440,13 @@ public static partial class RecordPatches
 
         // Build EVERY row first. A refusal in row 900 must not leave rows 1-899 in the store.
         var built = new NavValue[rows.Count][];
+        var maxRestoredRowVersion = 0L;
         for (var ri = 0; ri < rows.Count; ri++)
-            built[ri] = BuildTestDataRow(meta, tableId, tableNameForDiagnostics, rows[ri], fieldByName);
+        {
+            built[ri] = BuildTestDataRow(meta, tableId, tableNameForDiagnostics, rows[ri], fieldByName,
+                out var rowMax);
+            if (rowMax > maxRestoredRowVersion) maxRestoredRowVersion = rowMax;
+        }
 
         var perTable = _dataAccessByTable.GetValue(source,
             static _ => new System.Collections.Concurrent.ConcurrentDictionary<int, object>());
@@ -412,12 +468,21 @@ public static partial class RecordPatches
             ?? throw new InvalidOperationException(
                 "MutableRecordBuffer(ReadOnlyRecordBuffer) not found — BC metadata shape changed");
 
-        foreach (var values in built)
+        // #4123: suppress the rowversion stamp across the replay, then raise the counter ONCE
+        // above this table's highest restored value. Stamping per row would overwrite the
+        // backup's value and — interleaved with per-row seeding — reorder the restored rows
+        // relative to each other. Seeding after the loop keeps one monotonic sequence, so a row
+        // AL writes later still outranks every restored row.
+        using (RowVersionPatches.SuppressRowVersionStamp())
         {
-            var readOnly = new ReadOnlyRecordBuffer(meta, values);
-            var mutable = _ibMutableBufferCtor.Invoke(new object[] { readOnly });
-            insert.Invoke(provider, new object?[] { 0, mutable, insertOptions, null });
+            foreach (var values in built)
+            {
+                var readOnly = new ReadOnlyRecordBuffer(meta, values);
+                var mutable = _ibMutableBufferCtor.Invoke(new object[] { readOnly });
+                insert.Invoke(provider, new object?[] { 0, mutable, insertOptions, null });
+            }
         }
+        RowVersionPatches.SeedFromRestoredRowVersion(maxRestoredRowVersion);
         // Handed back only AFTER every row is in the store, so a caller can never see rows
         // for a table that ended up refused.
         metaTable = meta;
@@ -429,7 +494,14 @@ public static partial class RecordPatches
     private static NavValue[] BuildTestDataRow(
         NCLMetaTable meta, int tableId, string tableName,
         IReadOnlyDictionary<string, JsonElement> row, IReadOnlyDictionary<string, NCLMetaField> fieldByName)
+        => BuildTestDataRow(meta, tableId, tableName, row, fieldByName, out _);
+
+    private static NavValue[] BuildTestDataRow(
+        NCLMetaTable meta, int tableId, string tableName,
+        IReadOnlyDictionary<string, JsonElement> row, IReadOnlyDictionary<string, NCLMetaField> fieldByName,
+        out long maxRowVersion)
     {
+        maxRowVersion = 0;
         var values = new NavValue[meta.FieldCount];
         for (var fi = 0; fi < meta.FieldCount; fi++)
         {
@@ -442,6 +514,22 @@ public static partial class RecordPatches
                 // for the field's type — the same value Record.Init() produces — not a guess
                 // at what the source "probably" held.
                 values[fi] = NavValue.CreateNavValueFromObject(metadata, null);
+                continue;
+            }
+            if (IsTestDataRowVersionField(field.FieldNo, field.FieldName))
+            {
+                // #4123. The reader emits this as HEX ("0x000000000003FE14"), which the
+                // NavBigInteger branch below would refuse outright (long.TryParse with
+                // NumberStyles.Integer), so the column needs its own decode rather than
+                // merely not being dropped. Seeding the stamp counter is not optional: without
+                // it the next row a test writes takes rowversion 1 and sorts BEFORE every
+                // restored row, which is a NEW wrong answer in place of an absent one.
+                var decoded = DecodeTestDataRowVersion(json.GetString()
+                    ?? throw new TestDataHydrationRefusal(
+                        $"table {tableId} '{tableName}': the rowversion column is "
+                        + $"{json.ValueKind}, not the reader's hex string"));
+                if (decoded > maxRowVersion) maxRowVersion = decoded;
+                values[fi] = NavValue.CreateNavValueFromObject(metadata, decoded);
                 continue;
             }
             values[fi] = ConvertTestDataValue(
