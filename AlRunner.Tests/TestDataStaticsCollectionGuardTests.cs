@@ -242,15 +242,28 @@ public sealed class TestDataStaticsCollectionGuardTests
         // four statics is still seen by at least one class, which does discriminate: a stale
         // regex branch zeroes exactly the static it spells, while deleting a mutator only
         // decrements one static that other classes still cover.
-        foreach (var (statik, seen) in MutatorsByStatic())
+        // The branch SET is pinned first, because the loop below cannot miss what it does not
+        // iterate: deleting a branch outright made the static invisible rather than reported
+        // empty, and every test stayed green (found in review). Making a branch stale is caught;
+        // removing it was not.
+        var census = MutatorsByStatic().ToList();
+        Assert.Equal(
+            new[] { "TestDataNormalization", "TestDataOptions", "TestDataProvisioner", "BackupReaderTool" },
+            census.Select(c => c.Static).ToArray());
+
+        foreach (var (statik, seen) in census)
         {
+            // The census, not a claim about the other three: under a broken StripCommentsAndLiterals
+            // ALL four read as 0, and saying "the other three are still seen" would then be false
+            // in exactly the case hardest to diagnose (found in review). Printing the counts lets
+            // the reader tell a one-static failure (2; 3; 0; 3) from a blind probe (0; 0; 0; 0).
             Assert.True(seen.Count > 0,
-                $"no class under '{TestsDir}' is seen mutating {statik}, so this guard is no "
-                + $"longer covering that static. The other three are still seen, which is what "
-                + "distinguishes this from a mutator being removed -- a removal decrements one "
-                + $"static's list, it does not empty it. Check the `{statik}` branch of the "
-                + "Mutation regex against the members that exist today before touching anything "
-                + "else (#4257).");
+                $"no class under '{TestsDir}' is seen mutating {statik}, so this guard is no longer "
+                + $"covering that static. Census: "
+                + string.Join("; ", census.Select(c => $"{c.Static}={c.Seen.Count}"))
+                + ". One zero means that static's branch of MutationBranches no longer matches the "
+                + "members that exist today; all zeros mean the probe itself stopped seeing the "
+                + "sources. Check which before changing anything (#4257).");
         }
 
         // And it must still see a class it is NOT about to report, or the population above
