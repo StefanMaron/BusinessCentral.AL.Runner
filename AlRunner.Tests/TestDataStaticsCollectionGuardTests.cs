@@ -12,6 +12,7 @@
 // mutate nothing — measured here: `Probe.Reset()` inside embedded AL named four innocent
 // classes, and the same hole makes EnumMetadataRegistryCollectionGuardTests (#4199) list
 // itself, exempted only by the literal "[Collection(" inside its own failure message.
+using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using Xunit;
@@ -100,7 +101,7 @@ public sealed class TestDataStaticsCollectionGuardTests
         return sb.ToString();
     }
 
-    private sealed record Mutator(string ClassName, string File, bool HasCollection);
+    private sealed record Mutator(string ClassName, string File, string? CollectionName);
 
     /// <summary>Every top-level class whose own body mutates one of the statics, with whether
     /// its attribute block declares a [Collection]. Class-scoped rather than file-scoped
@@ -134,8 +135,39 @@ public sealed class TestDataStaticsCollectionGuardTests
                     attrs.Add(before[k]);
                 }
 
+                // The NAME, not a yes/no: whether that collection actually serialises is a
+                // property of its [CollectionDefinition], resolved below (#4249 review).
+                var attrText = string.Join('\n', attrs);
+                var coll = Regex.Match(attrText, @"\[Collection\(\s*(?:nameof\()?([A-Za-z0-9_.]+?)(?:\.Name)?\)?\s*\)");
                 found.Add(new Mutator(decls[i].Groups[1].Value, Path.GetFileName(path),
-                    string.Join('\n', attrs).Contains("[Collection(", StringComparison.Ordinal)));
+                    coll.Success ? coll.Groups[1].Value : null));
+            }
+        }
+        return found;
+    }
+
+    /// <summary>
+    /// Every collection in this assembly whose <c>[CollectionDefinition]</c> sets
+    /// <c>DisableParallelization = true</c>, by the DECLARING TYPE's name -- which is how a
+    /// <c>[Collection(X.Name)]</c> attribute spells it in source.
+    ///
+    /// Reflection rather than text: the flag lives on the definition, not at the use site, so no
+    /// amount of reading the attribute where it is applied can answer this (#4249 review).
+    /// </summary>
+    private static ISet<string> NonParallelCollectionTypeNames()
+    {
+        var found = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var type in typeof(TestDataStaticsCollectionGuardTests).Assembly.GetTypes())
+        {
+            foreach (var data in CustomAttributeData.GetCustomAttributes(type))
+            {
+                if (data.AttributeType != typeof(CollectionDefinitionAttribute)) continue;
+                if (data.NamedArguments.Any(
+                        a => a.MemberName == nameof(CollectionDefinitionAttribute.DisableParallelization)
+                             && a.TypedValue.Value is true))
+                {
+                    found.Add(type.Name);
+                }
             }
         }
         return found;
@@ -156,22 +188,32 @@ public sealed class TestDataStaticsCollectionGuardTests
 
         // And it must still see a class it is NOT about to report, or the population above
         // could be five copies of the same unserialised shape.
-        Assert.Contains(mutators, m => m.HasCollection);
+        Assert.Contains(mutators, m => m.CollectionName != null);
     }
 
     [Fact]
     public void EveryClassThatMutatesTheTestDataStatics_JoinsASerialCollection()
     {
-        var offenders = Mutators().Where(m => !m.HasCollection).ToList();
+        // Resolve each collection to whether it REALLY disables parallelization, rather than
+        // accepting any [Collection( ... ]. A substring test made this guard green on a class
+        // joined to a parallel collection -- which still races, and which the message below
+        // already promised was not good enough (found in review, #4249's reviewer on this PR).
+        // Same shape as ConsoleSwapIsolationGuardTests.NonParallelCollections().
+        var serial = NonParallelCollectionTypeNames();
+        var offenders = Mutators()
+            .Where(m => m.CollectionName == null || !serial.Contains(m.CollectionName))
+            .ToList();
 
         Assert.True(offenders.Count == 0,
             "these test classes mutate the process-wide --test-data statics (TestDataOptions, "
-            + "TestDataNormalization, TestDataProvisioner, BackupReaderTool) but declare no "
-            + "[Collection], so xunit runs them in parallel with the other mutators and each "
-            + "sees the others' writes (#4220): "
-            + string.Join(", ", offenders.Select(m => $"{m.ClassName} ({m.File})"))
+            + "TestDataNormalization, TestDataProvisioner, BackupReaderTool) but are not in a "
+            + "collection that disables parallelization, so xunit runs them alongside the other "
+            + "mutators and each sees the others' writes (#4220): "
+            + string.Join(", ", offenders.Select(
+                m => $"{m.ClassName} ({m.File}){(m.CollectionName is null ? " -- no [Collection]" : $" -- [Collection({m.CollectionName})] does NOT set DisableParallelization")}"))
             + $". Add [Collection({nameof(TestDataStaticsSerialCollection)}.Name)]. Joining a "
-            + "different DisableParallelization collection is equally correct.");
+            + "different DisableParallelization collection is equally correct -- but it must "
+            + "actually set that flag.");
     }
 
     [Fact]
