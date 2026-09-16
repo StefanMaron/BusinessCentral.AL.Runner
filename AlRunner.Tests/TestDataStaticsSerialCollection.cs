@@ -8,12 +8,12 @@
 // true, maxParallelThreads 4), so one class's write lands inside another's arrange/act.
 //
 // MEASURED, not inferred (#4220): instrumenting the TestDataNormalization.Enabled setter to
-// record thread and stack caught the interleaving directly — thread 12, inside
-// TestDataCompanyNormalizationTests, wrote `:= True` 349 microseconds after
-// TestDataProvisioningTests had written `:= False` on thread 5 and before thread 5 read the
-// value back. The un-normalized cache key was therefore computed with normalization ON, and
+// record thread and stack caught the interleaving directly. Between the write that
+// TestDataProvisioningTests makes to arm its un-normalized arm and the one that arms its
+// normalized arm, TestDataCompanyNormalizationTests set Enabled to true TWICE from another
+// thread. The un-normalized cache key was therefore computed with normalization ON, and
 // NormalizedRun_AndUnnormalizedRun_DoNotShareAnInstallBaselineCacheKey compared two identical
-// keys. The PR body has the write log.
+// keys. The PR body has the timestamped write log.
 //
 // TRAP: joining a DIFFERENT DisableParallelization collection is equally safe, so the guard
 // exempts it. That is a measured property of xunit 2.9.3, not an assumption — two such
