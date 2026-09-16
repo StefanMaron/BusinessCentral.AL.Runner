@@ -1338,6 +1338,25 @@ public static partial class BcRuntime
             }
             catch { }
         }
+        // #4137: the loading bundle's own modules next — the report may live in a sibling
+        // source DEPENDENCY, which is not CurrentTestAssembly, and a foreign workspace's
+        // same-id type is not a stale generation so the scan below would let it answer.
+        // Same tier #4100 added to RunnerPageInstance.FindPageType, whose fix this copies.
+        //
+        // PROVEN, unlike the query copy: ServerSameReportIdTwoWorkspacesTests drives this from
+        // AL. Without this tier its XThenB arm fails `expected dep-R, actual x-R` — workspace
+        // X's report running for workspace B's request, writing X's marker row.
+        foreach (var own in CurrentBundleAssemblies())
+        {
+            if (own == _currentTestAssembly) continue;
+            try
+            {
+                var t = AlRunner.Infrastructure.AssemblyTypeIndex.For(own)
+                    .FindFirst(name, x => (reportBase == null || reportBase.IsAssignableFrom(x)));
+                if (t != null) return t;
+            }
+            catch { }
+        }
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
             if (asm == _currentTestAssembly) continue;
