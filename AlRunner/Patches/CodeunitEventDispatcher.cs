@@ -502,6 +502,42 @@ public static partial class BcRuntime
         // dependent bundle's dep assembly). MethodInfo.Invoke would then throw
         // TargetException 'Object does not match target type' — re-resolve the handler
         // against the instance's ACTUAL runtime type (same AL body, canonical copy).
+        // UNCOVERED, measured rather than assumed (#4243). `xasm-event-dispatch` was written for
+        // this case and no longer reaches it: a probe inside this branch fired ZERO times across
+        // both bundle shapes while both of that suite's tests passed -- including
+        // FirePing_CrossAssemblyDuplicateSubscriber_RunsExactlyOnce, whose name claims it.
+        //
+        // The probe wrote to a FILE, and that detail is load-bearing -- but the reason is NOT
+        // that stderr is unavailable here. Log.Install (AlRunner/Log.cs) wraps both streams in a
+        // FilteredWriter that DROPS any line whose first character starts a bracket tag, unless
+        // --verbose: the ComponentTag regex exempts only the tags named in Log.cs's SeverityTags
+        // and UserFacingComponentTags constants. So a `[PROBE] ...` line vanishes
+        // while the branch IS entered, and an UNTAGGED stderr line prints normally. Measured at
+        // this call site, one run: `[TAG]`-prefixed 0 hits, untagged 634, file 634 -- the untagged
+        // row is what proves the stream was never nulled. (The TextWriter.Null calls in Program.cs
+        // are gated on `watchUi`, which is false for an ordinary run, so they are not the cause.)
+        // A swallowed zero and a measured zero are indistinguishable from the output, so anyone
+        // re-checking this must say which they got -- and must not tag the probe line.
+        //
+        // The branch itself runs constantly -- forcing the condition true showed Base App's
+        // Codeunit49.GetGlobalTableTriggerMask arriving here on every request -- but always with
+        // BOTH sides the same assembly (identical hashes), so the condition is never true and the
+        // body below is dead in practice. ResolveOnInstanceType is a safe no-op when the types
+        // already match: forcing the condition alone left both tests green.
+        //
+        // So do NOT read the suite's green as covering this. Restoring coverage needs a fixture
+        // that genuinely loads TWO copies of one AL codeunit -- making IsInstanceOfType false --
+        // which is more than loading the dep separately, since the current suite already does
+        // that.
+        //
+        // Scope of the measurement, stated because "uncovered" invites over-reading: it covers
+        // tests/runner-extras as CI runs it (474 tests, 634 dispatches, 0 entries), NOT
+        // runner-extras-isolation-disabled or runner-extras-tableext-eviction, which were not
+        // measured. And it is a claim about this BRANCH, not about the `throw` inside it: the
+        // throw needs a SECOND condition -- ResolveOnInstanceType returning null -- which the
+        // no-op result above shows is not met even when the branch is forced. So the throw is
+        // further from reachable than the branch is, and neither is proven unreachable in
+        // principle (review of #4263).
         if (!subscriberClrType.IsInstanceOfType(subscriberInstance))
         {
             var remapped = ResolveOnInstanceType(subscriberInstance.GetType(), subscriberMethod);
