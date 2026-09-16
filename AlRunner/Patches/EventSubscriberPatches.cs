@@ -507,6 +507,10 @@ public static partial class EventSubscriberPatches
             // registry itself is cleared alongside, so the two cannot drift apart.
             _subscriptionMetadataSeeded.Clear();
             _subscriptionMetadataList?.Clear();
+            // The row -> subscriber-method map #4222 added alongside them. Cleared here too, or
+            // it would keep every dropped row object alive and let a stale entry answer for a
+            // row index that now belongs to a freshly-seeded subscription.
+            _subscriptionMethodByRow.Clear();
             _codeunitTypeCache.Clear();
             _tableTypeCache.Clear();
             _objectEventTypeCache.Clear();

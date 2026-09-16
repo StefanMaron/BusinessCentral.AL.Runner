@@ -466,6 +466,11 @@ public static partial class BcRuntime
     {
         lock (_currentBundleAssemblies)
             if (!_currentBundleAssemblies.Contains(asm)) _currentBundleAssemblies.Add(asm);
+        // The single choke point every registration route reaches, which is why the #4222
+        // bundle stamp is written here rather than at each caller — see BcRuntime.BundleEpoch.cs.
+        // Outside the list's `if`: a reused dependency is re-noted deliberately, and must be
+        // re-stamped with the bundle now loading even though the list already holds it.
+        StampBundleEpoch(asm);
     }
 
     /// <summary>
@@ -677,6 +682,7 @@ public static partial class BcRuntime
     {
         _currentTestAssembly = null;
         lock (_currentBundleAssemblies) _currentBundleAssemblies.Clear();
+        ResetBundleEpochStamps();
         // AL-output type caches that live on this partial class (CodeunitPatches,
         // XmlPortPatches). Their finders already prefer CurrentTestAssembly; the
         // caches just need dropping so the rebuild re-resolves against the new asm.

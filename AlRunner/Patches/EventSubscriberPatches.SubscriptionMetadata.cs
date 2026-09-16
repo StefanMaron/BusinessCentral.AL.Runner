@@ -94,10 +94,11 @@ public static partial class EventSubscriberPatches
     /// <para><b>A one-shot multi-bundle run accumulates across bundles</b>, because it reaches
     /// neither reset: Program.cs gates <c>BcRuntime.ResetForNewBundleReload</c> on watch mode.
     /// Each bundle still counts its OWN subscriptions exactly once — the MethodInfo key sees to
-    /// that — but the inventory also lists the previous bundle's. Measured, with a control arm
-    /// confirming AllObj does not behave this way; tracked as #4222 and recorded in
-    /// docs/limitations.md#event-subscription-virtual-table. Single-bundle runs, which is every
-    /// CI leg, are correct.</para>
+    /// that — but the inventory also listed the previous bundle's. <b>Fixed in #4222</b> by
+    /// scoping both the append and the retained rows to
+    /// <see cref="BcRuntime.IsCurrentBundleAssembly"/>; see
+    /// <see cref="DropRowsFromPreviousBundles"/> for why an append-side filter alone is not
+    /// enough.</para>
     /// </summary>
     internal static void SeedSubscriptionMetadata()
     {
@@ -108,20 +109,19 @@ public static partial class EventSubscriberPatches
             var list = EnsureSubscriptionMetadataRegistry();
             if (list == null) return;
 
-            // NOT scoped to the current bundle, deliberately -- see the limitation recorded in
-            // docs/limitations.md#event-subscription-virtual-table and issue #4222. The scan
-            // registries this reads are process-wide and are cleared only by ResetForReload,
-            // which Program.cs reaches in watch/server mode but NOT between the bundles of a
-            // one-shot multi-bundle invocation. Three candidate scopes were measured and all
-            // three still contained the previous bundle: RegisteredModules(),
-            // GetModuleAppInfoFor(...).AppId, and CurrentBundleAssemblies(). Scoping this table
-            // therefore needs a per-bundle marker the runner does not currently keep, which is
-            // a process-model change rather than a change to this file.
-            //
-            // A single-bundle run -- every CI invocation and every ordinary local one -- is
-            // correct: measured, both probe bundles pass every arm when run alone.
+            DropRowsFromPreviousBundles(list);
+
             foreach (var handle in EnumerateSubscriberHandles())
             {
+                // #4222: the scan registries this walks are process-wide and are cleared only by
+                // ResetForReload, which a one-shot multi-bundle run reaches neither in
+                // Program.cs's watch-gated call nor in --server's per-REQUEST one. So the walk
+                // still yields the previous bundle's handles and the scope is applied here.
+                // BcRuntime.IsCurrentBundleAssembly fails open for an assembly it never stamped,
+                // which is what keeps Microsoft's own Base/System Application subscribers in the
+                // inventory — see its doc comment.
+                if (!BcRuntime.IsCurrentBundleAssembly(handle.Method.DeclaringType!.Assembly))
+                    continue;
                 if (!_subscriptionMetadataSeeded.Add(handle.Method)) continue;
                 object? subscription;
                 try { subscription = BuildSubscription(handle); }
@@ -138,6 +138,7 @@ public static partial class EventSubscriberPatches
                 }
                 if (subscription == null) { _subscriptionMetadataSeeded.Remove(handle.Method); continue; }
                 list.Add(subscription);
+                _subscriptionMethodByRow[subscription] = handle.Method;
             }
 
             if (list.Count > 0)
@@ -145,6 +146,71 @@ public static partial class EventSubscriberPatches
                     $"[Subscribers] EventSubscriptionMetadata seeded: rows={list.Count}");
         }
     }
+
+    /// <summary>
+    /// Remove every row this file seeded for a bundle that is no longer the one running, and
+    /// forget its <see cref="MethodInfo"/> so a later iteration can re-seed it.
+    ///
+    /// <para><b>Why an append-side filter alone does not fix #4222.</b> Bundle A's rows are
+    /// appended while A is current and are perfectly legitimate then; the inventory only
+    /// becomes wrong once B starts. Nothing re-examines a row after it is appended, so skipping
+    /// A's handles during B's seeding leaves A's rows exactly where they were — the reproducer
+    /// stays red. The scope has to be applied to the rows already in BC's registry, not only to
+    /// the handles being added.</para>
+    ///
+    /// <para>Rows the runner did not seed are left alone: the loop walks
+    /// <see cref="_subscriptionMetadataSeeded"/>, this file's own record of what it appended,
+    /// and BC's list is only ever touched at the indices those rows occupy. A future change
+    /// that populates the registry some other way therefore cannot have its rows dropped
+    /// here.</para>
+    /// </summary>
+    private static void DropRowsFromPreviousBundles(IList list)
+    {
+        if (_subscriptionMetadataSeeded.Count == 0) return;
+
+        var stale = new List<MethodInfo>();
+        foreach (var m in _subscriptionMetadataSeeded)
+        {
+            var asm = m.DeclaringType?.Assembly;
+            if (asm != null && !BcRuntime.IsCurrentBundleAssembly(asm)) stale.Add(m);
+        }
+        if (stale.Count == 0) return;
+
+        var staleSet = new HashSet<MethodInfo>(stale);
+        // Backwards, so each removal cannot shift an index still to be examined.
+        for (var i = list.Count - 1; i >= 0; i--)
+        {
+            var row = list[i];
+            var declaring = TryReadSubscriptionMethod(row);
+            if (declaring == null || !staleSet.Contains(declaring)) continue;
+            list.RemoveAt(i);
+            _subscriptionMethodByRow.Remove(row!);
+        }
+        foreach (var m in stale) _subscriptionMetadataSeeded.Remove(m);
+
+        Console.Error.WriteLine(
+            $"[Subscribers] EventSubscriptionMetadata: dropped {stale.Count} row(s) from a "
+            + $"previous bundle (#4222); rows={list.Count}");
+    }
+
+    /// <summary>
+    /// The AL subscriber method a seeded <c>NavEventSubscription</c> row was built from, or
+    /// null when the row did not come from this file.
+    ///
+    /// <para>The runner keeps its own map rather than reading the row back through BC's shape:
+    /// <c>NavEventSubscription</c> records the subscriber as an object id plus a method NAME,
+    /// which cannot be resolved back to a <see cref="MethodInfo"/> unambiguously, and a
+    /// mis-resolution here would delete a live bundle's row.</para>
+    /// </summary>
+    private static MethodInfo? TryReadSubscriptionMethod(object? row)
+        => row != null && _subscriptionMethodByRow.TryGetValue(row, out var m) ? m : null;
+
+    /// <summary>Row object -> the subscriber method it was built from, for
+    /// <see cref="DropRowsFromPreviousBundles"/>. Reference-keyed: BC's
+    /// <c>NavEventSubscription</c> does not override equality, and two subscriptions of one
+    /// codeunit would otherwise be indistinguishable.</summary>
+    private static readonly Dictionary<object, MethodInfo> _subscriptionMethodByRow =
+        new(ReferenceEqualityComparer.Instance);
 
     /// <summary>
     /// The live <c>eventSubscriptions</c> list inside <c>NavGlobal.EventSubscriptionMetadata</c>,
