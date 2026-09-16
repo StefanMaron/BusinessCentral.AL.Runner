@@ -12,12 +12,9 @@
 // yielded — so the subtype lookup is paid even on a pass that inserts nothing).
 //
 // That is O(objects x apps) file stats where the answer is a dictionary. The stats are not
-// avoidable downstream: BcAppSymbolCache.Get keys ProcessCache on the CONTENT HASH, and
-// RunnerFingerprint.ComputeFileContentHashMemoized keys its memo on statx/(path,length,mtime)
-// — so the memo correctly avoids re-HASHING and cannot avoid re-STATTING, because the stat IS
-// the key. Measured on this box (Linux/ext4, warm page cache, 6 registered .apps of 700 pages
-// each): 12 stats per lookup at ~0.8 us each, ~50-72 us per lookup all in, and 100 ms for ONE
-// population pass of 4,200 page objects. Full numbers and the Windows scaling in PR #4223.
+// avoidable downstream, because BcAppSymbolCache.Get keys ProcessCache on the CONTENT HASH and
+// the hash memo keys on statx/(path,length,mtime) — the stat IS the key. Measurements, and why
+// the path-keying alternative is refused, are in PR #4223.
 //
 // What these tests pin, and why a count
 // -------------------------------------
@@ -82,6 +79,7 @@ public sealed class DependencyPageSymbolIndexMemoTests : IDisposable
     private const int LatePageId = 88124103;
     private const int NeverDeclaredPageId = 88124104;
     private const int SwapPageId = 88124105;
+    private const int ContestedPageId = 88124106;
 
     private static readonly Type T = typeof(RecordPatches);
 
@@ -236,6 +234,51 @@ public sealed class DependencyPageSymbolIndexMemoTests : IDisposable
         Assert.Equal(36, late!.SourceTableId);
         // The earlier entry survives the rebuild — invalidation must rebuild, never truncate.
         Assert.Equal(18, Lookup(FirstPageId)!.SourceTableId);
+    }
+
+    /// <summary>
+    /// The ORDERING claim: when two registered .apps both declare the same page id, the
+    /// FIRST-registered one wins.
+    ///
+    /// <para>Reachable, not hypothetical: <c>AddBcAppPath</c> dedupes on the PATH only
+    /// (<c>_bcAppPaths.Contains(appPath, OrdinalIgnoreCase)</c>,
+    /// RecordPatches.BcAppFallback.cs:451), so two different .app FILES may each declare page N
+    /// and which one answers is a real observable.</para>
+    ///
+    /// <para>This pins what makes the memo a pure memoization rather than a behaviour change.
+    /// The walk it replaced returned on its first match over
+    /// <see cref="EnumerateRegisteredBcAppSymbols"/>, which yields in registration order; the
+    /// index reproduces that with <c>TryAdd</c>, whose first write wins. Nothing else in this
+    /// suite can see the property — every other test gives each .app its own page ids, so
+    /// reversing the index walk leaves all of them GREEN (measured in review of PR #4223:
+    /// <c>Failed: 0, Passed: 570</c> with LAST-registered winning).</para>
+    ///
+    /// <para>The two SourceTableIds differ by construction and the assertion names the
+    /// expected one concretely, so a reversal answers <c>Expected: 111 / Actual: 222</c>
+    /// rather than merely "not null".</para>
+    /// </summary>
+    [Fact]
+    public void WhenTwoAppsDeclareTheSamePageId_TheFirstRegisteredWins()
+    {
+        RecordPatches.ResetForReload();
+
+        // Two DISTINCT .app files — WriteApp gives each a fresh GUID name, so the path-keyed
+        // dedupe at AddBcAppPath registers both rather than collapsing them.
+        var firstRegistered = WriteApp((ContestedPageId, "Issue3774 Contested First", 111));
+        var secondRegistered = WriteApp((ContestedPageId, "Issue3774 Contested Second", 222));
+        Assert.NotEqual(firstRegistered, secondRegistered);
+
+        RecordPatches.AddBcAppPath(firstRegistered);
+        RecordPatches.AddBcAppPath(secondRegistered);
+
+        var resolved = Lookup(ContestedPageId);
+        Assert.NotNull(resolved);
+        Assert.Equal(ContestedPageId, resolved!.Id);
+        Assert.Equal(111, resolved.SourceTableId);
+
+        // Repeat across the memo boundary: the served answer must carry the same precedence as
+        // the build did, not merely happen to be right on the pass that built the index.
+        Assert.Equal(111, Lookup(ContestedPageId)!.SourceTableId);
     }
 
     /// <summary>

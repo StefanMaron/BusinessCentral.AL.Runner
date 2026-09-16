@@ -130,7 +130,10 @@ public static partial class RecordPatches
     /// <para>FIRST WINS for a page id two registered .apps both declare, which is the order the
     /// per-call walk answered in — <see cref="EnumerateRegisteredBcAppSymbols"/> yields in
     /// registration order and the old loop returned on its first match, so preserving it keeps
-    /// this a pure memoization rather than a behaviour change.</para>
+    /// this a pure memoization rather than a behaviour change. Reachable because AddBcAppPath
+    /// dedupes on the PATH only, so two .app files may each declare page N; pinned by
+    /// DependencyPageSymbolIndexMemoTests.WhenTwoAppsDeclareTheSamePageId_TheFirstRegisteredWins,
+    /// which reverses to Expected 111 / Actual 222 if this order is dropped.</para>
     /// </summary>
     private static Dictionary<int, BcAppSymbolCache.PageSymbol> DependencyPageSymbolsById(
         string surface = "pages and pageextensions (dependency page metadata)")
@@ -162,8 +165,11 @@ public static partial class RecordPatches
             // next caller retries rather than inheriting a short answer. That is the refusal
             // DependencySymbolReadFailureTests asserts is repeatable, not one-shot.
             //
-            // The index is published BEFORE its stamp, and both writes are inside the lock, so
-            // a reader on the fast path can never pair a new stamp with an older index.
+            // Index before stamp, both inside the lock, so a torn read cannot pair a NEW stamp
+            // with an OLDER index. Neither field is volatile, so this orders the writes rather
+            // than guaranteeing what an unsynchronized reader observes: the fast path may read a
+            // stale pair and rebuild, which costs a walk and never a wrong answer. Same shape as
+            // the ~10 sibling memos keyed on this epoch (Volatile.Read on the epoch itself).
             _dependencyPageSymbolsById = index;
             _dependencyPageSymbolsBuiltFromEpoch = epoch;
             return index;
