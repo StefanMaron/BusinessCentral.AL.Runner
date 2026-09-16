@@ -19,6 +19,7 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+[Collection(TestDataStaticsSerialCollection.Name)]
 public sealed class TestDataProvisioningTests : IDisposable
 {
     public TestDataProvisioningTests()
