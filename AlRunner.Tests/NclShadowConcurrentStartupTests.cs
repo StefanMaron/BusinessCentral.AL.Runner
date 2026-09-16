@@ -7,6 +7,7 @@
 // redundantly re-copying Microsoft.Dynamics.Nav.Ncl.dll into a dir siblings are reading
 // from. This file pins the three mechanism fixes directly, deterministically — no
 // subprocess race needed since each fix is a pure function over on-disk shape.
+using System.Threading;
 using AlRunner.Infrastructure;
 using Xunit;
 
@@ -430,18 +431,26 @@ public sealed class NclShadowConcurrentStartupTests
             using var exclusiveLock = new FileStream(
                 path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
 
-            var releaseAfter = Task.Run(async () =>
+            // A DEDICATED thread, not Task.Run: the release must not depend on the thread pool
+            // (#4258). GetAssemblyNameWithRetry below blocks a pool thread in Thread.Sleep for
+            // up to ~1.9s, and under the parallel suite the pool is already saturated -- so a
+            // `Task.Run(async () => { await Task.Delay(300); ... })` release needs two pool hops
+            // that may not be scheduled before the retry budget runs out. Reproduced by starving
+            // the pool: the test failed with the CI failure's exact `being used by another
+            // process`. IsBackground so a hang cannot outlive the run.
+            var releaseAfter = new Thread(() =>
             {
-                await Task.Delay(300);
+                Thread.Sleep(300);
                 exclusiveLock.Dispose();
-            });
+            }) { IsBackground = true, Name = "assemblyname-retry-release" };
+            releaseAfter.Start();
 
             // Blocks on the lock above for a few retry iterations, then succeeds once
             // the background task above disposes it.
             var name = AlRunner.Infrastructure.BcArtifacts.GetAssemblyNameWithRetry(path);
 
             Assert.NotNull(name.Name);
-            releaseAfter.Wait(TimeSpan.FromSeconds(5));
+            releaseAfter.Join(TimeSpan.FromSeconds(5));
         }
         finally { Directory.Delete(dir, recursive: true); }
     }
