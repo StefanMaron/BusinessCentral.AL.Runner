@@ -50,4 +50,56 @@ elsewhere (`[provision-gap]`, `[test-exec]` warnings), and exception messages (`
 `[source-dep]` is Loud because it is the source-sibling twin of the exempt `[layered]` progress
 lines, and `CacheRootsIsolationTests` asserts `[source-dep] WROTE` in a run without `--verbose`.
 
-Tags without a hyphen are a separate question, tracked in #2221.
+## Single-word tags
+
+These are the tags the filter actually acts on. Issue #2221 recorded five user-facing fixes
+that each shipped invisible because their tag was not on the exemption list — `[bc]`,
+`[expectations]` (#1984), `[reexec]` (#2034), `[dap]` (#1642) and `[warn]` (#2206) — and none
+of the five was caught by a test. Two were caught by accident (a harness timing out, a debug
+print vanishing); the rest by someone noticing.
+
+**Severity is a class, not a component.** `warn|error|fatal` is its own alternation in
+`Log.cs`, separate from the component exemptions. A line whose author thought it worth calling
+a warning or an error is worth the user seeing, whatever raised it. Before #2221 `warn` sat in
+the component list and `error` was absent altogether, so the first `[error] …` anyone wrote
+would have been eaten — the sixth instance, pre-empted. `fatal` has no call site yet.
+
+**The census is a ratchet.** `AlRunner.Tests/LogSingleWordTagContractTests.cs` scans
+`AlRunner/**/*.cs` for single-word `[tag]` literals and fails when one has no entry in
+`Declared`. Three kinds:
+
+| kind | what it is | what the test checks |
+|---|---|---|
+| **UserFacing** | a result, a failure, or readiness the user asked for | the real literal, read from the call site, survives the real filter with no `--verbose` |
+| **Internal** | per-object or per-method chatter | suppressed by default **and** still recovered by `--verbose`, so it is hidden rather than unreachable |
+| **NotALogLine** | matches the tag shape but is never written as a console line | carries a written reason — this is the one kind the filter cannot adjudicate |
+
+The classification is **per tag, not per site**, which is what the observed failure mode needs:
+all five instances were a *new tag*. A tag already declared `Internal` that gains a site
+deserving visibility is not caught here — that is the open backlog in #4234.
+
+### Census as of #2221
+
+Measured at `9cb68de`: **77** distinct tags, **1,016** literal sites.
+
+- **UserFacing (9 tags, 180 sites):** `bc`, `dap`, `dep`, `expectations`, `layered`,
+  `provision`, `reexec`, `warn`, `watch`.
+- **NotALogLine (8 tags, 25 sites):** `red`, `grey`, `green`, `blue`, `yellow`, `bold` —
+  Spectre.Console markup in `WatchDashboard.cs`, which contains no `Console.WriteLine`; `Oo`,
+  the `[Oo]bject` regex character class in a `BcCompiler` diagnostic pattern; `Content_Types`,
+  the `[Content_Types].xml` entry name inside an `.app` package.
+- **Internal (60 tags, 809 sites).** Concentrated: `Cecil` (369), `BcRuntime` (78),
+  `RecordPatches` (76), `NavReportSync` (32), `Subscribers` (31) and `EventPipeJIT` (25) are
+  611 of the 809. `[Cecil]` alone is 369 sites, not the ~280 quoted in #2221 and in the
+  comment above `Log.cs`'s pattern.
+
+### Why the default was not inverted
+
+#2221 proposed inverting the filter — suppress only what is marked internal — on the premise
+that the `[Cecil]` diagnostics are the volume and are "a small, known set to mark". The volume
+is indeed concentrated (six tags, 75%), but the remaining 54 tags are not chatter: 89 of their
+198 sites match failure-shaped wording, and the six bulk tags carry a further 254. So
+inversion cannot be done by marking six tags, and it changes what every default run prints.
+That is a product decision about the runner's default output rather than an engineering one,
+recorded on #2221 and tracked with the per-site backlog in #4234. The ratchet above closes the
+silent direction either way, and does not preempt the choice.
