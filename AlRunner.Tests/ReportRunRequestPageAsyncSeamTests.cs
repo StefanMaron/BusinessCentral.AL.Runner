@@ -30,6 +30,12 @@ namespace AlRunner.Tests;
 [Collection(BcEngineCollection.Name)]
 public sealed class ReportRunRequestPageAsyncSeamTests
 {
+    /// <summary>
+    /// A report id no loaded application declares. The seam refuses it by name, which is how
+    /// these tests tell "reached NavReportSync" from "refused before getting there".
+    /// </summary>
+    private const int MissingReportId = 4242;
+
     private readonly BcEngineFixture _engine;
 
     public ReportRunRequestPageAsyncSeamTests(BcEngineFixture engine) => _engine = engine;
@@ -94,31 +100,38 @@ public sealed class ReportRunRequestPageAsyncSeamTests
     // --- the defect itself: not one of them may answer with the out-of-scope refusal ----------
 
     [SkippableFact]
-    public void StaticRunRequestPageAsync_DoesNotRefuseTheCallAsOutOfScope()
+    public void StaticRunRequestPageAsync_ReachesTheSeam_WhichRefusesAnUnknownReportByName()
     {
-        // Report id 0 exists in no application, so the seam refuses it BY NAME — the runner
-        // could not construct report 0. That is a different refusal from the blanket
-        // out-of-scope one, and telling them apart is the whole assertion: the blanket throw
-        // fires before any argument is looked at, so it cannot mention the report id.
+        // The positive half, and the one that discriminates. Report id 4242 exists in no
+        // application loaded here, so a call that REACHED NavReportSync.SyncRunRequestPage
+        // comes back with that seam's own refusal — RunnerShapeGap.ReportConstruction, which
+        // quotes the id it could not construct. A call that never reached it cannot name 4242,
+        // because every refusal upstream of the seam is a constant string chosen at rewrite
+        // time. So "the message contains 4242" is a claim about the CALL PATH, not about the
+        // wording of any particular refusal.
         var navReport = NavReport();
         var m = AsyncOverloads(navReport).Single(
             x => x.IsStatic && x.GetParameters().Length == 3);
 
-        var thrown = InvokeAndUnwrap(m, null, new object?[] { null, 0, null });
+        var thrown = InvokeAndUnwrap(m, null, new object?[] { null, MissingReportId, null });
 
-        AssertNotTheBlanketRefusal(thrown, "the static (NavSession,int,string) overload");
+        AssertReachedTheSeam(thrown, "the static (NavSession,int,string) overload");
     }
 
     [SkippableFact]
-    public void StaticRunRequestPageAsync_TwoArgOverload_DoesNotRefuseTheCallAsOutOfScope()
+    public void StaticRunRequestPageAsync_TwoArgOverload_ReachesTheSeam()
     {
+        // The two-arg overload's report id is arg1, not arg0 — arg0 is the NavSession. An IL
+        // mapping that forwarded the wrong slot would pass the session (null) where the id
+        // belongs and refuse naming report 0, so pinning the id in the message also pins the
+        // argument mapping.
         var navReport = NavReport();
         var m = AsyncOverloads(navReport).Single(
             x => x.IsStatic && x.GetParameters().Length == 2);
 
-        var thrown = InvokeAndUnwrap(m, null, new object?[] { null, 0 });
+        var thrown = InvokeAndUnwrap(m, null, new object?[] { null, MissingReportId });
 
-        AssertNotTheBlanketRefusal(thrown, "the static (NavSession,int) overload");
+        AssertReachedTheSeam(thrown, "the static (NavSession,int) overload");
     }
 
     [SkippableFact]
@@ -142,19 +155,19 @@ public sealed class ReportRunRequestPageAsyncSeamTests
 
     // --- helpers ------------------------------------------------------------------------------
 
-    private static void AssertNotTheBlanketRefusal(Exception? thrown, string which)
+    private static void AssertReachedTheSeam(Exception? thrown, string which)
     {
-        // A null return is fine (the call succeeded). A throw is fine too, as long as it is
-        // not the blanket out-of-scope refusal this issue is about — a nonexistent report id
-        // legitimately refuses by name.
-        if (thrown == null) return;
+        Assert.True(thrown != null,
+            $"{which} returned without refusing report {MissingReportId}, which no loaded "
+            + "application declares — so this test can no longer tell whether the seam was "
+            + "reached. Pick an id that is still absent.");
 
-        var msg = thrown.Message ?? string.Empty;
-        Assert.False(
-            msg.Contains("out-of-scope: NavReport.RunRequestPage", StringComparison.Ordinal)
-            && msg.Contains("request-page-ui", StringComparison.Ordinal),
-            $"{which} answered the blanket out-of-scope refusal ({msg}). docs/scope.md §3.5.1: "
-            + "\"Running a request page is in scope; rendering one is not.\"");
+        var msg = thrown!.Message ?? string.Empty;
+        Assert.True(
+            msg.Contains(MissingReportId.ToString(), StringComparison.Ordinal),
+            $"{which} refused without naming report {MissingReportId}, so the call never "
+            + $"reached NavReportSync.SyncRunRequestPage. Message was: {msg}. "
+            + "docs/scope.md §3.5.1: \"Running a request page is in scope; rendering one is not.\"");
     }
 
     /// <summary>
