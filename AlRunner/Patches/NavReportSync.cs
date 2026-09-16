@@ -673,9 +673,19 @@ public static partial class NavReportSync
                 "the runner could not construct report " + reportId + " to run it");
 
         // BC: RunReportAsync(requestWindow: false, …) assigns this before the guard reads it.
+        // Bound STRICTLY, like ReadUseRequestForm below: a null here means "I could not find
+        // it", never "it is not needed" (guards-need-a-third-state.md). Skipping the write
+        // silently leaves whatever the report declared, so a report that HAS a request page
+        // would enter a transaction world Execute never enters — corpus 60981 Test09 answers
+        // wrongly and nothing raises.
         var pUseRequestForm = FindProperty(report.GetType(), "UseRequestForm");
-        if (pUseRequestForm != null && pUseRequestForm.CanWrite && pUseRequestForm.PropertyType == typeof(bool))
-            pUseRequestForm.SetValue(report, false);
+        if (pUseRequestForm == null || !pUseRequestForm.CanWrite
+            || pUseRequestForm.PropertyType != typeof(bool))
+            throw new AlRunner.Infrastructure.BcShapeGapException(
+                "NavReport.Execute/Print", "NavReport.UseRequestForm",
+                "writable bool property not found, so Execute/Print cannot be forced not to "
+                + "show a request page and whether the run enters a transaction world is undecidable");
+        pUseRequestForm.SetValue(report, false);
 
         SyncRun(report);
     }

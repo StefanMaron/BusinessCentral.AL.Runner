@@ -1452,25 +1452,19 @@ public static partial class NclCecilRewrite
 
         // 8g-bis. SessionTransactionExtensions.BeginTransactionWorld / EndTransactionWorld —
         //     the BARE pair, without the "AndTransaction" suffix 8g handles (#4089).
+        //     Replaced, not prepended: BC's bodies go through
+        //     session.DataAccessSource.SessionTransactionManager, which the skeleton session
+        //     lacks, so they reach nothing.
         //
-        //     This is BC's own transaction-world decision point for a report run:
-        //     NavReport.RunReportCoreAsync enters one when `UseRequestForm ||
-        //     (ALCurrentTransactionType != Metadata.TransactionType && that type is not
-        //     UpdateNoLocks)`, unless the test is AutoRollback. Report.Run / RunModal /
-        //     RunRequestPage reach it through runner seams that model it in C#
-        //     (NavReportSync.SyncRun, SyncRunRequestPage). Report.Execute and Report.Print have
-        //     no runner seam — their twelve sync wrappers are thin sync-over-async forwarders
-        //     and BC's real RunReportAsync → RunReportCoreAsync chain runs — so for those the
-        //     decision was taken by BC and then dropped on the floor, because the real bodies
-        //     are `session.DataAccessSource.SessionTransactionManager.{Begin,End}TransactionWorld()`
-        //     and the skeleton session has no such manager.
+        //     Covers BC's OWN callers of NavReport.RunReportCoreAsync — MS business logic
+        //     calling NavReport.RunAsync directly, measured firing from
+        //     Page5134.GenerateDuplicateSearchString's OnAction during install. NOT the AL
+        //     report verbs: Run/RunModal/RunRequestPage/Execute/Print each reach a runner seam
+        //     that applies the guard in C# itself (NavReportSync.SyncRun, SyncRunRequestPage,
+        //     SyncExecuteOrPrint), so this fires 0 times for corpus 60981's 14 arms.
         //
-        //     Replace, not prepend: unlike 8g's EndTransactionWorldAndTransaction, whose
-        //     original body already runs safely, these two reach nothing at all today.
-        //
-        //     Scope: RunReportCoreAsync is the only live caller here. BC's other one,
-        //     NavForm.RunModalAsync, calls it in the branch taken only when
-        //     TestExecution.TestHandleModalForm returns FALSE, which under test it does not.
+        //     Trap: measure that with AL_RUNNER_NCL_CACHE=0. A cache-served Cecil pass prints
+        //     no [Cecil] lines, so a probe reads zero when it means unmeasured.
         {
             var sessTxTypeW = asm.MainModule.Types
                 .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.SessionTransactionExtensions")
