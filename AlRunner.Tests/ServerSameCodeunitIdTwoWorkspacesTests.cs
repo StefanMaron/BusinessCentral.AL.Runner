@@ -166,14 +166,21 @@ public sealed class ServerSameCodeunitIdTwoWorkspacesTests
     }
 
     /// <summary>
-    /// The ordering CONTROL, not a second arm of evidence. Against the unfixed runner this
-    /// passes (measured: Failed: 0, Passed: 1) while XThenB fails — when B loads first its
-    /// dependency module is already the only registered Codeunit64190, so the AppDomain scan
-    /// has nothing foreign to prefer and the defect cannot appear in this order.
+    /// The ordering CONTROL, not a second arm of evidence: against the unfixed runner this
+    /// passes (measured: Failed: 0, Passed: 1) while XThenB fails. Only XThenB discriminates
+    /// the fix, so a body claiming "both orderings" as evidence counts a passenger.
     ///
-    /// It earns its place by pinning that asymmetry: if this one ever starts failing too, the
-    /// defect has moved rather than widened. But only XThenB discriminates the fix, and a body
-    /// claiming "both orderings" as evidence would be counting a passenger (found in review).
+    /// It passes for an ACCIDENTAL reason, and that is the point of keeping it. X's module is a
+    /// live, non-stale candidate at B's later requests — RunSessionAsync issues B, X, B, X, so
+    /// requests 3 and 4 run with X resident — and what saves them is only the order
+    /// AppDomain.CurrentDomain.GetAssemblies() happens to return. Measured in review: on the
+    /// unfixed runner, reversing ONLY that enumeration makes this test fail at request 3 with
+    /// the same `expected dep-A, actual x-A`.
+    ///
+    /// So B→X is not structurally immune, and an earlier version of this comment said it was.
+    /// The .NET docs give no order guarantee, and the #1901 comment in CodeunitPatches already
+    /// records that. The tier under test is what converts this ordering from accidentally-right
+    /// to structurally-right — which is an argument FOR the fix, not a reason to drop the arm.
     /// </summary>
     [SkippableFact]
     public async Task BThenX_BothCallTheirOwnCodeunit_ColdThenWarm()
