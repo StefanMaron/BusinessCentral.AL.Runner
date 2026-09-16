@@ -66,19 +66,40 @@ codeunit 64410 "Test Data System Fields Tests"
     procedure RestoredRowVersionIsNonZeroAndOutrankedByALaterWrite()
     var
         NoSeries: Record "No. Series";
+        OtherNoSeries: Record "No. Series";
         RestoredRowVersion: BigInteger;
+        OtherRowVersion: BigInteger;
         WrittenRowVersion: BigInteger;
     begin
         // #4123. Deliberately NOT asserting the literal rowversion: it is demo-data build state
-        // that moves with the artifact, exactly as TestDataDateValues says of its instant. What
-        // is invariant, and what the fix is FOR, is the ordering.
+        // that moves with the artifact, exactly as TestDataDateValues says of its instant.
+        //
+        // NOTE on what these assertions are worth. `RestoredRowVersion > 0` and
+        // `Written > Restored` BOTH pass on the unfixed runner, because #1980's stamp writes a
+        // non-zero value on every insert and Interlocked.Increment is monotonic. They are
+        // regression cover, not proof of this fix. What discriminates is the THIRD assertion:
+        // two restored rows must keep the backup's relative order, which per-row stamping
+        // destroys (measured: 261652, 100, 500000 became 261653, 261654, 500001).
         Assert.IsTrue(NoSeries.Get('A-BLK'), 'No. Series A-BLK must exist after --test-data hydration');
         RestoredRowVersion := NoSeries."timestamp";
         Assert.IsTrue(RestoredRowVersion > 0,
             'a restored row must carry the backup rowversion, not field 0 default (#4123)');
 
-        // A row written now must outrank it. Before the counter was seeded this failed by a wide
-        // margin: the first stamp is 1 against a restored value in the hundreds of thousands.
+        // Two restored rows, compared against each other. Under per-row stamping the value AL
+        // sees is a function of hydration order rather than of backup state, so this is the
+        // assertion that fails on the unfixed path. The SECOND row is whichever one follows in
+        // the table -- not a hardcoded code, because which codes the shipped backup carries is
+        // artifact state this test must not guess at.
+        OtherNoSeries.SetFilter(Code, '<>%1', 'A-BLK');
+        Assert.IsTrue(OtherNoSeries.FindFirst(),
+            'the backup must hold a second No. Series row to compare rowversions against');
+        OtherRowVersion := OtherNoSeries."timestamp";
+        Assert.AreNotEqual(RestoredRowVersion, OtherRowVersion,
+            'two restored rows must not share a rowversion: SQL assigns each row its own, and '
+            + 'equal values here mean the stamp overwrote both with consecutive counter values');
+
+        // A row written now must outrank both. Before seeding, the first stamp is 1 against a
+        // restored value in the hundreds of thousands.
         NoSeries.Init();
         NoSeries.Code := 'TDF-RV-1';
         NoSeries.Description := 'rowversion ordering probe';
@@ -88,6 +109,8 @@ codeunit 64410 "Test Data System Fields Tests"
         Assert.IsTrue(WrittenRowVersion > RestoredRowVersion,
             'a row inserted after the restore must sort AFTER every restored row; real SQL has '
             + 'one monotonic sequence per database, and an unseeded counter gives the runner two');
+        Assert.IsTrue(WrittenRowVersion > OtherRowVersion,
+            'the later write must outrank EVERY restored row, not only the first one read');
     end;
 
     [Test]

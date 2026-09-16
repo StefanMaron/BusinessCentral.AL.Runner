@@ -159,6 +159,12 @@ public static partial class RecordPatches
     /// <summary>The AL field-0 name the rowversion column is re-keyed onto (#4123).</summary>
     internal const string TestDataRowVersionFieldName = "timestamp";
 
+    /// <summary>Whether this field is the SQL rowversion the reader emits as hex (#4123). The
+    /// row builder calls exactly this, so a test driving it drives the real decision rather than
+    /// a restatement of it.</summary>
+    internal static bool IsTestDataRowVersionField(int fieldNo, string fieldName)
+        => fieldNo == 0 && fieldName == TestDataRowVersionFieldName;
+
     /// <summary>
     /// Decode the reader's hex rowversion (`"0x000000000003FE14"`) to field 0's value.
     ///
@@ -434,8 +440,13 @@ public static partial class RecordPatches
 
         // Build EVERY row first. A refusal in row 900 must not leave rows 1-899 in the store.
         var built = new NavValue[rows.Count][];
+        var maxRestoredRowVersion = 0L;
         for (var ri = 0; ri < rows.Count; ri++)
-            built[ri] = BuildTestDataRow(meta, tableId, tableNameForDiagnostics, rows[ri], fieldByName);
+        {
+            built[ri] = BuildTestDataRow(meta, tableId, tableNameForDiagnostics, rows[ri], fieldByName,
+                out var rowMax);
+            if (rowMax > maxRestoredRowVersion) maxRestoredRowVersion = rowMax;
+        }
 
         var perTable = _dataAccessByTable.GetValue(source,
             static _ => new System.Collections.Concurrent.ConcurrentDictionary<int, object>());
@@ -457,12 +468,21 @@ public static partial class RecordPatches
             ?? throw new InvalidOperationException(
                 "MutableRecordBuffer(ReadOnlyRecordBuffer) not found — BC metadata shape changed");
 
-        foreach (var values in built)
+        // #4123: suppress the rowversion stamp across the replay, then raise the counter ONCE
+        // above this table's highest restored value. Stamping per row would overwrite the
+        // backup's value and — interleaved with per-row seeding — reorder the restored rows
+        // relative to each other. Seeding after the loop keeps one monotonic sequence, so a row
+        // AL writes later still outranks every restored row.
+        using (RowVersionPatches.SuppressRowVersionStamp())
         {
-            var readOnly = new ReadOnlyRecordBuffer(meta, values);
-            var mutable = _ibMutableBufferCtor.Invoke(new object[] { readOnly });
-            insert.Invoke(provider, new object?[] { 0, mutable, insertOptions, null });
+            foreach (var values in built)
+            {
+                var readOnly = new ReadOnlyRecordBuffer(meta, values);
+                var mutable = _ibMutableBufferCtor.Invoke(new object[] { readOnly });
+                insert.Invoke(provider, new object?[] { 0, mutable, insertOptions, null });
+            }
         }
+        RowVersionPatches.SeedFromRestoredRowVersion(maxRestoredRowVersion);
         // Handed back only AFTER every row is in the store, so a caller can never see rows
         // for a table that ended up refused.
         metaTable = meta;
@@ -474,7 +494,14 @@ public static partial class RecordPatches
     private static NavValue[] BuildTestDataRow(
         NCLMetaTable meta, int tableId, string tableName,
         IReadOnlyDictionary<string, JsonElement> row, IReadOnlyDictionary<string, NCLMetaField> fieldByName)
+        => BuildTestDataRow(meta, tableId, tableName, row, fieldByName, out _);
+
+    private static NavValue[] BuildTestDataRow(
+        NCLMetaTable meta, int tableId, string tableName,
+        IReadOnlyDictionary<string, JsonElement> row, IReadOnlyDictionary<string, NCLMetaField> fieldByName,
+        out long maxRowVersion)
     {
+        maxRowVersion = 0;
         var values = new NavValue[meta.FieldCount];
         for (var fi = 0; fi < meta.FieldCount; fi++)
         {
@@ -489,7 +516,7 @@ public static partial class RecordPatches
                 values[fi] = NavValue.CreateNavValueFromObject(metadata, null);
                 continue;
             }
-            if (field.FieldNo == 0 && field.FieldName == TestDataRowVersionFieldName)
+            if (IsTestDataRowVersionField(field.FieldNo, field.FieldName))
             {
                 // #4123. The reader emits this as HEX ("0x000000000003FE14"), which the
                 // NavBigInteger branch below would refuse outright (long.TryParse with
@@ -501,7 +528,7 @@ public static partial class RecordPatches
                     ?? throw new TestDataHydrationRefusal(
                         $"table {tableId} '{tableName}': the rowversion column is "
                         + $"{json.ValueKind}, not the reader's hex string"));
-                RowVersionPatches.SeedFromRestoredRowVersion(decoded);
+                if (decoded > maxRowVersion) maxRowVersion = decoded;
                 values[fi] = NavValue.CreateNavValueFromObject(metadata, decoded);
                 continue;
             }

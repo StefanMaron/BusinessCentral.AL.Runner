@@ -84,13 +84,46 @@ public static partial class RowVersionPatches
     private static long _rowVersion;
 
     /// <summary>
-    /// Raise the counter above a rowversion restored by `--test-data` (#4123).
+    /// Suppress the rowversion stamp for the duration of a `--test-data` hydration (#4123).
     ///
-    /// Real SQL has ONE monotonic sequence per database. Hydrating restored values without this
-    /// gives the runner two: the next stamp would be 1 against a restored 261,652, so every row
-    /// a test writes would sort BEFORE every restored row — a new wrong answer (ordering) traded
-    /// for an absent one (the value). High-water mark, never lowering: rows arrive per table in
-    /// no defined order, so a later smaller value must not move the counter back.
+    /// A replay is not an AL Insert. The stamp exists so a row WRITTEN BY AL gets a fresh
+    /// rowversion; a restored row already carries the backup's, and stamping over it is wrong
+    /// twice: the value is lost, and — because seeding and stamping interleave per row — the
+    /// backup's RELATIVE order between restored rows is destroyed. Measured: restoring
+    /// 261652, 100, 500000 made AL see 261653, 261654, 500001, so the row with the LOWEST
+    /// backup rowversion read as higher than the row before it.
+    ///
+    /// Same shape and same reason as SuppressSystemIdUniqueness (#2694): restores the ENCLOSING
+    /// state on dispose, never unconditionally false, so a nested replay cannot re-arm the stamp
+    /// for the outer one's remaining rows.
+    /// </summary>
+    public static IDisposable SuppressRowVersionStamp() => new RowVersionStampSuppressionScope();
+
+    [ThreadStatic] private static bool _suppressRowVersionStamp;
+
+    private sealed class RowVersionStampSuppressionScope : IDisposable
+    {
+        private readonly bool _previous;
+        public RowVersionStampSuppressionScope()
+        {
+            _previous = _suppressRowVersionStamp;
+            _suppressRowVersionStamp = true;
+        }
+        public void Dispose() => _suppressRowVersionStamp = _previous;
+    }
+
+    /// <summary>Whether the stamp is currently suppressed for a replay. Read by Stamp.</summary>
+    internal static bool IsRowVersionStampSuppressed => _suppressRowVersionStamp;
+
+    /// <summary>
+    /// Raise the counter above the highest rowversion restored by `--test-data` (#4123).
+    ///
+    /// Called ONCE after a hydration completes, never per row — per-row seeding interleaved with
+    /// per-row stamping is what destroyed the restored ordering (see SuppressRowVersionStamp).
+    /// Real SQL has ONE monotonic sequence per database. Without this the next row a test writes
+    /// takes rowversion 1 and sorts BEFORE every restored row, giving the runner two sequences
+    /// interleaved wrongly. High-water mark, never lowering: tables hydrate in no defined order,
+    /// so a later smaller maximum must not move the counter back.
     /// </summary>
     internal static void SeedFromRestoredRowVersion(long restored)
     {
@@ -137,6 +170,9 @@ public static partial class RowVersionPatches
     private static void Stamp(object? provider, object? recordBuffer)
     {
         if (recordBuffer == null || !BlobStoreIsolationPatches.IsDatabaseBacked(provider)) return;
+        // #4123: a --test-data replay carries the backup's own rowversion; stamping over it
+        // loses the value AND the restored rows' relative order. See SuppressRowVersionStamp.
+        if (_suppressRowVersionStamp) return;
 
         // No try/catch here — a failed lookup throws straight out of this method and
         // out of the Cecil-prepended TempTableDataProvider.Insert/Modify call it runs

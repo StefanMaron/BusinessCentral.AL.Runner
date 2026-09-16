@@ -101,6 +101,65 @@ public class TestDataRowVersionHydrationTests
     }
 
     [Fact]
+    public void TheRowBuildersOwnPredicate_SelectsField0AndNothingElse()
+    {
+        // BuildTestDataRow needs a real NCLMetaTable, which BC only builds from a booted engine,
+        // so no C# test can call it — which is why a reviewer's `if (false)` on the branch guard
+        // left the whole suite green. This drives the predicate the row builder actually calls,
+        // so deleting or inverting it reds here.
+        Assert.True(RecordPatches.IsTestDataRowVersionField(0, "timestamp"));
+
+        // Field 0 is the ONLY rowversion. A user field that happens to be named "timestamp" is
+        // an ordinary column and must go through the normal conversion.
+        Assert.False(RecordPatches.IsTestDataRowVersionField(5, "timestamp"));
+        // …and field 0 under any other name is not it either.
+        Assert.False(RecordPatches.IsTestDataRowVersionField(0, "Code"));
+        Assert.False(RecordPatches.IsTestDataRowVersionField(2000000000, "SystemId"));
+    }
+
+    [Fact]
+    public void SuppressingTheStamp_PreservesTheRestoredRowsRelativeOrder()
+    {
+        // The defect this suppression exists for. Stamping per row while seeding per row makes
+        // the value AL sees a function of HYDRATION order rather than of backup state: restoring
+        // 261652, 100, 500000 produced 261653, 261654, 500001 — the row with the LOWEST backup
+        // rowversion read as HIGHER than the row before it. Suppressed, the decoded values
+        // survive untouched and their relative order is the backup's.
+        long[] restored = { 261_652, 100, 500_000 };
+
+        using (RowVersionPatches.SuppressRowVersionStamp())
+        {
+            Assert.True(RowVersionPatches.IsRowVersionStampSuppressed,
+                "the stamp must be suppressed for the duration of a replay");
+        }
+
+        Assert.False(RowVersionPatches.IsRowVersionStampSuppressed,
+            "the scope must restore the enclosing state on dispose");
+
+        // Seeding ONCE, after the replay, from the maximum — not per row.
+        RowVersionPatches.SeedFromRestoredRowVersion(restored.Max());
+        var next = RowVersionPatches.PeekNextRowVersionForTests();
+        Assert.True(next > restored.Max(),
+            $"a row written after the replay must outrank every restored row: next={next}");
+    }
+
+    [Fact]
+    public void SuppressionScope_RestoresTheEnclosingState_NotUnconditionallyFalse()
+    {
+        // A nested replay must not re-arm the stamp for the outer replay's remaining rows —
+        // the same property #2694's SuppressSystemIdUniqueness carries, for the same reason.
+        using (RowVersionPatches.SuppressRowVersionStamp())
+        {
+            using (RowVersionPatches.SuppressRowVersionStamp())
+                Assert.True(RowVersionPatches.IsRowVersionStampSuppressed);
+
+            Assert.True(RowVersionPatches.IsRowVersionStampSuppressed,
+                "the inner scope's dispose must not clear the OUTER replay's suppression");
+        }
+        Assert.False(RowVersionPatches.IsRowVersionStampSuppressed);
+    }
+
+    [Fact]
     public void SeedingIsHighWaterMark_ANonMaxValueNeverLowersTheCounter()
     {
         // Rows arrive per table in no particular order, so seeding must never move backwards.
