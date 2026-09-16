@@ -120,7 +120,15 @@ public sealed class DepTableExtPlatformBaseBothShapesTests
         // Without this, the step passes whenever the tests pass — including in a future where the
         // two directories collapse back into one bundle and the cross-bundle path stops running,
         // which is #4079's defect exactly.
-        Assert.Contains(DepLoadMarker, OrderedBundleStep(), StringComparison.Ordinal);
+        //
+        // Matches the grep INVOCATION, not the marker text. The first draft asserted the text and
+        // survived a mutation that replaced the whole check with `if false`, because the marker is
+        // also quoted in the ::error:: message the check prints — a test that names the thing
+        // rather than driving it (.claude/rules/tdd.md). Anchored `^ *` because the runner indents
+        // the line under its bundle.
+        Assert.Matches(
+            new Regex(@"grep -qE ""\^ \*\\\[dep\\\] " + Regex.Escape(DepLoadMarker[6..])),
+            OrderedBundleStep());
     }
 
     [Fact]
@@ -146,7 +154,8 @@ public sealed class DepTableExtPlatformBaseBothShapesTests
         foreach (var name in declared)
             Assert.Contains($"Codeunit{codeunitId}.{name}", step, StringComparison.Ordinal);
 
-        // The check must be ANCHORED, so a FAIL line mentioning the name cannot satisfy it.
-        Assert.Contains("^PASS +", step, StringComparison.Ordinal);
+        // The check must be an anchored grep, so a FAIL line mentioning the name cannot satisfy
+        // it — and, as above, matching the invocation rather than a loose substring.
+        Assert.Matches(new Regex(@"grep -qE ""\^PASS \+"), step);
     }
 }
