@@ -392,4 +392,148 @@ public sealed class TestDataCompanyNormalizationTests : IDisposable
             TestDataNormalization.ParseTarget(rule);   // throws if the literal is not JSON
         }
     }
+
+    // ──────────────────────── the No. Series setup fields (#3497) ──
+
+    /// <summary>
+    /// The four setup fields #3497 measured as blank in the restored company, each with the
+    /// series code Microsoft's DemoTool leaves there. The table ids and field names were read
+    /// from the SHIPPED Base Application AL source (Microsoft_Base Application_28.1.49838.53910),
+    /// not from memory; the target values from BCApps src/Layers/W1/DemoTool. See the PR body.
+    /// </summary>
+    public static TheoryData<int, string, string, string> ExpectedNoSeriesRules() => new()
+    {
+        { 311,  "Sales & Receivables Setup",     "Posted Prepmt. Inv. Nos.",  "S-INV+"   },
+        { 312,  "Purchases & Payables Setup",    "Posted Prepmt. Inv. Nos.",  "P-INV+"   },
+        { 313,  "Inventory Setup",               "Internal Movement Nos.",    "INT-MOVE" },
+        { 5911, "Service Mgt. Setup",            "Service Quote Nos.",        "SM-QUOTE" },
+        // Found by scanning the run for EVERY "must have a value in <setup table>" failure
+        // rather than only the shapes #3497 listed: same table, same mechanism, same evidence.
+        { 311,  "Sales & Receivables Setup",     "Direct Debit Mandate Nos.", "DDM"        },
+        { 5911, "Service Mgt. Setup",            "Contract Credit Memo Nos.", "SM-CR-CON"  },
+    };
+
+    /// <summary>
+    /// Each rule exists, targets the right table, and carries the EXACT series code Microsoft's
+    /// DemoTool company holds. The value is the load-bearing half: a rule that fired with a
+    /// plausible-but-wrong code would leave BC refusing to draw a number just as it does now,
+    /// and would look like a fix in the report while changing nothing observable.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExpectedNoSeriesRules))]
+    public void TheRuleSetCarriesTheDemoToolSeriesCodeForEachBlankSetupField(
+        int tableId, string tableName, string fieldName, string expectedSeries)
+    {
+        var rule = TestDataNormalization.Rules.SingleOrDefault(
+            r => r.TableId == tableId && r.FieldName == fieldName);
+
+        Assert.True(rule is not null,
+            $"no rule for table {tableId} '{tableName}'.'{fieldName}' — #3497 measured it blank in the restore");
+        Assert.Equal(tableName, rule!.TableName);
+        Assert.Equal($"\"{expectedSeries}\"", rule.TargetJson);
+    }
+
+    /// <summary>
+    /// The rewrite at the level the defect lives at, for the field that carries 316 of the 356
+    /// "empty No. Series Code" failures: a Sales &amp; Receivables Setup row the backup presents
+    /// with a BLANK "Posted Prepmt. Inv. Nos." reaches hydration carrying S-INV+.
+    ///
+    /// Why blank is the failure: Sales-Post Prepayments (codeunit 442, line 546 of the shipped
+    /// SalesPostPrepayments.Codeunit.al) assigns this field into Sales Header."Prepayment No.
+    /// Series", and Library - Sales.PostSalesPrepaymentInvoice then calls NoSeries.PeekNextNo on
+    /// it with NO blank guard — which is the exact stack the run log shows.
+    /// </summary>
+    [Fact]
+    public void WithTheFlag_ABlankSalesPostedPrepaymentSeriesIsFilledWithTheDemoToolCode()
+    {
+        TestDataNormalization.Enabled = true;
+        var rows = ParseRows("""
+            [ { "Primary Key": "",
+                "Posted Prepmt. Inv. Nos.": "",
+                "Posted Invoice Nos.": "S-INV+",
+                "Direct Debit Mandate Nos.": "DDM" } ]
+            """);
+        Assert.Equal("", rows[0]["Posted Prepmt. Inv. Nos."].GetString());   // precondition asserted
+
+        var result = TestDataNormalization.Apply(311, "Sales & Receivables Setup", rows);
+
+        Assert.Equal("S-INV+", result[0]["Posted Prepmt. Inv. Nos."].GetString());
+        // No other field of the same row moves. A rule set that wrote into the wrong column, or
+        // rewrote a field that already carries the DemoTool value, is caught only here.
+        Assert.Equal("S-INV+", result[0]["Posted Invoice Nos."].GetString());
+        Assert.Equal("DDM", result[0]["Direct Debit Mandate Nos."].GetString());
+        Assert.Equal("", rows[0]["Posted Prepmt. Inv. Nos."].GetString());   // input untouched
+    }
+
+    /// <summary>
+    /// The AL-observable end of the chain for a filled field, through the SAME codec
+    /// RecordPatches.HydrateTestDataTable uses. "Posted Prepmt. Inv. Nos." is Code[20], and the
+    /// claim is that BC reads a drawable series code — not that a dictionary key changed.
+    /// </summary>
+    [Fact]
+    public void WithTheFlag_TheAlValueBuiltFromAFilledSeriesCellIsTheSeriesCode()
+    {
+        TestDataNormalization.Enabled = true;
+        var normalized = TestDataNormalization.Apply(
+            311, "Sales & Receivables Setup",
+            // Both of table 311's rule fields must be present: a rule naming a field the rows do
+            // not carry THROWS by design, which is the guard ARuleWhoseFieldIsAbsent… pins.
+            ParseRows("""
+                [ { "Primary Key": "",
+                    "Posted Prepmt. Inv. Nos.": "",
+                    "Direct Debit Mandate Nos.": "" } ]
+                """));
+
+        var value = BuildAlValue(normalized[0]["Posted Prepmt. Inv. Nos."]);
+
+        Assert.Equal("S-INV+", Assert.IsType<NavCode>(value).Value);
+        // The blank test BC's own `if X = '' then` guard resolves to. This is the difference
+        // between "a series was written" and "the field is still AL-blank".
+        Assert.False(value.IsZeroOrEmpty, "a filled No. Series field must not read as AL's blank");
+    }
+
+    /// <summary>
+    /// A restore that ALREADY carries the DemoTool code is reported as changing nothing. Without
+    /// this, a future backup shipping these fields populated would look as though normalization
+    /// were still buying something.
+    /// </summary>
+    [Fact]
+    public void WithTheFlag_ASetupRowThatAlreadyCarriesTheSeriesIsReportedAsChangingNothing()
+    {
+        TestDataNormalization.Enabled = true;
+        TestDataNormalization.Apply(313, "Inventory Setup",
+            ParseRows("""[ { "Primary Key": "", "Internal Movement Nos.": "INT-MOVE" } ]"""));
+
+        var report = TestDataNormalization.Describe()!;
+
+        Assert.Contains("'INT-MOVE'", report, StringComparison.Ordinal);
+        Assert.Contains("0 row(s) changed", report, StringComparison.Ordinal);
+        Assert.Contains("1 already matched", report, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The residue, asserted rather than left to a reader of the PR body. #3497 grouped two
+    /// different situations under one heading; only the blank-field half is a field write.
+    ///
+    /// "A-ORD" carries 174 failures and is NOT a blank field: the run log shows the series
+    /// walking A00995 -> A01000 and exhausting ("The No. Series A-ORD is soon running out. The
+    /// current number is A01000 and the last allowed number of the sequence is A01000"), against
+    /// a DemoTool definition of exactly 1000 numbers. That is a No. Series Line ROW — a Last No.
+    /// Used that the bucket itself consumed — not a field on a setup table, so no rule here can
+    /// express it and none pretends to.
+    /// </summary>
+    [Fact]
+    public void TheRuleSetDoesNotAttemptTheExhaustedSeriesOrAnyNoSeriesLineRow()
+    {
+        var tables = TestDataNormalization.Rules.Select(r => r.TableId).ToList();
+
+        // 308/309 are "No. Series" / "No. Series Line". A rule targeting either would be trying
+        // to express a row difference as a field write.
+        Assert.DoesNotContain(308, tables);
+        Assert.DoesNotContain(309, tables);
+        // 905 is Assembly Setup, which holds "Assembly Order Nos." = A-ORD. The field is
+        // correct in the restore; the series behind it is what runs out.
+        Assert.DoesNotContain(905, tables);
+        Assert.DoesNotContain("Last No. Used", TestDataNormalization.Rules.Select(r => r.FieldName));
+    }
 }

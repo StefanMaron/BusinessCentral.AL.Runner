@@ -77,8 +77,9 @@ internal static class TestDataNormalization
     /// another — the rules change which VALUES are in the store, which is precisely what a
     /// baseline holds.
     ///
-    /// 1 — #2730, the first rule: General Ledger Setup."Additional Reporting Currency" := ''.</summary>
-    internal const int RuleSetVersion = 1;
+    /// 1 — #2730, the first rule: General Ledger Setup."Additional Reporting Currency" := ''.
+    /// 2 — #3497, four No. Series setup fields the restore leaves blank and DemoTool fills.</summary>
+    internal const int RuleSetVersion = 2;
 
     internal static readonly IReadOnlyList<CompanyNormalizationRule> Rules = new[]
     {
@@ -91,6 +92,86 @@ internal static class TestDataNormalization
                + "(<AdditionalCurrency/> is empty in all 25 DemoDataConfig.xml files); the restored "
                + "backup's EUR makes BC correctly write an extra residual G/L Entry, so every "
                + "Microsoft test counting G/L Entries after a posting sees one more than it expects"),
+
+        // ── #3497: four No. Series setup fields blank in the restore, set by DemoTool ──
+        //
+        // Observably equivalent because the target is the series code Microsoft's own DemoTool
+        // leaves in the field, and each of those series EXISTS in the restored company and is
+        // already issuing numbers there — so BC draws a number exactly as it does on Microsoft's
+        // pipeline rather than refusing. Evidence for the two prepayment codes: the restore's own
+        // posted-invoice document numbers 103297 and 108224 fall inside the ranges
+        // CreateNoSeries.InitFinalSeries computes for S-INV+ (103001-104999) and P-INV+
+        // (108001-109999). Derivation, and why the A-ORD half is NOT here: #3497 and the PR body.
+        //
+        // TRAP: the DemoTool writes "Posted Prepmt. Inv. Nos." TWICE. OnRun sets the sales field
+        // to S-INV-P+ and the purchase field to its own prepayment series; Finalize() then
+        // OVERWRITES both with the plain posted-invoice series, and Finalize is what runs last
+        // (InterfaceBasisData.Codeunit.al calls it). The final state is S-INV+ / P-INV+. Reading
+        // only OnRun gives a code that is real but is not what the company ends up holding.
+        new CompanyNormalizationRule(
+            TableId: 311,
+            TableName: "Sales & Receivables Setup",
+            FieldName: "Posted Prepmt. Inv. Nos.",
+            TargetJson: "\"S-INV+\"",
+            Why: "blank in the restore; DemoTool leaves the posted sales invoice series here "
+               + "(CreateSalesReceivablesS.Codeunit.al Finalize(), which overwrites OnRun's "
+               + "S-INV-P+). Blank makes Sales-Post Prepayments assign '' into Sales Header."
+               + "\"Prepayment No. Series\", and Library - Sales.PostSalesPrepaymentInvoice then "
+               + "calls PeekNextNo on it with no blank guard — 316 of the 356 'empty No. Series "
+               + "Code' failures in run 34169134540"),
+
+        new CompanyNormalizationRule(
+            TableId: 312,
+            TableName: "Purchases & Payables Setup",
+            FieldName: "Posted Prepmt. Inv. Nos.",
+            TargetJson: "\"P-INV+\"",
+            Why: "blank in the restore; DemoTool leaves the posted purchase invoice series here "
+               + "(CreatePurchasesPayablesS.Codeunit.al Finalize()). Blank is what Purch.-Post "
+               + "Prepayments reports as 'Specify the code for the number series that will be "
+               + "used to assign numbers to posted purchase prepayment invoices' — 69 failures "
+               + "in run 34169134540"),
+
+        new CompanyNormalizationRule(
+            TableId: 313,
+            TableName: "Inventory Setup",
+            FieldName: "Internal Movement Nos.",
+            TargetJson: "\"INT-MOVE\"",
+            Why: "blank in the restore; DemoTool creates the INT-MOVE series and leaves it here "
+               + "(CreateInventorySetup.Codeunit.al). Blank is what BC's TestField reports as "
+               + "'Internal Movement Nos. must have a value in Inventory Setup' — 26 failures "
+               + "in run 34169134540, mostly Tests-SCM Codeunit137152"),
+
+        new CompanyNormalizationRule(
+            TableId: 5911,
+            TableName: "Service Mgt. Setup",
+            FieldName: "Service Quote Nos.",
+            TargetJson: "\"SM-QUOTE\"",
+            Why: "blank in the restore; DemoTool passes SM-QUOTE as the last argument of "
+               + "CreateServiceMgtSetup.Codeunit.al's ModifyData2, and DemoDataConfig.xml has "
+               + "<SetupServiceMgt>TRUE</SetupServiceMgt> so that path runs. Blank is what BC's "
+               + "TestField reports as 'Service Quote Nos. must have a value in Service Mgt. "
+               + "Setup' — 13 failures in run 34169134540"),
+
+        new CompanyNormalizationRule(
+            TableId: 311,
+            TableName: "Sales & Receivables Setup",
+            FieldName: "Direct Debit Mandate Nos.",
+            TargetJson: "\"DDM\"",
+            Why: "blank in the restore; DemoTool creates the DDM series and leaves it here "
+               + "(CreateSalesReceivablesS.Codeunit.al, InitTempSeries). Blank is what BC's "
+               + "TestField reports as 'Direct Debit Mandate Nos. must have a value in Sales & "
+               + "Receivables Setup' — 20 failures in run 34169134540"),
+
+        new CompanyNormalizationRule(
+            TableId: 5911,
+            TableName: "Service Mgt. Setup",
+            FieldName: "Contract Credit Memo Nos.",
+            TargetJson: "\"SM-CR-CON\"",
+            Why: "blank in the restore; DemoTool passes SM-CR-CON as ModifyData3's second "
+               + "argument (CreateServiceMgtSetup.Codeunit.al). Blank is what BC's TestField "
+               + "reports as 'Contract Credit Memo Nos. must have a value in Service Mgt. "
+               + "Setup' — 4 failures in run 34169134540. Found by scanning the run for every "
+               + "blank-setup-field failure rather than only the shapes #3497 enumerated"),
     };
 
     /// <summary>What one rule did over the whole run. Accumulated rather than reported per
