@@ -1450,6 +1450,58 @@ public static partial class NclCecilRewrite
             PrependStaticCall(asm.MainModule, endTransactionMethod, noteTransactionEndHelper, argSlots: 2);
         }
 
+        // 8g-bis. SessionTransactionExtensions.BeginTransactionWorld / EndTransactionWorld —
+        //     the BARE pair, without the "AndTransaction" suffix 8g handles (#4089).
+        //     Replaced, not prepended: BC's bodies go through
+        //     session.DataAccessSource.SessionTransactionManager, which the skeleton session
+        //     lacks, so they reach nothing.
+        //
+        //     Covers BC's OWN callers of NavReport.RunReportCoreAsync — MS business logic
+        //     calling NavReport.RunAsync directly, measured firing from
+        //     Page5134.GenerateDuplicateSearchString's OnAction during install. NOT the AL
+        //     report verbs: Run/RunModal/RunRequestPage/Execute/Print each reach a runner seam
+        //     that applies the guard in C# itself (NavReportSync.SyncRun, SyncRunRequestPage,
+        //     SyncExecuteOrPrint), so this fires 0 times for corpus 60981's 14 arms.
+        //
+        //     Trap: measure that with AL_RUNNER_NCL_CACHE=0. A cache-served Cecil pass prints
+        //     no [Cecil] lines, so a probe reads zero when it means unmeasured.
+        {
+            var sessTxTypeW = asm.MainModule.Types
+                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.SessionTransactionExtensions")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] SessionTransactionExtensions type not found — Ncl shape changed; do not commit");
+
+            var worldTargets = new (string Name, string HelperName)[]
+            {
+                ("BeginTransactionWorld", nameof(AlRunner.Patches.ALDatabasePatches.BcBeginTransactionWorld)),
+                ("EndTransactionWorld",   nameof(AlRunner.Patches.ALDatabasePatches.BcEndTransactionWorld)),
+            };
+
+            foreach (var (name, helperName) in worldTargets)
+            {
+                // Parameters.Count == 1 is what separates the bare pair from 8g's
+                // ...AndTransaction(NavSession, bool); matching on the name alone would
+                // silently pick up whichever overload Cecil enumerated first.
+                var target = sessTxTypeW.Methods
+                    .FirstOrDefault(m => m.Name == name && m.IsStatic && m.HasBody
+                                         && m.Parameters.Count == 1)
+                    ?? throw new InvalidOperationException(
+                        $"[Cecil] SessionTransactionExtensions.{name}(NavSession) not found — "
+                        + "Ncl shape changed; do not commit");
+
+                var helper = typeof(AlRunner.Patches.ALDatabasePatches).GetMethod(
+                    helperName, BindingFlags.Public | BindingFlags.Static)
+                    ?? throw new InvalidOperationException(
+                        $"[Cecil] ALDatabasePatches.{helperName} not found");
+
+                ReplaceBodyWithHelper(asm.MainModule, target, helper);
+            }
+
+            Console.Error.WriteLine(
+                "[Cecil] Rewrote SessionTransactionExtensions.BeginTransactionWorld/EndTransactionWorld "
+                + "→ ALDatabasePatches report transaction-world pair");
+        }
+
         // 8h. SessionTransactionExtensions.BeginTransaction / EndTransaction /
         //     BeginTransactionWorldAndTransaction / EndTransactionWorldAndTransaction —
         //     the TransactionModel::None depth counter (#3580).

@@ -38,6 +38,12 @@ public static partial class NclCecilRewrite
                     new[] { typeof(int), typeof(bool), typeof(bool), typeof(object) })
                 ?? throw new InvalidOperationException(
                     "NavReportSync.SyncStaticRun(int,bool,bool,object) not found — do not commit"));
+            var syncExecutePrintRef = asm.MainModule.ImportReference(
+                typeof(AlRunner.NavReportSync).GetMethod(
+                    nameof(AlRunner.NavReportSync.SyncExecuteOrPrint),
+                    new[] { typeof(object), typeof(int) })
+                ?? throw new InvalidOperationException(
+                    "NavReportSync.SyncExecuteOrPrint(object,int) not found — do not commit"));
             // NavNCLDialogException is the AL Error() carrier; ctor takes (PrivacyClassification, string).
             // Resolving cross-assembly type refs here is brittle (Diagnostic enum lives in
             // Microsoft.Dynamics.Nav.Diagnostic.dll) — InvalidOperationException is caught by AL
@@ -287,6 +293,58 @@ public static partial class NclCecilRewrite
                             il.Append(il.Create(OpCodes.Call, syncRunRequestPageRef));
                             il.Append(il.Create(OpCodes.Ret));
                             body.MaxStackSize = 3;
+                        }
+                        reportRewrites++;
+                    }
+                    // Execute / Print, every sync overload — #4089. BC's twelve wrappers are
+                    // `…Async(…).AsTask().GetAwaiter().GetResult()` over
+                    // RunReportAsync(requestWindow: false, …), so they never show a request page
+                    // and their transaction-world decision turns on the TransactionType term
+                    // alone. Left to BC, the static forms resolved no metadata
+                    // (requireCompiled: true) and ran nothing at all, silently.
+                    //
+                    //   static   (int, …)     -> (null, arg0)          by report id
+                    //   instance (…)          -> (this, 0)             the instance IS the report
+                    //
+                    // A `string fullName` first parameter is NOT handled: the runner resolves a
+                    // report by id, and guessing an id from a name would be a different feature.
+                    // Those keep the loud refusal rather than a silent mis-wire, exactly as
+                    // RunRequestPage's unknown-shape branch does.
+                    else if ((method.Name == "Execute" || method.Name == "Print")
+                        && method.ReturnType.FullName == "System.Void"
+                        && method.Parameters.Count >= 1)
+                    {
+                        var eps = method.Parameters;
+                        bool isStatic = method.IsStatic;
+                        bool known = isStatic
+                            ? eps[0].ParameterType.FullName == "System.Int32"
+                            : eps[0].ParameterType.FullName == "System.String";
+
+                        var body = method.Body;
+                        body.Instructions.Clear();
+                        body.ExceptionHandlers.Clear();
+                        body.Variables.Clear();
+                        var il = body.GetILProcessor();
+
+                        if (!known)
+                        {
+                            il.Append(il.Create(OpCodes.Ldstr,
+                                $"out-of-scope: NavReport.{method.Name} (unrecognised overload shape)"));
+                            il.Append(il.Create(OpCodes.Newobj, ioeCtor));
+                            il.Append(il.Create(OpCodes.Throw));
+                            body.MaxStackSize = 1;
+                        }
+                        else
+                        {
+                            // arg 1: the report instance, or null for the static overloads
+                            if (isStatic) il.Append(il.Create(OpCodes.Ldnull));
+                            else il.Append(il.Create(OpCodes.Ldarg_0));
+                            // arg 2: the report id (0 for the instance overloads)
+                            if (isStatic) il.Append(il.Create(OpCodes.Ldarg_0));
+                            else il.Append(il.Create(OpCodes.Ldc_I4_0));
+                            il.Append(il.Create(OpCodes.Call, syncExecutePrintRef));
+                            il.Append(il.Create(OpCodes.Ret));
+                            body.MaxStackSize = 2;
                         }
                         reportRewrites++;
                     }

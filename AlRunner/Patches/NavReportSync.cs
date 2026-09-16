@@ -312,9 +312,40 @@ public static partial class NavReportSync
                 $"NavReport.RunRequestPage({reportId})",
                 "the runner could not construct report " + reportId + " to run its request page");
 
-        // offersOk: true — RunRequestPage opens the page with ReportIntent.Parameters, where a
-        // plain OK means "these are the parameters" and is available on every request page.
-        var confirmed = RunRequestPageForHandler(report, reportId, parameters, offersOk: true);
+        // #4089: BC's RunRequestPageAsync is RunReportAsync(requestWindow: true, ...), which
+        // assigns UseRequestForm = true before RunReportCoreAsync reads it — so this path
+        // ALWAYS takes the transaction-world branch, whatever the report declares. Entering one
+        // is refused while a write is pending, and the run's own writes commit on return, which
+        // is the same Begin/End pair SyncRun applies for Report.Run.
+        //
+        // Observably equivalent: corpus 60981 "Test TxModel Report Exec" Test02/Test03 (refused
+        // with a pending write, instance and static), Test04 (the control: shown and confirmed
+        // with none) and Test05 (the AutoRollback exemption), green on a real service tier.
+        bool entersTransactionWorld = AlRunner.Patches.ALDatabasePatches.ReportRunEntersTransactionWorld(
+            useRequestForm: true,
+            ReadReportTransactionType(report));
+        if (entersTransactionWorld)
+        {
+            AlRunner.Patches.ALDatabasePatches.ThrowIfWriteTransactionStarted();
+            AlRunner.Patches.ALDatabasePatches.BeginGuardedRunTransaction();
+        }
+
+        bool confirmed;
+        try
+        {
+            // offersOk: true — RunRequestPage opens the page with ReportIntent.Parameters, where a
+            // plain OK means "these are the parameters" and is available on every request page.
+            confirmed = RunRequestPageForHandler(report, reportId, parameters, offersOk: true);
+        }
+        catch
+        {
+            // BC: EndTransactionWorld on the way out rolls the run's writes back.
+            if (entersTransactionWorld)
+                AlRunner.Patches.ALDatabasePatches.EndGuardedRunTransaction(commit: false);
+            throw;
+        }
+        if (entersTransactionWorld)
+            AlRunner.Patches.ALDatabasePatches.EndGuardedRunTransaction(commit: true);
 
         // BC's own RunRequestPageAsync reaches GetReportParameters through
         // RunReportAsync(…, ReportIntent.Parameters, …), which sets NavReport.success when
@@ -605,6 +636,58 @@ public static partial class NavReportSync
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
             throw; // unreachable
         }
+    }
+
+    /// <summary>
+    /// Replacement for the sync <c>NavReport.Execute</c> / <c>NavReport.Print</c> overloads,
+    /// instance and static (#4089). Cecil-rewritten call sites — see
+    /// NclCecilRewrite.Reports.cs §NavReport.
+    ///
+    /// BC routes both through <c>RunReportAsync(requestWindow: false, …)</c>, whose first act is
+    /// <c>if (requestWindow.HasValue) UseRequestForm = requestWindow.Value</c> — so neither ever
+    /// shows a request page, whatever the report declares, and <c>RunReportCoreAsync</c> then
+    /// reads that <c>false</c> when it decides whether to enter a transaction world. Only the
+    /// TransactionType term can be true for these two entry points.
+    ///
+    /// The sync wrappers are <c>…Async(…).AsTask().GetAwaiter().GetResult()</c>, and that async
+    /// chain NREs on the skeleton session for the same reason Run/RunModal do (see this file's
+    /// header), so it is owned here rather than left to BC — the static overloads additionally
+    /// reach <c>GetMetaReportById(id, requireCompiled: true)</c>, which never resolves in runner
+    /// mode (CodeunitPatches.LookupNclMetaForReport says so) and silently ran nothing at all.
+    ///
+    /// Observably equivalent: corpus 60981 "Test TxModel Report Exec" Test06/Test10 (refused with
+    /// a pending write, instance and static), Test07 (the report's own writes commit), Test11
+    /// (Print, refused), and Test08/Test09 (a plain report and a report that HAS a request page
+    /// are neither refused nor a commit — the latter being exactly the UseRequestForm=false
+    /// claim), all green on a real service tier.
+    /// </summary>
+    /// <param name="navReportOrNull">The instance for the instance overloads; null for the
+    /// static ones, which construct their own — so a static run never sees a SetMarker the
+    /// caller made, which is why the corpus fixtures carry their own default keys.</param>
+    public static void SyncExecuteOrPrint(object? navReportOrNull, int reportId)
+    {
+        var report = navReportOrNull ?? CreateReportForRequestPage(reportId);
+        if (report == null)
+            throw AlRunner.Patches.RunnerShapeGap.ReportConstruction(
+                $"NavReport.Execute/Print({reportId})",
+                "the runner could not construct report " + reportId + " to run it");
+
+        // BC: RunReportAsync(requestWindow: false, …) assigns this before the guard reads it.
+        // Bound STRICTLY, like ReadUseRequestForm below: a null here means "I could not find
+        // it", never "it is not needed" (guards-need-a-third-state.md). Skipping the write
+        // silently leaves whatever the report declared, so a report that HAS a request page
+        // would enter a transaction world Execute never enters — corpus 60981 Test09 answers
+        // wrongly and nothing raises.
+        var pUseRequestForm = FindProperty(report.GetType(), "UseRequestForm");
+        if (pUseRequestForm == null || !pUseRequestForm.CanWrite
+            || pUseRequestForm.PropertyType != typeof(bool))
+            throw new AlRunner.Infrastructure.BcShapeGapException(
+                "NavReport.Execute/Print", "NavReport.UseRequestForm",
+                "writable bool property not found, so Execute/Print cannot be forced not to "
+                + "show a request page and whether the run enters a transaction world is undecidable");
+        pUseRequestForm.SetValue(report, false);
+
+        SyncRun(report);
     }
 
     /// <summary>
