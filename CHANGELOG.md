@@ -304,6 +304,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **dependency-metadata:** memoize the dependency page-symbol index so TryGetDependencyPageSymbol stops re-enumerating every registered .app per object
 - **metadata:** persist the NCLMetaTable derivation
 - **metadata:** consolidate the GetObjectNumberAndInfoWithinRange snapshot substitutions
 - **ci:** pin every setup-dotnet site to global.json's SDK floor
