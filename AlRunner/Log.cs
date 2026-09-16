@@ -15,11 +15,13 @@ public static class Log
 
     // Matches `[Component]` or `[ComponentName]` at the start of a line — alphanumeric
     // tag in square brackets, NOT a numeric progress tag like `[1/3]`.
-    // `[layered]`, `[watch]`, `[provision]`, `[bc]`, `[dep]` and `[expectations]` are
-    // explicitly exempted — they are user-facing output (layered source-build progress;
-    // watch-mode status; artifact provisioning/download progress; which BC version was
-    // selected; dependency resolution warnings; whether the tests/expectations manifest
-    // was found), not internal diagnostics.
+    // Two exemptions, both spelled out in the constants below rather than here, so that a
+    // reader counting them cannot get a different answer from the regex: SeverityTags
+    // (a severity is never an internal diagnostic) and UserFacingComponentTags (layered
+    // source-build progress; watch-mode status; artifact provisioning/download progress;
+    // which BC version was selected; dependency resolution warnings; whether the
+    // tests/expectations manifest was found). Per-tag census of everything NOT exempt:
+    // docs/log-filter.md#single-word-tags.
     //
     // `[bc]` was NOT exempted until 2026-07-29, so the two lines naming the selected BC
     // version vanished at default verbosity. Measured: the same suite scores 1041P/35F/0E
@@ -37,9 +39,12 @@ public static class Log
     // silently relaunching a child had no explanation on stderr at default verbosity.
     // These lines (why a second process is about to run, plus the genuinely unexpected
     // conditions hit while building the shadow dir) are operationally significant in the
-    // same way BC-version selection is; the ~280 other `[Cecil]`-tagged per-method
-    // rewrite diagnostics in NclCecilRewrite.cs are NOT retagged and stay suppressed —
-    // that volume of internal detail is exactly what this filter exists to hide.
+    // same way BC-version selection is; the other `[Cecil]`-tagged per-method rewrite
+    // diagnostics are NOT retagged and stay suppressed — that volume of internal detail is
+    // exactly what this filter exists to hide. (Written as ~280 until #2221 censused it: 369
+    // sites across 10 files. Counts live in docs/log-filter.md#single-word-tags rather than in
+    // this comment. LogSingleWordTagContractTests does NOT re-derive them -- it pins the
+    // classification, not the totals -- so treat them as a snapshot, not a checked contract.)
     //
     // `[dap]` was added for #1642: --dap's "listening on 127.0.0.1:<port>" line is the
     // ONLY signal a DAP client (or a human at a terminal) has that the runner is ready
@@ -87,8 +92,22 @@ public static class Log
     // `[PublishedApplication]`. They now use `[warn] <Component>: <message>`, the shape
     // ProvisioningCheck and BcAppFallback already use, and LoudDiagnosisReachesTheUserTests
     // reads those real call sites and pushes their real messages through this filter.
+    // #2221 — SEVERITY IS A CLASS, NOT AN ENTRY IN THE LIST BELOW. A line whose author
+    // thought it worth calling a warning or an error is worth the user seeing, whatever
+    // component raised it, so these are exempt by severity rather than by component name.
+    // `warn` sat in the component list until #2221 and `error` was simply absent, so the
+    // first `[error] ...` anyone wrote would have been eaten — the same shape as the five
+    // instances above, pre-empted. `fatal` has no call site yet and is declared so the next
+    // author to reach for one is covered; it changes nothing that runs today.
+    // LogSingleWordTagContractTests.SeverityTags_AreNeverSuppressed pins all three.
+    private const string SeverityTags = "warn|error|fatal";
+
+    // Component names that are user-facing OUTPUT rather than diagnostics. Adding one is the
+    // wrong lever in almost every case — see the #3068 note above; re-tag the line instead.
+    private const string UserFacingComponentTags = "layered|watch|provision|bc|dep|expectations|reexec|dap";
+
     private static readonly Regex ComponentTag =
-        new(@"^\[(?!(?:layered|watch|provision|bc|dep|expectations|reexec|dap|warn)\])[A-Za-z][A-Za-z0-9._+]*\]",
+        new($@"^\[(?!(?:{SeverityTags}|{UserFacingComponentTags})\])[A-Za-z][A-Za-z0-9._+]*\]",
             RegexOptions.Compiled);
 
     public static void Install()
