@@ -315,6 +315,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **ci:** pin the whole if:, because the glob check was not reachability
 - **ci:** execute the ordered-bundle guard, do not just grep its text
 - **runner-extras:** run the dep-tableext-platform-base pair as ordered bundles
 - **guards:** make the generation-key guard see a memo with NO generation key
