@@ -87,8 +87,22 @@ public static class Log
     // `[PublishedApplication]`. They now use `[warn] <Component>: <message>`, the shape
     // ProvisioningCheck and BcAppFallback already use, and LoudDiagnosisReachesTheUserTests
     // reads those real call sites and pushes their real messages through this filter.
+    // #2221 — SEVERITY IS A CLASS, NOT AN ENTRY IN THE LIST BELOW. A line whose author
+    // thought it worth calling a warning or an error is worth the user seeing, whatever
+    // component raised it, so these are exempt by severity rather than by component name.
+    // `warn` sat in the component list until #2221 and `error` was simply absent, so the
+    // first `[error] ...` anyone wrote would have been eaten — the same shape as the five
+    // instances above, pre-empted. `fatal` has no call site yet and is declared so the next
+    // author to reach for one is covered; it changes nothing that runs today.
+    // LogSingleWordTagContractTests.SeverityTags_AreNeverSuppressed pins all three.
+    private const string SeverityTags = "warn|error|fatal";
+
+    // Component names that are user-facing OUTPUT rather than diagnostics. Adding one is the
+    // wrong lever in almost every case — see the #3068 note above; re-tag the line instead.
+    private const string UserFacingComponentTags = "layered|watch|provision|bc|dep|expectations|reexec|dap";
+
     private static readonly Regex ComponentTag =
-        new(@"^\[(?!(?:layered|watch|provision|bc|dep|expectations|reexec|dap|warn)\])[A-Za-z][A-Za-z0-9._+]*\]",
+        new($@"^\[(?!(?:{SeverityTags}|{UserFacingComponentTags})\])[A-Za-z][A-Za-z0-9._+]*\]",
             RegexOptions.Compiled);
 
     public static void Install()
