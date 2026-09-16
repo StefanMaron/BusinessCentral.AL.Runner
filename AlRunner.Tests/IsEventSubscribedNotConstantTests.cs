@@ -50,7 +50,7 @@ public sealed class IsEventSubscribedNotConstantTests
     /// Reads the REWRITTEN bytes RewriteNcl produces, not the file on disk, so it measures
     /// the rewrite itself rather than whatever a previous run happened to leave in bin/.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void RewriteNcl_LeavesNoConstantTrueIsEventSubscribedOverload()
     {
         TestArtifacts.SkipIfMissing();
@@ -86,7 +86,7 @@ public sealed class IsEventSubscribedNotConstantTests
     /// the presence of a call to a member of that name is what distinguishes "BC's original
     /// body is intact" from "some other constant".
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void RewriteNcl_KeepsIsEventSubscribedDelegatingToTriggerEventHandler()
     {
         TestArtifacts.SkipIfMissing();
