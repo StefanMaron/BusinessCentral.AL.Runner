@@ -69,7 +69,10 @@ public sealed class EnumMetadataRegistryCollectionGuardTests
         // the population did not change, the measurement did.
         Assert.True(MutatingSources().Count() >= 8,
             $"expected at least the 8 known AlEnumMetadataRegistry.Clear() callers under '{TestsDir}', "
-            + $"found {MutatingSources().Count()} — the probe is broken, not the tree.");
+            + $"found {MutatingSources().Count()}. Either the probe stopped seeing the sources, or a "
+            + "caller was legitimately deleted — check which before lowering this floor, and lower "
+            + "it only for the second. The floor exists so an empty result cannot pass the "
+            + "membership test below vacuously, not to pin the exact count.");
     }
 
     [Fact]
