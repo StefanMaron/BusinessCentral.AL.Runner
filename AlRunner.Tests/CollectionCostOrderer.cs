@@ -70,6 +70,12 @@
 // satisfying the gate without addressing the tail it exists to catch. Record the observed
 // MAXIMUM in that case. The rule is: whichever end you pick, the recorded value must
 // change dispatch order relative to the fallback, or the entry is decoration.
+// #4208 pinned the sharp end of that rule: a value recorded EQUAL to
+// UnmeasuredWeightSeconds yields the identical sort key and tiebreak position to being
+// absent, so check-collection-weights.py now FAILS the leg on one. It is an equality
+// test, not a floor — the three entries recorded BELOW the fallback (21, 23, 23) rank
+// their collections after the unmeasured ones, which is a real dispatch change and the
+// right entry for a genuinely cheap collection.
 //
 // scripts/check-collection-weights.py is the loud guard that replaces "someone reads it by
 // hand": run against the same trx/unit-tests.trx the occupancy report already parses, it
@@ -85,9 +91,13 @@
 // dispatch order, not about satisfying the gate. It deliberately does NOT flag drift on entries
 // that already exist (see its own header for why: the same class's summed duration varies
 // materially by BC leg, and a percentage-drift check on top of that would be a noisy gate
-// nobody trusts). Re-measure existing entries with scripts/trx-occupancy.py by hand when
-// the shape changes; the guard's job is only to stop a class from going unmeasured
-// forever.
+// nobody trusts — #4208 re-measured that across two legs of one commit and found the same
+// collection running 1.83x-1.96x slower on 28.4 than on 27.5, which puts a HEALTHY entry
+// at 1.97x observed/recorded against a decorative one at 2.55x, too close to band). It
+// does flag an entry recorded at exactly the fallback, which needs no tolerance. Re-measure
+// existing entries with scripts/trx-occupancy.py by hand when the shape changes; the
+// guard's job is to stop a class from going unmeasured forever, and to stop an entry from
+// being recorded in a way that leaves it unmeasured in all but name.
 using Xunit;
 using Xunit.Abstractions;
 

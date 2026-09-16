@@ -443,5 +443,151 @@ class WorkflowFailThresholdTests(unittest.TestCase):
         self.assertIn("CountBaselineIntegrationTests", out_default)
 
 
+class DecorativeEntryTests(unittest.TestCase):
+    """#4208. The gate caught an ABSENT heavy collection and had no opinion at all about
+    the VALUE of one that is present, so
+
+        ["FloorOnlyBundleEnumFieldTests"] = 30,   // observed 76.4s
+
+    satisfied it permanently while leaving dispatch order IDENTICAL to being absent.
+
+    What is asserted here is not drift and carries no tolerance. CollectionCostOrderer
+    sorts descending on the weight and gives an absent collection UnmeasuredWeightSeconds,
+    so a recorded value EQUAL to that constant produces the same sort key as absence and
+    the same stable tiebreak — provably, not approximately, no dispatch change. That is
+    the orderer header's own rule ("the recorded value must change dispatch order relative
+    to the fallback, or the entry is decoration", #2175) finally pinned.
+
+    Why this is an equality test and not a ratio band: see the module docstring of
+    check-collection-weights.py. Measured on one commit across two legs, the SAME
+    collection runs 1.83x-1.96x slower on 28.4 than on 27.5, which puts a healthy entry's
+    observed/recorded at 1.97x while this defect's case is 2.55x. No band fits between.
+    """
+
+    def test_a_value_equal_to_the_fallback_is_decorative(self):
+        self.assertEqual(
+            ccw.find_decorative_entries({"DecorativeTests": 30}, unmeasured=30),
+            ["DecorativeTests"])
+
+    def test_a_value_above_the_fallback_is_not(self):
+        self.assertEqual(
+            ccw.find_decorative_entries({"RealTests": 31}, unmeasured=30), [])
+
+    def test_a_value_below_the_fallback_is_not_decorative(self):
+        """The three real entries at 21 and 23 rank the collection BELOW the fallback,
+        which is a genuine dispatch change and the right call for a cheap collection. A
+        'must exceed the fallback' rule would red all three."""
+        self.assertEqual(
+            ccw.find_decorative_entries(
+                {"TestTimeoutFlagTests": 21, "CheapTests": 23}, unmeasured=30), [])
+
+    def test_names_every_decorative_entry_sorted(self):
+        self.assertEqual(
+            ccw.find_decorative_entries(
+                {"BTests": 30, "ATests": 30, "FineTests": 90}, unmeasured=30),
+            ["ATests", "BTests"])
+
+    def test_the_fallback_is_read_from_the_source_not_hardcoded(self):
+        """If UnmeasuredWeightSeconds ever moves, 'decorative' moves with it."""
+        self.assertEqual(
+            ccw.find_decorative_entries({"XTests": 45}, unmeasured=45), ["XTests"])
+        self.assertEqual(
+            ccw.find_decorative_entries({"XTests": 30}, unmeasured=45), [])
+
+
+class DecorativeEntryExitCodeTests(unittest.TestCase):
+    """The same claim end to end through main(), driven by a fixture trx and a fixture
+    orderer file — never by reading the script's own source as text."""
+
+    def _straddle(self):
+        return StraddleTheThresholdTests("run")
+
+    def test_a_decorative_entry_fails_the_leg_and_is_named(self):
+        h = self._straddle()
+        table = {**h.REFERENCE_TABLE, "FloorOnlyBundleEnumFieldTests": 30}
+        trx = h._write_trx({**h.REFERENCE_TABLE, "FloorOnlyBundleEnumFieldTests": 76.4})
+        rc, out = h._run(trx, h._write_orderer(table))
+        self.assertEqual(rc, 1)
+        self.assertIn("FloorOnlyBundleEnumFieldTests", out)
+        self.assertIn("30", out)
+
+    def test_the_same_table_with_the_observed_maximum_recorded_passes(self):
+        """The fix #2175 asks for — record the observed MAXIMUM — must go green, or the
+        gate would be unsatisfiable rather than informative."""
+        h = self._straddle()
+        table = {**h.REFERENCE_TABLE, "FloorOnlyBundleEnumFieldTests": 76}
+        trx = h._write_trx({**h.REFERENCE_TABLE, "FloorOnlyBundleEnumFieldTests": 76.4})
+        rc, out = h._run(trx, h._write_orderer(table))
+        self.assertEqual(rc, 0)
+
+    def test_a_decorative_entry_fails_even_when_it_never_ran_this_leg(self):
+        """The claim is about the table, not about the run, so it does not need the
+        collection to appear in the trx at all — and must not fall silent when a filtered
+        leg happens not to execute it."""
+        h = self._straddle()
+        table = {**h.REFERENCE_TABLE, "NeverRanTests": 30}
+        trx = h._write_trx(dict(h.REFERENCE_TABLE))
+        rc, out = h._run(trx, h._write_orderer(table))
+        self.assertEqual(rc, 1)
+        self.assertIn("NeverRanTests", out)
+
+    def test_a_clean_table_still_passes(self):
+        h = self._straddle()
+        trx, orderer = h._reference_leg({})
+        rc, _ = h._run(trx, orderer)
+        self.assertEqual(rc, 0)
+
+
+class WorkflowSurfacesEveryNonZeroExitTests(unittest.TestCase):
+    """The third state is only worth having if the caller cannot swallow it. bc-tests.yml
+    invokes this script as a bare `run:` with no continue-on-error and no `|| true`, so
+    exit 3 fails the leg exactly as exit 1 does — asserted here because a future edit
+    adding either would silently restore the green-tick-over-an-unmeasured-table state."""
+
+    WORKFLOW = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "bc-tests.yml"
+
+    def _step_body(self):
+        text = self.WORKFLOW.read_text()
+        idx = text.index("Collection weight table freshness (unit tests)")
+        # up to the start of the next step at the same indentation
+        rest = text[idx:]
+        end = rest.index("\n      - name:", 1)
+        return rest[:end]
+
+    def test_the_step_exists_and_invokes_this_script(self):
+        self.assertIn("scripts/check-collection-weights.py", self._step_body())
+
+    def test_the_step_does_not_swallow_a_nonzero_exit(self):
+        body = self._step_body()
+        self.assertNotIn("continue-on-error", body)
+        self.assertNotIn("|| true", body)
+        self.assertNotIn("set +e", body)
+
+
+class UnreadableFallbackThirdStateTests(unittest.TestCase):
+    """guards-need-a-third-state.md. 'I could not measure' must not be spelled as either
+    the pass or the fail code.
+
+    A table the script cannot parse a fallback out of is not a table with no decorative
+    entries — it is a table whose decorative entries are unknowable, because 'decorative'
+    is defined relative to that constant. Reporting 0 there would put the broken case back
+    on the exit-0 path this change exists to take it off.
+    """
+
+    def test_an_unparsable_fallback_refuses_with_exit_three(self):
+        h = StraddleTheThresholdTests("run")
+        trx = h._write_trx(dict(h.REFERENCE_TABLE))
+        with tempfile.NamedTemporaryFile("w", suffix=".cs", delete=False) as f:
+            f.write("MeasuredWeightSeconds = new Dictionary<string, int> {\n"
+                    '["KnownTests"] = 30,\n};\n')   # no UnmeasuredWeightSeconds at all
+            orderer = f.name
+        rc, out = h._run(trx, orderer)
+        self.assertEqual(rc, 3)
+        self.assertIn("could not", out.lower())
+
+    def test_the_refusal_is_distinct_from_both_pass_and_fail(self):
+        self.assertNotIn(ccw.EXIT_CANNOT_MEASURE, (0, 1))
+
+
 if __name__ == "__main__":
     unittest.main()
