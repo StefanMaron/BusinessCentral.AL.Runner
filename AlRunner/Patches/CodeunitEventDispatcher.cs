@@ -502,6 +502,21 @@ public static partial class BcRuntime
         // dependent bundle's dep assembly). MethodInfo.Invoke would then throw
         // TargetException 'Object does not match target type' — re-resolve the handler
         // against the instance's ACTUAL runtime type (same AL body, canonical copy).
+        // UNCOVERED, measured rather than assumed (#4243). `xasm-event-dispatch` was written for
+        // this case and no longer reaches it: a probe inside this branch fired ZERO times across
+        // both bundle shapes while both of that suite's tests passed -- including
+        // FirePing_CrossAssemblyDuplicateSubscriber_RunsExactlyOnce, whose name claims it.
+        //
+        // The branch itself runs constantly -- forcing the condition true showed Base App's
+        // Codeunit49.GetGlobalTableTriggerMask arriving here on every request -- but always with
+        // BOTH sides the same assembly (identical hashes), so the condition is never true and the
+        // body below is dead in practice. ResolveOnInstanceType is a safe no-op when the types
+        // already match: forcing the condition alone left both tests green.
+        //
+        // So do NOT read the suite's green as covering this. Restoring coverage needs a fixture
+        // that genuinely loads TWO copies of one AL codeunit -- making IsInstanceOfType false --
+        // which is more than loading the dep separately, since the current suite already does
+        // that. Until then the `throw` below is unreachable-by-fixture.
         if (!subscriberClrType.IsInstanceOfType(subscriberInstance))
         {
             var remapped = ResolveOnInstanceType(subscriberInstance.GetType(), subscriberMethod);
