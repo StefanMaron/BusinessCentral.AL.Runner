@@ -1125,6 +1125,19 @@ misleads, where `Business` is indistinguishable from a genuine `[BusinessEvent]`
 Dispatch is unaffected: codeunit events fire correctly through the `<EventName>_Scope` seeding,
 which does not consult `NCLMetadata`. This is an inventory-reporting gap only.
 
+**A multi-bundle run lists the previous bundle's subscriptions too.** The scan registries this
+table is seeded from are process-wide and are cleared only by `ResetForReload`, which
+`Program.cs` reaches in watch and server mode but not between the bundles of a one-shot
+multi-bundle invocation. Measured: two probe bundles run together, and bundle B saw bundle A's
+subscriber; run alone, each bundle is correct — as is every CI leg and every ordinary local
+invocation, which are single-bundle. A control arm in the same run confirmed `AllObj` does
+**not** list the other bundle's objects, so this is the table's own defect rather than the
+runner's process model. Three candidate scopes were measured and all three still contained the
+previous bundle (`RegisteredModules()`, `GetModuleAppInfoFor(...).AppId`,
+`CurrentBundleAssemblies()`), so the fix needs a per-bundle marker the runner does not currently
+keep. [#4222](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4222) tracks it.
+Dispatch is again unaffected: subscriber lookup is keyed on `(publisherId, eventMethodName)`.
+
 ---
 
 ### `Record "Windows Language"` — the license and installed-resource columns are chosen values

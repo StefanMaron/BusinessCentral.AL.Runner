@@ -57,22 +57,47 @@ public static partial class EventSubscriberPatches
     private static readonly HashSet<MethodInfo> _subscriptionMetadataSeeded = new();
 
     /// <summary>
-    /// How many <c>NavEventSubscription</c> rows this file has appended to BC's registry.
-    /// Non-zero is the only thing that distinguishes "seeded and empty" from "never ran", which
-    /// is why the count is exposed rather than inferred from the table answering.
+    /// How many subscriber methods this file has appended to BC's registry, and how many rows
+    /// that registry now holds — <c>(-1, -1)</c> before the registry exists.
+    ///
+    /// <para>Exposed for <c>EventSubscriptionVirtualTableResetTests</c>, which drives
+    /// <see cref="ResetForReload"/> in-process. The reload path is not reachable from a
+    /// single-bundle runner invocation, so an AL fixture cannot see it: without this accessor a
+    /// reset that silently stopped clearing would leave every AL-level test passing, which is
+    /// exactly the hole a source-text assertion left open the first time.</para>
+    ///
+    /// <para>The two numbers are deliberately separate: they must move TOGETHER. A reset that
+    /// cleared one and not the other is the drift this pair exists to make visible.</para>
     /// </summary>
-    internal static int SubscriptionMetadataRowCount => _subscriptionMetadataSeeded.Count;
+    internal static (int SeededMethods, int RegistryRows) SubscriptionMetadataCountsForTests()
+    {
+        lock (_lock)
+        {
+            return _subscriptionMetadataList == null
+                ? (-1, -1)
+                : (_subscriptionMetadataSeeded.Count, _subscriptionMetadataList.Count);
+        }
+    }
 
     /// <summary>
     /// Ensure <c>NavGlobal.EventSubscriptionMetadata</c> is non-null and holds one
     /// <c>NavEventSubscription</c> per scanned <c>[NavEventSubscriber]</c> method.
     ///
-    /// <para>Idempotent: the registry is built once and each subscriber method is appended at
-    /// most once, so the per-bundle re-run that
+    /// <para>Idempotent: each subscriber method is appended at most once, keyed on its
+    /// <see cref="MethodInfo"/>, so the per-bundle re-entry
     /// <see cref="InjectAllUsingStoredLookup"/> performs tops the inventory up with newly
-    /// loaded assemblies instead of duplicating it. BC's own
-    /// <c>GetDistinctEventSubscriptions</c> de-duplicates on top of that, but a growing list
-    /// would still be a leak across bundles.</para>
+    /// loaded assemblies rather than duplicating it. <see cref="ResetForReload"/> clears that
+    /// record and BC's registry together, which is what makes a --watch or --server reload of
+    /// the same bundle identity re-seed from the fresh assembly instead of skipping every
+    /// subscriber as "already seeded".</para>
+    ///
+    /// <para><b>A one-shot multi-bundle run accumulates across bundles</b>, because it reaches
+    /// neither reset: Program.cs gates <c>BcRuntime.ResetForNewBundleReload</c> on watch mode.
+    /// Each bundle still counts its OWN subscriptions exactly once — the MethodInfo key sees to
+    /// that — but the inventory also lists the previous bundle's. Measured, with a control arm
+    /// confirming AllObj does not behave this way; tracked as #4222 and recorded in
+    /// docs/limitations.md#event-subscription-virtual-table. Single-bundle runs, which is every
+    /// CI leg, are correct.</para>
     /// </summary>
     internal static void SeedSubscriptionMetadata()
     {
@@ -83,7 +108,18 @@ public static partial class EventSubscriberPatches
             var list = EnsureSubscriptionMetadataRegistry();
             if (list == null) return;
 
-            var added = 0;
+            // NOT scoped to the current bundle, deliberately -- see the limitation recorded in
+            // docs/limitations.md#event-subscription-virtual-table and issue #4222. The scan
+            // registries this reads are process-wide and are cleared only by ResetForReload,
+            // which Program.cs reaches in watch/server mode but NOT between the bundles of a
+            // one-shot multi-bundle invocation. Three candidate scopes were measured and all
+            // three still contained the previous bundle: RegisteredModules(),
+            // GetModuleAppInfoFor(...).AppId, and CurrentBundleAssemblies(). Scoping this table
+            // therefore needs a per-bundle marker the runner does not currently keep, which is
+            // a process-model change rather than a change to this file.
+            //
+            // A single-bundle run -- every CI invocation and every ordinary local one -- is
+            // correct: measured, both probe bundles pass every arm when run alone.
             foreach (var handle in EnumerateSubscriberHandles())
             {
                 if (!_subscriptionMetadataSeeded.Add(handle.Method)) continue;
@@ -93,8 +129,7 @@ public static partial class EventSubscriberPatches
                 {
                     // A subscriber whose subscription cannot be built is already reported by the
                     // dispatch path, which runs first and is the one that matters for behaviour.
-                    // Reporting again per bundle would be noise; dropping it from the inventory
-                    // silently would not, which is why the count above is exposed.
+                    // Dropping it from the inventory silently would not be, so it is named here.
                     _subscriptionMetadataSeeded.Remove(handle.Method);
                     Console.Error.WriteLine(
                         $"[Subscribers] EventSubscriptionMetadata: could not build subscription for "
@@ -103,12 +138,11 @@ public static partial class EventSubscriberPatches
                 }
                 if (subscription == null) { _subscriptionMetadataSeeded.Remove(handle.Method); continue; }
                 list.Add(subscription);
-                added++;
             }
 
-            if (added > 0)
+            if (list.Count > 0)
                 Console.Error.WriteLine(
-                    $"[Subscribers] EventSubscriptionMetadata seeded: added={added} total={list.Count}");
+                    $"[Subscribers] EventSubscriptionMetadata seeded: rows={list.Count}");
         }
     }
 
