@@ -284,7 +284,11 @@ public sealed class DepTableExtPlatformBaseBothShapesTests
 
         // Two shapes the expression pin cannot see, because they are not in the expression
         // (#4255, found in review). Both leave the step's own `if:` byte-identical.
-        Assert.DoesNotContain("continue-on-error", step, StringComparison.Ordinal);
+        Assert.False(step.Contains("continue-on-error", StringComparison.Ordinal),
+            "the ordered-bundle step declares `continue-on-error`, so its failure no longer fails "
+            + "the leg: the guard runs, prints ::error::, and CI stays green (#4255). If this is "
+            + "deliberate, say in the same commit what is then asserting the pair runs as two "
+            + "ordered bundles, because nothing here would be.");
 
         // The enclosing job's `if:`. A `github.event_name == 'push'` there skips this step on
         // every pull request while the step's own condition is untouched -- the same words that
@@ -294,7 +298,14 @@ public sealed class DepTableExtPlatformBaseBothShapesTests
         // "no job-level if:" -- the silent direction.
         var wf = Workflow();
         var stepAt = wf.IndexOf(DepDir, StringComparison.Ordinal);
-        var jobs = Regex.Matches(wf, @"(?m)^  (?<name>[A-Za-z0-9_-]+):[ \t]*$")
+        // The header pattern is deliberately WIDE. `^  ([A-Za-z0-9_-]+):[ \t]*$` looked
+        // reasonable and silently skipped a job whose header carries a trailing comment, a
+        // quoted name or a dotted name -- all valid YAML. The locator then took the PRECEDING
+        // job and reported "no job-level if:" while one was present, with every test green
+        // (measured in review: three shapes, all Failed: 0, Passed: 6). Missing a job is the
+        // silent direction; picking a spurious one is loud, because a non-job block would have
+        // to carry `    if:` to matter and that reds.
+        var jobs = Regex.Matches(wf, @"(?m)^  (?<name>[^\s#][^\n]*?):[ \t]*(?:#[^\n]*)?$")
             .Where(m => m.Index < stepAt).ToList();
         Assert.True(jobs.Count > 0,
             "could not locate the job declaring the ordered-bundle step, so this test cannot tell "
@@ -302,7 +313,13 @@ public sealed class DepTableExtPlatformBaseBothShapesTests
         var jobStart = jobs[^1].Index;
         var stepsAt = wf.IndexOf("\n    steps:", jobStart, StringComparison.Ordinal);
         Assert.True(stepsAt > jobStart, "the enclosing job has no `steps:` -- shape changed (#4255).");
-        Assert.DoesNotContain("\n    if:", wf[jobStart..stepsAt], StringComparison.Ordinal);
+        var jobHeader = wf[jobStart..stepsAt];
+        Assert.False(jobHeader.Contains("\n    if:", StringComparison.Ordinal),
+            $"the job declaring the ordered-bundle step ({jobs[^1].Groups["name"].Value}) carries a "
+            + "job-level `if:`, which skips every step in it -- including this one -- while the "
+            + "step's own condition stays byte-identical, so the pin above sees nothing. A skipped "
+            + "step reports SUCCESS (#4255). If the condition is deliberate, state in the same "
+            + "commit why this pair still runs on a pull request, and update this test.");
     }
 
     /// <summary>
