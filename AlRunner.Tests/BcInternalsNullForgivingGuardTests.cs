@@ -35,7 +35,9 @@
 //                      string.Empty, InvalidOperationException(string), Task.FromResult. The
 //                      .NET surface does not move under a BC update. 7.
 //     FrameworkTuple   `Item1` / `Item2` on a ValueTuple or Tuple<,>. The tuple is BC's, the
-//                      MEMBER is the framework's, so a BC update cannot move it. 8.
+//                      MEMBER is the framework's, so a BC update cannot move it. 10. 8 -> 10 in
+//                      #3492, which reads the field and the expression off each translated
+//                      filter tuple to fold them onto one dictionary entry per field.
 //     Listed           thirteen sites the three rules above cannot classify structurally, each
 //                      with its own reason below. 13. 10 → 13 in the #3533 metadata-equivalence
 //                      PR: the differ walks an arbitrary object graph reflectively, so it reads
@@ -128,7 +130,7 @@ public sealed class BcInternalsNullForgivingGuardTests
     {
         [Cat.RunnerOwnMember] = 38,
         [Cat.Bcl] = 7,
-        [Cat.FrameworkTuple] = 8,
+        [Cat.FrameworkTuple] = 10,
         [Cat.Listed] = 13,
     };
 
@@ -264,6 +266,14 @@ public sealed class BcInternalsNullForgivingGuardTests
         // BcShapeGapException catch still drops the one unreadable binding from the index rather
         // than costing the page every other one — what changed is that the gap is named.
         //
+        // 95 -> 98 for the three reads that bind BC's own FilterFieldDictionaryBuilder in
+        // RecordPatches.QueryProjection.cs (#3492): its parameterless constructor, And and
+        // BuildFilterFieldDictionary. All three are NEW sites rather than converted `!` ones —
+        // the builder is how the runner folds two conditions on one field into one entry, and
+        // the only alternative to it is the duplicating array constructor it replaced, which is
+        // the defect. So a null bind here must refuse; carrying on without the builder would
+        // restore the ArgumentException it exists to remove.
+        //
         // 92 -> 95 for the three reads that copy BC's own platform-field metadata off
         // SystemFieldsHelper in RecordPatches.NclMetaTableBuilder.cs (#3568): MetaField.Id, the
         // three SystemFieldsHelper properties, and the per-member MetaField read. Measured on
@@ -273,7 +283,7 @@ public sealed class BcInternalsNullForgivingGuardTests
         // would silently restore the positional-ctor defaults the conversion exists to replace,
         // which is "answer WRONG instead of failing" rather than a neutral sentinel. Absence of
         // the helper TYPE stays a legitimate null, and is deliberately NOT shape-checked.
-        Assert.Equal(95, converted);
+        Assert.Equal(98, converted);
     }
 
     /// <summary>

@@ -822,16 +822,66 @@ public static partial class RecordPatches
         return Activator.CreateInstance(tupleType, field, expr)!;
     }
 
+    private static Type? _tFilterFieldDictionaryBuilder;
+    private static ConstructorInfo? _ctorFfdBuilder;
+    private static MethodInfo? _mFfdBuilderAnd;
+    private static MethodInfo? _mFfdBuilderBuild;
+
+    /// <summary>
+    /// BC's own <c>FilterFieldDictionaryBuilder</c>, bound as REQUIRED members. It is the
+    /// component BC uses to fold several conditions onto one field, so the runner reuses it
+    /// rather than re-deriving the fold (#3492).
+    ///
+    /// <para>Absence refuses. A null bind here is "I could not find it", never "carry on
+    /// without it": the only alternative is the duplicating array constructor this replaced,
+    /// which is the defect (.claude/rules/guards-need-a-third-state.md).</para>
+    /// </summary>
+    private static void EnsureFilterFieldDictionaryBuilderReflection()
+    {
+        if (_mFfdBuilderBuild != null) return;
+        const string surface = "AL query execution (projection and filter push-down)";
+        const string name = "Microsoft.Dynamics.Nav.Runtime.Data.FilterFieldDictionaryBuilder";
+        _tFilterFieldDictionaryBuilder = _tFilterFieldDictionary!.Assembly.GetType(name)
+            ?? throw new BcShapeGapException(
+                surface, name,
+                "type not found — the runner folds a query's translated filters onto one entry "
+                + "per field through it; without it two conditions on one field would be handed "
+                + "to FilterFieldDictionary as duplicate keys (#3492)");
+        _ctorFfdBuilder = BcShape.Constructor(
+            _tFilterFieldDictionaryBuilder, BcShape.AnyInstance, Type.EmptyTypes, surface);
+        _mFfdBuilderAnd = BcShape.Method(
+            _tFilterFieldDictionaryBuilder, "And", BcShape.AnyInstance,
+            new[] { _tNavFieldMetadata!, _tFilterExpr! }, surface);
+        _mFfdBuilderBuild = BcShape.Method(
+            _tFilterFieldDictionaryBuilder, "BuildFilterFieldDictionary", BcShape.AnyInstance,
+            Type.EmptyTypes, surface);
+    }
+
+    /// <summary>
+    /// Fold <paramref name="tuples"/> into a <c>FilterFieldDictionary</c>, ANDing the
+    /// expressions of any two tuples that name the same field.
+    ///
+    /// <para>The three passes in <see cref="TranslateQueryFilters"/> append independently, so
+    /// one field can arrive twice — two query columns over one source field (Microsoft's query
+    /// 7314 filters <c>Positive</c> and <c>Positive_2</c>, both Reservation Entry field 28), or
+    /// a column filter plus the dataitem's own <c>DataItemTableFilter</c> on that field. The
+    /// array constructor this replaced kept both, and <c>FilterFieldDictionary</c>'s lazy lookup
+    /// then threw <c>ArgumentException: An item with the same key has already been added</c> out
+    /// of the first <c>TryGetValue</c> BC made — inside <c>TempTableDataProvider.TryGetRanges</c>
+    /// (#3492).</para>
+    /// </summary>
     private static object BuildFilterFieldDictionary(List<object> tuples)
     {
-        var tupleType = typeof(Tuple<,>).MakeGenericType(_tNavFieldMetadata!, _tFilterExpr!);
-        var arr = Array.CreateInstance(tupleType, tuples.Count);
-        for (int i = 0; i < tuples.Count; i++) arr.SetValue(tuples[i], i);
-        // FilterFieldDictionary(IEnumerable<Tuple<INavFieldMetadata, FilterExpression>>)
-        var ienumType = typeof(IEnumerable<>).MakeGenericType(tupleType);
-        var ctor = _tFilterFieldDictionary!.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-            .First(c => c.GetParameters().Length == 1 && c.GetParameters()[0].ParameterType == ienumType);
-        return ctor.Invoke(new object[] { arr });
+        EnsureFilterFieldDictionaryBuilderReflection();
+        var builder = _ctorFfdBuilder!.Invoke(null);
+        foreach (var tuple in tuples)
+        {
+            var t = tuple.GetType();
+            var field = t.GetProperty("Item1")!.GetValue(tuple);
+            var expr = t.GetProperty("Item2")!.GetValue(tuple);
+            _mFfdBuilderAnd!.Invoke(builder, new[] { field, expr });
+        }
+        return _mFfdBuilderBuild!.Invoke(builder, null)!;
     }
 
     /// <summary>Rebuild a filter expression tree, retargeting Unary leaves to <paramref name="targetCtx"/>.</summary>
