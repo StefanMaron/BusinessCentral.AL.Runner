@@ -20,19 +20,38 @@ public sealed class EnumMetadataRegistryCollectionGuardTests
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "AlRunner.Tests"));
 
     /// <summary>
-    /// Every .cs under AlRunner.Tests that CALLS AlEnumMetadataRegistry.Clear() — comment lines
-    /// are stripped first, because this guard's own collection file and this file both describe
-    /// the call in prose, and a guard that matches its own documentation reports offenders that
-    /// do not exist. Measured: without the strip it named EnumMetadataRegistrySerialCollection.cs,
-    /// which contains no code at all.
+    /// Comments AND every string-literal form this assembly uses, replaced by a space.
+    ///
+    /// Comments were stripped from the first version, for the reason #4199 records: this guard's
+    /// own collection file describes the call in prose, and a guard matching its own documentation
+    /// reports offenders that do not exist. String literals are the other half of that same
+    /// mistake, and leaving them in made this guard name ITSELF (#4251) -- the text it scans for
+    /// is the argument to its own <c>code.Contains(...)</c> call, on the line that does the
+    /// scanning.
+    ///
+    /// Order matters: verbatim and raw strings first, because a regular-string pattern would
+    /// mis-tokenise <c>@"a\"</c> (a verbatim string ending in a backslash, where the backslash is
+    /// NOT an escape).
+    /// </summary>
+    private static string CodeOnly(string path)
+    {
+        var text = string.Join('\n',
+            File.ReadAllLines(path).Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal)));
+        text = Regex.Replace(text, "\"\"\"[\\s\\S]*?\"\"\"", " ");        // raw string literals
+        text = Regex.Replace(text, "@\"(?:[^\"]|\"\")*\"", " ");             // verbatim
+        text = Regex.Replace(text, "\"(?:\\\\.|[^\"\\\\])*\"", " ");        // regular, escapes honoured
+        return text;
+    }
+
+    /// <summary>
+    /// Every .cs under AlRunner.Tests that CALLS AlEnumMetadataRegistry.Clear(), reading
+    /// <see cref="CodeOnly"/> so neither prose nor an embedded AL fixture counts as a call site.
     /// </summary>
     private static IEnumerable<string> MutatingSources()
     {
         foreach (var path in Directory.EnumerateFiles(TestsDir, "*.cs", SearchOption.AllDirectories))
         {
-            var code = string.Join('\n',
-                File.ReadAllLines(path).Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal)));
-            if (code.Contains("AlEnumMetadataRegistry.Clear()", StringComparison.Ordinal))
+            if (CodeOnly(path).Contains("AlEnumMetadataRegistry.Clear()", StringComparison.Ordinal))
                 yield return path;
         }
     }
@@ -45,9 +64,15 @@ public sealed class EnumMetadataRegistryCollectionGuardTests
         // membership test below would pass vacuously — so assert the population is non-trivial
         // first, with the count that was true when this was written as the floor.
         Assert.True(Directory.Exists(TestsDir), $"cannot see the test sources at '{TestsDir}'");
-        Assert.True(MutatingSources().Count() >= 7,
-            $"expected at least the 7 known AlEnumMetadataRegistry.Clear() callers under '{TestsDir}', "
-            + $"found {MutatingSources().Count()} — the probe is broken, not the tree.");
+        // 8 real call sites once string literals are excluded (#4251). The floor was 7 when the
+        // scan still counted this file itself, so the number moved for a reason worth naming:
+        // the population did not change, the measurement did.
+        Assert.True(MutatingSources().Count() >= 8,
+            $"expected at least the 8 known AlEnumMetadataRegistry.Clear() callers under '{TestsDir}', "
+            + $"found {MutatingSources().Count()}. Either the probe stopped seeing the sources, or a "
+            + "caller was legitimately deleted — check which before lowering this floor, and lower "
+            + "it only for the second. The floor exists so an empty result cannot pass the "
+            + "membership test below vacuously, not to pin the exact count.");
     }
 
     [Fact]
