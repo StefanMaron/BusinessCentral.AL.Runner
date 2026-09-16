@@ -101,7 +101,7 @@ public sealed class TestDataStaticsCollectionGuardTests
         return sb.ToString();
     }
 
-    private sealed record Mutator(string ClassName, string File, string? CollectionName);
+    private sealed record Mutator(string ClassName, string File);
 
     /// <summary>Every top-level class whose own body mutates one of the statics, with whether
     /// its attribute block declares a [Collection]. Class-scoped rather than file-scoped
@@ -135,42 +135,53 @@ public sealed class TestDataStaticsCollectionGuardTests
                     attrs.Add(before[k]);
                 }
 
-                // The NAME, not a yes/no: whether that collection actually serialises is a
-                // property of its [CollectionDefinition], resolved below (#4249 review).
-                var attrText = string.Join('\n', attrs);
-                var coll = Regex.Match(attrText, @"\[Collection\(\s*(?:nameof\()?([A-Za-z0-9_.]+?)(?:\.Name)?\)?\s*\)");
-                found.Add(new Mutator(decls[i].Groups[1].Value, Path.GetFileName(path),
-                    coll.Success ? coll.Groups[1].Value : null));
+                found.Add(new Mutator(decls[i].Groups[1].Value, Path.GetFileName(path)));
             }
         }
         return found;
     }
 
     /// <summary>
-    /// Every collection in this assembly whose <c>[CollectionDefinition]</c> sets
-    /// <c>DisableParallelization = true</c>, by the DECLARING TYPE's name -- which is how a
-    /// <c>[Collection(X.Name)]</c> attribute spells it in source.
+    /// Class name -> the collection NAME it declares, for every class carrying
+    /// <c>[Collection(...)]</c>; and the set of collection names whose
+    /// <c>[CollectionDefinition]</c> sets <c>DisableParallelization = true</c>.
     ///
-    /// Reflection rather than text: the flag lives on the definition, not at the use site, so no
-    /// amount of reading the attribute where it is applied can answer this (#4249 review).
+    /// Both ends are read by REFLECTION and keyed on the resolved collection name, which is the
+    /// shape ConsoleSwapIsolationGuardTests.NonParallelCollections() uses and the reason it has
+    /// no spelling problem. A first version of this read the USE SITE with a regex over source
+    /// and keyed on the declaring TYPE name; that reported four live classes spelled
+    /// <c>[Collection("object-metadata-registry")]</c> as having no attribute at all, and also
+    /// false-rejected <c>ns.X.Name</c>, <c>global::</c> and same-line multi-attribute forms
+    /// (found in review). Resolving both ends deletes that class of defect rather than adding a
+    /// regex branch per spelling: the compiler has already done the resolution, so there is
+    /// nothing left to parse.
     /// </summary>
-    private static ISet<string> NonParallelCollectionTypeNames()
+    private static (IReadOnlyDictionary<string, string> Joined, ISet<string> Serial) CollectionFacts()
     {
-        var found = new HashSet<string>(StringComparer.Ordinal);
+        var joined = new Dictionary<string, string>(StringComparer.Ordinal);
+        var serial = new HashSet<string>(StringComparer.Ordinal);
+
         foreach (var type in typeof(TestDataStaticsCollectionGuardTests).Assembly.GetTypes())
         {
             foreach (var data in CustomAttributeData.GetCustomAttributes(type))
             {
-                if (data.AttributeType != typeof(CollectionDefinitionAttribute)) continue;
-                if (data.NamedArguments.Any(
-                        a => a.MemberName == nameof(CollectionDefinitionAttribute.DisableParallelization)
-                             && a.TypedValue.Value is true))
+                if (data.ConstructorArguments.Count != 1) continue;
+                if (data.ConstructorArguments[0].Value is not string name) continue;
+
+                if (data.AttributeType == typeof(CollectionAttribute))
                 {
-                    found.Add(type.Name);
+                    joined[type.Name] = name;
+                }
+                else if (data.AttributeType == typeof(CollectionDefinitionAttribute)
+                         && data.NamedArguments.Any(
+                             a => a.MemberName == nameof(CollectionDefinitionAttribute.DisableParallelization)
+                                  && a.TypedValue.Value is true))
+                {
+                    serial.Add(name);
                 }
             }
         }
-        return found;
+        return (joined, serial);
     }
 
     [Fact]
@@ -188,7 +199,7 @@ public sealed class TestDataStaticsCollectionGuardTests
 
         // And it must still see a class it is NOT about to report, or the population above
         // could be five copies of the same unserialised shape.
-        Assert.Contains(mutators, m => m.CollectionName != null);
+        Assert.Contains(mutators, m => CollectionFacts().Joined.ContainsKey(m.ClassName));
     }
 
     [Fact]
@@ -199,9 +210,9 @@ public sealed class TestDataStaticsCollectionGuardTests
         // joined to a parallel collection -- which still races, and which the message below
         // already promised was not good enough (found in review, #4249's reviewer on this PR).
         // Same shape as ConsoleSwapIsolationGuardTests.NonParallelCollections().
-        var serial = NonParallelCollectionTypeNames();
+        var (joined, serial) = CollectionFacts();
         var offenders = Mutators()
-            .Where(m => m.CollectionName == null || !serial.Contains(m.CollectionName))
+            .Where(m => !joined.TryGetValue(m.ClassName, out var c) || !serial.Contains(c))
             .ToList();
 
         Assert.True(offenders.Count == 0,
@@ -210,7 +221,7 @@ public sealed class TestDataStaticsCollectionGuardTests
             + "collection that disables parallelization, so xunit runs them alongside the other "
             + "mutators and each sees the others' writes (#4220): "
             + string.Join(", ", offenders.Select(
-                m => $"{m.ClassName} ({m.File}){(m.CollectionName is null ? " -- no [Collection]" : $" -- [Collection({m.CollectionName})] does NOT set DisableParallelization")}"))
+                m => $"{m.ClassName} ({m.File}){(joined.TryGetValue(m.ClassName, out var c) ? $" -- its collection \"{c}\" does NOT set DisableParallelization" : " -- no [Collection]")}"))
             + $". Add [Collection({nameof(TestDataStaticsSerialCollection)}.Name)]. Joining a "
             + "different DisableParallelization collection is equally correct -- but it must "
             + "actually set that flag.");
