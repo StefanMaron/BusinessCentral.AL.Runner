@@ -441,9 +441,14 @@ public static partial class RecordPatches
     /// <para>Page names are compared case-insensitively, as AL itself compares object names.
     /// The FIRST id wins for a duplicated name, matching the inventory's own source
     /// precedence (source-compiled before dependency symbols).</para>
+    /// <para>Deliberately NOT memoized: its one remaining caller that reads the captions half
+    /// (<see cref="EnumerateKnownTableMetadata"/>) is itself memoized for the whole run, so it
+    /// walks once either way. Callers wanting only the page half go through
+    /// <see cref="PageIdsByName"/>, which IS memoized — see #4189 there.</para>
     /// </summary>
     private static (Dictionary<string, int> PageIdsByName, Dictionary<int, string> TableCaptionsById) BuildObjectIndexes()
     {
+        ObjectIndexBuildCountForTests++;
         var pages = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var captions = new Dictionary<int, string>();
         foreach (var (kind, id, name, caption, _) in EnumerateKnownAlObjects())
@@ -461,6 +466,64 @@ public static partial class RecordPatches
         }
         return (pages, captions);
     }
+
+    // #4189 — the page half of the inventory, memoized. BuildObjectIndexes above is a full pass
+    // over EnumerateKnownAlObjects (4,492 objects on the standalone-suites bundle) and
+    // ResolvePageReference ran it once per call; BuildNCLMetaTable resolves one page reference
+    // per table (#1918's LookupFormId population), so a bundle whose tables declare LookupPageId
+    // NAMES re-walked the whole inventory once per such table. Measured on that bundle at BC
+    // 28.1.49838.53910, steady state: 59 walks costing 3.1-4.0 s — 71% of BuildNCLMetaTable's
+    // ~4.25 s and ~35% of the run's ~12 s wall clock.
+    //
+    // The KEY OMITS _parsedTables.Count, and that omission is the whole fix rather than an
+    // optimization. BuildNCLMetaTable's own fallback (TryPopulateParsedTableFromBcApps) ADDS to
+    // _parsedTables as it lazily pulls dependency tables in, so a key carrying that count is
+    // invalidated by the very loop it is trying to serve: measured, the count walked
+    // 241 → 274 → 275 → 281 → … and a _parsedTables-keyed memo still took 49 of the 59 walks.
+    // Omitting it is sound because the PAGE half cannot depend on it — EnumerateKnownAlObjects
+    // yields "Table" rows from _parsedTables and they are dropped by this index's `case "page"`.
+    // The captions half does depend on it, which is exactly why that half is not memoized here.
+    //
+    // The epoch term, never _bcAppPaths.Count, for #2888's ABA reason: the registered set can
+    // shrink, so a count cannot tell a set that lost N entries and gained N different ones from
+    // the one it was built against.
+    private static Dictionary<string, int>? _pageIdsByName;
+    private static (int Epoch, int Pages, int PageExts) _pageIdsByNameBuiltFrom = (-1, -1, -1);
+    private static readonly object _pageIdsByNameLock = new();
+
+    /// <summary>
+    /// Page name → page id over the same inventory <see cref="BuildObjectIndexes"/> walks,
+    /// memoized per generation (#4189). Handed out SHARED and read-only: a caller that mutated
+    /// it would corrupt every later lookup.
+    /// </summary>
+    private static Dictionary<string, int> PageIdsByName()
+    {
+        // _parsedPageExtensions is a term although no pageextension lands in this index: an
+        // app whose only new object is a pageextension still moves the inventory, and a key
+        // blind to that would serve a stale index to the next bundle in a --server process.
+        var generation = (BcAppRegistrationEpoch, _parsedPages.Count, _parsedPageExtensions.Count);
+        if (_pageIdsByName is { } memo && _pageIdsByNameBuiltFrom == generation) return memo;
+        lock (_pageIdsByNameLock)
+        {
+            generation = (BcAppRegistrationEpoch, _parsedPages.Count, _parsedPageExtensions.Count);
+            if (_pageIdsByName is { } inner && _pageIdsByNameBuiltFrom == generation) return inner;
+
+            var (pages, _) = BuildObjectIndexes();
+            // The index is published BEFORE its stamp, and both writes are inside the lock, so
+            // a reader on the fast path can never pair a new stamp with an older index.
+            _pageIdsByName = pages;
+            _pageIdsByNameBuiltFrom = generation;
+            return pages;
+        }
+    }
+
+    /// <summary>
+    /// How many times the inventory has actually been walked, as opposed to answered from the
+    /// page-index memo. A COUNT, never a duration — #4189's proving test asserts that N
+    /// resolutions at one generation cost one walk, which is the whole claim, and a duration
+    /// assertion would be a flake on a loaded box.
+    /// </summary>
+    internal static int ObjectIndexBuildCountForTests { get; private set; }
 
     /// <summary>
     /// Resolves a page reference as WRITTEN in an AL table property (<c>LookupPageId</c> /
@@ -481,8 +544,7 @@ public static partial class RecordPatches
     {
         if (string.IsNullOrWhiteSpace(reference)) return 0;
         if (int.TryParse(reference, out var literal) && literal > 0) return literal;
-        var (pageIdsByName, _) = BuildObjectIndexes();
-        return pageIdsByName.TryGetValue(reference, out var id) ? id : 0;
+        return PageIdsByName().TryGetValue(reference, out var id) ? id : 0;
     }
 
     /// <summary>
