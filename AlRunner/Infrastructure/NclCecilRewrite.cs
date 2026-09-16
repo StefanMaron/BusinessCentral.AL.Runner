@@ -195,8 +195,8 @@ public static partial class NclCecilRewrite
 
 
     /// <summary>
-    /// Reads Ncl.dll bytes, rewrites IsEventSubscribed body to return true,
-    /// strips R2R header, returns modified bytes ready for Assembly.Load.
+    /// Reads Ncl.dll bytes, applies the runner's Cecil rewrites, strips the R2R header,
+    /// and returns modified bytes ready for Assembly.Load.
     /// </summary>
 
     public static byte[] RewriteNcl(string nclPath)
@@ -210,32 +210,35 @@ public static partial class NclCecilRewrite
         using var inStream = new MemoryStream(originalBytes);
         var asm = AssemblyDefinition.ReadAssembly(inStream, new ReaderParameters { ReadWrite = false, AssemblyResolver = resolver });
 
+        // NCLMetaApplicationObject.IsEventSubscribed is deliberately NOT rewritten (#3576).
+        //
+        // BC's own body is `TriggerEventHandler?.IsEventSubscribed(evt, appGroup) ?? false`,
+        // and the handler's body is `GetEventScope(evt)?.HasSubscribersForAppGroup(appGroup)
+        // ?? false` — i.e. it reads exactly the registry EventSubscriberPatches populates
+        // (that file's header, steps 2-4). So the faithful answer is BC's unmodified body;
+        // a constant cannot report an event that has no subscribers, which is what
+        // RecordWritePatches.cs's "IsEventSubscribed: false until subscribers registered"
+        // note already assumes. The earlier constant-true rewrite is a leftover of the
+        // abandoned "A-base" approach the same header describes.
+        //
+        // Trap for a later editor: the callers are BC's own trigger-dispatch decisions —
+        // NavRecord.{Insert,Modify,Delete,Rename}Async, CanUseBulkDeleteAll and
+        // PerformJITLoadIfNecessaryAsync — so forcing this true does not merely over-report
+        // a query, it drives BC down the trigger path for tables that have no subscribers.
+        // Pinned by AlRunner.Tests/IsEventSubscribedNotConstantTests.cs.
         var type = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NCLMetaApplicationObject");
         if (type == null)
             throw new InvalidOperationException("NCLMetaApplicationObject type not found in Ncl.dll");
 
-        int rewroteCount = 0;
-        foreach (var method in type.Methods.Where(mm => mm.Name == "IsEventSubscribed").ToList())
-        {
-            Console.Error.WriteLine($"[Cecil] Rewriting {method.FullName}");
-            if (method.ReturnType.FullName != "System.Boolean")
-            {
-                Console.Error.WriteLine($"[Cecil]  - skipping: return type is {method.ReturnType.FullName}");
-                continue;
-            }
-            var body = method.Body;
-            body.Instructions.Clear();
-            body.Variables.Clear();
-            body.ExceptionHandlers.Clear();
-            var il = body.GetILProcessor();
-            il.Append(il.Create(OpCodes.Ldc_I4_1));
-            il.Append(il.Create(OpCodes.Ret));
-            body.MaxStackSize = 1;
-            rewroteCount++;
-        }
-        if (rewroteCount == 0)
-            throw new InvalidOperationException("IsEventSubscribed method not found");
-        Console.Error.WriteLine($"[Cecil] Rewrote {rewroteCount} IsEventSubscribed overload(s) → return true");
+        // The shape check that used to be implicit in rewriting them: if BC ever stops
+        // declaring a Boolean IsEventSubscribed here, the dispatch assumptions above no
+        // longer hold and that must be loud rather than silently fine (loud-failures.md).
+        if (!type.Methods.Any(mm => mm.Name == "IsEventSubscribed"
+                                    && mm.ReturnType.FullName == "System.Boolean"))
+            throw new InvalidOperationException(
+                "NCLMetaApplicationObject declares no Boolean IsEventSubscribed overload in Ncl.dll; "
+                + "the runner's event-subscriber dispatch assumes BC's own body reads the subscriber "
+                + "registry (issue #3576).");
 
         // NCLEnumMetadata.Create(int) — precompiled Microsoft dependency DLLs call
         // this directly (not through BcAssembler's emitted C# helper), and the real
@@ -420,7 +423,9 @@ public static partial class NclCecilRewrite
     // These promote idioms that were previously inlined throughout RewriteNcl into
     // named helpers so each migrated hook is a one-liner. Behavior-preserving: they
     // emit exactly the IL the inline blocks did (see RecordLink ReplaceWithStaticHelper
-    // at the precedent above, and the ALDatabase no-op / IsEventSubscribed const blocks).
+    // at the precedent above, and the ALDatabase no-op block). The IsEventSubscribed const
+    // block this list also used to name was removed at #3576 — BC's own body reads the
+    // subscriber registry, so the runner leaves it alone.
     // ─────────────────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -759,7 +764,8 @@ public static partial class NclCecilRewrite
     /// Replace <paramref name="target"/>'s body with a constant/no-op return. For a void
     /// method (incl. cctor) emits just `ret` — the unused args stay as ignored slots.
     /// For a value return, emits the appropriate const push then `ret`.
-    /// Models the existing IsEventSubscribed / ALHasTableConnection / ALCommit-no-op blocks.
+    /// Models the existing ALHasTableConnection / ALCommit-no-op blocks. (It used to name
+    /// the IsEventSubscribed const block too; that one was removed at #3576.)
     /// </summary>
     private static void ReplaceBodyConst(MethodDefinition target, ConstResult result)
     {
@@ -1294,6 +1300,12 @@ public static partial class NclCecilRewrite
         }
     }
 
+    /// <summary>
+    /// Prints the loaded IsEventSubscribed overloads' IL. Since #3576 these are NOT
+    /// rewritten, so the expected output is BC's own delegating body (a handful of bytes
+    /// ending in a call), not `16 2A` — a two-byte `ldc.i4.1; ret` here means a
+    /// constant-true rewrite has come back.
+    /// </summary>
     public static void VerifyRewriteLanded()
     {
         var ncl = AppDomain.CurrentDomain.GetAssemblies()
