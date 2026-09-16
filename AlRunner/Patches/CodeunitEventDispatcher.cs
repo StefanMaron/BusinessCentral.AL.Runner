@@ -507,10 +507,17 @@ public static partial class BcRuntime
         // both bundle shapes while both of that suite's tests passed -- including
         // FirePing_CrossAssemblyDuplicateSubscriber_RunsExactlyOnce, whose name claims it.
         //
-        // The probe wrote to a FILE, and that detail is load-bearing: Program.cs:2494 calls
-        // Console.SetOut/SetError(TextWriter.Null) for the run, so a Console.Error probe here
-        // returns zero even when the branch IS entered. A swallowed zero and a measured zero are
-        // indistinguishable from the output, so anyone re-checking this must say which they got.
+        // The probe wrote to a FILE, and that detail is load-bearing -- but the reason is NOT
+        // that stderr is unavailable here. Log.Install (AlRunner/Log.cs) wraps both streams in a
+        // FilteredWriter that DROPS any line whose first character starts a bracket tag, unless
+        // --verbose: the ComponentTag regex exempts only the tags named in Log.cs's SeverityTags
+        // and UserFacingComponentTags constants. So a `[PROBE] ...` line vanishes
+        // while the branch IS entered, and an UNTAGGED stderr line prints normally. Measured at
+        // this call site, one run: `[TAG]`-prefixed 0 hits, untagged 634, file 634 -- the untagged
+        // row is what proves the stream was never nulled. (The TextWriter.Null calls in Program.cs
+        // are gated on `watchUi`, which is false for an ordinary run, so they are not the cause.)
+        // A swallowed zero and a measured zero are indistinguishable from the output, so anyone
+        // re-checking this must say which they got -- and must not tag the probe line.
         //
         // The branch itself runs constantly -- forcing the condition true showed Base App's
         // Codeunit49.GetGlobalTableTriggerMask arriving here on every request -- but always with
