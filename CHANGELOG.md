@@ -26,6 +26,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **server:** prefer the loading bundle's own modules when resolving a codeunit type
 - **test:** strip string literals too, so the enum-registry guard stops naming itself
 - **guard:** a duplicated claim is unmeasurable, not a pass, in the partial-class counts
 - **test:** skip the leave-back-edge assertion on Debug, where that IL shape does not exist
