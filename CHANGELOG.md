@@ -26,6 +26,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **test:** release the lock on a dedicated thread, not a starved thread pool
 - **test:** the mutator floor cannot know the probe is broken, so stop asserting it
 - **server:** prefer the loading bundle's own modules when resolving a codeunit type
 - **test:** strip string literals too, so the enum-registry guard stops naming itself
