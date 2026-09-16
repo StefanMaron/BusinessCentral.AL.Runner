@@ -17,15 +17,48 @@ exceeds a threshold and is NOT a key in the table — a loud, failing check, per
 .claude/rules/loud-failures.md, instead of a report nobody is looking at until the next
 manual audit.
 
-Deliberately NOT checking drift on entries that ARE already present in the table:
-the same class's summed duration varies materially leg to leg — CacheKeyDependencyClosureTests
-measured 196s on one BC leg and 294s on another within the very run that reported #1887,
-because different BC versions ship different platform symbol sets and that changes AL
-compile cost. A percentage-drift check on top of that would be exactly the kind of noisy,
-BC-version-dependent gate that trains people to ignore CI red. A completely MISSING entry
-above threshold has no such false-positive mode: below threshold it is genuinely cheap (the
-file header's own argument — the ~66 collections under it total 2.8s), and above threshold
-it is precisely the failure #1887 found.
+Still deliberately NOT checking DRIFT on entries that are present, and #4208 re-measured
+why rather than inheriting the claim. On one commit and one table, every collection paired
+across two legs of run 35052870824 ran 1.83x-1.96x slower on BC 28.4 than on 27.5 (median
+1.90x) — a uniform property of the leg, not of any collection. That pushes a perfectly
+healthy entry's observed/recorded to 1.97x (EventSubscriberScanEquivalenceTests, recorded
+37, observed 73.0), while the decorative case #4208 measured sits at 2.55x (recorded 30,
+observed 76.4). A percentage-drift band would have to thread between 1.97 and 2.55 on a
+single sample, and the calibration below does not rescue it: both legs printed "leg clock
+at or under the table's", because the table records observed MAXIMA so the median ratio
+floors at 1.0 on a slow leg too. So a drift band remains the noisy, BC-version-dependent
+gate that trains people to ignore CI red.
+
+What IS checked on a present entry, and needs no tolerance at all (#4208): whether the
+recorded value is EQUAL to UnmeasuredWeightSeconds. CollectionCostOrderer sorts descending
+on the weight with a stable tiebreak and hands an absent collection exactly that constant,
+so such an entry produces the identical sort key to being absent — provably no dispatch
+change, on every leg, at every clock speed. That is a discrete fact about the table rather
+than a measurement of the run, which is why it carries no false-positive mode. #2175 stated
+it in prose in CollectionCostOrderer.cs's own header ("recording 31 would have silenced
+check-collection-weights.py while leaving dispatch order identical to being absent") as the
+reason to pick the right end of a range; nothing pinned it, so it held only as long as each
+author followed it by hand, and #4208 measured that a real entry mutated to 30 kept all nine
+CollectionCostOrderer tests green.
+
+Note the rule is equality, NOT "must exceed the fallback": three real entries are recorded
+BELOW it (TestTimeoutFlagTests at 21, and two at 23), which ranks those collections after
+the unmeasured ones and is the correct call for a genuinely cheap collection. A
+"must be > 30" rule would turn three legitimate entries red.
+
+WHAT THIS DELIBERATELY DOES NOT CATCH, stated so nobody reads the gate as wider than it
+is: an UNDERSTATED entry that still clears the fallback. #2175's own example is "recording
+31" for a collection measuring 31.8s-61.2s, and 31 DOES change dispatch order — it ranks
+above all ~1160 unmeasured collections — so the sort-key argument does not condemn it and
+no tolerance-free test can. Catching that needs the value to be DERIVED from the TRX rather
+than checked against it — #1887's own Preferred section proposed exactly that, and #4204
+(the fourth-plus staleness instance) argued for it from recurrence. This check closes the
+provable hole; the understated-but-above-fallback hole stays open, and deriving the table
+is what would close it.
+
+A completely MISSING entry above threshold has no false-positive mode either: below
+threshold it is genuinely cheap (the file header's own argument — the ~66 collections under
+it total 2.8s), and above threshold it is precisely the failure #1887 found.
 
 Two bands, and a clock that is not the wall clock (#3103)
 --------------------------------------------------------
@@ -88,10 +121,17 @@ Usage:
   scripts/check-collection-weights.py <results.trx> [--orderer PATH]
       [--advisory-threshold SECONDS] [--fail-threshold SECONDS] [--no-load-calibration]
 
-Exit code is 1 (loud failure) when a collection above the failing band is missing from the
-table, 0 otherwise — including when the trx file is absent/unparsable, matching
-scripts/trx-occupancy.py's "nothing to report" convention for a step that should not fail
-the build over missing input data.
+Exit codes (guards-need-a-third-state.md):
+  0  measured, and fine
+  1  loud failure — a collection above the failing band is missing from the table, or a
+     present entry is recorded at UnmeasuredWeightSeconds and so changes no dispatch order
+  3  could not measure — the orderer source parses but yields no UnmeasuredWeightSeconds,
+     so "decorative" has no definition. Deliberately distinct from 0: a table whose
+     decorative entries are UNKNOWABLE is not a table with none.
+
+A missing/unparsable trx stays exit 0, matching scripts/trx-occupancy.py's "nothing to
+report" convention for a step that should not fail the build over missing input data — but
+the decorative-entry check still runs, because it reads the table rather than the run.
 """
 import argparse
 import re
@@ -129,6 +169,12 @@ MIN_CALIBRATION_SAMPLES = 8
 # wholesale (or a truncated trx) cannot silently disable the gate.
 MAX_LOAD_FACTOR = 3.0
 
+# "I could not measure", kept distinct from both 0 and 1 (guards-need-a-third-state.md).
+# Only the orderer failing to yield a fallback constant reaches this: a decorative entry is
+# defined as one recorded AT that constant, so without it the question is unanswerable
+# rather than answered in the negative.
+EXIT_CANNOT_MEASURE = 3
+
 
 def load_trx_per_collection_seconds(path):
     """Bare class name -> summed test duration (seconds) from a VSTest TRX file."""
@@ -156,7 +202,8 @@ def load_table(orderer_path):
 
     unmeasured_match = re.search(r"UnmeasuredWeightSeconds\s*=\s*(\d+)", text)
     if not unmeasured_match:
-        raise ValueError(f"could not find UnmeasuredWeightSeconds in {orderer_path}")
+        raise UnmeasurableFallback(
+            f"could not find UnmeasuredWeightSeconds in {orderer_path}")
     unmeasured = int(unmeasured_match.group(1))
 
     table_match = re.search(r"MeasuredWeightSeconds\s*=.*?\{(.*?)\};", text, re.DOTALL)
@@ -164,6 +211,31 @@ def load_table(orderer_path):
         raise ValueError(f"could not find MeasuredWeightSeconds dictionary body in {orderer_path}")
     entries = re.findall(r'\["([^"]+)"\]\s*=\s*(\d+)', table_match.group(1))
     return {name: int(seconds) for name, seconds in entries}, unmeasured
+
+
+class UnmeasurableFallback(ValueError):
+    """The orderer source yielded no UnmeasuredWeightSeconds, so the fallback weight that
+    defines a decorative entry is unknown. Distinct from "the table is fine" — see
+    EXIT_CANNOT_MEASURE."""
+
+
+def find_decorative_entries(table, unmeasured):
+    """Entries whose recorded value is EXACTLY the fallback weight, so they change no
+    dispatch order at all (#4208).
+
+    CollectionCostOrderer.WeightSeconds returns UnmeasuredWeightSeconds for any collection
+    it cannot find in the table, and OrderTestCollections is a stable descending sort on
+    that number. An entry recorded at the same value therefore yields the identical sort
+    key AND the identical tiebreak position it would have had while absent: not "close to"
+    absent, indistinguishable from it. Recording it satisfies the missing-entry gate above
+    while leaving the #1887 tail exactly where it was.
+
+    No tolerance and no dependence on the run: this compares two integers read out of one
+    source file. Strictly less than the fallback is NOT decorative — it ranks the
+    collection below the unmeasured ones, which is a real dispatch change and the correct
+    entry for a genuinely cheap collection (three real entries sit at 21 and 23).
+    """
+    return sorted(cls for cls, recorded in table.items() if recorded == unmeasured)
 
 
 def find_missing_heavy(observed_seconds, table, threshold_seconds):
@@ -215,6 +287,30 @@ def classify_missing(observed_seconds, table, advisory_seconds, fail_seconds):
     return failing, advisory
 
 
+def report_decorative(decorative, unmeasured, orderer_path):
+    """Print the #4208 verdict for entries recorded at the fallback weight. Always exit 1:
+    unlike a wall-clock band this is a discrete property of the table, identical on every
+    leg, so there is no noise to demote it to an advisory over."""
+    print("=" * 78)
+    print("DECORATIVE CollectionCostOrderer.MeasuredWeightSeconds ENTRIES (issue #4208)")
+    print("=" * 78)
+    print(f"The following entr{'y is' if len(decorative) == 1 else 'ies are'} recorded at "
+          f"exactly UnmeasuredWeightSeconds ({unmeasured}s)")
+    print(f"in {orderer_path}. The orderer sorts descending on that number and gives an")
+    print("ABSENT collection the same value, so each of these is dispatched in exactly the")
+    print("position it would occupy with no entry at all — it satisfies the missing-entry")
+    print("check above while leaving the #1887 tail untouched.")
+    print()
+    for cls in decorative:
+        print(f"  {cls}")
+    print()
+    print("Record the collection's observed MAXIMUM instead (CollectionCostOrderer.cs's")
+    print("own header, #2175: 'whichever end you pick, the recorded value must change")
+    print("dispatch order relative to the fallback, or the entry is decoration'), or")
+    print("delete the entry if the collection is genuinely no heavier than the fallback.")
+    return 1
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("path")
@@ -227,16 +323,31 @@ def main():
                     help="compare raw wall-clock seconds, without the #3103 leg calibration")
     args = ap.parse_args()
 
+    # The table is loaded before the trx because the decorative-entry check (#4208) is a
+    # claim about the TABLE, not about the run: it must still fire on a leg whose trx is
+    # missing, truncated, or filtered down to a subset that never ran the entry.
+    try:
+        table, unmeasured = load_table(args.orderer)
+    except UnmeasurableFallback as ex:
+        print(f"REFUSING TO REPORT: {ex}. An entry recorded at UnmeasuredWeightSeconds "
+              f"changes no dispatch order, so without that constant the table's "
+              f"decorative entries are unknowable — which is not the same as there being "
+              f"none (guards-need-a-third-state.md).")
+        return EXIT_CANNOT_MEASURE
+
+    decorative = find_decorative_entries(table, unmeasured)
+
     try:
         observed = load_trx_per_collection_seconds(args.path)
     except (FileNotFoundError, ET.ParseError) as ex:
-        print(f"trx '{args.path}' not usable ({ex}) — nothing to check")
-        return 0
+        print(f"trx '{args.path}' not usable ({ex}) — no missing-entry check")
+        observed = {}
     if not observed:
-        print(f"trx '{args.path}' has no timed results — nothing to check")
-        return 0
-
-    table, unmeasured = load_table(args.orderer)
+        if not decorative:
+            print(f"trx '{args.path}': no timed results to check for missing entries; "
+                  f"{len(table)} recorded entries carry no decorative weight. OK.")
+            return 0
+        return report_decorative(decorative, unmeasured, args.orderer)
 
     load_factor = 1.0 if args.no_load_calibration else leg_load_factor(observed, table)
     advisory = (args.advisory_threshold if args.advisory_threshold is not None
@@ -263,6 +374,11 @@ def main():
               f"cost {unmeasured}s. Record it (issue #1887).")
 
     if not failing:
+        if decorative:
+            print(f"CollectionCostOrderer.MeasuredWeightSeconds: no collection above "
+                  f"{fail:.0f}s is missing from the table; {bands}.")
+            print()
+            return report_decorative(decorative, unmeasured, args.orderer)
         print(f"CollectionCostOrderer.MeasuredWeightSeconds: no collection above "
               f"{fail:.0f}s is missing from the table; {bands}. OK.")
         return 0
@@ -284,6 +400,9 @@ def main():
     print(f"Add {noun} to MeasuredWeightSeconds in AlRunner.Tests/CollectionCostOrderer.cs")
     print("with its measured seconds (round down), per the file header's")
     print("'Why a measured table' note.")
+    if decorative:
+        print()
+        report_decorative(decorative, unmeasured, args.orderer)
     return 1
 
 
