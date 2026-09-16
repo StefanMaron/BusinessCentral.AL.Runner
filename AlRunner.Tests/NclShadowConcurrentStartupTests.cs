@@ -432,12 +432,16 @@ public sealed class NclShadowConcurrentStartupTests
                 path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
 
             // A DEDICATED thread, not Task.Run: the release must not depend on the thread pool
-            // (#4258). GetAssemblyNameWithRetry below blocks a pool thread in Thread.Sleep for
-            // up to ~1.9s, and under the parallel suite the pool is already saturated -- so a
-            // `Task.Run(async () => { await Task.Delay(300); ... })` release needs two pool hops
-            // that may not be scheduled before the retry budget runs out. Reproduced by starving
-            // the pool: the test failed with the CI failure's exact `being used by another
-            // process`. IsBackground so a hang cannot outlive the run.
+            // (#4258). Under the parallel suite the pool is saturated by the other ~6,000 tests,
+            // so a release QUEUED TO THE POOL may not be scheduled before the ~1.9s retry budget
+            // runs out. What matters is WHEN the work item is enqueued, not how many pool hops it
+            // takes: at saturation a `Task.Run` item never gets a thread, while a timer-based
+            // release enqueues 300ms later, after hill-climbing has grown the pool. Measured under
+            // identical starvation -- `Task.Run(async () => { await Task.Delay(300); ... })` FAIL
+            // 1919ms; `Task.Run(() => { Thread.Sleep(300); ... })`, ONE hop, FAIL 1907ms;
+            // `Task.Delay(300).ContinueWith(...)` PASS 1113ms; dedicated thread PASS 302ms. All
+            // four pass unstarved, so starvation is the variable. One hop already fails, so the
+            // count of hops is not the cause. IsBackground so a hang cannot outlive the run.
             var releaseAfter = new Thread(() =>
             {
                 Thread.Sleep(300);
@@ -446,7 +450,7 @@ public sealed class NclShadowConcurrentStartupTests
             releaseAfter.Start();
 
             // Blocks on the lock above for a few retry iterations, then succeeds once
-            // the background task above disposes it.
+            // the release thread above disposes it.
             var name = AlRunner.Infrastructure.BcArtifacts.GetAssemblyNameWithRetry(path);
 
             Assert.NotNull(name.Name);
