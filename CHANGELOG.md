@@ -235,6 +235,7 @@ All notable changes to this project are documented here. Format based on
 - **integer-vt:** judge a half-open range against the base window, not the envelope-widened span
 
 ### Documentation
+- **claude:** cite the BC build and its hash, not the version label, and pin the example
 - **agents:** 34 tools/ guards, not 33 -- main is red on the guard that says so
 - **agents:** correct impl-agent.md's stale guard counts, and say they drift
 - **rules:** a number that travels - sharpen the re-derivation rule
