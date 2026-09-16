@@ -239,6 +239,77 @@ check("the report does not name the benign authors",
       "claude" not in _text.lower(), _text)
 
 
+# --------------------------------------------------------------------------
+# fetch_authors(): the one thing a unit test can pin about the live read
+#
+# This session has no `gh`, so an end-to-end read is not available. What IS
+# available, and is the half that carries the defect, is WHICH read it makes:
+# a fetcher pointed at `/pulls/<N>/commits` gets a shape with no `login` field
+# and every real account in it then looks benign. A fake `gh` on PATH records
+# the argv and answers with the real `gh pr view --json commits` shape.
+# --------------------------------------------------------------------------
+print("fetch_authors():")
+
+import json as _json
+import stat as _stat
+import subprocess as _sub
+import tempfile as _tmp
+
+
+def _with_fake_gh(body: str, rc: int = 0):
+    """Run fetch_authors(3927) with a `gh` that prints `body` and exits `rc`."""
+    d = _tmp.mkdtemp(prefix="pr-attribution-test-")
+    argv_log = os.path.join(d, "argv.txt")
+    script = os.path.join(d, "gh")
+    with open(script, "w", encoding="utf-8") as fh:
+        fh.write("#!/usr/bin/env python3\n"
+                 "import sys\n"
+                 f"open({argv_log!r}, 'w').write(' '.join(sys.argv[1:]))\n"
+                 f"sys.stdout.write({body!r})\n"
+                 f"sys.exit({rc})\n")
+    os.chmod(script, os.stat(script).st_mode | _stat.S_IEXEC | _stat.S_IXGRP
+             | _stat.S_IXOTH)
+    old_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = d + os.pathsep + old_path
+    try:
+        got = pa.fetch_authors(3927)
+    finally:
+        os.environ["PATH"] = old_path
+    argv = open(argv_log, encoding="utf-8").read() if os.path.exists(argv_log) else ""
+    return got, argv
+
+
+_got, _argv = _with_fake_gh(_json.dumps(PR3927_AUTHORS))
+check("fetch_authors parses the gh pr view shape into {login, name} entries",
+      _got == PR3927_AUTHORS, repr(_got))
+check("...and it asks for `--json commits`, the ONLY read that reports a login "
+      "(the REST /pulls/<N>/commits shape does not)",
+      "--json commits" in _argv, _argv)
+check("...and it projects authors[].login, not commit.author",
+      ".commits[].authors[]" in _argv and "login" in _argv, _argv)
+check("...and the fetched list classifies end to end",
+      pa.classify(_got, viewer="StefanMaron").verdict == pa.APPROVAL_REQUIRED)
+
+_got, _ = _with_fake_gh("", rc=1)
+check("a gh that exits non-zero yields None -- the third state, never []",
+      _got is None, repr(_got))
+
+_got, _ = _with_fake_gh("not json at all")
+check("an unparseable body yields None, never a crash", _got is None, repr(_got))
+
+# CLAUDE.md: mise prints a banner on stdout, so a capture gets it alongside the
+# value. A fetcher that fails on it reports UNREADABLE for every pull request on
+# a mise box -- honest, and useless.
+_got, _ = _with_fake_gh("mise ~/.config/mise/config.toml tools: gh@2.100.0\n"
+                        + _json.dumps(LOOP_AUTHORS))
+check("a mise banner on stdout does not break the parse",
+      _got == LOOP_AUTHORS, repr(_got))
+
+_got, _ = _with_fake_gh(_json.dumps({"login": "x"}))
+check("a JSON object where a list was expected yields None", _got is None,
+      repr(_got))
+
+
 print()
 _total = PASSED + len(FAILURES)
 print(f"Failed: {len(FAILURES)}, Passed: {PASSED}, Total: {_total}")
