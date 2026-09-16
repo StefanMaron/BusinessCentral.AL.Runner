@@ -26,6 +26,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **expectations:** repoint the three page-methods allowlist entries at #4267
 - **server:** prefer the loading bundle's own modules when resolving a report type
 - **test-data:** hydrate the timestamp (rowversion) column, and seed the stamp counter
 - **test:** release the lock on a dedicated thread, not a starved thread pool
