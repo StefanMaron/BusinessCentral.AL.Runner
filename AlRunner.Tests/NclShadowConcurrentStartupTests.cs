@@ -7,6 +7,7 @@
 // redundantly re-copying Microsoft.Dynamics.Nav.Ncl.dll into a dir siblings are reading
 // from. This file pins the three mechanism fixes directly, deterministically — no
 // subprocess race needed since each fix is a pure function over on-disk shape.
+using System.Threading;
 using AlRunner.Infrastructure;
 using Xunit;
 
@@ -430,18 +431,26 @@ public sealed class NclShadowConcurrentStartupTests
             using var exclusiveLock = new FileStream(
                 path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
 
-            var releaseAfter = Task.Run(async () =>
+            // A DEDICATED thread, not Task.Run: the release must not depend on the thread pool
+            // (#4258). Under the parallel suite the pool is saturated by the other ~6,000 tests,
+            // and ANY release the pool must schedule can be starved past the ~1.9s retry budget --
+            // measured, a one-hop `Task.Run(() => { Thread.Sleep(300); ... })` release fails
+            // exactly like the two-hop `async`/`await` one, so hop count is not the variable.
+            // A dedicated thread cannot be starved. IsBackground so a hang cannot outlive the run.
+            // Mechanism and measurements: #4258.
+            var releaseAfter = new Thread(() =>
             {
-                await Task.Delay(300);
+                Thread.Sleep(300);
                 exclusiveLock.Dispose();
-            });
+            }) { IsBackground = true, Name = "assemblyname-retry-release" };
+            releaseAfter.Start();
 
             // Blocks on the lock above for a few retry iterations, then succeeds once
-            // the background task above disposes it.
+            // the release thread above disposes it.
             var name = AlRunner.Infrastructure.BcArtifacts.GetAssemblyNameWithRetry(path);
 
             Assert.NotNull(name.Name);
-            releaseAfter.Wait(TimeSpan.FromSeconds(5));
+            releaseAfter.Join(TimeSpan.FromSeconds(5));
         }
         finally { Directory.Delete(dir, recursive: true); }
     }
