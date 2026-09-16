@@ -38,6 +38,7 @@ public sealed class BundleEpochScopeTests
     private static readonly MethodInfo Begin = Bind("BeginBundleEpoch");
     private static readonly MethodInfo Stamp = Bind("StampBundleEpoch");
     private static readonly MethodInfo IsCurrent = Bind("IsCurrentBundleAssembly");
+    private static readonly MethodInfo ResetStamps = Bind("ResetBundleEpochStamps");
 
     /// <summary>
     /// Bind one member of <c>BcRuntime</c>'s bundle-epoch surface, REQUIRED.
@@ -56,6 +57,7 @@ public sealed class BundleEpochScopeTests
     private static void BeginBundle() => Begin.Invoke(null, null);
     private static void StampFor(Assembly asm) => Stamp.Invoke(null, new object[] { asm });
     private static bool Current(Assembly asm) => (bool)IsCurrent.Invoke(null, new object[] { asm })!;
+    private static void ResetAllStamps() => ResetStamps.Invoke(null, null);
 
     [Fact]
     public void AnAssemblyStampedForThePreviousBundle_IsNotCurrent()
@@ -105,5 +107,28 @@ public sealed class BundleEpochScopeTests
         Assert.True(Current(A),
             "re-noting an assembly must re-stamp it for the bundle now loading, not skip it "
             + "because the epoch map already holds an entry.");
+    }
+
+    [Fact]
+    public void TheResetDropsEveryStamp_SoNoStampOutlivesItsAssemblyList()
+    {
+        // The third state the header names, and the one no single-bundle invocation reaches.
+        // ResetForNewBundleReload clears _currentBundleAssemblies and calls this in the same
+        // breath: a stamp that survived would describe an assembly the runner has stopped
+        // tracking, and after the next BeginBundleEpoch it could read as current again.
+        //
+        // Asserted through the fail-open answer rather than by reading the dictionary, because
+        // fail-open is what an unstamped assembly OBSERVABLY gets — which is the same state a
+        // never-stamped one is in, and the state the reset is supposed to restore.
+        BeginBundle();
+        StampFor(A);
+        BeginBundle();
+        Assert.False(Current(A), "precondition: A must be stale before the reset, or this proves nothing");
+
+        ResetAllStamps();
+
+        Assert.True(Current(A),
+            "after the reset drops every stamp, A is an assembly the marker has never seen and "
+            + "must take the fail-open answer — not stay pinned to a bundle that no longer exists.");
     }
 }
