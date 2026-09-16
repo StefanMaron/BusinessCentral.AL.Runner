@@ -507,6 +507,11 @@ public static partial class BcRuntime
         // both bundle shapes while both of that suite's tests passed -- including
         // FirePing_CrossAssemblyDuplicateSubscriber_RunsExactlyOnce, whose name claims it.
         //
+        // The probe wrote to a FILE, and that detail is load-bearing: Program.cs:2494 calls
+        // Console.SetOut/SetError(TextWriter.Null) for the run, so a Console.Error probe here
+        // returns zero even when the branch IS entered. A swallowed zero and a measured zero are
+        // indistinguishable from the output, so anyone re-checking this must say which they got.
+        //
         // The branch itself runs constantly -- forcing the condition true showed Base App's
         // Codeunit49.GetGlobalTableTriggerMask arriving here on every request -- but always with
         // BOTH sides the same assembly (identical hashes), so the condition is never true and the
@@ -516,7 +521,16 @@ public static partial class BcRuntime
         // So do NOT read the suite's green as covering this. Restoring coverage needs a fixture
         // that genuinely loads TWO copies of one AL codeunit -- making IsInstanceOfType false --
         // which is more than loading the dep separately, since the current suite already does
-        // that. Until then the `throw` below is unreachable-by-fixture.
+        // that.
+        //
+        // Scope of the measurement, stated because "uncovered" invites over-reading: it covers
+        // tests/runner-extras as CI runs it (474 tests, 634 dispatches, 0 entries), NOT
+        // runner-extras-isolation-disabled or runner-extras-tableext-eviction, which were not
+        // measured. And it is a claim about this BRANCH, not about the `throw` inside it: the
+        // throw needs a SECOND condition -- ResolveOnInstanceType returning null -- which the
+        // no-op result above shows is not met even when the branch is forced. So the throw is
+        // further from reachable than the branch is, and neither is proven unreachable in
+        // principle (review of #4263).
         if (!subscriberClrType.IsInstanceOfType(subscriberInstance))
         {
             var remapped = ResolveOnInstanceType(subscriberInstance.GetType(), subscriberMethod);
