@@ -25,6 +25,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **log:** make severity a class and ratchet every single-word component tag
 - **events:** scope the Event Subscription virtual table to the bundle being run
 - **allobj:** key the dependency table-subtype memo on the registration epoch
 - **scripts:** check-collection-weights must reject a weight that does not change dispatch order
