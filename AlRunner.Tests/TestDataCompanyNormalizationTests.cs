@@ -35,6 +35,7 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+[Collection(TestDataStaticsSerialCollection.Name)]
 public sealed class TestDataCompanyNormalizationTests : IDisposable
 {
     public TestDataCompanyNormalizationTests() => TestDataNormalization.ResetForTests();
