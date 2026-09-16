@@ -22,10 +22,21 @@ failing.
 So the bar for a new entry is not "it is a number in a document". It is: the
 document states a count *of the tree as it is now*, and one grep settles it.
 
-Third state (guards-need-a-third-state.md): a prose pattern that matches nothing
-FAILS rather than passing vacuously, because a reworded sentence and a correct
-one are otherwise indistinguishable -- that silent-pass shape is exactly what
-#3299 and #3681 were.
+Third state (guards-need-a-third-state.md). A prose pattern that could not be read
+never passes vacuously -- a reworded sentence and a correct one are otherwise
+indistinguishable, which is the silent-pass shape #3299 and #3681 were. Since
+#4241 the verdicts are split by the remedy they send the reader to:
+
+  0  every claim matched once and agrees with the tree
+  1  a claim DISAGREES with the tree -- go fix the prose's number
+  3  a claim could not be READ: the pattern matches nothing (reworded), or it
+     matches several places that disagree with each other, so the guard cannot
+     tell which sentence it pins -- go fix the prose's shape
+
+Copies that agree are measurable and are compared like a single match: the
+document says one thing, twice. Only disagreeing copies are unmeasurable. And a
+measured disagreement outranks an unreadable claim, so a real drift is never
+downgraded to "could not tell".
 
 Run: python3 tools/test_partial_class_counts.py
 """
@@ -97,11 +108,21 @@ def main() -> int:
                 f"entry if the claim is gone -- do not leave it unmatched."
             )
             continue
-        if len(found) > 1:
+        if len(found) > 1 and len(set(found)) > 1:
             # findall, not search (#4241). `re.search` returns the FIRST match and
             # stops, so a document stating the claim twice -- one copy correct, one
             # drifted -- reads as correct and exits 0. The drift is present in the
             # file, and the guard whose whole job is to notice it reports success.
+            #
+            # `len(set(found)) > 1` is load-bearing: it refuses only when the copies
+            # DISAGREE, which is the case where the guard genuinely cannot tell what
+            # the document claims. Copies that AGREE are measurable -- the document
+            # says one thing, twice -- so they fall through and get compared against
+            # the tree like any single match. Without that term, a claim duplicated
+            # with both copies wrong (888 twice against a tree of 105) reported exit 3
+            # "make the claim unique", and deduplicating it leaves the survivor still
+            # saying 888. The remedy would have destroyed the evidence of the drift it
+            # was hiding -- the same defect one layer in (found in review of this PR).
             #
             # Two matches is UNMEASURABLE rather than a failure: the guard can no
             # longer tell which sentence it pins, so it must not report either
