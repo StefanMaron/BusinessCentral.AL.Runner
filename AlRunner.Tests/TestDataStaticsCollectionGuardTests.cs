@@ -193,10 +193,23 @@ public sealed class TestDataStaticsCollectionGuardTests
         // membership test below pass by finding nobody at all.
         Assert.True(Directory.Exists(TestsDir), $"cannot see the test sources at '{TestsDir}'");
         var mutators = Mutators();
+        // The floor cannot tell a BROKEN PROBE from a LEGITIMATELY SMALLER TREE -- both shrink
+        // the count -- so it must not assert one (#4257). It used to say "the probe is broken,
+        // not the tree", which is false in exactly the case a reader hits it: deleting the last
+        // mutation from one real mutator class gives `found 4 (...)` with nothing broken.
+        //
+        // The two causes have different remedies, and the list below is what separates them: four
+        // plausible mutator names means the tree shrank (lower this number in the same commit);
+        // an empty or nonsense list means the probe stopped seeing the sources (fix the probe,
+        // and do NOT lower the floor). The sibling assertion above discriminates the worst case
+        // -- a directory probe that sees nothing at all fails there first, naming the directory.
         Assert.True(mutators.Count >= 5,
             $"expected at least the 5 known mutators of the --test-data statics under '{TestsDir}', "
-            + $"found {mutators.Count} ({string.Join(", ", mutators.Select(m => m.ClassName))}) — "
-            + "the probe is broken, not the tree.");
+            + $"found {mutators.Count} ({string.Join(", ", mutators.Select(m => m.ClassName))}). "
+            + "Either a mutator was legitimately removed, or the probe stopped seeing them -- read "
+            + "the list to tell which, and lower this floor only for the first. The floor exists so "
+            + "an empty result cannot pass the membership test below vacuously, not to pin the "
+            + "exact count.");
 
         // And it must still see a class it is NOT about to report, or the population above
         // could be five copies of the same unserialised shape.
