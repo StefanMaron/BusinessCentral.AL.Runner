@@ -355,7 +355,15 @@ public sealed class RunnerShapeGapClaimTests
         // added here without someone stating what it claims. This assertion only holds the
         // floor.
         // 19 -> 20 (#4067): NavReportSync.BindRequestPageOpenedByBc, with its Sites entry above.
-        Assert.Equal(20, total);
+        // 20 -> 21 (#4089): NavReportSync.SyncExecuteOrPrint, the new Report.Execute/Print seam.
+        // NO new Sites entry, and that is the classification rather than an omission: it is a
+        // third call of the SAME factory and the SAME surface the `report-construction` entry
+        // already pins — `RunnerShapeGap.ReportConstruction`, anchor "report-construction" —
+        // reached when the by-id overloads cannot build the report, exactly as SyncRunRequestPage
+        // (line ~311) and SyncStaticRun (line ~471) are. Only the api string differs, naming which
+        // AL verb was called. A Sites entry per call site would assert the same claim three times;
+        // what the entry pins is the surface, and this PR added none.
+        Assert.Equal(21, total);
     }
 
     // ── The nine sites the issue's own measurement could not see ─────────────────────────

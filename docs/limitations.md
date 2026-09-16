@@ -1604,7 +1604,7 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
 <a id="runtime-shape-gaps"></a>
 
 - **Runtime shape gaps outside the virtual tables — the runner refuses rather than answering
-  a shape it cannot produce.** 15 further guards raise `RunnerOutOfScopeException` with the
+  a shape it cannot produce.** 16 further guards raise `RunnerOutOfScopeException` with the
   reason anchor `not-yet-implemented`, so an AL `[TryFunction]` cannot absorb one into `false`
   ([#2966](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2966)). The number
   counts refusal **call sites**, which is the rule the original nine were counted under; it is
@@ -1623,8 +1623,11 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   - a **[ModalPageHandler]** asked for a form handle the runner's own form registry does not
     hold (`RunnerTestClientSession.cs`), and modal/page dispatch handed a null test-execution
     context or request (`RunnerModalDispatch.cs`);
-  - **report construction**, when the runner cannot build the report object at all to run it
-    or its request page (`NavReportSync.cs`);
+  - **report construction**, when the runner cannot build the report object at all — to run
+    it (`Report.Run` / `RunModal`), to run its request page (`Report.RunRequestPage`), or to
+    execute it without one (`Report.Execute` / `Report.Print`,
+    [#4089](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4089)). Three call
+    sites of one guard in `NavReportSync.cs`, differing only in which AL verb they name;
   - a **request page opened by BC's own report engine** (the async `Report.Run` entry points
     compiled dependency code calls) whose owner is not a report, so the runner cannot tell
     which data items and built-in actions the `[RequestPageHandler]` is driving
