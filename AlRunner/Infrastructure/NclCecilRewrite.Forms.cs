@@ -1450,6 +1450,64 @@ public static partial class NclCecilRewrite
             PrependStaticCall(asm.MainModule, endTransactionMethod, noteTransactionEndHelper, argSlots: 2);
         }
 
+        // 8g-bis. SessionTransactionExtensions.BeginTransactionWorld / EndTransactionWorld —
+        //     the BARE pair, without the "AndTransaction" suffix 8g handles (#4089).
+        //
+        //     This is BC's own transaction-world decision point for a report run:
+        //     NavReport.RunReportCoreAsync enters one when `UseRequestForm ||
+        //     (ALCurrentTransactionType != Metadata.TransactionType && that type is not
+        //     UpdateNoLocks)`, unless the test is AutoRollback. Report.Run / RunModal /
+        //     RunRequestPage reach it through runner seams that model it in C#
+        //     (NavReportSync.SyncRun, SyncRunRequestPage). Report.Execute and Report.Print have
+        //     no runner seam — their twelve sync wrappers are thin sync-over-async forwarders
+        //     and BC's real RunReportAsync → RunReportCoreAsync chain runs — so for those the
+        //     decision was taken by BC and then dropped on the floor, because the real bodies
+        //     are `session.DataAccessSource.SessionTransactionManager.{Begin,End}TransactionWorld()`
+        //     and the skeleton session has no such manager.
+        //
+        //     Replace, not prepend: unlike 8g's EndTransactionWorldAndTransaction, whose
+        //     original body already runs safely, these two reach nothing at all today.
+        //
+        //     Scope: RunReportCoreAsync is the only live caller here. BC's other one,
+        //     NavForm.RunModalAsync, calls it in the branch taken only when
+        //     TestExecution.TestHandleModalForm returns FALSE, which under test it does not.
+        {
+            var sessTxTypeW = asm.MainModule.Types
+                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.SessionTransactionExtensions")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] SessionTransactionExtensions type not found — Ncl shape changed; do not commit");
+
+            var worldTargets = new (string Name, string HelperName)[]
+            {
+                ("BeginTransactionWorld", nameof(AlRunner.Patches.ALDatabasePatches.BcBeginTransactionWorld)),
+                ("EndTransactionWorld",   nameof(AlRunner.Patches.ALDatabasePatches.BcEndTransactionWorld)),
+            };
+
+            foreach (var (name, helperName) in worldTargets)
+            {
+                // Parameters.Count == 1 is what separates the bare pair from 8g's
+                // ...AndTransaction(NavSession, bool); matching on the name alone would
+                // silently pick up whichever overload Cecil enumerated first.
+                var target = sessTxTypeW.Methods
+                    .FirstOrDefault(m => m.Name == name && m.IsStatic && m.HasBody
+                                         && m.Parameters.Count == 1)
+                    ?? throw new InvalidOperationException(
+                        $"[Cecil] SessionTransactionExtensions.{name}(NavSession) not found — "
+                        + "Ncl shape changed; do not commit");
+
+                var helper = typeof(AlRunner.Patches.ALDatabasePatches).GetMethod(
+                    helperName, BindingFlags.Public | BindingFlags.Static)
+                    ?? throw new InvalidOperationException(
+                        $"[Cecil] ALDatabasePatches.{helperName} not found");
+
+                ReplaceBodyWithHelper(asm.MainModule, target, helper);
+            }
+
+            Console.Error.WriteLine(
+                "[Cecil] Rewrote SessionTransactionExtensions.BeginTransactionWorld/EndTransactionWorld "
+                + "→ ALDatabasePatches report transaction-world pair");
+        }
+
         // 8h. SessionTransactionExtensions.BeginTransaction / EndTransaction /
         //     BeginTransactionWorldAndTransaction / EndTransactionWorldAndTransaction —
         //     the TransactionModel::None depth counter (#3580).

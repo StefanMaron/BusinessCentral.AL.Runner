@@ -328,6 +328,79 @@ public static class ALDatabasePatches
     public static void BeginGuardedRunTransaction() => RecordPatches.PushTransactionWorldScope();
 
     /// <summary>
+    /// Replacement for <c>SessionTransactionExtensions.BeginTransactionWorld(NavSession)</c>,
+    /// BC's own bare transaction-world entry — the one <c>NavReport.RunReportCoreAsync</c>
+    /// takes for <c>Report.Execute</c> and <c>Report.Print</c>, whose sync wrappers the runner
+    /// does not Cecil-own and which therefore run BC's real async chain (#4089).
+    ///
+    /// BC's body is <c>session.DataAccessSource.SessionTransactionManager.BeginTransactionWorld()</c>,
+    /// reaching <c>TransactionManager.BeginTransactionWorld</c>:
+    ///
+    ///     if (logicalTransaction.TransactionWorldCount == 0) {
+    ///         ThrowIfWriteTransactionStarted();
+    ///         if (IsTransactionActive) CommitImpl(inconsistentRecords, commit: true);
+    ///     }
+    ///     logicalTransaction.TransactionWorldCount++;
+    ///
+    /// The runner's skeleton session has no DataAccessSource transaction manager, so the real
+    /// body reaches nothing and the decision BC makes here was simply lost. These two calls are
+    /// the runner's model of that push, the same pair <c>NavReportSync.SyncRun</c> applies.
+    ///
+    /// Observably equivalent: refusal-while-a-write-is-pending and commit-on-return are exactly
+    /// what BC's body above does, and corpus 60981 "Test TxModel Report Exec" Test06/Test07
+    /// (Execute, refused then committing), Test10 (static Execute), Test11 (Print) and
+    /// Test08/Test09 (neither, because the TransactionType term is false) pin both directions on
+    /// a real service tier.
+    ///
+    /// Trap: BC has a SECOND caller, <c>NavForm.RunModalAsync</c>, but it sits in the branch
+    /// taken only when <c>TestExecution.TestHandleModalForm</c> returns FALSE. Under test it
+    /// returns true, so that branch is unreachable here. Re-check this if form dispatch changes.
+    /// </summary>
+    /// <param name="session">BC's <c>this</c> extension receiver, forwarded by
+    /// <c>ReplaceBodyWithHelper</c> because it forwards every IL argument slot and asserts the
+    /// arity matches. The runner's decision reads process-wide state, so the value is unused.</param>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void BcBeginTransactionWorld(object? session)
+    {
+        _ = session;
+        ThrowIfWriteTransactionStarted();
+        // BC: `if (IsTransactionActive) CommitImpl(inconsistentRecords, commit: true);` — the
+        // ENTRY is where a transaction world makes what came before it durable. Nothing is
+        // outstanding here (the line above refused if there were), so this only moves the
+        // commit floor, which is what makes the report's own writes survive a later trapped
+        // error while the caller's post-return writes do not (corpus 60981 Test07).
+        CommitWithoutTestExecutionGuard();
+        BeginGuardedRunTransaction();
+    }
+
+    /// <summary>
+    /// Replacement for <c>SessionTransactionExtensions.EndTransactionWorld(NavSession)</c> — the
+    /// other half of <see cref="BcBeginTransactionWorld"/>.
+    ///
+    /// BC's <c>RunReportCoreAsync</c> calls this from a <c>finally</c>, with no commit flag, and
+    /// <c>TransactionManager.EndTransactionWorld</c> pops the world it pushed. The push already
+    /// committed anything outstanding, so the report's own writes are durable by the time the
+    /// pop runs; <c>commit: true</c> is what reproduces that for the runner's snapshot scope.
+    ///
+    /// Trap: a failing run is NOT rolled back here, because BC does not roll one back here
+    /// either — the error propagates and AL's own asserterror rollback (SessionTransactionExtensions
+    /// .Rollback, rewritten to RecordPatches.RollbackToCommitPoint) is what discards it, back to
+    /// the commit this world's entry made. Corpus 60981 Test07 pins exactly that boundary.
+    /// </summary>
+    /// <param name="session">Forwarded and unused — see <see cref="BcBeginTransactionWorld"/>.</param>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void BcEndTransactionWorld(object? session)
+    {
+        _ = session;
+        // BC's TransactionManager.EndTransactionWorld only decrements TransactionWorldCount —
+        // it does NOT commit. Durability came from the entry above. So this pops the runner's
+        // scope without restoring, which discards the scope's snapshots rather than applying
+        // them; a failing run is undone by AL's own asserterror rollback to the commit floor
+        // the entry set, exactly as on BC.
+        EndGuardedRunTransaction(commit: true);
+    }
+
+    /// <summary>
     /// BC's TransactionManager end of the nested logical transaction a GUARDED
     /// <c>Codeunit.Run</c> opens — the other half of
     /// <see cref="ThrowIfWriteTransactionStarted"/>, which only models the entry guard.
