@@ -25,6 +25,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **allobj:** key the dependency table-subtype memo on the registration epoch
 - **scripts:** check-collection-weights must reject a weight that does not change dispatch order
 - **reports:** NavReport.RunRequestPageAsync is rewritten to throw unconditionally, contradicting docs/scope.md 3.5.1
 - **virtual-tables:** Event Subscription (2000000140) registry gap
