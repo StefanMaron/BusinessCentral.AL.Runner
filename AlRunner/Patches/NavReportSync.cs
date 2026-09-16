@@ -19,9 +19,11 @@
 //   The runner has no service tier and cannot render report layouts. All
 //   reports execute as if `ProcessingOnly = true`. Layout-rendering APIs that
 //   would produce a rendered artifact (SaveAsPdf / SaveAsHtml / SaveAsWord /
-//   SaveAsExcel / SaveAsDocx / RunRequestPage) throw an AL-observable
-//   NavNCLDialogException with the "out-of-scope:" prefix — tests rewrite
-//   those calls as `asserterror`.
+//   SaveAsExcel / SaveAsDocx) throw an AL-observable NavNCLDialogException
+//   with the "out-of-scope:" prefix — tests rewrite those calls as
+//   `asserterror`. RunRequestPage is NOT one of them: running a request page
+//   is in scope and rendering one is not (docs/scope.md §3.5.1), so both its
+//   sync and its async overloads route to the seams below (#3505).
 //
 // Data-item iteration:
 //   The row loop is NOT re-implemented here. InvokeDataItems drives BC's own
@@ -374,6 +376,37 @@ public static partial class NavReportSync
             Console.Error.WriteLine($"[NavReportSync] RunRequestPage({reportId}) confirmed={confirmed} params={result}");
         return result;
     }
+
+    /// <summary>
+    /// Replacement for every async <c>NavReport.RunRequestPageAsync</c> overload (#3505).
+    ///
+    /// Observably equivalent to BC's own bodies: all four of them end in
+    /// <c>RunReportAsync(requestWindow: true, …, ReportIntent.Parameters, …)</c> followed by
+    /// <c>GetReportParameters()</c>, which is exactly what <see cref="SyncRunRequestPage"/>
+    /// already produces for the sync overloads — those are BC's own
+    /// <c>…Async(…).AsTask().GetAwaiter().GetResult()</c> wrappers over these, so one seam is
+    /// faithful to both by construction. Citation: corpus 60545 "Test Report RunRequestPage"
+    /// (both directions: confirmed returns the handler's filter, cancelled returns empty) and
+    /// corpus 60981 Test02-Test05 for the transaction-world pair, green on a real service tier.
+    ///
+    /// WHY THE ASYNC OVERLOADS NEED THEIR OWN SEAM. Runner-compiled AL emits the SYNC call, so
+    /// routing only those left the corpus green while precompiled Base Application — which
+    /// emits the ASYNC call — hit the blanket refusal this replaced. Measured on
+    /// Microsoft_Base Application_28.1.49838.53910.app: 3 of its 5 R2R chunks carry a
+    /// RunRequestPageAsync member reference; the runner's own emitted AL carries none.
+    ///
+    /// Trap for a later editor: the result is a COMPLETED ValueTask, not a running one. The
+    /// work is synchronous — NavTestExecution's handler dispatch is — so there is nothing to
+    /// await, and returning a completed task keeps every BC caller's `await` a no-op rather
+    /// than introducing a thread hop into the report's execution scope.
+    ///
+    /// <param name="navReportOrNull">The report instance for the instance overloads; null for
+    /// the static (by-id) overloads, which construct one.</param>
+    /// </summary>
+    public static System.Threading.Tasks.ValueTask<string> AsyncRunRequestPage(
+        object? navReportOrNull, int reportId, string? parameters)
+        => new System.Threading.Tasks.ValueTask<string>(
+            SyncRunRequestPage(navReportOrNull, reportId, parameters));
 
     /// <summary>Set NavReport's private <c>success</c> flag (see SyncRunRequestPage).</summary>
     private static void SetReportSuccess(object report, bool value)

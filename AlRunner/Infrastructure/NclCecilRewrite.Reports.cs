@@ -369,7 +369,7 @@ public static partial class NclCecilRewrite
             // BC's own body only touches DataItemIterator state the runner already builds
             // (dataItems, TableViewRecord, TableViewIsSet), so there is nothing to stand in
             // for — the original is both correct and sufficient.
-            Console.Error.WriteLine($"[Cecil] Rewrote {reportRewrites} NavReport/DataItemIterator method(s) (Run/RunModal→SyncRun; Add→ReportAdd; RunRequestPage→OOS-throw)");
+            Console.Error.WriteLine($"[Cecil] Rewrote {reportRewrites} NavReport/DataItemIterator method(s) (Run/RunModal→SyncRun; Add→ReportAdd; RunRequestPage→SyncRunRequestPage)");
         }
 
         // NavXmlPort static Run(id[, requestWindow[, import[, record]]]) — #1800.
