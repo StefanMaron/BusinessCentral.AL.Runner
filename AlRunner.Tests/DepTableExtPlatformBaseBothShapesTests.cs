@@ -162,6 +162,50 @@ public sealed class DepTableExtPlatformBaseBothShapesTests
     }
 
     /// <summary>
+    /// The step's own `if:` must name a glob that MATCHES SOMETHING, or the step is skipped --
+    /// and a skipped step reports success.
+    ///
+    /// Found in review of #4249: narrowing the guard to `**/*.NOPE` leaves every other test in
+    /// this class green, because they all reason about the step's CONTENT and none about whether
+    /// it runs. That is the same defect this file exists to fix, one level up -- the other tests
+    /// prove the block works; this one proves it is reached.
+    /// </summary>
+    [Fact]
+    public void OrderedBundleStep_IsReachable_ItsHashFilesGlobMatchesRealFiles()
+    {
+        var step = OrderedBundleStep();
+        var condition = Regex.Match(step, @"^\s*if:\s*(?<expr>.+)$", RegexOptions.Multiline);
+        Assert.True(condition.Success,
+            "the ordered-bundle step has no `if:` -- if that is deliberate the step always runs and "
+            + "this test should be deleted, but silently losing the condition is not the same thing.");
+
+        var globs = Regex.Matches(condition.Groups["expr"].Value, @"hashFiles\('(?<glob>[^']+)'\)")
+            .Select(m => m.Groups["glob"].Value).ToList();
+        Assert.True(globs.Count > 0,
+            $"the step's `if:` calls no hashFiles(): {condition.Groups["expr"].Value.Trim()} -- this "
+            + "test reads that call to decide whether the step can run at all.");
+
+        foreach (var glob in globs)
+        {
+            // hashFiles() is repo-root-relative and '' when nothing matches, which makes the step
+            // skip -- and a skipped step reports SUCCESS.
+            var star = glob.IndexOf('*');
+            Assert.True(star > 0, $"unexpected hashFiles glob with no wildcard: {glob}");
+            var dir = Path.Combine(RepoRoot, glob[..glob.LastIndexOf('/', star)].Replace('/', Path.DirectorySeparatorChar));
+            var ext = glob[(glob.LastIndexOf('.') + 1)..];
+
+            Assert.True(Directory.Exists(dir),
+                $"the step's `if:` tests hashFiles('{glob}'), but '{dir}' does not exist, so it "
+                + "evaluates to '' and the step is SKIPPED -- which reports success (#4249).");
+            Assert.True(
+                Directory.EnumerateFiles(dir, "*." + ext, SearchOption.AllDirectories).Any(),
+                $"the step's `if:` tests hashFiles('{glob}'), which matches no file under '{dir}', "
+                + "so it evaluates to '' and the step is SKIPPED -- reporting success while running "
+                + "nothing (#4249).");
+        }
+    }
+
+    /// <summary>
     /// The step's verification block, from `missing=0` to its final `exit`, with the log filename
     /// replaced by $LOG so it can be run against a fixture.
     ///
