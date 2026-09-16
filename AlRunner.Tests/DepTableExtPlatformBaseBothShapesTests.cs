@@ -302,9 +302,17 @@ public sealed class DepTableExtPlatformBaseBothShapesTests
         // reasonable and silently skipped a job whose header carries a trailing comment, a
         // quoted name or a dotted name -- all valid YAML. The locator then took the PRECEDING
         // job and reported "no job-level if:" while one was present, with every test green
-        // (measured in review: three shapes, all Failed: 0, Passed: 6). Missing a job is the
-        // silent direction; picking a spurious one is loud, because a non-job block would have
-        // to carry `    if:` to matter and that reds.
+        // (measured in review: three shapes, all Failed: 0, Passed: 6).
+        //
+        // Widening cannot pick a non-job, and the reason is YAML's, not this regex's: a line at
+        // column 2 TERMINATES an enclosing block scalar, so a `  x:` inside a `run: |` heredoc
+        // is not "text that looks like a job" -- the parser reads it as a sibling job. Verified:
+        //   yaml.safe_load("jobs:\n  a:\n    steps:\n      - run: |\n          cat <<'EOF'\n  x:\n          EOF\n")
+        //   -> jobs has keys ['a', 'x']
+        // So anything this pattern matches at column 2 under `jobs:` IS a job by construction.
+        // An earlier version of this comment argued instead that a wrong pick would be "loud
+        // because a non-job would need `    if:` to matter" -- true, but a weaker claim about
+        // consequences where a structural one is available (found in review of #4255).
         var jobs = Regex.Matches(wf, @"(?m)^  (?<name>[^\s#][^\n]*?):[ \t]*(?:#[^\n]*)?$")
             .Where(m => m.Index < stepAt).ToList();
         Assert.True(jobs.Count > 0,
