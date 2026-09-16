@@ -964,6 +964,63 @@ jobs:
           done
           exit "$missing"
 
+      - name: Run dep-tableext-platform-base as ordered bundles
+        # A FOURTH invocation, and the only one whose suites ALSO stay in the combined step
+        # above. #4085 measured both shapes under one mutation per half of #1686, and each is
+        # blind to the half the other catches — so this pair runs in BOTH places, and moving it
+        # to its own root the way #4079 moved the tableext-eviction pairs would drop coverage:
+        #
+        #   cross-bundle half (RecordPatches `_sourceDirs` de-dup + the field-id de-dup in
+        #   MergeExtensionFields): two ordered bundles -> exit 2, 0 tests, "table 27 metadata
+        #   could not be built: NullReferenceException". Combined -> exit 0, all four PASS.
+        #
+        #   in-bundle half (EmitSiblingSymbols writing the bundle-wide platform closure into
+        #   the sibling's deps sidecar): combined -> exit 3, AL0132 'Record Item' does not
+        #   contain a definition for 'DTB Repro Flag'. Two ordered bundles -> exit 0, 4/4 PASS.
+        #
+        # Order comes from the ARGUMENT LIST, dep first: that is what makes the dep load as a
+        # dependency PACKAGE instead of a sibling app group. --verbose because the `[dep]` marker
+        # is a [Component] log. AlRunner.Tests/DepTableExtPlatformBaseBothShapesTests.cs holds
+        # the both-places property so a tidy-up cannot quietly undo it.
+        if: ${{ always() && hashFiles('tests/runner-extras/dep-tableext-platform-base-main/**/*.al') != '' }}
+        run: |
+          rc=0
+          dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
+              tests/runner-extras/dep-tableext-platform-base-dep \
+              tests/runner-extras/dep-tableext-platform-base-main \
+              --package-cache "$HOME/.al-runner/platform-apps" \
+              --strict \
+              --verbose > dep-tableext-platform-base.log 2>&1 || rc=$?
+          command grep -E '^(PASS|FAIL|ERROR) |→ [0-9]+P/|\[dep\] AL Runner/DTB' dep-tableext-platform-base.log || true
+          if [ "$rc" -ne 0 ]; then
+            tail -40 dep-tableext-platform-base.log
+            echo "::error::dep-tableext-platform-base failed as ordered bundles (exit $rc)"
+            exit "$rc"
+          fi
+          missing=0
+          # The dep must have loaded as a separate dependency PACKAGE. Without this, the step
+          # passes whenever the tests pass, including if the two directories ever collapse back
+          # into one bundle -- which is #4079's defect, and the shape that hid the cross-bundle
+          # half of #1686 in the combined step.
+          if ! command grep -qE "^ *\[dep\] AL Runner/DTB Platform Base Dep " dep-tableext-platform-base.log; then
+            echo "::error::no '[dep] AL Runner/DTB Platform Base Dep' line: the dep did not load as a separate dependency package, so the cross-bundle path these tests exist to pin never ran (#4085). Check the argument list above is two directories, dep first."
+            missing=1
+          fi
+          # The marker prints at PARSE time, so it appears even when zero tests run (#4080: a copy
+          # with every [Test] stripped printed its markers, ran 0P/0F/0E and exited 0). With no
+          # --count-baseline here, these PASS lines are the only thing asserting the tests ran.
+          for t in \
+              Codeunit63411.ItemRoundtrip_BooleanExtensionField_ReturnsInsertedValue \
+              Codeunit63411.ItemRoundtrip_IntegerExtensionField_ReturnsInsertedValue \
+              Codeunit63411.ItemInit_ExtensionFieldsDefaultToTypeDefaults \
+              Codeunit63411.ItemGet_NonExistentNo_RaisesDoesNotExistError; do
+            if ! command grep -qE "^PASS +${t//./\\.}( |$)" dep-tableext-platform-base.log; then
+              echo "::error::no 'PASS $t' line: the dep loaded cross-bundle but this test did not pass in this step, so nothing asserted on it (#4085)."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
       - name: Phase-log report (runner-extras)
         # The step with the most to say: 25 app groups in ONE process (down from 38 —
         # see #1847, which folded 16 standalone-with-no-hazard suites into
