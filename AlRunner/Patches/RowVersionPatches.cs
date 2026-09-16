@@ -83,6 +83,31 @@ public static partial class RowVersionPatches
     // so the very first stamped row already answers HasBeenInserted = true.
     private static long _rowVersion;
 
+    /// <summary>
+    /// Raise the counter above a rowversion restored by `--test-data` (#4123).
+    ///
+    /// Real SQL has ONE monotonic sequence per database. Hydrating restored values without this
+    /// gives the runner two: the next stamp would be 1 against a restored 261,652, so every row
+    /// a test writes would sort BEFORE every restored row — a new wrong answer (ordering) traded
+    /// for an absent one (the value). High-water mark, never lowering: rows arrive per table in
+    /// no defined order, so a later smaller value must not move the counter back.
+    /// </summary>
+    internal static void SeedFromRestoredRowVersion(long restored)
+    {
+        if (restored <= 0) return;
+        long seen;
+        while ((seen = System.Threading.Interlocked.Read(ref _rowVersion)) < restored)
+        {
+            if (System.Threading.Interlocked.CompareExchange(ref _rowVersion, restored, seen) == seen)
+                return;
+        }
+    }
+
+    /// <summary>The value the next stamp would take. Tests only — the production path reads the
+    /// counter exactly once, through Interlocked.Increment at the stamp site.</summary>
+    internal static long PeekNextRowVersionForTests()
+        => System.Threading.Interlocked.Read(ref _rowVersion) + 1;
+
     private static PropertyInfo? _pMetaTable;      // MutableRecordBuffer.MetaTable
     private static PropertyInfo? _pTimestampField; // NCLMetaTable.TimestampField (internal)
     private static PropertyInfo? _pFieldIndex;     // NCLMetaField.FieldIndex (shared with SystemIdField resolution)

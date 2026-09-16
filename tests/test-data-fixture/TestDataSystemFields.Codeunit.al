@@ -63,6 +63,34 @@ codeunit 64410 "Test Data System Fields Tests"
     end;
 
     [Test]
+    procedure RestoredRowVersionIsNonZeroAndOutrankedByALaterWrite()
+    var
+        NoSeries: Record "No. Series";
+        RestoredRowVersion: BigInteger;
+        WrittenRowVersion: BigInteger;
+    begin
+        // #4123. Deliberately NOT asserting the literal rowversion: it is demo-data build state
+        // that moves with the artifact, exactly as TestDataDateValues says of its instant. What
+        // is invariant, and what the fix is FOR, is the ordering.
+        Assert.IsTrue(NoSeries.Get('A-BLK'), 'No. Series A-BLK must exist after --test-data hydration');
+        RestoredRowVersion := NoSeries."timestamp";
+        Assert.IsTrue(RestoredRowVersion > 0,
+            'a restored row must carry the backup rowversion, not field 0 default (#4123)');
+
+        // A row written now must outrank it. Before the counter was seeded this failed by a wide
+        // margin: the first stamp is 1 against a restored value in the hundreds of thousands.
+        NoSeries.Init();
+        NoSeries.Code := 'TDF-RV-1';
+        NoSeries.Description := 'rowversion ordering probe';
+        NoSeries.Insert();
+        WrittenRowVersion := NoSeries."timestamp";
+
+        Assert.IsTrue(WrittenRowVersion > RestoredRowVersion,
+            'a row inserted after the restore must sort AFTER every restored row; real SQL has '
+            + 'one monotonic sequence per database, and an unseeded counter gives the runner two');
+    end;
+
+    [Test]
     procedure NoSeriesSystemIdIsTheBackupsValue()
     var
         NoSeries: Record "No. Series";

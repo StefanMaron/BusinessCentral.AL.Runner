@@ -21,7 +21,9 @@ back through ordinary AL `Record` calls with the right values.
   BC's container (four magic bytes + raw Deflate), not the field's bytes, so a codec that
   stored it verbatim would still give a blob with `HasValue` = true and a plausible length.
 - `TestDataSystemFields.Codeunit.al` (#2260) — `SystemId` and the audit fields
-  (`SystemCreatedAt`, `SystemCreatedBy`, `SystemModifiedAt`, `SystemModifiedBy`). Customer 10000
+  (`SystemCreatedAt`, `SystemCreatedBy`, `SystemModifiedAt`, `SystemModifiedBy`), and the
+  `timestamp` rowversion (#4123), whose test asserts the ORDERING rather than a literal value —
+  a row inserted after the restore must outrank every restored row. Customer 10000
   is the subject because its created and modified instants differ, so a mapping that sends one
   column to the wrong field fails; `GetBySystemId` is asserted both ways.
 

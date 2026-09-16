@@ -586,10 +586,12 @@ public sealed class TestDataProvisioningTests : IDisposable
         Assert.Equal("2026-05-19 23:24:34.417", rows[0]["SystemModifiedAt"].GetString());
         Assert.Equal("00000000-0000-0000-0000-000000000002", rows[0]["SystemModifiedBy"].GetString());
 
-        // No SQL spelling survives beside its AL one, and the rowversion is not hydrated.
+        // No SQL spelling survives beside its AL one. The rowversion IS kept now (#4123) — it
+        // is field 0's own AL name, so it needs no re-keying and arrives verbatim for the
+        // decoder. Before #4123 this asserted its ABSENCE and a count of 8.
         Assert.DoesNotContain(rows[0].Keys, k => k.StartsWith("$system", StringComparison.Ordinal));
-        Assert.DoesNotContain("timestamp", rows[0].Keys);
-        Assert.Equal(8, rows[0].Count);
+        Assert.Equal("0x01", rows[0]["timestamp"].GetString());
+        Assert.Equal(9, rows[0].Count);
     }
 
     [Fact]
