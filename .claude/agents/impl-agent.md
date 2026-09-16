@@ -241,10 +241,14 @@ The unfiltered suite is for CI; it spends most of its time in tests that spawn t
 
    ```bash
    for t in tools/test_*.py; do python3 "$t" >/dev/null || echo "FAILED: $t"; done   # ~30s
-   dotnet test AlRunner.Tests --filter "FullyQualifiedName~GuardTests"               # 228 tests
+   dotnet test AlRunner.Tests --filter "FullyQualifiedName~GuardTests"               # 280 tests
    ```
 
-   There are 21 of each. Four fired on a new file in one session, each costing a round trip: a
+   The loop above runs **32** guards (`tools/test_*.py`); `.github/scripts/test_*` holds a further
+   **19**, run by `pr-gate.yml` rather than by this loop. Counts drift — #4235 found this line
+   claiming "21 of each" when the sets were 32 and 19 and no longer equal — so treat them as a
+   scale, not a contract, and trust `ls tools/test_*.py` over this sentence. Four fired on a new
+   file in one session, each costing a round trip: a
    bare `return;` reporting `Passed` having asserted nothing; a doc comment stranded from its
    member by an inserted method; a test class touching the parse statics from outside the serial
    collection (#1696's four-of-five-legs flake); and a dangling `docs/` anchor. **None of them
