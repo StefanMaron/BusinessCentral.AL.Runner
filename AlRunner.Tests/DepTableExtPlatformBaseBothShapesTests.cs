@@ -18,6 +18,8 @@
 // #4080 moved the tableext-eviction pairs would silently drop the in-bundle half. That is the
 // tidy-up this file exists to stop: the "move it to its own root like #4079 did" edit reads as
 // finishing an unfinished job, and nothing else would fail if someone made it.
+using System.Diagnostics;
+using System.Text;
 using System.Text.RegularExpressions;
 using Xunit;
 
@@ -157,5 +159,126 @@ public sealed class DepTableExtPlatformBaseBothShapesTests
         // The check must be an anchored grep, so a FAIL line mentioning the name cannot satisfy
         // it — and, as above, matching the invocation rather than a loose substring.
         Assert.Matches(new Regex(@"grep -qE ""\^PASS \+"), step);
+    }
+
+    /// <summary>
+    /// The step's verification block, from `missing=0` to its final `exit`, with the log filename
+    /// replaced by $LOG so it can be run against a fixture.
+    ///
+    /// Scoped through <see cref="OrderedBundleStep"/> deliberately: `exit "$missing"` occurs TWICE
+    /// in bc-tests.yml (#4249), and a file-wide search would extract the wrong one.
+    /// </summary>
+    private static string VerificationBlock()
+    {
+        var step = OrderedBundleStep();
+        var start = step.IndexOf("missing=0", StringComparison.Ordinal);
+        Assert.True(start >= 0,
+            "the ordered-bundle step has no `missing=0`, so the block this test executes is gone "
+            + "(#4249). If the guard was rewritten, re-point this extraction at the new shape.");
+        var end = step.IndexOf("exit \"$missing\"", start, StringComparison.Ordinal);
+        Assert.True(end > start,
+            "the ordered-bundle step's verification block does not end in `exit \"$missing\"`. "
+            + "Either it no longer propagates its own verdict -- which is the defect #4249 is "
+            + "about -- or it was restructured and this extraction needs re-pointing.");
+
+        var block = step[start..end] + "exit \"$missing\"";
+        // Dedent: the YAML block is indented under `run: |`.
+        var lines = block.Split('\n').Select(l => l.Length > 10 ? l[10..] : l.TrimStart());
+        return string.Join("\n", lines)
+            .Replace("dep-tableext-platform-base.log", "\"$LOG\"", StringComparison.Ordinal);
+    }
+
+    /// <summary>Runs the extracted block against a log fixture and returns its exit code.</summary>
+    private static (int Exit, string Output) RunGuard(string log)
+    {
+        // TestScratch, not Path.GetTempPath(): ScratchDirs records an owner, so a killed test
+        // host cannot leak this directory permanently (ScratchDirOwnershipGuardTests, #2743).
+        var dir = TestScratch.Dir(nameof(DepTableExtPlatformBaseBothShapesTests));
+        Directory.CreateDirectory(dir);   // Reserve() records an owner; it does not create.
+        try
+        {
+            var logPath = Path.Combine(dir, "run.log");
+            File.WriteAllText(logPath, log);
+            var script = Path.Combine(dir, "guard.sh");
+            File.WriteAllText(script, "#!/usr/bin/env bash\nLOG=\"$1\"\n" + VerificationBlock() + "\n");
+
+            var psi = new ProcessStartInfo("bash", $"\"{script}\" \"{logPath}\"")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                WorkingDirectory = dir,
+            };
+            using var proc = Process.Start(psi)!;
+            var stdout = proc.StandardOutput.ReadToEnd();
+            var stderr = proc.StandardError.ReadToEnd();
+            Assert.True(proc.WaitForExit(60_000), "the extracted guard did not finish in 60s");
+            return (proc.ExitCode, stdout + stderr);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* owned by ScratchDirs either way */ }
+        }
+    }
+
+    /// <summary>A log with the dep marker and a PASS line for every declared test.</summary>
+    private static string GoodLog()
+    {
+        var al = File.ReadAllText(Path.Combine(RepoRoot, MainDir, "DtbTests.Codeunit.al"));
+        var id = Regex.Match(al, @"codeunit\s+(\d+)\s").Groups[1].Value;
+        var names = Regex.Matches(al, @"\[Test\]\s*\r?\n\s*procedure\s+(\w+)")
+            .Select(m => m.Groups[1].Value);
+        var sb = new StringBuilder();
+        sb.AppendLine("  [dep] AL Runner/DTB Platform Base Dep 1.0.0.0");
+        foreach (var n in names) sb.AppendLine($"PASS Codeunit{id}.{n} 3ms");
+        sb.AppendLine("-> 4P/0F/0E");
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// The step's guard must actually REFUSE, not merely contain the right grep text.
+    ///
+    /// #4249: three mutations that each disarm the step completely -- `exit "$missing"` to
+    /// `exit 0`, `missing=1` to `missing=0`, and dropping `( |$)` from the PASS pattern -- left all
+    /// four of this class's other tests GREEN, because they assert over the step's TEXT. Two of
+    /// those make the step report success unconditionally.
+    ///
+    /// This test executes the block instead, so a disarmed guard fails here rather than passing
+    /// CI forever while asserting nothing (.claude/rules/tdd.md, "a test that names the thing is
+    /// not a test that drives it").
+    /// </summary>
+    [Fact]
+    public void OrderedBundleStep_VerificationBlock_ActuallyRefuses_NotJustContainsTheGrep()
+    {
+        var good = GoodLog();
+
+        // A real log passes. Without this the rest proves only that the block fails on everything.
+        var (okExit, okOut) = RunGuard(good);
+        Assert.True(okExit == 0,
+            $"the guard rejects a log carrying the marker and every PASS line (exit {okExit}):\n{okOut}");
+
+        // The dep did not load as a separate package -- #4079's collapse-to-one-bundle shape.
+        var noMarker = string.Join("\n",
+            good.Split('\n').Where(l => !l.Contains(DepLoadMarker, StringComparison.Ordinal)));
+        Assert.True(RunGuard(noMarker).Exit != 0,
+            "the guard accepts a log with no '[dep] ...' line, so the step would pass when the two "
+            + "directories collapse into one bundle -- the defect it exists to catch (#4085).");
+
+        // Markers print at parse time, so a suite that ran nothing still prints them (#4080).
+        var noPass = string.Join("\n",
+            good.Split('\n').Where(l => !l.StartsWith("PASS ", StringComparison.Ordinal)));
+        Assert.True(RunGuard(noPass).Exit != 0,
+            "the guard accepts a log with no PASS lines, so a suite that ran zero tests would pass.");
+
+        // A FAIL line naming the test must not satisfy the PASS check.
+        Assert.True(RunGuard(good.Replace("PASS Codeunit", "FAIL Codeunit", StringComparison.Ordinal)).Exit != 0,
+            "the guard accepts FAIL lines where it requires PASS.");
+
+        // tdd.md's prefix trap: a longer name must not satisfy the check for a shorter one.
+        // This is what `( |$)` buys, and dropping it is one of #4249's three silent mutations.
+        var suffixed = good.Replace("_ReturnsInsertedValue 3ms", "_ReturnsInsertedValueExtra 3ms",
+            StringComparison.Ordinal);
+        Assert.True(RunGuard(suffixed).Exit != 0,
+            "the guard accepts a PASS line whose test name merely STARTS WITH the required one, so "
+            + "renaming a test to a longer name would silently stop asserting it.");
     }
 }
