@@ -28,11 +28,21 @@ public sealed class TestDataStaticsCollectionGuardTests
     /// only: `nameof(TestDataProvisioner.ResetForTests)` is how TestDataProvisionerTallyAtomicityTests
     /// names the method for a Cecil scan without ever calling it, and a pattern without the
     /// parentheses would report that class as a mutator it is not.</summary>
+    /// <summary>
+    /// One branch per static, and <see cref="Mutation"/> is their OR. Deliberately ONE source:
+    /// a second copy of these patterns let a stale branch keep matching through the other copy,
+    /// so the per-static check below silently kept passing (caught while fixing #4257).
+    /// </summary>
+    private static readonly (string Static, Regex Pattern)[] MutationBranches =
+    {
+        ("TestDataNormalization", new Regex(@"TestDataNormalization\.(Enabled\s*=[^=]|ResetForTests\(\)|TryParseArg\()", RegexOptions.Compiled)),
+        ("TestDataOptions",       new Regex(@"TestDataOptions\.(Enabled\s*=[^=]|ExplicitBackupPath\s*=[^=]|CompanyOverride\s*=[^=]|ResetForTests\(\)|TryParseArg\()", RegexOptions.Compiled)),
+        ("TestDataProvisioner",   new Regex(@"TestDataProvisioner\.(ResetForTests\(\)|Arm\()", RegexOptions.Compiled)),
+        ("BackupReaderTool",      new Regex(@"BackupReaderTool\.ResetForTests\(\)", RegexOptions.Compiled)),
+    };
+
     private static readonly Regex Mutation = new(
-        @"TestDataNormalization\.(Enabled\s*=[^=]|ResetForTests\(\)|TryParseArg\()"
-        + @"|TestDataOptions\.(Enabled\s*=[^=]|ExplicitBackupPath\s*=[^=]|CompanyOverride\s*=[^=]|ResetForTests\(\)|TryParseArg\()"
-        + @"|TestDataProvisioner\.(ResetForTests\(\)|Arm\()"
-        + @"|BackupReaderTool\.ResetForTests\(\)",
+        string.Join("|", MutationBranches.Select(b => "(?:" + b.Pattern.ToString() + ")")),
         RegexOptions.Compiled);
 
     private static readonly Regex TopLevelClass = new(
@@ -185,31 +195,63 @@ public sealed class TestDataStaticsCollectionGuardTests
         return (joined, serial);
     }
 
+    /// <summary>
+    /// Which classes are seen mutating each of the four statics. Per-static rather than a total
+    /// because a total cannot discriminate a broken probe from a smaller tree (#4257).
+    /// </summary>
+    private static IEnumerable<(string Static, IReadOnlyList<string> Seen)> MutatorsByStatic()
+    {
+        foreach (var (name, pattern) in MutationBranches)
+        {
+            var seen = new List<string>();
+            foreach (var path in Directory.EnumerateFiles(TestsDir, "*.cs", SearchOption.AllDirectories))
+            {
+                var code = StripCommentsAndLiterals(File.ReadAllText(path));
+                if (pattern.IsMatch(code)) seen.Add(Path.GetFileNameWithoutExtension(path));
+            }
+            yield return (name, seen);
+        }
+    }
+
     [Fact]
     public void TheGuardCanSeeTheMutators_SoAnEmptyResultIsNotAFalsePass()
     {
         // The third state: a guard that measured nothing must not report its success state.
         // Without this, a broken directory probe or an over-eager stripper makes the
         // membership test below pass by finding nobody at all.
+        // Directory.Exists alone is not "the probe can see the sources": TestsDir pointed at
+        // AlRunner.Tests/Fixtures exists and holds no test classes, so it sails past and the
+        // checks below measure an empty tree (found in review of #4260). Assert the directory
+        // holds this assembly's own source file, which is the cheapest thing that cannot be
+        // true of the wrong directory.
         Assert.True(Directory.Exists(TestsDir), $"cannot see the test sources at '{TestsDir}'");
+        Assert.True(File.Exists(Path.Combine(TestsDir, nameof(TestDataStaticsCollectionGuardTests) + ".cs")),
+            $"'{TestsDir}' exists but does not contain this guard's own source file, so it is not "
+            + "the AlRunner.Tests source root and everything measured below is about the wrong "
+            + "tree (#4257).");
         var mutators = Mutators();
-        // The floor cannot tell a BROKEN PROBE from a LEGITIMATELY SMALLER TREE -- both shrink
-        // the count -- so it must not assert one (#4257). It used to say "the probe is broken,
-        // not the tree", which is false in exactly the case a reader hits it: deleting the last
-        // mutation from one real mutator class gives `found 4 (...)` with nothing broken.
+        // PER-STATIC coverage, not a total (#4257, and the review of #4260 that rejected the
+        // total). A count cannot tell a broken probe from a legitimately smaller tree: both
+        // shrink it, and measured, the two print BYTE-IDENTICAL output --
         //
-        // The two causes have different remedies, and the list below is what separates them: four
-        // plausible mutator names means the tree shrank (lower this number in the same commit);
-        // an empty or nonsense list means the probe stopped seeing the sources (fix the probe,
-        // and do NOT lower the floor). The sibling assertion above discriminates the worst case
-        // -- a directory probe that sees nothing at all fails there first, naming the directory.
-        Assert.True(mutators.Count >= 5,
-            $"expected at least the 5 known mutators of the --test-data statics under '{TestsDir}', "
-            + $"found {mutators.Count} ({string.Join(", ", mutators.Select(m => m.ClassName))}). "
-            + "Either a mutator was legitimately removed, or the probe stopped seeing them -- read "
-            + "the list to tell which, and lower this floor only for the first. The floor exists so "
-            + "an empty result cannot pass the membership test below vacuously, not to pin the "
-            + "exact count.");
+        //   delete BackupRowProvenanceTests' only mutation   -> found 4 (A, B, C, D)
+        //   make ONE Mutation alternation branch stale       -> found 4 (A, B, C, D)
+        //
+        // so "read the list to tell which" is not actionable, and an instruction to lower the
+        // floor is actively wrong in the second case. This asserts instead that EVERY one of the
+        // four statics is still seen by at least one class, which does discriminate: a stale
+        // regex branch zeroes exactly the static it spells, while deleting a mutator only
+        // decrements one static that other classes still cover.
+        foreach (var (statik, seen) in MutatorsByStatic())
+        {
+            Assert.True(seen.Count > 0,
+                $"no class under '{TestsDir}' is seen mutating {statik}, so this guard is no "
+                + $"longer covering that static. The other three are still seen, which is what "
+                + "distinguishes this from a mutator being removed -- a removal decrements one "
+                + $"static's list, it does not empty it. Check the `{statik}` branch of the "
+                + "Mutation regex against the members that exist today before touching anything "
+                + "else (#4257).");
+        }
 
         // And it must still see a class it is NOT about to report, or the population above
         // could be five copies of the same unserialised shape.
