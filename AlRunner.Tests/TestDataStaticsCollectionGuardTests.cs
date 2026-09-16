@@ -246,10 +246,14 @@ public sealed class TestDataStaticsCollectionGuardTests
         // iterate: deleting a branch outright made the static invisible rather than reported
         // empty, and every test stayed green (found in review). Making a branch stale is caught;
         // removing it was not.
+        // SORTED both sides: what this pins is a SET, and Assert.Equal over the declaration
+        // order reds on a pure reorder -- a semantic no-op. That is the shape that teaches
+        // reflexive literal-editing (red, nothing wrong, edit the literal), which is the habit
+        // the count floor this replaced had already built (found in review).
         var census = MutatorsByStatic().ToList();
         Assert.Equal(
-            new[] { "TestDataNormalization", "TestDataOptions", "TestDataProvisioner", "BackupReaderTool" },
-            census.Select(c => c.Static).ToArray());
+            new[] { "BackupReaderTool", "TestDataNormalization", "TestDataOptions", "TestDataProvisioner" },
+            census.Select(c => c.Static).OrderBy(n => n, StringComparer.Ordinal).ToArray());
 
         foreach (var (statik, seen) in census)
         {
