@@ -557,8 +557,21 @@ public static partial class RecordPatches
     /// See RecordPatches.DependencyAppSymbolWalk.cs for the vanished/unreadable split.
     /// </summary>
     private static IEnumerable<ParsedTable> EnumerateBcAppTableSymbols()
+        => EnumerateBcAppTableSymbolsForSurface("tables (Table Metadata)");
+
+    /// <summary>
+    /// <see cref="EnumerateBcAppTableSymbols"/> with the CALLER's surface, for a caller whose
+    /// refusal must name what IT was reading rather than this walk's own default (#3143).
+    ///
+    /// <para>Deliberately a separate method rather than an optional parameter on the walk
+    /// above: <c>DependencySymbolReadFailureTests</c> invokes that walk by reflection with no
+    /// arguments, and <c>MethodInfo.Invoke</c> does NOT apply a C# optional parameter's default
+    /// — it throws <c>TargetParameterCountException</c>. Adding the parameter there reds three
+    /// of that suite's tests (measured), for a signature change no production caller needed.</para>
+    /// </summary>
+    private static IEnumerable<ParsedTable> EnumerateBcAppTableSymbolsForSurface(string surface)
     {
-        foreach (var (_, symbols) in EnumerateRegisteredBcAppSymbols("tables (Table Metadata)"))
+        foreach (var (_, symbols) in EnumerateRegisteredBcAppSymbols(surface))
             foreach (var t in symbols.Tables)
                 yield return t;
     }

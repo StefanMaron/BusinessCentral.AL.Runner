@@ -279,7 +279,7 @@ public static partial class RecordPatches
             // happens to be built here — see TryGetDependencyPageSymbol's `surface` parameter.
             "page" => TryGetDependencyPageSymbol(o.Id, "objects (AllObj)")?.PageType,
             "query" => TryGetQuerySymbol(o.Id)?.QueryType,
-            "table" => DependencyTableTypeName(o.Id),
+            "table" => DependencyTableTypeName(o.Id, "objects (AllObj)"),
             // ObjectSymbol.Subtype is populated for Codeunit only; null means the symbol file
             // stated none, which is Normal, which BC blanks.
             "codeunit" => o.Subtype,
@@ -289,21 +289,86 @@ public static partial class RecordPatches
             _ => o.TargetObjectName,
         };
 
-    // Table type by id across the registered dependency .apps. Built once per run: the walk
-    // behind EnumerateBcAppTableSymbols parses every registered app's table list, and this is
-    // asked once per dependency table row of AllObjWithCaption.
     private static Dictionary<int, string?>? _aovDependencyTableTypes;
+    private static int _aovDependencyTableTypesBuiltFromEpoch = -1;
+    private static readonly object _aovDependencyTableTypesLock = new();
 
-    private static string? DependencyTableTypeName(int tableId)
+    /// <summary>
+    /// Table id → declared <c>TableType</c> across the registered dependency .apps, memoized
+    /// per registration epoch (#4225). The walk behind
+    /// <see cref="EnumerateBcAppTableSymbols"/> parses every registered app's table list, and
+    /// this is asked once per dependency table row of AllObjWithCaption, so it is memoized —
+    /// but keyed, because the registered set changes within one process.
+    ///
+    /// <para>KEYED ON <see cref="BcAppRegistrationEpoch"/>, which is bumped unconditionally as
+    /// the LAST statement of <see cref="InvalidateBcAppIndexes"/>; both registration funnels
+    /// pass through it (<c>AddBcAppPath</c> and <c>ClearPerBundleBcAppPaths</c>), so the epoch
+    /// alone is sufficient and no reload path has to remember to clear this field. That is why
+    /// the epoch is preferred over a clear in <c>ResetForReload</c>: a one-shot multi-bundle
+    /// CLI run reaches neither the watch-mode reset nor the per-request one, and would keep the
+    /// stale memo (the shape of #4222).</para>
+    ///
+    /// <para>Never on <c>_bcAppPaths.Count</c>: the registered set shrinks and regrows across a
+    /// <c>--server</c> request, so a count cannot tell a set that lost N entries and gained N
+    /// different ones from the one the memo was built against (#2888's ABA case). Pinned
+    /// structurally by <c>NoGenerationKeyUsesTheAppPathCount</c> and behaviourally by
+    /// <c>AllObjDependencyTableTypeMemoTests.ASameCountSwapOfTheRegisteredApps_IsNotServedFromTheMemo</c>.</para>
+    ///
+    /// <para>LAST WINS for a table id two registered .apps both declare — the indexer, not
+    /// TryAdd. That is the precedence the pre-memo code had and it is deliberately the OPPOSITE
+    /// of <see cref="DependencyPageSymbolsById"/>'s first-wins rule, which reproduces ITS own
+    /// walk's return-on-first-match. Reachable because AddBcAppPath dedupes on the PATH only;
+    /// pinned by
+    /// <c>AllObjDependencyTableTypeMemoTests.WhenTwoAppsDeclareTheSameTableId_TheLastRegisteredWins</c>,
+    /// which reverses to Expected CRM / Actual Temporary if this becomes TryAdd.</para>
+    ///
+    /// <para>Handed out SHARED and read-only: a caller that mutated it would corrupt every
+    /// later lookup.</para>
+    ///
+    /// <para>TAKES THE CALLER'S SURFACE, and this is not cosmetic (#3143). The build now
+    /// happens underneath whichever walk asked first, so an .app that became unreadable after
+    /// registration must still raise BcAppSymbolReadException naming what the CALLER was
+    /// reading. Before this memo existed the point was moot — every call rebuilt, so a failing
+    /// build only ever happened under its own caller. Memoizing makes it reachable: AllObj's
+    /// walk reaches a `table` object, this build runs inside it, and a hardcoded surface would
+    /// make AllObj's refusal say "tables (Table Metadata)" instead of "objects (AllObj)".
+    /// Measured: DependencySymbolReadFailureTests
+    /// .SymbolReadFailsAfterRegistration_EveryWalkRefusesNamingTheAppAndSurface(walk:
+    /// "EnumerateBcAppObjects") fails exactly that way when the surface is not threaded
+    /// through. Same fix, and the same regression, as the page memo in PR #4223.</para>
+    /// </summary>
+    private static string? DependencyTableTypeName(
+        int tableId, string surface = "tables (Table Metadata)")
     {
-        if (_aovDependencyTableTypes == null)
+        var epoch = BcAppRegistrationEpoch;
+        if (_aovDependencyTableTypes is { } memo && _aovDependencyTableTypesBuiltFromEpoch == epoch)
+            return memo.TryGetValue(tableId, out var hit) ? hit : null;
+
+        lock (_aovDependencyTableTypesLock)
         {
+            epoch = BcAppRegistrationEpoch;
+            if (_aovDependencyTableTypes is { } inner && _aovDependencyTableTypesBuiltFromEpoch == epoch)
+                return inner.TryGetValue(tableId, out var innerHit) ? innerHit : null;
+
             var map = new Dictionary<int, string?>();
-            foreach (var t in EnumerateBcAppTableSymbols())
+            foreach (var t in EnumerateBcAppTableSymbolsForSurface(surface))
+                // LAST wins — see the summary above. The indexer, not TryAdd.
                 map[t.TableId] = t.TableTypeName ?? (t.IsTableTypeTemporary ? "Temporary" : AlDefaultTableType);
+
+            // Reached only when the walk COMPLETED: EnumerateBcAppTableSymbols throws out of the
+            // loop above on an unreadable .app (#3143 — not swallowed), so a partial map is
+            // never published and the next caller retries rather than inheriting a short answer.
+            // The pre-memo code had this property too, by assigning after the loop; keep it.
+            //
+            // Map before stamp, both inside the lock, so a torn read cannot pair a NEW stamp
+            // with an OLDER map. Neither field is volatile, so this orders the writes rather
+            // than guaranteeing what an unsynchronized reader observes: the fast path may read a
+            // stale pair and rebuild, which costs a walk and never a wrong answer. Same shape as
+            // the sibling memos keyed on this epoch (Volatile.Read on the epoch itself).
             _aovDependencyTableTypes = map;
+            _aovDependencyTableTypesBuiltFromEpoch = epoch;
+            return map.TryGetValue(tableId, out var name) ? name : null;
         }
-        return _aovDependencyTableTypes.TryGetValue(tableId, out var name) ? name : null;
     }
 
     /// <summary>
