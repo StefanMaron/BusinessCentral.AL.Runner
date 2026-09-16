@@ -25,6 +25,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **events:** preserve dynamic IsEventSubscribed results
 - **query:** merge query filters by field instead of appending a duplicate key
 - **transaction:** AL Commit() moves the rollback floor of every open guarded-run scope
 - **preflight:** state and check the .NET SDK requirement
