@@ -82,9 +82,18 @@ deserving visibility is not caught here — that is the open backlog in #4234.
 
 Measured at `9cb68de`: **77** distinct tags, **1,016** literal sites.
 
+These site counts are a **snapshot**, not a pinned contract: they move whenever anyone adds or
+removes a tagged line. `LogSingleWordTagContractTests` does not re-derive them. What it does pin,
+on every run, is the property that actually matters -- every tag reaching the filter is
+classified, no declaration is stale, no UserFacing line is eaten, no Internal line leaks, and
+severity is never suppressed. The three class totals partition the scan exactly, so they must sum
+to the total above; they did not before #4233's review (180 + 25 + 809 = 1,014), which is how the
+NotALogLine figure was found to be 27 rather than 25 -- it had been left at the six-colour
+subtotal when `Oo` and `Content_Types` were added.
+
 - **UserFacing (9 tags, 180 sites):** `bc`, `dap`, `dep`, `expectations`, `layered`,
   `provision`, `reexec`, `warn`, `watch`.
-- **NotALogLine (8 tags, 25 sites):** `red`, `grey`, `green`, `blue`, `yellow`, `bold` —
+- **NotALogLine (8 tags, 27 sites):** `red`, `grey`, `green`, `blue`, `yellow`, `bold` —
   Spectre.Console markup in `WatchDashboard.cs`, which contains no `Console.WriteLine`; `Oo`,
   the `[Oo]bject` regex character class in a `BcCompiler` diagnostic pattern; `Content_Types`,
   the `[Content_Types].xml` entry name inside an `.app` package.

@@ -42,8 +42,9 @@ public static class Log
     // same way BC-version selection is; the other `[Cecil]`-tagged per-method rewrite
     // diagnostics are NOT retagged and stay suppressed — that volume of internal detail is
     // exactly what this filter exists to hide. (Written as ~280 until #2221 censused it: 369
-    // sites across 10 files. Counts live in docs/log-filter.md#single-word-tags, which
-    // LogSingleWordTagContractTests re-derives, rather than in this comment.)
+    // sites across 10 files. Counts live in docs/log-filter.md#single-word-tags rather than in
+    // this comment. LogSingleWordTagContractTests does NOT re-derive them -- it pins the
+    // classification, not the totals -- so treat them as a snapshot, not a checked contract.)
     //
     // `[dap]` was added for #1642: --dap's "listening on 127.0.0.1:<port>" line is the
     // ONLY signal a DAP client (or a human at a terminal) has that the runner is ready
