@@ -807,8 +807,10 @@ public static partial class NclCecilRewrite
             // an empty snapshot means the table answers no rows at all. The helper returns the
             // same type carrying ObjectType.Query ONLY, from the runner's own query inventory;
             // every other object type stays absent, so the sixteen other callers — AllObj,
-            // Field, Table Metadata and the rest, which work today BECAUSE this is empty — see
-            // exactly what they see now. Widening it further is #4196.
+            // Field, Table Metadata and the rest — see exactly what they see now. #4196
+            // measured why: those callers are unreachable through this runner's dispatch (their
+            // BC providers are never constructed), so emptiness is not what protects them.
+            // See AlRunner.Tests/SnapshotConsumerReachabilityTests.cs.
             ReplaceBodyWithHelper(asm.MainModule, getSnap,
                 typeof(AlRunner.Patches.RecordPatches).GetMethod(
                     "NCLMetadata_GetSnapshotOfAllObjects",
