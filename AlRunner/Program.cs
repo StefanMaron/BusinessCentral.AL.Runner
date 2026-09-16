@@ -2545,6 +2545,14 @@ foreach (var bundle in bundles)
     // without deps doesn't inherit a sibling bundle's Install codeunits.
     AlRunner.InstallTriggerRunner.ResetForNewBundle();
 
+    // #4222: mark the start of this bundle's iteration, so an inventory read can tell this
+    // bundle's assemblies from a previous one's. Unconditional, next to the reset above and
+    // for the same reason — a one-shot multi-bundle run must not inherit a sibling bundle's
+    // registrations. It stamps and clears nothing, which is what separates it from
+    // ResetForNewBundleReload two lines up: that one is gated on watch mode precisely because
+    // it drops parsed table schemas a later bundle still needs.
+    BcRuntime.BeginBundleEpoch();
+
     // Everything about this bundle that says "your package cache cannot serve this run":
     // dependencies no loader tier can implement (DependencyResolver.UnservableDependencies,
     // added below where they are printed) plus platform runtime apps found symbol-only
