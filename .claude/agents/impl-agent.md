@@ -241,10 +241,15 @@ The unfiltered suite is for CI; it spends most of its time in tests that spawn t
 
    ```bash
    for t in tools/test_*.py; do python3 "$t" >/dev/null || echo "FAILED: $t"; done   # ~30s
-   dotnet test AlRunner.Tests --filter "FullyQualifiedName~GuardTests"               # 228 tests
+   dotnet test AlRunner.Tests --filter "FullyQualifiedName~GuardTests"               # 280 tests
    ```
 
-   There are 21 of each. Four fired on a new file in one session, each costing a round trip: a
+   The loop above runs **33** guards (`tools/test_*.py`); `.github/scripts/test_*` holds a further
+   **19**, run by `pr-gate.yml` rather than by this loop. Treat both as a scale, not a contract,
+   and trust `ls tools/test_*.py` over this sentence: the line this replaced said "21 of each",
+   and at the commit that wrote it the sets were already **21 and 18** — never equal, so the
+   claim was wrong the day it landed rather than having drifted (#4235, #3924). Four fired on a new
+   file in one session, each costing a round trip: a
    bare `return;` reporting `Passed` having asserted nothing; a doc comment stranded from its
    member by an inserted method; a test class touching the parse statics from outside the serial
    collection (#1696's four-of-five-legs flake); and a dangling `docs/` anchor. **None of them
@@ -253,7 +258,7 @@ The unfiltered suite is for CI; it spends most of its time in tests that spawn t
    **Build first; do not pass `--no-build` here.** Several of these guards assert against the
    *current* tree — a ratchet count, a converted-site census, an artifact readiness probe — so a
    stale binary fails them for reasons that have nothing to do with your change and read exactly
-   like findings. Measured: three of the 228 failed against a build 15 hours behind `main`, all
+   like findings. Measured: three of them failed against a build 15 hours behind `main`, all
    three spuriously.
 
 Then push. A pull request runs **three** BC legs — 27.0, 27.5 and 28.4, from `.github/pr-bc-versions.txt` — not the eight in `.github/bc-versions.txt`; those eight run on push to `main`, on `main-verdict-floor.yml`'s 30-minute cadence, and on the release path (#3141, #3200). Every leg runs the corpus, all of `runner-extras`, the xmlport isolation guard and server-mode. The full `AlRunner.Tests` suite runs only on the unit legs — the newest minor of each major, 27.5 and 28.4 — two legs of whichever matrix ran, not the whole matrix (#2674). All of it in parallel with you rather than in front of you.
