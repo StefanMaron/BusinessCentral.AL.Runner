@@ -40,6 +40,7 @@ SOURCE_DIR = os.path.join(ROOT, "AlRunner")
 CLAUDE_MD = os.path.join(ROOT, "CLAUDE.md")
 
 FAILURES: list[str] = []
+UNMEASURABLE: list[str] = []
 
 # Each entry: the class name as CLAUDE.md spells it, and a regex with ONE group
 # capturing the number that follows it in the prose. Kept explicit rather than
@@ -86,17 +87,37 @@ def main() -> int:
         return 3
 
     for name, pattern in CLAIMS:
-        match = re.search(pattern, prose)
-        if match is None:
+        found = re.findall(pattern, prose)
+        if not found:
             # The third state. A pattern matching nothing means the sentence was
             # reworded; reporting that as a pass would retire the check silently.
-            FAILURES.append(
+            UNMEASURABLE.append(
                 f"{name}: the CLAUDE.md sentence this check reads no longer matches "
                 f"/{pattern}/. Re-point the pattern at the new wording, or drop the "
                 f"entry if the claim is gone -- do not leave it unmatched."
             )
             continue
-        claimed = int(match.group(1))
+        if len(found) > 1:
+            # findall, not search (#4241). `re.search` returns the FIRST match and
+            # stops, so a document stating the claim twice -- one copy correct, one
+            # drifted -- reads as correct and exits 0. The drift is present in the
+            # file, and the guard whose whole job is to notice it reports success.
+            #
+            # Two matches is UNMEASURABLE rather than a failure: the guard can no
+            # longer tell which sentence it pins, so it must not report either
+            # verdict. guards-need-a-third-state.md, applied to the guard's own
+            # ambiguity rather than to its subject.
+            #
+            # Not hypothetical for a file this long, edited by many hands, that
+            # states counts in more than one register. Nothing makes the copy a
+            # writer edits the copy that appears first.
+            UNMEASURABLE.append(
+                f"{name}: /{pattern}/ matches {len(found)} places in CLAUDE.md, so "
+                f"this check cannot tell which sentence it is pinning. Make the claim "
+                f"unique, or narrow the pattern."
+            )
+            continue
+        claimed = int(found[0])
         actual = count_partial_class_files(name)
         if actual == 0:
             FAILURES.append(
@@ -110,11 +131,29 @@ def main() -> int:
                 f"Update the prose (command grep -rl 'partial class {name}' AlRunner --include=*.cs | wc -l)."
             )
 
+    # A measured disagreement outranks a pattern that stopped matching: if any claim
+    # is demonstrably wrong, say so, whatever happened to the others. Only when
+    # nothing is measurably wrong does an unmeasurable claim decide the verdict --
+    # and then it is exit 3, never 1 and never 0. A reworded or duplicated sentence
+    # means nothing was measured, which is a different thing from a count being
+    # wrong and sends the reader to a different remedy (#4241).
     if FAILURES:
         print("FAIL: CLAUDE.md partial-class counts do not match the tree", file=sys.stderr)
         for f in FAILURES:
             print(f"  - {f}", file=sys.stderr)
+        for u in UNMEASURABLE:
+            print(f"  - (also unmeasurable) {u}", file=sys.stderr)
         return 1
+
+    if UNMEASURABLE:
+        print("UNMEASURABLE: CLAUDE.md's partial-class claims could not be read",
+              file=sys.stderr)
+        for u in UNMEASURABLE:
+            print(f"  - {u}", file=sys.stderr)
+        print(f"  {len(CLAIMS) - len(UNMEASURABLE)} of {len(CLAIMS)} claim(s) checked "
+              f"and consistent.", file=sys.stderr)
+        return 3
+
     print(f"PASS: {len(CLAIMS)} partial-class counts in CLAUDE.md match the tree")
     return 0
 
