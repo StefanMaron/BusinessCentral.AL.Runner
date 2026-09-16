@@ -175,6 +175,26 @@ public sealed class DepTableExtPlatformBaseBothShapesTests
     /// extension -- and those reds are about the PARSE, not about reachability. A benign reformat
     /// of the `if:` (a folded scalar, say) reds here with "calls no hashFiles()", and the fix is to
     /// teach this test the new shape, not to go looking for a skipped step.
+    ///
+    /// The glob check alone was NOT reachability, though an earlier version of this comment said
+    /// it was (#4255). Validating that the glob names real files leaves the rest of the condition
+    /// unchecked: inverting `!= ''` to `== ''` -- two characters -- and appending `&amp;&amp; false` both
+    /// skipped the step with all six tests green, and `&amp;&amp; github.event_name == 'push'` is the
+    /// realistic form of the second. A skipped step reports SUCCESS, so that is silent forever.
+    /// Pinning the whole expression closes the STEP-level shapes, and it subsumes the glob
+    /// refusals rather than replacing them: they still give the better message when the glob is
+    /// what moved.
+    ///
+    /// It does NOT close reachability in general, and review measured two shapes that still skip
+    /// this step with every test here green (#4255):
+    ///
+    ///   - `if: github.event_name == 'push'` on the enclosing JOB. The step's own `if:` is then
+    ///     byte-identical, so this pin sees nothing. The symmetry is the point: the same words at
+    ///     step level RED and at job level do not, and the job-level form is the likelier edit.
+    ///   - `continue-on-error: true` on the step. It runs, emits `::error::`, and the leg is green.
+    ///
+    /// The step-level assertions below catch what they can see; the two above are checked
+    /// separately because they are properties of the step's NEIGHBOURS, not of its condition.
     /// </summary>
     [Fact]
     public void OrderedBundleStep_IsReachable_ItsHashFilesGlobMatchesRealFiles()
@@ -241,6 +261,73 @@ public sealed class DepTableExtPlatformBaseBothShapesTests
                 + "so it evaluates to '' and the step is SKIPPED -- reporting success while running "
                 + "nothing (#4249).");
         }
+
+        // The globs above are necessary and not sufficient: they say the hashFiles() call can
+        // return something, and nothing about the REST of the condition. Measured on main
+        // (#4255): inverting `!= ''` to `== ''`, and appending `&& false`, each skipped the step
+        // with all six tests green. The realistic form of the second is
+        // `&& github.event_name == 'push'` -- an edit someone makes to save CI minutes, which
+        // then skips this step on every pull request, silently, forever.
+        //
+        // So pin the whole expression. Whitespace-normalised, because YAML line-wrapping is not
+        // a semantic change and should not red; anything else about the condition is.
+        var actual = Regex.Replace(condition.Groups["expr"].Value.Trim(), @"\s+", " ");
+        const string Expected =
+            "${{ always() && hashFiles('tests/runner-extras/dep-tableext-platform-base-main/**/*.al') != '' }}";
+        Assert.True(actual == Expected,
+            "the ordered-bundle step's `if:` is no longer the condition this test was written "
+            + $"against.\n  expected: {Expected}\n  actual:   {actual}\n"
+            + "A step whose condition is false is SKIPPED, and a skipped step reports SUCCESS -- so "
+            + "an edit here disables the whole step with nothing going red (#4255). If the change is "
+            + "deliberate, update this expectation in the same commit and say why the step should "
+            + "still run on a pull request.");
+
+        // Two shapes the expression pin cannot see, because they are not in the expression
+        // (#4255, found in review). Both leave the step's own `if:` byte-identical.
+        Assert.False(step.Contains("continue-on-error", StringComparison.Ordinal),
+            "the ordered-bundle step declares `continue-on-error`, so its failure no longer fails "
+            + "the leg: the guard runs, prints ::error::, and CI stays green (#4255). If this is "
+            + "deliberate, say in the same commit what is then asserting the pair runs as two "
+            + "ordered bundles, because nothing here would be.");
+
+        // The enclosing job's `if:`. A `github.event_name == 'push'` there skips this step on
+        // every pull request while the step's own condition is untouched -- the same words that
+        // RED at step level, invisible one level up.
+        // Locate the enclosing job by SHAPE (the last top-level `  <name>:` before the step),
+        // not by name: the job is called `test`, and hardcoding that would make a rename read as
+        // "no job-level if:" -- the silent direction.
+        var wf = Workflow();
+        var stepAt = wf.IndexOf(DepDir, StringComparison.Ordinal);
+        // The header pattern is deliberately WIDE. `^  ([A-Za-z0-9_-]+):[ \t]*$` looked
+        // reasonable and silently skipped a job whose header carries a trailing comment, a
+        // quoted name or a dotted name -- all valid YAML. The locator then took the PRECEDING
+        // job and reported "no job-level if:" while one was present, with every test green
+        // (measured in review: three shapes, all Failed: 0, Passed: 6).
+        //
+        // Widening cannot pick a non-job, and the reason is YAML's, not this regex's: a line at
+        // column 2 TERMINATES an enclosing block scalar, so a `  x:` inside a `run: |` heredoc
+        // is not "text that looks like a job" -- the parser reads it as a sibling job. Verified:
+        //   yaml.safe_load("jobs:\n  a:\n    steps:\n      - run: |\n          cat <<'EOF'\n  x:\n          EOF\n")
+        //   -> jobs has keys ['a', 'x']
+        // So anything this pattern matches at column 2 under `jobs:` IS a job by construction.
+        // An earlier version of this comment argued instead that a wrong pick would be "loud
+        // because a non-job would need `    if:` to matter" -- true, but a weaker claim about
+        // consequences where a structural one is available (found in review of #4255).
+        var jobs = Regex.Matches(wf, @"(?m)^  (?<name>[^\s#][^\n]*?):[ \t]*(?:#[^\n]*)?$")
+            .Where(m => m.Index < stepAt).ToList();
+        Assert.True(jobs.Count > 0,
+            "could not locate the job declaring the ordered-bundle step, so this test cannot tell "
+            + "whether a job-level `if:` skips it (#4255).");
+        var jobStart = jobs[^1].Index;
+        var stepsAt = wf.IndexOf("\n    steps:", jobStart, StringComparison.Ordinal);
+        Assert.True(stepsAt > jobStart, "the enclosing job has no `steps:` -- shape changed (#4255).");
+        var jobHeader = wf[jobStart..stepsAt];
+        Assert.False(jobHeader.Contains("\n    if:", StringComparison.Ordinal),
+            $"the job declaring the ordered-bundle step ({jobs[^1].Groups["name"].Value}) carries a "
+            + "job-level `if:`, which skips every step in it -- including this one -- while the "
+            + "step's own condition stays byte-identical, so the pin above sees nothing. A skipped "
+            + "step reports SUCCESS (#4255). If the condition is deliberate, state in the same "
+            + "commit why this pair still runs on a pull request, and update this test.");
     }
 
     /// <summary>
