@@ -184,9 +184,14 @@ public static class AlCoverageSourceMap
 
         void Add(string root)
         {
-            // Canonical for the dedup only — the root added is the caller's own spelling, since
-            // `relativeTo` turns it into the report's filename and a bundle passed as a
-            // relative path must keep producing the relative filenames it always did.
+            // Canonical for the dedup only; the root added is the caller's own spelling.
+            //
+            // Keeping the spelling is insurance, not a demonstrated requirement: measured in
+            // review, dropping the execution-roots loop entirely still produces byte-identical
+            // filenames even for a bundle passed as a relative path, because every execution
+            // bundle is already registered as a parsed source dir and `relativeTo` normalises
+            // either way. An earlier version of this comment claimed the relative spelling
+            // depended on it; that claim did not survive the mutation.
             string key;
             try { key = Path.GetFullPath(root).Replace('\\', '/').TrimEnd('/'); }
             catch (ArgumentException) { key = root; }
