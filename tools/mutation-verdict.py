@@ -66,6 +66,10 @@ BUILD_ERROR_RE = re.compile(r"^\S.*: error [A-Z]{2,}\d+: .*\[[^\]]+\.csproj\]\s*
 NO_MATCH = "No test matches the given testcase filter"
 # An unhandled Python exception exits 1, the same code a guard uses for "I caught it".
 TRACEBACK_RE = re.compile(r"^Traceback \(most recent call last\):$", re.M)
+# ...but `unittest` prints a line-start traceback for every ORDINARY assertion failure, so the
+# traceback alone cannot separate "crashed" from "caught". What does: a run that reached its
+# verdict prints its own summary, and one that died before judging does not.
+JUDGED_RE = re.compile(r"^Ran \d+ tests?\b", re.M)
 
 
 @dataclass
@@ -159,17 +163,21 @@ def classify_exit(code: int, text: str = "") -> Result:
     And exit 1 is AMBIGUOUS, which is the trap: an unhandled Python exception exits 1 too, so
     "the guard failed its assertions" and "the guard crashed before judging anything" arrive as
     the same number. Reading a crash as a caught mutation is the false RED `tdd.md` warns
-    about. The log is already in hand, so a traceback in it downgrades the RED to a refusal
-    rather than being ignored. Found in review of #4317, where an earlier revision of this
-    function refused on code 2 while citing a condition that produces code 1.
+    about. The log is already in hand, so a traceback in it downgrades the RED to a refusal —
+    UNLESS the run also printed a summary of its own (`Ran N tests`), because `unittest` emits a
+    line-start traceback for every ordinary assertion failure. A guard that reached its verdict
+    says so; one that died before judging does not. Both halves found in review of #4317: the
+    first because an earlier revision refused on code 2 while citing a condition that produces
+    code 1, the second because the fix for that regressed three unittest-based guards.
     """
     if code == GREEN:
         return Result(GREEN, reason="the guard exited 0: it passed, so the mutation was NOT caught")
     if code == RED:
-        if TRACEBACK_RE.search(text):
+        if TRACEBACK_RE.search(text) and not JUDGED_RE.search(text):
             return Result(UNMEASURED,
-                          reason="the guard exited 1, but its output carries a Python traceback: "
-                                 "it crashed rather than judged, so nothing was measured")
+                          reason="the guard exited 1, but its output carries a Python traceback "
+                                 "and no run summary: it crashed rather than judged, so nothing "
+                                 "was measured")
         return Result(RED, reason="the guard exited 1: it failed, so the mutation WAS caught")
     if code == UNMEASURED:
         return Result(UNMEASURED, reason="the guard exited 3: it refused to measure")

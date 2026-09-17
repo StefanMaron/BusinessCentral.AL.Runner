@@ -146,6 +146,22 @@ genuine = mv.classify_exit(1, "12 passed, 1 failed (3 file(s) carried both flag 
 check("process guard: ...and a genuine red without one is still RED",
       genuine.verdict == mv.RED, f"got {mv.NAMES[genuine.verdict]}: {genuine.reason}")
 
+# ...and the half that makes the traceback check usable at all: `unittest` prints a line-start
+# traceback for EVERY ordinary assertion failure, so the traceback alone cannot separate
+# "crashed" from "caught". Three guards in this repo are unittest-based, and the first version
+# of the downgrade turned their genuine reds into refusals -- #4314's own defect on a new
+# population. A run that reached its verdict prints `Ran N tests`; one that died does not.
+unittest_red = mv.classify_exit(1, (
+    "F\n======================================================================\n"
+    "FAIL: test_x (__main__.T.test_x)\n"
+    "Traceback (most recent call last):\n"
+    '  File "/tmp/ut.py", line 3, in test_x\n'
+    "AssertionError: 1 != 2 : an ordinary caught mutation\n\n"
+    "----------------------------------------------------------------------\n"
+    "Ran 1 test in 0.000s\n\nFAILED (failures=1)"))
+check("process guard: an ordinary unittest failure is RED despite its traceback",
+      unittest_red.verdict == mv.RED, f"got {mv.NAMES[unittest_red.verdict]}: {unittest_red.reason}")
+
 # A non-zero code the tool has no meaning for must NOT be read as RED: an unhandled traceback
 # exits 1 in Python, but a guard that crashed measured nothing. Anything else refuses.
 crashed = mv.classify_exit(2, "Traceback (most recent call last):\n  ...\nValueError: boom")
