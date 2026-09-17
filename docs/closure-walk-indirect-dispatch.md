@@ -42,31 +42,40 @@ Two different answers, because the two shapes are not equally decidable.
   what closes the `async` shape: control re-enters the universe through a member of that type the
   instruction does not name.
 
-  **Two narrowings make that refusal usable, and both are load-bearing.** Without them it reds
-  ordinary C# over any type nested in the host, and FLOOR 5 turns every such refusal into a
-  **false RED on correct code**. Measured on a nested `Row`:
-
-  | shape | refusals without narrowing 1 | …and without narrowing 2 |
-  |---|---|---|
-  | `new List<Row>()` + `Add` + `Count` | **3** | 0 |
-  | `EqualityComparer<Row>.Default.Equals` | **2** | 0 |
-  | `Enumerable.Count<Row>` | 0 | **1** |
-  | control, `List<string>` | 0 | 0 |
-
   1. **The declaring type's generic arguments are not read at all.** `List<Row>::Add` names `Row`
      only through its declaring type.
   2. **The argument type must declare a body that is `virtual` or `static`** — the same set
      `IndirectTargetsInUniverse` treats as dispatchable. A plain data type has no member
      out-of-universe code could re-enter through.
 
-  **Narrowing 2 is not optional, and the third row is why.** `Enumerable.Count<Row>` **is** a
-  generic method call, so narrowing 1 does not touch it — a review that attributed the whole
-  class to the declaring-type branch would have left this one refusing. The `async` shape passes
-  both tests: `AsyncTaskMethodBuilder.Start<TStateMachine>` is a generic method, and the state
-  machine declares `MoveNext` — virtual, with a body, holding the store.
+  **Both are load-bearing, and neither alone gets to zero.** Without them the refusal fires on
+  ordinary C# over any type nested in the host, and the `Assert.Empty(Unfollowable)` in
+  `AGenericLocalOverAUniverseTypeIsNotRefused` — FLOOR 5's fixture-side analogue — turns every
+  such refusal into a **false RED on correct code**. Counted per call site in the fixture entry
+  `EntryWithGenericLocals`, re-measured after the declaring-type line came out:
+
+  | shape (call sites) | shipped | narrowing 1 dropped (2 kept) | both dropped |
+  |---|---|---|---|
+  | `List<Row>` — `.ctor`, `Add`, `get_Item`×2, `get_Count` (5) | 0 | 0 | **5** |
+  | `EqualityComparer<Row>` — `get_Default`, `Equals` (2) | 0 | 0 | **2** |
+  | `Enumerable.Count<Row>` (1) | 0 | 0 | **1** |
+  | `List<ThroughInterface>` — `.ctor`, `Add`, `get_Count` (3) | 0 | **3** | **3** |
+
+  Read the middle column against the last one: it is the **whole** column-2 total, so `Row` is
+  suppressed by narrowing 2 rather than by narrowing 1, and only `ThroughInterface` — which has a
+  virtual body — is attributable to the declaring-type branch. A review that attributed all of
+  these to that branch would have removed it and left the eight `Row` refusals standing.
+  Conversely `Enumerable.Count<Row>` **is** a generic *method* call, so narrowing 1 does not
+  touch it, and dropping narrowing 2 alone leaves exactly that one refusing.
+
+  The `async` shape passes both tests, which is why it still refuses:
+  `AsyncTaskMethodBuilder.Start<TStateMachine>` is a generic method, and the state machine
+  declares `MoveNext` — virtual, with a body, holding the store.
 
   `AGenericLocalOverAUniverseTypeIsNotRefused` anchors the absence, which is the only kind of
-  anchor a narrowing can have.
+  anchor a narrowing can have. It reds when **either** narrowing is dropped in isolation
+  (`Failed: 1, Passed: 15` each), which is what makes the two independently pinned rather than
+  one riding on the other.
 
 ### The opcode is the wrong dial; the `constrained.` prefix is the right one
 
@@ -104,7 +113,9 @@ hold the store, so not walking it loses nothing.
 
 ## Census
 
-Measured on `127ceac` (the runner's own `AlRunner.dll`, read with Mono.Cecil).
+Measured on the runner's own `AlRunner.dll`, read with Mono.Cecil. Re-derived after the
+declaring-type line came out of `InUniverseGenericArguments`; every figure below is from
+that re-run, not carried over.
 
 | | before (#4308) | after |
 |---|---|---|
@@ -137,7 +148,8 @@ all 58, exactly **one** yields any in-universe candidate: `IDisposable::Dispose(
 **Why the other 57 yield none is not "nothing here implements `System.Numerics`" — the filter
 never asks about interfaces.** It matches **name and arity**. The 57 sites call `get_Zero/0`,
 `op_Checked*/2`, `Min/2`, `Max/2`, `CreateChecked/1` and `op_Equality/2`, and **0** universe
-methods carry those shapes today. That is a measurement about *this* universe, not a property of
+methods carry those shapes today — measured directly as **0 static candidates across all 58
+sites**, out of **18** universe statics with a body that were eligible to match. That is a measurement about *this* universe, not a property of
 the design: an ordinary static helper or an operator overload of a matching shape would be
 enqueued at a site it can never run at, and a store inside it would be reported as an offender on
 the headline row. Constructed and measured — a nested type with a plain `operator +` produced

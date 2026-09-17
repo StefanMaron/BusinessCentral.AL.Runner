@@ -183,12 +183,12 @@ public sealed class BuiltInCancelIsNotADiscardTests
     }
 
     /// <summary>
-    /// What Invoke() reaches within that universe, transitively — 16 of the type's 111 methods,
-    /// so the walk is one type's own call graph and costs milliseconds rather than a
-    /// repository-wide closure. It reports two kinds of hole beside the methods it reached, and
-    /// both are failures of measurement rather than absences of stores: a callee it could not
-    /// RESOLVE, and a call site it could not FOLLOW. See docs/closure-walk-indirect-dispatch.md
-    /// for the census behind those figures and the termination argument.
+    /// What Invoke() reaches within that universe, transitively — 16 of the universe's 111
+    /// methods, of which the host declares 104 — so the walk is one type's own call graph and
+    /// costs milliseconds rather than a repository-wide closure. It reports two kinds of hole
+    /// beside the methods it reached, and both are failures of measurement rather than absences
+    /// of stores: a callee it could not RESOLVE, and a call site it could not FOLLOW. See
+    /// docs/closure-walk-indirect-dispatch.md for the census and the termination argument.
     /// <para>Trap: resolve through <see cref="MethodReference.Resolve"/> — a call to a GENERIC
     /// method carries the instantiated name (<c>CalculateClientAutoKey&lt;System.Int32&gt;</c>), so
     /// matching FullName against the definitions dropped six real references here and made a
