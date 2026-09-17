@@ -237,6 +237,45 @@ public static partial class BcRuntime
         return meta;
     }
 
+    /// <summary>
+    /// Resolve a codeunit's <c>NCLMetaCodeunit</c> from its AL object id alone, for callers that
+    /// have an id rather than a live <c>NavCodeunit</c> — <c>NCLMetadata.GetMetaApplicationObject
+    /// (ObjectType.Codeunit, …)</c> being the one that matters (#4218).
+    ///
+    /// <para>Observably equivalent because the meta it returns is not an answer of ours: BC reads
+    /// <c>ApplicationObjectClrType</c> off it and then does its own reflection over the AL-emitted
+    /// <c>Codeunit{N}</c> type — <c>NavEventPublisherReflectionHelper.GetScopeType</c> then
+    /// <c>GetMethodInfoByScopeType(...).Attribute</c> — so the <c>NavEventAttribute</c> BC ends up
+    /// with is the publisher's real <c>[IntegrationEvent]</c>/<c>[BusinessEvent]</c>, read from the
+    /// assembly the AL compiler emitted. Same <c>ObjectType=5</c>, id and <c>NavAppGroup</c> BC's own
+    /// <c>NCLMetaCodeunit</c> ctor records. Citation: corpus codeunit 60955
+    /// <c>EventSubscription_Row_DescribesTheSubscription</c>, green on a real service tier.</para>
+    ///
+    /// <para>Trap: returning <c>null</c> here must stay a not-found rather than a fabricated meta —
+    /// the caller turns it into BC's own <c>NavMetadataNotFoundException</c>, which is what
+    /// <c>TryGetMetaApplicationObject</c> is written to catch. A codeunit whose CLR type this run
+    /// cannot see is genuinely absent, and BC reports that truthfully as
+    /// <c>ErrorOriginalApplicationObjectNotFound</c>.</para>
+    /// </summary>
+    internal static object? EnsureCodeunitMetaById(int codeunitId)
+    {
+        if (codeunitId <= 0) return null;
+
+        EnsureMetaCodeunitReflection();
+        if (_metaCodeunitReflectionFailed || _mCreateEmptyNCLMetaCodeunit == null) return null;
+
+        var clrType = FindCodeunitTypePublic(codeunitId);
+        if (clrType == null) return null;
+
+        var meta = _navCodeunitMetaCache.GetOrAdd(codeunitId, id => BuildNclMetaCodeunit(id, clrType));
+        if (meta == null) return null;
+
+        // Same stash NavCodeunit_get_MetaCodeunit keeps, for the same reason: the
+        // IsEventManualBinding hook cannot go through base.ApplicationObjectClrType.
+        try { _metaToClrType.AddOrUpdate(meta, clrType); } catch { }
+        return meta;
+    }
+
     private static object? BuildNclMetaCodeunit(int id, Type clrType)
     {
         try
