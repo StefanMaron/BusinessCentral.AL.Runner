@@ -106,10 +106,10 @@ def cannot_measure(label: str, detail: str = "") -> None:
 # builder ignoring its input and the real race present.
 #
 # Trap: there is no one expression that reads it, and picking either one for
-# both jobs rebuilds the same defect. `strip-labels-on-close` reads the label
-# names out of $LABELS (issue-label-hygiene.yml:51, piped to jq at :56);
-# `release-part-of-issues` never sees $LABELS at all and reads them from
-# `gh issue view --json state,labels` (:142), which the harness answers from
+# both jobs rebuilds the same defect. In issue-label-hygiene.yml,
+# `strip-labels-on-close` reads the names out of its `LABELS:` env value;
+# `release-part-of-issues` is never given LABELS at all and reads them from
+# `gh issue view --json state,labels`, which the harness answers from
 # ISSUE_JSON. So the channel is part of each job's entry in JOBS, beside the
 # builder that writes it.
 def read_fixture(read_labels, env, issue_json) -> tuple[list[str] | None, str]:
