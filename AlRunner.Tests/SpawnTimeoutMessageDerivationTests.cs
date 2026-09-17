@@ -171,9 +171,7 @@ public sealed class SpawnTimeoutMessageDerivationTests
         // MEASURED, never that every site WITHIN a file is. A two-site file losing one site while
         // keeping the other still contributes, so a regression in the lost one is invisible.
         // Deliberately not closed: a per-file expected-count map would reintroduce exactly the
-        // per-cohort constant retired above. Measured in review of #4307 — the old `>= N` floor
-        // shares this blind spot, catching the bare case only by arithmetic accident, so nothing
-        // was traded away here.
+        // per-cohort constant retired above (#4307).
         // Two causes, different fixes, so the message says which: a file with NO
         // TimeoutException at all has lost its spawn (or never had one), while a file that still
         // throws one but contributes no site has a message the `within` anchor no longer matches.
