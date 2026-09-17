@@ -2841,12 +2841,13 @@ _DOTNET_PATH_REPAIR = ""
 def path_with_dir_prepended(directory: str, path: str) -> str:
     """`directory` at the front of a PATH string, idempotently.
 
-    Idempotent because preflight may probe more than once in one process, and a
-    PATH that grows a duplicate entry per call is a repair that degrades.
+    The `p != directory` filter is what makes this idempotent, and idempotence is
+    required: preflight may probe more than once in one process, and a PATH that
+    grows an entry per call is a repair that degrades. An early `entries[0] ==
+    directory: return path` fast path used to sit above it and read as the
+    mechanism; deleting it changed no answer and no test, so it is gone.
     """
     entries = [p for p in (path or "").split(os.pathsep) if p]
-    if entries and entries[0] == directory:
-        return path
     return os.pathsep.join([directory] + [p for p in entries if p != directory])
 
 
