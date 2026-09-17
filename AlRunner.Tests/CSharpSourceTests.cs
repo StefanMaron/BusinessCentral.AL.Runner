@@ -269,18 +269,17 @@ public sealed class CSharpSourceTests
     public void AMissingDirectory_Refuses()
     {
         Assert.Throws<CSharpSourceRefusedException>(
-            () => CSharpSource.CsFilesUnder(Path.Combine(Path.GetTempPath(), "al-runner-no-such-dir-3527")));
+            () => CSharpSource.CsFilesUnder(Path.Combine(TestScratch.Dir("al-runner-3527-missing"), "no-such-subdir")));
     }
 
     [Fact]
     public void ADirectoryWithNoSources_Refuses()
     {
-        var dir = Directory.CreateTempSubdirectory("csharpsource3527").FullName;
-        try
-        {
-            Assert.Throws<CSharpSourceRefusedException>(() => CSharpSource.CsFilesUnder(dir));
-        }
-        finally { Directory.Delete(dir, recursive: true); }
+        // A directory that exists and holds nothing this guard can read is the shape that made
+        // the old census pass vacuously: "zero violations" and "nothing scanned" are the same
+        // answer through a plain enumerate.
+        Assert.Throws<CSharpSourceRefusedException>(
+            () => CSharpSource.CsFilesUnder(TestScratch.Dir("al-runner-3527-empty")));
     }
 
     [Fact]
