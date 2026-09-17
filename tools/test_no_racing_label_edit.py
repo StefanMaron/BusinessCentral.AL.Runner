@@ -27,9 +27,12 @@ Two known-safe constructions are exempt, each for a stated reason:
 
   * `.github/workflows/issue-label-hygiene.yml` builds its removal list in a
     bash array and adds `status: ready` in the same call, but explicitly filters
-    `status: ready` OUT of the removals (PR #3959). It is checked here for that
-    filter rather than for the flag pair, so re-widening the filter fails this
-    test instead of silently restoring the race.
+    `status: ready` OUT of the removals (PR #3959). Instead of the flag pair, it
+    is checked by RUNNING that step against a fixture issue and asserting the
+    command it resolves to names no label in both lists, so re-widening the
+    filter fails this test instead of silently restoring the race. Executed
+    rather than matched in the source, because a YAML comment quoting the
+    filter satisfied the old source match with the real filter deleted (#4301).
   * tools/test_*.py files asserting the ABSENCE of the shape necessarily contain
     both flag names as string literals.
 
@@ -53,14 +56,19 @@ Run directly: python3 tools/test_no_racing_label_edit.py
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import label_hygiene_harness as harness  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 failures: list[str] = []
+unmeasurable: list[str] = []
 passes = 0
 
 
@@ -75,6 +83,19 @@ def check(label: str, ok: bool, detail: str = "") -> None:
         if detail:
             for line in str(detail).splitlines()[:12]:
                 print(f"      {line}")
+
+
+# The third state, exit 3: measured-and-fine and could-not-measure must not
+# share a code, or a box that answered nothing reports that everything is well
+# (`guards-need-a-third-state.md`). Deliberately not a FAIL either -- a missing
+# `jq` is not the workflow racing, and sending a reader to the wrong remedy is
+# how a correct guard gets deleted.
+def cannot_measure(label: str, detail: str = "") -> None:
+    unmeasurable.append(label)
+    print(f"UNMEASURABLE  {label}")
+    if detail:
+        for line in str(detail).splitlines()[:12]:
+            print(f"      {line}")
 
 
 def tracked_files() -> list[str]:
@@ -212,21 +233,96 @@ check(
     )),
 )
 
-# The one live single-call site. It is safe only because status: ready is
-# filtered out of the removals, so that filter is what gets asserted.
-wf_path = os.path.join(ROOT, EXEMPT_WORKFLOW)
-if os.path.exists(wf_path):
-    with open(wf_path, encoding="utf-8", errors="replace") as fh:
-        wf = fh.read()
-    check(
-        "issue-label-hygiene.yml still filters `status: ready` out of the labels "
-        "it removes -- it adds that label in the same call, so dropping the "
-        "filter restores the #3930 race",
-        re.search(r'select\(\s*\.\s*!=\s*"status: ready"\s*\)', wf) is not None,
-        "the `select(. != \"status: ready\")` filter is gone from the release job",
+# The one live single-call site, and the EXEMPT_WORKFLOW entry above is what
+# makes this suite skip it. So the exemption is discharged by running the
+# release step's own shell against a fixture issue and reading the command it
+# actually issues -- never by matching the filter's spelling in the source.
+#
+# #4301: the source match was the whole check here, and a YAML comment quoting
+# `select(. != "status: ready")` satisfied it with the real filter deleted --
+# 10 passed, exit 0, over a workflow that races. A `run:` block resolved out of
+# parsed YAML and executed cannot be written by a comment.
+#
+# Trap: the label the edit ADDS is derived from a first run, never named here.
+# A check spelling `status: ready` itself still passes -- vacuously -- the day
+# the workflow adds some other label, which is this same false green one step
+# along.
+if not os.path.exists(os.path.join(ROOT, EXEMPT_WORKFLOW)):
+    check("issue-label-hygiene.yml is present to be checked", False, EXEMPT_WORKFLOW)
+elif harness.missing_tools():
+    cannot_measure(
+        "the exempted workflow's `gh issue edit` calls name no label in both "
+        "their add-list and their remove-list",
+        "cannot run the workflow's shell: "
+        + ", ".join(harness.missing_tools()) + " not found",
     )
 else:
-    check("issue-label-hygiene.yml is present to be checked", False, wf_path)
+    # BOTH jobs, because EXEMPT_WORKFLOW skips the whole FILE from the scan above,
+    # so the exemption has to be discharged for every `gh issue edit` the file can
+    # resolve to. `strip-labels-on-close` is safe today only because it adds
+    # nothing -- an --add-label appended to it would need the same filter, and a
+    # check reading only the release job would not say so.
+    JOBS = [
+        ("strip-labels-on-close",
+         lambda labels: ({"ISSUE": "42", "LABELS": json.dumps(labels)}, None)),
+        ("release-part-of-issues",
+         lambda labels: ({"PR_NUMBER": "999", "PR_BODY": "Part of #42",
+                          "PR_HEAD_REF": "agent/fbk-2/issue-42",
+                          "PR_LABELS": json.dumps(["agent: fbk-2"]),
+                          "EDIT_RC": "0"},
+                         {"state": "OPEN",
+                          "labels": [{"name": n} for n in labels]})),
+    ]
+    BASE = ["status: in-progress", "agent: fbk-2", "bug"]
+
+    for job_id, build in JOBS:
+        block = harness.run_block(job_id)
+
+        def resolved_edits(label_names: list[str]) -> tuple[list[str], str, list[str]]:
+            """The `gh issue edit` calls this job makes for an issue with these labels.
+
+            Returns the fixture it used as well, so the non-vacuity check below reads
+            the labels the step was ACTUALLY handed rather than a list recomputed
+            beside the call -- a recomputed one stays green when the call is changed
+            to pass something else, which is the check going vacuous unnoticed.
+            """
+            env, issue_json = build(label_names)
+            _rc, out, calls = harness.invoke(block, env, issue_json=issue_json)
+            return ([c for c in calls if c.startswith("issue edit")], out,
+                    list(label_names))
+
+        first, first_out, _ = resolved_edits(BASE)
+        if len(first) != 1:
+            # Not a FAIL: the job no longer resolves to exactly one `gh issue edit`,
+            # so there is nothing here to call racing or safe. What it does mean is
+            # that the EXEMPT_WORKFLOW skip is now resting on nothing for this job,
+            # which is a person's call rather than a verdict.
+            cannot_measure(
+                f"{job_id}'s `gh issue edit` names no label in both its add-list "
+                "and its remove-list",
+                f"expected exactly one `gh issue edit`, got {first!r}\n{first_out}",
+            )
+            continue
+
+        added = harness.flag_values(first[0], "add-label")
+        second, second_out, second_fixture = resolved_edits(BASE + added)
+        removed = harness.flag_values(second[0], "remove-label") if len(second) == 1 else []
+        both = sorted(set(added) & set(removed))
+        check(
+            f"{job_id}'s `gh issue edit` names no label in both its add-list and "
+            "its remove-list -- gh dispatches the two as unordered concurrent "
+            "mutations and drops the loser (#3930)",
+            len(second) == 1 and not both,
+            f"adds {added!r} and removes {removed!r}; both: {both!r}\n"
+            f"resolved: {second!r}\n{second_out}",
+        )
+        check(
+            f"...and {job_id} was measured against an issue carrying every label it "
+            "adds, so the check above cannot pass vacuously -- an unfiltered jq "
+            "would have put each of them in the removals",
+            set(added) <= set(second_fixture),
+            f"added={added!r} was not all present in the fixture={second_fixture!r}",
+        )
 
 # The replacement recipe must actually be in the file agents read, in the safe
 # order. Absence here would mean the guard passes over a file that no longer
@@ -251,5 +347,9 @@ check(
 )
 
 print("")
-print(f"{passes} passed, {len(failures)} failed ({scanned} file(s) carried both flag names)")
-sys.exit(1 if failures else 0)
+tail = f", {len(unmeasurable)} unmeasurable" if unmeasurable else ""
+print(f"{passes} passed, {len(failures)} failed{tail} "
+      f"({scanned} file(s) carried both flag names)")
+# A real failure outranks an unmeasurable one: exit 1 says the shape is present,
+# exit 3 says this box could not establish it either way.
+sys.exit(1 if failures else (3 if unmeasurable else 0))
