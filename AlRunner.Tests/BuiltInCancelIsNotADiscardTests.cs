@@ -25,6 +25,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 using Xunit;
@@ -104,11 +105,14 @@ public sealed class BuiltInCancelIsNotADiscardTests
 
     /// <summary>
     /// The in-universe methods an indirectly-dispatched call to <paramref name="callee"/> could
-    /// land on (#4311): a universe method that is <c>virtual</c>, of the same arity, answering to
-    /// that name — directly, or through an explicit interface implementation, whose own name is
-    /// mangled (<c>Ns.IFoo.Go</c>) and so never matches directly. Always a subset of the universe,
-    /// so #4302's compiler-verified accessibility bound is untouched.
+    /// land on (#4311): a universe method of the same arity answering to that name — directly, or
+    /// through an explicit interface implementation, whose own name is mangled (<c>Ns.IFoo.Go</c>)
+    /// and so never matches directly. Always a subset of the universe, so #4302's
+    /// compiler-verified accessibility bound is untouched.
     /// See docs/closure-walk-indirect-dispatch.md#scope-the-accessibility-bound-is-untouched.
+    /// <para><c>IsStatic</c> is not redundant beside <c>IsVirtual</c>: a static abstract interface
+    /// member's implementation is <c>static</c> and NOT virtual, so a virtual-only filter finds no
+    /// candidate for the 57 <c>constrained. call</c> sites in the closure.</para>
     /// <para>Trap: read off the <see cref="MethodReference"/>, never its definition — it must
     /// still answer for a callee that will not resolve. And do not narrow it by the type
     /// hierarchy: that can only remove candidates, removes none today, and buys an unmeasurable.</para>
@@ -116,22 +120,44 @@ public sealed class BuiltInCancelIsNotADiscardTests
     private static IEnumerable<MethodDefinition> IndirectTargetsInUniverse(
         List<MethodDefinition> universeMethods, MethodReference callee)
         => universeMethods.Where(m =>
-            m.IsVirtual && m.HasBody
+            (m.IsVirtual || m.IsStatic) && m.HasBody
             && m.Parameters.Count == callee.Parameters.Count
             && (m.Name == callee.Name || m.Overrides.Any(o => o.Name == callee.Name)));
+
+    /// <summary>
+    /// The universe types this call names only as a generic argument. Control can re-enter the
+    /// universe through a member of one that the instruction does not name — an async method's
+    /// state machine handed to <c>AsyncTaskMethodBuilder.Start&lt;T&gt;</c> is the live shape.
+    /// </summary>
+    private static IEnumerable<string> InUniverseGenericArguments(
+        HashSet<string> universe, MethodReference callee)
+    {
+        var arguments = new List<TypeReference>();
+        if (callee is GenericInstanceMethod method) arguments.AddRange(method.GenericArguments);
+        if (callee.DeclaringType is GenericInstanceType type) arguments.AddRange(type.GenericArguments);
+        return arguments.Select(a => a.FullName).Where(universe.Contains).Distinct();
+    }
 
     /// <summary>
     /// Whether a call site invokes a delegate, whose target is whatever <c>ldftn</c> built it and
     /// is therefore not a property of this instruction at all. A declaring type that will not
     /// resolve answers <c>true</c>: an unknown must not resolve toward the followable direction.
+    /// <para>Trap: the name alone does not decide it. An ordinary interface may declare
+    /// <c>Invoke()</c> — <c>RecordingBuiltInAction.Invoke()</c> is itself an arity-0 <c>Invoke</c>
+    /// — and refusing that would report an unmeasurable where the walk can see the implementation
+    /// perfectly well. The declaring type is what discriminates, and both halves are pinned
+    /// (#4320 review).</para>
     /// </summary>
     private static bool IsDelegateInvocation(MethodReference callee)
     {
-        if (callee.Name != "Invoke") return false;
+        if (callee.Name != "Invoke" && callee.Name != "DynamicInvoke") return false;
         TypeDefinition declaring;
         try { declaring = callee.DeclaringType.Resolve(); }
         catch (AssemblyResolutionException) { return true; }
-        return declaring is null || declaring.BaseType?.FullName == "System.MulticastDelegate";
+        if (declaring is null) return true;
+        // DynamicInvoke is declared on Delegate itself; Invoke on the closed delegate type.
+        return declaring.BaseType?.FullName == "System.MulticastDelegate"
+            || declaring.FullName is "System.Delegate" or "System.MulticastDelegate";
     }
 
     /// <summary>
@@ -193,25 +219,35 @@ public sealed class BuiltInCancelIsNotADiscardTests
                     && op != OpCodes.Ldftn && op != OpCodes.Ldvirtftn) continue;
                 if (instruction.Operand is not MethodReference callee) continue;
 
-                // INDIRECT DISPATCH (#4311). A virtual or interface dispatch is FOLLOWED to the
-                // universe methods it could land on; a delegate invocation is REFUSED, because
-                // its target is not a property of the call site. Neither may be the silent
-                // `continue` that let a discard behind both read as an absence of one. `call` is
-                // excluded deliberately — it is statically bound, so the resolution below is the
-                // whole answer for it. docs/closure-walk-indirect-dispatch.md#what-the-fix-does
+                // INDIRECT DISPATCH (#4311). A dispatch whose target is chosen at run time is
+                // FOLLOWED to the universe methods it could land on; a delegate invocation is
+                // REFUSED, because its target is not a property of the call site. Neither may be
+                // the silent `continue` that let a discard behind both read as an absence of one.
+                // docs/closure-walk-indirect-dispatch.md#what-the-fix-does
+                //
+                // A `constrained.` prefix makes the NEXT instruction indirect whichever opcode it
+                // is: on a type parameter the target is chosen when T is substituted, so a
+                // `constrained. call` to a static abstract interface member is dispatched exactly
+                // as a callvirt is. Reading only the opcode accounted for 1 of the closure's 58
+                // constrained sites and silently ignored the other 57 (#4320 review).
                 //
                 // Trap, for the next person who tries to make the delegate case followable:
                 // enqueueing every address-taken universe method was measured and REDS INNOCENT
                 // CODE — ActivateControl(Int32) is address-taken and legitimately clears
-                // _pendingNewRow from outside the closure. Signature matching does not rescue it.
-                if (op == OpCodes.Callvirt || op == OpCodes.Ldvirtftn)
-                {
-                    if (IsDelegateInvocation(callee))
-                        unfollowable.Add($"{caller.Name} -> {callee.FullName}");
-                    else
-                        foreach (var target in IndirectTargetsInUniverse(universeMethods, callee))
-                            Reach(target);
-                }
+                // _pendingNewRow from outside the closure. Signature matching does not rescue it,
+                // and note ActivateControl is not virtual, so the follow path cannot reach it.
+                // The delegate refusal is deliberately NOT gated on the opcode. `Invoke()` on a
+                // closed delegate type is a callvirt, but `Delegate.DynamicInvoke` is non-virtual
+                // and `?.` has already null-checked the receiver, so Roslyn emits a plain `call`
+                // — measured off the fixture's IL, not assumed. Gating on the opcode let that one
+                // through silently.
+                var constrained = instruction.Previous?.OpCode == OpCodes.Constrained;
+                if (IsDelegateInvocation(callee))
+                    unfollowable.Add($"{caller.Name} -> {callee.FullName}");
+                else if (op == OpCodes.Callvirt || op == OpCodes.Ldvirtftn
+                         || (op == OpCodes.Call && constrained))
+                    foreach (var target in IndirectTargetsInUniverse(universeMethods, callee))
+                        Reach(target);
 
                 // Unwrap a generic instantiation to the type that declares the member, but
                 // NOT an array/pointer/byref: GetElementType() happily turns `Foo[,]::Set` into
@@ -245,7 +281,21 @@ public sealed class BuiltInCancelIsNotADiscardTests
                     if (declaredInUniverse) unresolved.Add($"{caller.Name} -> {callee.FullName}");
                     continue;
                 }
-                if (!universe.Contains(resolved.DeclaringType.FullName)) continue;
+                if (!universe.Contains(resolved.DeclaringType.FullName))
+                {
+                    // An out-of-universe callee cannot itself hold the stfld, so skipping it is
+                    // the "genuinely absent stays a pass" constraint — EXCEPT when it names a
+                    // universe type as a GENERIC ARGUMENT, which means control can re-enter the
+                    // universe through a member of that type this instruction does not name.
+                    // The live shape is an async method: the body moves to a compiler-generated
+                    // state machine nested in the declarer (so in the universe, and holding the
+                    // stfld), entered by `call AsyncTaskMethodBuilder::Start<TStateMachine>` —
+                    // out of universe, and a plain `call`. Refused rather than followed: which
+                    // member runs is not on the instruction (#4320 review).
+                    foreach (var argument in InUniverseGenericArguments(universe, callee))
+                        unfollowable.Add($"{caller.Name} -> {callee.Name}<{argument}>");
+                    continue;
+                }
 
                 // Bodiless by construction — an interface member, an abstract override, an extern.
                 // There is nothing to walk FROM here; what actually runs was enqueued above by
@@ -399,7 +449,42 @@ public sealed class BuiltInCancelIsNotADiscardTests
         {
             private readonly IndirectDispatchFixture _fixture;
             public ThroughInterface(IndirectDispatchFixture fixture) { _fixture = fixture; }
-            public void Go() { _fixture._pendingNewRow = false; }
+            public void Go() { _fixture._pendingNewRow = false; }   // implicit: matches on Name
+        }
+
+        // EXPLICIT implementation. The compiler names it `…IExplicit.Step`, so only the Overrides
+        // match finds it — the clause whose justification was previously untested because every
+        // fixture implementation was implicit. Its own interface, so the two cannot cross-match.
+        private interface IExplicit { void Step(); }
+
+        private sealed class ThroughExplicitInterface : IExplicit
+        {
+            private readonly IndirectDispatchFixture _fixture;
+            public ThroughExplicitInterface(IndirectDispatchFixture fixture) { _fixture = fixture; }
+            void IExplicit.Step() { _fixture._pendingNewRow = false; }
+        }
+
+        // A STATIC ABSTRACT interface member. The call site is `constrained. call`, not callvirt,
+        // and the implementation is static rather than virtual — the two properties that between
+        // them hid 57 sites in the production closure.
+        private interface IStaticIndirect { static abstract void Jump(IndirectDispatchFixture f); }
+
+        private sealed class ThroughStaticAbstract : IStaticIndirect
+        {
+            public static void Jump(IndirectDispatchFixture f) { f._pendingNewRow = false; }
+        }
+
+        private static void DispatchStatic<T>(IndirectDispatchFixture f) where T : IStaticIndirect
+            => T.Jump(f);
+
+        // An `Invoke()` that is NOT a delegate's, so the refusal must not fire on the name alone.
+        private interface IAction { void Invoke(); }
+
+        private sealed class NotADelegate : IAction
+        {
+            private readonly IndirectDispatchFixture _fixture;
+            public NotADelegate(IndirectDispatchFixture fixture) { _fixture = fixture; }
+            public void Invoke() { _fixture._pendingNewRow = false; }
         }
 
         // Deliberately unreachable from every entry point below, so the ldftn that builds the
@@ -409,7 +494,20 @@ public sealed class BuiltInCancelIsNotADiscardTests
         private void Seed() { _seeded = () => { _pendingNewRow = false; }; }
 
         internal void EntryThroughInterface() { IIndirect i = new ThroughInterface(this); i.Go(); }
+        internal void EntryThroughExplicitInterface()
+        { IExplicit e = new ThroughExplicitInterface(this); e.Step(); }
+        internal void EntryThroughStaticAbstract() { DispatchStatic<ThroughStaticAbstract>(this); }
+        // A delegate over an INTERFACE-typed receiver emits ldvirtftn rather than ldftn; returned
+        // so the delegate creation cannot be optimised away.
+        internal Action EntryThroughVirtualFtn()
+        { IIndirect i = new ThroughInterface(this); return i.Go; }
+        internal void EntryThroughNonDelegateInvoke()
+        { IAction a = new NotADelegate(this); a.Invoke(); }
         internal void EntryThroughDelegate() { _seeded?.Invoke(); }
+        internal void EntryThroughDynamicInvoke() { _seeded?.DynamicInvoke(); }
+        // The body moves to a compiler-generated state machine nested in this type, so the store
+        // is IN the universe while the call that starts it is a plain out-of-universe `call`.
+        internal async Task EntryAsync() { await Task.Yield(); _pendingNewRow = false; }
         internal void EntryDirect() { Observe(_pendingNewRow); Seed(); }
         private static void Observe(bool _) { }
     }
@@ -434,6 +532,53 @@ public sealed class BuiltInCancelIsNotADiscardTests
         Assert.Contains(("Go()", "_pendingNewRow", true), stores);
     }
 
+    // Anchors the Overrides clause: an explicit implementation's own name is `…IExplicit.Step`,
+    // so nothing but that clause matches it. Dropping the clause reds here and nowhere else.
+    [Fact]
+    public void AStoreBehindAnExplicitInterfaceImplementationIsVisibleToTheWalk()
+    {
+        var stores = FlagStores(
+            WalkFixture(nameof(IndirectDispatchFixture.EntryThroughExplicitInterface)));
+
+        Assert.Contains(stores, s => s.Signature.EndsWith("Step()") && s.Clears
+                                     && s.Field == "_pendingNewRow");
+    }
+
+    // Anchors BOTH halves of the constrained-call fix: reading the `constrained.` prefix rather
+    // than the opcode, and admitting a STATIC candidate. 57 sites of this shape sit in the
+    // production closure, where they were neither followed nor refused (#4320 review).
+    [Fact]
+    public void AStoreBehindAStaticAbstractInterfaceMemberIsVisibleToTheWalk()
+    {
+        var walk = WalkFixture(nameof(IndirectDispatchFixture.EntryThroughStaticAbstract));
+
+        Assert.Contains(FlagStores(walk),
+            s => s.Signature.StartsWith("Jump(") && s.Clears && s.Field == "_pendingNewRow");
+        Assert.Empty(walk.Unfollowable);
+    }
+
+    // Anchors Ldvirtftn in the indirect branch. A delegate over an interface-typed receiver takes
+    // the address virtually, so the operand names the bodiless interface method and only the
+    // indirect branch can reach the implementation.
+    [Fact]
+    public void AStoreBehindAVirtualFunctionPointerIsVisibleToTheWalk()
+    {
+        var stores = FlagStores(WalkFixture(nameof(IndirectDispatchFixture.EntryThroughVirtualFtn)));
+
+        Assert.Contains(("Go()", "_pendingNewRow", true), stores);
+    }
+
+    // The refusal must key on the declaring TYPE, not on the name. RecordingBuiltInAction.Invoke()
+    // is itself an arity-0 Invoke, so a name-only test would refuse the guard's own entry point.
+    [Fact]
+    public void ANonDelegateInvokeIsFollowedRatherThanRefused()
+    {
+        var walk = WalkFixture(nameof(IndirectDispatchFixture.EntryThroughNonDelegateInvoke));
+
+        Assert.Empty(walk.Unfollowable);
+        Assert.Contains(("Invoke()", "_pendingNewRow", true), FlagStores(walk));
+    }
+
     // THE FIX, second half. A delegate invocation is refused, not skipped. Asserted on the
     // refusal list rather than on the store list, because the point is precisely that the store
     // is NOT visible and must therefore not be reported as absent.
@@ -444,6 +589,31 @@ public sealed class BuiltInCancelIsNotADiscardTests
 
         Assert.Empty(FlagStores(walk));
         Assert.Contains(walk.Unfollowable, u => u.Contains("EntryThroughDelegate"));
+    }
+
+    // DynamicInvoke is the same refusal by a different member name, and it is declared on
+    // System.Delegate itself rather than on the closed delegate type — so the declaring-type test
+    // needs both spellings.
+    [Fact]
+    public void ADynamicInvokeIsRefusedLikeAnyOtherDelegateInvocation()
+    {
+        var walk = WalkFixture(nameof(IndirectDispatchFixture.EntryThroughDynamicInvoke));
+
+        Assert.Empty(FlagStores(walk));
+        Assert.Contains(walk.Unfollowable, u => u.Contains("DynamicInvoke"));
+    }
+
+    // An async method's store lands in a compiler-generated state machine nested in the declarer,
+    // so it is IN the universe — while the call that starts it is an out-of-universe plain `call`
+    // and reaches no indirect branch at all. Neither followed nor refused was the silent skip
+    // #4311 is about, one shape over (#4320 review).
+    [Fact]
+    public void AnAsyncStateMachineIsRefusedRatherThanSilentlySkipped()
+    {
+        var walk = WalkFixture(nameof(IndirectDispatchFixture.EntryAsync));
+
+        Assert.Empty(FlagStores(walk));
+        Assert.Contains(walk.Unfollowable, u => u.Contains("EntryAsync"));
     }
 
     // The discrimination the two above need to be worth anything: the refusal is keyed on the
@@ -481,4 +651,5 @@ public sealed class BuiltInCancelIsNotADiscardTests
             + " did not read them and cannot claim they hold no discard. Unresolved: "
             + string.Join("; ", unresolved.Distinct()));
     }
+
 }
