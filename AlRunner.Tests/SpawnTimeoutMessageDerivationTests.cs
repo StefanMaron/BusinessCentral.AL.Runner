@@ -84,7 +84,7 @@ public sealed class SpawnTimeoutMessageDerivationTests
     public void EveryListedSpawnSite_DerivesItsTimeoutFigureFromTheCapItApplied()
     {
         var offenders = new List<string>();
-        var sitesChecked = 0;
+        var sitesPerFile = new Dictionary<string, int>();
 
         foreach (var file in Files)
         {
@@ -107,7 +107,7 @@ public sealed class SpawnTimeoutMessageDerivationTests
                 // Only the spawn-timeout throws are in scope; a TimeoutException thrown for some
                 // other reason has no cap to report.
                 if (!stmt.Contains("within", StringComparison.Ordinal)) continue;
-                sitesChecked++;
+                sitesPerFile[file] = sitesPerFile.GetValueOrDefault(file) + 1;
 
                 if (!stmt.Contains("SpawnTimeoutMs", StringComparison.Ordinal))
                 {
@@ -151,11 +151,25 @@ public sealed class SpawnTimeoutMessageDerivationTests
             }
         }
 
-        // The population must be non-empty, or an empty scan reads as a pass. #3488 lists five
-        // sites, #3487 contributes one, and #4275's 180s and 120s cohorts thirteen and nine.
-        Assert.True(sitesChecked >= 34,
-            $"expected at least 34 spawn-timeout throw sites across {Files.Length} files, found {sitesChecked} — "
-            + "the anchor stopped matching, so this test measured almost nothing");
+        // EVERY listed file must contribute at least one site, per file rather than in total.
+        //
+        // A `sitesChecked >= N` floor was the earlier form and it has slack, because a total
+        // cannot say WHICH files contributed it: one file losing its site is fungible with
+        // another gaining one, and the population already contains a two-site file
+        // (ArtifactsRootEnvOverrideTests), which is why 33 files yield 34 sites. Measured in
+        // review of #4307 — reword one file's message so `within` stops matching (caught), add a
+        // second correctly-derived site elsewhere (green again), then regress the first file to a
+        // hardcoded literal: STILL GREEN, with a file in this very list carrying exactly the
+        // spelling this test forbids.
+        //
+        // "at least one", not "exactly one": the two-site file is legitimate. This also retires
+        // the >= N constant, which every cohort had to edit — one fewer thing to get right.
+        var silent = Files.Where(f => sitesPerFile.GetValueOrDefault(f) == 0).ToArray();
+        Assert.True(silent.Length == 0,
+            "these listed files contributed NO spawn-timeout throw site, so this test measured "
+            + "nothing about them — the anchor stopped matching, or the site moved or was reworded. "
+            + "Remove the file from the list deliberately, or restore the site:"
+            + Environment.NewLine + string.Join(Environment.NewLine, silent));
 
         Assert.True(offenders.Count == 0,
             "a spawn timeout message must DERIVE its figure from the cap actually applied (#3488):"
