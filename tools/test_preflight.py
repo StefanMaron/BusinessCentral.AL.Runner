@@ -2578,7 +2578,9 @@ check("toolchain: the repair survives an empty PATH rather than emitting a bare 
 # defined and never called from toolchain_reading. These drive the real function
 # with `which`, the probe and `run` replaced, so nothing here reads the live box.
 def _wired(which_hit, probe_hit, sdk_text="9.0.318 [/fake/sdk]\n"):
-    saved = (pf.shutil.which, pf.find_offpath_dotnet, pf.run, os.environ.get("PATH", ""))
+    saved = (pf.shutil.which, pf.find_offpath_dotnet, pf.run, os.environ.get("PATH", ""),
+             pf._DOTNET_PATH_REPAIR)
+    pf._DOTNET_PATH_REPAIR = ""
     try:
         pf.shutil.which = lambda _n: which_hit
         pf.find_offpath_dotnet = lambda _d, **_k: probe_hit
@@ -2588,6 +2590,7 @@ def _wired(which_hit, probe_hit, sdk_text="9.0.318 [/fake/sdk]\n"):
     finally:
         pf.shutil.which, pf.find_offpath_dotnet, pf.run = saved[0], saved[1], saved[2]
         os.environ["PATH"] = saved[3]
+        pf._DOTNET_PATH_REPAIR = saved[4]
 
 
 _r_off, _path_after = _wired(None, "/fake/dotnet")
@@ -2603,6 +2606,40 @@ check("toolchain: ...and reports absent, unrepaired, when the probe finds nothin
 _r_on, _ = _wired("/usr/bin/dotnet", "/must-not-be-used")
 check("toolchain: a dotnet already on PATH is never attributed to the probe",
       _r_on.get("off_path_dir") == "" and _r_on.get("status") == "ok", repr(_r_on))
+
+
+# The warm-run half (local-test-scope.md). The repair makes `which` succeed, so a
+# SECOND reading in one process would answer PASS and erase both the finding and
+# the export the caller's shell still needs. Measured before the fix: WARN, PASS,
+# PASS. CI cannot catch this -- it starts a fresh process for every run.
+def _wired_twice():
+    saved = (pf.shutil.which, pf.find_offpath_dotnet, pf.run, os.environ.get("PATH", ""),
+             pf._DOTNET_PATH_REPAIR)
+    pf._DOTNET_PATH_REPAIR = ""
+    try:
+        resolvable = []
+        pf.shutil.which = lambda _n: ("/fake/dotnet/dotnet" if resolvable else None)
+        pf.find_offpath_dotnet = lambda _d, **_k: "/fake/dotnet"
+        pf.run = lambda *_a, **_k: pf.Ran(rc=0, out="9.0.318 [/fake/sdk]\n", err="")
+        first = pf.toolchain_reading(".")
+        resolvable.append(True)          # ...because the first call repaired PATH
+        second = pf.toolchain_reading(".")
+        return first, second, os.environ.get("PATH", "")
+    finally:
+        pf.shutil.which, pf.find_offpath_dotnet, pf.run = saved[0], saved[1], saved[2]
+        os.environ["PATH"] = saved[3]
+        pf._DOTNET_PATH_REPAIR = saved[4]
+
+
+_w1, _w2, _wpath = _wired_twice()
+check("toolchain: a SECOND reading still reports the SDK as off PATH, warm as well as cold",
+      _w2.get("off_path_dir") == "/fake/dotnet" == _w1.get("off_path_dir"),
+      f"cold={_w1.get('off_path_dir')!r} warm={_w2.get('off_path_dir')!r}")
+check("toolchain: ...and so the WARM verdict is still the WARN, not a PASS",
+      pf.classify_toolchain(_w2).status == "WARN",
+      f"got {pf.classify_toolchain(_w2).status}: the repair would erase its own finding")
+check("toolchain: ...and PATH gained the directory once, not once per call",
+      _wpath.split(os.pathsep).count("/fake/dotnet") == 1, repr(_wpath[:80]))
 
 # The sibling state (#4299, question 3). classify_artifacts is handed "can this
 # box run `dotnet run`", and main() must answer it from the READING, not from the

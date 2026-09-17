@@ -2831,6 +2831,13 @@ def find_offpath_dotnet(dirs: Iterable[str], is_exec=_is_executable) -> Optional
     return None
 
 
+# What THIS process prepended, if anything. A second toolchain_reading() resolves
+# `dotnet` only because the first repaired PATH, so without this the warm answer is
+# PASS and the finding -- plus the export the caller's own shell still needs -- is
+# erased by the repair that produced it. Measured: WARN, then PASS, then PASS.
+_DOTNET_PATH_REPAIR = ""
+
+
 def path_with_dir_prepended(directory: str, path: str) -> str:
     """`directory` at the front of a PATH string, idempotently.
 
@@ -2866,6 +2873,7 @@ def toolchain_reading(repo: str) -> dict:
 
     base = {"sdks": [], "error": "", "solution": SOLUTION_FILE,
             "floor": floor, "floor_source": floor_source, "off_path_dir": ""}
+    global _DOTNET_PATH_REPAIR
     if not shutil.which("dotnet"):
         found = find_offpath_dotnet(dotnet_probe_dirs())
         if not found:
@@ -2876,7 +2884,9 @@ def toolchain_reading(repo: str) -> dict:
         # can write its caller's shell -- which is why the verdict still WARNs with
         # the export line instead of passing silently.
         os.environ["PATH"] = path_with_dir_prepended(found, os.environ.get("PATH", ""))
-        base = {**base, "off_path_dir": found}
+        _DOTNET_PATH_REPAIR = found
+    if _DOTNET_PATH_REPAIR:
+        base = {**base, "off_path_dir": _DOTNET_PATH_REPAIR}
     r = run(["dotnet", "--list-sdks"], timeout=60)
     if r.timed_out:
         return {**base, "status": "unreadable", "error": "`dotnet --list-sdks` timed out"}
@@ -2924,6 +2934,11 @@ def classify_toolchain(reading: dict) -> CheckResult:
         # and its measurements are trustworthy. Not PASS -- preflight repaired its
         # own process and cannot reach the caller's shell, so one action is still
         # outstanding and --strict should still see it (#4299).
+        #
+        # Trap: this branch must stay AFTER `status` is known good. Excusing an
+        # off-PATH SDK for anything but being off PATH -- a too-old one, one that
+        # could not be asked -- launders a FAIL into a WARN, and the `max(sdks)`
+        # below then raises on the empty list such a reading carries.
         return CheckResult(
             name="toolchain", status="WARN",
             summary=f"SDK {max(sdks, key=lambda v: _sdk_sort_key(v))} is installed at "
