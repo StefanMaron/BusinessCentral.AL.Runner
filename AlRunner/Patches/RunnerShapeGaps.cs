@@ -23,8 +23,16 @@
 //
 //   #2966 named a real example of that: a reason saying not-implemented in words that did not
 //   START with "not-yet-implemented", and so was swallowed. It has since been re-spelled and
-//   moved to a BcShapeGapException, and a sweep for #3460 found NO reason in AlRunner/ in that
-//   gap today. The trap remains reachable, because the classification is still a prefix test.
+//   moved to a BcShapeGapException.
+//
+//   Scope of the #3460 sweep that checked this, stated because the paragraph above is broader
+//   than what was measured: it looked for reasons whose WORDING says not-implemented while not
+//   starting with the token, and found none in AlRunner/. It did NOT clear the wider class this
+//   block describes — a shape gap typed as RunnerOutOfScopeException and swallowed. Four such
+//   sites exist today (RecordPatches.RecordLinkTable.cs, TableConnectionPatches.cs,
+//   EventSubscriberPatches.cs, RunnerPageInstance.RowsetTriggers.cs), none of them worded
+//   not-implemented, all tracked in #2994. The trap remains reachable either way, because the
+//   classification is still a prefix test.
 //
 // ── CLASSIFYING ALL 77 SITES BEFORE TOUCHING ANY ─────────────────────────────────────────
 //   The issue counted 96 across 23 files. Re-measured on main after #2894 and #2950 landed,
