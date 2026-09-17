@@ -39,15 +39,20 @@ public sealed class BuiltInCancelIsNotADiscardTests
 
     // The ONLY legitimate clears anywhere under Invoke(): each flush method clears its OWN flag
     // on entry and then writes that row, so the flag is consumed rather than discarded. Keyed by
-    // (method, field) rather than by method, so a flush clearing the OTHER flag — which would
-    // drop a write nothing in that method is about to perform — is still an offender.
+    // (signature, field), on both halves deliberately — by FIELD so a flush clearing the OTHER
+    // flag is still an offender, and by SIGNATURE rather than name so the exemption covers the
+    // parameterless flush alone. Trap: a bare-name key licenses every OVERLOAD of that name, and
+    // `FlushPendingNewRow(bool)` clearing without writing is a discard the guard would then miss.
     // Both pairs are asserted to be OCCUPIED below: an exemption whose store has gone is a
     // licence left lying around for a future discard to be written under.
-    private static readonly (string Method, string Field)[] FlushMayClearItsOwnFlag =
+    private static readonly (string Signature, string Field)[] FlushMayClearItsOwnFlag =
     {
-        ("FlushPendingNewRow", "_pendingNewRow"),
-        ("FlushPendingModify", "_pendingModify"),
+        ("FlushPendingNewRow()", "_pendingNewRow"),
+        ("FlushPendingModify()", "_pendingModify"),
     };
+
+    private static string Signature(MethodDefinition m)
+        => $"{m.Name}({string.Join(",", m.Parameters.Select(p => p.ParameterType.Name))})";
 
     private static ModuleDefinition Module()
         => ModuleDefinition.ReadModule(typeof(AlRunner.TestExecutor).Assembly.Location);
@@ -74,72 +79,93 @@ public sealed class BuiltInCancelIsNotADiscardTests
     /// (#4302). Nested to any depth because a lambda or an async rewrite moves a method body
     /// into a generated type nested inside its declarer.
     /// </summary>
-    private static List<MethodDefinition> FlagWritableUniverse(TypeDefinition host)
+    private static HashSet<string> FlagWritableUniverse(TypeDefinition host)
     {
-        var methods = new List<MethodDefinition>();
+        var names = new HashSet<string>();
         var pending = new Stack<TypeDefinition>();
         pending.Push(host);
         while (pending.Count > 0)
         {
             var type = pending.Pop();
-            methods.AddRange(type.Methods);
+            names.Add(type.FullName);
             foreach (var nested in type.NestedTypes) pending.Push(nested);
         }
-        return methods;
+        return names;
     }
 
     /// <summary>
-    /// Everything Invoke() can reach within that universe, transitively — 12 of the 111 methods
-    /// as measured on #4302's fix, so the walk is over a single type's own call graph and costs
-    /// milliseconds, not a repository-wide closure.
-    /// <para>Trap: follow <c>ldftn</c>/<c>ldvirtftn</c> as well as the call opcodes. A lambda is
-    /// reached through a delegate whose declaring type is <c>System.Func</c>, which this walk
-    /// stops at, so dropping those two would let a body inside a generated closure type sit in
-    /// the universe unvisited.</para>
+    /// Everything Invoke() can reach within that universe, transitively — 15 of the type's 111
+    /// methods, max depth 7, so the walk is over a single type's own call graph and costs
+    /// milliseconds rather than a repository-wide closure. Also reports every in-universe callee
+    /// it could NOT resolve, which is a broken measurement rather than an absence of stores.
+    /// <para>Trap: resolve through <see cref="MethodReference.Resolve"/> — a call to a GENERIC
+    /// method carries the instantiated name (<c>CalculateClientAutoKey&lt;System.Int32&gt;</c>), so
+    /// matching FullName against the definitions dropped six real references here and made a
+    /// generic discard helper invisible at depth 1 (#4302 review). Follow ldftn/ldvirtftn too: a
+    /// lambda is reached through a delegate whose declaring type this walk stops at.</para>
     /// </summary>
-    private static Dictionary<string, MethodDefinition> ClosureFromInvoke(TypeDefinition host)
+    private static (Dictionary<string, MethodDefinition> Reached, List<string> UnresolvedInUniverse)
+        ClosureFromInvoke(TypeDefinition host)
     {
-        var universe = FlagWritableUniverse(host)
-            .Where(m => m.HasBody)
-            .GroupBy(m => m.FullName)
-            .ToDictionary(g => g.Key, g => g.First());
-
+        var universe = FlagWritableUniverse(host);
         var reached = new Dictionary<string, MethodDefinition>();
+        var unresolved = new List<string>();
         var queue = new Queue<MethodDefinition>();
         var invoke = BuiltInActionInvoke(host);
         reached[invoke.FullName] = invoke;
         queue.Enqueue(invoke);
 
         while (queue.Count > 0)
-            foreach (var instruction in queue.Dequeue().Body.Instructions)
+        {
+            var caller = queue.Dequeue();
+            foreach (var instruction in caller.Body.Instructions)
             {
                 var op = instruction.OpCode;
                 if (op != OpCodes.Call && op != OpCodes.Callvirt && op != OpCodes.Newobj
                     && op != OpCodes.Ldftn && op != OpCodes.Ldvirtftn) continue;
                 if (instruction.Operand is not MethodReference callee) continue;
-                if (!universe.TryGetValue(callee.FullName, out var resolved)) continue;
+
+                var declaredInUniverse =
+                    universe.Contains(callee.DeclaringType.GetElementType().FullName);
+                var resolved = callee.Resolve();
+
+                // Three outcomes, and only the first two are legitimate passes. A callee OUTSIDE
+                // the universe cannot hold an stfld of a private field of this type, so skipping
+                // an unresolvable one is the "genuinely absent stays a pass" constraint — refusing
+                // on every unreadable System.*/BC reference would trade a false green for a false
+                // red. A callee INSIDE it that will not resolve is code we are obliged to scan and
+                // could not (guards-need-a-third-state.md).
+                if (resolved is null)
+                {
+                    if (declaredInUniverse) unresolved.Add($"{caller.Name} -> {callee.FullName}");
+                    continue;
+                }
+                if (!universe.Contains(resolved.DeclaringType.FullName)) continue;
+                if (!resolved.HasBody) continue;
+
                 if (reached.ContainsKey(resolved.FullName)) continue;
                 reached[resolved.FullName] = resolved;
                 queue.Enqueue(resolved);
             }
+        }
 
-        return reached;
+        return (reached, unresolved);
     }
 
     /// <summary>
-    /// Every store to a pending-write flag Invoke() can reach, as (method, field, clears). A
+    /// Every store to a pending-write flag Invoke() can reach, as (signature, field, clears). A
     /// store is a CLEAR when the value pushed is literal <c>false</c>, a SET when it is literal
     /// <c>true</c> — measured, not assumed: Roslyn emits ldc.i4.0/ldc.i4.1 before each of the
-    /// four stores in this type today. Anything else is unclassifiable from IL alone and is
-    /// reported as a clear, because an unknown must not resolve toward the success state
-    /// (guards-need-a-third-state.md).
+    /// seven stores in this type today. Anything else is unclassifiable from IL alone and is
+    /// reported as a clear, because an unknown must not resolve toward the success state.
     /// </summary>
-    private static List<(string Method, string Field, bool Clears)> FlagStoresUnderInvoke()
+    private static List<(string Signature, string Field, bool Clears)> FlagStoresUnderInvoke()
     {
         var host = LiveNavTestPage(Module());
         var stores = new List<(string, string, bool)>();
 
-        foreach (var method in ClosureFromInvoke(host).Values.OrderBy(m => m.Name, StringComparer.Ordinal))
+        foreach (var method in ClosureFromInvoke(host).Reached.Values
+                     .OrderBy(m => m.Name, StringComparer.Ordinal))
         {
             Instruction previous = null;
             foreach (var instruction in method.Body.Instructions)
@@ -147,7 +173,7 @@ public sealed class BuiltInCancelIsNotADiscardTests
                 if (instruction.OpCode == OpCodes.Stfld
                     && instruction.Operand is FieldReference field
                     && PendingWriteFlags.Contains(field.Name))
-                    stores.Add((method.Name, field.Name, previous?.OpCode != OpCodes.Ldc_I4_1));
+                    stores.Add((Signature(method), field.Name, previous?.OpCode != OpCodes.Ldc_I4_1));
                 previous = instruction;
             }
         }
@@ -161,8 +187,8 @@ public sealed class BuiltInCancelIsNotADiscardTests
     public void NothingInvokeCanReachClearsTheHostPendingWriteFlags()
     {
         var offenders = FlagStoresUnderInvoke()
-            .Where(s => s.Clears && !FlushMayClearItsOwnFlag.Contains((s.Method, s.Field)))
-            .Select(s => $"{s.Method} clears {s.Field}")
+            .Where(s => s.Clears && !FlushMayClearItsOwnFlag.Contains((s.Signature, s.Field)))
+            .Select(s => $"{s.Signature} clears {s.Field}")
             .ToList();
 
         Assert.True(offenders.Count == 0,
@@ -215,14 +241,34 @@ public sealed class BuiltInCancelIsNotADiscardTests
     {
         var clears = FlagStoresUnderInvoke().Where(s => s.Clears).ToList();
 
-        foreach (var (method, field) in FlushMayClearItsOwnFlag)
-            Assert.True(clears.Any(c => c.Method == method && c.Field == field),
-                $"'{method}' no longer clears '{field}' anywhere Invoke() can reach. Either the "
+        foreach (var (signature, field) in FlushMayClearItsOwnFlag)
+            Assert.True(clears.Any(c => c.Signature == signature && c.Field == field),
+                $"'{signature}' no longer clears '{field}' anywhere Invoke() can reach. Either the "
                 + "walk no longer reaches it — in which case "
                 + nameof(NothingInvokeCanReachClearsTheHostPendingWriteFlags)
                 + " is scanning a collapsed closure and passes having measured nothing — or the "
                 + "clear has moved, and the exemption must move with it rather than stay behind "
                 + "as a licence. Clears actually found: "
-                + (clears.Count == 0 ? "(none)" : string.Join("; ", clears.Select(c => $"{c.Method}->{c.Field}"))));
+                + (clears.Count == 0 ? "(none)" : string.Join("; ", clears.Select(c => $"{c.Signature}->{c.Field}"))));
+    }
+
+    // FLOOR 4, the refusal. An in-universe callee the walk could not resolve is a method it was
+    // obliged to read and did not — "could not tell", which must not be spelled as the success
+    // direction the way a silent `continue` spells it. This is the floor that would have caught
+    // the walk's own regression: keying the lookup on FullName dropped six real generic
+    // references from ClientAutoKeyValue and hid a generic discard helper at depth 1 (#4302
+    // review). Deliberately scoped to the universe — an unreadable System.*/BC reference is a
+    // legitimate absence and stays a pass (guards-need-a-third-state.md).
+    [Fact]
+    public void TheWalkResolvedEveryCalleeDeclaredInsideTheUniverse()
+    {
+        var unresolved = ClosureFromInvoke(LiveNavTestPage(Module())).UnresolvedInUniverse;
+
+        Assert.True(unresolved.Count == 0,
+            "The closure walk could not resolve callee(s) declared on LiveNavTestPage or a type "
+            + "nested in it, so "
+            + nameof(NothingInvokeCanReachClearsTheHostPendingWriteFlags)
+            + " did not read them and cannot claim they hold no discard. Unresolved: "
+            + string.Join("; ", unresolved.Distinct()));
     }
 }
