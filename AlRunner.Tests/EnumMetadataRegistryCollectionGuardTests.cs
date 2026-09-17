@@ -56,6 +56,14 @@ public sealed class EnumMetadataRegistryCollectionGuardTests
         }
     }
 
+    /// <summary>
+    /// Whether <paramref name="sourceText"/> declares a <c>[Collection(...)]</c> attribute.
+    /// Exposed over TEXT so the exemption can be tested against synthetic inputs, rather than
+    /// only against whatever this suite happens to contain.
+    /// </summary>
+    internal static bool DeclaresCollection(string sourceText) =>
+        Regex.IsMatch(CSharpSource.CodeOnly(sourceText), @"\[Collection\(");
+
     [Fact]
     public void TheGuardCanSeeTheTestSources_SoAnEmptyResultIsNotAFalsePass()
     {
@@ -81,10 +89,9 @@ public sealed class EnumMetadataRegistryCollectionGuardTests
         var offenders = new List<string>();
         foreach (var path in MutatingSources())
         {
-            var text = File.ReadAllText(path);
             // Already serialised by a DIFFERENT collection is fine: two DisableParallelization
             // collections never run concurrently with each other either.
-            if (Regex.IsMatch(text, @"\[Collection\("))
+            if (DeclaresCollection(File.ReadAllText(path)))
                 continue;
             offenders.Add(Path.GetFileName(path));
         }
