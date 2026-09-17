@@ -98,6 +98,36 @@ def cannot_measure(label: str, detail: str = "") -> None:
             print(f"      {line}")
 
 
+# The labels the step was ACTUALLY handed, read back out of what build() made.
+#
+# #4305: this used to return build()'s ARGUMENT, so a builder that stopped
+# honouring it left the non-vacuity check below comparing the edit against a
+# list nothing was driven with -- measured green (13 passed, exit 0) with the
+# builder ignoring its input and the real race present.
+#
+# Trap: there is no one expression that reads it, and picking either one for
+# both jobs rebuilds the same defect. In issue-label-hygiene.yml,
+# `strip-labels-on-close` reads the names out of its `LABELS:` env value;
+# `release-part-of-issues` is never given LABELS at all and reads them from
+# `gh issue view --json state,labels`, which the harness answers from
+# ISSUE_JSON. So the channel is part of each job's entry in JOBS, beside the
+# builder that writes it.
+def read_fixture(read_labels, env, issue_json) -> tuple[list[str] | None, str]:
+    """(label names, "") -- or (None, why) when the channel could not be read.
+
+    Returns rather than raises, because a fixture the guard cannot read back is
+    a measurement that did not happen: exiting 1 would send the reader to the
+    workflow for a fault in this file (`guards-need-a-third-state.md`).
+    """
+    try:
+        names = read_labels(env, issue_json)
+    except Exception as exc:  # any malformed channel, not one chosen shape
+        return None, f"{type(exc).__name__}: {exc}"
+    if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+        return None, f"channel did not yield a list of label names: {names!r}"
+    return names, ""
+
+
 def tracked_files() -> list[str]:
     out = subprocess.run(
         ["git", "-C", ROOT, "ls-files"],
@@ -262,36 +292,43 @@ else:
     # resolve to. `strip-labels-on-close` is safe today only because it adds
     # nothing -- an --add-label appended to it would need the same filter, and a
     # check reading only the release job would not say so.
+    # (job id, build the fixture, read the labels back out of it). The third
+    # entry is the channel that job's `run:` block reads -- see read_fixture.
     JOBS = [
         ("strip-labels-on-close",
-         lambda labels: ({"ISSUE": "42", "LABELS": json.dumps(labels)}, None)),
+         lambda labels: ({"ISSUE": "42", "LABELS": json.dumps(labels)}, None),
+         lambda env, issue_json: json.loads(env["LABELS"])),
         ("release-part-of-issues",
          lambda labels: ({"PR_NUMBER": "999", "PR_BODY": "Part of #42",
                           "PR_HEAD_REF": "agent/fbk-2/issue-42",
                           "PR_LABELS": json.dumps(["agent: fbk-2"]),
                           "EDIT_RC": "0"},
                          {"state": "OPEN",
-                          "labels": [{"name": n} for n in labels]})),
+                          "labels": [{"name": n} for n in labels]}),
+         lambda env, issue_json: [l["name"] for l in issue_json["labels"]]),
     ]
     BASE = ["status: in-progress", "agent: fbk-2", "bug"]
 
-    for job_id, build in JOBS:
+    for job_id, build, read_labels in JOBS:
         block = harness.run_block(job_id)
 
-        def resolved_edits(label_names: list[str]) -> tuple[list[str], str, list[str]]:
+        def resolved_edits(label_names: list[str]
+                           ) -> tuple[list[str], str, list[str] | None, str]:
             """The `gh issue edit` calls this job makes for an issue with these labels.
 
-            Returns the fixture it used as well, so the non-vacuity check below reads
-            the labels the step was ACTUALLY handed rather than a list recomputed
-            beside the call -- a recomputed one stays green when the call is changed
-            to pass something else, which is the check going vacuous unnoticed.
+            Also returns the fixture read back out of build()'s OUTPUT, through the
+            channel this job's step reads -- never `label_names`, which is what was
+            requested rather than what the step was handed (#4305). The two differ
+            exactly when build() stops honouring its argument, which is the case the
+            non-vacuity check below has to be able to see.
             """
             env, issue_json = build(label_names)
             _rc, out, calls = harness.invoke(block, env, issue_json=issue_json)
+            fixture, why = read_fixture(read_labels, env, issue_json)
             return ([c for c in calls if c.startswith("issue edit")], out,
-                    list(label_names))
+                    fixture, why)
 
-        first, first_out, _ = resolved_edits(BASE)
+        first, first_out, _, _ = resolved_edits(BASE)
         if len(first) != 1:
             # Not a FAIL: the job no longer resolves to exactly one `gh issue edit`,
             # so there is nothing here to call racing or safe. What it does mean is
@@ -305,7 +342,7 @@ else:
             continue
 
         added = harness.flag_values(first[0], "add-label")
-        second, second_out, second_fixture = resolved_edits(BASE + added)
+        second, second_out, second_fixture, fixture_why = resolved_edits(BASE + added)
         removed = harness.flag_values(second[0], "remove-label") if len(second) == 1 else []
         both = sorted(set(added) & set(removed))
         check(
@@ -316,13 +353,26 @@ else:
             f"adds {added!r} and removes {removed!r}; both: {both!r}\n"
             f"resolved: {second!r}\n{second_out}",
         )
-        check(
-            f"...and {job_id} was measured against an issue carrying every label it "
-            "adds, so the check above cannot pass vacuously -- an unfiltered jq "
-            "would have put each of them in the removals",
-            set(added) <= set(second_fixture),
-            f"added={added!r} was not all present in the fixture={second_fixture!r}",
-        )
+        if second_fixture is None:
+            cannot_measure(
+                f"...and {job_id} was measured against an issue carrying every "
+                "label it adds",
+                "could not read the fixture back through the channel the step "
+                f"reads: {fixture_why}",
+            )
+        else:
+            # A fixture carrying MORE than was asked for still satisfies this --
+            # the claim is that every added label was present, not that the
+            # fixture is exactly BASE + added. A fixture carrying LESS is the
+            # vacuity this guards against.
+            check(
+                f"...and {job_id} was measured against an issue carrying every label it "
+                "adds, so the check above cannot pass vacuously -- an unfiltered jq "
+                "would have put each of them in the removals",
+                set(added) <= set(second_fixture),
+                f"added={added!r} was not all present in the fixture the step was "
+                f"handed={second_fixture!r}",
+            )
 
 # The replacement recipe must actually be in the file agents read, in the safe
 # order. Absence here would mean the guard passes over a file that no longer
