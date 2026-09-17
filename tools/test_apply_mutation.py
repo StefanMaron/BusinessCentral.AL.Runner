@@ -114,6 +114,40 @@ check("a missing anchor file is REFUSED, not NOT-APPLIED", rc3 == am.REFUSED, f"
 check("...because a mistyped path and a stale anchor have opposite remedies",
       rc3 != am.NOT_APPLIED, str(rc3))
 
+print("anchor == replacement is a refusal, and strands nothing")
+# Review of #4321 found this arm stayed GREEN under mutation: it was reachable (a paste error
+# makes anchor and replacement the same) and it returned NOT_APPLIED *after* writing a backup,
+# so it stranded one -- and the next apply then refused with "a mutation is still applied" when
+# none ever was. Both halves are pinned here.
+d3 = tempfile.mkdtemp()
+p3 = os.path.join(d3, "s.cs")
+with open(p3, "w", encoding="utf-8") as fh:
+    fh.write("line ONE\nline TWO\n")
+same = os.path.join(d3, "same")
+with open(same, "w", encoding="utf-8") as fh:
+    fh.write("line ONE")
+with redirect_stdout(io.StringIO()) as out:
+    rc4 = am.main(["apply-mutation.py", p3, "--anchor-file", same, "--replacement-file", same])
+msg4 = out.getvalue()
+check("anchor identical to replacement is REFUSED, not NOT-APPLIED", rc4 == am.REFUSED, f"{rc4}: {msg4}")
+check("...because nothing was measured — no mutation was expressed at all",
+      "byte-identical" in msg4, msg4)
+check("...and NO backup is left stranded", not os.path.exists(p3 + am.SUFFIX),
+      "a .mutation-backup survived a run that mutated nothing")
+with redirect_stdout(io.StringIO()) as out:
+    fa, fr = os.path.join(d3, "a"), os.path.join(d3, "r")
+    for f, s in ((fa, "line TWO"), (fr, "line TWO-MUT")):
+        with open(f, "w", encoding="utf-8") as fh:
+            fh.write(s)
+    rc5 = am.main(["apply-mutation.py", p3, "--anchor-file", fa, "--replacement-file", fr])
+check("...so a REAL mutation afterwards still applies", rc5 == am.APPLIED, f"{rc5}: {out.getvalue()}")
+
+print("a usage error is a refusal, not a measured answer")
+with redirect_stdout(io.StringIO()) as out:
+    rc6 = am.main(["apply-mutation.py", p3])
+check("--anchor-file omitted is REFUSED", rc6 == am.REFUSED, f"{rc6}: {out.getvalue()}")
+check("...not NOT-APPLIED, which would read as 'your anchor is stale'", rc6 != am.NOT_APPLIED, str(rc6))
+
 print("the three codes are distinct")
 check("APPLIED, NOT-APPLIED and AMBIGUOUS are three different values",
       len({am.APPLIED, am.NOT_APPLIED, am.AMBIGUOUS}) == 3,
