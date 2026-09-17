@@ -2427,8 +2427,8 @@ SDKS_8_ONLY = "8.0.425 [/usr/share/dotnet/sdk]\n"
 SDKS_MIXED = "8.0.130 [/usr/share/dotnet/sdk]\n10.0.111 [/usr/share/dotnet/sdk]\n"
 
 
-def _tc(status, sdks=(), error="", solution="AlRunner.slnx", floor=9):
-    return {"status": status, "sdks": list(sdks), "error": error,
+def _tc(status, sdks=(), error="", solution="AlRunner.slnx", floor=9, off_path=""):
+    return {"status": status, "sdks": list(sdks), "error": error, "off_path_dir": off_path,
             "solution": solution, "floor": floor}
 
 
@@ -2482,6 +2482,188 @@ check("toolchain: ...and says the measurement failed rather than that no SDK exi
       "dotnet --list-sdks exited 134" in
       (_unreadable.summary + " " + " ".join(_unreadable.detail)),
       f"summary={_unreadable.summary!r}")
+
+
+# ------------------------------------- an SDK installed but off PATH (#4299)
+# The FIFTH outcome, and the false RED on the other side of #4200's false green.
+# `shutil.which("dotnet")` answers "is dotnet resolvable on PATH right now"; the
+# absent branch reported it as "there is no SDK here". On the box #4299 was filed
+# from those diverged -- 8.0.425 and 9.0.318 under /root/.dotnet, reported as
+# "no .NET SDK on this box", with the whole suite building after one export.
+#
+# Every check below is against a synthetic reading or an injected filesystem, for
+# the reason the rest of this section is: a suite that reads the live box cannot
+# fail on the box the defect was filed from.
+_off = pf.classify_toolchain(_tc("ok", sdks=["8.0.425", "9.0.318"], off_path="/root/.dotnet"))
+check("toolchain: an SDK that is installed but off PATH is NOT the absent FAIL",
+      _off.status != "FAIL" and _off.summary != _none.summary,
+      f"got {_off.status}: {_off.summary!r}")
+check("toolchain: ...it WARNs, so the cycle continues at exit 0 and --strict still sees it",
+      _off.status == "WARN", f"got {_off.status}")
+check("toolchain: ...and names the directory the SDK was found in",
+      "/root/.dotnet" in _off.summary, f"summary={_off.summary!r}")
+check("toolchain: ...and the remedy is the export, not an install",
+      _off.remedy == 'export PATH="/root/.dotnet:$PATH"' and "download" not in _off.remedy,
+      f"remedy={_off.remedy!r}")
+check("toolchain: ...and says the SDK is present, contradicting the message it used to print",
+      "not 'no SDK is installed'" in " ".join(_off.detail).replace('"', "'"),
+      f"detail={_off.detail!r}")
+check("toolchain: ...and says the caller's own shell is still unrepaired",
+      any("exits 127" in d for d in _off.detail), f"detail={_off.detail!r}")
+check("toolchain: ...and is a DIFFERENT verdict from an SDK that is on PATH",
+      (_off.status, _off.summary) != (_ok.status, _ok.summary),
+      f"off={_off.summary!r} on-path={_ok.summary!r}")
+
+# The constraint that must not be traded away. An off-PATH SDK is excused for
+# being off PATH and for nothing else: if it cannot build the solution, or could
+# not be asked, finding it on disk must not launder the FAIL into a WARN.
+_off_old = pf.classify_toolchain(_tc("too-old", sdks=["8.0.425"], off_path="/root/.dotnet"))
+check("toolchain: an off-PATH SDK that is TOO OLD is still a FAIL, not laundered to WARN",
+      _off_old.status == "FAIL", f"got {_off_old.status}: {_off_old.summary!r}")
+_off_bad = pf.classify_toolchain(_tc("unreadable", error="exited 134", off_path="/root/.dotnet"))
+check("toolchain: an off-PATH SDK that could not be READ is still a FAIL",
+      _off_bad.status == "FAIL", f"got {_off_bad.status}: {_off_bad.summary!r}")
+check("toolchain: no SDK anywhere is still #4200's FAIL, with the probe in place",
+      pf.classify_toolchain(_tc("absent", off_path="")).status == "FAIL",
+      "the false-green #4200 closed must stay closed")
+
+# ------------------------------------------------------ the probe itself
+_FAKE = {"/opt/dotnet/dotnet", "/usr/share/dotnet/dotnet"}
+check("toolchain: the probe returns the directory, not the binary, of the first hit",
+      pf.find_offpath_dotnet(["/nope", "/usr/share/dotnet", "/opt/dotnet"],
+                             is_exec=_FAKE.__contains__) == "/usr/share/dotnet",
+      repr(pf.find_offpath_dotnet(["/nope", "/usr/share/dotnet", "/opt/dotnet"],
+                                  is_exec=_FAKE.__contains__)))
+check("toolchain: the probe answers None when no candidate holds a dotnet",
+      pf.find_offpath_dotnet(["/nope", "/also-nope"], is_exec=_FAKE.__contains__) is None,
+      "a probe that invents a hit would report an SDK the box does not have")
+check("toolchain: the probe is ORDERED -- an earlier candidate wins over a later one",
+      pf.find_offpath_dotnet(["/opt/dotnet", "/usr/share/dotnet"],
+                             is_exec=_FAKE.__contains__) == "/opt/dotnet",
+      "PATH-like precedence, so the reported path is the one the export would use")
+_dirs = pf.dotnet_probe_dirs({"DOTNET_ROOT": "/custom/sdk"})
+check("toolchain: $DOTNET_ROOT is probed, and probed FIRST",
+      _dirs and _dirs[0] == "/custom/sdk", repr(_dirs[:3]))
+check("toolchain: ~ is expanded, so the list holds paths os.path can test",
+      all(not d.startswith("~") for d in pf.dotnet_probe_dirs({})),
+      repr(pf.dotnet_probe_dirs({})))
+check("toolchain: the probe list has no duplicates",
+      len(pf.dotnet_probe_dirs({"DOTNET_ROOT": "/usr/share/dotnet"})) ==
+      len(set(pf.dotnet_probe_dirs({"DOTNET_ROOT": "/usr/share/dotnet"}))),
+      repr(pf.dotnet_probe_dirs({"DOTNET_ROOT": "/usr/share/dotnet"})))
+check("toolchain: Windows' ProgramFiles is probed as <ProgramFiles>/dotnet, not as itself",
+      os.path.join("C:/PF", "dotnet") in pf.dotnet_probe_dirs({"ProgramFiles": "C:/PF"}),
+      repr(pf.dotnet_probe_dirs({"ProgramFiles": "C:/PF"})[:3]))
+
+# ------------------------------------------------------ the PATH repair
+check("toolchain: the repair puts the directory at the FRONT of PATH",
+      pf.path_with_dir_prepended("/root/.dotnet", "/usr/bin:/bin")
+      == "/root/.dotnet" + os.pathsep + "/usr/bin" + os.pathsep + "/bin",
+      repr(pf.path_with_dir_prepended("/root/.dotnet", "/usr/bin:/bin")))
+check("toolchain: the repair is idempotent, so repeated probing cannot grow PATH",
+      pf.path_with_dir_prepended("/root/.dotnet",
+                                 pf.path_with_dir_prepended("/root/.dotnet", "/usr/bin"))
+      == pf.path_with_dir_prepended("/root/.dotnet", "/usr/bin"),
+      "a repair that degrades with each call is not a repair")
+check("toolchain: an entry already further down PATH is MOVED, not duplicated",
+      pf.path_with_dir_prepended("/opt/dotnet", "/usr/bin:/opt/dotnet:/bin")
+      == "/opt/dotnet" + os.pathsep + "/usr/bin" + os.pathsep + "/bin",
+      repr(pf.path_with_dir_prepended("/opt/dotnet", "/usr/bin:/opt/dotnet:/bin")))
+check("toolchain: the repair survives an empty PATH rather than emitting a bare separator",
+      pf.path_with_dir_prepended("/root/.dotnet", "") == "/root/.dotnet",
+      repr(pf.path_with_dir_prepended("/root/.dotnet", "")))
+
+# ------------------------------- the WIRING, which the pure checks above cannot see
+# The trap tdd.md names: every check above would pass with `find_offpath_dotnet`
+# defined and never called from toolchain_reading. These drive the real function
+# with `which`, the probe and `run` replaced, so nothing here reads the live box.
+def _wired(which_hit, probe_hit, sdk_text="9.0.318 [/fake/sdk]\n"):
+    saved = (pf.shutil.which, pf.find_offpath_dotnet, pf.run, os.environ.get("PATH", ""),
+             pf._DOTNET_PATH_REPAIR)
+    pf._DOTNET_PATH_REPAIR = ""
+    try:
+        pf.shutil.which = lambda _n: which_hit
+        pf.find_offpath_dotnet = lambda _d, **_k: probe_hit
+        pf.run = lambda *_a, **_k: pf.Ran(rc=0, out=sdk_text, err="")
+        reading = pf.toolchain_reading(".")
+        return reading, os.environ.get("PATH", "")
+    finally:
+        pf.shutil.which, pf.find_offpath_dotnet, pf.run = saved[0], saved[1], saved[2]
+        os.environ["PATH"] = saved[3]
+        pf._DOTNET_PATH_REPAIR = saved[4]
+
+
+_r_off, _path_after = _wired(None, "/fake/dotnet")
+check("toolchain: toolchain_reading ASKS the probe when dotnet is not on PATH",
+      _r_off.get("off_path_dir") == "/fake/dotnet" and _r_off.get("status") == "ok",
+      repr(_r_off))
+check("toolchain: ...and REPAIRS this process's PATH, so every check below measures a real box",
+      _path_after.split(os.pathsep)[0] == "/fake/dotnet", repr(_path_after[:80]))
+_r_none, _path_none = _wired(None, None)
+check("toolchain: ...and reports absent, unrepaired, when the probe finds nothing either",
+      _r_none.get("status") == "absent" and "/fake/dotnet" not in _path_none,
+      repr(_r_none))
+_r_on, _ = _wired("/usr/bin/dotnet", "/must-not-be-used")
+check("toolchain: a dotnet already on PATH is never attributed to the probe",
+      _r_on.get("off_path_dir") == "" and _r_on.get("status") == "ok", repr(_r_on))
+
+
+# The warm-run half (local-test-scope.md). The repair makes `which` succeed, so a
+# SECOND reading in one process would answer PASS and erase both the finding and
+# the export the caller's shell still needs. Measured before the fix: WARN, PASS,
+# PASS. CI cannot catch this -- it starts a fresh process for every run.
+def _wired_twice():
+    saved = (pf.shutil.which, pf.find_offpath_dotnet, pf.run, os.environ.get("PATH", ""),
+             pf._DOTNET_PATH_REPAIR)
+    pf._DOTNET_PATH_REPAIR = ""
+    try:
+        resolvable = []
+        pf.shutil.which = lambda _n: ("/fake/dotnet/dotnet" if resolvable else None)
+        pf.find_offpath_dotnet = lambda _d, **_k: "/fake/dotnet"
+        pf.run = lambda *_a, **_k: pf.Ran(rc=0, out="9.0.318 [/fake/sdk]\n", err="")
+        first = pf.toolchain_reading(".")
+        resolvable.append(True)          # ...because the first call repaired PATH
+        second = pf.toolchain_reading(".")
+        return first, second, os.environ.get("PATH", "")
+    finally:
+        pf.shutil.which, pf.find_offpath_dotnet, pf.run = saved[0], saved[1], saved[2]
+        os.environ["PATH"] = saved[3]
+        pf._DOTNET_PATH_REPAIR = saved[4]
+
+
+_w1, _w2, _wpath = _wired_twice()
+check("toolchain: a SECOND reading still reports the SDK as off PATH, warm as well as cold",
+      _w2.get("off_path_dir") == "/fake/dotnet" == _w1.get("off_path_dir"),
+      f"cold={_w1.get('off_path_dir')!r} warm={_w2.get('off_path_dir')!r}")
+check("toolchain: ...and so the WARM verdict is still the WARN, not a PASS",
+      pf.classify_toolchain(_w2).status == "WARN",
+      f"got {pf.classify_toolchain(_w2).status}: the repair would erase its own finding")
+check("toolchain: ...and PATH gained the directory once, not once per call",
+      _wpath.split(os.pathsep).count("/fake/dotnet") == 1, repr(_wpath[:80]))
+
+# The sibling state (#4299, question 3). classify_artifacts is handed "can this
+# box run `dotnet run`", and main() must answer it from the READING, not from the
+# verdict letter -- keyed on the letter, an off-PATH WARN would make the artifacts
+# check tell a box whose SDK works that it has none.
+_art_off = pf.classify_artifacts({"status": "absent", "broken": [], "total": 0,
+                                  "error": "", "root": ""}, toolchain_ok=True)
+_art_no_sdk = pf.classify_artifacts({"status": "absent", "broken": [], "total": 0,
+                                     "error": "", "root": ""}, toolchain_ok=False)
+check("toolchain: an off-PATH SDK PERMITS provisioning -- it is a WARN, and it works",
+      pf.toolchain_permits_provisioning(_off) is True,
+      "keyed on status == 'PASS' this answers False, and the note below goes wrong")
+check("toolchain: ...as does an SDK on PATH, unchanged",
+      pf.toolchain_permits_provisioning(_ok) is True, "no regression on the PASS path")
+check("toolchain: ...while no SDK, a too-old SDK and an unreadable one all do NOT",
+      not any(pf.toolchain_permits_provisioning(r) for r in (_none, _too_old, _off_bad)),
+      "a box that cannot run `dotnet run` must not be told a run will provision for it")
+check("toolchain: ...and the two artifacts notes really do differ, so that choice matters",
+      _art_off.detail != _art_no_sdk.detail,
+      "if they were identical this check would be asserting nothing")
+check("toolchain: ...with the false-statement note reaching only the box that has no SDK",
+      any("has no" in d for d in _art_no_sdk.detail)
+      and not any("has no" in d for d in _art_off.detail),
+      f"ok={_art_off.detail!r} not-ok={_art_no_sdk.detail!r}")
 
 # ------------------------------------------------ parsing `dotnet --list-sdks`
 check("toolchain: a single 8.0 SDK parses to exactly that version",
