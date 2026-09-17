@@ -330,6 +330,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **spawn:** derive the 300s cohort's timeout messages from the cap applied
 - **guard:** execute the label-hygiene step, don't match its filter's spelling
 - **ci:** assert the resolved matrix, not the REQ source text
 - **guard:** read spawn-timeout literals with Roslyn, so raw strings stop lying
