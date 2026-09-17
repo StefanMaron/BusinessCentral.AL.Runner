@@ -522,16 +522,22 @@ public sealed class BuiltInCancelIsNotADiscardTests
             public void Invoke() { _fixture._pendingNewRow = false; }
         }
 
-        // Ordinary C# over a type nested in the host. Every one of these names Row as a generic
-        // argument of the DECLARING type, which is what the generic-argument refusal must NOT
-        // read: doing so refused all three and FLOOR 5 turned that into a RED on correct code.
+        // Ordinary C# over types nested in the host, covering BOTH narrowings — each line is
+        // refused if one of them is dropped, and the two are not interchangeable:
+        //   * Row is a plain data type, so the DISPATCHABLE test suppresses it. It reaches the
+        //     refusal through `Enumerable.Count<Row>`, a generic METHOD, which dropping the
+        //     declaring-type branch does not touch.
+        //   * ThroughInterface has a virtual body, so the dispatchable test does NOT suppress it.
+        //     It reaches the refusal only through `List<ThroughInterface>`'s DECLARING type, so it
+        //     is refused exactly when that branch is (wrongly) read.
         private sealed class Row { public int Value; }
 
         internal int EntryWithGenericLocals()
         {
             var rows = new List<Row> { new Row { Value = 1 } };
             var same = EqualityComparer<Row>.Default.Equals(rows[0], rows[0]);
-            return rows.Count + Enumerable.Count(rows) + (same ? 1 : 0);
+            var impls = new List<ThroughInterface> { new ThroughInterface(this) };
+            return rows.Count + Enumerable.Count(rows) + (same ? 1 : 0) + impls.Count;
         }
 
         // Deliberately unreachable from every entry point below, so the ldftn that builds the
