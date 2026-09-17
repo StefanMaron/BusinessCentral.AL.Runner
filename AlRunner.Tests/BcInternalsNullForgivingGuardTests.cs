@@ -315,9 +315,9 @@ public sealed class BcInternalsNullForgivingGuardTests
 
     private static int CountConverted(string src)
     {
-        // Blank() first, for the same reason Scan() does: a comment or string literal naming
+        // CSharpSource.CodeOnly() first, for the same reason Scan() does: a comment or string literal naming
         // a converted site is prose about the population, not a member of it.
-        var code = Blank(src);
+        var code = CSharpSource.CodeOnly(src);
         var n = 0;
         foreach (var name in new[] { "BcShape.Property(", "BcShape.Method(", "BcShape.Field(",
                                      "BcShape.Constructor(", "BcShape.NestedType(" })
@@ -386,7 +386,7 @@ public sealed class BcInternalsNullForgivingGuardTests
     /// </summary>
     private static IEnumerable<Site> Scan(string file, string src)
     {
-        var code = Blank(src);
+        var code = CSharpSource.CodeOnly(src);
         for (var i = 0; i < code.Length; i++)
         {
             if (code[i] != '.') continue;
@@ -404,7 +404,7 @@ public sealed class BcInternalsNullForgivingGuardTests
             if (k >= code.Length || code[k] != '!') continue;
             if (k + 1 < code.Length && code[k + 1] == '=') continue;   // `!=`
 
-            // The argument text comes from the ORIGINAL source: Blank() erases string bodies,
+            // The argument text comes from the ORIGINAL source: CSharpSource.CodeOnly() erases string bodies,
             // and the member name is exactly what lives inside them.
             var args = src.Substring(j + 1, close - j - 1);
             yield return new Site(file, code.Take(i).Count(c => c == '\n') + 1, kind,
@@ -483,74 +483,5 @@ public sealed class BcInternalsNullForgivingGuardTests
             else if (s[i] == ')') { depth--; if (depth == 0) return i; }
         }
         return -1;
-    }
-
-    /// <summary>
-    /// <paramref name="src"/> with comment and string-literal CONTENT replaced by spaces,
-    /// same length so every offset still lines up with the original.
-    /// </summary>
-    private static string Blank(string src)
-    {
-        var b = new StringBuilder(src);
-        var i = 0;
-        while (i < src.Length)
-        {
-            if (src[i] == '/' && i + 1 < src.Length && src[i + 1] == '/')
-            {
-                while (i < src.Length && src[i] != '\n') { b[i] = ' '; i++; }
-                continue;
-            }
-            if (src[i] == '/' && i + 1 < src.Length && src[i + 1] == '*')
-            {
-                while (i < src.Length && !(src[i] == '*' && i + 1 < src.Length && src[i + 1] == '/'))
-                { if (src[i] != '\n') b[i] = ' '; i++; }
-                if (i < src.Length) { b[i] = ' '; b[i + 1] = ' '; i += 2; }
-                continue;
-            }
-            if (src[i] == '"' && i >= 2 && src[i - 1] == '"' && src[i - 2] == '"')
-            {
-                // raw string literal `"""…"""` — blank through the closing fence
-                var endFence = src.IndexOf("\"\"\"", i + 1, StringComparison.Ordinal);
-                var stop = endFence < 0 ? src.Length : endFence + 3;
-                for (; i < stop; i++) if (src[i] != '\n') b[i] = ' ';
-                continue;
-            }
-            if (src[i] == '@' && i + 1 < src.Length && src[i + 1] == '"')
-            {
-                b[i] = ' '; i += 2;
-                while (i < src.Length)
-                {
-                    if (src[i] == '"' && i + 1 < src.Length && src[i + 1] == '"') { b[i] = ' '; b[i + 1] = ' '; i += 2; continue; }
-                    if (src[i] == '"') { b[i] = ' '; i++; break; }
-                    if (src[i] != '\n') b[i] = ' ';
-                    i++;
-                }
-                continue;
-            }
-            if (src[i] == '"')
-            {
-                i++;
-                while (i < src.Length && src[i] != '"')
-                {
-                    if (src[i] == '\\') { b[i] = ' '; i++; if (i < src.Length) { b[i] = ' '; i++; } continue; }
-                    b[i] = ' '; i++;
-                }
-                if (i < src.Length) i++;
-                continue;
-            }
-            if (src[i] == '\'')
-            {
-                i++;
-                while (i < src.Length && src[i] != '\'')
-                {
-                    if (src[i] == '\\') { b[i] = ' '; i++; if (i < src.Length) { b[i] = ' '; i++; } continue; }
-                    b[i] = ' '; i++;
-                }
-                if (i < src.Length) i++;
-                continue;
-            }
-            i++;
-        }
-        return b.ToString();
     }
 }

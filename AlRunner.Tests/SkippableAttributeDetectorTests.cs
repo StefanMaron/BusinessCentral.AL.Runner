@@ -365,29 +365,38 @@ public sealed class SkippableAttributeDetectorTests
             """;
 
         Assert.Equal(source.Split('\n').Length,
-                     TestArtifactsGateTests.StripCommentsPreservingLines(source).Split('\n').Length);
+                     CSharpSource.CodeOnly(source).Split('\n').Length);
     }
 
     /// <summary>Code on the same line as a comment survives; the comment does not.</summary>
     [Fact]
     public void StrippingKeepsTheCodeAndDropsTheComment()
     {
-        var stripped = TestArtifactsGateTests.StripCommentsPreservingLines("var a = 1; // set a to one");
+        var stripped = CSharpSource.CodeOnly("var a = 1; // set a to one");
 
         Assert.Contains("var a = 1;", stripped, StringComparison.Ordinal);
         Assert.DoesNotContain("set a to one", stripped, StringComparison.Ordinal);
     }
 
-    /// <summary>An unterminated block comment swallows the rest of the file, as the compiler
-    /// would have it -- and must not throw, because a guard that throws on a file it cannot
-    /// parse reports nothing about every other file in the suite.</summary>
+    /// <summary>
+    /// An unterminated block comment REFUSES rather than swallowing the rest of the file (#3527).
+    ///
+    /// <para>This test used to assert the opposite, on the reasoning that "a guard that throws on
+    /// a file it cannot parse reports nothing about every other file in the suite". The first
+    /// half is true and the conclusion does not follow: swallowing reports zero violations for
+    /// that file — the guard's SUCCESS state — while a refusal naming the file reports strictly
+    /// more, and is diagnosable. That is the trade guards-need-a-third-state.md settles the other
+    /// way round.</para>
+    ///
+    /// <para>The cost is measured, not assumed:
+    /// <c>CSharpSourceTests.EverySourceFileThisAssemblyScans_Parses</c> reads every .cs file under
+    /// both source roots and asserts none refuses, so this path does not fire on the real tree.</para>
+    /// </summary>
     [Fact]
-    public void AnUnterminatedBlockCommentSwallowsTheRestWithoutThrowing()
+    public void AnUnterminatedBlockComment_Refuses()
     {
-        var stripped = TestArtifactsGateTests.StripCommentsPreservingLines("var a = 1;\n/* open\nSkip.Always(\"x\");\n");
-
-        Assert.Contains("var a = 1;", stripped, StringComparison.Ordinal);
-        Assert.DoesNotContain("Skip.Always", stripped, StringComparison.Ordinal);
+        Assert.Throws<CSharpSourceRefusedException>(
+            () => CSharpSource.CodeOnly("var a = 1;\n/* open\nSkip.Always(\"x\");\n"));
     }
 
     // ---- the sibling guard in the same file, which had the same blind spot -------

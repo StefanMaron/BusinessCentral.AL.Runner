@@ -13,7 +13,6 @@
 // classes, and the same hole makes EnumMetadataRegistryCollectionGuardTests (#4199) list
 // itself, exempted only by the literal "[Collection(" inside its own failure message.
 using System.Reflection;
-using System.Text;
 using System.Text.RegularExpressions;
 using Xunit;
 
@@ -49,68 +48,6 @@ public sealed class TestDataStaticsCollectionGuardTests
         @"(?m)^(?:public|internal)\s+(?:sealed\s+)?(?:abstract\s+)?(?:static\s+)?(?:partial\s+)?class\s+(\w+)",
         RegexOptions.Compiled);
 
-    /// <summary>Comments, and every string literal form this assembly uses, replaced by a
-    /// space. See the file header for why the literals matter.</summary>
-    internal static string StripCommentsAndLiterals(string text)
-    {
-        var sb = new StringBuilder(text.Length);
-        for (var i = 0; i < text.Length;)
-        {
-            if (text[i] == '/' && i + 1 < text.Length && text[i + 1] == '/')
-            {
-                var nl = text.IndexOf('\n', i);
-                if (nl < 0) break;
-                i = nl;                       // keep the newline: line structure is load-bearing
-                continue;
-            }
-            if (text[i] == '/' && i + 1 < text.Length && text[i + 1] == '*')
-            {
-                var end = text.IndexOf("*/", i + 2, StringComparison.Ordinal);
-                i = end < 0 ? text.Length : end + 2;
-                sb.Append(' ');
-                continue;
-            }
-            if (text.AsSpan(i).StartsWith("\"\"\""))          // raw string
-            {
-                var end = text.IndexOf("\"\"\"", i + 3, StringComparison.Ordinal);
-                i = end < 0 ? text.Length : end + 3;
-                sb.Append(' ');
-                continue;
-            }
-            if (text[i] == '@' && i + 1 < text.Length && text[i + 1] == '"')   // verbatim
-            {
-                i += 2;
-                while (i < text.Length)
-                {
-                    if (text[i] == '"')
-                    {
-                        if (i + 1 < text.Length && text[i + 1] == '"') { i += 2; continue; }
-                        i++; break;
-                    }
-                    i++;
-                }
-                sb.Append(' ');
-                continue;
-            }
-            if (text[i] == '"')                                                // regular
-            {
-                i++;
-                while (i < text.Length)
-                {
-                    if (text[i] == '\\') { i += 2; continue; }
-                    if (text[i] == '"') { i++; break; }
-                    if (text[i] == '\n') break;
-                    i++;
-                }
-                sb.Append(' ');
-                continue;
-            }
-            sb.Append(text[i]);
-            i++;
-        }
-        return sb.ToString();
-    }
-
     private sealed record Mutator(string ClassName, string File);
 
     /// <summary>Every top-level class whose own body mutates one of the statics, with whether
@@ -122,7 +59,7 @@ public sealed class TestDataStaticsCollectionGuardTests
         var found = new List<Mutator>();
         foreach (var path in Directory.EnumerateFiles(TestsDir, "*.cs", SearchOption.AllDirectories))
         {
-            var code = StripCommentsAndLiterals(File.ReadAllText(path));
+            var code = CSharpSource.ReadCodeOnly(path);
             if (!Mutation.IsMatch(code)) continue;
             var decls = TopLevelClass.Matches(code);
             for (var i = 0; i < decls.Count; i++)
@@ -206,7 +143,7 @@ public sealed class TestDataStaticsCollectionGuardTests
             var seen = new List<string>();
             foreach (var path in Directory.EnumerateFiles(TestsDir, "*.cs", SearchOption.AllDirectories))
             {
-                var code = StripCommentsAndLiterals(File.ReadAllText(path));
+                var code = CSharpSource.ReadCodeOnly(path);
                 if (pattern.IsMatch(code)) seen.Add(Path.GetFileNameWithoutExtension(path));
             }
             yield return (name, seen);
@@ -257,7 +194,7 @@ public sealed class TestDataStaticsCollectionGuardTests
 
         foreach (var (statik, seen) in census)
         {
-            // The census, not a claim about the other three: under a broken StripCommentsAndLiterals
+            // The census, not a claim about the other three: under a broken CSharpSource.CodeOnly
             // ALL four read as 0, and saying "the other three are still seen" would then be false
             // in exactly the case hardest to diagnose (found in review). Printing the counts lets
             // the reader tell a one-static failure (2; 3; 0; 3) from a blind probe (0; 0; 0; 0).
