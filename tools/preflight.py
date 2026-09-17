@@ -2765,6 +2765,84 @@ def global_json_floor(text: str) -> Optional[int]:
         return None
 
 
+# --------------------------------------------------------------------------
+# An SDK that is installed but off PATH (#4299)
+# --------------------------------------------------------------------------
+# `shutil.which("dotnet")` answers "is dotnet resolvable on PATH right now"; the
+# absent branch below reported it as "there is no SDK here". Those are different
+# propositions, and the box #4299 was filed from diverged: 8.0.425 and 9.0.318 at
+# /root/.dotnet, FAIL, and a whole suite that builds after one `export`.
+#
+# Trap: this list is a fallback for PATH, never a substitute. An entry added here
+# must be a location an INSTALLER writes, not a place an SDK might be copied to --
+# a probe that finds something PATH deliberately excludes would report a version
+# the caller's own shell will never run.
+DOTNET_PROBE_ENV = ("DOTNET_ROOT", "DOTNET_INSTALL_DIR", "ProgramFiles", "ProgramW6432")
+DOTNET_PROBE_DIRS = (
+    "~/.dotnet",                    # dotnet-install.sh default
+    "/root/.dotnet",                # ...the same, when HOME is not /root (#4299's box)
+    "/usr/share/dotnet",            # apt / dnf
+    "/usr/lib/dotnet",              # Debian's newer layout
+    "/usr/local/share/dotnet",      # macOS installer
+    "/opt/dotnet",
+    "~/.local/share/mise/shims",    # mise, which shims rather than installs to a root
+)
+
+
+def dotnet_probe_dirs(env: Optional[dict] = None) -> list[str]:
+    """Where to look for a dotnet an empty PATH is hiding, in order, de-duplicated.
+
+    `ProgramFiles`/`ProgramW6432` get a `dotnet` suffix because Windows installs
+    under them rather than into them; the POSIX roots are install roots already.
+    """
+    env = os.environ if env is None else env
+    out: list[str] = []
+    for var in DOTNET_PROBE_ENV:
+        raw = (env.get(var) or "").strip()
+        if not raw:
+            continue
+        out.append(os.path.join(raw, "dotnet") if var.startswith("Program") else raw)
+    out.extend(DOTNET_PROBE_DIRS)
+    seen, uniq = set(), []
+    for d in out:
+        expanded = os.path.expanduser(d)
+        if expanded not in seen:
+            seen.add(expanded)
+            uniq.append(expanded)
+    return uniq
+
+
+def _is_executable(path: str) -> bool:
+    return os.path.isfile(path) and os.access(path, os.X_OK)
+
+
+def find_offpath_dotnet(dirs: Iterable[str], is_exec=_is_executable) -> Optional[str]:
+    """The first directory in `dirs` holding an executable `dotnet`, or None.
+
+    `is_exec` is injectable so the tests measure the search order against a named
+    filesystem rather than against whatever the box running them happens to have --
+    a suite that reads the live box cannot fail on the box the defect was filed from.
+    """
+    names = ("dotnet.exe", "dotnet") if os.name == "nt" else ("dotnet",)
+    for d in dirs:
+        for name in names:
+            if is_exec(os.path.join(d, name)):
+                return d
+    return None
+
+
+def path_with_dir_prepended(directory: str, path: str) -> str:
+    """`directory` at the front of a PATH string, idempotently.
+
+    Idempotent because preflight may probe more than once in one process, and a
+    PATH that grows a duplicate entry per call is a repair that degrades.
+    """
+    entries = [p for p in (path or "").split(os.pathsep) if p]
+    if entries and entries[0] == directory:
+        return path
+    return os.pathsep.join([directory] + [p for p in entries if p != directory])
+
+
 def toolchain_reading(repo: str) -> dict:
     """Ask the box what SDKs it has. Never raises.
 
@@ -2787,9 +2865,18 @@ def toolchain_reading(repo: str) -> dict:
         floor_source = "the built-in fallback (no global.json)"
 
     base = {"sdks": [], "error": "", "solution": SOLUTION_FILE,
-            "floor": floor, "floor_source": floor_source}
+            "floor": floor, "floor_source": floor_source, "off_path_dir": ""}
     if not shutil.which("dotnet"):
-        return {**base, "status": "absent"}
+        found = find_offpath_dotnet(dotnet_probe_dirs())
+        if not found:
+            return {**base, "status": "absent"}
+        # Repair, not only report (#4299). Every check below shells out and run()
+        # inherits os.environ, so leaving PATH alone would trade one false FAIL for
+        # a false reading from each of them. It reaches THIS process only -- no child
+        # can write its caller's shell -- which is why the verdict still WARNs with
+        # the export line instead of passing silently.
+        os.environ["PATH"] = path_with_dir_prepended(found, os.environ.get("PATH", ""))
+        base = {**base, "off_path_dir": found}
     r = run(["dotnet", "--list-sdks"], timeout=60)
     if r.timed_out:
         return {**base, "status": "unreadable", "error": "`dotnet --list-sdks` timed out"}
@@ -2828,6 +2915,28 @@ def classify_toolchain(reading: dict) -> CheckResult:
     install = (f"Install a .NET {floor}+ SDK (the projects still target net8.0; "
                f"the floor is the SOLUTION format).\n"
                f"  https://dotnet.microsoft.com/download/dotnet/{floor}.0")
+
+    off_path = reading.get("off_path_dir") or ""
+
+    if status == "ok" and off_path:
+        # The fourth state, and the one #4200 had no branch for: an SDK that is
+        # installed, new enough, and simply not on PATH. Not FAIL -- this box builds
+        # and its measurements are trustworthy. Not PASS -- preflight repaired its
+        # own process and cannot reach the caller's shell, so one action is still
+        # outstanding and --strict should still see it (#4299).
+        return CheckResult(
+            name="toolchain", status="WARN",
+            summary=f"SDK {max(sdks, key=lambda v: _sdk_sort_key(v))} is installed at "
+                    f"{off_path} but is NOT on PATH; installed: {listed}",
+            command="command -v dotnet || ls " + off_path,
+            detail=["This is not 'no SDK is installed' -- the SDK is present and can build "
+                    f"{solution}. `dotnet` is simply unresolvable on PATH.",
+                    "preflight prepended that directory to its OWN environment, so every "
+                    "check below this one measured a working toolchain. Your shell is "
+                    "unchanged: a child process cannot write its caller's environment.",
+                    "So `dotnet build` in this session still exits 127 until the export "
+                    "below is run."],
+            remedy=f'export PATH="{off_path}:$PATH"', data=reading)
 
     if status == "ok":
         return CheckResult(
@@ -2897,6 +3006,16 @@ def _sdk_sort_key(version: str) -> tuple:
 
 def check_toolchain(repo: str) -> CheckResult:
     return classify_toolchain(toolchain_reading(repo))
+
+
+def toolchain_permits_provisioning(result: CheckResult) -> bool:
+    """Can this box run `dotnet run`? Answered from the READING, not the letter.
+
+    Keyed on `status == "PASS"`, an off-PATH SDK -- a WARN since #4299 -- would make
+    the artifacts check below tell a box whose SDK works that it has none: a false
+    statement at a PASS exit code. The reading's own `ok` is the proposition.
+    """
+    return (result.data or {}).get("status") == "ok"
 
 
 ARTIFACT_CLOSURE_FILES = engine_closure_files()
@@ -3469,7 +3588,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         check_push(repo, identity),
         check_commit(repo),
         check_github(slug),
-        check_artifacts(toolchain_ok=toolchain.status == "PASS"),
+        check_artifacts(toolchain_ok=toolchain_permits_provisioning(toolchain)),
         check_corpus_checkout(repo),
         check_corpus(repo, args.with_corpus),
     ]
