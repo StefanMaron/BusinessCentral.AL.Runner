@@ -188,10 +188,15 @@ public static class AlCoverageSourceMap
             //
             // Keeping the spelling is insurance, not a demonstrated requirement: measured in
             // review, dropping the execution-roots loop entirely still produces byte-identical
-            // filenames even for a bundle passed as a relative path, because every execution
-            // bundle is already registered as a parsed source dir and `relativeTo` normalises
-            // either way. An earlier version of this comment claimed the relative spelling
-            // depended on it; that claim did not survive the mutation.
+            // filenames even for a bundle passed as a relative path -- on a flat bundle AND on a
+            // conventional src/ + test/ layout, because SafeDirectoryScan.Files recurses.
+            //
+            // Why it currently cannot matter is a fact about the CALLER, not about this method:
+            // Program.cs registers the compile's own folders as source dirs and says that is the
+            // only such call (search AddSourceDirs / SuiteRegistrationDirs there). The loop stays
+            // so this method does not silently depend on that staying true -- a green mutation is
+            // not an argument for deleting a contract. An earlier version of this comment claimed
+            // the relative spelling depended on the loop; that claim did not survive the mutation.
             string key;
             try { key = Path.GetFullPath(root).Replace('\\', '/').TrimEnd('/'); }
             catch (ArgumentException) { key = root; }
