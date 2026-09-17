@@ -21,9 +21,10 @@
 //   prevent — and the test goes green having quietly done without the surface. With the
 //   "not-yet-implemented" anchor the refusal tears through instead.
 //
-//   The issue named one example and it is real: RecordPatches.QueryProjection.cs's
-//   "query-join-synthesized-subquery-not-implemented" says not-implemented in words, but does
-//   not START with "not-yet-implemented", so it was swallowed.
+//   #2966 named a real example of that: a reason saying not-implemented in words that did not
+//   START with "not-yet-implemented", and so was swallowed. It has since been re-spelled and
+//   moved to a BcShapeGapException, and a sweep for #3460 found NO reason in AlRunner/ in that
+//   gap today. The trap remains reachable, because the classification is still a prefix test.
 //
 // ── CLASSIFYING ALL 77 SITES BEFORE TOUCHING ANY ─────────────────────────────────────────
 //   The issue counted 96 across 23 files. Re-measured on main after #2894 and #2950 landed,

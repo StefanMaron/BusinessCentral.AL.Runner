@@ -25,8 +25,9 @@
 //
 // so under a scope.md anchor an AL [TryFunction] trapped a runner gap into `false`, and the
 // test went green having quietly done without the surface. The nine query sites are the case
-// the issue named: "query-join-synthesized-subquery-not-implemented" says not-implemented in
-// words yet does not START with the token the trap reads.
+// #2966 named: a reason saying not-implemented in words that does not START with the token the
+// trap reads. That reason has since been re-spelled and now raises a BcShapeGapException, so
+// the example is gone while the trap it illustrates is not — see #3460.
 //
 // THE CONTROL ARMS
 // ----------------
