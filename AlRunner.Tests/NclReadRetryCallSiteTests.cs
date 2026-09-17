@@ -85,13 +85,16 @@ public sealed class NclReadRetryCallSiteTests
             $"expected at least 2 bare reads inside GetAssemblyNameWithRetry, found {helperCalls} — "
             + "the anchor stopped matching, so this test measured almost nothing");
 
+        // readsChecked counts the reads OUTSIDE the helper — the population this test is about.
+        // It is legitimately zero when every read is routed, which is the fixed state, so there
+        // is no floor to assert on it; reporting it in the failure message is what it is for.
         Assert.True(offenders.Count == 0,
             "these Ncl.dll reads use the bare AssemblyName.GetAssemblyName, which has no retry. "
             + "The file is atomically replaced by a concurrently-starting runner's Cecil rewrite, "
             + "so the read can land inside the rename and throw (#2489, #4264). Route them through "
             + "BcArtifacts.GetAssemblyNameWithRetry:"
-            + System.Environment.NewLine + string.Join(System.Environment.NewLine, offenders));
+            + System.Environment.NewLine + string.Join(System.Environment.NewLine, offenders)
+            + System.Environment.NewLine + $"({readsChecked} read(s) outside the helper were checked)");
 
-        _ = readsChecked;
     }
 }
