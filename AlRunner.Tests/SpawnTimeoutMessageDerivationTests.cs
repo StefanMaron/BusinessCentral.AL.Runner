@@ -57,6 +57,17 @@ public sealed class SpawnTimeoutMessageDerivationTests
         "TestPageNewRecordValidationTests.cs",
         "TestPageOnNewRecordCountTests.cs",
         "TestPageSubscriberRefusalTests.cs",
+
+        // The 120s-cap cohort of #4275, batched on the same principle as the 180s one above.
+        "ActiveSessionTableTests.cs",
+        "AggregatePermissionSetVirtualTableTests.cs",
+        "CodeunitMetadataVirtualTableTests.cs",
+        "EngineMajorConsistencyTests.cs",
+        "FeatureKeyVirtualTableTests.cs",
+        "PermissionMetadataPopulationTests.cs",
+        "SessionVirtualTableTests.cs",
+        "TimeZoneVirtualTableTests.cs",
+        "WindowsLanguageVirtualTableTests.cs",
     };
 
     [Fact]
@@ -116,7 +127,12 @@ public sealed class SpawnTimeoutMessageDerivationTests
                 // constant and carries no literal but the 1000. Caught while writing #4275: the
                 // edit that adds the placeholder and the edit that adds the $ are separate, so
                 // this is the state 11 of 13 files were briefly in.
-                foreach (var seg in Regex.Matches(stmt, @"(?<prefix>\$?)""(?<body>(?:[^""\\]|\\.)*)""")
+                // [$@]* rather than \$?: a verbatim interpolated string is spelled BOTH ways
+                // ($@"..." and @$"..."), and \$? matches empty before the @ of the first, so the
+                // prefix reads as absent and a correctly-interpolated string is flagged. Found in
+                // review of #4278; no in-scope statement uses that spelling today, so it was a
+                // latent false POSITIVE — loud rather than silent, but still wrong.
+                foreach (var seg in Regex.Matches(stmt, @"(?<prefix>[$@]*)""(?<body>(?:[^""\\]|\\.)*)""")
                              .Where(sm => sm.Groups["body"].Value.Contains("SpawnTimeoutMs", StringComparison.Ordinal))
                              .Where(sm => sm.Groups["prefix"].Value.Length == 0))
                     offenders.Add($"{file}: {{SpawnTimeoutMs}} sits in a string with no $ prefix, so the braces "
@@ -125,9 +141,9 @@ public sealed class SpawnTimeoutMessageDerivationTests
         }
 
         // The population must be non-empty, or an empty scan reads as a pass. #3488 lists five
-        // sites, #3487 contributes one, and #4275's 180s cohort thirteen.
-        Assert.True(sitesChecked >= 19,
-            $"expected at least 19 spawn-timeout throw sites across {Files.Length} files, found {sitesChecked} — "
+        // sites, #3487 contributes one, and #4275's 180s and 120s cohorts thirteen and nine.
+        Assert.True(sitesChecked >= 28,
+            $"expected at least 28 spawn-timeout throw sites across {Files.Length} files, found {sitesChecked} — "
             + "the anchor stopped matching, so this test measured almost nothing");
 
         Assert.True(offenders.Count == 0,

@@ -29,6 +29,13 @@ namespace AlRunner.Tests;
 
 public sealed class PermissionMetadataPopulationTests
 {
+    /// <summary>The cap this file's subprocess spawns actually apply, and the single source of
+    /// the figure their timeout messages report (#4275). Derived rather than repeated: a literal
+    /// in the message is invisible while it happens to match, and wrong the moment the cap moves.
+    /// Measured for real on #3435 — a cap squeezed to 3s still threw "did not exit within 120s".
+    /// Same shape as BcVersionDefaultDocumentationTests.SpawnTimeoutMs (#3487).</summary>
+    private const int SpawnTimeoutMs = 120_000;
+
     private static readonly string RepoRoot = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
 
@@ -128,10 +135,10 @@ public sealed class PermissionMetadataPopulationTests
         proc.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (errSb) errSb.AppendLine(e.Data); };
         proc.BeginOutputReadLine();
         proc.BeginErrorReadLine();
-        if (!proc.WaitForExit(120_000))
+        if (!proc.WaitForExit(SpawnTimeoutMs))
         {
             try { proc.Kill(entireProcessTree: true); } catch { }
-            throw new TimeoutException("al-runner did not exit within 120s.");
+            throw new TimeoutException($"al-runner did not exit within {SpawnTimeoutMs / 1000}s.");
         }
         // WaitForExit(int) does not wait for the async read callbacks to drain; only the
         // parameterless overload does. Without this the diagnostic line can still be in flight
