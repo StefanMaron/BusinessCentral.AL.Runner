@@ -370,14 +370,19 @@ internal partial class LiveNavTestPage
         /// <c>Card.OpenNew(); Card.Name.SetValue(…); Card.OK().Invoke();</c> and then reads
         /// the table — so a row persisted only at Close/Dispose does not exist yet for every
         /// assertion in between, and the test reports a missing row rather than a late one.
-        /// Cancel is the other half: it must abandon the row, not merely record a result.
+        ///
+        /// <para>Cancel is NOT the other half: it is not a discard. BC keeps a pending change
+        /// and this method must leave the buffer alone so the page's ordinary close flush
+        /// (<c>Dispose</c>) writes it — corpus codeunit 60535 "PCN Tests"
+        /// (StefanMaron/BusinessCentral.AL.Language.Tests#378), green on all eight cloud legs;
+        /// issue #4295. Trap: the discard this replaced reached only the HOST's own buffer, so
+        /// parts kept flushing at Dispose and three neighbouring arms stayed green while the
+        /// host field silently reverted.</para>
         /// </summary>
         public void Invoke()
         {
             _page._invokedFormResult = _result;
-            if (_result is FormResult.Cancel or FormResult.LookupCancel)
-                _page.DiscardPendingNewRow();
-            else
+            if (_result is not (FormResult.Cancel or FormResult.LookupCancel))
             {
                 // OK also saves a row typed into a PART, whoever opened the page, and saves it
                 // BEFORE the host row: a header OnModify reads the part's lines. AttemptHandler-

@@ -213,14 +213,13 @@ internal partial class LiveNavTestPage
         }
     }
 
-    /// <summary>
-    /// Abandon an in-progress new row without writing it — how Cancel closes. Clears the
-    /// captured insert position for the same reason FlushPendingNewRow's discard branch does:
-    /// the bounds belong to the row being thrown away, and an armed capture would be consumed
-    /// by whatever inserts next.
-    /// </summary>
-    internal void DiscardPendingNewRow()
-    { _pendingNewRow = false; _pendingModify = false; _onNewRowLine = false; _newRowLineReturnPosition = null; _insertPositionCaptured = false; _newRowLineRecordStarted = false; }
+    // There is deliberately no DiscardPendingNewRow here. It existed to abandon the buffer when
+    // a built-in Cancel was invoked, and BC has no such rollback: Cancel closes the page and
+    // reports Cancel, and that is all it does. Corpus codeunit 60535 "PCN Tests"
+    // (StefanMaron/BusinessCentral.AL.Language.Tests#378) measured the host field surviving
+    // Cancel on all eight cloud legs, and codeunit 60844 "TRT Tests" measured the same for a
+    // dirty new row reached through Close(). Issue #4295; the guard is
+    // AlRunner.Tests/BuiltInCancelIsNotADiscardTests.cs.
 
     // BC's AutoSplitKey increment. Named NavForm.AutoSplitKeyIncrement there, and the same
     // literal in the client's AutoKeyGenerator — both sides of the wire agree on 10000.
