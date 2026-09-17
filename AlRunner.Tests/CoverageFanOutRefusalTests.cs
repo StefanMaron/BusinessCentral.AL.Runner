@@ -16,13 +16,80 @@
 // out, and coverage is correct in that run. That placement is load-bearing and is what the
 // source-shape test below pins.
 
+using System.Diagnostics;
+using System.Text;
 using System.Text.RegularExpressions;
+using AlRunner.Infrastructure;
 using Xunit;
 
 namespace AlRunner.Tests;
 
 public sealed class CoverageFanOutRefusalTests
 {
+    private static readonly string RepoRoot = Path.GetFullPath(
+        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
+
+    /// <summary>
+    /// The one test that can see whether the refusal REFUSES. The three source-shape tests below
+    /// read Program.cs as text, so all three stay green when `return 2;` is deleted from the
+    /// guard — measured in review: the mutated binary printed the refusal, fanned out anyway,
+    /// and wrote a cobertura.xml holding one shard, which is #3966 reproduced underneath a
+    /// warning claiming the run was refused.
+    ///
+    /// Same shape as CountOutTests.CountOutUnderJobs_IsRefusedLoudly_..., the precedent this
+    /// refusal copies, and for the same reason: the load-bearing assertion is that NO coverage
+    /// document is left behind. Exit 2 alone would not catch a refusal that still ran.
+    /// </summary>
+    [SkippableFact]
+    public void CoverageUnderJobs_IsRefusedLoudly_AndLeavesNoCoberturaBehind()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var scratch = TestScratch.Dir("al-runner-coverage-jobs");
+        var coveragePath = Path.Combine(scratch, "cobertura.xml");
+        var fixtures = Path.Combine(RepoRoot, "AlRunner.Tests", "Fixtures");
+
+        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
+        args.Append(TestBuildConfig.BcVersionArg);
+        // Two bundles, because one bundle never fans out however large --jobs is.
+        args.Append($" \"{Path.Combine(fixtures, "RecordTriggerXRec")}\"");
+        args.Append($" \"{Path.Combine(fixtures, "CoverageBranch")}\"");
+        args.Append(" --jobs 2");
+        args.Append(" --coverage");
+        args.Append($" --coverage-out \"{coveragePath}\"");
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = "dotnet", Arguments = args.ToString(),
+            RedirectStandardOutput = true, RedirectStandardError = true,
+            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
+        };
+        var sb = new StringBuilder();
+        var p = Process.Start(psi)!;
+        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
+        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
+        p.BeginOutputReadLine();
+        p.BeginErrorReadLine();
+        if (!p.WaitForExit(600_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
+        p.WaitForExit();
+        string output;
+        lock (sb) output = sb.ToString();
+
+        Assert.True(p.ExitCode == 2,
+            $"expected exit 2 (bad invocation), got {p.ExitCode}.\n{output}");
+        Assert.Contains("--coverage", output);
+        Assert.Contains("--jobs", output);
+        // The message must say what would otherwise happen, not merely that it is refused.
+        Assert.Contains("shard", output);
+
+        // THE assertion. A refusal that printed its message and then fanned out anyway leaves a
+        // one-shard document here, which is the defect wearing the fix's clothes.
+        Assert.False(File.Exists(coveragePath),
+            "a refused invocation must leave no coverage document behind — a one-shard one would "
+            + $"be #3966 reproduced under a message claiming the run was refused.\n{output}");
+    }
+
     private static string ProgramSource()
     {
         var dir = AppContext.BaseDirectory;
