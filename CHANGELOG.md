@@ -326,6 +326,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **guards:** one Roslyn C# source reader, replacing four handwritten lexers
 - **spawn:** derive the 180s cohort's timeout messages from the cap applied
 - **testpage:** check the skeleton-session precondition instead of asserting it
 - **spawn:** derive the five spawn timeout messages from the cap actually applied
