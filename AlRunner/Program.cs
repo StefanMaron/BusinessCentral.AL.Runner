@@ -1688,6 +1688,32 @@ if (jobs > 1 && bundles.Count > 1 && !watchMode && !serverMode && !dapMode)
             + "the whole run. Run the counted invocation without --jobs, or drop --count-out.");
         return 2;
     }
+    // #3966: the same shape as --count-out above, and the same answer. ParallelFanOut forwards
+    // --coverage-out to every worker unchanged (it is in ValueTakingFlags, not rewritten the way
+    // --output-junit is), AlCoverageReport.WriteCobertura creates/truncates that path, and the
+    // parent merges nothing. So the last worker to finish silently becomes "the run's" coverage
+    // -- measured on the report: two apps, two workers, both tests pass, parent exits 0, and the
+    // Cobertura holds ONE app's file. Without the reporter's deliberate delay in app b the writes
+    // overlap instead and the run exits 2 on a sharing violation, so the defect is a hard error
+    // or silent data loss depending on timing.
+    //
+    // Keyed on coverageEnabled rather than on an explicit --coverage-out: the DEFAULT output path
+    // collides in exactly the same way, so refusing only the explicit form would leave the
+    // commoner invocation silently lossy.
+    //
+    // Aggregating is the other defensible answer, as it was for --count-out. Not taken for the
+    // same reason: the merge would live in the parent, which has no coverage of its own, and a
+    // Cobertura merge that gets line-hit attribution wrong would produce a confident wrong report
+    // rather than a missing one -- strictly worse than the refusal. #3966 names both routes as
+    // acceptable and this is the one with a precedent beside it.
+    if (coverageEnabled)
+    {
+        Console.Error.WriteLine(
+            "--coverage cannot be combined with a --jobs fan-out: each shard would write its own "
+            + "coverage to the same path and the last shard to finish would be recorded as the "
+            + "whole run. Run the covered invocation without --jobs, or drop --coverage.");
+        return 2;
+    }
     // #3130: each worker sees only its shard's bundles, so no single process can decide that
     // every declared suite produced a bucket; forwarding the flag would fail every shard.
     if (countBaselineRequireAll)
