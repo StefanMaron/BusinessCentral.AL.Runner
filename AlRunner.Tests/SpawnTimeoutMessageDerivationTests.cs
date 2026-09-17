@@ -57,6 +57,17 @@ public sealed class SpawnTimeoutMessageDerivationTests
         "TestPageNewRecordValidationTests.cs",
         "TestPageOnNewRecordCountTests.cs",
         "TestPageSubscriberRefusalTests.cs",
+
+        // The 120s-cap cohort of #4275, batched on the same principle as the 180s one above.
+        "ActiveSessionTableTests.cs",
+        "AggregatePermissionSetVirtualTableTests.cs",
+        "CodeunitMetadataVirtualTableTests.cs",
+        "EngineMajorConsistencyTests.cs",
+        "FeatureKeyVirtualTableTests.cs",
+        "PermissionMetadataPopulationTests.cs",
+        "SessionVirtualTableTests.cs",
+        "TimeZoneVirtualTableTests.cs",
+        "WindowsLanguageVirtualTableTests.cs",
     };
 
     [Fact]
@@ -116,24 +127,69 @@ public sealed class SpawnTimeoutMessageDerivationTests
                 // constant and carries no literal but the 1000. Caught while writing #4275: the
                 // edit that adds the placeholder and the edit that adds the $ are separate, so
                 // this is the state 11 of 13 files were briefly in.
-                foreach (var seg in Regex.Matches(stmt, @"(?<prefix>\$?)""(?<body>(?:[^""\\]|\\.)*)""")
-                             .Where(sm => sm.Groups["body"].Value.Contains("SpawnTimeoutMs", StringComparison.Ordinal))
-                             .Where(sm => sm.Groups["prefix"].Value.Length == 0))
+                // The test is "does this string interpolate", so the predicate asks for the $ —
+                // it is NOT a test of prefix length. A verbatim interpolated string is spelled
+                // both $@"..." and @$"...", so the character class has to admit the @; but with
+                // a length test, admitting it also exonerates @"...{SpawnTimeoutMs}...", which
+                // is verbatim and NOT interpolated and prints the braces. Widening the class
+                // while keeping Length == 0 trades a loud false positive for a SILENT false
+                // negative, the worse direction (caught in review of the first attempt at this
+                // fix, #4286). The [Theory] below pins all five spellings.
+                foreach (var seg in NonInterpolatedSpawnTimeoutStrings(stmt))
                     offenders.Add($"{file}: {{SpawnTimeoutMs}} sits in a string with no $ prefix, so the braces "
                                   + $"are printed rather than the cap: {Compact(seg.Value)}");
             }
         }
 
         // The population must be non-empty, or an empty scan reads as a pass. #3488 lists five
-        // sites, #3487 contributes one, and #4275's 180s cohort thirteen.
-        Assert.True(sitesChecked >= 19,
-            $"expected at least 19 spawn-timeout throw sites across {Files.Length} files, found {sitesChecked} — "
+        // sites, #3487 contributes one, and #4275's 180s and 120s cohorts thirteen and nine.
+        Assert.True(sitesChecked >= 28,
+            $"expected at least 28 spawn-timeout throw sites across {Files.Length} files, found {sitesChecked} — "
             + "the anchor stopped matching, so this test measured almost nothing");
 
         Assert.True(offenders.Count == 0,
             "a spawn timeout message must DERIVE its figure from the cap actually applied (#3488):"
             + Environment.NewLine + string.Join(Environment.NewLine, offenders));
     }
+
+    /// <summary>
+    /// The five string spellings a timeout message can carry, and whether each one actually
+    /// INTERPOLATES. Two of them print the braces verbatim and must be reported; three are real
+    /// interpolations and must not be.
+    ///
+    /// Pinned as data rather than left to the scan, because both wrong answers have shipped in
+    /// this file: `\$?` flagged the correct `$@"..."` (a loud false positive, #4278), and
+    /// `[$@]*` with a LENGTH test exonerated the broken `@"..."` (a silent false negative, found
+    /// in review of #4286). One is noisy and one is the defect this whole guard exists to catch,
+    /// so a change that fixes either direction has to be checked against the other.
+    /// </summary>
+    [Theory]
+    [InlineData("\"within {SpawnTimeoutMs / 1000}s.\"", true)]      // bare: prints the braces
+    [InlineData("@\"within {SpawnTimeoutMs / 1000}s.\"", true)]     // verbatim, NOT interpolated
+    [InlineData("$\"within {SpawnTimeoutMs / 1000}s.\"", false)]    // interpolated
+    [InlineData("$@\"within {SpawnTimeoutMs / 1000}s.\"", false)]   // verbatim interpolated
+    [InlineData("@$\"within {SpawnTimeoutMs / 1000}s.\"", false)]   // the other spelling of it
+    public void TheScan_ReportsExactlyTheSpellingsThatDoNotInterpolate(string literal, bool expectedReported)
+    {
+        var stmt = "throw new TimeoutException(" + literal + ");";
+
+        var reported = NonInterpolatedSpawnTimeoutStrings(stmt).Any();
+
+        Assert.Equal(expectedReported, reported);
+    }
+
+    /// <summary>
+    /// The string literals in <paramref name="stmt"/> that mention SpawnTimeoutMs and do NOT
+    /// interpolate — so the braces reach the reader verbatim.
+    ///
+    /// One implementation, read by the scan above AND by the [Theory] below. An earlier revision
+    /// had the [Theory] carry its own copy of this expression, which made it unable to fail: a
+    /// mutation of the scan left all five cases green (a pin must read production code).
+    /// </summary>
+    private static IEnumerable<Match> NonInterpolatedSpawnTimeoutStrings(string stmt) =>
+        Regex.Matches(stmt, @"(?<prefix>[$@]*)""(?<body>(?:[^""\\]|\\.)*)""")
+            .Where(sm => sm.Groups["body"].Value.Contains("SpawnTimeoutMs", StringComparison.Ordinal))
+            .Where(sm => !sm.Groups["prefix"].Value.Contains('$'));
 
     private static string Compact(string s) =>
         Regex.Replace(s, @"\s+", " ").Trim() is { Length: > 120 } long_ ? long_[..120] + "…" : Regex.Replace(s, @"\s+", " ").Trim();

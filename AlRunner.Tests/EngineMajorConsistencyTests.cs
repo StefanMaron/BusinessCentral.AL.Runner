@@ -19,6 +19,13 @@ namespace AlRunner.Tests;
 
 public sealed class EngineMajorConsistencyTests
 {
+    /// <summary>The cap this file's subprocess spawns actually apply, and the single source of
+    /// the figure their timeout messages report (#4275). Derived rather than repeated: a literal
+    /// in the message is invisible while it happens to match, and wrong the moment the cap moves.
+    /// Measured for real on #3435 — a cap squeezed to 3s still threw "did not exit within 120s".
+    /// Same shape as BcVersionDefaultDocumentationTests.SpawnTimeoutMs (#3487).</summary>
+    private const int SpawnTimeoutMs = 120_000;
+
     private const string MismatchPrefix = "BC engine/version mismatch:";
 
     private static readonly string RepoRoot = Path.GetFullPath(
@@ -170,10 +177,10 @@ public sealed class EngineMajorConsistencyTests
         p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
         p.BeginOutputReadLine();
         p.BeginErrorReadLine();
-        if (!p.WaitForExit(120_000))
+        if (!p.WaitForExit(SpawnTimeoutMs))
         {
             try { p.Kill(entireProcessTree: true); } catch { }
-            throw new TimeoutException($"al-runner {runnerArgs} did not exit within 120s.");
+            throw new TimeoutException($"al-runner {runnerArgs} did not exit within {SpawnTimeoutMs / 1000}s.");
         }
         p.WaitForExit();
         lock (sb) return (p.ExitCode, sb.ToString());
