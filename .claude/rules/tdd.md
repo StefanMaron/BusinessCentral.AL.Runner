@@ -28,9 +28,11 @@ are claiming to prove:
    silently no-ops leaves the test **green**, which reads as "my test is broken" when it means
    "I changed nothing".
 
-   `tools/apply-mutation.py` does this for you and refuses three ways — **0 applied, 1 not
-   applied, 2 ambiguous** — because a mutator that detects zero matches but not two has the same
-   hole one step along. Prefer it to `sed`:
+   `tools/apply-mutation.py` does this for you. Three codes are measured answers — **0 applied,
+   1 not applied, 2 ambiguous** — because a mutator that detects zero matches but not two has the
+   same hole one step along; **3 refused** is the fourth, and means nothing was measured at all
+   (a live backup, an I/O failure, bad usage). Never read a 3 as either a caught mutation or a
+   stale anchor. Prefer it to `sed`:
 
    ```bash
    tools/apply-mutation.py <file> --anchor-file a.txt --replacement-file b.txt   # exit 0 = applied
