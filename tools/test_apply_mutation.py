@@ -153,6 +153,147 @@ with redirect_stdout(io.StringIO()) as out:
 check("--anchor-file omitted is REFUSED", rc6 == am.REFUSED, f"{rc6}: {out.getvalue()}")
 check("...not NOT-APPLIED, which would read as 'your anchor is stale'", rc6 != am.NOT_APPLIED, str(rc6))
 
+print("every refusal arm is asserted, not merely produced")
+# Rounds 2-4 of review each found the same shape: a property pinned on the member it was shown
+# and left bare on the rest of its population. Round 4 found it on the REFUSAL arms -- REFUSED
+# was asserted on four and merely produced on six, so three reachable arms could be flipped to a
+# measured answer with the suite fully green. The worst was a failed --restore reporting success
+# while the file stayed mutated, which is round 1's defect by another door.
+#
+# So this block enumerates the population rather than three more instances. A refusal arm added
+# later and left unasserted fails the LAST check here, which is the point: an omission becomes a
+# failure instead of a silence.
+def _fresh():
+    d = tempfile.mkdtemp()
+    f = os.path.join(d, "s.cs")
+    with open(f, "w", encoding="utf-8") as fh:
+        fh.write("line ONE\nline TWO\n")
+    a, r = os.path.join(d, "a"), os.path.join(d, "r")
+    for path, s in ((a, "line ONE"), (r, "line ONE-MUT")):
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(s)
+    return d, f, a, r
+
+_unreadable_ok = os.name != "nt" and os.geteuid() != 0
+
+def _argparse_failure():
+    d, f, a, r = _fresh()
+    with redirect_stdout(io.StringIO()):
+        return am.main(["apply-mutation.py", f, "--no-such-flag"])
+
+def _unreadable_target():
+    d, f, a, r = _fresh()
+    os.chmod(f, 0o000)
+    try:
+        with redirect_stdout(io.StringIO()):
+            return am.main(["apply-mutation.py", f, "--anchor-file", a, "--replacement-file", r])
+    finally:
+        os.chmod(f, 0o644)
+
+def _unreadable_backup():
+    d, f, a, r = _fresh()
+    with redirect_stdout(io.StringIO()):
+        am.main(["apply-mutation.py", f, "--anchor-file", a, "--replacement-file", r])
+    os.chmod(f + am.SUFFIX, 0o000)
+    try:
+        with redirect_stdout(io.StringIO()) as out:
+            rc = am.main(["apply-mutation.py", f, "--restore"])
+        with open(f, encoding="utf-8") as fh:
+            still_mutated = "ONE-MUT" in fh.read()
+        # A failed restore must not report success WHILE leaving the file mutated.
+        check("...and a failed --restore does not report success over a still-mutated file",
+              not (rc == am.APPLIED and still_mutated), f"rc={rc} mutated={still_mutated}")
+        return rc
+    finally:
+        os.chmod(f + am.SUFFIX, 0o644)
+
+REFUSAL_ARMS = [
+    ("a missing anchor file", lambda: _missing_anchor()),
+    ("a live backup blocking a second apply", lambda: _live_backup()),
+    ("--restore with no backup", lambda: _no_backup()),
+    ("anchor identical to replacement", lambda: _identical()),
+    ("--anchor-file omitted", lambda: _omitted()),
+    ("an unparseable command line", _argparse_failure),
+]
+if _unreadable_ok:
+    REFUSAL_ARMS += [
+        ("an unreadable target file", _unreadable_target),
+        ("an unreadable backup during --restore", _unreadable_backup),
+        ("an unwritable target file", lambda: _unwritable_target()),
+        ("a backup that cannot be rolled back", lambda: _unrollbackable()),
+    ]
+
+def _unwritable_target():
+    # Read succeeds, write fails: a read-only file in a writable directory.
+    d, f, a, r = _fresh()
+    os.chmod(f, 0o444)
+    try:
+        with redirect_stdout(io.StringIO()):
+            return am.main(["apply-mutation.py", f, "--anchor-file", a, "--replacement-file", r])
+    finally:
+        os.chmod(f, 0o644)
+
+def _unrollbackable():
+    # The byte-identical path rolls the backup back; make that os.replace fail by taking away
+    # the DIRECTORY's write permission after the backup exists.
+    d, f, a, r = _fresh()
+    with redirect_stdout(io.StringIO()):
+        rc_pre = am.main(["apply-mutation.py", f, "--anchor-file", a, "--replacement-file", a])
+    # anchor == replacement, so this already refused and rolled back; assert that much here and
+    # exercise the failing-rollback arm with the directory locked.
+    with open(f, "w", encoding="utf-8") as fh:
+        fh.write("line ONE\nline TWO\n")
+    os.chmod(d, 0o555)
+    try:
+        with redirect_stdout(io.StringIO()):
+            return am.main(["apply-mutation.py", f, "--anchor-file", a, "--replacement-file", a])
+    finally:
+        os.chmod(d, 0o755)
+
+def _missing_anchor():
+    d, f, a, r = _fresh()
+    with redirect_stdout(io.StringIO()):
+        return am.main(["apply-mutation.py", f, "--anchor-file", os.path.join(d, "nope"),
+                        "--replacement-file", r])
+
+def _live_backup():
+    d, f, a, r = _fresh()
+    with redirect_stdout(io.StringIO()):
+        am.main(["apply-mutation.py", f, "--anchor-file", a, "--replacement-file", r])
+    a2 = os.path.join(d, "a2")
+    with open(a2, "w", encoding="utf-8") as fh:
+        fh.write("line TWO")
+    with redirect_stdout(io.StringIO()):
+        return am.main(["apply-mutation.py", f, "--anchor-file", a2, "--replacement-file", r])
+
+def _no_backup():
+    d, f, a, r = _fresh()
+    with redirect_stdout(io.StringIO()):
+        return am.main(["apply-mutation.py", f, "--restore"])
+
+def _identical():
+    d, f, a, r = _fresh()
+    with redirect_stdout(io.StringIO()):
+        return am.main(["apply-mutation.py", f, "--anchor-file", a, "--replacement-file", a])
+
+def _omitted():
+    d, f, a, r = _fresh()
+    with redirect_stdout(io.StringIO()):
+        return am.main(["apply-mutation.py", f])
+
+for _name, _fn in REFUSAL_ARMS:
+    check(f"REFUSED (exit 3) for {_name}", _fn() == am.REFUSED, f"{_name} did not refuse")
+
+# The population check itself: count the REFUSED return sites in the source and require the
+# table above to cover them. A new arm added without a case here reds THIS, naming the gap.
+_src = open(os.path.join(HERE, "apply-mutation.py"), encoding="utf-8").read()
+_sites = _src.count("return REFUSED")
+_covered = len(REFUSAL_ARMS) + (0 if _unreadable_ok else 4)
+check(f"every `return REFUSED` site has a case above ({_sites} sites, {_covered} cases)",
+      _covered >= _sites,
+      f"{_sites - _covered} refusal arm(s) are produced but asserted nowhere — add a case to "
+      f"REFUSAL_ARMS rather than raising the number")
+
 print("the three codes are distinct")
 check("APPLIED, NOT-APPLIED and AMBIGUOUS are three different values",
       len({am.APPLIED, am.NOT_APPLIED, am.AMBIGUOUS}) == 3,
