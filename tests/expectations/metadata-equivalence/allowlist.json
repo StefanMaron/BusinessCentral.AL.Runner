@@ -586,12 +586,12 @@
     {
       "member": "InfopartPageDefinition.#applicationAreaField",
       "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies InfopartPageDefinition.ApplicationArea, declared in this file with the measurement.",
-      "issue": 4267
+      "issue": 4282
     },
     {
       "member": "InfopartPageDefinition.#editableField",
       "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies InfopartPageDefinition.Editable, declared in this file with the measurement.",
-      "issue": 4267
+      "issue": 4282
     },
     {
       "member": "InfopartPageDefinition.#providerIDField",
@@ -609,7 +609,7 @@
     {
       "member": "InfopartPageDefinition.#showFilterField",
       "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies InfopartPageDefinition.ShowFilter, declared in this file with the measurement.",
-      "issue": 4267
+      "issue": 4282
     },
     {
       "member": "InfopartPageDefinition.#updatePropagationField",
@@ -626,7 +626,7 @@
     {
       "member": "InfopartPageDefinition.AboutTextMLString",
       "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 21 pages declare AboutText, including on parts; EmitPartControlXml writes no AboutText. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 4267
+      "issue": 4282
     },
     {
       "member": "InfopartPageDefinition.AboutTextTranslationKey",
@@ -643,7 +643,7 @@
     {
       "member": "InfopartPageDefinition.AboutTitleMLString",
       "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 21 pages declare AboutTitle, including on parts; EmitPartControlXml writes no AboutTitle. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 4267
+      "issue": 4282
     },
     {
       "member": "InfopartPageDefinition.AboutTitleTranslationKey",
@@ -654,7 +654,7 @@
     {
       "member": "InfopartPageDefinition.ApplicationArea",
       "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 112 pages declare ApplicationArea, including on their part controls; EmitPartControlXml writes no ApplicationArea attribute. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 4267
+      "issue": 4282
     },
     {
       "member": "InfopartPageDefinition.CaptionTranslationKey",
@@ -671,7 +671,7 @@
     {
       "member": "InfopartPageDefinition.Editable",
       "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 113 pages declare Editable; EmitPartControlXml does not carry it onto the part control. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
-      "issue": 4267,
+      "issue": 4282,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
     },
@@ -704,7 +704,7 @@
     {
       "member": "InfopartPageDefinition.ShowFilter",
       "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 26 pages declare ShowFilter; EmitPartControlXml writes no ShowFilter attribute, so the part answers the type default. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 4267
+      "issue": 4282
     },
     {
       "member": "InfopartPageDefinition.UpdatePropagation",
@@ -727,7 +727,7 @@
     {
       "member": "PageDefinition.#actionContainersField.<presence>",
       "reason": "Page actions. SymbolReference.json carries an Actions array on 106 of the 235 pages measured, with their properties, so this is a datum the runner has and does not read. Reclassified from a scope boundary to a gap: EmitPageXml emits no <ActionContainers> element at all, and the values are present, typed and unambiguous in the symbol file the runner already parses for this page. Tracked on #3784. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
-      "issue": 4267
+      "issue": 4282
     },
     {
       "member": "PageDefinition.#expressionsField.<presence>",
@@ -749,7 +749,7 @@
     {
       "member": "PageDefinition.#viewContainersField.<presence>",
       "reason": "Page views. SymbolReference.json carries a Views array on 4 of the 235 pages measured, so this is a datum the runner has and does not read. Reclassified from a scope boundary to a gap: EmitPageXml emits no <ViewContainers> element at all, and the values are present, typed and unambiguous in the symbol file the runner already parses for this page. Tracked on #3784. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
-      "issue": 4267
+      "issue": 4282
     },
     {
       "member": "PageDefinition.ALNamespace",
@@ -760,7 +760,7 @@
     {
       "member": "PageDefinition.ActionContainers.<presence>",
       "reason": "Page actions. SymbolReference.json carries an Actions array on 106 of the 235 pages measured, with their properties, so this is a datum the runner has and does not read. Reclassified from a scope boundary to a gap: EmitPageXml emits no <ActionContainers> element at all, and the values are present, typed and unambiguous in the symbol file the runner already parses for this page. Tracked on #3784. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
-      "issue": 4267
+      "issue": 4282
     },
     {
       "member": "PageDefinition.CaptionML.<presence>",
@@ -771,7 +771,7 @@
     {
       "member": "PageDefinition.CaptionMLString",
       "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 185 pages declare Caption and the runner writes CaptionML only for those, while BC's emitter states a caption on 196 -- so the gap is both the unread property and the cases where BC derives one the symbol file does not spell out. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 4267
+      "issue": 4282
     },
     {
       "member": "PageDefinition.CaptionTranslationKey",
@@ -793,7 +793,7 @@
     {
       "member": "PageDefinition.Microsoft.Dynamics.Nav.Types.Metadata.IMetaPageDefinition.ActionContainers.<presence>",
       "reason": "Page actions. SymbolReference.json carries an Actions array on 106 of the 235 pages measured, with their properties, so this is a datum the runner has and does not read. Reclassified from a scope boundary to a gap: EmitPageXml emits no <ActionContainers> element at all, and the values are present, typed and unambiguous in the symbol file the runner already parses for this page. Tracked on #3784. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
-      "issue": 4267
+      "issue": 4282
     },
     {
       "member": "PageDefinition.Microsoft.Dynamics.Nav.Types.Metadata.IMetaPageDefinition.Expressions.<presence>",
@@ -815,7 +815,7 @@
     {
       "member": "PageDefinition.Microsoft.Dynamics.Nav.Types.Metadata.IMetaPageDefinition.ViewContainers.<presence>",
       "reason": "Page views. SymbolReference.json carries a Views array on 4 of the 235 pages measured, so this is a datum the runner has and does not read. Reclassified from a scope boundary to a gap: EmitPageXml emits no <ViewContainers> element at all, and the values are present, typed and unambiguous in the symbol file the runner already parses for this page. Tracked on #3784. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
-      "issue": 4267
+      "issue": 4282
     },
     {
       "member": "PageDefinition.Triggers.<presence>",
@@ -826,7 +826,7 @@
     {
       "member": "PageDefinition.ViewContainers.<presence>",
       "reason": "Page views. SymbolReference.json carries a Views array on 4 of the 235 pages measured, so this is a datum the runner has and does not read. Reclassified from a scope boundary to a gap: EmitPageXml emits no <ViewContainers> element at all, and the values are present, typed and unambiguous in the symbol file the runner already parses for this page. Tracked on #3784. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
-      "issue": 4267
+      "issue": 4282
     },
     {
       "member": "PageProperties.#aPIVersionField",
@@ -844,14 +844,14 @@
     {
       "member": "PageProperties.#analysisModeEnabledField",
       "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.AnalysisModeEnabled, declared in this file with the measurement. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
-      "issue": 4267,
+      "issue": 4282,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
     },
     {
       "member": "PageProperties.#cardFormIDField",
       "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.CardFormID, declared in this file with the measurement.",
-      "issue": 4267
+      "issue": 4282
     },
     {
       "member": "PageProperties.#controlGUIDField",
@@ -862,7 +862,7 @@
     {
       "member": "PageProperties.#dataCaptionExprField",
       "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.DataCaptionExpr, declared in this file with the measurement.",
-      "issue": 4267
+      "issue": 4282
     },
     {
       "member": "PageProperties.#extensionsWithPromotedActionSyntaxField",
@@ -873,7 +873,7 @@
     {
       "member": "PageProperties.#helpLinkField",
       "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.HelpLink, declared in this file with the measurement.",
-      "issue": 4267
+      "issue": 4282
     },
     {
       "member": "PageProperties.#isPreviewField",
@@ -921,19 +921,19 @@
     {
       "member": "PageProperties.AnalysisModeEnabled",
       "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 1 page declares AnalysisModeEnabled; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
-      "issue": 4267,
+      "issue": 4282,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
     },
     {
       "member": "PageProperties.CardFormID",
       "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 9 pages declare CardPageId; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 4267
+      "issue": 4282
     },
     {
       "member": "PageProperties.CardFormIDSpecified",
       "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.CardFormID, declared in this file with the measurement.",
-      "issue": 4267
+      "issue": 4282
     },
     {
       "member": "PageProperties.ControlGUID",
@@ -944,7 +944,7 @@
     {
       "member": "PageProperties.DataCaptionExpr",
       "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 31 pages declare DataCaptionExpression; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 4267
+      "issue": 4282
     },
     {
       "member": "PageProperties.EntityCaptionTranslationKey",
@@ -967,7 +967,7 @@
     {
       "member": "PageProperties.HelpLink",
       "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 6 pages declare HelpLink and BC states a default for the rest; the runner never writes the attribute at all. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 4267
+      "issue": 4282
     },
     {
       "member": "PageProperties.InstructionalTextTranslationKey",
@@ -997,38 +997,38 @@
     {
       "member": "SourceObjectDefinition.#delayedInsertField",
       "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies SourceObjectDefinition.DelayedInsert, declared in this file with the measurement. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 2 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
-      "issue": 4267,
+      "issue": 4282,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
     },
     {
       "member": "SourceObjectDefinition.#indirectPermissionsField",
       "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies SourceObjectDefinition.IndirectPermissions, declared in this file with the measurement.",
-      "issue": 4267
+      "issue": 4282
     },
     {
       "member": "SourceObjectDefinition.#modifyAllowedField",
       "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies SourceObjectDefinition.ModifyAllowed, declared in this file with the measurement. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 2 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
-      "issue": 4267,
+      "issue": 4282,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
     },
     {
       "member": "SourceObjectDefinition.DelayedInsert",
       "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 13 pages declare DelayedInsert, with the same SourceTable-branch condition. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 2 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
-      "issue": 4267,
+      "issue": 4282,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
     },
     {
       "member": "SourceObjectDefinition.IndirectPermissions",
       "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 86 pages declare a Permissions property, which BC resolves into the SourceObject's IndirectPermissions vector; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 4267
+      "issue": 4282
     },
     {
       "member": "SourceObjectDefinition.ModifyAllowed",
       "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 89 pages declare ModifyAllowed, with the same SourceTable-branch condition as InsertAllowed. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 2 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
-      "issue": 4267,
+      "issue": 4282,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
     },
@@ -1258,7 +1258,7 @@
     {
       "member": "MetaQuery.RuntimeInfo.<presence>",
       "reason": "Measured on BC 28.1.49838.53910 over System Application's 7 queries, re-measured after #3798. The MetaRuntimeInfo BC attaches to every query; the runner's design object has none. NOT derivable the way this issue's other members were, and the reason is mechanical rather than a missing input: Types.Metadata.MetaQuery.RuntimeInfo is READ-ONLY on the design object (CanWrite=false, measured through the property directly), so the SymbolReference route cannot state it at all -- BC's own constructor builds it while parsing the document. Closing it means constructing a MetaRuntimeInfo, which is the same work the codeunit <Methods> gap needs, and it is tracked with that rather than here.",
-      "issue": 3788,
+      "issue": 4280,
       "Doc": "docs/metadata-equivalence.md#queries"
     },
     {
