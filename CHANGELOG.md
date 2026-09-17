@@ -329,6 +329,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **guard:** read spawn-timeout literals with Roslyn, so raw strings stop lying
 - **ci:** derive the verification-step population and pin every conditional one's reachability
 - **spawn:** derive the 120s cohort's messages, and fix the guard's verbatim-string blind spot
 - **guards:** one Roslyn C# source reader, replacing four handwritten lexers
