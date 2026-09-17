@@ -118,6 +118,62 @@ with redirect_stdout(io.StringIO()) as out:
 check("ENGINE-NOT-BOOTSTRAPPED prints the remedy", "tools/engine-test-bootstrap.sh" in out.getvalue(),
       out.getvalue())
 
+print("a guard that is a PROCESS, not a dotnet suite (#4314)")
+# The tools/test_*.py guards print many different summary shapes -- "all checks passed",
+# "13 passed, 0 failed", "PASS: ...", "OK: ..." -- so no second regex can read them. What they
+# DO share is an exit code, which is a stronger signal than scraped text: it is the contract the
+# guard's own author wrote, not a format that happens to be parseable.
+for code, want, label in ((0, mv.GREEN, "exit 0 is GREEN"),
+                          (1, mv.RED, "exit 1 is RED"),
+                          (3, mv.UNMEASURED, "exit 3 stays UNMEASURED")):
+    r = mv.classify_exit(code, "13 passed, 0 failed (3 file(s) carried both flag names)")
+    check(f"process guard: {label}", r.verdict == want, f"got {mv.NAMES[r.verdict]}: {r.reason}")
+
+# The 3 arm and the fallthrough BOTH answer UNMEASURED, so a verdict check cannot tell them
+# apart and deleting the 3 arm passes every test (found in review of #4317). What distinguishes
+# them is the reason an agent reads: "it refused to measure" sends you to the guard, "may have
+# crashed" sends you to the run. Pin the reason, not only the code.
+r3 = mv.classify_exit(3, "")
+check("process guard: exit 3 says the guard REFUSED, not that it may have crashed",
+      "refused to measure" in r3.reason and "crashed" not in r3.reason, r3.reason)
+
+# Exit 1 is ambiguous: an unhandled Python exception exits 1 too. A traceback in the log the
+# tool already read downgrades the RED, or a crashed guard reads as a caught mutation.
+crash = mv.classify_exit(1, "Traceback (most recent call last):\n  File \"g.py\", line 1\nRuntimeError: boom")
+check("process guard: exit 1 WITH a traceback refuses rather than claiming a catch",
+      crash.verdict == mv.UNMEASURED, f"got {mv.NAMES[crash.verdict]}: {crash.reason}")
+genuine = mv.classify_exit(1, "12 passed, 1 failed (3 file(s) carried both flag names)")
+check("process guard: ...and a genuine red without one is still RED",
+      genuine.verdict == mv.RED, f"got {mv.NAMES[genuine.verdict]}: {genuine.reason}")
+
+# ...and the half that makes the traceback check usable at all: `unittest` prints a line-start
+# traceback for EVERY ordinary assertion failure, so the traceback alone cannot separate
+# "crashed" from "caught". Three guards in this repo are unittest-based, and the first version
+# of the downgrade turned their genuine reds into refusals -- #4314's own defect on a new
+# population. A run that reached its verdict prints `Ran N tests`; one that died does not.
+unittest_red = mv.classify_exit(1, (
+    "F\n======================================================================\n"
+    "FAIL: test_x (__main__.T.test_x)\n"
+    "Traceback (most recent call last):\n"
+    '  File "/tmp/ut.py", line 3, in test_x\n'
+    "AssertionError: 1 != 2 : an ordinary caught mutation\n\n"
+    "----------------------------------------------------------------------\n"
+    "Ran 1 test in 0.000s\n\nFAILED (failures=1)"))
+check("process guard: an ordinary unittest failure is RED despite its traceback",
+      unittest_red.verdict == mv.RED, f"got {mv.NAMES[unittest_red.verdict]}: {unittest_red.reason}")
+
+# A non-zero code the tool has no meaning for must NOT be read as RED: an unhandled traceback
+# exits 1 in Python, but a guard that crashed measured nothing. Anything else refuses.
+crashed = mv.classify_exit(2, "Traceback (most recent call last):\n  ...\nValueError: boom")
+check("process guard: an unexpected exit code refuses rather than guessing",
+      crashed.verdict == mv.UNMEASURED, f"got {mv.NAMES[crashed.verdict]}: {crashed.reason}")
+
+# And the CLI reaches it, so an agent does not have to know which classifier applies.
+for code, want in ((0, 0), (1, 1), (3, 3)):
+    with redirect_stdout(io.StringIO()) as out:
+        rc = mv.main(["mutation-verdict.py", "--exit", str(code), os.devnull])
+    check(f"CLI --exit {code} answers {want}", rc == want, f"got {rc}: {out.getvalue()}")
+
 if FAILURES:
     print(f"\n{len(FAILURES)} failure(s)")
     sys.exit(1)

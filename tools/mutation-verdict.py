@@ -4,6 +4,17 @@
     dotnet test AlRunner.Tests --filter ... > run.txt 2>&1
     tools/mutation-verdict.py run.txt          # or: ... | tools/mutation-verdict.py -
 
+A `tools/test_*.py` guard is a PROCESS, not a dotnet suite. They print many different
+summary shapes -- "all checks passed", "N passed, M failed", "PASS: ...", "OK: ..." -- so no
+regex reads them all, and this tool answered UNMEASURED for every one of them (#4314). Pass
+their exit code instead; it is the contract their authors wrote:
+
+    python3 tools/test_no_racing_label_edit.py > g.txt 2>&1; rc=$?
+    tools/mutation-verdict.py --exit $rc g.txt
+
+Only 0, 1 and 3 have meanings. Anything else REFUSES rather than guessing, because a
+Python traceback also exits 1 and a guard that crashed measured nothing.
+
 A mutation check reads one number -- `Failed: N` -- and three different things
 print a non-zero one (#3957, .claude/rules/tdd.md):
 
@@ -53,6 +64,12 @@ FAILED_HEADER_RE = re.compile(r"^\s*Failed (\S.*?) \[[^\]]*\]\s*$")
 # also appears in assertion messages about compiler output, which are genuine test failures.
 BUILD_ERROR_RE = re.compile(r"^\S.*: error [A-Z]{2,}\d+: .*\[[^\]]+\.csproj\]\s*$", re.M)
 NO_MATCH = "No test matches the given testcase filter"
+# An unhandled Python exception exits 1, the same code a guard uses for "I caught it".
+TRACEBACK_RE = re.compile(r"^Traceback \(most recent call last\):$", re.M)
+# ...but `unittest` prints a line-start traceback for every ORDINARY assertion failure, so the
+# traceback alone cannot separate "crashed" from "caught". What does: a run that reached its
+# verdict prints its own summary, and one that died before judging does not.
+JUDGED_RE = re.compile(r"^Ran \d+ tests?\b", re.M)
 
 
 @dataclass
@@ -131,16 +148,65 @@ def classify(text: str) -> Result:
     return r
 
 
+def classify_exit(code: int, text: str = "") -> Result:
+    """Classify a guard that is a PROCESS rather than a `dotnet test` suite.
+
+    The `tools/test_*.py` guards print many different summary shapes — "all checks passed",
+    "13 passed, 0 failed", "PASS: …", "OK: …" — so no regex reads them all, and scraping the
+    few that happen to look parseable would answer UNMEASURED for the rest while looking like
+    it worked. (Counting them here would be a snapshot that rots as guards are added; the
+    argument does not need the number.) Their exit code is the contract their own authors wrote, and it is the same
+    contract this tool already publishes.
+
+    An exit code this tool has no meaning for REFUSES.
+
+    And exit 1 is AMBIGUOUS, which is the trap: an unhandled Python exception exits 1 too, so
+    "the guard failed its assertions" and "the guard crashed before judging anything" arrive as
+    the same number. Reading a crash as a caught mutation is the false RED `tdd.md` warns
+    about. The log is already in hand, so a traceback in it downgrades the RED to a refusal —
+    UNLESS the run also printed a summary of its own (`Ran N tests`), because `unittest` emits a
+    line-start traceback for every ordinary assertion failure. A guard that reached its verdict
+    says so; one that died before judging does not. Both halves found in review of #4317: the
+    first because an earlier revision refused on code 2 while citing a condition that produces
+    code 1, the second because the fix for that regressed three unittest-based guards.
+    """
+    if code == GREEN:
+        return Result(GREEN, reason="the guard exited 0: it passed, so the mutation was NOT caught")
+    if code == RED:
+        if TRACEBACK_RE.search(text) and not JUDGED_RE.search(text):
+            return Result(UNMEASURED,
+                          reason="the guard exited 1, but its output carries a Python traceback "
+                                 "and no run summary: it crashed rather than judged, so nothing "
+                                 "was measured")
+        return Result(RED, reason="the guard exited 1: it failed, so the mutation WAS caught")
+    if code == UNMEASURED:
+        return Result(UNMEASURED, reason="the guard exited 3: it refused to measure")
+    return Result(UNMEASURED,
+                  reason=f"the guard exited {code}, which is not one of 0/1/3 — it may have "
+                         f"crashed rather than judged")
+
+
 NAMES = {GREEN: "GREEN", RED: "RED", UNMEASURED: "UNMEASURED",
          BUILD_BROKE: "BUILD-BROKE", ENGINE_NOT_BOOTSTRAPPED: "ENGINE-NOT-BOOTSTRAPPED"}
 
 
 def main(argv: list[str]) -> int:
+    # --exit N classifies a PROCESS guard (tools/test_*.py) by its exit code, because they
+    # print many different summary shapes and no regex reads them all (#4314). The log is still
+    # read, so the printed reason can quote it, but the VERDICT comes from the code.
+    exit_code: int | None = None
+    if len(argv) >= 3 and argv[1] == "--exit":
+        try:
+            exit_code = int(argv[2])
+        except ValueError:
+            print(f"--exit wants an integer, got {argv[2]!r}")
+            return 2
+        argv = [argv[0], *argv[3:]]
     if len(argv) != 2 or argv[1] in ("-h", "--help"):
         print(__doc__)
         return 2
     text = sys.stdin.read() if argv[1] == "-" else open(argv[1], encoding="utf-8", errors="replace").read()
-    r = classify(text)
+    r = classify_exit(exit_code, text) if exit_code is not None else classify(text)
     print(f"{NAMES[r.verdict]}: {r.reason}")
     if r.total:
         print(f"  Failed: {r.failed}, Passed: {r.passed}, Skipped: {r.skipped}, Total: {r.total}")
