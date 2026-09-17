@@ -18,7 +18,6 @@
 // and a test that pinned 120s would have to be edited by anyone legitimately changing it — which
 // is the coupling this whole issue exists to remove.
 
-using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using System.Text.RegularExpressions;
@@ -211,8 +210,10 @@ public sealed class SpawnTimeoutMessageDerivationTests
             // InterpolatedStringExpressionSyntax, so it cannot reach this branch at all. That is
             // what the walk buys over the quote-pair regex it replaced, and it needs no explicit
             // skip: an earlier revision carried `if (node is InterpolatedStringExpressionSyntax)
-            // continue;`, and review measured it as DEAD — deleting it changed no answer across
-            // all 58 real sites and 10 adversarial ones.
+            // continue;`, and review measured it as DEAD — deleting it changed no answer at any
+            // spawn site in this assembly, nor on a set of adversarial spellings. (A literal
+            // inside a `{…}` hole is a different node and IS still reported, correctly: it does
+            // print its braces.)
             if (node is LiteralExpressionSyntax lit
                 && lit.Token.Text.Contains("SpawnTimeoutMs", StringComparison.Ordinal))
                 yield return lit.Token.Text;
