@@ -380,7 +380,7 @@ public static class BcArtifacts
         var ncl = Path.Combine(root, "Microsoft.Dynamics.Nav.Ncl.dll");
         if (File.Exists(ncl))
         {
-            var v = System.Reflection.AssemblyName.GetAssemblyName(ncl).Version;
+            var v = GetAssemblyNameWithRetry(ncl).Version;
             if (v != null) return v;
         }
         throw new InvalidOperationException(
@@ -404,7 +404,7 @@ public static class BcArtifacts
     {
         var ncl = Path.Combine(binDir, "Microsoft.Dynamics.Nav.Ncl.dll");
         if (!File.Exists(ncl)) return null;
-        return System.Reflection.AssemblyName.GetAssemblyName(ncl).Version;
+        return GetAssemblyNameWithRetry(ncl).Version;
     }
 
     /// <summary>
