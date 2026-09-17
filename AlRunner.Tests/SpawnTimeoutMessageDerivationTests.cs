@@ -60,6 +60,14 @@ public sealed class SpawnTimeoutMessageDerivationTests
         "TestPageOnNewRecordCountTests.cs",
         "TestPageSubscriberRefusalTests.cs",
 
+        // The 300s-cap cohort of #4275, batched on the same principle as the two above.
+        "BundleInstallTriggerSeedVisibilityTests.cs",
+        "CacheGateProbeScopeTests.cs",
+        "DepInstallTriggerSessionIdentityTests.cs",
+        "EventSubscriptionMultiBundleScopeTests.cs",
+        "InstallExecutionContextTests.cs",
+        "InstallTriggerSessionIdentityTests.cs",
+
         // The 120s-cap cohort of #4275, batched on the same principle as the 180s one above.
         "ActiveSessionTableTests.cs",
         "AggregatePermissionSetVirtualTableTests.cs",
@@ -76,7 +84,7 @@ public sealed class SpawnTimeoutMessageDerivationTests
     public void EveryListedSpawnSite_DerivesItsTimeoutFigureFromTheCapItApplied()
     {
         var offenders = new List<string>();
-        var sitesChecked = 0;
+        var sitesPerFile = new Dictionary<string, int>();
 
         foreach (var file in Files)
         {
@@ -99,7 +107,7 @@ public sealed class SpawnTimeoutMessageDerivationTests
                 // Only the spawn-timeout throws are in scope; a TimeoutException thrown for some
                 // other reason has no cap to report.
                 if (!stmt.Contains("within", StringComparison.Ordinal)) continue;
-                sitesChecked++;
+                sitesPerFile[file] = sitesPerFile.GetValueOrDefault(file) + 1;
 
                 if (!stmt.Contains("SpawnTimeoutMs", StringComparison.Ordinal))
                 {
@@ -143,11 +151,41 @@ public sealed class SpawnTimeoutMessageDerivationTests
             }
         }
 
-        // The population must be non-empty, or an empty scan reads as a pass. #3488 lists five
-        // sites, #3487 contributes one, and #4275's 180s and 120s cohorts thirteen and nine.
-        Assert.True(sitesChecked >= 28,
-            $"expected at least 28 spawn-timeout throw sites across {Files.Length} files, found {sitesChecked} — "
-            + "the anchor stopped matching, so this test measured almost nothing");
+        // EVERY listed file must contribute at least one site, per file rather than in total.
+        //
+        // A `sitesChecked >= N` floor was the earlier form and it has slack, because a total
+        // cannot say WHICH files contributed it: one file losing its site is fungible with
+        // another gaining one, and the population already contains a two-site file
+        // (ArtifactsRootEnvOverrideTests), which is why 33 files yield 34 sites. Measured in
+        // review of #4307 — reword one file's message so `within` stops matching (caught), add a
+        // second correctly-derived site elsewhere (green again), then regress the first file to a
+        // hardcoded literal: STILL GREEN, with a file in this very list carrying exactly the
+        // spelling this test forbids.
+        //
+        // "at least one", not "exactly one": the two-site file is legitimate —
+        // ArtifactsRootEnvOverrideTests spawns al-runner AND `dotnet msbuild -getProperty`. This
+        // also retires the >= N constant, which every cohort had to edit — one fewer thing to get
+        // right.
+        //
+        // THE REMAINING BLIND SPOT, and it is the only one: this proves every listed file is
+        // MEASURED, never that every site WITHIN a file is. A two-site file losing one site while
+        // keeping the other still contributes, so a regression in the lost one is invisible.
+        // Deliberately not closed: a per-file expected-count map would reintroduce exactly the
+        // per-cohort constant retired above (#4307).
+        // Two causes, different fixes, so the message says which: a file with NO
+        // TimeoutException at all has lost its spawn (or never had one), while a file that still
+        // throws one but contributes no site has a message the `within` anchor no longer matches.
+        var silent = Files
+            .Where(f => sitesPerFile.GetValueOrDefault(f) == 0)
+            .Select(f => File.ReadAllText(Path.Combine(RepoRoot, "AlRunner.Tests", f))
+                             .Contains("throw new " + nameof(TimeoutException) + "(", StringComparison.Ordinal)
+                ? $"{f}: throws a TimeoutException, but no message the anchor matches — reworded?"
+                : $"{f}: no spawn-timeout throw at all — the spawn moved, or the file no longer has one")
+            .ToArray();
+        Assert.True(silent.Length == 0,
+            "these listed files contributed NO spawn-timeout throw site, so this test measured "
+            + "nothing about them. Restore the site, or remove the file from the list deliberately:"
+            + Environment.NewLine + string.Join(Environment.NewLine, silent));
 
         Assert.True(offenders.Count == 0,
             "a spawn timeout message must DERIVE its figure from the cap actually applied (#3488):"
