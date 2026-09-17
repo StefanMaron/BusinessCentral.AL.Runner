@@ -80,40 +80,105 @@ public sealed class BuiltInCancelIsNotADiscardTests
     /// into a generated type nested inside its declarer.
     /// </summary>
     private static HashSet<string> FlagWritableUniverse(TypeDefinition host)
+        => UniverseTypes(host).Select(t => t.FullName).ToHashSet();
+
+    /// <summary>
+    /// The same set as <see cref="FlagWritableUniverse"/>, as types rather than names, so the
+    /// walk can ask which of their methods an indirect dispatch could land on. One traversal
+    /// with two projections: a second copy of the nested-type walk is a second thing to keep in
+    /// step with the first.
+    /// </summary>
+    private static List<TypeDefinition> UniverseTypes(TypeDefinition host)
     {
-        var names = new HashSet<string>();
+        var types = new List<TypeDefinition>();
         var pending = new Stack<TypeDefinition>();
         pending.Push(host);
         while (pending.Count > 0)
         {
             var type = pending.Pop();
-            names.Add(type.FullName);
+            types.Add(type);
             foreach (var nested in type.NestedTypes) pending.Push(nested);
         }
-        return names;
+        return types;
     }
 
     /// <summary>
-    /// What Invoke() reaches within that universe by direct and delegate calls, transitively —
-    /// 15 of the type's 111 methods, max depth 7, so the walk is one type's own call graph and costs
-    /// milliseconds rather than a repository-wide closure. Also reports every in-universe callee
-    /// it could NOT resolve, which is a broken measurement rather than an absence of stores.
+    /// The in-universe methods an indirectly-dispatched call to <paramref name="callee"/> could
+    /// land on: a universe method that is <c>virtual</c> — every interface implementation and
+    /// every override is, and nothing that is not can be dispatched to — takes the same number of
+    /// arguments, and answers to that name, either directly or through an explicit interface
+    /// implementation, whose own name is mangled (<c>Ns.IFoo.Go</c>) and so never matches
+    /// directly. Read off the <see cref="MethodReference"/> rather than its definition, so it
+    /// still answers for a callee that will not resolve.
+    /// <para>The result is always a subset of the universe, which is what keeps #4302's
+    /// accessibility bound intact: this widens the reachability relation INSIDE the universe and
+    /// never the universe itself. Deliberately not narrowed by asking which universe types
+    /// implement the interface or derive from the class — that filter can only REMOVE candidates,
+    /// removes none today (measured: the only in-universe target any of the closure's callvirt
+    /// sites matches is <c>Dispose()</c>, which LiveNavTestPage does inherit IDisposable for), and
+    /// needs a base/interface resolution that can fail, i.e. a new unmeasurable bought for
+    /// nothing.</para>
+    /// </summary>
+    private static IEnumerable<MethodDefinition> IndirectTargetsInUniverse(
+        List<MethodDefinition> universeMethods, MethodReference callee)
+        => universeMethods.Where(m =>
+            m.IsVirtual && m.HasBody
+            && m.Parameters.Count == callee.Parameters.Count
+            && (m.Name == callee.Name || m.Overrides.Any(o => o.Name == callee.Name)));
+
+    /// <summary>
+    /// Whether a call site invokes a delegate, whose target is whatever <c>ldftn</c> built it and
+    /// is therefore not a property of this instruction at all. A declaring type that will not
+    /// resolve answers <c>true</c>: an unknown must not resolve toward the followable direction.
+    /// </summary>
+    private static bool IsDelegateInvocation(MethodReference callee)
+    {
+        if (callee.Name != "Invoke") return false;
+        TypeDefinition declaring;
+        try { declaring = callee.DeclaringType.Resolve(); }
+        catch (AssemblyResolutionException) { return true; }
+        return declaring is null || declaring.BaseType?.FullName == "System.MulticastDelegate";
+    }
+
+    /// <summary>
+    /// What Invoke() reaches within that universe, transitively — 16 of the type's 111 methods,
+    /// so the walk is one type's own call graph and costs milliseconds rather than a
+    /// repository-wide closure. It reports two kinds of hole beside the methods it reached, and
+    /// both are failures of measurement rather than absences of stores: a callee it could not
+    /// RESOLVE, and a call site it could not FOLLOW. See docs/closure-walk-indirect-dispatch.md
+    /// for the census behind those figures and the termination argument.
     /// <para>Trap: resolve through <see cref="MethodReference.Resolve"/> — a call to a GENERIC
     /// method carries the instantiated name (<c>CalculateClientAutoKey&lt;System.Int32&gt;</c>), so
     /// matching FullName against the definitions dropped six real references here and made a
     /// generic discard helper invisible at depth 1 (#4302 review). Follow ldftn/ldvirtftn too: a
     /// lambda is reached through a delegate whose declaring type this walk stops at.</para>
     /// </summary>
-    private static (Dictionary<string, MethodDefinition> Reached, List<string> UnresolvedInUniverse)
-        ClosureFromInvoke(TypeDefinition host)
+    private static Walk ClosureFromInvoke(TypeDefinition host)
+        => ClosureFrom(host, BuiltInActionInvoke(host));
+
+    private readonly record struct Walk(
+        Dictionary<string, MethodDefinition> Reached,
+        List<string> UnresolvedInUniverse,
+        List<string> Unfollowable);
+
+    private static Walk ClosureFrom(TypeDefinition host, MethodDefinition entry)
     {
-        var universe = FlagWritableUniverse(host);
+        var universeTypes = UniverseTypes(host);
+        var universe = universeTypes.Select(t => t.FullName).ToHashSet();
+        var universeMethods = universeTypes.SelectMany(t => t.Methods).ToList();
         var reached = new Dictionary<string, MethodDefinition>();
         var unresolved = new List<string>();
+        var unfollowable = new List<string>();
         var queue = new Queue<MethodDefinition>();
-        var invoke = BuiltInActionInvoke(host);
-        reached[invoke.FullName] = invoke;
-        queue.Enqueue(invoke);
+        reached[entry.FullName] = entry;
+        queue.Enqueue(entry);
+
+        void Reach(MethodDefinition target)
+        {
+            if (reached.ContainsKey(target.FullName)) return;
+            reached[target.FullName] = target;
+            queue.Enqueue(target);
+        }
 
         while (queue.Count > 0)
         {
@@ -121,9 +186,44 @@ public sealed class BuiltInCancelIsNotADiscardTests
             foreach (var instruction in caller.Body.Instructions)
             {
                 var op = instruction.OpCode;
+
+                // calli's operand is a CallSite, not a MethodReference, so it would fall out of
+                // the cast below and read as "not a call at all". It is the opposite: a call
+                // through a function pointer, whose target this walk cannot name.
+                if (op == OpCodes.Calli)
+                {
+                    unfollowable.Add($"{caller.Name} -> calli {instruction.Operand}");
+                    continue;
+                }
                 if (op != OpCodes.Call && op != OpCodes.Callvirt && op != OpCodes.Newobj
                     && op != OpCodes.Ldftn && op != OpCodes.Ldvirtftn) continue;
                 if (instruction.Operand is not MethodReference callee) continue;
+
+                // INDIRECT DISPATCH (#4311), in the two shapes it comes in — and neither may be
+                // spelled as the silent `continue` that let both through before.
+                //
+                // Followed: a virtual or interface dispatch. The IL names the declaring type's
+                // member, which for an interface has no body at all; the body that runs is an
+                // override or implementation, which for our purposes only matters when it is in
+                // the universe. Enqueue every universe method it could land on. `call` is
+                // excluded deliberately: it is statically bound, so the resolution below is the
+                // whole answer for it.
+                //
+                // Refused: a delegate invocation or a calli, whose target is not a property of
+                // the call site. Over-approximating it — enqueueing every address-taken universe
+                // method — was measured and REJECTED: ActivateControl(Int32) is address-taken and
+                // legitimately clears _pendingNewRow outside the closure, so that rule reds
+                // innocent code. A refusal is the honest answer and it is scoped tightly enough
+                // to be silent today (0 such sites). It fires even when the matching ldftn is
+                // visible in the closure: pairing the two needs dataflow this walk does not do.
+                if (op == OpCodes.Callvirt || op == OpCodes.Ldvirtftn)
+                {
+                    if (IsDelegateInvocation(callee))
+                        unfollowable.Add($"{caller.Name} -> {callee.FullName}");
+                    else
+                        foreach (var target in IndirectTargetsInUniverse(universeMethods, callee))
+                            Reach(target);
+                }
 
                 // Unwrap a generic instantiation to the type that declares the member, but
                 // NOT an array/pointer/byref: GetElementType() happily turns `Foo[,]::Set` into
@@ -159,25 +259,17 @@ public sealed class BuiltInCancelIsNotADiscardTests
                 }
                 if (!universe.Contains(resolved.DeclaringType.FullName)) continue;
 
-                // Known hole, and this is the line it lives on: a call dispatched INDIRECTLY —
-                // through an interface, or a delegate whose ldftn sits outside the closure —
-                // resolves to a bodiless or unreached method and is dropped here, so the
-                // implementation is never walked (#4311). Dormant rather than absent: the closure
-                // holds 58 interface-dispatch sites, and none of them resolves to an implementer
-                // INSIDE the universe (57 System.Numerics constrained-generic-math calls, one
-                // IDisposable.Dispose from FlushParts' foreach), so none can hold the stfld.
-                // Re-measure that before relying on it. The occupancy floor covers the case where
-                // the indirection lands on the flush path. NOT the accessibility bound's doing:
-                // that region the compiler excludes (CS0122); this is reachable code not followed.
+                // Bodiless by construction — an interface member, an abstract override, an extern.
+                // There is nothing to walk FROM here; what actually runs was enqueued above by
+                // IndirectTargetsInUniverse, which is why this skip is no longer the hole #4311
+                // reported.
                 if (!resolved.HasBody) continue;
 
-                if (reached.ContainsKey(resolved.FullName)) continue;
-                reached[resolved.FullName] = resolved;
-                queue.Enqueue(resolved);
+                Reach(resolved);
             }
         }
 
-        return (reached, unresolved);
+        return new Walk(reached, unresolved, unfollowable);
     }
 
     /// <summary>
@@ -190,9 +282,14 @@ public sealed class BuiltInCancelIsNotADiscardTests
     private static List<(string Signature, string Field, bool Clears)> FlagStoresUnderInvoke()
     {
         var host = LiveNavTestPage(Module());
+        return FlagStores(ClosureFromInvoke(host));
+    }
+
+    private static List<(string Signature, string Field, bool Clears)> FlagStores(Walk walk)
+    {
         var stores = new List<(string, string, bool)>();
 
-        foreach (var method in ClosureFromInvoke(host).Reached.Values
+        foreach (var method in walk.Reached.Values
                      .OrderBy(m => m.Name, StringComparer.Ordinal))
         {
             Instruction previous = null;
@@ -278,6 +375,103 @@ public sealed class BuiltInCancelIsNotADiscardTests
                 + "clear has moved, and the exemption must move with it rather than stay behind "
                 + "as a licence. Clears actually found: "
                 + (clears.Count == 0 ? "(none)" : string.Join("; ", clears.Select(c => $"{c.Signature}->{c.Field}"))));
+    }
+
+    // FLOOR 5, the second refusal (#4311). A call site the walk could not FOLLOW is a different
+    // failure from one it could not RESOLVE: the callee is readable, and where control actually
+    // goes is simply not a property of the instruction. That is "could not tell", and the silent
+    // `continue` it replaced is what made an indirect discard read as an absence of one.
+    [Fact]
+    public void TheWalkFollowedEveryCallSiteInsideTheClosure()
+    {
+        var unfollowable = ClosureFromInvoke(LiveNavTestPage(Module())).Unfollowable;
+
+        Assert.True(unfollowable.Count == 0,
+            "The closure walk met a call whose target is not a property of the call site — a "
+            + "delegate invocation or a calli — so "
+            + nameof(NothingInvokeCanReachClearsTheHostPendingWriteFlags)
+            + " did not read whatever runs there and cannot claim it holds no discard. Resolving "
+            + "it needs the ldftn that built the delegate, which may sit anywhere; enqueueing "
+            + "every address-taken universe method instead was measured and reds innocent code "
+            + "(ActivateControl is address-taken and legitimately clears _pendingNewRow). Either "
+            + "make the call direct, or extend the walk. Unfollowable: "
+            + string.Join("; ", unfollowable.Distinct()));
+    }
+
+    // A stand-in carrying the two indirect shapes, so the walk's behaviour on each is asserted
+    // rather than inferred from LiveNavTestPage happening to contain none of them today. It is a
+    // fixture for the WALK, not a model of the page: nothing here claims anything about BC.
+    private sealed class IndirectDispatchFixture
+    {
+        private bool _pendingNewRow;
+
+        private interface IIndirect { void Go(); }
+
+        private sealed class ThroughInterface : IIndirect
+        {
+            private readonly IndirectDispatchFixture _fixture;
+            public ThroughInterface(IndirectDispatchFixture fixture) { _fixture = fixture; }
+            public void Go() { _fixture._pendingNewRow = false; }
+        }
+
+        // Deliberately unreachable from every entry point below, so the ldftn that builds the
+        // delegate sits OUTSIDE the closure and a walk that only follows the ldftn instructions
+        // it meets never reaches the lambda's body. That is #4311's second shape.
+        private Action _seeded;
+        private void Seed() { _seeded = () => { _pendingNewRow = false; }; }
+
+        internal void EntryThroughInterface() { IIndirect i = new ThroughInterface(this); i.Go(); }
+        internal void EntryThroughDelegate() { _seeded?.Invoke(); }
+        internal void EntryDirect() { Observe(_pendingNewRow); Seed(); }
+        private static void Observe(bool _) { }
+    }
+
+    private static TypeDefinition Fixture()
+        => ModuleDefinition.ReadModule(typeof(BuiltInCancelIsNotADiscardTests).Assembly.Location)
+           .GetTypes().Single(t => t.Name == nameof(IndirectDispatchFixture));
+
+    private static Walk WalkFixture(string entryName)
+    {
+        var fixture = Fixture();
+        return ClosureFrom(fixture, fixture.Methods.Single(m => m.Name == entryName));
+    }
+
+    // THE FIX, first half. An interface callvirt is followed to the implementations that could
+    // run, so a store behind one is seen. Without it this is GREEN having measured nothing.
+    [Fact]
+    public void AStoreBehindAnInterfaceDispatchIsVisibleToTheWalk()
+    {
+        var stores = FlagStores(WalkFixture(nameof(IndirectDispatchFixture.EntryThroughInterface)));
+
+        Assert.Contains(("Go()", "_pendingNewRow", true), stores);
+    }
+
+    // THE FIX, second half. A delegate invocation is refused, not skipped. Asserted on the
+    // refusal list rather than on the store list, because the point is precisely that the store
+    // is NOT visible and must therefore not be reported as absent.
+    [Fact]
+    public void ADelegateInvocationIsRefusedRatherThanReadAsHoldingNoStore()
+    {
+        var walk = WalkFixture(nameof(IndirectDispatchFixture.EntryThroughDelegate));
+
+        Assert.Empty(FlagStores(walk));
+        Assert.Contains(walk.Unfollowable, u => u.Contains("EntryThroughDelegate"));
+    }
+
+    // The discrimination the two above need to be worth anything: the refusal is keyed on the
+    // shape, not raised for every call. An entry that dispatches directly refuses nothing — even
+    // though it calls Seed(), whose lambda the walk then reaches through an ordinary ldftn.
+    [Fact]
+    public void ADirectCallIsNeitherRefusedNorTreatedAsIndirect()
+    {
+        var walk = WalkFixture(nameof(IndirectDispatchFixture.EntryDirect));
+
+        Assert.Empty(walk.Unfollowable);
+        Assert.Empty(walk.UnresolvedInUniverse);
+        // Matched on a substring because the lambda's name carries a compiler-allocated ordinal
+        // (<Seed>b__3_0), which moves whenever a member is added above it.
+        Assert.Contains(FlagStores(walk),
+            s => s.Signature.Contains("Seed") && s.Field == "_pendingNewRow" && s.Clears);
     }
 
     // FLOOR 4, the refusal. An in-universe callee the walk could not resolve is a method it was
