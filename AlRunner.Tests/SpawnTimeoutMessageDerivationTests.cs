@@ -68,6 +68,16 @@ public sealed class SpawnTimeoutMessageDerivationTests
         "InstallExecutionContextTests.cs",
         "InstallTriggerSessionIdentityTests.cs",
 
+        // The last six of #4275, spanning three caps (240s x3, 60s x2, 600s x1). Batched together
+        // rather than by cap: the population is now small enough that three PRs of two files each
+        // would be more review overhead than the figures they carry.
+        "AutoProvisionDefaultTests.cs",
+        "CliDocumentationTests.cs",
+        "DefaultProvisionTargetMessagingTests.cs",
+        "EmitAppPackageCacheRefusalTests.cs",
+        "HomeRootedPathsEnvOverrideTests.cs",
+        "OutputPathPreparationTests.cs",
+
         // The 120s-cap cohort of #4275, batched on the same principle as the 180s one above.
         "ActiveSessionTableTests.cs",
         "AggregatePermissionSetVirtualTableTests.cs",
