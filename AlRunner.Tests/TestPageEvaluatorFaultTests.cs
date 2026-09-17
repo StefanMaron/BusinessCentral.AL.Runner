@@ -192,15 +192,29 @@ public sealed class TestPageEvaluatorFaultTests
     //
     // With the fix in place this is no longer ambiguous. Before it, a refusal and a fault both
     // produced false here, so the assertion held either way and no reader could tell which had
-    // happened. Measured on this build while writing the fix: the session IS populated in the
-    // xunit process and BC's evaluator refuses '@@@' by RETURNING false, so nothing throws -
-    // which is why the assertion below and TestPageTemporalValueTests's own
-    // TryResolve_AnUnreadableSpelling_DeclinesRatherThanGuessing are now real controls.
-    [Fact]
+    // happened. BC's evaluator refuses '@@@' by RETURNING false, so nothing throws — which is
+    // why this and TestPageTemporalValueTests's own
+    // TryResolve_AnUnreadableSpelling_DeclinesRatherThanGuessing are real controls.
+    //
+    // #3486: the skeleton session is a PRECONDITION this test does not establish. The original
+    // comment recorded "the session IS populated in the xunit process" as a property of the
+    // build. It is not — a build restores a pristine bin/Microsoft.Dynamics.Nav.Ncl.dll, and the
+    // FIRST test run after one performs the Cecil rewrite and cannot itself use it. That run
+    // skips; later runs against the rewritten copy execute.
+    //
+    // So the precondition is CHECKED, not asserted: a bare Assert.NotNull fails with
+    // "Value is null" and sends a reader looking for a null-handling bug in TryResolve that is
+    // not there. Most of this class needs no engine, so it stays out of BcEngineCollection
+    // rather than serialising every test to satisfy this one.
+    [SkippableFact]
     public void TryResolve_AnUnreadableSpelling_IsRefusedByBcRatherThanFaulting()
     {
         _ = NavDate.Create(DateTime.SpecifyKind(new DateTime(2026, 1, 15), DateTimeKind.Local));
-        Assert.NotNull(BcRuntime.SkeletonSession);
+        Skip.If(BcRuntime.SkeletonSession is null,
+            "the skeleton session is not populated, so BC's evaluator cannot be asked anything: "
+            + "run tools/engine-test-bootstrap.sh and re-run with --settings engine.runsettings. "
+            + "A build restores a pristine bin/Microsoft.Dynamics.Nav.Ncl.dll, so the bootstrap "
+            + "is needed again after EVERY build (#3486).");
 
         Assert.False(TestPageTemporalValue.TryResolve(NavType.Date, "@@@", out var resolved));
         Assert.Null(resolved);
