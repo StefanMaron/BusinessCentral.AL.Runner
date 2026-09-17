@@ -118,6 +118,29 @@ with redirect_stdout(io.StringIO()) as out:
 check("ENGINE-NOT-BOOTSTRAPPED prints the remedy", "tools/engine-test-bootstrap.sh" in out.getvalue(),
       out.getvalue())
 
+print("a guard that is a PROCESS, not a dotnet suite (#4314)")
+# The tools/test_*.py guards print many different summary shapes -- "all checks passed",
+# "13 passed, 0 failed", "PASS: ...", "OK: ..." -- so no second regex can read them. What they
+# DO share is an exit code, which is a stronger signal than scraped text: it is the contract the
+# guard's own author wrote, not a format that happens to be parseable.
+for code, want, label in ((0, mv.GREEN, "exit 0 is GREEN"),
+                          (1, mv.RED, "exit 1 is RED"),
+                          (3, mv.UNMEASURED, "exit 3 stays UNMEASURED")):
+    r = mv.classify_exit(code, "13 passed, 0 failed (3 file(s) carried both flag names)")
+    check(f"process guard: {label}", r.verdict == want, f"got {mv.NAMES[r.verdict]}: {r.reason}")
+
+# A non-zero code the tool has no meaning for must NOT be read as RED: an unhandled traceback
+# exits 1 in Python, but a guard that crashed measured nothing. Anything else refuses.
+crashed = mv.classify_exit(2, "Traceback (most recent call last):\n  ...\nValueError: boom")
+check("process guard: an unexpected exit code refuses rather than guessing",
+      crashed.verdict == mv.UNMEASURED, f"got {mv.NAMES[crashed.verdict]}: {crashed.reason}")
+
+# And the CLI reaches it, so an agent does not have to know which classifier applies.
+for code, want in ((0, 0), (1, 1), (3, 3)):
+    with redirect_stdout(io.StringIO()) as out:
+        rc = mv.main(["mutation-verdict.py", "--exit", str(code), os.devnull])
+    check(f"CLI --exit {code} answers {want}", rc == want, f"got {rc}: {out.getvalue()}")
+
 if FAILURES:
     print(f"\n{len(FAILURES)} failure(s)")
     sys.exit(1)
