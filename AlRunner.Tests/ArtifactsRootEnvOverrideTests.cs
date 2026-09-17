@@ -32,6 +32,14 @@ namespace AlRunner.Tests;
 
 public sealed class ArtifactsRootEnvOverrideTests
 {
+    /// <summary>The cap this file's subprocess spawns actually apply, and the single source of
+    /// the figure their timeout messages report (#3488). Both spawn sites in this class share it.
+    /// Derived rather than repeated: a literal in the message is invisible while it happens to
+    /// match, and wrong the moment the cap moves. Measured for real on #3435 — a cap squeezed to
+    /// 3s still threw "did not exit within 120s". Same shape as
+    /// BcVersionDefaultDocumentationTests.SpawnTimeoutMs (#3487).</summary>
+    private const int SpawnTimeoutMs = 120_000;
+
     private static readonly string RepoRoot = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
 
@@ -164,10 +172,10 @@ public sealed class ArtifactsRootEnvOverrideTests
         proc.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (errSb) errSb.AppendLine(e.Data); };
         proc.BeginOutputReadLine();
         proc.BeginErrorReadLine();
-        if (!proc.WaitForExit(120_000))
+        if (!proc.WaitForExit(SpawnTimeoutMs))
         {
             try { proc.Kill(entireProcessTree: true); } catch { }
-            throw new TimeoutException("al-runner did not exit within 120s.");
+            throw new TimeoutException($"al-runner did not exit within {SpawnTimeoutMs / 1000}s.");
         }
         proc.WaitForExit();
         lock (errSb) return (proc.ExitCode, errSb.ToString());
@@ -315,10 +323,10 @@ public sealed class ArtifactsRootEnvOverrideTests
         using var proc = Process.Start(psi)!;
         var stdout = proc.StandardOutput.ReadToEnd();
         var stderr = proc.StandardError.ReadToEnd();
-        if (!proc.WaitForExit(120_000))
+        if (!proc.WaitForExit(SpawnTimeoutMs))
         {
             try { proc.Kill(entireProcessTree: true); } catch { }
-            throw new TimeoutException("dotnet msbuild -getProperty did not finish within 120s.");
+            throw new TimeoutException($"dotnet msbuild -getProperty did not finish within {SpawnTimeoutMs / 1000}s.");
         }
         proc.WaitForExit();
         Assert.True(proc.ExitCode == 0, $"msbuild evaluation failed ({proc.ExitCode}):\n{stdout}\n{stderr}");
