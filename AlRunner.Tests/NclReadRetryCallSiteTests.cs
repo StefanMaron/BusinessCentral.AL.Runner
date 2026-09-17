@@ -20,12 +20,21 @@
 // does not rescue it because the helper's own two calls are untouched. Measured: green on a
 // genuinely unretried read.
 //
-// Left as a documented limit rather than fixed, for two reasons. BcArtifacts.cs declares no
-// file-level `using` directives and spells all five System.Reflection references fully qualified,
-// so an alias would be a visible style departure in the same diff a reviewer is reading. And the
-// limit is inherent to text anchoring: closing it properly means resolving the symbol, which is
-// a semantic model rather than the syntax tree CSharpSource parses. If this guard ever needs
-// that, #3527 is the place it belongs. The existing test proves the retry WORKS; it cannot prove
+// Left as a documented limit rather than fixed, and the reason is FAILURE DIRECTION, not
+// likelihood. The wider anchor that would catch it -- `.AssemblyName.GetAssemblyName(` without
+// the namespace -- was prototyped: it works, and it also reports any unrelated type named
+// AssemblyName as an unretried Ncl read. Measured over the 374 .cs files under AlRunner/, the
+// wide and narrow patterns return identical counts (2 and 2): zero aliased uses, zero foreign
+// AssemblyName types. So BOTH risks are hypothetical and the base rate cannot choose between
+// them.
+//
+// What decides it is which way each is wrong. A missed alias is silent. A false positive is
+// loud and lands on someone who wrote an unrelated type, telling them to route an Ncl read they
+// never made -- and a guard that misfires is a guard people learn to paste past. With the risks
+// equal, prefer the mode that is loud when wrong.
+//
+// Closing it properly means resolving the symbol, which needs a semantic model rather than the
+// syntax tree CSharpSource parses. If this guard ever needs that, #3527 is where it belongs. The existing test proves the retry WORKS; it cannot prove
 // anything CALLS it. Those are different claims, and only the second one was lost.
 
 using Xunit;
