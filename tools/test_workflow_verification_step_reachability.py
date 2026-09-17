@@ -39,9 +39,13 @@ Exit 0 = measured and fine, 1 = measured and broken, 3 = could not measure.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 
 import yaml
 
@@ -149,6 +153,17 @@ def strip_bash_comments(run: str) -> str:
     return "\n".join(l for l in run.split("\n") if not l.lstrip().startswith("#"))
 
 
+# A verdict is `exit <non-zero>` wherever a COMMAND may start, not only at the start of
+# a line: `; exit 1`, `|| { ...; exit 1; }`, `&& exit 1` and a `case` arm's `*) ...;
+# exit 1 ;;` are all ordinary shapes. Anchoring at `^` missed every one of them, so a
+# guard step written as a one-liner joined no population and got no entry, silently
+# (#4296). Trap: `bc-tests.yml / Resolve BC versions` carries THREE case-arm verdicts
+# and was in the population only because it also has start-of-line `exit 1` lines --
+# delete those and the step vanished from the census with nothing to say so.
+_EXIT = re.compile(
+    r"""(?:^|[;&|{(]|\b(?:then|else|do)\b)\s*exit\s+(?P<code>["']?\$?\w+)""", re.M)
+
+
 def is_verification_step(run: str) -> bool:
     """A step whose failure is the only thing asserting a property.
 
@@ -159,7 +174,7 @@ def is_verification_step(run: str) -> bool:
     code = strip_bash_comments(run)
     if "::error::" not in code:
         return False
-    return re.search(r"(?m)^\s*exit\s+(?!0\s*$)[\"']?\$?\w", code) is not None
+    return any(m.group("code").strip("\"'") != "0" for m in _EXIT.finditer(code))
 
 
 def coe_state(value: object) -> str:
@@ -264,6 +279,25 @@ for s in steps:
         if state == "expression":
             profile.append((f"{lvl} `continue-on-error:`", actual, expected))
 
+    # A pin is only worth what the comparison behind it is worth. `step_coe`/`job_coe`
+    # reach `profile` only when coe_state says `expression`, so a coe_state that stops
+    # discriminating drops them silently -- blinding it to `absent` took the run from 57
+    # checks to 51 at exit 0, and reported the corpus step, whose job-level switch is the
+    # one thing that could stop its failures gating, as "unconditional, so nothing can
+    # skip or disarm it" (#4296). An entry that declares a pin now asserts it was read.
+    for lvl, state, declared in (
+        ("step", s["step_coe_state"], (entry or {}).get("step_coe")),
+        ("job", s["job_coe_state"], (entry or {}).get("job_coe")),
+    ):
+        if declared is not None:
+            check(f"{where}: its pinned {lvl} `continue-on-error:` is still read as an "
+                  "expression, so the pin is actually compared",
+                  state == "expression",
+                  f"REVIEWED pins {lvl} `continue-on-error: {declared}`, but coe_state now "
+                  f"reads that value as {state!r}, so the pin below is never compared and "
+                  "this step's disarm switch stops being checked while the run still "
+                  "reports success (#4296).")
+
     if all(actual is None for _, actual, _ in profile):
         check(f"{where}: unconditional, so nothing can skip or disarm it", True)
         continue
@@ -295,16 +329,161 @@ check("every REVIEWED entry still names a live verification step", not stale,
       "for a step that is gone is what a broken detector looks like from the inside, so "
       "this is a failure rather than a tidy-up.")
 
-with open(os.path.join(WF_DIR, "bc-tests.yml"), encoding="utf-8") as fh:
-    bc_tests = fh.read()
-check("bc-tests.yml marks every matrix leg required, which is the only reason the "
-      "`test` job's continue-on-error expression is safe",
-      re.search(r"(?m)^\s*REQ=True\s*$", bc_tests) is not None
-      and re.search(r"(?m)^\s*REQ=False", bc_tests) is None,
-      "`continue-on-error: ${{ !matrix.target.required }}` disarms EVERY verification "
-      "step in that job for any leg marked not-required. The workflow's own comment "
-      "records an informational tier that 'had failed on every single run since the "
-      "matrix landed without anyone being told' (#4255).")
+# ---------------------------------------------------------------------------------
+# `continue-on-error: ${{ !matrix.target.required }}` disarms EVERY verification step in
+# the `test` job for any leg resolved not-required, so "every leg is required" is the one
+# premise the whole file above rests on. It is checked by RESOLVING the matrix, not by
+# reading the source that computes it: the previous `REQ=True` grep was wrong in both
+# directions -- `REQ="$INFORMATIONAL"` reinstated an informational tier at 57 passed /
+# exit 0, while a trailing comment on the same line went red (#4296).
+#
+# `matrix`, not `versions-json`: versions-json is flattened to bare version STRINGS and
+# carries no `required` key at all. `matrix` is what the `test` job reads.
+#
+# Trap: `bash -e` is GitHub's own default shell for a `run:` block. Keep it -- a plain
+# `bash` here would measure a script CI never executes.
+RESOLVE_STEP = "Resolve BC versions"
+DOTNET_STUB = """#!/bin/sh
+# `dotnet run --project tools/DownloadArtifacts -- resolve-version <prefix> dummy`.
+# Stubbed so the matrix resolves without a network round trip; only REQ is under test.
+want=0
+for a in "$@"; do
+  if [ "$want" = "1" ]; then echo "$a.99999.12345"; exit 0; fi
+  [ "$a" = "resolve-version" ] && want=1
+done
+exit 1
+"""
+
+
+def prefixes(rel: str) -> list[str]:
+    """The prefixes the workflow itself reads: `grep -v '^#' | tr '\\n' ' '`.
+
+    Trap: both files put every prefix on ONE space-separated line, so counting lines
+    answers 1 and the count floor below then fails for a reason that has nothing to do
+    with the matrix. Split on whitespace, as the workflow does.
+    """
+    with open(os.path.join(ROOT, rel), encoding="utf-8") as fh:
+        body = "\n".join(ln for ln in fh.read().splitlines()
+                         if not ln.lstrip().startswith("#"))
+    return body.split()
+
+
+def resolved_matrix(event: str) -> tuple[list[dict] | None, str]:
+    """Run `Resolve BC versions` for one event and read its `matrix` output back.
+
+    Returns (entries, detail); entries is None when the measurement could not be TAKEN,
+    which stays distinct from a measured failure (guards-need-a-third-state.md).
+    """
+    try:
+        with open(os.path.join(WF_DIR, "bc-tests.yml"), encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh)
+    except (OSError, yaml.YAMLError) as exc:
+        return None, f"bc-tests.yml could not be read: {exc}"
+    runs = [st.get("run") for j in (doc.get("jobs") or {}).values() if isinstance(j, dict)
+            for st in (j.get("steps") or []) if isinstance(st, dict)
+            and st.get("name") == RESOLVE_STEP]
+    if len(runs) != 1 or not isinstance(runs[0], str):
+        return None, (f"expected exactly one step named {RESOLVE_STEP!r} in bc-tests.yml, "
+                      f"found {len(runs)} -- renamed or removed, so the premise below "
+                      "cannot be measured rather than being satisfied")
+    if not shutil.which("bash"):
+        return None, "no bash on PATH, so the resolve script cannot be executed"
+    with tempfile.TemporaryDirectory() as tmp:
+        binned = os.path.join(tmp, "bin")
+        os.mkdir(binned)
+        stub = os.path.join(binned, "dotnet")
+        with open(stub, "w", encoding="utf-8") as fh:
+            fh.write(DOTNET_STUB)
+        os.chmod(stub, 0o755)
+        out = os.path.join(tmp, "github_output")
+        open(out, "w", encoding="utf-8").close()
+        env = dict(os.environ, PATH=binned + os.pathsep + os.environ.get("PATH", ""),
+                   GITHUB_OUTPUT=out, GATING_EVENT=event, BC_VERSION_FILTER="")
+        try:
+            proc = subprocess.run(["bash", "-e", "-c", runs[0]], cwd=ROOT, env=env,
+                                  capture_output=True, text=True, timeout=300)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return None, f"the resolve script could not be run for {event}: {exc}"
+        with open(out, encoding="utf-8") as fh:
+            lines = [ln for ln in fh if ln.startswith("matrix=")]
+    if not lines:
+        return None, (f"the resolve script emitted no `matrix=` output for {event} "
+                      f"(rc={proc.returncode}); tail: {proc.stderr.strip()[-400:]!r}")
+    try:
+        entries = json.loads(lines[-1].split("=", 1)[1])["target"]
+    except (ValueError, KeyError, TypeError) as exc:
+        return None, f"the `matrix=` output for {event} did not parse: {exc}"
+    if not isinstance(entries, list):
+        return None, f"the `matrix=` target for {event} is not a list"
+    return entries, f"rc={proc.returncode}"
+
+
+for event, source in (("push", ".github/bc-versions.txt"),
+                      ("pull_request", ".github/pr-bc-versions.txt")):
+    entries, detail = resolved_matrix(event)
+    if entries is None:
+        unmeasurable.append(f"could not resolve the {event} matrix: {detail}")
+        continue
+    try:
+        want = len(prefixes(source))
+    except OSError as exc:
+        unmeasurable.append(f"{source} could not be read: {exc}")
+        continue
+    # The count floor is what stops this passing vacuously: "every entry is required" is
+    # true of an empty list, and of a one-leg list that dropped seven legs silently.
+    check(f"the resolved {event} matrix has one leg per {source} prefix",
+          len(entries) == want,
+          f"resolved {len(entries)} leg(s), {source} lists {want} prefix(es) -- so the "
+          "required-ness check below would be measuring a matrix that is not the one CI "
+          "runs")
+    not_required = [e.get("bc-version") for e in entries if e.get("required") is not True]
+    check(f"every leg of the resolved {event} matrix is marked required",
+          not not_required,
+          f"{not_required} resolve to required=false, and "
+          "`continue-on-error: ${{ !matrix.target.required }}` therefore disarms EVERY "
+          "verification step in the `test` job on those legs: they run, print ::error::, "
+          "and the leg stays GREEN. The workflow's own comment records an informational "
+          "tier that 'had failed on every single run since the matrix landed without "
+          "anyone being told' (#4255).")
+
+# ---------------------------------------------------------------------------------
+# The detectors are the only reason any of the above has a population to check, and a
+# detector that stops discriminating shrinks the run at exit 0 rather than failing it.
+# So they are pinned directly: blinding coe_state to `absent` dropped 57 checks to 51
+# and reported the corpus step as unconditional; both tables below go red instead.
+DETECTOR_CASES: list[tuple[str, str, bool]] = [
+    ("a start-of-line exit", 'echo "::error::bad"\nexit 1', True),
+    ("a one-liner `if`", 'if [ ! -f x ]; then echo "::error::gone"; exit 1; fi', True),
+    ("a `||` brace group", 'foo || { echo "::error::failed"; exit 1; }', True),
+    ("an `&&` chain", 'test -f x && echo "::error::present" && exit 1', True),
+    ("a `case` arm", 'case "$v" in\n  ok) ;;\n  *) echo "::error::bad"; exit 1 ;;\nesac',
+     True),
+    ("a step with no ::error:: marker", 'echo nope\nexit 1', False),
+    ("a step that only reports", 'echo "::error::just saying"', False),
+    ("a step whose only exit is 0", 'echo "::error::x"\nexit 0', False),
+    ("an exit inside a comment only", '# echo "::error::x"; exit 1\necho hi', False),
+]
+for label, script, want in DETECTOR_CASES:
+    check(f"is_verification_step sees a verdict written as {label}"
+          if want else f"is_verification_step does not claim {label}",
+          is_verification_step(script) is want,
+          f"got {is_verification_step(script)!r}, expected {want!r} for {script!r} -- a "
+          "detector that stops matching drops steps from the population SILENTLY, which "
+          "is the shape this whole file exists to refuse (#4296).")
+
+COE_CASES: list[tuple[object, str]] = [
+    (None, "absent"),
+    (True, "literal-true"),
+    (False, "literal-false"),
+    ("${{ !matrix.target.required }}", "expression"),
+    ("true", "literal-true"),
+    ("false", "literal-false"),
+]
+for value, want in COE_CASES:
+    check(f"coe_state reads {value!r} as {want}", coe_state(value) == want,
+          f"got {coe_state(value)!r} -- a coe_state that stops discriminating drops the "
+          "continue-on-error pins from every profile and shrinks the run at exit 0, "
+          "reporting a disarmable step as unconditional (#4296).")
 
 with open(os.path.join(WF_DIR, "pr-gate.yml"), encoding="utf-8") as fh:
     gate = yaml.safe_load(fh)
@@ -325,5 +504,12 @@ check("the step that runs this file is itself unconditional and not disarmed -- 
           if runner else ", so this file may run nowhere"))
 
 print("")
-print(f"{passes} passed, {len(failures)} failed")
-sys.exit(1 if failures else 0)
+for u in unmeasurable:
+    print(f"UNMEASURABLE - {u}")
+print(f"{passes} passed, {len(failures)} failed, {len(unmeasurable)} unmeasurable")
+if failures:
+    sys.exit(1)
+if unmeasurable:
+    print("could not measure -- refusing to report a verdict (guards-need-a-third-state.md)")
+    sys.exit(3)
+sys.exit(0)
