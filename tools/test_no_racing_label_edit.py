@@ -257,60 +257,68 @@ elif harness.missing_tools():
         + ", ".join(harness.missing_tools()) + " not found",
     )
 else:
-    RELEASE = harness.run_block("release-part-of-issues")
-
-    def resolved_edits(label_names: list[str]) -> tuple[list[str], str, list[str]]:
-        """The `gh issue edit` calls the release step makes for an issue with these labels.
-
-        Returns the fixture it used as well, so the non-vacuity check below reads
-        the labels the step was ACTUALLY handed rather than a list recomputed
-        beside the call -- a recomputed one stays green when the call is changed
-        to pass something else, which is the check going vacuous unnoticed.
-        """
-        _rc, out, calls = harness.invoke(
-            RELEASE,
-            {
-                "PR_NUMBER": "999",
-                "PR_BODY": "Part of #42",
-                "PR_HEAD_REF": "agent/fbk-2/issue-42",
-                "PR_LABELS": json.dumps(["agent: fbk-2"]),
-                "EDIT_RC": "0",
-            },
-            issue_json={"state": "OPEN",
-                        "labels": [{"name": n} for n in label_names]},
-        )
-        return ([c for c in calls if c.startswith("issue edit")], out,
-                list(label_names))
-
+    # BOTH jobs, because EXEMPT_WORKFLOW skips the whole FILE from the scan above,
+    # so the exemption has to be discharged for every `gh issue edit` the file can
+    # resolve to. `strip-labels-on-close` is safe today only because it adds
+    # nothing -- an --add-label appended to it would need the same filter, and a
+    # check reading only the release job would not say so.
+    JOBS = [
+        ("strip-labels-on-close",
+         lambda labels: ({"ISSUE": "42", "LABELS": json.dumps(labels)}, None)),
+        ("release-part-of-issues",
+         lambda labels: ({"PR_NUMBER": "999", "PR_BODY": "Part of #42",
+                          "PR_HEAD_REF": "agent/fbk-2/issue-42",
+                          "PR_LABELS": json.dumps(["agent: fbk-2"]),
+                          "EDIT_RC": "0"},
+                         {"state": "OPEN",
+                          "labels": [{"name": n} for n in labels]})),
+    ]
     BASE = ["status: in-progress", "agent: fbk-2", "bug"]
-    first, first_out, _ = resolved_edits(BASE)
-    added = harness.flag_values(first[0], "add-label") if len(first) == 1 else []
 
-    if len(first) != 1 or not added:
-        # Not a FAIL: the release step no longer resolves to one `gh issue edit`
-        # carrying an --add-label, so there is nothing here to call racing or
-        # safe. What it does mean is that the EXEMPT_WORKFLOW skip is now
-        # resting on nothing, which is a person's call rather than a verdict.
-        cannot_measure(
-            "the exempted workflow's single `gh issue edit` names no label in both "
-            "its add-list and its remove-list",
-            f"expected one `gh issue edit ... --add-label X`, got {first!r}\n{first_out}",
-        )
-    else:
+    for job_id, build in JOBS:
+        block = harness.run_block(job_id)
+
+        def resolved_edits(label_names: list[str]) -> tuple[list[str], str, list[str]]:
+            """The `gh issue edit` calls this job makes for an issue with these labels.
+
+            Returns the fixture it used as well, so the non-vacuity check below reads
+            the labels the step was ACTUALLY handed rather than a list recomputed
+            beside the call -- a recomputed one stays green when the call is changed
+            to pass something else, which is the check going vacuous unnoticed.
+            """
+            env, issue_json = build(label_names)
+            _rc, out, calls = harness.invoke(block, env, issue_json=issue_json)
+            return ([c for c in calls if c.startswith("issue edit")], out,
+                    list(label_names))
+
+        first, first_out, _ = resolved_edits(BASE)
+        if len(first) != 1:
+            # Not a FAIL: the job no longer resolves to exactly one `gh issue edit`,
+            # so there is nothing here to call racing or safe. What it does mean is
+            # that the EXEMPT_WORKFLOW skip is now resting on nothing for this job,
+            # which is a person's call rather than a verdict.
+            cannot_measure(
+                f"{job_id}'s `gh issue edit` names no label in both its add-list "
+                "and its remove-list",
+                f"expected exactly one `gh issue edit`, got {first!r}\n{first_out}",
+            )
+            continue
+
+        added = harness.flag_values(first[0], "add-label")
         second, second_out, second_fixture = resolved_edits(BASE + added)
         removed = harness.flag_values(second[0], "remove-label") if len(second) == 1 else []
         both = sorted(set(added) & set(removed))
         check(
-            "the exempted workflow's single `gh issue edit` names no label in both "
-            "its add-list and its remove-list -- gh dispatches the two as unordered "
-            "concurrent mutations and drops the loser (#3930)",
+            f"{job_id}'s `gh issue edit` names no label in both its add-list and "
+            "its remove-list -- gh dispatches the two as unordered concurrent "
+            "mutations and drops the loser (#3930)",
             len(second) == 1 and not both,
             f"adds {added!r} and removes {removed!r}; both: {both!r}\n"
             f"resolved: {second!r}\n{second_out}",
         )
         check(
-            "...measured against an issue that actually carries every label being "
-            "added, so the check above cannot pass vacuously -- an unfiltered jq "
+            f"...and {job_id} was measured against an issue carrying every label it "
+            "adds, so the check above cannot pass vacuously -- an unfiltered jq "
             "would have put each of them in the removals",
             set(added) <= set(second_fixture),
             f"added={added!r} was not all present in the fixture={second_fixture!r}",
