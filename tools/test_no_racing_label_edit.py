@@ -259,8 +259,14 @@ elif harness.missing_tools():
 else:
     RELEASE = harness.run_block("release-part-of-issues")
 
-    def resolved_edits(label_names: list[str]) -> tuple[list[str], str]:
-        """The `gh issue edit` calls the release step makes for an issue with these labels."""
+    def resolved_edits(label_names: list[str]) -> tuple[list[str], str, list[str]]:
+        """The `gh issue edit` calls the release step makes for an issue with these labels.
+
+        Returns the fixture it used as well, so the non-vacuity check below reads
+        the labels the step was ACTUALLY handed rather than a list recomputed
+        beside the call -- a recomputed one stays green when the call is changed
+        to pass something else, which is the check going vacuous unnoticed.
+        """
         _rc, out, calls = harness.invoke(
             RELEASE,
             {
@@ -273,10 +279,11 @@ else:
             issue_json={"state": "OPEN",
                         "labels": [{"name": n} for n in label_names]},
         )
-        return [c for c in calls if c.startswith("issue edit")], out
+        return ([c for c in calls if c.startswith("issue edit")], out,
+                list(label_names))
 
     BASE = ["status: in-progress", "agent: fbk-2", "bug"]
-    first, first_out = resolved_edits(BASE)
+    first, first_out, _ = resolved_edits(BASE)
     added = harness.flag_values(first[0], "add-label") if len(first) == 1 else []
 
     if len(first) != 1 or not added:
@@ -290,7 +297,7 @@ else:
             f"expected one `gh issue edit ... --add-label X`, got {first!r}\n{first_out}",
         )
     else:
-        second, second_out = resolved_edits(BASE + added)
+        second, second_out, second_fixture = resolved_edits(BASE + added)
         removed = harness.flag_values(second[0], "remove-label") if len(second) == 1 else []
         both = sorted(set(added) & set(removed))
         check(
@@ -302,10 +309,11 @@ else:
             f"resolved: {second!r}\n{second_out}",
         )
         check(
-            "...measured against an issue that actually carries the label being "
-            "added, so the check above cannot pass vacuously",
-            any(lbl in BASE + added for lbl in added),
-            f"added={added!r} fixture={BASE + added!r}",
+            "...measured against an issue that actually carries every label being "
+            "added, so the check above cannot pass vacuously -- an unfiltered jq "
+            "would have put each of them in the removals",
+            set(added) <= set(second_fixture),
+            f"added={added!r} was not all present in the fixture={second_fixture!r}",
         )
 
 # The replacement recipe must actually be in the file agents read, in the safe
