@@ -188,6 +188,25 @@ public static partial class RecordPatches
             if (meta != null)
                 return meta;
         }
+        else if (objectType == ObjectType.CodeUnit)
+        {
+            // #4218: NavEventSubscription's ctor resolves its PUBLISHER through
+            // GetOriginalApplicationObject -> TryGetMetaApplicationObject -> here, and returns
+            // early with ErrorOriginalApplicationObjectNotFound when that is null, leaving
+            // originalEventAttribute unassigned; OriginalEventType then falls back to
+            // NavEventType.Business. Without this branch every CODEUNIT-published subscription
+            // read Active=No and Event Type=Business through Event Subscription (2000000140),
+            // while a TABLE-published one in the same run resolved and read Trigger.
+            //
+            // Lazy by design, and deliberately NOT a sixth PopulateOneObjectType pass: this
+            // dispatch IS the implementation of GetMetaApplicationObject (the Cecil rewrite
+            // replaces the body), so nothing consults metadataCacheEntries[Codeunit] on this
+            // path and eagerly building every codeunit's meta would buy nothing while
+            // perturbing startup.
+            var meta = AlRunner.BcRuntime.EnsureCodeunitMetaById(objectId);
+            if (meta != null)
+                return meta;
+        }
         else if (objectType == ObjectType.PermissionSet)
         {
             // #2893: BC's PermissionDataProviderBase resolves each role id it found in the app
