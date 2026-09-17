@@ -192,15 +192,32 @@ public sealed class TestPageEvaluatorFaultTests
     //
     // With the fix in place this is no longer ambiguous. Before it, a refusal and a fault both
     // produced false here, so the assertion held either way and no reader could tell which had
-    // happened. Measured on this build while writing the fix: the session IS populated in the
-    // xunit process and BC's evaluator refuses '@@@' by RETURNING false, so nothing throws -
-    // which is why the assertion below and TestPageTemporalValueTests's own
-    // TryResolve_AnUnreadableSpelling_DeclinesRatherThanGuessing are now real controls.
-    [Fact]
+    // happened. BC's evaluator refuses '@@@' by RETURNING false, so nothing throws — which is
+    // why this and TestPageTemporalValueTests's own
+    // TryResolve_AnUnreadableSpelling_DeclinesRatherThanGuessing are real controls.
+    //
+    // #3486: the skeleton session is a PRECONDITION this test does not establish, and the
+    // original comment recorded "the session IS populated in the xunit process" as though that
+    // were a property of the build. It is not — it is a property of whether
+    // tools/engine-test-bootstrap.sh has run in this worktree since the last BUILD, because a
+    // build restores a pristine bin/Microsoft.Dynamics.Nav.Ncl.dll and undoes it. Measured:
+    // bootstrapped, this class passes alone 6/6; run straight after a `dotnet build`, it fails
+    // 3/3 with `Assert.NotNull() Failure: Value is null`.
+    //
+    // So the precondition is CHECKED here with a message naming the cause and the remedy,
+    // rather than asserted as a fact. A bare Assert.NotNull sends a reader looking for a
+    // null-handling bug in TryResolve that is not there. The class deliberately does NOT join
+    // BcEngineCollection: 23 of its 24 tests drive seams that need no engine at all, and
+    // serialising them to satisfy one test would cost every run for nothing.
+    [SkippableFact]
     public void TryResolve_AnUnreadableSpelling_IsRefusedByBcRatherThanFaulting()
     {
         _ = NavDate.Create(DateTime.SpecifyKind(new DateTime(2026, 1, 15), DateTimeKind.Local));
-        Assert.NotNull(BcRuntime.SkeletonSession);
+        Skip.If(BcRuntime.SkeletonSession is null,
+            "the skeleton session is not populated, so BC's evaluator cannot be asked anything: "
+            + "run tools/engine-test-bootstrap.sh and re-run with --settings engine.runsettings. "
+            + "A build restores a pristine bin/Microsoft.Dynamics.Nav.Ncl.dll, so the bootstrap "
+            + "is needed again after EVERY build (#3486).");
 
         Assert.False(TestPageTemporalValue.TryResolve(NavType.Date, "@@@", out var resolved));
         Assert.Null(resolved);
