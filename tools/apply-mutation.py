@@ -135,6 +135,12 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--replacement-file")
     ap.add_argument("--restore", action="store_true")
     ap.add_argument("-h", "--help", action="store_true")
+    # --help must work with no file argument: `file` is positional and required, so argparse
+    # would error out before the flag is read and asking for help would exit 3 (#4316, review
+    # round 7). Help is a request that succeeded, not a refusal.
+    if any(a in ("-h", "--help") for a in argv[1:]):
+        print(__doc__)
+        return APPLIED
     try:
         args = ap.parse_args(argv[1:])
     except SystemExit:

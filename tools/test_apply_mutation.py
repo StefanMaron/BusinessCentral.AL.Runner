@@ -355,15 +355,25 @@ def _refusal_lines(path: str) -> set[int]:
 _REFUSAL_LINES = _refusal_lines(_AM_FILE)
 
 def _lines_hit(fn):
-    """Run fn under a tracer; return the refusal lines in apply-mutation.py it executed."""
-    hit: set[int] = set()
+    """Run fn under a tracer; return the refusal lines in apply-mutation.py it executed.
+
+    A line number alone does not identify a line: `_REFUSAL_LINES` holds bare integers, and the
+    standard library executes every one of those numbers in its own files. Review round 7 measured
+    58 distinct (file, line) collisions covering all ten arms -- `tokenize.py` hits one of them 93
+    times -- so a tracer that recorded `frame.f_lineno` without checking WHICH FILE the frame
+    belongs to could credit an arm to `tempfile.py`. Deleting the file filter left all 51 checks
+    green at 10/10, and a case removed from the roster entirely still read as covered.
+
+    So the recorded key is (realpath, lineno) and the file identity is part of the datum rather
+    than a filter in front of it. A filter can be deleted and the data still look right; a key
+    cannot.
+    """
+    hit: set[tuple[str, int]] = set()
     real = os.path.realpath(_AM_FILE)
 
     def tracer(frame, event, arg):
-        if event == "call":
-            return tracer if os.path.realpath(frame.f_code.co_filename) == real else None
         if event == "line" and frame.f_lineno in _REFUSAL_LINES:
-            hit.add(frame.f_lineno)
+            hit.add((os.path.realpath(frame.f_code.co_filename), frame.f_lineno))
         return tracer
 
     old = sys.gettrace()
@@ -372,7 +382,9 @@ def _lines_hit(fn):
         rc = fn()
     finally:
         sys.settrace(old)
-    return rc, hit
+    # Only lines in apply-mutation.py itself are refusal arms; a same-numbered line in the
+    # stdlib is a different line that happens to share an integer.
+    return rc, {n for f, n in hit if f == real}
 
 # The tracer is the instrument, so assert it before trusting anything it says. Review round 6
 # faked it with `return rc, set(_REFUSAL_LINES)` -- a constant standing in for the measurement --
@@ -397,6 +409,26 @@ check("...and a call reaching NO arm traces to the EMPTY set, not to a constant"
       f"traced {sorted(_empty_hit)} for a call that executed no arm — the tracer is reporting "
       f"something other than what ran, so every coverage figure below is meaningless")
 
+# The assertion above falsifies a CONSTANT and nothing else: `lambda: am.REFUSED` is one attribute
+# lookup, so it runs almost no Python and no foreign frame exists to be misattributed. Round 7
+# showed that gap is live -- a line number alone does not name a line, the stdlib executes every
+# one of these integers in its own files, and a tracer keyed on the number alone credited arms to
+# tempfile.py. This probe does real FOREIGN work and must still trace to empty: it is the only
+# assertion here that can fail when the tracer is accurate about lines and wrong about files.
+def _foreign_work():
+    import re, tokenize, io as _io
+    re.compile(r"(?P<a>x+)|(?P<b>y{2,3})").match("xxx")
+    list(tokenize.generate_tokens(_io.StringIO("def f(a, b):\n    return a + b\n").readline))
+    return am.REFUSED
+
+_, _foreign_hit = _lines_hit(_foreign_work)
+check("...and heavy work in OTHER files traces to empty too, so line numbers are not "
+      "confused across files",
+      _foreign_hit == set(),
+      f"traced {sorted(_foreign_hit)} while executing only stdlib code — those line numbers were "
+      f"hit in another file, so the tracer is crediting apply-mutation.py's arms to code that "
+      f"never ran them")
+
 _reached: set[int] = set()
 for _name, _fn in REFUSAL_ARMS:
     _rc, _hit = _lines_hit(_fn)
@@ -415,6 +447,22 @@ check(f"every `return REFUSED` arm is reached by a case ({len(_reached)}/{len(_R
       f"apply-mutation.py line(s) {_missing} return REFUSED and no case above executes them. "
       f"Add a case that reaches the arm — not one that merely refuses, and never a constant "
       f"standing in for a skipped case.")
+
+print("--help works, and the file stays executable")
+with redirect_stdout(io.StringIO()) as _out:
+    _help_rc = am.main(["apply-mutation.py", "--help"])
+check("--help exits 0 with no file argument — asking for help is not a refusal",
+      _help_rc == am.APPLIED, f"exit {_help_rc}")
+check("...and it prints the usage", "--anchor-file" in _out.getvalue(), _out.getvalue()[:80])
+
+# The tdd.md recipe invokes this as `tools/apply-mutation.py <file>`, so the exec bit is part of
+# the documented interface. It was lost once in this PR's own history -- a manual `mv` recovery
+# committed 100644 -- and nothing caught it: every test imports the module, which works either
+# way, so the only symptom was `Permission denied` from the documented command (round 7).
+check("the tool is executable, as the documented recipe invokes it",
+      os.access(_AM_FILE, os.X_OK),
+      f"{_AM_FILE} is not executable — `tools/apply-mutation.py <file>` fails with Permission "
+      f"denied, though importing it still works, so nothing else here would notice")
 
 print("the backup suffix is the one .gitignore actually excludes")
 # SUFFIX is a cross-file contract: .gitignore carries the literal, so renaming SUFFIX leaves
