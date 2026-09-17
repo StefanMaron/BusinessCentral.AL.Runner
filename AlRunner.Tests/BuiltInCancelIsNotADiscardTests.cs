@@ -1,4 +1,4 @@
-// BuiltInCancelIsNotADiscardTests — issues #4295, #4302.
+// BuiltInCancelIsNotADiscardTests — issues #4295, #4302, #4311.
 //
 // The defect: LiveNavTestPage's built-in Cancel/LookupCancel action called
 // DiscardPendingNewRow(), which cleared the HOST page's _pendingNewRow and _pendingModify
@@ -104,20 +104,14 @@ public sealed class BuiltInCancelIsNotADiscardTests
 
     /// <summary>
     /// The in-universe methods an indirectly-dispatched call to <paramref name="callee"/> could
-    /// land on: a universe method that is <c>virtual</c> — every interface implementation and
-    /// every override is, and nothing that is not can be dispatched to — takes the same number of
-    /// arguments, and answers to that name, either directly or through an explicit interface
-    /// implementation, whose own name is mangled (<c>Ns.IFoo.Go</c>) and so never matches
-    /// directly. Read off the <see cref="MethodReference"/> rather than its definition, so it
-    /// still answers for a callee that will not resolve.
-    /// <para>The result is always a subset of the universe, which is what keeps #4302's
-    /// accessibility bound intact: this widens the reachability relation INSIDE the universe and
-    /// never the universe itself. Deliberately not narrowed by asking which universe types
-    /// implement the interface or derive from the class — that filter can only REMOVE candidates,
-    /// removes none today (measured: the only in-universe target any of the closure's callvirt
-    /// sites matches is <c>Dispose()</c>, which LiveNavTestPage does inherit IDisposable for), and
-    /// needs a base/interface resolution that can fail, i.e. a new unmeasurable bought for
-    /// nothing.</para>
+    /// land on (#4311): a universe method that is <c>virtual</c>, of the same arity, answering to
+    /// that name — directly, or through an explicit interface implementation, whose own name is
+    /// mangled (<c>Ns.IFoo.Go</c>) and so never matches directly. Always a subset of the universe,
+    /// so #4302's compiler-verified accessibility bound is untouched.
+    /// See docs/closure-walk-indirect-dispatch.md#scope-the-accessibility-bound-is-untouched.
+    /// <para>Trap: read off the <see cref="MethodReference"/>, never its definition — it must
+    /// still answer for a callee that will not resolve. And do not narrow it by the type
+    /// hierarchy: that can only remove candidates, removes none today, and buys an unmeasurable.</para>
     /// </summary>
     private static IEnumerable<MethodDefinition> IndirectTargetsInUniverse(
         List<MethodDefinition> universeMethods, MethodReference callee)
@@ -199,23 +193,17 @@ public sealed class BuiltInCancelIsNotADiscardTests
                     && op != OpCodes.Ldftn && op != OpCodes.Ldvirtftn) continue;
                 if (instruction.Operand is not MethodReference callee) continue;
 
-                // INDIRECT DISPATCH (#4311), in the two shapes it comes in — and neither may be
-                // spelled as the silent `continue` that let both through before.
+                // INDIRECT DISPATCH (#4311). A virtual or interface dispatch is FOLLOWED to the
+                // universe methods it could land on; a delegate invocation is REFUSED, because
+                // its target is not a property of the call site. Neither may be the silent
+                // `continue` that let a discard behind both read as an absence of one. `call` is
+                // excluded deliberately — it is statically bound, so the resolution below is the
+                // whole answer for it. docs/closure-walk-indirect-dispatch.md#what-the-fix-does
                 //
-                // Followed: a virtual or interface dispatch. The IL names the declaring type's
-                // member, which for an interface has no body at all; the body that runs is an
-                // override or implementation, which for our purposes only matters when it is in
-                // the universe. Enqueue every universe method it could land on. `call` is
-                // excluded deliberately: it is statically bound, so the resolution below is the
-                // whole answer for it.
-                //
-                // Refused: a delegate invocation or a calli, whose target is not a property of
-                // the call site. Over-approximating it — enqueueing every address-taken universe
-                // method — was measured and REJECTED: ActivateControl(Int32) is address-taken and
-                // legitimately clears _pendingNewRow outside the closure, so that rule reds
-                // innocent code. A refusal is the honest answer and it is scoped tightly enough
-                // to be silent today (0 such sites). It fires even when the matching ldftn is
-                // visible in the closure: pairing the two needs dataflow this walk does not do.
+                // Trap, for the next person who tries to make the delegate case followable:
+                // enqueueing every address-taken universe method was measured and REDS INNOCENT
+                // CODE — ActivateControl(Int32) is address-taken and legitimately clears
+                // _pendingNewRow from outside the closure. Signature matching does not rescue it.
                 if (op == OpCodes.Callvirt || op == OpCodes.Ldvirtftn)
                 {
                     if (IsDelegateInvocation(callee))
