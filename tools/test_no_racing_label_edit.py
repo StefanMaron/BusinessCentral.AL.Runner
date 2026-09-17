@@ -251,8 +251,8 @@ if not os.path.exists(os.path.join(ROOT, EXEMPT_WORKFLOW)):
     check("issue-label-hygiene.yml is present to be checked", False, EXEMPT_WORKFLOW)
 elif harness.missing_tools():
     cannot_measure(
-        "the exempted workflow's single `gh issue edit` names no label in both "
-        "its add-list and its remove-list",
+        "the exempted workflow's `gh issue edit` calls name no label in both "
+        "their add-list and their remove-list",
         "cannot run the workflow's shell: "
         + ", ".join(harness.missing_tools()) + " not found",
     )
