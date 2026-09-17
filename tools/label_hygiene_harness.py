@@ -114,8 +114,15 @@ def invoke(block: str, env: dict[str, str], issue_json: dict | None = None
         # exec resolve "bash" through PATH lands on a different bash from the
         # one shutil.which reports, and that one answers "No such file or
         # directory" for a script it cannot read a drive-letter path for.
+        # encoding= explicitly, not bare text=True: the decode would otherwise
+        # use the locale codec, and a PR body carrying an em dash (one of the
+        # behaviour suite's own Part-of fixtures does) is undecodable under
+        # cp1252. tools/test_text_encoding.py holds this for every non-test
+        # module under tools/ -- which this became the moment it stopped living
+        # inside a test_*.py file.
         proc = subprocess.run([BASH, script.replace(os.sep, "/")], cwd=ROOT, env=full,
-                              capture_output=True, text=True)
+                              capture_output=True, text=True,
+                              encoding="utf-8", errors="replace")
         calls = []
         if os.path.exists(log):
             # jq emits CRLF on Windows, so a label read out of it carries a
