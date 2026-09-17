@@ -27,9 +27,8 @@
 //
 //   The #3460 sweep that re-checked this looked only for reasons WORDED as not-implemented
 //   without starting with the token, and found none. It did NOT clear the wider class above —
-//   a shape gap typed as RunnerOutOfScopeException and swallowed — which #2994 owns and counts
-//   (233 sites, 37 files). The trap stays reachable either way: the classification is a prefix
-//   test.
+//   a shape gap typed as RunnerOutOfScopeException and swallowed — which #2994 owns and
+//   counts. The trap stays reachable either way: the classification is a prefix test.
 //
 // ── CLASSIFYING ALL 77 SITES BEFORE TOUCHING ANY ─────────────────────────────────────────
 //   The issue counted 96 across 23 files. Re-measured on main after #2894 and #2950 landed,
