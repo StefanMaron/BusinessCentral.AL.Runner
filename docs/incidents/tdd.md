@@ -263,3 +263,60 @@ Caught only because the reviewer applied step 2 to the property rather than to t
 been reported as found, a sound test would have been recorded as weak, and the natural follow-up
 — strengthening a test that needed nothing — would have been wasted work resting on a wrong
 belief about the provider.
+
+## Seven review rounds on one mutation tool, every gap the same shape (#4316, PR #4321)
+
+`tools/apply-mutation.py` exists because a mutation that silently fails to apply leaves the suite
+GREEN, and GREEN reads as "the guard did not catch this" when it means "this was never applied".
+The tool refuses unless its anchor matched exactly once.
+
+It took seven review rounds. Every round found a real gap, and **every gap was the same defect
+one level up**: a property asserted on the member the reviewer had shown, and merely *produced*
+on the rest of its population.
+
+| round | population | what was unpinned |
+|---|---|---|
+| 1 | `--restore` | reported `APPLIED` while leaving mutated code, and deleted the only backup |
+| 2 | the arms of `apply()` | the byte-identical arm — stayed GREEN under `if False:`, returned a *measured* code after stranding a backup |
+| 3 | the two AMBIGUOUS fixtures | the 2-match fixture asserted `code` and `body`, never `msg`, so a hardcoded `3` published a wrong count |
+| 4 | the ten `return REFUSED` arms | four asserted, six merely produced; flipping one made a failed `--restore` report success |
+| 5 | the enumeration's cases | a case satisfied the count without reaching the arm it named; a constant `4` stood in for platform-skipped cases |
+| 6 | the instrument | the tracer was correct but unasserted — `return rc, set(ALL_LINES)` printed full coverage and passed |
+| 7 | the instrument's **scope** | a line number is not a line: the stdlib executes those integers in its own files |
+
+**The escape is always one move: a constant standing in for a measurement.** `2 times`, then
+`+ 4` for skipped cases, then `set(_REFUSAL_LINES)` for the trace. Each looks exactly like the
+value it replaces, and each passes.
+
+**Round 7 is the one worth reading.** `_REFUSAL_LINES` holds bare integers; the standard library
+executes every one of those numbers in its own files — 58 distinct `(file, line)` collisions
+covering all ten arms, `tokenize.py` hitting one 93 times. Deleting the tracer's file filter left
+all 51 checks green at `10/10`, and deleting the filter *and* removing a case from the roster
+still read `10/10`, with that arm "reached" only by `tempfile.py`.
+
+Two lessons, and the second is the one that actually ended the regress:
+
+1. **Make identity part of the key, not a filter in front of the data.** A filter can be deleted
+   and the data still look right; a key cannot.
+2. **A structural fix that nothing can falsify is not finished.** Keying on `(file, line)` was
+   correct and both escape mutations stayed GREEN against it, because the existing empty-set probe
+   was a single attribute lookup — it ran almost no Python, so no foreign frame existed to be
+   misattributed. It could falsify a constant and nothing else. A probe doing real foreign work
+   (`re.compile`, `tokenize`) that must still trace to empty is the assertion that discriminates.
+
+**Choose the assertion a constant cannot satisfy.** "A known case traces to one arm" can be faked
+by returning everything; "a case reaching NO arm traces to the EMPTY set, while doing real work in
+other files" cannot.
+
+Two incidental traps, both of which cost real time:
+
+- **A stale `__pycache__` outlives `--restore`.** A probe read `(0, <a REFUSED arm's message>)` —
+  which reads exactly like a latent success-on-failure defect — from bytecode written during an
+  earlier mutation. The source was correct throughout; `dis.dis` showed the loaded function
+  executing `LOAD_GLOBAL APPLIED`. `python3 -B` does not help: it suppresses *writing* a `.pyc`,
+  not reading one.
+- **Mutating `SUFFIX` breaks the tool's own `--restore`**, because restore resolves the backup
+  name *through* the mutated constant. The backup is never destroyed, only unfindable. Recovering
+  it by hand with `mv` then dropped the file's exec bit, which was committed as `100644` and made
+  the documented `tools/apply-mutation.py <file>` invocation fail with `Permission denied` for
+  everyone — while every test kept passing, because they import the module.
