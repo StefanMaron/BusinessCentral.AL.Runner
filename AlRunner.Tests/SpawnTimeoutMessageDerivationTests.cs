@@ -18,6 +18,8 @@
 // and a test that pinned 120s would have to be edited by anyone legitimately changing it — which
 // is the coupling this whole issue exists to remove.
 
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using System.Text.RegularExpressions;
 using Xunit;
 
@@ -137,7 +139,7 @@ public sealed class SpawnTimeoutMessageDerivationTests
                 // fix, #4286). The [Theory] below pins all five spellings.
                 foreach (var seg in NonInterpolatedSpawnTimeoutStrings(stmt))
                     offenders.Add($"{file}: {{SpawnTimeoutMs}} sits in a string with no $ prefix, so the braces "
-                                  + $"are printed rather than the cap: {Compact(seg.Value)}");
+                                  + $"are printed rather than the cap: {Compact(seg)}");
             }
         }
 
@@ -169,6 +171,12 @@ public sealed class SpawnTimeoutMessageDerivationTests
     [InlineData("$\"within {SpawnTimeoutMs / 1000}s.\"", false)]    // interpolated
     [InlineData("$@\"within {SpawnTimeoutMs / 1000}s.\"", false)]   // verbatim interpolated
     [InlineData("@$\"within {SpawnTimeoutMs / 1000}s.\"", false)]   // the other spelling of it
+    // Raw strings. The regex this replaced matched on PAIRS of quotes, so it split \"\"\"...\"\"\"
+    // into an empty match plus a bare-looking middle and reported all three of these — two of
+    // them wrongly. A token walk sees one token per literal and one node per interpolation.
+    [InlineData("\"\"\"within {SpawnTimeoutMs / 1000}s.\"\"\"", true)]    // raw, NOT interpolated
+    [InlineData("$\"\"\"within {SpawnTimeoutMs / 1000}s.\"\"\"", false)]  // raw interpolated
+    [InlineData("$$\"\"\"within {{SpawnTimeoutMs / 1000}}s.\"\"\"", false)] // raw, two-dollar form
     public void TheScan_ReportsExactlyTheSpellingsThatDoNotInterpolate(string literal, bool expectedReported)
     {
         var stmt = "throw new TimeoutException(" + literal + ");";
@@ -182,14 +190,35 @@ public sealed class SpawnTimeoutMessageDerivationTests
     /// The string literals in <paramref name="stmt"/> that mention SpawnTimeoutMs and do NOT
     /// interpolate — so the braces reach the reader verbatim.
     ///
-    /// One implementation, read by the scan above AND by the [Theory] below. An earlier revision
-    /// had the [Theory] carry its own copy of this expression, which made it unable to fail: a
-    /// mutation of the scan left all five cases green (a pin must read production code).
+    /// Roslyn rather than a regex, because the regex could not see raw strings: it matched on
+    /// pairs of quotes, so `"""..."""` split into an empty match plus a bare-looking middle and
+    /// the interpolated `$"""` / `$$"""` forms were reported as if they printed their braces.
+    /// A token walk has no such blind spot — interpolated text is an InterpolatedStringTextToken
+    /// rather than a literal, and every raw form is its own token kind (#3527, #4275).
+    ///
+    /// One implementation, read by the scan AND by the [Theory]. An earlier revision gave the
+    /// [Theory] its own copy of the matching logic, which made it unable to fail: a mutation of
+    /// the scan left every case green (a pin must read production code).
     /// </summary>
-    private static IEnumerable<Match> NonInterpolatedSpawnTimeoutStrings(string stmt) =>
-        Regex.Matches(stmt, @"(?<prefix>[$@]*)""(?<body>(?:[^""\\]|\\.)*)""")
-            .Where(sm => sm.Groups["body"].Value.Contains("SpawnTimeoutMs", StringComparison.Ordinal))
-            .Where(sm => !sm.Groups["prefix"].Value.Contains('$'));
+    private static IEnumerable<string> NonInterpolatedSpawnTimeoutStrings(string stmt)
+    {
+        foreach (var node in CSharpSyntaxTree.ParseText(stmt).GetRoot().DescendantNodes())
+        {
+            // Only a NON-interpolated literal is a LiteralExpressionSyntax. The text inside an
+            // interpolated string of any spelling — $"...", $@"...", @$"...", $"""...""",
+            // $$"""...""" — is an InterpolatedStringTextToken hanging off an
+            // InterpolatedStringExpressionSyntax, so it cannot reach this branch at all. That is
+            // what the walk buys over the quote-pair regex it replaced, and it needs no explicit
+            // skip: an earlier revision carried `if (node is InterpolatedStringExpressionSyntax)
+            // continue;`, and review measured it as DEAD — deleting it changed no answer at any
+            // spawn site in this assembly, nor on a set of adversarial spellings. (A literal
+            // inside a `{…}` hole is a different node and IS still reported, correctly: it does
+            // print its braces.)
+            if (node is LiteralExpressionSyntax lit
+                && lit.Token.Text.Contains("SpawnTimeoutMs", StringComparison.Ordinal))
+                yield return lit.Token.Text;
+        }
+    }
 
     private static string Compact(string s) =>
         Regex.Replace(s, @"\s+", " ").Trim() is { Length: > 120 } long_ ? long_[..120] + "…" : Regex.Replace(s, @"\s+", " ").Trim();
