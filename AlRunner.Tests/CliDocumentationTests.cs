@@ -20,6 +20,13 @@ namespace AlRunner.Tests;
 // and no longer is — #1809.
 public sealed class CliDocumentationTests
 {
+    /// <summary>The cap this file's subprocess spawns actually apply, and the single source of
+    /// the figure their timeout messages report (#4275). Derived rather than repeated: a literal
+    /// in the message is invisible while it happens to match, and wrong the moment the cap moves.
+    /// Measured for real on #3435 — a cap squeezed to 3s still threw "did not exit within 120s".
+    /// Same shape as BcVersionDefaultDocumentationTests.SpawnTimeoutMs (#3487).</summary>
+    private const int SpawnTimeoutMs = 240_000;
+
     private static readonly string RepoRoot = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
 
@@ -63,11 +70,10 @@ public sealed class CliDocumentationTests
         proc.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (errSb) errSb.AppendLine(e.Data); };
         proc.BeginOutputReadLine();
         proc.BeginErrorReadLine();
-        if (!proc.WaitForExit(240_000))
+        if (!proc.WaitForExit(SpawnTimeoutMs))
         {
             try { proc.Kill(entireProcessTree: true); } catch { }
-            throw new TimeoutException(
-                $"al-runner did not exit within 240s for args: {string.Join(' ', args)}");
+            throw new TimeoutException($"al-runner did not exit within {SpawnTimeoutMs / 1000}s for args: {string.Join(' ', args)}");
         }
         proc.WaitForExit(); // flush the async readers
         lock (outSb) lock (errSb) return (proc.ExitCode, outSb.ToString(), errSb.ToString());
