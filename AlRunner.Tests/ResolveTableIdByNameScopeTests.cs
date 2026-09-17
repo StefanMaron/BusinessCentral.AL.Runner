@@ -95,11 +95,17 @@ public class ResolveTableIdByNameScopeTests
             },
             act: () =>
             {
+                // ORDER MATTERS, and it is load-bearing rather than incidental.
+                // ResolveTableNameInDeclaringScope FAULTS its answer into _parsedTables
+                // (RecordPatches.BcAppFallback.cs:768-769). Calling it first would leave the bare
+                // resolver answering from tier 1, never reaching the symbol index — and then
+                // disabling the index tier entirely would red NOTHING here. Bare first keeps this
+                // arm pinned to the index lookup it is about. Found in review of PR #4269.
+                var bare = InvokeBare(SharedName);
                 var scoped = RecordPatches.ResolveTableNameInDeclaringScope(
                     SharedName, SymbolTable(DepDeclaringId));
-                var bare = InvokeBare(SharedName);
-                Assert.Equal(DepTargetId, scoped?.TableId);
                 Assert.Equal(DepTargetId, bare);
+                Assert.Equal(DepTargetId, scoped?.TableId);
             });
     }
 
