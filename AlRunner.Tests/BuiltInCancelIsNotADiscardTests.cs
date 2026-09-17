@@ -125,9 +125,26 @@ public sealed class BuiltInCancelIsNotADiscardTests
                     && op != OpCodes.Ldftn && op != OpCodes.Ldvirtftn) continue;
                 if (instruction.Operand is not MethodReference callee) continue;
 
+                // Unwrap a generic instantiation to the type that declares the member, but
+                // NOT an array/pointer/byref: GetElementType() happily turns `Foo[,]::Set` into
+                // `Foo`, so an array of an in-universe type read as in-universe and its
+                // MethodDefinition-less members then REFUSED below — a genuinely absent thing
+                // (an array holds no code) spelled as unmeasurable.
+                var declaring = callee.DeclaringType is GenericInstanceType generic
+                    ? generic.ElementType
+                    : callee.DeclaringType;
                 var declaredInUniverse =
-                    universe.Contains(callee.DeclaringType.GetElementType().FullName);
-                var resolved = callee.Resolve();
+                    declaring is not TypeSpecification && universe.Contains(declaring.FullName);
+
+                // Resolve() answers null for a missing MEMBER but THROWS for a missing ASSEMBLY,
+                // so the unreadable-System.*/BC case the skip below exists for arrives as an
+                // exception, not a null. Unwrapped, it would fail the run with a Cecil stack
+                // trace instead of skipping. Measured: 118 out-of-universe callees resolve and
+                // none is unresolvable today, so this catch has never fired — which is exactly
+                // why it must be here rather than inferred from the branch never being seen.
+                MethodDefinition resolved;
+                try { resolved = callee.Resolve(); }
+                catch (AssemblyResolutionException) { resolved = null; }
 
                 // Three outcomes, and only the first two are legitimate passes. A callee OUTSIDE
                 // the universe cannot hold an stfld of a private field of this type, so skipping
@@ -142,14 +159,16 @@ public sealed class BuiltInCancelIsNotADiscardTests
                 }
                 if (!universe.Contains(resolved.DeclaringType.FullName)) continue;
 
-                // Known hole, and this is the line it lives on: an INTERFACE-dispatched call
-                // resolves to the bodiless interface method and is dropped here, so the
-                // implementation is never walked (#4311). Pre-existing and not live — every call
-                // site on this path is a direct call on a concrete method — and the occupancy
-                // floor covers it wherever the indirection lands on the flush path. Following it
-                // means enumerating the assembly's implementors, which needs its own termination
-                // argument. NOT the accessibility bound's doing: that region the compiler
-                // excludes (CS0122); this is reachable code the walk does not follow.
+                // Known hole, and this is the line it lives on: a call dispatched INDIRECTLY —
+                // through an interface, or a delegate whose ldftn sits outside the closure —
+                // resolves to a bodiless or unreached method and is dropped here, so the
+                // implementation is never walked (#4311). Dormant rather than absent: the closure
+                // holds 58 interface-dispatch sites, and none of them resolves to an implementer
+                // INSIDE the universe (57 System.Numerics constrained-generic-math calls, one
+                // IDisposable.Dispose from FlushParts' foreach), so none can hold the stfld.
+                // Re-measure that before relying on it. The occupancy floor covers the case where
+                // the indirection lands on the flush path. NOT the accessibility bound's doing:
+                // that region the compiler excludes (CS0122); this is reachable code not followed.
                 if (!resolved.HasBody) continue;
 
                 if (reached.ContainsKey(resolved.FullName)) continue;
