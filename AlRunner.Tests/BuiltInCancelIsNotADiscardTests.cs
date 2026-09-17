@@ -94,8 +94,8 @@ public sealed class BuiltInCancelIsNotADiscardTests
     }
 
     /// <summary>
-    /// Everything Invoke() can reach within that universe, transitively — 15 of the type's 111
-    /// methods, max depth 7, so the walk is over a single type's own call graph and costs
+    /// What Invoke() reaches within that universe by direct and delegate calls, transitively —
+    /// 15 of the type's 111 methods, max depth 7, so the walk is one type's own call graph and costs
     /// milliseconds rather than a repository-wide closure. Also reports every in-universe callee
     /// it could NOT resolve, which is a broken measurement rather than an absence of stores.
     /// <para>Trap: resolve through <see cref="MethodReference.Resolve"/> — a call to a GENERIC
@@ -141,6 +141,15 @@ public sealed class BuiltInCancelIsNotADiscardTests
                     continue;
                 }
                 if (!universe.Contains(resolved.DeclaringType.FullName)) continue;
+
+                // Known hole, and this is the line it lives on: an INTERFACE-dispatched call
+                // resolves to the bodiless interface method and is dropped here, so the
+                // implementation is never walked (#4311). Pre-existing and not live — every call
+                // site on this path is a direct call on a concrete method — and the occupancy
+                // floor covers it wherever the indirection lands on the flush path. Following it
+                // means enumerating the assembly's implementors, which needs its own termination
+                // argument. NOT the accessibility bound's doing: that region the compiler
+                // excludes (CS0122); this is reachable code the walk does not follow.
                 if (!resolved.HasBody) continue;
 
                 if (reached.ContainsKey(resolved.FullName)) continue;
