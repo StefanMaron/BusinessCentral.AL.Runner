@@ -162,25 +162,51 @@ public static partial class BcRuntime
         // by name to avoid hard-binding to internal types.
         foreach (var attr in clrType.GetCustomAttributes(inherit: false))
         {
-            var t = attr.GetType();
-            if (t.Name != "NavCodeunitOptionsAttribute") continue;
-            // Match decompile: Options & EventManualBinding != 0.  Property "Options" is
-            // a NavCodeunitOptions enum; "IsEventManualBinding" is a derived bool.
-            var isManual = t.GetProperty("IsEventManualBinding",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            if (isManual != null)
+            if (attr.GetType().Name != "NavCodeunitOptionsAttribute") continue;
+            return ReadEventManualBindingFromAttribute(attr);
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Does this <c>[NavCodeunitOptionsAttribute]</c> instance declare manual event binding?
+    ///
+    /// <para>The attribute's own derived <c>IsEventManualBinding</c> property is the answer
+    /// when it exists — BC computes it, so nothing here can drift from it. The fallback reads
+    /// the flag out of the <c>Options</c> enum <b>by member name</b>: the enum's own members
+    /// are the mapping, and a hardcoded mask is a second spelling of BC's enum that is free to
+    /// drift from it. It had drifted — both readers masked with <c>1</c>, which is
+    /// <c>SingleInstance</c>; <c>EventManualBinding</c> is <c>2</c> on BC 28.1.49838.53910, so
+    /// the fallback answered the question backwards in both directions (#4289).</para>
+    ///
+    /// <para>Trap: the fallback is unreachable while BC's attribute keeps the derived property,
+    /// which is why nothing caught the mask. Measured on 28.1.49838.53910 only — the artifact
+    /// set on the box that made this change — so re-measure before assuming another BC agrees.
+    /// An <c>Options</c> enum declaring no <c>EventManualBinding</c> member answers false, the
+    /// same as a codeunit carrying no attribute at all, which is what BC's own property returns
+    /// for a codeunit that declares nothing.</para>
+    /// </summary>
+    private static bool ReadEventManualBindingFromAttribute(object attr)
+    {
+        var t = attr.GetType();
+        var isManual = t.GetProperty("IsEventManualBinding",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        if (isManual != null)
+        {
+            try { return (bool)isManual.GetValue(attr)!; } catch { }
+        }
+        var options = t.GetProperty("Options",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(attr);
+        if (options == null || !options.GetType().IsEnum) return false;
+        var enumType = options.GetType();
+        foreach (var name in Enum.GetNames(enumType))
+        {
+            if (name != "EventManualBinding") continue;
+            try
             {
-                try { return (bool)isManual.GetValue(attr)!; } catch { }
+                return (Convert.ToInt64(options) & Convert.ToInt64(Enum.Parse(enumType, name))) != 0;
             }
-            var optionsProp = t.GetProperty("Options",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            var v = optionsProp?.GetValue(attr);
-            if (v != null)
-            {
-                // EventManualBinding flag = 1 in NavCodeunitOptions enum (per decompile).
-                int iv = Convert.ToInt32(v);
-                return (iv & 1) != 0;
-            }
+            catch { return false; }
         }
         return false;
     }
