@@ -26,6 +26,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **startup:** route both Ncl.dll reads through the retry helper again
 - **metadata:** resolve codeunit publishers so Event Subscription reports Event Type and Active
 - **expectations:** repoint the 41 allowlist entries citing closed issues
 - **coverage:** attribute statements executed in a sibling SOURCE dependency
