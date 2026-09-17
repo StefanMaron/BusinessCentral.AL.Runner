@@ -1,0 +1,13 @@
+{
+  "id": "c9a37e51-6d24-4b83-a15f-8e2760d4bb31",
+  "name": "Runner Tests Fixture - Coverage Dependency Source Subject",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "#3965: a sibling SOURCE dependency whose executed statement must appear in the Cobertura report without the app becoming an execution bundle.",
+  "description": "AlRunner#3965: AlCoverageSourceMap.Build is fed only the execution bundles, so a statement executed in a dependency compiled from sibling source cannot be attributed and is dropped from the report. This app exists only to own one executed statement and one NEVER-executed statement, so a fix that attributes everything indiscriminately is as visible as one that attributes nothing.",
+  "dependencies": [],
+  "idRanges": [ { "from": 70860, "to": 70869 } ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "OnPrem"
+}

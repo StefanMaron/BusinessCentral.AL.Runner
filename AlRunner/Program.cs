@@ -4792,11 +4792,16 @@ if (outputJunitPath != null)
 if (coverageEnabled)
 {
     // Source map keyed by (AL object label, object id) → file path, scanned from the
-    // same bundle roots the run compiled — see AlCoverageSourceMap. relativeTo the
+    // roots the run compiled — see AlCoverageSourceMap. relativeTo the
     // working directory so cobertura's <source> (".") lines up with the filename
     // attributes, matching v1's convention.
+    //
+    // #3965: the execution bundles are not the whole set. A sibling SOURCE dependency is
+    // compiled and executed without being a bundle, so RootsWithParsedSourceDependencies adds
+    // the dirs the run actually parsed; a packaged .app dep adds nothing, which is correct.
     var coverageSourceMap = AlRunner.Infrastructure.AlCoverageSourceMap.Build(
-        bundles, relativeTo: AlRunner.Infrastructure.WorkingDirectory.TryGet());   // #3120: null → absolute filenames
+        AlRunner.Infrastructure.AlCoverageSourceMap.RootsWithParsedSourceDependencies(bundles),
+        relativeTo: AlRunner.Infrastructure.WorkingDirectory.TryGet());   // #3120: null → absolute filenames
     var coverageStatements = AlRunner.Infrastructure.AlCoverageTracker.Collect(coverageSourceMap);
     List<AlRunner.Infrastructure.AlCoverageReport.FileCoverage>? coverageFiles = null;
     var coverageProblem = AlRunner.Infrastructure.OutputPaths.TryWrite("--coverage-out", coverageOutputPath,

@@ -510,6 +510,22 @@ public static partial class RecordPatches
     public static void AddSourceDir(string dir) => AddSourceDirs(new[] { dir });
 
     /// <summary>
+    /// Every AL source directory registered for this run — the execution bundles' own suite
+    /// dirs AND the sibling SOURCE dependencies <c>BuildSiblingSourceDeps</c> matched and
+    /// compiled. A snapshot; the registry keeps accumulating after the call.
+    ///
+    /// <para>Exists for --coverage (#3965). The report's source map was built from the
+    /// execution bundles alone, so a statement executed in a dependency compiled from sibling
+    /// source had no root to be attributed to and was dropped from the Cobertura document
+    /// while being tracked perfectly well. This registry is the right root set because
+    /// <see cref="AddSourceDirs(IEnumerable{string})"/> is fed exactly the directories that
+    /// were PARSED as AL — a packaged .app dependency never reaches it and so contributes no
+    /// root, which is what keeps an ordinary packaged-dep run free of the scan failures
+    /// <c>AlCoverageSourceMap.Build</c> reports for a root it cannot read.</para>
+    /// </summary>
+    public static IReadOnlyList<string> RegisteredSourceDirs() => _sourceDirs.ToList();
+
+    /// <summary>
     /// Runs all eight source extractors (table, tableextension, page, report, query,
     /// xmlport, object-decl, object-caption) over ONE already-read file's text (#1903).
     /// <para>
