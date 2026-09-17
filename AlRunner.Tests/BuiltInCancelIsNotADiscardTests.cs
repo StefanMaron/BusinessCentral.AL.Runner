@@ -113,6 +113,14 @@ public sealed class BuiltInCancelIsNotADiscardTests
     /// <para><c>IsStatic</c> is not redundant beside <c>IsVirtual</c>: a static abstract interface
     /// member's implementation is <c>static</c> and NOT virtual, so a virtual-only filter finds no
     /// candidate for the 57 <c>constrained. call</c> sites in the closure.</para>
+    /// <para>Trap: this matches on NAME AND ARITY and asks nothing about interfaces, so an
+    /// ordinary static helper or operator overload of the right shape IS enqueued at a site it
+    /// could never run at — the 57 call <c>get_Zero/0</c>, <c>op_Checked*/2</c>, <c>Min/2</c>,
+    /// <c>Max/2</c>, <c>CreateChecked/1</c>, and a nested type with a plain <c>operator +</c> was
+    /// measured being enqueued and its store reported as an offender. Harmless only because
+    /// <strong>0</strong> universe statics match any of the 58 today; re-measure rather than
+    /// reasoning from "nothing here implements System.Numerics", which is not what this asks
+    /// (#4320 review).</para>
     /// <para>Trap: read off the <see cref="MethodReference"/>, never its definition — it must
     /// still answer for a callee that will not resolve. And do not narrow it by the type
     /// hierarchy: that can only remove candidates, removes none today, and buys an unmeasurable.</para>
@@ -125,18 +133,32 @@ public sealed class BuiltInCancelIsNotADiscardTests
             && (m.Name == callee.Name || m.Overrides.Any(o => o.Name == callee.Name)));
 
     /// <summary>
-    /// The universe types this call names only as a generic argument. Control can re-enter the
-    /// universe through a member of one that the instruction does not name — an async method's
-    /// state machine handed to <c>AsyncTaskMethodBuilder.Start&lt;T&gt;</c> is the live shape.
+    /// The universe types this call names only as a GENERIC ARGUMENT OF THE METHOD. Control can
+    /// re-enter the universe through a member of one that the instruction does not name — an
+    /// async method's state machine handed to <c>AsyncTaskMethodBuilder.Start&lt;T&gt;</c> is the
+    /// live shape, and it is a generic <em>method</em> argument.
+    /// <para>Two narrowings, and BOTH are load-bearing against false REDs on ordinary C# over a
+    /// type nested in the host (#4320 review). The DECLARING type's generic arguments are not
+    /// read at all: that refused <c>new List&lt;Row&gt;()</c> (3) and
+    /// <c>EqualityComparer&lt;Row&gt;.Default.Equals</c> (2). And the argument type must declare
+    /// something out-of-universe code could actually dispatch INTO — a body that is
+    /// <c>virtual</c> or <c>static</c>, the same set <see cref="IndirectTargetsInUniverse"/>
+    /// treats as reachable. Without that second test <c>Enumerable.Count&lt;Row&gt;</c> is
+    /// refused (1), because it IS a generic method call and the first narrowing does not touch
+    /// it. A plain data type has no such member, so nothing can re-enter through it.</para>
+    /// <para>The async state machine passes both: <c>Start&lt;TStateMachine&gt;</c> is a generic
+    /// method, and the state machine declares <c>MoveNext</c> — virtual, with a body, holding the
+    /// store. <c>AGenericLocalOverAUniverseTypeIsNotRefused</c> anchors the absence, which is the
+    /// only anchor a narrowing can have.</para>
     /// </summary>
     private static IEnumerable<string> InUniverseGenericArguments(
-        HashSet<string> universe, MethodReference callee)
-    {
-        var arguments = new List<TypeReference>();
-        if (callee is GenericInstanceMethod method) arguments.AddRange(method.GenericArguments);
-        if (callee.DeclaringType is GenericInstanceType type) arguments.AddRange(type.GenericArguments);
-        return arguments.Select(a => a.FullName).Where(universe.Contains).Distinct();
-    }
+        HashSet<string> universe, List<TypeDefinition> universeTypes, MethodReference callee)
+        => callee is not GenericInstanceMethod method
+            ? Enumerable.Empty<string>()
+            : method.GenericArguments.Select(a => a.FullName).Where(universe.Contains)
+                .Where(name => universeTypes.Single(t => t.FullName == name).Methods
+                    .Any(m => m.HasBody && (m.IsVirtual || m.IsStatic)))
+                .Distinct();
 
     /// <summary>
     /// Whether a call site invokes a delegate, whose target is whatever <c>ldftn</c> built it and
@@ -296,7 +318,7 @@ public sealed class BuiltInCancelIsNotADiscardTests
                     // stfld), entered by `call AsyncTaskMethodBuilder::Start<TStateMachine>` —
                     // out of universe, and a plain `call`. Refused rather than followed: which
                     // member runs is not on the instruction (#4320 review).
-                    foreach (var argument in InUniverseGenericArguments(universe, callee))
+                    foreach (var argument in InUniverseGenericArguments(universe, universeTypes, callee))
                         unfollowable.Add($"{caller.Name} -> {callee.Name}<{argument}>");
                     continue;
                 }
@@ -500,6 +522,18 @@ public sealed class BuiltInCancelIsNotADiscardTests
             public void Invoke() { _fixture._pendingNewRow = false; }
         }
 
+        // Ordinary C# over a type nested in the host. Every one of these names Row as a generic
+        // argument of the DECLARING type, which is what the generic-argument refusal must NOT
+        // read: doing so refused all three and FLOOR 5 turned that into a RED on correct code.
+        private sealed class Row { public int Value; }
+
+        internal int EntryWithGenericLocals()
+        {
+            var rows = new List<Row> { new Row { Value = 1 } };
+            var same = EqualityComparer<Row>.Default.Equals(rows[0], rows[0]);
+            return rows.Count + Enumerable.Count(rows) + (same ? 1 : 0);
+        }
+
         // Deliberately unreachable from every entry point below, so the ldftn that builds the
         // delegate sits OUTSIDE the closure and a walk that only follows the ldftn instructions
         // it meets never reaches the lambda's body. That is #4311's second shape.
@@ -627,6 +661,19 @@ public sealed class BuiltInCancelIsNotADiscardTests
 
         Assert.Empty(FlagStores(walk));
         Assert.Contains(walk.Unfollowable, u => u.Contains("EntryAsync"));
+    }
+
+    // The anchor for a DELETED clause, which is the only kind of anchor an absence can have.
+    // Reading the DECLARING type's generic arguments as well refused all three of these shapes
+    // (3 + 1 + 2 refusals) and FLOOR 5 made that a RED on correct code. Re-add that line and this
+    // reds; nothing else does, because none of these is a generic METHOD call (#4320 review).
+    [Fact]
+    public void AGenericLocalOverAUniverseTypeIsNotRefused()
+    {
+        var walk = WalkFixture(nameof(IndirectDispatchFixture.EntryWithGenericLocals));
+
+        Assert.Empty(walk.Unfollowable);
+        Assert.Empty(walk.UnresolvedInUniverse);
     }
 
     // The discrimination the two above need to be worth anything: the refusal is keyed on the

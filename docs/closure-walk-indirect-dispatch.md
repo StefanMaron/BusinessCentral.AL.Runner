@@ -38,9 +38,35 @@ Two different answers, because the two shapes are not equally decidable.
 - **A delegate invocation or a `calli` is REFUSED**, reported on the walk's `Unfollowable` list,
   which `TheWalkFollowedEveryCallSiteInsideTheClosure` asserts is empty. Its target is not a
   property of the call site at all.
-- **A call that names a universe type only as a GENERIC ARGUMENT is REFUSED**, which is what
-  closes the `async` shape: control re-enters the universe through a member of that type the
+- **A call that names a universe type as a GENERIC ARGUMENT OF THE METHOD is REFUSED**, which is
+  what closes the `async` shape: control re-enters the universe through a member of that type the
   instruction does not name.
+
+  **Two narrowings make that refusal usable, and both are load-bearing.** Without them it reds
+  ordinary C# over any type nested in the host, and FLOOR 5 turns every such refusal into a
+  **false RED on correct code**. Measured on a nested `Row`:
+
+  | shape | refusals without narrowing 1 | …and without narrowing 2 |
+  |---|---|---|
+  | `new List<Row>()` + `Add` + `Count` | **3** | 0 |
+  | `EqualityComparer<Row>.Default.Equals` | **2** | 0 |
+  | `Enumerable.Count<Row>` | 0 | **1** |
+  | control, `List<string>` | 0 | 0 |
+
+  1. **The declaring type's generic arguments are not read at all.** `List<Row>::Add` names `Row`
+     only through its declaring type.
+  2. **The argument type must declare a body that is `virtual` or `static`** — the same set
+     `IndirectTargetsInUniverse` treats as dispatchable. A plain data type has no member
+     out-of-universe code could re-enter through.
+
+  **Narrowing 2 is not optional, and the third row is why.** `Enumerable.Count<Row>` **is** a
+  generic method call, so narrowing 1 does not touch it — a review that attributed the whole
+  class to the declaring-type branch would have left this one refusing. The `async` shape passes
+  both tests: `AsyncTaskMethodBuilder.Start<TStateMachine>` is a generic method, and the state
+  machine declares `MoveNext` — virtual, with a body, holding the store.
+
+  `AGenericLocalOverAUniverseTypeIsNotRefused` anchors the absence, which is the only kind of
+  anchor a narrowing can have.
 
 ### The opcode is the wrong dial; the `constrained.` prefix is the right one
 
@@ -105,10 +131,21 @@ matters because each one is a place the walk either follows or refuses:
 | `constrained.` + `callvirt` | **1** | `FlushParts` → `IDisposable::Dispose()` |
 
 All 58 are now followed; before this change **1** was and 57 were dropped as plain `call`s. Of
-all 58, the only in-universe target any name-and-arity match produces is `Dispose()` — no
-in-universe type can implement a `System.Numerics` interface. There are **no** delegate
-invocations, **no** `calli` and **no** in-universe generic arguments in the closure, which is
-why all three refusals are silent today (`UNFOLLOWABLE=0`).
+all 58, exactly **one** yields any in-universe candidate: `IDisposable::Dispose()` matches
+`LiveNavTestPage::Dispose()`.
+
+**Why the other 57 yield none is not "nothing here implements `System.Numerics`" — the filter
+never asks about interfaces.** It matches **name and arity**. The 57 sites call `get_Zero/0`,
+`op_Checked*/2`, `Min/2`, `Max/2`, `CreateChecked/1` and `op_Equality/2`, and **0** universe
+methods carry those shapes today. That is a measurement about *this* universe, not a property of
+the design: an ordinary static helper or an operator overload of a matching shape would be
+enqueued at a site it can never run at, and a store inside it would be reported as an offender on
+the headline row. Constructed and measured — a nested type with a plain `operator +` produced
+`STORE (op_Addition(Trap,Trap), _pendingNewRow, True)`. **Re-measure this line rather than
+reasoning about interfaces.**
+
+There are **no** delegate invocations, **no** `calli` and **no** in-universe generic *method*
+arguments in the closure, which is why all three refusals are silent today (`UNFOLLOWABLE=0`).
 
 ## The over-approximation that was rejected, and why
 
