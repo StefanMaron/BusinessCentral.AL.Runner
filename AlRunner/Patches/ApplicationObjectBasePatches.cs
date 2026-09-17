@@ -223,10 +223,10 @@ public static partial class BcRuntime
     /// BC's internals" — is not a RunnerOutOfScopeException at all, so it can never reach this
     /// method's `true` branch however the reason string is spelled. That is the point of it
     /// being a type: this classification is a STRING PREFIX test, and a prefix gets mis-spelled
-    /// silently (RecordPatches.QueryProjection.cs's
-    /// "query-join-synthesized-subquery-not-implemented" says not-implemented in words while
-    /// not STARTING with the token, so a [TryFunction] swallows it today — #2966). The callers
-    /// above ask <c>BcShapeGapException.Find</c> before anything else instead.</para>
+    /// silently — a reason that says not-implemented in words while not STARTING with the token
+    /// is swallowed. #2966 measured one and fixed it; a sweep for #3460 found none in
+    /// AlRunner/ today, and the trap stays reachable because the test is still on the prefix.
+    /// The callers above ask <c>BcShapeGapException.Find</c> before anything else instead.</para>
     /// </summary>
     private static bool IsPermanentOutOfScope(Exception ex, out AlRunner.Infrastructure.RunnerOutOfScopeException? oos)
     {

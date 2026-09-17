@@ -43,10 +43,12 @@
 //      ApplicationObjectBasePatches.IsPermanentOutOfScope decides whether an AL [TryFunction]
 //      may swallow a refusal with
 //          !oos.Reason.StartsWith("not-yet-implemented", StringComparison.Ordinal)
-//      and RecordPatches.QueryProjection.cs's "query-join-synthesized-subquery-not-implemented"
-//      says not-implemented in words while not STARTING with the token — so a [TryFunction]
-//      swallows it today (measured, #2966). A second prefix would be a second chance to make
-//      that mistake. A type is checked by the compiler and by `is`, not by spelling.
+//      so a reason that says not-implemented in WORDS while not STARTING with that token is
+//      swallowed. #2966 measured one such reason and fixed it; re-measured for #3460, NO
+//      reason in AlRunner/ currently falls into that gap. The trap is still reachable — it is
+//      a prefix test, and the next reason worded that way lands in it — which is why this
+//      type exists. A second prefix would be a second chance to make the mistake. A type is
+//      checked by the compiler and by `is`, not by spelling.
 //
 //   2. Anything carrying a RunnerOutOfScopeException can be ABSORBED BY AN `expect-oos`
 //      MANIFEST ENTRY. OutOfScopeMessage.FromException finds the typed exception anywhere in

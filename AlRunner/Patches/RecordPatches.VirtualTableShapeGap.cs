@@ -78,11 +78,11 @@
 //   other seven — that issue says so instead of assuming.
 //
 //   96 further "see docs/scope.md" citations sit in 23 files outside this directory. MOST are
-//   correct — SMTP, HTTP egress, file storage and printing really are permanent — but at least
-//   one is the same defect (RecordPatches.QueryProjection.cs's
-//   "query-join-synthesized-subquery-not-implemented", whose anchor says not-implemented in
-//   words yet does not START with "not-yet-implemented", so a [TryFunction] swallows it).
-//   Measured and tracked in #2966; classifying them is the work, not deleting the citation.
+//   correct — SMTP, HTTP egress, file storage and printing really are permanent — but some are
+//   the same defect: an anchor saying not-implemented in words that does not START with
+//   "not-yet-implemented", so a [TryFunction] swallows it. Measured and tracked in #2966, whose
+//   example has since been re-spelled and retyped; classifying the rest is the work, not
+//   deleting the citation.
 //
 //   #2766 is the separate doubled-link sweep (it measured capital-S "See docs/scope.md"); the
 //   doubling is fixed here only as a consequence of rewriting these reason strings.
