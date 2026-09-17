@@ -26,7 +26,22 @@ are claiming to prove:
    return the default.
 2. **Confirm the mutation LANDED** — re-read the mutated region or diff it. A mutation that
    silently no-ops leaves the test **green**, which reads as "my test is broken" when it means
-   "I changed nothing". Force a clean rebuild when you mutated a build input (`.csproj`, an
+   "I changed nothing".
+
+   `tools/apply-mutation.py` does this for you and refuses three ways — **0 applied, 1 not
+   applied, 2 ambiguous** — because a mutator that detects zero matches but not two has the same
+   hole one step along. Prefer it to `sed`:
+
+   ```bash
+   tools/apply-mutation.py <file> --anchor-file a.txt --replacement-file b.txt   # exit 0 = applied
+   tools/apply-mutation.py <file> --restore
+   ```
+
+   **After a review-driven repair, re-confirm every mutation still ANCHORS.** A repair that
+   touches the line a mutation anchors on invalidates that mutation, and the invalidation is
+   green — so "all rows identical to the previous revision" is exactly what a row that stopped
+   applying produces (#4316, measured on PR #4308). The lines a reviewer sends you back to change
+   are by construction the interesting ones, which are the lines the mutations target. Force a clean rebuild when you mutated a build input (`.csproj`, an
    MSBuild target, a generator), since an incremental build may skip the compile entirely.
 3. **Rebuild and re-run. Confirm RED — and that the RED is the assertion, not the build.**
    A mutation that breaks the compile also exits non-zero, and a run with compile errors prints
