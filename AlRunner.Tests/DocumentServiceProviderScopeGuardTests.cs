@@ -38,7 +38,7 @@ namespace AlRunner.Tests;
 /// because it necessarily quotes the very identifiers and literals it forbids. That exclusion
 /// was a hole: the one file never checked was the one whose author is most likely to be
 /// experimenting with the contract it forbids. Fixed the same way #3064 fixed
-/// <c>BaseAppFloorFixtureGuardTests</c> — reusing <see cref="TestArtifactsGateTests.StripCommentsPreservingLines"/>
+/// <c>BaseAppFloorFixtureGuardTests</c> — reusing <see cref="CSharpSource.CodeOnly"/>
 /// rather than a second hand-rolled comment stripper — with one refinement <c>DeclaresADocumentServiceHandler</c>
 /// needs: it blanks string-literal content too (<c>blankStringContents: true</c>), because the
 /// contract this half checks is IDENTIFIERS IN CODE (implementing an interface, applying an
@@ -116,7 +116,7 @@ public sealed class DocumentServiceProviderScopeGuardTests
     /// </summary>
     internal static bool DeclaresADocumentServiceHandler(string sourceText) =>
         HandlerContract.IsMatch(
-            TestArtifactsGateTests.StripCommentsPreservingLines(sourceText, blankStringContents: true));
+            CSharpSource.CodeOnly(sourceText));
 
     /// <summary>
     /// True when <paramref name="sourceText"/> reproduces Microsoft's mock error text inside a
@@ -125,7 +125,7 @@ public sealed class DocumentServiceProviderScopeGuardTests
     /// </summary>
     internal static bool CopiesTheMockErrorLiteral(string sourceText) =>
         CopiedMockLiteral.IsMatch(
-            TestArtifactsGateTests.StripCommentsPreservingLines(sourceText, blankStringContents: false));
+            CSharpSource.CommentsBlanked(sourceText));
 
     [Fact]
     public void NoRunnerSource_DeclaresADocumentServiceHandler()

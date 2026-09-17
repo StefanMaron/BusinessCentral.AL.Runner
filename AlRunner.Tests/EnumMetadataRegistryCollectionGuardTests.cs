@@ -20,38 +20,15 @@ public sealed class EnumMetadataRegistryCollectionGuardTests
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "AlRunner.Tests"));
 
     /// <summary>
-    /// Comments AND every string-literal form this assembly uses, replaced by a space.
-    ///
-    /// Comments were stripped from the first version, for the reason #4199 records: this guard's
-    /// own collection file describes the call in prose, and a guard matching its own documentation
-    /// reports offenders that do not exist. String literals are the other half of that same
-    /// mistake, and leaving them in made this guard name ITSELF (#4251) -- the text it scans for
-    /// is the argument to its own <c>code.Contains(...)</c> call, on the line that does the
-    /// scanning.
-    ///
-    /// Order matters: verbatim and raw strings first, because a regular-string pattern would
-    /// mis-tokenise <c>@"a\"</c> (a verbatim string ending in a backslash, where the backslash is
-    /// NOT an escape).
-    /// </summary>
-    private static string CodeOnly(string path)
-    {
-        var text = string.Join('\n',
-            File.ReadAllLines(path).Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal)));
-        text = Regex.Replace(text, "\"\"\"[\\s\\S]*?\"\"\"", " ");        // raw string literals
-        text = Regex.Replace(text, "@\"(?:[^\"]|\"\")*\"", " ");             // verbatim
-        text = Regex.Replace(text, "\"(?:\\\\.|[^\"\\\\])*\"", " ");        // regular, escapes honoured
-        return text;
-    }
-
-    /// <summary>
     /// Every .cs under AlRunner.Tests that CALLS AlEnumMetadataRegistry.Clear(), reading
-    /// <see cref="CodeOnly"/> so neither prose nor an embedded AL fixture counts as a call site.
+    /// <see cref="CSharpSource.CodeOnly"/> so neither prose nor an embedded AL fixture counts as
+    /// a call site.
     /// </summary>
     private static IEnumerable<string> MutatingSources()
     {
         foreach (var path in Directory.EnumerateFiles(TestsDir, "*.cs", SearchOption.AllDirectories))
         {
-            if (CodeOnly(path).Contains("AlEnumMetadataRegistry.Clear()", StringComparison.Ordinal))
+            if (CSharpSource.ReadCodeOnly(path).Contains("AlEnumMetadataRegistry.Clear()", StringComparison.Ordinal))
                 yield return path;
         }
     }

@@ -10,7 +10,6 @@
 // its own Contains call) and #4249. Every such scanner has to re-derive verbatim-vs-regular
 // escaping, raw-string fences, doc comments and interpolation nesting, and each one gets a
 // different subset right.
-using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 
 namespace AlRunner.Tests;
@@ -33,6 +32,20 @@ internal static class CSharpSource
     internal static string CodeOnly(string sourceText) => Strip(sourceText, blankLiteralContents: true);
 
     /// <summary>
+    /// <see cref="CodeOnly(string)"/> of a file on disk, with the PATH in any refusal. A scan over
+    /// several hundred files that refuses without naming the one it choked on is a failure nobody
+    /// can act on.
+    /// </summary>
+    internal static string ReadCodeOnly(string path)
+    {
+        try { return CodeOnly(File.ReadAllText(path)); }
+        catch (CSharpSourceRefusedException e)
+        {
+            throw new CSharpSourceRefusedException($"{path}: {e.Message}");
+        }
+    }
+
+    /// <summary>
     /// The same pass with literals LEFT ALONE, for the scans whose subject is a value spelled as
     /// a literal (an artifact path, a manifest fragment) and for which blanking literals would
     /// remove the thing being looked for.
@@ -53,18 +66,37 @@ internal static class CSharpSource
     private static string Strip(string text, bool blankLiteralContents)
     {
         var tree = CSharpSyntaxTree.ParseText(text);
-        var errors = tree.GetDiagnostics()
-            .Where(d => d.Severity == DiagnosticSeverity.Error)
+        var root = tree.GetRoot();
+
+        // The third state, scoped to what this pass actually depends on: the LEXICAL structure.
+        //
+        // Not "the source has any error diagnostic". A synthetic FRAGMENT -- a member without its
+        // enclosing type, a bare statement -- is what every detector test in this assembly feeds,
+        // and Roslyn reports CS0106/CS1513 for those while lexing them perfectly. Refusing them
+        // would break 25 existing tests and measure nothing (found the expensive way while
+        // writing this: a whole-tree diagnostic check did exactly that).
+        //
+        // What DOES make the answer untrustworthy is an unterminated literal or comment, because
+        // then the boundary between content and code is guesswork and the blanking either eats
+        // real code or leaves literal content standing as code. That shows up as a diagnostic ON
+        // the very token or trivia this pass is about to blank, which is the narrowest statement
+        // of "I could not read the thing I am relying on".
+        var unreadable = root.DescendantTrivia(descendIntoTrivia: true)
+            .Where(t => IsCommentOrDisabledCode(t.Kind()) && t.ContainsDiagnostics)
+            .Select(t => $"{t.Kind()} at {tree.GetLineSpan(t.Span).StartLinePosition}")
+            .Concat(root.DescendantTokens(descendIntoTrivia: true)
+                .Where(t => IsLiteralContent(t.Kind()) && t.ContainsDiagnostics)
+                .Select(t => $"{t.Kind()} at {tree.GetLineSpan(t.Span).StartLinePosition}"))
             .Take(3)
             .ToList();
-        if (errors.Count > 0)
+
+        if (unreadable.Count > 0)
         {
             throw new CSharpSourceRefusedException(
-                "cannot parse this source as C#, so nothing has been measured about it: "
-                + string.Join("; ", errors.Select(d => $"{d.Id} at {d.Location.GetLineSpan().StartLinePosition}: {d.GetMessage()}")));
+                "cannot parse the literals and comments in this source, so nothing has been "
+                + "measured about it: " + string.Join("; ", unreadable));
         }
 
-        var root = tree.GetRoot();
         var kept = new System.Text.StringBuilder(text);
 
         void Blank(Microsoft.CodeAnalysis.Text.TextSpan span)

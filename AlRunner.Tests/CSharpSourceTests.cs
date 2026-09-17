@@ -229,14 +229,40 @@ public sealed class CSharpSourceTests
     // ── The third state ────────────────────────────────────────────────────────────────
 
     [Fact]
-    public void SourceThatDoesNotParse_Refuses()
+    public void AnUnterminatedStringLiteral_Refuses()
     {
         // A guard that could not read its input has measured nothing. Returning the partial
         // blanking it managed would let every scan over that file report zero violations --
-        // its success state (guards-need-a-third-state.md).
-        var ex = Assert.Throws<CSharpSourceRefusedException>(
-            () => CSharpSource.CodeOnly("class C { void M() { Probe.Reset();"));
-        Assert.Contains("parse", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // its success state (guards-need-a-third-state.md). An unterminated literal is the
+        // shape that makes the answer WRONG rather than merely incomplete: the boundary between
+        // content and code is guesswork from there on.
+        const string src = "class C { void M() { var s = \"Probe.Reset(); } }\n";
+        var ex = Record.Exception(() => CSharpSource.CodeOnly(src));
+        Assert.True(ex is CSharpSourceRefusedException,
+            "expected a refusal, got " + (ex?.GetType().Name ?? "no exception") + ". Roslyn's "
+            + "diagnostics for this source were: " + string.Join(", ",
+                Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(src).GetDiagnostics()
+                    .Select(d => d.Id + "@" + d.Location.SourceSpan)));
+    }
+
+    [Fact]
+    public void AnUnterminatedBlockComment_Refuses()
+    {
+        var ex = Record.Exception(() => CSharpSource.CodeOnly("class C { /* Probe.Reset();\n"));
+        Assert.IsType<CSharpSourceRefusedException>(ex);
+    }
+
+    [Fact]
+    public void AFragmentThatIsNotAWholeCompilationUnit_IsStillRead()
+    {
+        // The constraint that stops the third state trading one defect for another: a genuinely
+        // readable thing must stay a pass. Every detector test in this assembly feeds synthetic
+        // fragments -- a member without its enclosing type, a bare statement -- for which Roslyn
+        // reports CS0106/CS1513 and lexes perfectly. This pass depends on the lexing only, so a
+        // whole-tree error check here would be a false RED on 25 tests that are measuring
+        // something real.
+        Assert.False(Sees("public void M() { var s = \"Probe.Reset();\"; }"));
+        Assert.True(Sees("public void M() { Probe.Reset(); }"));
     }
 
     [Fact]

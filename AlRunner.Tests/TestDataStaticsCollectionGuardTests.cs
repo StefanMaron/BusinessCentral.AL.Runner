@@ -59,7 +59,7 @@ public sealed class TestDataStaticsCollectionGuardTests
         var found = new List<Mutator>();
         foreach (var path in Directory.EnumerateFiles(TestsDir, "*.cs", SearchOption.AllDirectories))
         {
-            var code = CSharpSource.CodeOnly(File.ReadAllText(path));
+            var code = CSharpSource.ReadCodeOnly(path);
             if (!Mutation.IsMatch(code)) continue;
             var decls = TopLevelClass.Matches(code);
             for (var i = 0; i < decls.Count; i++)
@@ -143,7 +143,7 @@ public sealed class TestDataStaticsCollectionGuardTests
             var seen = new List<string>();
             foreach (var path in Directory.EnumerateFiles(TestsDir, "*.cs", SearchOption.AllDirectories))
             {
-                var code = CSharpSource.CodeOnly(File.ReadAllText(path));
+                var code = CSharpSource.ReadCodeOnly(path);
                 if (pattern.IsMatch(code)) seen.Add(Path.GetFileNameWithoutExtension(path));
             }
             yield return (name, seen);

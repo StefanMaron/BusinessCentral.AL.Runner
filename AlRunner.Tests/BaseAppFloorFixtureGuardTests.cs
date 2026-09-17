@@ -1,7 +1,5 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -174,28 +172,8 @@ public sealed class BaseAppFloorFixtureGuardTests
     /// <c>\"application\":</c>) and <c>ValueText</c> (the unescaped value) are checked, so
     /// either spelling counts.
     /// </summary>
-    private static bool CSharpWritesFloor(string text)
-    {
-        foreach (var token in CSharpSyntaxTree.ParseText(text).GetRoot().DescendantTokens())
-        {
-            if (!IsStringContent(token.Kind())) continue;
-            if (ApplicationProperty.IsMatch(token.Text) || ApplicationProperty.IsMatch(token.ValueText))
-                return true;
-        }
-
-        return false;
-    }
-
-    /// <summary>Every token kind whose text is string CONTENT rather than code.</summary>
-    private static bool IsStringContent(SyntaxKind kind) => kind
-        is SyntaxKind.StringLiteralToken
-        or SyntaxKind.Utf8StringLiteralToken
-        or SyntaxKind.SingleLineRawStringLiteralToken
-        or SyntaxKind.MultiLineRawStringLiteralToken
-        or SyntaxKind.Utf8SingleLineRawStringLiteralToken
-        or SyntaxKind.Utf8MultiLineRawStringLiteralToken
-        or SyntaxKind.InterpolatedStringTextToken
-        or SyntaxKind.InterpolatedRawStringEndToken;
+    private static bool CSharpWritesFloor(string text) =>
+        CSharpSource.AnyStringLiteral(text, t => ApplicationProperty.IsMatch(t));
 
     /// <summary>
     /// Checked-in fixture manifests permitted to declare the floor, with the reason. Each
