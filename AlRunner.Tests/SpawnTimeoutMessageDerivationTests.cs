@@ -194,8 +194,8 @@ public sealed class SpawnTimeoutMessageDerivationTests
     /// Roslyn rather than a regex, because the regex could not see raw strings: it matched on
     /// pairs of quotes, so `"""..."""` split into an empty match plus a bare-looking middle and
     /// the interpolated `$"""` / `$$"""` forms were reported as if they printed their braces.
-    /// A token walk has no such blind spot — an interpolated string of any spelling is an
-    /// InterpolatedStringExpression, and every raw form is its own token kind (#3527, #4275).
+    /// A token walk has no such blind spot — interpolated text is an InterpolatedStringTextToken
+    /// rather than a literal, and every raw form is its own token kind (#3527, #4275).
     ///
     /// One implementation, read by the scan AND by the [Theory]. An earlier revision gave the
     /// [Theory] its own copy of the matching logic, which made it unable to fail: a mutation of
@@ -205,10 +205,14 @@ public sealed class SpawnTimeoutMessageDerivationTests
     {
         foreach (var node in CSharpSyntaxTree.ParseText(stmt).GetRoot().DescendantNodes())
         {
-            // An interpolated string — $"...", $@"...", @$"...", $"""...""", $$"""...""" — is
-            // this node type whatever its spelling, so it never reaches the literal case below.
-            if (node is InterpolatedStringExpressionSyntax) continue;
-
+            // Only a NON-interpolated literal is a LiteralExpressionSyntax. The text inside an
+            // interpolated string of any spelling — $"...", $@"...", @$"...", $"""...""",
+            // $$"""...""" — is an InterpolatedStringTextToken hanging off an
+            // InterpolatedStringExpressionSyntax, so it cannot reach this branch at all. That is
+            // what the walk buys over the quote-pair regex it replaced, and it needs no explicit
+            // skip: an earlier revision carried `if (node is InterpolatedStringExpressionSyntax)
+            // continue;`, and review measured it as DEAD — deleting it changed no answer across
+            // all 58 real sites and 10 adversarial ones.
             if (node is LiteralExpressionSyntax lit
                 && lit.Token.Text.Contains("SpawnTimeoutMs", StringComparison.Ordinal))
                 yield return lit.Token.Text;
