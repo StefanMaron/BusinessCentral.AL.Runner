@@ -73,6 +73,11 @@ check("...and it is the COUNT check that says so, not the post-write re-read",
 code, msg, body = run("beta\nalpha\nbeta\n", "beta", "BETA")
 check("two matches are AMBIGUOUS, not a silent first-match mutation", code == am.AMBIGUOUS, f"{code}: {msg}")
 check("...and the file is untouched", body == "beta\nalpha\nbeta\n", body)
+# Both fixtures assert the count, not just one. Pinning it on the 3-match case alone left a
+# hardcoded 3 GREEN, and a 2-match input then printed "matched 3 times" -- a wrong count handed
+# to an agent deciding how far to narrow its anchor, which is the one thing this number is for.
+check("...and the count is the REAL one here too, not whatever the other fixture has",
+      "2 times" in msg, msg)
 
 # Falsifying the reported count stayed GREEN in review, because the AMBIGUOUS fixture has
 # exactly 2 matches and "matched 2 times" is what a hardcoded 2 also prints. Three matches
