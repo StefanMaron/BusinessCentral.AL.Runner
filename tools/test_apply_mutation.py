@@ -74,6 +74,46 @@ code, msg, body = run("beta\nalpha\nbeta\n", "beta", "BETA")
 check("two matches are AMBIGUOUS, not a silent first-match mutation", code == am.AMBIGUOUS, f"{code}: {msg}")
 check("...and the file is untouched", body == "beta\nalpha\nbeta\n", body)
 
+# Falsifying the reported count stayed GREEN in review, because the AMBIGUOUS fixture has
+# exactly 2 matches and "matched 2 times" is what a hardcoded 2 also prints. Three matches
+# distinguishes them: the count is what tells an agent how far to narrow the anchor.
+code, msg, _ = run("beta\nbeta\nalpha\nbeta\n", "beta", "BETA")
+check("three matches are AMBIGUOUS too", code == am.AMBIGUOUS, f"{code}: {msg}")
+check("...and the message reports the REAL count, not a constant", "3 times" in msg, msg)
+
+print("a second apply cannot destroy the backup")
+d2 = tempfile.mkdtemp()
+p2 = os.path.join(d2, "s.cs")
+with open(p2, "w", encoding="utf-8") as fh:
+    fh.write("line ONE\nline TWO\n")
+def _files(a, r):
+    fa, fr = os.path.join(d2, "a"), os.path.join(d2, "r")
+    for f, s in ((fa, a), (fr, r)):
+        with open(f, "w", encoding="utf-8") as fh:
+            fh.write(s)
+    return fa, fr
+fa, fr = _files("line ONE", "line ONE-MUT")
+with redirect_stdout(io.StringIO()):
+    am.main(["apply-mutation.py", p2, "--anchor-file", fa, "--replacement-file", fr])
+fa, fr = _files("line TWO", "line TWO-MUT")
+with redirect_stdout(io.StringIO()) as out:
+    rc2 = am.main(["apply-mutation.py", p2, "--anchor-file", fa, "--replacement-file", fr])
+check("a second apply over a live backup is REFUSED", rc2 == am.REFUSED, f"{rc2}: {out.getvalue()}")
+with redirect_stdout(io.StringIO()):
+    am.main(["apply-mutation.py", p2, "--restore"])
+with open(p2, encoding="utf-8") as fh:
+    back = fh.read()
+check("...so --restore recovers the file COMPLETELY, not just the second mutation",
+      back == "line ONE\nline TWO\n", back)
+
+print("I/O failures refuse rather than reading as NOT-APPLIED")
+with redirect_stdout(io.StringIO()) as out:
+    rc3 = am.main(["apply-mutation.py", os.path.join(d2, "nope.cs"),
+                   "--anchor-file", os.path.join(d2, "missing"), "--replacement-file", fr])
+check("a missing anchor file is REFUSED, not NOT-APPLIED", rc3 == am.REFUSED, f"{rc3}: {out.getvalue()}")
+check("...because a mistyped path and a stale anchor have opposite remedies",
+      rc3 != am.NOT_APPLIED, str(rc3))
+
 print("the three codes are distinct")
 check("APPLIED, NOT-APPLIED and AMBIGUOUS are three different values",
       len({am.APPLIED, am.NOT_APPLIED, am.AMBIGUOUS}) == 3,
@@ -99,7 +139,7 @@ check("...and removes the backup, so a stale one cannot restore the wrong revisi
       not os.path.exists(p + am.SUFFIX))
 with redirect_stdout(io.StringIO()) as out:
     rc = am.main(["apply-mutation.py", p, "--restore"])
-check("--restore with no backup refuses rather than reporting success", rc != am.APPLIED, out.getvalue())
+check("--restore with no backup refuses rather than reporting success", rc == am.REFUSED, out.getvalue())
 
 if FAILURES:
     print(f"\n{len(FAILURES)} failed, {0} passed")

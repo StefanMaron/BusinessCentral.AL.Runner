@@ -41,8 +41,10 @@ are claiming to prove:
    touches the line a mutation anchors on invalidates that mutation, and the invalidation is
    green — so "all rows identical to the previous revision" is exactly what a row that stopped
    applying produces (#4316, measured on PR #4308). The lines a reviewer sends you back to change
-   are by construction the interesting ones, which are the lines the mutations target. Force a clean rebuild when you mutated a build input (`.csproj`, an
-   MSBuild target, a generator), since an incremental build may skip the compile entirely.
+   are by construction the interesting ones, which are the lines the mutations target.
+
+   Force a clean rebuild when you mutated a build input (`.csproj`, an MSBuild target, a
+   generator), since an incremental build may skip the compile entirely.
 3. **Rebuild and re-run. Confirm RED — and that the RED is the assertion, not the build.**
    A mutation that breaks the compile also exits non-zero, and a run with compile errors prints
    no `Total:` line at all. Check the error text says `Assert`, not `error CS`. Restore.
