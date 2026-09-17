@@ -162,13 +162,31 @@ public sealed class SpawnTimeoutMessageDerivationTests
         // hardcoded literal: STILL GREEN, with a file in this very list carrying exactly the
         // spelling this test forbids.
         //
-        // "at least one", not "exactly one": the two-site file is legitimate. This also retires
-        // the >= N constant, which every cohort had to edit — one fewer thing to get right.
-        var silent = Files.Where(f => sitesPerFile.GetValueOrDefault(f) == 0).ToArray();
+        // "at least one", not "exactly one": the two-site file is legitimate —
+        // ArtifactsRootEnvOverrideTests spawns al-runner AND `dotnet msbuild -getProperty`. This
+        // also retires the >= N constant, which every cohort had to edit — one fewer thing to get
+        // right.
+        //
+        // THE REMAINING BLIND SPOT, and it is the only one: this proves every listed file is
+        // MEASURED, never that every site WITHIN a file is. A two-site file losing one site while
+        // keeping the other still contributes, so a regression in the lost one is invisible.
+        // Deliberately not closed: a per-file expected-count map would reintroduce exactly the
+        // per-cohort constant retired above. Measured in review of #4307 — the old `>= N` floor
+        // shares this blind spot, catching the bare case only by arithmetic accident, so nothing
+        // was traded away here.
+        // Two causes, different fixes, so the message says which: a file with NO
+        // TimeoutException at all has lost its spawn (or never had one), while a file that still
+        // throws one but contributes no site has a message the `within` anchor no longer matches.
+        var silent = Files
+            .Where(f => sitesPerFile.GetValueOrDefault(f) == 0)
+            .Select(f => File.ReadAllText(Path.Combine(RepoRoot, "AlRunner.Tests", f))
+                             .Contains("throw new " + nameof(TimeoutException) + "(", StringComparison.Ordinal)
+                ? $"{f}: throws a TimeoutException, but no message the anchor matches — reworded?"
+                : $"{f}: no spawn-timeout throw at all — the spawn moved, or the file no longer has one")
+            .ToArray();
         Assert.True(silent.Length == 0,
             "these listed files contributed NO spawn-timeout throw site, so this test measured "
-            + "nothing about them — the anchor stopped matching, or the site moved or was reworded. "
-            + "Remove the file from the list deliberately, or restore the site:"
+            + "nothing about them. Restore the site, or remove the file from the list deliberately:"
             + Environment.NewLine + string.Join(Environment.NewLine, silent));
 
         Assert.True(offenders.Count == 0,
