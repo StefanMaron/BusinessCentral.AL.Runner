@@ -311,8 +311,48 @@ def _omitted():
 # So trace execution and assert the SET of refusal lines reached. That subsumes the count, needs
 # no constant, and a case that does not reach its arm is a failure rather than a tally.
 _AM_FILE = os.path.join(HERE, "apply-mutation.py")
-_REFUSAL_LINES = {n for n, line in enumerate(open(_AM_FILE, encoding="utf-8"), 1)
-                  if line.strip().startswith("return REFUSED")}
+def _refusal_lines(path: str) -> set[int]:
+    """Line numbers of every `return` in `path` whose value can be REFUSED.
+
+    A text scan for "return REFUSED" was the first version and it false-negatives on an arm
+    spelled `code = REFUSED; return code` -- an ordinary refactor away, and the failure is a
+    silent GREEN: the arm leaves the population, so nothing reports it unpinned (#4316, review
+    round 6). It also false-POSITIVES on the phrase inside a comment, which makes the tool's
+    prose load-bearing for this test.
+
+    The AST answers both: it sees values, not text, and never looks inside a comment. Bare
+    `return REFUSED` and a name bound to REFUSED in the same function both count.
+    """
+    import ast
+    tree = ast.parse(open(path, encoding="utf-8").read())
+    lines: set[int] = set()
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        # Names assigned REFUSED anywhere in this function, so `code = REFUSED; return code`
+        # is found the same as the direct spelling.
+        aliases = {
+            tgt.id
+            for node in ast.walk(fn) if isinstance(node, ast.Assign)
+            for tgt in node.targets
+            if isinstance(tgt, ast.Name)
+            and isinstance(node.value, ast.Name) and node.value.id == "REFUSED"
+        }
+        for node in ast.walk(fn):
+            if not isinstance(node, ast.Return) or node.value is None:
+                continue
+            v = node.value
+            # `return REFUSED` and `return REFUSED, "..."` both count.
+            heads = v.elts[:1] if isinstance(v, ast.Tuple) and v.elts else [v]
+            for h in heads:
+                if isinstance(h, ast.Name) and (h.id == "REFUSED" or h.id in aliases):
+                    lines.add(node.lineno)
+    if not lines:
+        raise SystemExit(f"{path}: no REFUSED return found — the scan is broken, not the tool")
+    return lines
+
+
+_REFUSAL_LINES = _refusal_lines(_AM_FILE)
 
 def _lines_hit(fn):
     """Run fn under a tracer; return the refusal lines in apply-mutation.py it executed."""
@@ -334,6 +374,29 @@ def _lines_hit(fn):
         sys.settrace(old)
     return rc, hit
 
+# The tracer is the instrument, so assert it before trusting anything it says. Review round 6
+# faked it with `return rc, set(_REFUSAL_LINES)` -- a constant standing in for the measurement --
+# and the suite stayed green 47/47 printing "10/10", which let round 5's defect back in
+# unnoticed. Both directions are needed and the SECOND is the one a constant cannot satisfy: a
+# call that refuses WITHOUT reaching an arm must trace to the EMPTY set.
+_probe_dir = tempfile.mkdtemp()
+_probe_file = os.path.join(_probe_dir, "s.cs")
+with open(_probe_file, "w", encoding="utf-8") as _fh:
+    _fh.write("line ONE\n")
+
+_, _probe_hit = _lines_hit(lambda: am.restore(_probe_file))
+_no_backup_line = min(_REFUSAL_LINES, key=lambda n: abs(n - 110))
+check("the tracer reports the arm a known refusal actually executes",
+      len(_probe_hit) == 1, f"traced {sorted(_probe_hit)} for one refusal — expected exactly one arm")
+check("...and it is a line that returns REFUSED in apply-mutation.py",
+      _probe_hit <= _REFUSAL_LINES, f"{sorted(_probe_hit)} is not a subset of {sorted(_REFUSAL_LINES)}")
+
+_, _empty_hit = _lines_hit(lambda: am.REFUSED)
+check("...and a call reaching NO arm traces to the EMPTY set, not to a constant",
+      _empty_hit == set(),
+      f"traced {sorted(_empty_hit)} for a call that executed no arm — the tracer is reporting "
+      f"something other than what ran, so every coverage figure below is meaningless")
+
 _reached: set[int] = set()
 for _name, _fn in REFUSAL_ARMS:
     _rc, _hit = _lines_hit(_fn)
@@ -352,6 +415,17 @@ check(f"every `return REFUSED` arm is reached by a case ({len(_reached)}/{len(_R
       f"apply-mutation.py line(s) {_missing} return REFUSED and no case above executes them. "
       f"Add a case that reaches the arm — not one that merely refuses, and never a constant "
       f"standing in for a skipped case.")
+
+print("the backup suffix is the one .gitignore actually excludes")
+# SUFFIX is a cross-file contract: .gitignore carries the literal, so renaming SUFFIX leaves
+# every test green AND starts committing backups -- a pre-mutation copy of a source file in the
+# history, and a stranded backup that makes --restore refuse later (#4316, review round 6).
+_gitignore = os.path.join(os.path.dirname(HERE), ".gitignore")
+_ignored = open(_gitignore, encoding="utf-8").read() if os.path.exists(_gitignore) else ""
+check("`*<SUFFIX>` is an ignore rule, so a backup is never committed",
+      f"*{am.SUFFIX}" in _ignored,
+      f"SUFFIX is {am.SUFFIX!r} and .gitignore has no `*{am.SUFFIX}` line — renaming one without "
+      f"the other commits the backup")
 
 print("the three codes are distinct")
 check("APPLIED, NOT-APPLIED and AMBIGUOUS are three different values",

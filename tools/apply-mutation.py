@@ -43,6 +43,13 @@ if _stdio is not None:
     _stdio.enable_utf8_stdio()
 
 APPLIED, NOT_APPLIED, AMBIGUOUS, REFUSED = 0, 1, 2, 3
+# Keep in step with `.gitignore`'s `*.mutation-backup` rule, which carries the literal --
+# `test_apply_mutation.py` fails if they drift, because a committed backup ships a pre-mutation
+# copy of a source file and strands a backup that makes every later --restore on that path refuse.
+#
+# Trap, if you ever mutate THIS line to test that: --restore resolves the backup name through
+# this constant, so a mutated SUFFIX cannot find the backup the unmutated code wrote. Recover by
+# renaming the file by hand; the backup is never destroyed, only unfindable.
 SUFFIX = ".mutation-backup"
 
 
