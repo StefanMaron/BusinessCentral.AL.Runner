@@ -41,6 +41,22 @@ public sealed class SpawnTimeoutMessageDerivationTests
         "ArtifactsRootEnvOverrideTests.cs",
         "HomeDirectoryMissingLoudFailureTests.cs",
         "BcVersionDefaultDocumentationTests.cs",
+
+        // The 180s-cap cohort of #4275. Added as one batch because they share a cap value, so a
+        // reviewer checks one figure against thirteen call sites rather than thirteen figures.
+        "EventSubscriptionVirtualTableTests.cs",
+        "FailedTestRollbackBoundaryTests.cs",
+        "MaskedTriggerErrorDiagnosisTests.cs",
+        "OlderBcVersionSelectionWithNewerProvisionedTests.cs",
+        "PageOnInitTriggerTests.cs",
+        "PageRowsetTriggerTests.cs",
+        "PageTriggerMetadataTests.cs",
+        "ProvisionExplicitModesTests.cs",
+        "SessionUserRowRefusalTests.cs",
+        "TableTriggerMetadataTests.cs",
+        "TestPageNewRecordValidationTests.cs",
+        "TestPageOnNewRecordCountTests.cs",
+        "TestPageSubscriberRefusalTests.cs",
     };
 
     [Fact]
@@ -93,13 +109,25 @@ public sealed class SpawnTimeoutMessageDerivationTests
                     .ToArray();
                 if (digits.Length > 0)
                     offenders.Add($"{file}: literal number(s) {string.Join(", ", digits)} in {Compact(stmt)}");
+
+                // A placeholder only interpolates in a $-prefixed string. Without the $ the
+                // reader is shown the BRACES — "did not exit within {SpawnTimeoutMs / 1000}s" —
+                // and the two checks above both pass, because the statement does mention the
+                // constant and carries no literal but the 1000. Caught while writing #4275: the
+                // edit that adds the placeholder and the edit that adds the $ are separate, so
+                // this is the state 11 of 13 files were briefly in.
+                foreach (var seg in Regex.Matches(stmt, @"(?<prefix>\$?)""(?<body>(?:[^""\\]|\\.)*)""")
+                             .Where(sm => sm.Groups["body"].Value.Contains("SpawnTimeoutMs", StringComparison.Ordinal))
+                             .Where(sm => sm.Groups["prefix"].Value.Length == 0))
+                    offenders.Add($"{file}: {{SpawnTimeoutMs}} sits in a string with no $ prefix, so the braces "
+                                  + $"are printed rather than the cap: {Compact(seg.Value)}");
             }
         }
 
         // The population must be non-empty, or an empty scan reads as a pass. #3488 lists five
-        // sites and #3487 contributes one.
-        Assert.True(sitesChecked >= 6,
-            $"expected at least 6 spawn-timeout throw sites across {Files.Length} files, found {sitesChecked} — "
+        // sites, #3487 contributes one, and #4275's 180s cohort thirteen.
+        Assert.True(sitesChecked >= 19,
+            $"expected at least 19 spawn-timeout throw sites across {Files.Length} files, found {sitesChecked} — "
             + "the anchor stopped matching, so this test measured almost nothing");
 
         Assert.True(offenders.Count == 0,
