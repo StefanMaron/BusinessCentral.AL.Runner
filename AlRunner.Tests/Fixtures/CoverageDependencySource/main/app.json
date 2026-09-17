@@ -1,0 +1,20 @@
+{
+  "id": "d1b48f62-7e35-4c94-b260-9f3871e5cc42",
+  "name": "Runner Tests Fixture - Coverage Dependency Source",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "#3965: calls a sibling SOURCE dependency's procedure so its statement is executed but its file is not an execution bundle.",
+  "description": "AlRunner#3965: the consuming bundle is the only execution bundle, so the dependency's source directory never reaches AlCoverageSourceMap.Build and its executed statement is dropped from the Cobertura report.",
+  "dependencies": [
+    {
+      "id": "c9a37e51-6d24-4b83-a15f-8e2760d4bb31",
+      "name": "Runner Tests Fixture - Coverage Dependency Source Subject",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    }
+  ],
+  "idRanges": [ { "from": 70870, "to": 70879 } ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "OnPrem"
+}
