@@ -28,12 +28,20 @@
 //   BC for a given AL codeunit id, and that an id it cannot resolve stays a loud not-found.
 //
 //   * POSITIVE — a loaded Codeunit{id} type reaches the CodeUnit branch of the dispatch, and
-//     the meta handed back carries that exact type as ApplicationObjectClrType and (CodeUnit,
-//     id) as ApplicationObjectId. ApplicationObjectClrType is the load-bearing one: BC reads
-//     it and does its OWN reflection over the AL-emitted attribute
-//     (NavEventPublisherReflectionHelper.GetScopeType, then GetMethodInfoByScopeType(...)
-//     .Attribute), so the event type BC ends up reporting comes from the publisher's real
-//     [IntegrationEvent], never from anything the runner decides.
+//     the meta handed back identifies itself as (CodeUnit, id) and resolves that exact type
+//     as ApplicationObjectClrType. BC then does its OWN reflection over the AL-emitted
+//     attribute (NavEventPublisherReflectionHelper.GetScopeType, then
+//     GetMethodInfoByScopeType(...).Attribute), so the event type BC reports comes from the
+//     publisher's real [IntegrationEvent], never from anything the runner decides.
+//
+//     Note what the ApplicationObjectClrType assertion does and does NOT cover, because the
+//     two are easy to confuse. That getter is Cecil-owned — RecordPatches
+//     .NCLMetaApplicationObject_get_ApplicationObjectClrType — and its "CodeUnit" arm resolves
+//     FindClrTypeByName($"Codeunit{id}") from the meta's OWN object number, ignoring the
+//     nclMetaObjectCLRTypeContainer that BuildNclMetaCodeunit populates. So this asserts the
+//     meta's IDENTITY is right and that the name resolves; it does not pin the container, and
+//     a mutation of the type handed to BuildNclMetaCodeunit leaves it green (measured). The
+//     mutation that reds it is one that changes the id the meta reports.
 //
 //   * NEGATIVE — the lookup is WIDENED, not abolished. An id with no loadable Codeunit{id}
 //     type still raises BC's own NavMetadataNotFoundException, which is the type
@@ -126,8 +134,11 @@ public abstract class Codeunit{codeunitId} : Microsoft.Dynamics.Nav.Runtime.NavC
 
         Assert.NotNull(meta);
 
-        // The load-bearing assertion: BC reads ApplicationObjectClrType off this meta and
-        // reflects over it to find the publisher's own NavEventAttribute.
+        // BC reads ApplicationObjectClrType off this meta and reflects over it to find the
+        // publisher's own NavEventAttribute. The getter is Cecil-owned and resolves
+        // Codeunit{id} by name from the meta's own object number (see the header), so this
+        // asserts the meta identifies the right codeunit and that name resolves to the type
+        // this test compiled.
         var clrType = meta.GetType()
             .GetProperty("ApplicationObjectClrType",
                 BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!
