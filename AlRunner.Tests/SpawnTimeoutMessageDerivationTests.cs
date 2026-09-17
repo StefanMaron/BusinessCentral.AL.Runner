@@ -60,6 +60,14 @@ public sealed class SpawnTimeoutMessageDerivationTests
         "TestPageOnNewRecordCountTests.cs",
         "TestPageSubscriberRefusalTests.cs",
 
+        // The 300s-cap cohort of #4275, batched on the same principle as the two above.
+        "BundleInstallTriggerSeedVisibilityTests.cs",
+        "CacheGateProbeScopeTests.cs",
+        "DepInstallTriggerSessionIdentityTests.cs",
+        "EventSubscriptionMultiBundleScopeTests.cs",
+        "InstallExecutionContextTests.cs",
+        "InstallTriggerSessionIdentityTests.cs",
+
         // The 120s-cap cohort of #4275, batched on the same principle as the 180s one above.
         "ActiveSessionTableTests.cs",
         "AggregatePermissionSetVirtualTableTests.cs",
@@ -145,8 +153,8 @@ public sealed class SpawnTimeoutMessageDerivationTests
 
         // The population must be non-empty, or an empty scan reads as a pass. #3488 lists five
         // sites, #3487 contributes one, and #4275's 180s and 120s cohorts thirteen and nine.
-        Assert.True(sitesChecked >= 28,
-            $"expected at least 28 spawn-timeout throw sites across {Files.Length} files, found {sitesChecked} — "
+        Assert.True(sitesChecked >= 34,
+            $"expected at least 34 spawn-timeout throw sites across {Files.Length} files, found {sitesChecked} — "
             + "the anchor stopped matching, so this test measured almost nothing");
 
         Assert.True(offenders.Count == 0,
