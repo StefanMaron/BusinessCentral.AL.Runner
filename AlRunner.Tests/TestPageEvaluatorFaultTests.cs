@@ -196,19 +196,16 @@ public sealed class TestPageEvaluatorFaultTests
     // why this and TestPageTemporalValueTests's own
     // TryResolve_AnUnreadableSpelling_DeclinesRatherThanGuessing are real controls.
     //
-    // #3486: the skeleton session is a PRECONDITION this test does not establish, and the
-    // original comment recorded "the session IS populated in the xunit process" as though that
-    // were a property of the build. It is not — it is a property of whether
-    // tools/engine-test-bootstrap.sh has run in this worktree since the last BUILD, because a
-    // build restores a pristine bin/Microsoft.Dynamics.Nav.Ncl.dll and undoes it. Measured:
-    // bootstrapped, this class passes alone 6/6; run straight after a `dotnet build`, it fails
-    // 3/3 with `Assert.NotNull() Failure: Value is null`.
+    // #3486: the skeleton session is a PRECONDITION this test does not establish. The original
+    // comment recorded "the session IS populated in the xunit process" as a property of the
+    // build. It is not — a build restores a pristine bin/Microsoft.Dynamics.Nav.Ncl.dll, and the
+    // FIRST test run after one performs the Cecil rewrite and cannot itself use it. That run
+    // skips; later runs against the rewritten copy execute.
     //
-    // So the precondition is CHECKED here with a message naming the cause and the remedy,
-    // rather than asserted as a fact. A bare Assert.NotNull sends a reader looking for a
-    // null-handling bug in TryResolve that is not there. The class deliberately does NOT join
-    // BcEngineCollection: 23 of its 24 tests drive seams that need no engine at all, and
-    // serialising them to satisfy one test would cost every run for nothing.
+    // So the precondition is CHECKED, not asserted: a bare Assert.NotNull fails with
+    // "Value is null" and sends a reader looking for a null-handling bug in TryResolve that is
+    // not there. Most of this class needs no engine, so it stays out of BcEngineCollection
+    // rather than serialising every test to satisfy this one.
     [SkippableFact]
     public void TryResolve_AnUnreadableSpelling_IsRefusedByBcRatherThanFaulting()
     {
