@@ -12,7 +12,20 @@
 // `internal` method is not a warning, and NclShadowConcurrentStartupTests kept passing because
 // it invokes the helper DIRECTLY.
 //
-// That is the gap this file closes. The existing test proves the retry WORKS; it cannot prove
+// That is the gap this file closes.
+//
+// KNOWN BLIND SPOT, found in review: the scan is text-anchored on the fully-qualified spelling,
+// so a reader reached through an alias -- `using Reflect = System.Reflection;` then
+// `Reflect.AssemblyName.GetAssemblyName(p)` -- is NOT reported, and the helperCalls floor below
+// does not rescue it because the helper's own two calls are untouched. Measured: green on a
+// genuinely unretried read.
+//
+// Left as a documented limit rather than fixed, for two reasons. BcArtifacts.cs declares no
+// file-level `using` directives and spells all five System.Reflection references fully qualified,
+// so an alias would be a visible style departure in the same diff a reviewer is reading. And the
+// limit is inherent to text anchoring: closing it properly means resolving the symbol, which is
+// a semantic model rather than the syntax tree CSharpSource parses. If this guard ever needs
+// that, #3527 is the place it belongs. The existing test proves the retry WORKS; it cannot prove
 // anything CALLS it. Those are different claims, and only the second one was lost.
 
 using Xunit;
