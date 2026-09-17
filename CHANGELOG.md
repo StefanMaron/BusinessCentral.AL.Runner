@@ -246,6 +246,7 @@ All notable changes to this project are documented here. Format based on
 - **integer-vt:** judge a half-open range against the base window, not the envelope-widened span
 
 ### Documentation
+- **scope:** drop a dead swallowed-refusal citation, keep the trap it illustrated
 - **dispatch:** record that the cross-assembly remap is reached by nothing
 - **claude:** strings -el is the wrong instrument for .NET member names
 - **claude:** cite the BC build and its hash, not the version label, and pin the example
