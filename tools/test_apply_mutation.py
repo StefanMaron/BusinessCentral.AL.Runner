@@ -174,7 +174,15 @@ def _fresh():
             fh.write(s)
     return d, f, a, r
 
+# A permission-based case cannot work as root or on Windows. The skip is LOUD and the
+# population check above no longer has a constant to absorb it: skipping here makes those arms
+# unreached, which reds. That is deliberate -- a silent skip asserting coverage is the defect
+# round 5 found.
 _unreadable_ok = os.name != "nt" and os.geteuid() != 0
+if not _unreadable_ok:
+    print(f"  NOTE permission-based refusal cases cannot run here "
+          f"(os.name={os.name!r}, euid={getattr(os, 'geteuid', lambda: '?')()}); "
+          f"the arms they cover will report as unreached")
 
 def _argparse_failure():
     d, f, a, r = _fresh()
@@ -234,21 +242,33 @@ def _unwritable_target():
         os.chmod(f, 0o644)
 
 def _unrollbackable():
-    # The byte-identical path rolls the backup back; make that os.replace fail by taking away
-    # the DIRECTORY's write permission after the backup exists.
+    # Reaching the rollback-failed arm needs os.replace to fail with BOTH writes succeeding.
+    # Locking the directory does not do it: that breaks the backup WRITE, which is upstream, so
+    # the case lands on the "could not write" arm another case already covers — measured in
+    # review round 5, where it printed full coverage while this arm stayed unpinned.
+    #
+    # So fail os.replace itself, shadowed on the module only. A real cross-device rename is the
+    # production shape (EXDEV, errno 18).
     d, f, a, r = _fresh()
-    with redirect_stdout(io.StringIO()):
-        rc_pre = am.main(["apply-mutation.py", f, "--anchor-file", a, "--replacement-file", a])
-    # anchor == replacement, so this already refused and rolled back; assert that much here and
-    # exercise the failing-rollback arm with the directory locked.
-    with open(f, "w", encoding="utf-8") as fh:
-        fh.write("line ONE\nline TWO\n")
-    os.chmod(d, 0o555)
+
+    class _OsReplaceFails:
+        def __getattr__(self, name):
+            return getattr(os, name)
+
+        def replace(self, src, dst):
+            raise OSError(18, "Invalid cross-device link")
+
+    real_os = am.os
+    am.os = _OsReplaceFails()
     try:
         with redirect_stdout(io.StringIO()):
-            return am.main(["apply-mutation.py", f, "--anchor-file", a, "--replacement-file", a])
+            rc = am.main(["apply-mutation.py", f, "--anchor-file", a, "--replacement-file", a])
     finally:
-        os.chmod(d, 0o755)
+        am.os = real_os
+    # The backup must survive a failed rollback -- it is the only copy of the original.
+    check("...and a failed rollback leaves the backup in place",
+          os.path.exists(f + am.SUFFIX), "the backup vanished when the rollback failed")
+    return rc
 
 def _missing_anchor():
     d, f, a, r = _fresh()
@@ -281,18 +301,57 @@ def _omitted():
     with redirect_stdout(io.StringIO()):
         return am.main(["apply-mutation.py", f])
 
-for _name, _fn in REFUSAL_ARMS:
-    check(f"REFUSED (exit 3) for {_name}", _fn() == am.REFUSED, f"{_name} did not refuse")
+# Which arm did each case actually REACH? Counting cases proved nothing: review round 5 found
+# a case whose chmod broke the backup WRITE (line 86) rather than the os.replace it named
+# (line 99), so 10 sites / 10 cases printed while line 99 was unpinned -- flipping it to APPLIED
+# left all 36 checks green. And forcing the platform guard off dropped four cases while the same
+# line still read "10 sites, 10 cases", because a hardcoded constant stood in for them: coverage
+# nobody measured, which is this tool's own defect class.
+#
+# So trace execution and assert the SET of refusal lines reached. That subsumes the count, needs
+# no constant, and a case that does not reach its arm is a failure rather than a tally.
+_AM_FILE = os.path.join(HERE, "apply-mutation.py")
+_REFUSAL_LINES = {n for n, line in enumerate(open(_AM_FILE, encoding="utf-8"), 1)
+                  if line.strip().startswith("return REFUSED")}
 
-# The population check itself: count the REFUSED return sites in the source and require the
-# table above to cover them. A new arm added without a case here reds THIS, naming the gap.
-_src = open(os.path.join(HERE, "apply-mutation.py"), encoding="utf-8").read()
-_sites = _src.count("return REFUSED")
-_covered = len(REFUSAL_ARMS) + (0 if _unreadable_ok else 4)
-check(f"every `return REFUSED` site has a case above ({_sites} sites, {_covered} cases)",
-      _covered >= _sites,
-      f"{_sites - _covered} refusal arm(s) are produced but asserted nowhere — add a case to "
-      f"REFUSAL_ARMS rather than raising the number")
+def _lines_hit(fn):
+    """Run fn under a tracer; return the refusal lines in apply-mutation.py it executed."""
+    hit: set[int] = set()
+    real = os.path.realpath(_AM_FILE)
+
+    def tracer(frame, event, arg):
+        if event == "call":
+            return tracer if os.path.realpath(frame.f_code.co_filename) == real else None
+        if event == "line" and frame.f_lineno in _REFUSAL_LINES:
+            hit.add(frame.f_lineno)
+        return tracer
+
+    old = sys.gettrace()
+    sys.settrace(tracer)
+    try:
+        rc = fn()
+    finally:
+        sys.settrace(old)
+    return rc, hit
+
+_reached: set[int] = set()
+for _name, _fn in REFUSAL_ARMS:
+    _rc, _hit = _lines_hit(_fn)
+    check(f"REFUSED (exit 3) for {_name}", _rc == am.REFUSED, f"{_name} did not refuse")
+    check(f"...and {_name} reaches a refusal arm in apply-mutation.py", bool(_hit),
+          f"{_name} refused without executing any `return REFUSED` line — it is not testing "
+          f"the arm it names")
+    _reached |= _hit
+
+# The population check, keyed on lines REACHED rather than cases declared. A skipped
+# platform-conditional case now shows up here as an unreached arm, because nothing stands in
+# for it.
+_missing = sorted(_REFUSAL_LINES - _reached)
+check(f"every `return REFUSED` arm is reached by a case ({len(_reached)}/{len(_REFUSAL_LINES)})",
+      not _missing,
+      f"apply-mutation.py line(s) {_missing} return REFUSED and no case above executes them. "
+      f"Add a case that reaches the arm — not one that merely refuses, and never a constant "
+      f"standing in for a skipped case.")
 
 print("the three codes are distinct")
 check("APPLIED, NOT-APPLIED and AMBIGUOUS are three different values",
