@@ -159,6 +159,48 @@ public static class AlCoverageSourceMap
             => SafeDirectoryScan.Files(root, "*.al", out inaccessible));
 
     /// <summary>
+    /// The execution roots a coverage run was given, plus every OTHER AL source directory the
+    /// run actually parsed — the sibling SOURCE dependencies <c>BuildSiblingSourceDeps</c>
+    /// matched and compiled. Execution roots come first and their order is preserved, so
+    /// nothing about the existing attribution changes; the extra roots only add files that had
+    /// no root at all.
+    ///
+    /// <para>#3965: a statement executed in a sibling source dependency was tracked and then
+    /// dropped from the report, because <see cref="Build"/> was fed the execution bundles
+    /// alone and an object with no root cannot be attributed. Listing the dependency as a
+    /// second execution bundle attributed it correctly, which is what localised the defect to
+    /// the root set rather than to the tracker.</para>
+    ///
+    /// <para>A packaged .app dependency contributes nothing here and must not: it has no
+    /// source on disk, its coverage is legitimately absent, and inventing a root for it would
+    /// make <see cref="Build"/> report a scan failure on every ordinary run
+    /// (guards-need-a-third-state.md — an absent thing stays a pass). The registry gives that
+    /// for free by construction, because only directories that were PARSED as AL are in it.</para>
+    /// </summary>
+    public static IReadOnlyList<string> RootsWithParsedSourceDependencies(IEnumerable<string> executionRoots)
+    {
+        var roots = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void Add(string root)
+        {
+            // Canonical for the dedup only — the root added is the caller's own spelling, since
+            // `relativeTo` turns it into the report's filename and a bundle passed as a
+            // relative path must keep producing the relative filenames it always did.
+            string key;
+            try { key = Path.GetFullPath(root).Replace('\\', '/').TrimEnd('/'); }
+            catch (ArgumentException) { key = root; }
+            catch (NotSupportedException) { key = root; }
+            if (seen.Add(key)) roots.Add(root);
+        }
+
+        foreach (var root in executionRoots) Add(root);
+        // After the execution roots, so a directory that is both keeps the caller's spelling.
+        foreach (var dir in AlRunner.Patches.RecordPatches.RegisteredSourceDirs()) Add(dir);
+        return roots;
+    }
+
+    /// <summary>
     /// How <see cref="Build"/> lists a root: the .al files under it, and the directories it
     /// could not enter. A seam, not a policy — the production implementation is
     /// <see cref="SafeDirectoryScan.Files(string, string, out IReadOnlyList{string}, SearchOption)"/>
