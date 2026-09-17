@@ -249,11 +249,15 @@ public sealed class BuiltInCancelIsNotADiscardTests
                     foreach (var target in IndirectTargetsInUniverse(universeMethods, callee))
                         Reach(target);
 
-                // Unwrap a generic instantiation to the type that declares the member, but
-                // NOT an array/pointer/byref: GetElementType() happily turns `Foo[,]::Set` into
-                // `Foo`, so an array of an in-universe type read as in-universe and its
-                // MethodDefinition-less members then REFUSED below — a genuinely absent thing
-                // (an array holds no code) spelled as unmeasurable.
+                // Unwrap a generic instantiation to the type that declares the member. The
+                // TypeSpecification clause below is belt-and-braces and is DEAD as written:
+                // measured, Cecil spells the suffix into FullName (`AlRunner.LiveNavTestPage[]`,
+                // `…&`, `…*`, `… modreq(…)`), so universe.Contains already excludes every one
+                // without it. Only PinnedType/SentinelType share the bare FullName, and neither
+                // can be a method reference's declaring type in C#-emitted IL; the closure holds
+                // 0 non-generic TypeSpecification declaring types today. Kept rather than
+                // deleted because it costs nothing and would become load-bearing if that FullName
+                // spelling ever changed. docs/closure-walk-indirect-dispatch.md#the-typespecification-clause-is-dead-as-written
                 var declaring = callee.DeclaringType is GenericInstanceType generic
                     ? generic.ElementType
                     : callee.DeclaringType;
@@ -301,6 +305,15 @@ public sealed class BuiltInCancelIsNotADiscardTests
                 // There is nothing to walk FROM here; what actually runs was enqueued above by
                 // IndirectTargetsInUniverse, which is why this skip is no longer the hole #4311
                 // reported.
+                //
+                // THE POPULATION, because this skip is only safe as long as it holds. The closure
+                // carries 58 indirect-dispatch sites: 57 `constrained. call` to System.Numerics
+                // static-abstract members from CalculateClientAutoKey and its g__Step local
+                // function, and 1 `constrained. callvirt` to IDisposable::Dispose from FlushParts'
+                // foreach. All 58 are now enqueued-or-refused rather than dropped here, and none
+                // resolves to an implementation INSIDE the universe, so none can hold the stfld.
+                // **Re-measure that before relying on it** — it is a fact about today's closure,
+                // not a property of the design. docs/closure-walk-indirect-dispatch.md#census
                 if (!resolved.HasBody) continue;
 
                 Reach(resolved);
@@ -651,5 +664,6 @@ public sealed class BuiltInCancelIsNotADiscardTests
             + " did not read them and cannot claim they hold no discard. Unresolved: "
             + string.Join("; ", unresolved.Distinct()));
     }
+
 
 }
