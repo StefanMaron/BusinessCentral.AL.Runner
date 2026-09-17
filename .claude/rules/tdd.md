@@ -73,6 +73,20 @@ itself produces both and is a genuine red. Pipe the run through `tools/mutation-
 believing a red: exit 1 is a real one, 4 a build break, 5 the engine guard, 3 unmeasured (#3957;
 `docs/incidents/tdd.md`).
 
+**A `tools/test_*.py` guard is a PROCESS, not a `dotnet test` suite, and needs `--exit`.** Those
+guards print many different summary shapes, so the tool cannot read them and answered `3
+unmeasured` for every one — including greens — which is indistinguishable from "your mutation was
+not measured, try again" (#4314). Pass the guard's exit code:
+
+```bash
+python3 tools/test_no_racing_label_edit.py > g.txt 2>&1; rc=$?
+tools/mutation-verdict.py --exit $rc g.txt
+```
+
+Trap: **exit 1 is ambiguous** — an unhandled Python exception exits 1 too, so a guard that
+crashed before judging anything looks exactly like one that caught your mutation. The tool
+downgrades a red whose log carries a traceback; do not hand-read that number instead.
+
 **Trap: a failed mutation and a working guard look identical.** Measured twice in one session
 (#3895): a backslash edit that a heredoc collapsed, so the file never changed; and a
 `-p:` override whose build was incremental and skipped `CoreCompile`, reporting the clean

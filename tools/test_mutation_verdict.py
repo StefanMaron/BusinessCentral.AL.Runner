@@ -129,6 +129,23 @@ for code, want, label in ((0, mv.GREEN, "exit 0 is GREEN"),
     r = mv.classify_exit(code, "13 passed, 0 failed (3 file(s) carried both flag names)")
     check(f"process guard: {label}", r.verdict == want, f"got {mv.NAMES[r.verdict]}: {r.reason}")
 
+# The 3 arm and the fallthrough BOTH answer UNMEASURED, so a verdict check cannot tell them
+# apart and deleting the 3 arm passes every test (found in review of #4317). What distinguishes
+# them is the reason an agent reads: "it refused to measure" sends you to the guard, "may have
+# crashed" sends you to the run. Pin the reason, not only the code.
+r3 = mv.classify_exit(3, "")
+check("process guard: exit 3 says the guard REFUSED, not that it may have crashed",
+      "refused to measure" in r3.reason and "crashed" not in r3.reason, r3.reason)
+
+# Exit 1 is ambiguous: an unhandled Python exception exits 1 too. A traceback in the log the
+# tool already read downgrades the RED, or a crashed guard reads as a caught mutation.
+crash = mv.classify_exit(1, "Traceback (most recent call last):\n  File \"g.py\", line 1\nRuntimeError: boom")
+check("process guard: exit 1 WITH a traceback refuses rather than claiming a catch",
+      crash.verdict == mv.UNMEASURED, f"got {mv.NAMES[crash.verdict]}: {crash.reason}")
+genuine = mv.classify_exit(1, "12 passed, 1 failed (3 file(s) carried both flag names)")
+check("process guard: ...and a genuine red without one is still RED",
+      genuine.verdict == mv.RED, f"got {mv.NAMES[genuine.verdict]}: {genuine.reason}")
+
 # A non-zero code the tool has no meaning for must NOT be read as RED: an unhandled traceback
 # exits 1 in Python, but a guard that crashed measured nothing. Anything else refuses.
 crashed = mv.classify_exit(2, "Traceback (most recent call last):\n  ...\nValueError: boom")

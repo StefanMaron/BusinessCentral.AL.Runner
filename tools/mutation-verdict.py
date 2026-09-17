@@ -64,6 +64,8 @@ FAILED_HEADER_RE = re.compile(r"^\s*Failed (\S.*?) \[[^\]]*\]\s*$")
 # also appears in assertion messages about compiler output, which are genuine test failures.
 BUILD_ERROR_RE = re.compile(r"^\S.*: error [A-Z]{2,}\d+: .*\[[^\]]+\.csproj\]\s*$", re.M)
 NO_MATCH = "No test matches the given testcase filter"
+# An unhandled Python exception exits 1, the same code a guard uses for "I caught it".
+TRACEBACK_RE = re.compile(r"^Traceback \(most recent call last\):$", re.M)
 
 
 @dataclass
@@ -152,19 +154,28 @@ def classify_exit(code: int, text: str = "") -> Result:
     argument does not need the number.) Their exit code is the contract their own authors wrote, and it is the same
     contract this tool already publishes.
 
-    An exit code this tool has no meaning for REFUSES. A Python traceback also exits 1, and
-    reading that as "the mutation was caught" is the false RED `tdd.md` warns about — a guard
-    that crashed measured nothing.
+    An exit code this tool has no meaning for REFUSES.
+
+    And exit 1 is AMBIGUOUS, which is the trap: an unhandled Python exception exits 1 too, so
+    "the guard failed its assertions" and "the guard crashed before judging anything" arrive as
+    the same number. Reading a crash as a caught mutation is the false RED `tdd.md` warns
+    about. The log is already in hand, so a traceback in it downgrades the RED to a refusal
+    rather than being ignored. Found in review of #4317, where an earlier revision of this
+    function refused on code 2 while citing a condition that produces code 1.
     """
     if code == GREEN:
         return Result(GREEN, reason="the guard exited 0: it passed, so the mutation was NOT caught")
     if code == RED:
+        if TRACEBACK_RE.search(text):
+            return Result(UNMEASURED,
+                          reason="the guard exited 1, but its output carries a Python traceback: "
+                                 "it crashed rather than judged, so nothing was measured")
         return Result(RED, reason="the guard exited 1: it failed, so the mutation WAS caught")
     if code == UNMEASURED:
         return Result(UNMEASURED, reason="the guard exited 3: it refused to measure")
     return Result(UNMEASURED,
                   reason=f"the guard exited {code}, which is not one of 0/1/3 — it may have "
-                         f"crashed rather than judged; a traceback also exits 1")
+                         f"crashed rather than judged")
 
 
 NAMES = {GREEN: "GREEN", RED: "RED", UNMEASURED: "UNMEASURED",
