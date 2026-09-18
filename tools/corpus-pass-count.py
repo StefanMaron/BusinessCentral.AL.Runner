@@ -44,6 +44,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -84,8 +85,33 @@ TRANSIENT = ("i/o timeout", "connection reset", "502 Bad", "dial tcp",
              "could not connect", "TLS handshake")
 
 
+class GhUnavailable(Exception):
+    """`gh` is not on PATH, so nothing about GitHub could be measured.
+
+    Deliberately an exception rather than a return value: every call site here reads a verdict,
+    and a sentinel would have to be checked at each one — the check that gets forgotten at the
+    call site added next. Raising reaches the one handler in main() by construction.
+
+    github-access.md: web and remote Claude Code sessions have no `gh` at all, so this is a
+    supported environment rather than a broken box. What is NOT supported is answering as though
+    a measurement happened: this tool's exit 1 means "a required check failed", and reporting that
+    for a missing binary sends an agent to diagnose a red PR that is not red
+    (guards-need-a-third-state.md, #4329).
+    """
+
+
+def require_gh() -> None:
+    if shutil.which("gh") is None:
+        raise GhUnavailable(
+            "gh is not on PATH, so no GitHub state could be read. This is expected in a web or "
+            "remote session (github-access.md) — use the mcp__github__* tools there. Exiting 3: "
+            "could not measure, which is NOT the same as a failing check."
+        )
+
+
 def gh(args: list[str], attempts: int = 4) -> tuple[int, str]:
     """Run gh, retrying transient network failures. Returns (rc, stdout)."""
+    require_gh()
     last = ""
     for i in range(attempts):
         # UTF-8, never the locale codec: a CI log or a JSON body decoded as
@@ -258,4 +284,10 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except GhUnavailable as exc:
+        # Exit 3 is "could not measure" for both tools. Printing to stderr keeps it out of any
+        # caller parsing stdout, and the message names the remedy rather than the symptom.
+        print(f"UNDETERMINED: {exc}", file=sys.stderr)
+        sys.exit(3)
