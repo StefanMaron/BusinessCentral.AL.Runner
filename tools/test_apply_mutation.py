@@ -12,11 +12,14 @@ Run: python3 tools/test_apply_mutation.py
 """
 from __future__ import annotations
 
+import ast
 import importlib.util
+import inspect
 import io
 import os
 import sys
 import tempfile
+import textwrap
 from contextlib import redirect_stdout
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -223,13 +226,10 @@ REFUSAL_ARMS = [
     ("--anchor-file omitted", lambda: _omitted()),
     ("an unparseable command line", _argparse_failure),
 ]
-if _unreadable_ok:
-    REFUSAL_ARMS += [
-        ("an unreadable target file", _unreadable_target),
-        ("an unreadable backup during --restore", _unreadable_backup),
-        ("an unwritable target file", lambda: _unwritable_target()),
-        ("a backup that cannot be rolled back", lambda: _unrollbackable()),
-    ]
+# These four drive their arm by making an I/O call fail through file permissions, which cannot be
+# done as root (chmod does not deny uid 0) or on Windows. They stay IN the table and are marked,
+# rather than disappearing from it: dropping them made the census demand arms nothing could reach,
+# so the suite failed as root for a correct reason it could not express (#4328).
 
 def _unwritable_target():
     # Read succeeds, write fails: a read-only file in a writable directory.
@@ -269,6 +269,21 @@ def _unrollbackable():
     check("...and a failed rollback leaves the backup in place",
           os.path.exists(f + am.SUFFIX), "the backup vanished when the rollback failed")
     return rc
+
+# Named functions, not `lambda: f()` wrappers: the wrapper hides the body from
+# inspect.getsource, so the chmod check below reads the lambda line and reports a false positive.
+PERMISSION_GATED = [
+    ("an unreadable target file", _unreadable_target),
+    ("an unreadable backup during --restore", _unreadable_backup),
+    ("an unwritable target file", _unwritable_target),
+]
+# NOT gated: _unrollbackable shadows os.replace on the module rather than using file permissions,
+# so it runs as any user on any platform. It sat here until the chmod check above rejected it —
+# I had grouped it by "it is about an I/O failure" rather than by what actually stops it, which is
+# the same confusion the census exists to prevent (#4328).
+REFUSAL_ARMS += PERMISSION_GATED + [
+    ("a backup that cannot be rolled back", _unrollbackable),
+]
 
 def _missing_anchor():
     d, f, a, r = _fresh()
@@ -429,8 +444,134 @@ check("...and heavy work in OTHER files traces to empty too, so line numbers are
       f"hit in another file, so the tracer is crediting apply-mutation.py's arms to code that "
       f"never ran them")
 
+# Which `return REFUSED` line does each permission-gated case drive? Read out of apply-mutation.py
+# rather than written down: each of these four is the sole `except OSError` handler of one I/O
+# block, so the arm is the REFUSED return inside the handler guarding the call the case breaks.
+#
+# A hand-written map here would be the `+ 4` constant again with a better name -- a number
+# asserting coverage nobody measured (#4321 round 5, #4328). This derives it, so an arm that moves
+# or splits changes the answer instead of going stale.
+def _calls_chmod(fn) -> bool:
+    """Does fn actually CALL chmod, rather than merely containing the word?
+
+    A substring test over `inspect.getsource` was the first version and it is satisfied by the
+    word in a COMMENT — measured at real root (`unshare --user --map-root-user`): adding
+    `# nothing here calls chmod` to a non-permission case and marking it gated went green at 6/10
+    with its arm excused untested, which is the exact regression #4328 exists to prevent.
+
+    So parse and look for a call whose callee is named chmod. Comments are not in the AST.
+    """
+    try:
+        src = textwrap.dedent(inspect.getsource(fn))
+    except (OSError, TypeError):
+        return False
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        callee = node.func
+        name = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", None)
+        if name == "chmod":
+            return True
+    return False
+
+
+def _arms_by_case() -> dict[str, set[int]]:
+    """Map each permission-gated case to the refusal lines it would reach, by the call it breaks."""
+    src = open(_AM_FILE, encoding="utf-8").read().split("\n")
+    def refusal_of(pattern: str) -> set[int]:
+        """The `return REFUSED` line whose STATEMENT contains pattern.
+
+        Searching FORWARD from the match is wrong and was the first attempt: a refusal message
+        spanning two source lines puts the match below its own `return`, so the forward walk
+        lands on the NEXT refusal — for the rollback arm, the success return two lines down.
+        Walk backward from the match to the nearest `return REFUSED` at or above it instead.
+        """
+        for i, line in enumerate(src):
+            if pattern in line:
+                for j in range(i, max(i - 12, -1), -1):
+                    if j + 1 in _REFUSAL_LINES:
+                        return {j + 1}
+        return set()
+    return {
+        # reads the target: `with open(path, encoding=...)` in apply()
+        "an unreadable target file": refusal_of("could not read {path}"),
+        # writes the target: the `except OSError` after the two-write try block
+        "an unwritable target file": refusal_of("could not write {path}"),
+        # reads the backup during restore
+        "an unreadable backup during --restore": refusal_of("could not restore {path}"),
+        # os.replace rollback on the byte-identical path
+        "a backup that cannot be rolled back": refusal_of("could not be rolled back"),
+    }
+
+_ARMS_BY_CASE = _arms_by_case()
+
+# The backward walk is otherwise UNFALSIFIABLE. It differs from a forward walk on exactly one
+# entry — rollback, whose message spans two lines so a forward search lands on the SUCCESS return
+# below it — and that entry belongs to the one case NOT in PERMISSION_GATED, so its mapping is
+# never consumed and reverting the direction stays green at real root (measured under
+# `unshare --user --map-root-user`, #4333 review). Assert the mapping itself, which is the thing
+# the direction decides.
+for _case, _lines in _ARMS_BY_CASE.items():
+    check(f"the arm map resolves {_case} to exactly one refusal line", len(_lines) == 1,
+          f"{_case} -> {sorted(_lines)}; a case that maps to no arm excuses nothing and one that "
+          f"maps to several excuses too much")
+    check(f"...and {_case} maps to a line that RETURNS refused, not one below it",
+          _lines <= _REFUSAL_LINES, f"{_case} -> {sorted(_lines)} not in {sorted(_REFUSAL_LINES)}")
+
+# Every excusable arm is an I/O-failure HANDLER by definition — that is what "permissions blocked
+# the call" means — so each mapped line must sit inside an `except`. This is what discriminates
+# the walk direction: the rollback handler (inside `except OSError`) and the success return two
+# lines below it are both refusal lines, and only the handler is under an except.
+#
+# An earlier version of this check asked whether the mapped line was the lowest refusal line at or
+# above itself, which is true of EVERY refusal line and so pinned nothing — it passed the forward
+# walk it was written to catch.
+_am_src = open(_AM_FILE, encoding="utf-8").read().split("\n")
+
+def _inside_except(line_no: int) -> bool:
+    """Is this line in the body of an `except` clause? Walk up past its own continuations."""
+    indent = len(_am_src[line_no - 1]) - len(_am_src[line_no - 1].lstrip())
+    for j in range(line_no - 2, max(line_no - 12, -1), -1):
+        stripped = _am_src[j].strip()
+        if not stripped:
+            continue
+        if len(_am_src[j]) - len(_am_src[j].lstrip()) < indent:
+            return stripped.startswith("except")
+    return False
+
+for _case, _lines in _ARMS_BY_CASE.items():
+    for _ln in _lines:
+        check(f"{_case} maps to a refusal inside an `except`, not one merely below it",
+              _inside_except(_ln),
+              f"{_case} -> line {_ln}, which is not in an except body; a permission-blocked call "
+              f"can only be answered by its own handler, so this mapping excuses the wrong arm")
+
 _reached: set[int] = set()
+_skipped_arms: set[int] = set()
+_gated = {n for n, _ in PERMISSION_GATED}
 for _name, _fn in REFUSAL_ARMS:
+    if _name in _gated and not _unreadable_ok:
+        # A case is excused only if it is genuinely permission-driven. Marking one gated is
+        # otherwise a free pass: adding a non-permission case to PERMISSION_GATED excused its arm
+        # with nothing objecting (measured while writing this). So require the case to actually
+        # use the mechanism the gate is about — a chmod — read out of its own source.
+        check(f"{_name} is permission-gated because it CALLS chmod, not merely mentions it",
+              _calls_chmod(_fn),
+              f"{_name} sits in PERMISSION_GATED but its body makes no chmod CALL, so the gate is "
+              f"not what stops it — excusing its arm would hide an untested refusal")
+        # Establish WHICH arms this case would have covered, by reading the source rather than
+        # by asserting a number: run it where it works and it reaches these lines. Here it cannot
+        # run, so those lines are excused -- and only those.
+        _skipped_arms |= _ARMS_BY_CASE.get(_name, set())
+        check(f"{_name} is skipped for a stated reason, not silently",
+              _name in _ARMS_BY_CASE,
+              f"{_name} is permission-gated but no arm mapping says which lines it covers, so "
+              f"skipping it would excuse nothing and the census would demand the impossible")
+        continue
     _rc, _hit = _lines_hit(_fn)
     check(f"REFUSED (exit 3) for {_name}", _rc == am.REFUSED, f"{_name} did not refuse")
     check(f"...and {_name} reaches a refusal arm in apply-mutation.py", bool(_hit),
@@ -441,7 +582,7 @@ for _name, _fn in REFUSAL_ARMS:
 # The population check, keyed on lines REACHED rather than cases declared. A skipped
 # platform-conditional case now shows up here as an unreached arm, because nothing stands in
 # for it.
-_missing = sorted(_REFUSAL_LINES - _reached)
+_missing = sorted(_REFUSAL_LINES - _reached - _skipped_arms)
 check(f"every `return REFUSED` arm is reached by a case ({len(_reached)}/{len(_REFUSAL_LINES)})",
       not _missing,
       f"apply-mutation.py line(s) {_missing} return REFUSED and no case above executes them. "
