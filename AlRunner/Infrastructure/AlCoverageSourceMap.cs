@@ -191,6 +191,15 @@ public static class AlCoverageSourceMap
             // filenames even for a bundle passed as a relative path -- on a flat bundle AND on a
             // conventional src/ + test/ layout, because SafeDirectoryScan.Files recurses.
             //
+            // That measurement was taken on the CLI --coverage site ALONE, which passes
+            // `relativeTo: WorkingDirectory.TryGet()`, and it does NOT extend to a caller passing
+            // `relativeTo: null` -- the three server/DAP sites #4272 added. Measured there: a
+            // RELATIVE sourcePath yields a document mixing coordinate systems, because registry
+            // dirs arrive already GetFullPath'd (Program.cs, bundleAbs) while the caller's own
+            // root keeps its spelling. Unambiguous, and nothing regressed -- the dependency file
+            // had no entry at all before -- but not "byte-identical". #4344 tracks making
+            // `relativeTo` consistent across the four Build sites.
+            //
             // Why it currently cannot matter is a fact about the CALLER, not about this method:
             // Program.cs registers the compile's own folders as source dirs and says that is the
             // only such call (search AddSourceDirs / SuiteRegistrationDirs there). The loop stays

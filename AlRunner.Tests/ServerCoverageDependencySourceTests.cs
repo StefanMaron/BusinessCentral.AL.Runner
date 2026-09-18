@@ -95,8 +95,14 @@ public sealed class ServerCoverageDependencySourceTests
     }
 
     /// <summary>
-    /// The consuming bundle was attributed before this fix and must still be — a change that
-    /// swapped one root set for another rather than widening it would otherwise go unnoticed.
+    /// The consuming bundle was attributed before this fix and must still be.
+    ///
+    /// <para>It does NOT catch "swapped one root set for another rather than widening it", which
+    /// an earlier version of this comment claimed: measured in review, dropping the
+    /// execution-roots loop from RootsWithParsedSourceDependencies entirely leaves this green,
+    /// because Program.cs registers the execution bundles' own suite dirs as source dirs anyway,
+    /// so the registry alone still covers them. The helper's own comment carries the honest
+    /// version ("insurance, not a demonstrated requirement").</para>
     ///
     /// <para>It also carries the discrimination that makes <c>Never()</c>'s ABSENCE above
     /// readable. Within this one response the consumer shows a hits:0 statement (the un-taken
