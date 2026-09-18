@@ -38,39 +38,45 @@ public sealed class TestBarrierTimeoutDerivationTests
         File.ReadAllText(Path.Combine(RepoRoot, "AlRunner", "Infrastructure", "TestBarrier.cs")));
 
     /// <summary>
-    /// The deadline and the message must both come from one constant. Asserting on CodeOnly
-    /// source, so the doc comment above WaitForRelease — which legitimately says "Bounded at 60s"
-    /// in prose — cannot satisfy or break this.
+    /// Both the deadline and the message must READ the constant, asserted structurally rather
+    /// than by counting a number.
+    ///
+    /// <para>Counting was the first version and it guarded the deadline only by accident of the
+    /// cap's current value: raise the cap to 90 legitimately, hardcode the deadline to 90, and a
+    /// `60`-keyed count sees nothing — the identical defect, passing. Worse, the regex it used
+    /// could not match `60s` at all, because `s` is a word character, so the check the comment
+    /// described was never performed (#4309, measured in review).</para>
+    ///
+    /// <para>A number-keyed assertion also has to be edited by anyone legitimately changing the
+    /// cap, which is the coupling this issue exists to remove — `SpawnTimeoutMessageDerivation`'s
+    /// header says the same thing about pinning `120s`.</para>
     /// </summary>
     [Fact]
     public void WaitForRelease_DerivesItsReportedFigureFromTheDeadlineItApplied()
     {
         var src = Source();
 
-        // One spelling of the cap in the whole file, literals included. A second means the
-        // message (or a second deadline) carries its own copy, which is the defect: one of the
-        // two will eventually move alone.
-        var literals = System.Text.RegularExpressions.Regex.Matches(src, @"(?<![\w.])60(?![\w.])")
-            .Count;
-        Assert.True(literals <= 1,
-            $"TestBarrier.cs spells 60 {literals} times. The cap belongs in ONE constant that both "
-            + "the deadline and the message read, or the two drift apart silently (#4309, and "
-            + "#3435 for what that costs).");
+        // The deadline half: whatever AddSeconds is given, it must be the constant.
+        var deadline = System.Text.RegularExpressions.Regex.Match(src, @"AddSeconds\(([^)]*)\)");
+        Assert.True(deadline.Success,
+            "no AddSeconds(...) call found in TestBarrier.cs, so this test is measuring nothing "
+            + "about the deadline. The wait was restructured — re-point this.");
+        Assert.Equal("ReleaseWaitSeconds", deadline.Groups[1].Value.Trim());
 
-        // ...and the message must READ that constant rather than carry its own copy.
+        // The message half: EVERY `within …s` phrase must interpolate the same constant.
         //
-        // Asserted through the interpolation HOLE, not the message text: CodeOnly blanks literal
-        // content but deliberately leaves the expressions inside {…} standing, because a hole can
-        // call something (CSharpSource, #3527). So a derived message leaves the constant's name
-        // visible here and a hardcoded one leaves nothing — which is exactly the distinction this
-        // test is about, and it is why scanning the raw text would be weaker: there, "within 60s"
-        // inside a string and 60 in the deadline look the same.
-        // Asserted on the MESSAGE, not on the file: the constant stays declared under a
-        // regression, so "the name appears somewhere" passes while the sentence carries a
-        // literal — measured, that mutation was GREEN before this line read the message itself.
-        var message = System.Text.RegularExpressions.Regex.Match(src, @"within [^""]*s ");
-        Assert.True(message.Success, "no `within …s` phrase found in TestBarrier.cs at all — the "
-            + "message was reworded, so this test is measuring nothing. Re-point it.");
-        Assert.Contains("ReleaseWaitSeconds", message.Value, StringComparison.Ordinal);
+        // All matches, not the first. A first-match-wins read is satisfied by any one derived
+        // phrase, so an earlier string naming the constant let a fully regressed message pass —
+        // measured in review, GREEN with `within 60s` in the actual throw. Requiring every
+        // occurrence to be derived removes the ordering dependency entirely: a second phrase can
+        // only help if it is correct too.
+        var phrases = System.Text.RegularExpressions.Regex.Matches(src, @"within ([^""]{0,40}?)s[ ""]");
+        Assert.True(phrases.Count > 0,
+            "no `within …s` phrase found in TestBarrier.cs at all — the message was reworded, so "
+            + "this test measures nothing, which is not the same as passing. Re-point it.");
+        foreach (System.Text.RegularExpressions.Match phrase in phrases)
+        {
+            Assert.Equal("{ReleaseWaitSeconds}", phrase.Groups[1].Value.Trim());
+        }
     }
 }
