@@ -27,6 +27,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **codeunit-binding:** a non-enum Options refuses, and the option mask stops answering false on an overflow
 - **harness:** TestBarrier derives its reported deadline from the cap it applied
 - **coverage:** build the server and DAP source maps from the roots the run parsed
 - **metadata-conversion:** emit a page's `Methods` subtree, gated on the same subscriber witness codeunits use
