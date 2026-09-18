@@ -418,7 +418,7 @@ public sealed class DependencyLoader
         // here because this is the one place that holds (assemblies, appPath) together, which
         // is the pairing the codeunit metadata derivation needs and cannot reconstruct from a
         // .app path alone. See RecordPatches.CodeunitSubscriberWitness.cs.
-        AlRunner.Patches.RecordPatches.WitnessCodeunitSubscribers(assemblies, appPath);
+        AlRunner.Patches.RecordPatches.WitnessAlObjectSubscribers(assemblies, appPath);
         foreach (var asm in assemblies)
         {
             _byName[asm.GetName().Name ?? ""] = asm;

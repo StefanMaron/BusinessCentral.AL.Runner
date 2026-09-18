@@ -292,7 +292,14 @@ internal static partial class BcAppSymbolCache
         // which 1,129 declare Enabled and 1,101 declare Visible — all of them answered true,
         // because the synthesized page metadata reconstructs no action tree for BC's own
         // ActionDefinition lookup to find. There is no Editable: AL does not give an action one.
-        Dictionary<int, ActionDeclaredPropertiesSymbol>? MemberIdToDeclaredProperties = null);
+        Dictionary<int, ActionDeclaredPropertiesSymbol>? MemberIdToDeclaredProperties = null,
+        // The methods BC's emitter writes as <Method>, in the symbol file's own array order, read
+        // by the SAME ReadAttributedMethods the codeunit path uses (#4267). Null when the page
+        // states no Methods array, keeping "states none" distinct from "states an empty list" —
+        // same contract as CodeunitMethodSymbol. What the emitter does with this list, the
+        // counts behind it and the trap in them: RecordPatches.EmitPageMethodsXml and
+        // docs/dependency-page-methods.md.
+        List<CodeunitMethodSymbol>? AttributedMethods = null);
 
     /// <summary>
     /// The <c>Enabled</c> / <c>Visible</c> one action DECLARES, exactly as the compiler wrote
@@ -1455,7 +1462,11 @@ internal static partial class BcAppSymbolCache
             isPreview,
             insertAllowedStated, modifyAllowedStated, deleteAllowedStated,
             delayedInsertStated, multipleNewLinesStated,
-            unreadableBooleans, actionDeclaredProperties);
+            unreadableBooleans, actionDeclaredProperties,
+            // #4267. The SAME reader the codeunit path uses — BC's emitter writes one method
+            // table for both kinds, so a second reader here would be a second spelling of one
+            // rule, free to drift.
+            ReadAttributedMethods(page));
     }
 
     /// <summary>

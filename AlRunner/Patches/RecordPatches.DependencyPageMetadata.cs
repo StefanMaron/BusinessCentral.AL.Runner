@@ -97,6 +97,22 @@ public static partial class RecordPatches
         int pageId, string surface = "pages and pageextensions (dependency page metadata)")
         => DependencyPageSymbolsById(surface).TryGetValue(pageId, out var page) ? page : null;
 
+    /// <summary>
+    /// The precompiled <c>.app</c> that declared page <paramref name="pageId"/>, or null when no
+    /// registered app does (#4267). Built by the same walk as
+    /// <see cref="DependencyPageSymbolsById"/> and published under the same epoch stamp, so the
+    /// path this returns always belongs to the symbol that lookup returns.
+    /// </summary>
+    private static string? TryGetDependencyPageAppPath(int pageId)
+    {
+        // Forces the build when the memo is cold; the app-path dictionary is only ever assigned
+        // alongside the symbol index, so reading it after this call cannot see a null for a
+        // populated index.
+        DependencyPageSymbolsById();
+        var paths = _dependencyPageAppPathById;
+        return paths is not null && paths.TryGetValue(pageId, out var appPath) ? appPath : null;
+    }
+
     // #3774 — page id -> PageSymbol, memoized per registration epoch. The walk above ran ONCE
     // PER CALL and DependencyObjectSubtype calls it once per enumerated `page` object, so the
     // cost was O(objects x apps) file stats. Measurements: PR #4223.
@@ -118,6 +134,17 @@ public static partial class RecordPatches
     // the stat IS the key: keying on the path alone would replay symbols for an .app whose
     // bytes changed underneath it. This fix stops ASKING rather than weakening the answer.
     private static Dictionary<int, BcAppSymbolCache.PageSymbol>? _dependencyPageSymbolsById;
+
+    // Page id -> the .app that declared it, built in the SAME walk and published under the same
+    // epoch stamp (#4267). The page-symbol index deliberately discards the app path, and the
+    // <Methods> subtree needs it: the subscriber witness is asked per (.app, page id), and asking
+    // it against the wrong .app would answer UNKNOWN or, worse, read another app's cleared page.
+    //
+    // A separate dictionary rather than a wider value type, so every existing caller of
+    // DependencyPageSymbolsById keeps the shape it reads. FIRST WINS in lockstep with the symbol
+    // index — both are filled from one TryAdd, so the path a page id maps to is always the path
+    // of the symbol that page id maps to.
+    private static Dictionary<int, string>? _dependencyPageAppPathById;
     private static int _dependencyPageSymbolsBuiltFromEpoch = -1;
     private static readonly object _dependencyPageSymbolsLock = new();
 
@@ -150,15 +177,17 @@ public static partial class RecordPatches
 
             DependencyPageSymbolIndexBuildCountForTests++;
             var index = new Dictionary<int, BcAppSymbolCache.PageSymbol>();
+            var appPaths = new Dictionary<int, string>();
             // The caller's surface, NOT DependencyAppSymbols()'s fixed one: an unreadable .app
             // must raise BcAppSymbolReadException naming what the CALLER was reading, and this
             // build now happens underneath whichever walk asked first. Pinned by
             // DependencySymbolReadFailureTests.SymbolReadFailsAfterRegistration_* — which caught
             // exactly this regression when the memo first landed (see PR #4223).
-            foreach (var (_, symbols) in EnumerateRegisteredBcAppSymbols(surface))
+            foreach (var (appPath, symbols) in EnumerateRegisteredBcAppSymbols(surface))
                 foreach (var p in symbols.Pages)
-                    // FIRST wins — see the summary above. TryAdd, not the indexer.
-                    index.TryAdd(p.Id, p);
+                    // FIRST wins — see the summary above. TryAdd, not the indexer. The app-path
+                    // entry is written only when the symbol entry was, so the two stay in step.
+                    if (index.TryAdd(p.Id, p)) appPaths[p.Id] = appPath;
 
             // Reached only when the walk COMPLETED: EnumerateRegisteredBcAppSymbols throws out of
             // the loop above on an unreadable .app, so a partial index is never published and the
@@ -171,6 +200,7 @@ public static partial class RecordPatches
             // stale pair and rebuild, which costs a walk and never a wrong answer. Same shape as
             // the ~10 sibling memos keyed on this epoch (Volatile.Read on the epoch itself).
             _dependencyPageSymbolsById = index;
+            _dependencyPageAppPathById = appPaths;
             _dependencyPageSymbolsBuiltFromEpoch = epoch;
             return index;
         }

@@ -83,8 +83,49 @@ public static partial class RecordPatches
     private sealed record CodeunitSubscriberWitness(
         IReadOnlySet<int> SubscriberCodeunitIds, IReadOnlySet<int> ScannedCodeunitIds);
 
-    private static readonly ConcurrentDictionary<string, CodeunitSubscriberWitness>
-        _codeunitSubscriberWitness = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>
+    /// The emitted-type-name prefixes this file witnesses, one per AL object kind whose
+    /// <c>&lt;Methods&gt;</c> subtree is derived from the symbol file. Both kinds ask the same
+    /// question of the same bytes; only the type-name prefix differs.
+    ///
+    /// <para><b>Pages need the witness for the same reason codeunits do, and the reason is
+    /// measured rather than assumed</b> (#4267). A page may host <c>[EventSubscriber]</c>: BC's
+    /// own <c>src/Modules/System/EventRecorder/EventRecorder.Page.al</c> in Base Application
+    /// 28.1.49838.53910 declares one, the only page of the 2,772 page/pageext AL files that app
+    /// ships that does. The symbol file cannot see it — it is <c>local</c>, like every AL
+    /// subscriber — so a page subtree built from the symbol file alone is exact for a page with
+    /// no subscriber and silently SHORT for that one, and short mis-pairs every later element
+    /// (<c>MetadataObjectDiff</c> pairs <c>Methods</c> positionally).</para>
+    /// </summary>
+    private const string CodeunitTypePrefix = "Codeunit";
+    private const string PageTypePrefix = "Page";
+
+    // Keyed on (full app path, type-name prefix). One app has one witness per object kind, and
+    // they are registered independently: the loaded-assembly route and the package route both
+    // scan every kind in one pass, but a test may register one kind and leave the other UNKNOWN,
+    // which is a state the third-state contract has to be able to express.
+    //
+    // The path half stays OrdinalIgnoreCase, which is what the single-string key used before
+    // #4267 widened it: Path.GetFullPath normalises separators and relative segments but never
+    // case, so on Windows two spellings of one .app would otherwise be two witnesses and the
+    // second lookup would read UNKNOWN. The kind half is Ordinal — it is one of two literals
+    // declared above, never user input.
+    private sealed class WitnessKeyComparer : IEqualityComparer<(string AppPath, string Kind)>
+    {
+        internal static readonly WitnessKeyComparer Instance = new();
+
+        public bool Equals((string AppPath, string Kind) x, (string AppPath, string Kind) y)
+            => string.Equals(x.AppPath, y.AppPath, StringComparison.OrdinalIgnoreCase)
+               && string.Equals(x.Kind, y.Kind, StringComparison.Ordinal);
+
+        public int GetHashCode((string AppPath, string Kind) obj)
+            => HashCode.Combine(
+                StringComparer.OrdinalIgnoreCase.GetHashCode(obj.AppPath),
+                StringComparer.Ordinal.GetHashCode(obj.Kind));
+    }
+
+    private static readonly ConcurrentDictionary<(string AppPath, string Kind), CodeunitSubscriberWitness>
+        _subscriberWitness = new(WitnessKeyComparer.Instance);
 
     /// <summary>
     /// Record what an app's loaded assemblies say about its codeunits' event subscribers.
@@ -99,19 +140,35 @@ public static partial class RecordPatches
     internal static void RegisterCodeunitSubscriberWitness(
         string appPath, IReadOnlyCollection<int> subscriberCodeunitIds,
         IReadOnlyCollection<int> scannedCodeunitIds)
+        => RegisterSubscriberWitness(appPath, CodeunitTypePrefix, subscriberCodeunitIds, scannedCodeunitIds);
+
+    /// <summary>
+    /// The same registration for PAGES (#4267). A separate entry point rather than a kind
+    /// parameter on the codeunit one, so a caller cannot register page ids into the codeunit
+    /// witness by passing the wrong string — the two id spaces are disjoint in neither
+    /// direction, and a page id landing in the codeunit set would read as a cleared codeunit.
+    /// </summary>
+    internal static void RegisterPageSubscriberWitness(
+        string appPath, IReadOnlyCollection<int> subscriberPageIds,
+        IReadOnlyCollection<int> scannedPageIds)
+        => RegisterSubscriberWitness(appPath, PageTypePrefix, subscriberPageIds, scannedPageIds);
+
+    private static void RegisterSubscriberWitness(
+        string appPath, string kind, IReadOnlyCollection<int> subscriberIds,
+        IReadOnlyCollection<int> scannedIds)
     {
         if (string.IsNullOrEmpty(appPath)) return;
-        var key = Path.GetFullPath(appPath);
-        _codeunitSubscriberWitness.AddOrUpdate(
+        var key = (Path.GetFullPath(appPath), kind);
+        _subscriberWitness.AddOrUpdate(
             key,
             _ => new CodeunitSubscriberWitness(
-                subscriberCodeunitIds.ToHashSet(), scannedCodeunitIds.ToHashSet()),
+                subscriberIds.ToHashSet(), scannedIds.ToHashSet()),
             (_, existing) =>
             {
                 var subscribers = existing.SubscriberCodeunitIds.ToHashSet();
-                subscribers.UnionWith(subscriberCodeunitIds);
+                subscribers.UnionWith(subscriberIds);
                 var scanned = existing.ScannedCodeunitIds.ToHashSet();
-                scanned.UnionWith(scannedCodeunitIds);
+                scanned.UnionWith(scannedIds);
                 return new CodeunitSubscriberWitness(subscribers, scanned);
             });
     }
@@ -127,8 +184,15 @@ public static partial class RecordPatches
     /// An assembly whose scan throws contributes nothing rather than being recorded as clear:
     /// that is the unknown state, and it is the honest one.</para>
     /// </summary>
-    internal static void WitnessCodeunitSubscribers(
+    internal static void WitnessAlObjectSubscribers(
         IReadOnlyList<Assembly> assemblies, string appPath)
+    {
+        WitnessSubscribers(assemblies, appPath, CodeunitTypePrefix);
+        WitnessSubscribers(assemblies, appPath, PageTypePrefix);
+    }
+
+    private static void WitnessSubscribers(
+        IReadOnlyList<Assembly> assemblies, string appPath, string kind)
     {
         if (assemblies.Count == 0 || string.IsNullOrEmpty(appPath)) return;
 
@@ -145,8 +209,8 @@ public static partial class RecordPatches
                 // read at all, so this assembly witnesses nothing. Skipping it leaves its
                 // codeunits UNSCANNED — the unknown state — rather than clear.
                 if (!index.IsMetadataBacked) continue;
-                codeunitTypeNames = index.TypeNamesWithPrefix("Codeunit").ToList();
-                subscriberMethods = index.FindAttributedMethods("Codeunit", "NavEventSubscriberAttribute");
+                codeunitTypeNames = index.TypeNamesWithPrefix(kind).ToList();
+                subscriberMethods = index.FindAttributedMethods(kind, "NavEventSubscriberAttribute");
             }
             catch (Exception ex)
             {
@@ -155,31 +219,37 @@ public static partial class RecordPatches
                 // wrong answer the whole design avoids (loud-failures.md).
                 Console.Error.WriteLine(
                     $"[warn] RecordPatches: could not scan {asm.GetName().Name} for event subscribers, so the "
-                    + "codeunits it declares stay UNWITNESSED and their method tables stay absent rather than "
-                    + $"being derived from an incomplete view: {ex.GetType().Name}: {ex.Message}");
+                    + $"{kind.ToLowerInvariant()}s it declares stay UNWITNESSED and their method tables stay "
+                    + $"absent rather than being derived from an incomplete view: {ex.GetType().Name}: {ex.Message}");
                 continue;
             }
 
             foreach (var typeName in codeunitTypeNames)
-                if (TryParseCodeunitTypeId(typeName, out var scannedId)) scanned.Add(scannedId);
+                if (TryParseAlObjectTypeId(typeName, kind, out var scannedId)) scanned.Add(scannedId);
 
             foreach (var method in subscriberMethods)
             {
                 var declaring = method.DeclaringType?.Name;
-                if (declaring != null && TryParseCodeunitTypeId(declaring, out var id)) subscribers.Add(id);
+                if (declaring != null && TryParseAlObjectTypeId(declaring, kind, out var id)) subscribers.Add(id);
             }
         }
 
         if (scanned.Count == 0) return;   // nothing measured — leave the app unwitnessed
-        RegisterCodeunitSubscriberWitness(appPath, subscribers, scanned);
+        RegisterSubscriberWitness(appPath, kind, subscribers, scanned);
     }
 
-    /// <summary>The AL object id in a <c>Codeunit&lt;N&gt;</c> emitted type name, or false for a
-    /// type whose name merely starts with "Codeunit" without an id following.</summary>
-    private static bool TryParseCodeunitTypeId(string typeName, out int id)
+    /// <summary>The AL object id in a <c>Codeunit&lt;N&gt;</c> / <c>Page&lt;N&gt;</c> emitted
+    /// type name, or false for a type whose name merely starts with the prefix without an id
+    /// following.
+    ///
+    /// <para><b>The trailing-digits requirement is what keeps the two kinds disjoint</b>, and it
+    /// is load-bearing for the <c>Page</c> prefix specifically: an emitted assembly also carries
+    /// <c>PageExtension&lt;N&gt;</c> types, whose remainder (<c>Extension&lt;N&gt;</c>) does not
+    /// parse as an integer, so they are rejected here rather than entering the page witness
+    /// under a mangled id.</para></summary>
+    private static bool TryParseAlObjectTypeId(string typeName, string prefix, out int id)
     {
         id = 0;
-        const string prefix = "Codeunit";
         if (!typeName.StartsWith(prefix, StringComparison.Ordinal)) return false;
         var rest = typeName.AsSpan(prefix.Length);
         return rest.Length > 0 && int.TryParse(rest, out id);
@@ -196,11 +266,24 @@ public static partial class RecordPatches
     /// doing that on an unmeasured codeunit is how a fabricated association gets made.</para>
     /// </summary>
     internal static bool AssemblyProvesNoSubscriber(string appPath, int codeunitId)
+        => AssemblyProvesNoSubscriber(appPath, CodeunitTypePrefix, codeunitId);
+
+    /// <summary>
+    /// The same question about a PAGE (#4267), with the same three false cases and the same
+    /// reason for each. Separate from the codeunit entry point because the two witnesses are
+    /// separate: a page id is not a codeunit id, and asking the codeunit witness about a page
+    /// would answer from a set that never contained it — UNKNOWN by accident rather than by
+    /// measurement, which happens to be the safe direction here and is still not an answer.
+    /// </summary>
+    internal static bool PageAssemblyProvesNoSubscriber(string appPath, int pageId)
+        => AssemblyProvesNoSubscriber(appPath, PageTypePrefix, pageId);
+
+    private static bool AssemblyProvesNoSubscriber(string appPath, string kind, int objectId)
     {
-        var witness = EnsureCodeunitSubscriberWitness(appPath);
+        var witness = EnsureCodeunitSubscriberWitness(appPath, kind);
         return witness is not null
-               && witness.ScannedCodeunitIds.Contains(codeunitId)
-               && !witness.SubscriberCodeunitIds.Contains(codeunitId);
+               && witness.ScannedCodeunitIds.Contains(objectId)
+               && !witness.SubscriberCodeunitIds.Contains(objectId);
     }
 
     /// <summary>
@@ -220,22 +303,23 @@ public static partial class RecordPatches
     /// never a load. Both routes answer the same question about the same bytes, so a run where
     /// both are available cannot get two answers.</para>
     /// </summary>
-    private static CodeunitSubscriberWitness? EnsureCodeunitSubscriberWitness(string appPath)
+    private static CodeunitSubscriberWitness? EnsureCodeunitSubscriberWitness(string appPath, string kind)
     {
         if (string.IsNullOrEmpty(appPath)) return null;
-        string key;
-        try { key = Path.GetFullPath(appPath); }
+        string path;
+        try { path = Path.GetFullPath(appPath); }
         catch { return null; }
 
-        if (_codeunitSubscriberWitness.TryGetValue(key, out var existing)) return existing;
-        if (!File.Exists(key)) return null;
+        var key = (path, kind);
+        if (_subscriberWitness.TryGetValue(key, out var existing)) return existing;
+        if (!File.Exists(path)) return null;
 
         var subscribers = new HashSet<int>();
         var scanned = new HashSet<int>();
         try
         {
-            foreach (var dllPath in AppLoader.ExtractAllDllPaths(key))
-                ScanPackageAssembly(dllPath, subscribers, scanned);
+            foreach (var dllPath in AppLoader.ExtractAllDllPaths(path))
+                ScanPackageAssembly(dllPath, kind, subscribers, scanned);
         }
         catch (Exception ex)
         {
@@ -243,19 +327,20 @@ public static partial class RecordPatches
             // measured nothing, and recording that as "no subscribers" is the silent wrong
             // answer this design exists to avoid (loud-failures.md).
             Console.Error.WriteLine(
-                $"[warn] RecordPatches: could not read the R2R assemblies of '{Path.GetFileName(key)}' to "
-                + "decide which of its codeunits declare event subscribers, so their method tables stay "
-                + $"absent rather than being derived from an incomplete view: {ex.GetType().Name}: {ex.Message}");
+                $"[warn] RecordPatches: could not read the R2R assemblies of '{Path.GetFileName(path)}' to "
+                + $"decide which of its {kind.ToLowerInvariant()}s declare event subscribers, so their method "
+                + $"tables stay absent rather than being derived from an incomplete view: "
+                + $"{ex.GetType().Name}: {ex.Message}");
             return null;
         }
 
-        // A package carrying no readable Codeunit type witnessed nothing — a source-only app, or
-        // one whose chunks did not extract. Not cached, so a later run that CAN read it is not
-        // held to this answer.
+        // A package carrying no readable type of this kind witnessed nothing — a source-only app,
+        // one whose chunks did not extract, or (for pages) an app that genuinely declares none.
+        // Not cached, so a later run that CAN read it is not held to this answer.
         if (scanned.Count == 0) return null;
 
         var witness = new CodeunitSubscriberWitness(subscribers, scanned);
-        return _codeunitSubscriberWitness.GetOrAdd(key, witness);
+        return _subscriberWitness.GetOrAdd(key, witness);
     }
 
     /// <summary>
@@ -263,7 +348,8 @@ public static partial class RecordPatches
     /// <c>[NavEventSubscriber]</c> method, read straight out of the TypeDef / CustomAttribute
     /// tables. No <c>Type</c> is resolved and nothing is loaded.
     /// </summary>
-    private static void ScanPackageAssembly(string dllPath, HashSet<int> subscribers, HashSet<int> scanned)
+    private static void ScanPackageAssembly(
+        string dllPath, string kind, HashSet<int> subscribers, HashSet<int> scanned)
     {
         using var stream = File.OpenRead(dllPath);
         using var pe = new System.Reflection.PortableExecutable.PEReader(stream);
@@ -273,7 +359,7 @@ public static partial class RecordPatches
         foreach (var handle in md.TypeDefinitions)
         {
             var type = md.GetTypeDefinition(handle);
-            if (!TryParseCodeunitTypeId(md.GetString(type.Name), out var id)) continue;
+            if (!TryParseAlObjectTypeId(md.GetString(type.Name), kind, out var id)) continue;
             scanned.Add(id);
             if (subscribers.Contains(id)) continue;
 
@@ -332,5 +418,5 @@ public static partial class RecordPatches
 
     /// <summary>Test seam: forget every witness, so a test can drive the unknown state without
     /// depending on what an earlier test in the same process registered.</summary>
-    internal static void ClearCodeunitSubscriberWitnessForTests() => _codeunitSubscriberWitness.Clear();
+    internal static void ClearCodeunitSubscriberWitnessForTests() => _subscriberWitness.Clear();
 }

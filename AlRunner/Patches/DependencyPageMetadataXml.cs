@@ -106,14 +106,23 @@ public static partial class RecordPatches
         var page = TryGetDependencyPageSymbol(pageId);
         if (page == null) return null;
 
-        var xml = EmitPageXml(page);
+        // The witness is asked HERE, where the .app that declared this page is still known, and
+        // the verdict travels rather than the path — so EmitPageXml cannot ask the question
+        // against the wrong app. Same shape as the codeunit row in
+        // RecordPatches.CodeunitMetadataVirtualTable.cs.
+        var appPath = TryGetDependencyPageAppPath(pageId);
+        var methodsProvenComplete =
+            appPath is not null && PageAssemblyProvesNoSubscriber(appPath, pageId);
+
+        var xml = EmitPageXml(page, methodsProvenComplete);
         Console.Error.WriteLine(
             $"[RecordPatches] dependency page metadata: synthesized Page {pageId} \"{page.Name}\" "
             + $"(PageType={page.PageType}, SourceTable={page.SourceTableId})");
         return xml;
     }
 
-    private static string EmitPageXml(BcAppSymbolCache.PageSymbol page)
+    private static string EmitPageXml(
+        BcAppSymbolCache.PageSymbol page, bool methodsProvenComplete = false)
     {
         var settings = new XmlWriterSettings { Indent = true, Encoding = new UTF8Encoding(false) };
         var sb = new StringBuilder();
@@ -252,12 +261,99 @@ public static partial class RecordPatches
             }
             w.WriteEndElement(); // Content
 
+            // LAST, which is where BC's own emitter puts it: over the 235 PageDefinition
+            // documents of Business Foundation + System Application at 28.1.49838.53910, the 5
+            // carrying <Methods> all end with it, after Triggers (#4267).
+            EmitPageMethodsXml(w, page, methodsProvenComplete);
+
             w.WriteEndElement(); // PageDefinition
         }
         return sb.ToString();
     }
 
     private const string XsiNs = "http://www.w3.org/2001/XMLSchema-instance";
+
+    /// <summary>
+    /// The page's <c>&lt;Methods&gt;</c> subtree — BC's emitted method table — written only when
+    /// the runner can prove its view of it is COMPLETE, and omitted entirely otherwise (#4267).
+    ///
+    /// <para><b>Observably equivalent:</b> BC's <c>ObjectMetadataEmitter</c> writes a page's
+    /// ATTRIBUTED methods, and <c>SymbolReference.json</c> states every event PUBLISHER exactly —
+    /// by id, by name and in BC's document order. Over Business Foundation + System Application at
+    /// BC 28.1.49838.53910, BC emits <c>&lt;Methods&gt;</c> on 5 of 235 pages and those are exactly
+    /// the 5 whose symbol entry states an event-publisher attribute, each with the id and name the
+    /// symbol file states. The filter is <c>EmittedMethodAttributeKinds</c> and the reader is
+    /// <c>ReadAttributedMethods</c>, both shared with the codeunit path, so one rule has one
+    /// spelling. See docs/dependency-page-methods.md.</para>
+    ///
+    /// <para><b>The gate is the assembly witness, never the list's own length.</b> The symbol file
+    /// states no event SUBSCRIBER — an AL subscriber is always <c>local</c> and the file is an
+    /// app's consumer-facing API surface — and a page CAN host one: Base Application
+    /// 28.1.49838.53910 ships <c>EventRecorder.Page.al</c>, which declares one.
+    /// <c>MetadataObjectDiff</c> pairs <c>Methods</c> POSITIONALLY, so a short list puts every
+    /// later element in a different method's slot, which is worse than stating nothing
+    /// (loud-failures.md).</para>
+    ///
+    /// <para><b>Trap for a later editor:</b> 107 of those 235 pages state a non-empty
+    /// <c>Methods</c> array, and that is NOT the number that get a subtree. 105 state only
+    /// ordinary public procedures and 8 only <c>Scope</c>/<c>Obsolete</c>/<c>NonDebuggable</c>,
+    /// none of which BC's emitter writes. Keying on the array being non-empty would manufacture a
+    /// difference on 102 pages.</para>
+    ///
+    /// <para>The element shape is pinned against the codeunit renderer by
+    /// <c>DependencyPageMethodSubtreeRenderingParityTests</c>, so the two cannot drift.</para>
+    /// </summary>
+    private static void EmitPageMethodsXml(
+        XmlWriter w, BcAppSymbolCache.PageSymbol page, bool methodsProvenComplete)
+    {
+        // Two conditions, and the first is the third state: a page whose app's assemblies were
+        // never scanned proves nothing, which is not the same as proving it has no subscriber
+        // (guards-need-a-third-state.md).
+        if (!methodsProvenComplete) return;
+        if (page.AttributedMethods is not { Count: > 0 } methods) return;
+
+        WriteMethodsSubtree(w, methods);
+    }
+
+    /// <summary>
+    /// The <c>&lt;Methods&gt;</c> element BC's emitter writes, for a page or a codeunit alike —
+    /// one renderer, because BC's document has one shape for both and two copies would be free to
+    /// drift. <c>RecordPatches.CodeunitMetadataEquivalence.cs</c>'s <c>AppendMethodsSubtree</c>
+    /// builds the same shape through <c>XmlDocument</c>; the parity test renders one list both
+    /// ways and compares.
+    ///
+    /// <para><c>Name</c> on the attribute element is REQUIRED, not decorative: BC's own
+    /// <c>MetaCodeunit(XmlNode)</c> throws <c>NullReferenceException</c> on an attribute element
+    /// that has none. <c>IncludeSender</c> is written unconditionally and <c>Isolated</c> only
+    /// when true — BC's own asymmetry, and its reader defaults an absent <c>Isolated</c> to
+    /// false.</para>
+    /// </summary>
+    private static void WriteMethodsSubtree(
+        XmlWriter w, IReadOnlyList<BcAppSymbolCache.CodeunitMethodSymbol> methods)
+    {
+        w.WriteStartElement("Methods");
+        foreach (var method in methods)
+        {
+            w.WriteStartElement("Method");
+            w.WriteAttributeString(
+                "ID", method.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            w.WriteAttributeString("Name", method.Name);
+
+            w.WriteStartElement("MethodAttributes");
+            w.WriteStartElement(method.Kind);
+            w.WriteAttributeString("Name", method.AttributeName);
+            if (method.Kind == "EventPublisherAttribute")
+            {
+                w.WriteAttributeString("IncludeSender", method.IncludeSender ? "True" : "False");
+                if (method.Isolated) w.WriteAttributeString("Isolated", "True");
+            }
+            w.WriteEndElement(); // the attribute kind
+            w.WriteEndElement(); // MethodAttributes
+
+            w.WriteEndElement(); // Method
+        }
+        w.WriteEndElement(); // Methods
+    }
 
     /// <summary>
     /// The <c>&lt;Properties&gt;</c> attributes SymbolReference.json states and this
