@@ -55,7 +55,7 @@ public static class TestBarrier
     /// class doc comment for why that's safe). When set, blocks — polling every
     /// 5ms, not spinning — until a file named "release" appears in that
     /// directory, then deletes it so a later call starts from a clean slate.
-    /// Bounded at 60s: a harness bug that forgets to drop the release file must
+    /// Bounded: a harness bug that forgets to drop the release file must
     /// fail loud with a clear message, not hang the test run (and CI) forever.
     /// </summary>
 
