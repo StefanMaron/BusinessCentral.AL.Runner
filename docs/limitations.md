@@ -1454,7 +1454,7 @@ function (#4371). The replacement now runs the guards. What it does **not** run:
 | # | guard | here |
 |---|---|---|
 | 1 | `IsTemporary` -> "Temporary tables does not support truncation." | runs |
-| 2 | `!MetaTable.SupportsTruncation` -> "This table does not support truncation." | runs |
+| 2 | `!MetaTable.SupportsTruncation` -> "The table does not support truncation." | runs |
 | 3 | `CurrentMethodScope.IsInTryScope` -> "Truncate is not supported in try functions." | runs |
 | 4 | `RequiresSecurityFiltersValidation(Delete)` -> `NavPermissionException` | **skipped** |
 | 5 | `IsEventSubscribed(OnBeforeDelete/OnAfterDelete)` -> "Truncate is not supported when the OnBeforeDelete and/or OnAfterDelete event is subscribed..." | **skipped** |

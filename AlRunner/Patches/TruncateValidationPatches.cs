@@ -58,8 +58,16 @@ public static partial class BcRuntime
 
         // Guard 2 — MetaTable.SupportsTruncation. Only asserted when the property resolved and
         // answered false; a null read is "could not measure", which must not become a refusal.
+        //
+        // Unlike guards 1, 3 and 6 this one has NO corpus arm, and not for want of trying:
+        // SupportsTruncation is `TableType == Normal && (!IsSystemTable || TableId == 2000000295)`,
+        // so reaching it needs a non-Normal table. The corpus has two — "ALT Temp Only"
+        // (TableType = Temporary), which guard 1 catches first, and "ALT CRM Entity" (60291,
+        // TableType = CRM), which throws "Table connection for table type CRM must be registered
+        // ..." before ValidateTruncateSupport runs at all (measured). So the message here is
+        // pinned only by the resource string it was read from, not by a service tier.
         if (metaTable != null && _pMtSupportsTruncation?.GetValue(metaTable) is false)
-            ThrowTruncate("This table does not support truncation.");
+            ThrowTruncate("The table does not support truncation.");
 
         // Guard 3 — the try scope. This is the one #4371 is about: BC reads
         // Session.CurrentMethodScope.IsInTryScope, which EnterTryScope sets for the body of an
