@@ -65,6 +65,17 @@ The runner already wrote a `<CaptionML>` child *element* inside `<Properties>`, 
 The element is left in place: nothing here established what else may read it, and it contributes
 nothing to the parsed member either way.
 
+**Two pages state a blank caption and it is load-bearing.** 1433 "Satisfaction Survey" and 9260
+"Customer Experience Survey" state `Caption` as a single space, and BC writes `CaptionML="ENU= "`
+for both. So the emit guard is `IsNullOrEmpty` rather than `IsNullOrWhiteSpace`, and `Caption`
+deliberately skips the `OrNullIfBlank` filter its neighbours use — either change drops the
+attribute on those two and states no caption where BC states a blank one.
+
+They are also why a mutation dropping the `ENU=` prefix reds **194** rather than 196: `" "` and
+`"ENU= "` both render as an empty `ENU=`, so those two agree under that mutation alone. A
+mutation that corrupts the *value* instead (`"ENU=Z" + Caption`) reds all **196**, which is the
+measurement establishing that the whole population is pinned.
+
 ## What is deliberately not implemented, and why
 
 - **`AnalysisModeEnabled` (1 stated, 94 written).** BC writes it for every page whose emitted
@@ -74,6 +85,11 @@ nothing to the parsed member either way.
   `AnalysisModeEnabled="1"`. That page is also the only one of the 235 stating no `PageType` at
   all. One unexplained page out of 94 is not a rule, and shipping the PageType rule would
   manufacture a *missing* attribute on 1998.
+
+  **The lead for whoever takes it:** 1998 is also the only one of the 235 whose emitted
+  `<Properties>` carries `APIVersion` (`"beta"`). So "states no `PageType`", "is a `Card` BC
+  gives `AnalysisModeEnabled`" and "is the only API page" are one page, not three coincidences —
+  an API page is the shape to check before the PageType rule, not an outlier to wave through.
 - **`CardFormID` (10 stated, 10 written).** The sets match exactly, but the symbol file states a
   page **name** (`Retention Policy Setup Card`) and BC writes the resolved page **id** (`3901`).
   That is a cross-object name lookup, a different mechanism from every property above. Note also

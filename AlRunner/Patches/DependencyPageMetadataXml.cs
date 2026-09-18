@@ -147,6 +147,13 @@ public static partial class RecordPatches
             // attribute once the writer has entered element content, and the throw returns a
             // null document rather than a diagnostic -- the same failure the SourceObject
             // attribute ordering note below records.
+            //
+            // IsNullOrEmpty, NOT IsNullOrWhiteSpace, and page.Caption deliberately does not go
+            // through TryParsePageSymbol's OrNullIfBlank the way UsageCategory and HelpLink do:
+            // pages 1433 "Satisfaction Survey" and 9260 "Customer Experience Survey" state a
+            // Caption of a SINGLE SPACE, and BC writes CaptionML="ENU= " for both. Either
+            // "simplification" drops the attribute on those two and states no caption where BC
+            // states a blank one.
             if (!string.IsNullOrEmpty(page.Caption))
                 w.WriteAttributeString("CaptionML", "ENU=" + page.Caption);
 
@@ -463,12 +470,6 @@ public static partial class RecordPatches
     /// <see cref="HelpLinkBase"/> + that path; the remaining 193 state neither and BC writes the
     /// bare base. 6 + 36 + 193 = 235, and each arm matched BC's exact string on every page it
     /// covers. See docs/dependency-page-properties.md#helplink.</para>
-    ///
-    /// <para><b>The trap this replaced:</b> writing the attribute only for the 6 pages that
-    /// state <c>HelpLink</c> — which is what "carry what the symbol file states" means for every
-    /// other scalar beside it, and is wrong here for 229 of 235. <c>HelpLink</c> is the one
-    /// <c>&lt;Properties&gt;</c> scalar BC DERIVES rather than copies, so the write-iff-stated
-    /// rule that governs <c>UsageCategory</c> one line up does not transfer to it.</para>
     ///
     /// <para><b>Trap for a later editor:</b> <c>ContextSensitiveHelpPage</c> is never a URL, and
     /// an ISV page may state one that already looks absolute. This concatenates unconditionally
