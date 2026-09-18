@@ -86,9 +86,17 @@ public sealed class UserPropertyCompanionRowBindingTests
     /// Cecil-rewritten yet" (a legitimate skip) apart from "it was rewritten and OUR prepend
     /// is missing" (the regression this test exists to catch). Without the distinction an
     /// un-rewritten bin would fail the test for the wrong reason.
+    ///
+    /// <para>The marker must be a prepend that still lands on <c>ALInsertAsync(3)</c>, which is
+    /// what <see cref="SkipUnlessRewritten"/> reads. It used to be
+    /// <c>BcRuntime.AssignAutoIncrement</c>; #4142 moved that one to the
+    /// <c>InsertAsync(4)</c> funnel, and the marker silently stopped matching — turning every
+    /// test in this class into a green SKIP rather than a failure. <c>NoteRecordInsertWrite</c>
+    /// is prepended to <c>ALInsertAsync</c> by name (all overloads) and is not asserted by any
+    /// test here, so it can play the marker role without also being a subject.</para>
     /// </summary>
     private const string PriorPrependMarker =
-        "AlRunner.BcRuntime::AssignAutoIncrement(Microsoft.Dynamics.Nav.Runtime.NavRecord)";
+        "AlRunner.Patches.ALDatabasePatches::NoteRecordInsertWrite(System.Object)";
 
     private static void SkipUnlessRewritten(MethodDefinition alInsert)
         => Skip.IfNot(
