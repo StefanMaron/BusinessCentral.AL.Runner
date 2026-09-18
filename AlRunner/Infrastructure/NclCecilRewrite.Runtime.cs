@@ -2003,13 +2003,16 @@ public static partial class NclCecilRewrite
                 H(typeof(AlRunner.BcRuntime), "NavCodeunit_RunCodeunit"));
 
             // ── Truncate + security-filtering cluster (Batch 8) ─────────────────
-            // ValidateTruncateSupport throws NavPermissionException on the skeleton
-            // (a security filter is set); SetSecurityFiltering / DataProvider.Truncate
-            // Async / SessionHasSuperOr… all sit on the same record/security R2R path.
-            // Migrate together so the path is single-mechanism.
+            // SetSecurityFiltering / DataProvider.TruncateAsync / SessionHasSuperOr… all sit on
+            // the same record/security R2R path. Migrate together so the path is single-mechanism.
+            //
+            // ValidateTruncateSupport was NoOp_OneArg because its security-filter guard throws
+            // NavPermissionException on the skeleton — which also discarded the other six guards,
+            // so Record.Truncate() succeeded inside a try function where BC refuses it (#4371).
+            // The helper keeps the six that are faithful here and skips only that one.
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "NavRecord", "ValidateTruncateSupport", "NavRecord"),
-                H(helperShims, "NoOp_OneArg"));
+                H(typeof(AlRunner.BcRuntime), "NavRecord_ValidateTruncateSupport"));
             // SetSecurityFiltering was NoOp2 — which also dropped `securityFiltering = filtering`,
             // so Record.SecurityFiltering() could never observe a mode change. The helper stores
             // the field and invalidates the result set; see SecurityFilteringPatches for why

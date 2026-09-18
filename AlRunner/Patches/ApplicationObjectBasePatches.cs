@@ -182,6 +182,15 @@ public static partial class BcRuntime
     public static bool NavApplicationObjectBase_TryInvoke(object? session, Action? method)
     {
         if (method == null) return false;
+        // Observably equivalent to BC's `using (session.CurrentMethodScope.GetTryMethodScope())`:
+        // BC's TryMethodScope exists to make NavMethodScope.IsInTryScope true for the body and
+        // everything it calls, and AL reads that flag through NavRecord.ValidateTruncateSupport,
+        // which raises Lang.TruncateTryFunction. Running the body without it made Record.Truncate()
+        // silently succeed inside a try function (#4371). Citation: Ncl 28.1.49838.53910 (49b11d9b),
+        // NavApplicationObjectBase.TryInvoke and NavMethodScope.TryMethodScope.GetMethodScopeFlags;
+        // corpus codeunit 60923. Trap: the flag must be restored on EVERY exit, including the
+        // exception paths below, or one try function leaves the whole run inside a try scope.
+        var tryScope = EnterTryScope();
         try
         {
             method();
@@ -202,6 +211,10 @@ public static partial class BcRuntime
                 return false;
             if (IsPermanentOutOfScope(ex, out var oos)) { ReportOosTrappedByTryFunction(oos!); return false; }
             throw;
+        }
+        finally
+        {
+            ExitTryScope(tryScope);
         }
     }
 
@@ -269,6 +282,10 @@ public static partial class BcRuntime
         object? session, System.Func<System.Threading.Tasks.ValueTask>? method)
     {
         if (method == null) return new System.Threading.Tasks.ValueTask<bool>(false);
+        // Same try scope as TryInvoke, and for the same reason — see there. BC sets the flag on
+        // both paths, so leaving it off here would make IsInTryScope depend on whether the AL
+        // object happened to be compiled async.
+        var tryScope = EnterTryScope();
         try
         {
             method().GetAwaiter().GetResult();
@@ -289,5 +306,55 @@ public static partial class BcRuntime
             }
             throw;
         }
+        finally
+        {
+            ExitTryScope(tryScope);
+        }
+    }
+
+    // ── The try scope BC's TryInvoke creates, and the runner's stand-in for it ──────────────
+
+    /// <summary>
+    /// Sets MethodScopeFlags.IsInTryScope on the session's current scope for the duration of an
+    /// AL [TryFunction] body, and returns what to hand <see cref="ExitTryScope"/> to undo it.
+    ///
+    /// <para>BC constructs a real TryMethodScope here. The runner cannot: that type is a PRIVATE
+    /// nested class reachable only through the internal GetTryMethodScope(), and its base ctor
+    /// dereferences skeleton session state that NREs. Setting the flag on the scope already
+    /// current is observably equivalent for the thing AL can see — IsInTryScope is a plain
+    /// `(flags &amp; IsInTryScope) != 0` read, and the scopes BC would nest below its TryMethodScope
+    /// inherit the bit through NavMethodScopeCtorReplacement's InheritIsInTryScope, which is
+    /// exactly the OR BC's own ctor does.</para>
+    ///
+    /// <para>Returns null when the flag could not be set — no reflected flags field, no session,
+    /// no current scope, or the flag already set by an enclosing try function. Null means
+    /// ExitTryScope does nothing, so a nested try function cannot clear the outer one's bit.</para>
+    /// </summary>
+    private static (object Scope, object Original)? EnterTryScope()
+    {
+        if (_fMsFlags == null || _fSessCurrentScope == null || _skeletonSession == null) return null;
+
+        var scope = _fSessCurrentScope.GetValue(_skeletonSession) ?? _skeletonRootScope;
+        if (scope == null) return null;
+
+        var original = _fMsFlags.GetValue(scope);
+        if (original == null) return null;
+
+        var isInTryScope = Convert.ToInt64(Enum.Parse(_fMsFlags.FieldType, "IsInTryScope"));
+        // Already inside a try scope: leave it alone, and record nothing to restore. Without this
+        // the inner exit would clear a bit the OUTER try function still owns.
+        if ((Convert.ToInt64(original) & isInTryScope) != 0) return null;
+
+        FieldPoke.SetInstance(
+            _fMsFlags, scope,
+            Enum.ToObject(_fMsFlags.FieldType, Convert.ToInt64(original) | isInTryScope));
+        return (scope, original);
+    }
+
+    /// <summary>Restores what <see cref="EnterTryScope"/> changed; a null token is a no-op.</summary>
+    private static void ExitTryScope((object Scope, object Original)? token)
+    {
+        if (token == null || _fMsFlags == null) return;
+        FieldPoke.SetInstance(_fMsFlags, token.Value.Scope, token.Value.Original);
     }
 }

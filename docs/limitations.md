@@ -1442,6 +1442,49 @@ asserted upstream by codeunit 61202, where a real tier adjudicates it on every c
 
 ---
 
+### Truncate security filter validation
+
+*Six of BC's seven `Record.Truncate()` guards run here; the security-filter one does not.*
+
+BC's `NavRecord.ValidateTruncateSupport` is the whole precondition check for `Record.Truncate()`.
+It runs seven guards in order, each raising its own message, and the runner used to replace the
+method with a no-op — so `Truncate()` succeeded wherever BC refuses it, including inside a try
+function (#4371). The replacement now runs the guards. What it does **not** run:
+
+| # | guard | here |
+|---|---|---|
+| 1 | `IsTemporary` -> "Temporary tables does not support truncation." | runs |
+| 2 | `!MetaTable.SupportsTruncation` -> "The table does not support truncation." | runs |
+| 3 | `CurrentMethodScope.IsInTryScope` -> "Truncate is not supported in try functions." | runs |
+| 4 | `RequiresSecurityFiltersValidation(Delete)` -> `NavPermissionException` | **skipped** |
+| 5 | `IsEventSubscribed(OnBeforeDelete/OnAfterDelete)` -> "Truncate is not supported when the OnBeforeDelete and/or OnAfterDelete event is subscribed..." | **skipped** |
+| 6 | `MediaFieldCount > 0` -> "Truncate is not supported when the field has Media and/or MediaSet fields." | runs |
+| 7 | marked records / FlowField filters -> two more messages | **skipped** |
+
+**Guard 4** reads `recordImplementation.RequiresSecurityFiltersValidation`, which answers true on
+the skeleton because the runner populates no security-filter state for it to consult. Running it
+refused every `Truncate()` with a `NavPermissionException`, which is what made the whole method a
+no-op in the first place. Skipping exactly one guard is the narrower fix.
+
+**Guard 5** calls `NCLMetaTable.IsEventSubscribed(NavTriggerEventType, NavAppGroup)`, whose second
+argument comes from `NavCurrentThread.ResolveAppGroup`. `NavApplicationObjectBaseCtorReplacement`
+deliberately skips app-group resolution and pins `BaseGroupId = 0`, so any answer here would be
+about the runner's placeholder group rather than about BC.
+
+**Guard 7** reads `RecordImplementation.TableState.FiltersAndMarks`, which the in-memory provider
+does not populate in the shape `IsCompleteExpressionLarge` and `FlowFieldsHelper
+.AnyFiltersOnFlowFields` read.
+
+So a `Truncate()` that real BC refuses for reason 4, 5 or 7 **succeeds here**. Guards 5 and 7
+are tracked by #4374; guard 4 is deliberate and stays, because the state it reads does not
+exist here at all.
+Guard 3 is pinned upstream by corpus codeunit 60923, where a real service tier adjudicates it.
+
+Measured on `Microsoft.Dynamics.Nav.Ncl.dll` build `28.1.49838.53910` (sha256 `49b11d9b`); the
+method body is byte-identical on 27.0 and 28.4 (`compare_symbols`, `bodyChanged: false`).
+
+---
+
 ## Per-BC-minor engine variants: granularity is per MINOR, not per exact build
 
 Every released `al-runner` binary used to be compiled against exactly one BC minor's
