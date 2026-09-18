@@ -34,14 +34,24 @@ tree's pointers, which is what #4322 was about.
 Every surface must be non-empty, so a regex that drifts to match nothing
 fails instead of passing vacuously.
 
+And the POPULATION is asserted too (#4367), not just the pointers in it: deleting a
+CODE_TREES entry used to take the scan from 7 trees to 6 and 713 pointers to 482 while
+still exiting 0. Three checks pin it, in both directions -- every registered tree
+exists and matches files, every tracked source file is in some entry or declared
+UNSCANNED, and every UNSCANNED entry still names something. The second is measured
+against `git ls-files`, which knows nothing about the tuple, so a tree added and never
+registered fails here rather than quietly leaving the population.
+
 Run: python3 tools/test_doc_pointers.py
 """
 from __future__ import annotations
 
+import fnmatch
 import glob
 import json
 import os
 import re
+import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -152,18 +162,138 @@ GENERATED = ("/obj/", "/bin/", "/__pycache__/", "/node_modules/")
 # removing BOTH crashes. They are kept as two because they fail differently -- the
 # path entry cannot help a binary outside __pycache__, and is_text() cannot stop a
 # DECODABLE generated file from being counted as a pointer source.
+#
+# The patterns are per-tree rather than one global extension set because the trees
+# genuinely differ: `scripts` mixes .js, .py and .sh, and `tools` holds three C#
+# sub-projects beside its Python. A tree whose pattern misses its own source files
+# is caught by check_code_trees_cover_the_repo(), not by anybody noticing.
 CODE_TREES = (
     ("AlRunner", "*.cs"),
+    ("AlRunner", "*.sh"),
     ("AlRunner.Tests", "*.cs"),
     ("AlRunner.Provisioning", "*.cs"),
+    ("AlRunner.QueryJoin", "*.cs"),
     ("tools", "*.py"),
+    ("tools", "*.sh"),
+    ("tools", "*.cs"),
     ("scripts", "*.js"),
+    ("scripts", "*.py"),
+    ("scripts", "*.sh"),
     (".github/scripts", "*"),
+    (".claude/hooks", "*.py"),
     # tests/runner-extras only: tests/expectations is surface 4 (its Doc values),
     # tests/archive is history by declaration like docs/archive/, and
     # tests/al-language is the read-only corpus, which must never be scanned here.
     ("tests/runner-extras", "*"),
 )
+
+
+# Every tracked source file is either inside a CODE_TREES entry or named here, and
+# check_code_trees_cover_the_repo() fails when one is neither. UNSCANNED is the
+# second half of the claim, not an escape hatch: an entry says "a reader does not
+# follow a docs/ pointer out of this tree", which is a statement someone can be
+# wrong about, so each carries the reason it is not merely inconvenient to scan.
+UNSCANNED = (
+    # History by declaration, exactly like docs/archive/ and for the same reason:
+    # a pointer here describes the layout this tree had, so checking it would demand
+    # the docs of a retired era still exist. It is the one tree whose pointers are
+    # meant to rot. Everything else that is not source gets SCANNED rather than
+    # exempted -- an exemption is a claim a reader has to trust, and the cheapest
+    # number of those is as few as the repository actually needs.
+    ("tests/archive", "the frozen pre-v2 bucket trees, retired at the v1->v2 cutover"),
+)
+
+# A tracked file with one of these extensions is source a reader can cite from. Not
+# a taste question: it decides which files the coverage check below is allowed to
+# ignore silently, so widening it hides trees rather than revealing them.
+SOURCE_EXTENSIONS = (".cs", ".py", ".js", ".ts", ".sh", ".ps1")
+
+
+def tracked_files() -> list[str] | None:
+    """Every file git tracks, or None when git could not answer.
+
+    None is the third state (guards-need-a-third-state.md): a repository-independent
+    census is the whole point of the coverage check, and an empty list from a failed
+    subprocess would report "every tree is registered" for a measurement that never
+    happened.
+    """
+    try:
+        out = subprocess.run(["git", "-C", ROOT, "ls-files", "-z"],
+                             capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    return [f for f in out.stdout.split("\0") if f]
+
+
+def check_code_trees_are_populated() -> None:
+    """Each registered tree exists and matches files -- the REMOVAL direction (#4367).
+
+    Deleting an entry took the population from 7 trees/713 pointers to 6/482 with the
+    guard still exiting 0, because nothing named the trees it was supposed to hold.
+    A count floor was rejected in the issue: 713 moves whenever a legitimate citation
+    is added, and it cannot say WHICH tree left. The enumeration is the claim, so the
+    enumeration is what gets asserted.
+
+    An entry matching zero files fails too: a tree that stops matching has left the
+    population just as completely as one that was deleted, and is harder to see.
+    """
+    offenders = []
+    for tree, pattern in CODE_TREES:
+        if not os.path.isdir(os.path.join(ROOT, tree)):
+            offenders.append(f"{tree}: registered in CODE_TREES but not a directory")
+            continue
+        if not any(f.startswith(os.path.join(ROOT, tree) + os.sep) for f in code_files()):
+            offenders.append(f"{tree}/**/{pattern}: matches no file -- the entry guards nothing")
+    check("every CODE_TREES entry names a tree that exists and matches files",
+          offenders, len(CODE_TREES), "trees")
+
+
+def check_code_trees_cover_the_repo() -> None:
+    """Every tracked source file is scanned or declared -- the ADDITION direction (#4367).
+
+    Measured against `git ls-files`, which knows nothing about CODE_TREES, so adding a
+    source tree and forgetting to register it fails here rather than shrinking the
+    guarded population by an amount nobody records. That direction was unmeasured when
+    #4367 was filed and is the one that arrives on its own as the repository grows:
+    AlRunner.QueryJoin/ was already tracked, already holding .cs, and already invisible.
+    """
+    tracked = tracked_files()
+    if tracked is None:
+        print("  FAIL CODE_TREES covers every tracked source tree: "
+              "`git ls-files` failed -- the census could not be taken")
+        FAILURES.append("CODE_TREES covers every tracked source tree")
+        return
+    offenders, seen = [], 0
+    for f in tracked:
+        if not f.endswith(SOURCE_EXTENSIONS):
+            continue
+        seen += 1
+        if any(f.startswith(t + "/") and fnmatch.fnmatch(os.path.basename(f), p)
+               for t, p in CODE_TREES):
+            continue
+        if any(f.startswith(t + "/") for t, _ in UNSCANNED):
+            continue
+        offenders.append(f"{f}: in no CODE_TREES entry and in no UNSCANNED entry -- "
+                         "register the tree, or declare why a reader follows no pointer out of it")
+    check("CODE_TREES covers every tracked source tree", offenders, seen, "tracked source files")
+
+
+def check_unscanned_entries_are_live() -> None:
+    """An UNSCANNED entry that no longer names anything is a stale exemption.
+
+    Same failure as a fixture mark on a path that resolves: it reads as a reviewed
+    decision while covering nothing, and the next tree to land under that prefix is
+    exempted by an entry written about something else.
+    """
+    offenders = []
+    for tree, why in UNSCANNED:
+        if not os.path.isdir(os.path.join(ROOT, tree)):
+            offenders.append(f"{tree}: declared UNSCANNED ({why}) but does not exist -- drop the entry")
+        elif any(tree.startswith(t + "/") or tree == t for t, _ in CODE_TREES):
+            offenders.append(f"{tree}: declared UNSCANNED ({why}) but is also inside CODE_TREES")
+    check("every UNSCANNED entry names a tree that exists", offenders, len(UNSCANNED), "entries")
 
 
 def code_files() -> list[str]:
@@ -391,6 +521,9 @@ def check_anchor_logic() -> None:
 def main() -> int:
     print(f"doc-pointer guard, repo root {ROOT}")
     check_anchor_logic()
+    check_code_trees_are_populated()
+    check_code_trees_cover_the_repo()
+    check_unscanned_entries_are_live()
     check_code_pointers()
     check_fixture_marks_are_needed()
     check_relocations()
