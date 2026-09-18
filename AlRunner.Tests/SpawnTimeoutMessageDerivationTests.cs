@@ -114,106 +114,11 @@ public sealed class SpawnTimeoutMessageDerivationTests
         {
             var path = Path.Combine(RepoRoot, "AlRunner.Tests", file);
             Assert.True(File.Exists(path), $"{file} no longer exists; update this test's list deliberately");
-            var source = File.ReadAllText(path);
-            var root = CSharpSyntaxTree.ParseText(source).GetRoot();
 
-            // Anchored on the throw STATEMENT, not on message text: the phrase "did not exit
-            // within" also appears in comments, and scanning for it would pass or fail on where
-            // the prose sits. Assembled rather than written whole so this file's own comments
-            // cannot match when it is itself scanned.
-            foreach (var (i, anchor) in FailureSites(source))
+            foreach (var site in ScanSites(File.ReadAllText(path)))
             {
-                var end = source.IndexOf(");", i, StringComparison.Ordinal);
-                if (end <= i) { offenders.Add($"{file}: a {anchor} statement does not terminate"); continue; }
-                var stmt = source[i..end];
-
-                // Only the spawn-timeout throws are in scope; a TimeoutException thrown for some
-                // other reason has no cap to report.
-                if (!stmt.Contains("within", StringComparison.Ordinal)) continue;
-                sitesPerFile[file] = sitesPerFile.GetValueOrDefault(file) + 1;
-
-                // The property is "the figure is DERIVED from the cap this site applied", not
-                // "the identifier is spelled SpawnTimeoutMs". A file with two genuinely different
-                // caps needs two names — DefaultProvisionTargetMessagingTests bounds the whole
-                // spawn with SpawnTimeoutMs and watches stderr with LineWatchTimeoutMs — and
-                // keying on one literal name rejected the correctly-derived second one (#4275).
-                //
-                // So: some identifier ending in TimeoutMs, which is this assembly's convention for
-                // a cap constant, and it must appear in the DIVISION that produces the figure, not
-                // merely somewhere in the statement. The `/ 1000` half is what makes this stronger
-                // than co-occurrence — a name mentioned in passing does not satisfy it.
-                var reported = Regex.Matches(stmt, @"\b(\w*TimeoutMs)\s*/\s*1000\b")
-                    .Select(m => m.Groups[1].Value).Distinct().ToArray();
-                if (reported.Length == 0)
-                {
-                    offenders.Add($"{file}: a timeout message does not derive its figure from a "
-                                  + $"*TimeoutMs cap: {Compact(stmt)}");
-                    continue;
-                }
-
-                // Deriving from SOME cap is not deriving from THIS site's cap. Dropping the exact
-                // name made that reachable for the first time: cross-wiring a site so it waits on
-                // one constant and reports another passed, leaving a message that says 30s beside
-                // a 60s wait — the very shape #3435 measured, now spelled with two correct-looking
-                // identifiers (found in review of #4275).
-                //
-                // Scoped to the ENCLOSING METHOD, not to the statement. Statement scope saw only
-                // a cap the message's own statement applied — 9 of 51 sites — because a `throw`
-                // lives in an `if (!p.WaitForExit(...))` body and the Assert.Fail site waits in a
-                // `try` and reports in the `catch`, so the wait is a statement away by
-                // construction (#4332).
-                //
-                // A line window was the obvious widening and is rejected: the window size would
-                // be a constant with no principle behind it, and a wait can precede its message
-                // by any distance. A method declaration is a syntax node, so it bounds the search
-                // without a number and without a distance limit.
-                //
-                // Measured at the commit that made this change: all 42 previously-blind sites
-                // have an enclosing method that applies a cap (0 fall through), and no enclosing
-                // method applies more than one DISTINCT cap — so widening the scope adds no slack
-                // here, it only removes the blindness. The two-cap file the comment above names
-                // keeps its two caps in two different methods, which is why the method boundary
-                // separates them where a file-scoped check would not.
-                var applied = AppliedCaps(EnclosingMethod(root, i) ?? stmt);
-                var crossed = applied.Length > 0 && !applied.Intersect(reported).Any();
-                if (crossed)
-                    offenders.Add($"{file}: waits on {string.Join("/", applied)} but reports "
-                                  + $"{string.Join("/", reported)} — the figure is derived from a "
-                                  + $"cap this site does not apply: {Compact(stmt)}");
-
-                // Co-occurrence is weaker than derivation, and the gap is reachable by accident:
-                // appending the constant to an otherwise-hardcoded message ("...within 120s...
-                // (cap {SpawnTimeoutMs})") mentions it while the figure a reader acts on is still
-                // a literal. So the statement may carry NO standalone number but the 1000 that
-                // converts milliseconds to seconds, and the 0/1 of a format placeholder.
-                //
-                // Leading guard only: the literal that matters is spelled "120s", glued to a
-                // letter, so requiring a non-word character AFTER the digits would skip exactly
-                // the case being forbidden.
-                var digits = Regex.Matches(stmt, @"(?<![\w.])\d+")
-                    .Select(m => m.Value)
-                    .Where(v => v is not ("1000" or "0" or "1"))
-                    .ToArray();
-                if (digits.Length > 0)
-                    offenders.Add($"{file}: literal number(s) {string.Join(", ", digits)} in {Compact(stmt)}");
-
-                // A placeholder only interpolates in a $-prefixed string. Without the $ the
-                // reader is shown the BRACES — "did not exit within {SpawnTimeoutMs / 1000}s" —
-                // and the two checks above both pass, because the statement does mention the
-                // constant and carries no literal but the 1000. Caught while writing #4275: the
-                // edit that adds the placeholder and the edit that adds the $ are separate, so
-                // this is the state 11 of 13 files were briefly in.
-                // The test is "does this string interpolate", so the predicate asks for the $ —
-                // it is NOT a test of prefix length. A verbatim interpolated string is spelled
-                // both $@"..." and @$"...", so the character class has to admit the @; but with
-                // a length test, admitting it also exonerates @"...{SpawnTimeoutMs}...", which
-                // is verbatim and NOT interpolated and prints the braces. Widening the class
-                // while keeping Length == 0 trades a loud false positive for a SILENT false
-                // negative, the worse direction (caught in review of the first attempt at this
-                // fix, #4286). The [Theory] below pins all five spellings.
-                foreach (var seg in NonInterpolatedSpawnTimeoutStrings(stmt))
-                    offenders.Add($"{file}: {{SpawnTimeoutMs}} sits in a string with no $ prefix, so the braces "
-                                  + $"are printed rather than the cap: {Compact(seg)}");
+                if (site.IsInScope) sitesPerFile[file] = sitesPerFile.GetValueOrDefault(file) + 1;
+                foreach (var complaint in site.Offenders) offenders.Add($"{file}: {complaint}");
             }
         }
 
@@ -286,11 +191,8 @@ public sealed class SpawnTimeoutMessageDerivationTests
     /// opposite directions: literals must survive because the defect IS a literal, so
     /// <c>CodeOnly</c> would blank the very thing being looked for; comments must go because the
     /// #3435 narrative is quoted in most of these files' doc comments, and a raw text scan
-    /// reports every one of them. Deliberately no count: the figure moves whenever anyone edits
-    /// the prose — including the commit that added this sentence — and the population it would
-    /// have to name (these 48 files, not the test tree) is the distinction such a number is
-    /// likeliest to be quoted without. The property is what matters: over the listed files every
-    /// raw match is prose, and this check reports zero of them.</para>
+    /// reports every one of them. The property, not a count: over the listed files every raw
+    /// match is prose, and this check reports zero of them.</para>
     ///
     /// <para>The anchor set does not bound this one. The scan above can only see a literal inside
     /// a statement one of its three anchors matched, so a figure in a helper that BUILDS a message
@@ -326,6 +228,104 @@ public sealed class SpawnTimeoutMessageDerivationTests
     }
 
     /// <summary>
+    /// Synthetic sources that separate METHOD scope from the STATEMENT scope it replaced, so the
+    /// widening is pinned by a RED rather than by the live tree happening to be clean.
+    ///
+    /// <para>Why a fixture and not the tree: the tree carries ZERO cross-wires across all 51
+    /// sites, so both scopes agree everywhere on it and mutating <see cref="EnclosingMethod"/> to
+    /// <c>return null</c> left the suite GREEN. The check the widening exists to make possible had
+    /// therefore never been shown to fire (#4332, found in review). These cases make it fire.</para>
+    ///
+    /// <para>Measured over these cases: METHOD scope reports the four true cross-wires, STATEMENT
+    /// scope reports one — the single case where wait and message share a statement. The other
+    /// three are exactly the shapes the live tree is made of: a <c>throw</c> inside
+    /// <c>if (!WaitForExit(...))</c>, a <c>try</c>/<c>catch</c> pair, and a local function. The
+    /// two correct multi-cap cases must stay silent, which is what stops "catches more" from being
+    /// satisfied by a check that simply reports everything.</para>
+    /// </summary>
+    [Theory]
+    // Wait and message in DIFFERENT statements of one method — invisible to statement scope, and
+    // the shape 42 of the 51 live sites have.
+    [InlineData("CrossWire_TwoStatements", """
+        class C {
+          void M() {
+            var ok = p.WaitForExit(SpawnTimeoutMs);
+            if (!ok) throw new TimeoutException($"runner did not exit within {LineWatchTimeoutMs / 1000}s");
+          }
+        }
+        """, true)]
+    // The same two statements, correctly wired. Proves the check reports a CROSS-wire rather than
+    // "the wait is not in this statement".
+    [InlineData("Correct_TwoStatements", """
+        class C {
+          void M() {
+            var ok = p.WaitForExit(SpawnTimeoutMs);
+            if (!ok) throw new TimeoutException($"runner did not exit within {SpawnTimeoutMs / 1000}s");
+          }
+        }
+        """, false)]
+    // Wait and message in ONE statement: the only shape statement scope ever saw, kept so a
+    // regression that loses the narrow case is still caught.
+    [InlineData("CrossWire_SameStatement", """
+        class C {
+          void M() {
+            Assert.True(p.WaitForExit(SpawnTimeoutMs), $"runner did not exit within {LineWatchTimeoutMs / 1000}s");
+          }
+        }
+        """, true)]
+    // Two caps in two methods, each correctly wired — the live two-cap file's shape. Method scope
+    // must separate them; a file-scoped check would intersect both and report neither, and a
+    // check that reported everything would red this.
+    [InlineData("Correct_TwoMethodsTwoCaps", """
+        class C {
+          void M1() {
+            var a = p.WaitForExit(SpawnTimeoutMs);
+            if (!a) throw new TimeoutException($"runner did not exit within {SpawnTimeoutMs / 1000}s");
+          }
+          void M2() {
+            var b = q.WaitForExit(LineWatchTimeoutMs);
+            if (!b) throw new TimeoutException($"watch did not fire within {LineWatchTimeoutMs / 1000}s");
+          }
+        }
+        """, false)]
+    // Wait in the try, message in the catch — the Assert.Fail shape, a statement away by
+    // construction.
+    [InlineData("CrossWire_TryCatch", """
+        class C {
+          void M() {
+            try { t.Wait(SpawnTimeoutMs); }
+            catch { Assert.Fail($"did not settle within {LineWatchTimeoutMs / 1000}s"); }
+          }
+        }
+        """, true)]
+    // A local function is the scope, not the method around it. Without
+    // LocalFunctionStatementSyntax the walk reaches Outer, finds ITS wait, and reports a
+    // cross-wire the local function does not have — a spurious red. Measured: dropping the clause
+    // turns this case from clean to reported.
+    [InlineData("Correct_LocalFunctionIgnoresOuterWait", """
+        class C {
+          void Outer() {
+            var outerWait = q.WaitForExit(SpawnTimeoutMs);
+            void Inner() {
+              throw new TimeoutException($"runner did not exit within {LineWatchTimeoutMs / 1000}s");
+            }
+            Inner();
+          }
+        }
+        """, false)]
+    public void TheCrossWireCheck_ScopesToTheEnclosingMethod(string name, string source, bool expectedCrossWire)
+    {
+        var crossWires = ScanSites(source)
+            .SelectMany(s => s.Offenders)
+            .Where(o => o.StartsWith("waits on", StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.True(expectedCrossWire == (crossWires.Length > 0),
+            $"{name}: expected cross-wire={expectedCrossWire}, got {crossWires.Length}:"
+            + Environment.NewLine + string.Join(Environment.NewLine, crossWires));
+    }
+
+    /// <summary>
     /// The five string spellings a timeout message can carry, and whether each one actually
     /// INTERPOLATES. Two of them print the braces verbatim and must be reported; three are real
     /// interpolations and must not be.
@@ -355,6 +355,134 @@ public sealed class SpawnTimeoutMessageDerivationTests
         var reported = NonInterpolatedSpawnTimeoutStrings(stmt).Any();
 
         Assert.Equal(expectedReported, reported);
+    }
+
+    /// <summary>One spawn-timeout site the scan found, and what it has to say about it.</summary>
+    private readonly record struct Site(bool IsInScope, IReadOnlyList<string> Offenders);
+
+    /// <summary>
+    /// Every spawn-timeout site in <paramref name="source"/>, with the complaints each one earns.
+    ///
+    /// <para>Taking SOURCE rather than a file path is what makes the cross-wire rule testable.
+    /// The live tree carries zero cross-wires — that is the finding of #4332, not a coincidence —
+    /// so on this tree the method-scoped rule and the statement-scoped one it replaced return the
+    /// same answer at all 51 sites, and a mutation of <see cref="EnclosingMethod"/> to
+    /// <c>return null</c> stayed GREEN. A guard whose correctness rests on the tree not growing a
+    /// defect is not pinned: the day someone writes the cross-wire, the check that was supposed to
+    /// catch it has never once been shown to. The [Theory] below feeds it synthetic sources that
+    /// discriminate the two scopes, so the widening is proven by a RED rather than by the absence
+    /// of one.</para>
+    /// </summary>
+    private static IEnumerable<Site> ScanSites(string source)
+    {
+        var root = CSharpSyntaxTree.ParseText(source).GetRoot();
+
+        // Anchored on the throw STATEMENT, not on message text: the phrase "did not exit
+        // within" also appears in comments, and scanning for it would pass or fail on where
+        // the prose sits. Assembled rather than written whole so this file's own comments
+        // cannot match when it is itself scanned.
+        foreach (var (i, anchor) in FailureSites(source))
+        {
+            var end = source.IndexOf(");", i, StringComparison.Ordinal);
+            if (end <= i)
+            {
+                yield return new Site(false, new[] { $"a {anchor} statement does not terminate" });
+                continue;
+            }
+            var stmt = source[i..end];
+
+            // Only the spawn-timeout throws are in scope; a TimeoutException thrown for some
+            // other reason has no cap to report.
+            if (!stmt.Contains("within", StringComparison.Ordinal)) continue;
+
+            var offenders = new List<string>();
+
+            // The property is "the figure is DERIVED from the cap this site applied", not
+            // "the identifier is spelled SpawnTimeoutMs". A file with two genuinely different
+            // caps needs two names — DefaultProvisionTargetMessagingTests bounds the whole
+            // spawn with SpawnTimeoutMs and watches stderr with LineWatchTimeoutMs — and
+            // keying on one literal name rejected the correctly-derived second one (#4275).
+            //
+            // So: some identifier ending in TimeoutMs, which is this assembly's convention for
+            // a cap constant, and it must appear in the DIVISION that produces the figure, not
+            // merely somewhere in the statement. The `/ 1000` half is what makes this stronger
+            // than co-occurrence — a name mentioned in passing does not satisfy it.
+            var reported = Regex.Matches(stmt, @"\b(\w*TimeoutMs)\s*/\s*1000\b")
+                .Select(m => m.Groups[1].Value).Distinct().ToArray();
+            if (reported.Length == 0)
+            {
+                offenders.Add($"a timeout message does not derive its figure from a "
+                              + $"*TimeoutMs cap: {Compact(stmt)}");
+                yield return new Site(true, offenders);
+                continue;
+            }
+
+            // Deriving from SOME cap is not deriving from THIS site's cap. Dropping the exact
+            // name made that reachable for the first time: cross-wiring a site so it waits on
+            // one constant and reports another passed, leaving a message that says 30s beside
+            // a 60s wait — the very shape #3435 measured, now spelled with two correct-looking
+            // identifiers (found in review of #4275).
+            //
+            // Scoped to the ENCLOSING METHOD, not to the statement. Statement scope saw only
+            // a cap the message's own statement applied — 9 of 51 sites — because a `throw`
+            // lives in an `if (!p.WaitForExit(...))` body and the Assert.Fail site waits in a
+            // `try` and reports in the `catch`, so the wait is a statement away by
+            // construction (#4332).
+            //
+            // A line window was the obvious widening and is rejected: the window size would
+            // be a constant with no principle behind it, and a wait can precede its message
+            // by any distance. A method declaration is a syntax node, so it bounds the search
+            // without a number and without a distance limit.
+            //
+            // Measured at the commit that made this change: all 42 previously-blind sites
+            // have an enclosing method that applies a cap (0 fall through), and no enclosing
+            // method applies more than one DISTINCT cap — so widening the scope adds no slack
+            // here, it only removes the blindness. The two-cap file the comment above names
+            // keeps its two caps in two different methods, which is why the method boundary
+            // separates them where a file-scoped check would not.
+            var applied = AppliedCaps(EnclosingMethod(root, i) ?? stmt);
+            var crossed = applied.Length > 0 && !applied.Intersect(reported).Any();
+            if (crossed)
+                offenders.Add($"waits on {string.Join("/", applied)} but reports "
+                              + $"{string.Join("/", reported)} — the figure is derived from a "
+                              + $"cap this site does not apply: {Compact(stmt)}");
+
+            // Co-occurrence is weaker than derivation, and the gap is reachable by accident:
+            // appending the constant to an otherwise-hardcoded message ("...within 120s...
+            // (cap {SpawnTimeoutMs})") mentions it while the figure a reader acts on is still
+            // a literal. So the statement may carry NO standalone number but the 1000 that
+            // converts milliseconds to seconds, and the 0/1 of a format placeholder.
+            //
+            // Leading guard only: the literal that matters is spelled "120s", glued to a
+            // letter, so requiring a non-word character AFTER the digits would skip exactly
+            // the case being forbidden.
+            var digits = Regex.Matches(stmt, @"(?<![\w.])\d+")
+                .Select(m => m.Value)
+                .Where(v => v is not ("1000" or "0" or "1"))
+                .ToArray();
+            if (digits.Length > 0)
+                offenders.Add($"literal number(s) {string.Join(", ", digits)} in {Compact(stmt)}");
+
+            // A placeholder only interpolates in a $-prefixed string. Without the $ the
+            // reader is shown the BRACES — "did not exit within {SpawnTimeoutMs / 1000}s" —
+            // and the two checks above both pass, because the statement does mention the
+            // constant and carries no literal but the 1000. Caught while writing #4275: the
+            // edit that adds the placeholder and the edit that adds the $ are separate, so
+            // this is the state 11 of 13 files were briefly in.
+            // The test is "does this string interpolate", so the predicate asks for the $ —
+            // it is NOT a test of prefix length. A verbatim interpolated string is spelled
+            // both $@"..." and @$"...", so the character class has to admit the @; but with
+            // a length test, admitting it also exonerates @"...{SpawnTimeoutMs}...", which
+            // is verbatim and NOT interpolated and prints the braces. Widening the class
+            // while keeping Length == 0 trades a loud false positive for a SILENT false
+            // negative, the worse direction (caught in review of the first attempt at this
+            // fix, #4286). The [Theory] below pins all five spellings.
+            foreach (var seg in NonInterpolatedSpawnTimeoutStrings(stmt))
+                offenders.Add($"{{SpawnTimeoutMs}} sits in a string with no $ prefix, so the braces "
+                              + $"are printed rather than the cap: {Compact(seg)}");
+
+            yield return new Site(true, offenders);
+        }
     }
 
     /// <summary>
@@ -452,8 +580,12 @@ public sealed class SpawnTimeoutMessageDerivationTests
     /// narrower of the two and therefore cannot manufacture a pass (guards-need-a-third-state.md
     /// — the degraded answer must not be the permissive one).</para>
     ///
-    /// <para>A local function counts as a method: several spawn helpers here are written as one,
-    /// and its body is the scope a reader would expect to bound the wait.</para>
+    /// <para>A local function counts as a method, and the clause is load-bearing in the direction
+    /// that produces FALSE POSITIVES. Without it the walk continues to the enclosing method and
+    /// picks up ITS wait, so a local function reporting a cap it never applies is blamed for the
+    /// outer method's constant. Pinned by <c>Correct_LocalFunctionIgnoresOuterWait</c>, which goes
+    /// from clean to reported when the clause is dropped — no live site exercises it, so the
+    /// fixture is the only thing holding it (#4332).</para>
     /// </summary>
     private static string? EnclosingMethod(SyntaxNode root, int offset)
     {
