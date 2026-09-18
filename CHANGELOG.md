@@ -27,6 +27,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **coverage:** build the server and DAP source maps from the roots the run parsed
 - **metadata-conversion:** emit a page's `Methods` subtree, gated on the same subscriber witness codeunits use
 - **codeunit-binding:** refuse when [NavCodeunitOptions] has no Options member, and pin what the meta stash buys
 - **tools:** a missing gh is UNDETERMINED (3), not a failing check (1)
