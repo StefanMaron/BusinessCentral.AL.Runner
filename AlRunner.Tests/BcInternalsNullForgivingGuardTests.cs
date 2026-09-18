@@ -292,6 +292,15 @@ public sealed class BcInternalsNullForgivingGuardTests
         // member — is a read that SUCCEEDED and stays a false; the split is pinned by
         // AlRunner.Tests/CodeunitManualBindingOptionsTests and written up in
         // docs/codeunit-manual-binding.md#the-three-ways-of-not-getting-an-answer.
+        //
+        // 99 stays 99 at #4319, which widened that same decoder to refuse an Options that
+        // reads as null or holds a non-enum. Not an oversight: this counter's population is
+        // the five LOOKUP helpers listed in CountConverted, and those two refusals go
+        // through the value-shape helper BcShape.RequiredEnum — the flags sibling of
+        // RequiredEnumerable, which is outside this count for the same reason and always
+        // has been. A site can therefore be deliberately converted without moving this
+        // number; a reader expecting it to move on every such change would read the flat
+        // count as a conversion that was undone.
         Assert.Equal(99, converted);
     }
 
