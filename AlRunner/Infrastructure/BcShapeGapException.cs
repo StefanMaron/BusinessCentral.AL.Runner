@@ -291,6 +291,30 @@ internal static class BcShape
                    surface, member, $"holds a {value.GetType().Name}, which cannot be enumerated — {detail}");
     }
 
+    /// <summary>
+    /// <paramref name="value"/> as an <see cref="Enum"/>, or a <see cref="BcShapeGapException"/>
+    /// naming what it actually held. The sibling of
+    /// <see cref="RequiredEnumerable(object, string, string, string)"/> for a member the runner
+    /// decodes as option FLAGS, and it draws the same line: a member that exists but holds an
+    /// uninterpretable shape is the same "BC's layout moved" case as an absent one.
+    ///
+    /// <para>Null and wrong-type refuse separately so the message names which of the two it was:
+    /// they mean BC stopped populating the member and BC re-typed it, and those have different
+    /// remedies (#4319).</para>
+    /// </summary>
+    public static Enum RequiredEnum(object? value, string member, string surface, string detail)
+    {
+        if (value is null)
+            throw new BcShapeGapException(
+                surface, member, $"read as null, so no option flag can be decoded from it — {detail}");
+
+        return value as Enum
+               ?? throw new BcShapeGapException(
+                   surface, member,
+                   $"holds a {value.GetType().Name}, which is not an enum, so no option flag can "
+                   + $"be decoded from it — {detail}");
+    }
+
     // ── THE NULL-FORGIVING HALF (#3051) ─────────────────────────────────────────────────
     //
     // `t.GetProperty("X")!` is a COMPILER ANNOTATION. It throws nothing. When Microsoft moves

@@ -168,31 +168,36 @@ public static partial class BcRuntime
         return false;
     }
 
+    /// <summary>What a wrong answer on this surface costs; shared by the reads that refuse.</summary>
+    private const string ManualBindingCost =
+        "the runner cannot tell a manual-binding codeunit from an automatic one; answering "
+        + "false would silently unbind every manual subscriber";
+
+    /// <summary>The AL-visible surface all three refusals on this path are serving.</summary>
+    private const string ManualBindingSurface = "codeunit event binding (IsEventManualBinding)";
+
     /// <summary>
     /// Does this <c>[NavCodeunitOptionsAttribute]</c> instance declare manual event binding?
     ///
-    /// <para>The attribute's own derived <c>IsEventManualBinding</c> property is the answer
-    /// when it exists — BC computes it, so nothing here can drift from it. The fallback reads
-    /// the flag out of the <c>Options</c> enum <b>by member name</b>: the enum's own members
-    /// are the mapping, and a hardcoded mask is a second spelling of BC's enum that is free to
-    /// drift from it. It had drifted — both readers masked with <c>1</c>, which is
-    /// <c>SingleInstance</c>; <c>EventManualBinding</c> is <c>2</c> on BC 28.1.49838.53910, so
-    /// the fallback answered the question backwards in both directions (#4289).</para>
+    /// <para>The attribute's own derived <c>IsEventManualBinding</c> property is the answer when
+    /// it exists — BC computes it, so nothing here can drift from it. The fallback reads the flag
+    /// out of the <c>Options</c> enum <b>by member name</b> and masks it the way BC's own property
+    /// masks it, <c>(Options &amp; flag) != 0</c> rather than <c>HasFlag</c>'s all-bits test: that
+    /// is literally BC's IL on 28.1.49838.53910 (Ncl.dll sha256 <c>49b11d9b…</c>). A hardcoded
+    /// mask is a second spelling of BC's enum and free to drift from it — it had, both readers
+    /// masking with <c>1</c>, which is <c>SingleInstance</c> (#4289).</para>
     ///
     /// <para>Trap: the fallback is unreachable while BC's attribute keeps the derived property,
-    /// which is why nothing caught the mask. Measured on 28.1.49838.53910 only — the artifact
-    /// set on the box that made this change — so re-measure before assuming another BC agrees.
-    /// An <c>Options</c> enum declaring no <c>EventManualBinding</c> member answers false, the
-    /// same as a codeunit carrying no attribute at all, which is what BC's own property returns
-    /// for a codeunit that declares nothing.</para>
+    /// which is why nothing caught the mask. Measured on 28.1.49838.53910 only.</para>
     ///
-    /// <para>Trap for a later editor: the two absences are NOT the same question, so only one
-    /// of them is a <c>false</c>. A missing <c>IsEventManualBinding</c> is a legitimate shape
-    /// and the enum-member fallback answers instead; a missing <c>Options</c> is a read that
-    /// CANNOT BE PERFORMED, so it refuses through <see cref="BcShape.Property"/> rather than
-    /// inventing a <c>false</c> that would report every manual-binding codeunit as automatic
-    /// (<c>guards-need-a-third-state.md</c> § "A reflection bind that answers null is
-    /// unmeasurable, not absent"; see docs/codeunit-manual-binding.md#the-two-absences).</para>
+    /// <para>Trap for a later editor: there are THREE ways of not getting an answer here and only
+    /// one of them is a <c>false</c>. An <c>Options</c> enum declaring no <c>EventManualBinding</c>
+    /// member is a read that SUCCEEDED, and <c>false</c> is what it read; an <c>Options</c> that is
+    /// absent, null, or not an enum is a read that could not be performed, and refuses. Fold
+    /// either side into the other and a BC shape change starts reading as a routine negative
+    /// (#4319; <c>guards-need-a-third-state.md</c> § "A reflection bind that answers null is
+    /// unmeasurable, not absent"; the table is in
+    /// docs/codeunit-manual-binding.md#what-the-decoder-concludes).</para>
     /// </summary>
     private static bool ReadEventManualBindingFromAttribute(object attr)
     {
@@ -204,24 +209,37 @@ public static partial class BcRuntime
             try { return (bool)isManual.GetValue(attr)!; } catch { }
         }
         var options = BcShape.Property(t, "Options", BcShape.AnyInstance,
-            "codeunit event binding (IsEventManualBinding)",
+            ManualBindingSurface,
             "NavCodeunitOptionsAttribute exposes no readable IsEventManualBinding property and "
-            + "no Options member, so the runner cannot tell a manual-binding codeunit from an "
-            + "automatic one; answering false would silently unbind every manual subscriber")
+            + "no Options member, so " + ManualBindingCost)
             .GetValue(attr);
-        if (options == null || !options.GetType().IsEnum) return false;
-        var enumType = options.GetType();
+        var flags = BcShape.RequiredEnum(
+            options, $"{t.Name}.Options", ManualBindingSurface, ManualBindingCost);
+        var enumType = flags.GetType();
         foreach (var name in Enum.GetNames(enumType))
         {
             if (name != "EventManualBinding") continue;
-            try
-            {
-                return (Convert.ToInt64(options) & Convert.ToInt64(Enum.Parse(enumType, name))) != 0;
-            }
-            catch { return false; }
+            return (OptionBits(flags) & OptionBits((Enum)Enum.Parse(enumType, name))) != 0;
         }
         return false;
     }
+
+    /// <summary>
+    /// The raw bits of an option flag widened to 64 — reinterpreted, never range-converted.
+    ///
+    /// <para>Not <c>Convert.ToInt64</c>, which raises <see cref="OverflowException"/> for a
+    /// ulong-backed enum member above <see cref="long.MaxValue"/>. That throw used to be caught
+    /// and answered <c>false</c>, which is a wrong answer about a value that decodes exactly
+    /// rather than a gap — so this is a decode fix, not a third state (#4319). Measured: that
+    /// conversion is the ONLY reachable throw the old <c>catch</c> could see, because
+    /// <c>Enum.Parse</c> cannot fail for a name <c>Enum.GetNames</c> just returned. There is no
+    /// <c>catch</c> here on purpose; an unexpected throw is loud, which is the right direction
+    /// (<c>loud-failures.md</c>).</para>
+    /// </summary>
+    private static ulong OptionBits(Enum value)
+        => Enum.GetUnderlyingType(value.GetType()) == typeof(ulong)
+            ? Convert.ToUInt64(value)
+            : unchecked((ulong)Convert.ToInt64(value));
 
     /// <summary>
     /// Replacement for NavCodeunit.get_MetaCodeunit. Returns a skeleton
