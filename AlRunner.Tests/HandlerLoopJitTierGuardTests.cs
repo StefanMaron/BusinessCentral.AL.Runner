@@ -16,6 +16,14 @@ namespace AlRunner.Tests;
 /// </summary>
 public sealed class HandlerLoopJitTierGuardTests
 {
+    /// <summary>The cap this file's subprocess spawns actually apply, and the single source of
+    /// the figure their timeout messages report (#4275). Derived rather than repeated: a literal
+    /// in the message is invisible while it happens to match, and wrong the moment the cap moves.
+    /// Measured for real on #3435 — a cap squeezed to 3s still reported "did not exit within 120s".
+    /// This file ASSERTS rather than throws, which is why it sat outside the guard until #4275
+    /// widened its anchor; the hardcoded figure is the same defect either way.</summary>
+    private const int SpawnTimeoutMs = 120_000;
+
     private static readonly string RunnerAssemblyPath = typeof(AlRunner.BcRuntime).Assembly.Location;
     private static readonly string BuiltRunnerPath = Path.Combine(
         Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..")),
@@ -123,7 +131,7 @@ public sealed class HandlerLoopJitTierGuardTests
         {
             p.StandardOutput.ReadToEnd();
             p.StandardError.ReadToEnd();
-            Assert.True(p.WaitForExit(120_000), "al-runner --version did not exit within 120s");
+            Assert.True(p.WaitForExit(SpawnTimeoutMs), $"al-runner --version did not exit within {SpawnTimeoutMs / 1000}s");
             Assert.Equal(0, p.ExitCode);
         }
 

@@ -38,6 +38,18 @@ public sealed class SpawnTimeoutMessageDerivationTests
     /// </summary>
     private static readonly string[] Files =
     {
+        // #4275 widening 1: failure paths that ASSERT rather than throw. The guard's anchor was
+        // `throw new TimeoutException(`, so these nine were outside it entirely — each spells its
+        // own cap twice, once in the wait and once in the message.
+        "CoverageDependencySourceTests.cs",
+        "CoverageTests.cs",
+        "HandlerLoopJitTierGuardTests.cs",
+        "PlainRunInstrumentationGateTests.cs",
+        "PrecompileEngineVariantSelectionTests.cs",
+        "PrecompileNclShadowHopTests.cs",
+        "StartupJitModeTests.cs",
+        "StartupOutputReexecDedupTests.cs",
+
         "CrossMajorNoteTests.cs",
         "CountryFlagTests.cs",
         "ArtifactsRootEnvOverrideTests.cs",
@@ -106,12 +118,10 @@ public sealed class SpawnTimeoutMessageDerivationTests
             // within" also appears in comments, and scanning for it would pass or fail on where
             // the prose sits. Assembled rather than written whole so this file's own comments
             // cannot match when it is itself scanned.
-            var anchor = "throw new " + nameof(TimeoutException) + "(";
-            for (var i = source.IndexOf(anchor, StringComparison.Ordinal); i >= 0;
-                 i = source.IndexOf(anchor, i + 1, StringComparison.Ordinal))
+            foreach (var (i, anchor) in FailureSites(source))
             {
                 var end = source.IndexOf(");", i, StringComparison.Ordinal);
-                if (end <= i) { offenders.Add($"{file}: a throw statement does not terminate"); continue; }
+                if (end <= i) { offenders.Add($"{file}: a {anchor} statement does not terminate"); continue; }
                 var stmt = source[i..end];
 
                 // Only the spawn-timeout throws are in scope; a TimeoutException thrown for some
@@ -119,9 +129,21 @@ public sealed class SpawnTimeoutMessageDerivationTests
                 if (!stmt.Contains("within", StringComparison.Ordinal)) continue;
                 sitesPerFile[file] = sitesPerFile.GetValueOrDefault(file) + 1;
 
-                if (!stmt.Contains("SpawnTimeoutMs", StringComparison.Ordinal))
+                // The property is "the figure is DERIVED from the cap this site applied", not
+                // "the identifier is spelled SpawnTimeoutMs". A file with two genuinely different
+                // caps needs two names — DefaultProvisionTargetMessagingTests bounds the whole
+                // spawn with SpawnTimeoutMs and watches stderr with LineWatchTimeoutMs — and
+                // keying on one literal name rejected the correctly-derived second one (#4275).
+                //
+                // So: some identifier ending in TimeoutMs, which is this assembly's convention for
+                // a cap constant, and it must appear in the DIVISION that produces the figure, not
+                // merely somewhere in the statement. The `/ 1000` half is what makes this stronger
+                // than co-occurrence — a name mentioned in passing does not satisfy it.
+                var derivesFromACap = Regex.IsMatch(stmt, @"\b\w*TimeoutMs\s*/\s*1000\b");
+                if (!derivesFromACap)
                 {
-                    offenders.Add($"{file}: a timeout message does not mention SpawnTimeoutMs: {Compact(stmt)}");
+                    offenders.Add($"{file}: a timeout message does not derive its figure from a "
+                                  + $"*TimeoutMs cap: {Compact(stmt)}");
                     continue;
                 }
 
@@ -187,10 +209,20 @@ public sealed class SpawnTimeoutMessageDerivationTests
         // throws one but contributes no site has a message the `within` anchor no longer matches.
         var silent = Files
             .Where(f => sitesPerFile.GetValueOrDefault(f) == 0)
-            .Select(f => File.ReadAllText(Path.Combine(RepoRoot, "AlRunner.Tests", f))
-                             .Contains("throw new " + nameof(TimeoutException) + "(", StringComparison.Ordinal)
-                ? $"{f}: throws a TimeoutException, but no message the anchor matches — reworded?"
-                : $"{f}: no spawn-timeout throw at all — the spawn moved, or the file no longer has one")
+            .Select(f =>
+            {
+                // Since #4275 a listed file may report its timeout by ASSERTING rather than
+                // throwing, so "no throw here" is no longer the same statement as "no spawn-timeout
+                // site here" — saying the first about an asserting file sends the reader looking
+                // for a throw that was never supposed to exist.
+                var text = File.ReadAllText(Path.Combine(RepoRoot, "AlRunner.Tests", f));
+                var hasSite = FailureSites(text).Any();
+                return hasSite
+                    ? $"{f}: has a failure path that could report a timeout, but no message the "
+                      + $"`within` anchor matches — reworded?"
+                    : $"{f}: no spawn-timeout site at all — the spawn moved, or the file no longer "
+                      + $"has one";
+            })
             .ToArray();
         Assert.True(silent.Length == 0,
             "these listed files contributed NO spawn-timeout throw site, so this test measured "
@@ -248,6 +280,36 @@ public sealed class SpawnTimeoutMessageDerivationTests
     /// [Theory] its own copy of the matching logic, which made it unable to fail: a mutation of
     /// the scan left every case green (a pin must read production code).
     /// </summary>
+    /// <summary>
+    /// Every offset in <paramref name="source"/> where a failure path that reports a timeout
+    /// begins, with the anchor that matched.
+    ///
+    /// <para>A `throw` was the only anchor until #4275's first widening, and a failure path that
+    /// ASSERTS was invisible to it — nine sites across eight files, each spelling its cap twice:
+    /// <c>Assert.True(p.WaitForExit(240_000), "runner did not exit within 240s")</c>. The
+    /// hardcoded figure is the defect whether a throw or an assert carries it, so the anchor is
+    /// about *reporting a timeout*, not about the statement kind.</para>
+    ///
+    /// <para>Trap: `Assert.True(` is far more common than the throw was, and most uses have
+    /// nothing to do with timeouts. The caller's existing `within` filter is what keeps the
+    /// population honest — it runs on the matched statement, so a non-timeout assertion is
+    /// skipped there rather than here. Widening the anchor without that filter would put every
+    /// assertion in this assembly into the population.</para>
+    /// </summary>
+    private static IEnumerable<(int Offset, string Anchor)> FailureSites(string source)
+    {
+        var anchors = new[]
+        {
+            "throw new " + nameof(TimeoutException) + "(",
+            "Assert.True(",
+        };
+
+        foreach (var anchor in anchors)
+            for (var i = source.IndexOf(anchor, StringComparison.Ordinal); i >= 0;
+                 i = source.IndexOf(anchor, i + 1, StringComparison.Ordinal))
+                yield return (i, anchor);
+    }
+
     private static IEnumerable<string> NonInterpolatedSpawnTimeoutStrings(string stmt)
     {
         foreach (var node in CSharpSyntaxTree.ParseText(stmt).GetRoot().DescendantNodes())
