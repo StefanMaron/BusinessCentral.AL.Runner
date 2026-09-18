@@ -9,7 +9,7 @@
 # and publish.yml) push straight to main and never open a pull request, so
 # nothing that is meant to change it comes through here.
 #
-# The path is matched WHOLE, not as a substring: docs/CHANGELOG.md and
+# The path is matched WHOLE, not as a substring: docs/CHANGELOG.md and  # doc-pointer-fixture
 # CHANGELOG.md.bak are different files and this must not fire on them.
 #
 # Input (environment variable, required, and it must not be empty):

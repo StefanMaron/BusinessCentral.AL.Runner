@@ -844,7 +844,7 @@ public sealed class DependencyResolverTests : IDisposable
     // dependency. The cycle lives in the <Dependencies> array, which Visit already guards with
     // its own cycle detector, not in the floors. Blanket-exempting both floors therefore bought
     // nothing and cost System Application every symbol it compiles against -- see
-    // docs/dependency-metadata-from-bc.md#platform-floor.
+    // docs/dependency-metadata-from-bc.md#the-platform-floor.
     //
     // The Application floor stays unfollowed, because that is the one that could cycle if a
     // future build did declare it; PlatformApp_ApplicationFloor_IsStillNotFollowed pins that.

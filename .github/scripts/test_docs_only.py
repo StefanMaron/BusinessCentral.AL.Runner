@@ -56,9 +56,10 @@ cases = [
     ("a non-.md file under docs/ -> not docs-only", ["docs/archive/coverage.yaml"], "docs-only=false"),
     ("a workflow file -> not docs-only", [".github/workflows/test-matrix.yml"], "docs-only=false"),
     ("'.md' in the middle of the name, not the suffix -> not docs-only",
-     ["docs/notes.md.bak"], "docs-only=false"),
+     ["docs/notes.md.bak"], "docs-only=false"),  # doc-pointer-fixture
     ("upper-case .MD is not the documented suffix -> not docs-only", ["README.MD"], "docs-only=false"),
-    ("blank lines around the list are ignored", ["", "docs/a.md", "  ", "docs/b.md", ""], "docs-only=true"),
+    # synthetic changed-file lists.
+    ("blank lines around the list are ignored", ["", "docs/a.md", "  ", "docs/b.md", ""], "docs-only=true"),  # doc-pointer-fixture
 ]
 for name, paths, expected in cases:
     r = run(paths)
@@ -70,7 +71,7 @@ check("an empty list is refused with exit 2, never classified",
       r.returncode == 2 and "docs-only=" not in r.stdout and "broken measurement" in r.stderr,
       f"exit={r.returncode} stdout={r.stdout!r} stderr={r.stderr!r}")
 
-r = run(["docs/a.md", "AlRunner/X.cs", "AlRunner/Y.cs"])
+r = run(["docs/a.md", "AlRunner/X.cs", "AlRunner/Y.cs"])  # doc-pointer-fixture
 check("the refusal names a non-documentation path so the author can see why",
       "AlRunner/X.cs" in r.stderr, r.stderr)
 

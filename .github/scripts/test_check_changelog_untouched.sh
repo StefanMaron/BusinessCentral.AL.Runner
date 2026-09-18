@@ -88,7 +88,7 @@ assert_stderr_contains "the failure names the generator" "CHANGELOG.md" \
 assert_exit "an ordinary diff passes" 0 \
   "$(printf 'AlRunner/Patches/RecordPatches.cs\nAlRunner.Tests/RecordPatchesTests.cs\n')"
 assert_exit "a nested CHANGELOG.md is a different file and passes" 0 \
-  "docs/CHANGELOG.md"
+  "docs/CHANGELOG.md"  # doc-pointer-fixture: a path the matcher must REJECT
 assert_exit "a path merely starting with the name passes" 0 "CHANGELOG.md.bak"
 assert_exit "a path merely ending with the name passes" 0 "vendor/OLD-CHANGELOG.md"
 assert_exit "the lowercase spelling is a different git path and passes" 0 \

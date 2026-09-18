@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-// coverage-gen.js — Generates docs/coverage.yaml + docs/coverage.md.
+// coverage-gen.js — Generates docs/coverage.yaml + docs/coverage.md.  // doc-pointer-fixture
+// Both outputs are v1-era and now live under docs/archive/ (docs/archive/coverage.md);
+// this generator is retained as history and is not wired into any workflow.
 //
 // The coverage map has TWO layers:
 //   - syntax      → from tree-sitter-al node-types.json (construct presence in tests)

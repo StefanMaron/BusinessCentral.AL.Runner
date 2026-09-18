@@ -190,9 +190,12 @@ public sealed class ObjectMetadataSystemTableRefusalTests
     [Fact]
     public void DocAnchorNamingItsOwnFile_IsUsedVerbatim()
     {
-        var ex = new RunnerOutOfScopeException("Some.Api", "some-reason", "docs/limitations.md#somewhere");
+        // The anchor is the INPUT under test -- it proves a docAnchor naming its own
+        // doc file is used verbatim, so it must not resolve.
+        var ex = new RunnerOutOfScopeException("Some.Api", "some-reason", "docs/limitations.md#somewhere");  // doc-pointer-fixture
 
-        Assert.EndsWith(" — see docs/limitations.md#somewhere", ex.Message, StringComparison.Ordinal);
+        // the expected message echoes the synthetic input above.
+        Assert.EndsWith(" — see docs/limitations.md#somewhere", ex.Message, StringComparison.Ordinal);  // doc-pointer-fixture
     }
 
     [Theory]

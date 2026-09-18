@@ -455,7 +455,7 @@ public sealed class CliDocumentationTests
     }
 
     /// <summary>
-    /// Issue #2080: --help and --guide listed `docs/subsystems.md` as the "subsystem
+    /// Issue #2080: --help and --guide listed `docs/archive/subsystems.md` as the "subsystem
     /// map". It is a v1-era spike artifact that says so in its own second line
     /// ("preserved as historical analysis"), recommends the JmpHook strategy the
     /// runner has since abandoned, and cross-references files that no longer exist.
@@ -478,7 +478,7 @@ public sealed class CliDocumentationTests
     /// Widened past the reported line: the same defect — a repository path printed by
     /// the CLI that is not in the repository — was also sitting in --help's EXAMPLES,
     /// which offered `tests/runner-extras/oos-reports`. That bundle has never existed;
-    /// it was invented in the same v2-cutover commit that left docs/subsystems.md
+    /// it was invented in the same v2-cutover commit that left docs/archive/subsystems.md
     /// advertised as a map. So this checks every docs/, tests/, tools/ and scripts/
     /// path either surface prints, not just the .md ones.
     /// </summary>

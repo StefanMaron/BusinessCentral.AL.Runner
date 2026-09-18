@@ -283,7 +283,8 @@ public sealed class BcShapeGapConventionTests
             Mode: mode,
             Reason: reason,
             Issue: issue,
-            Doc: mode == ExpectationMode.ExpectDivergence ? "docs/limitations.md#x" : null,
+            // a synthetic Doc value, not a pointer to follow.
+            Doc: mode == ExpectationMode.ExpectDivergence ? "docs/limitations.md#x" : null,  // doc-pointer-fixture
             Note: null,
             SourceFile: "tests/expectations/known-gaps-probe.json");
 
