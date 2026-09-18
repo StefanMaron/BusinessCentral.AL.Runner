@@ -134,6 +134,24 @@ public static partial class RecordPatches
             w.WriteAttributeString("ID", page.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
             w.WriteAttributeString("Name", page.Name);
             w.WriteAttributeString("ALNamespace", string.Empty);
+            // #4282. BC's emitter carries a page's caption as a ROOT attribute in its
+            // MultiLanguage "ENU=<text>" form, and PageDefinition(XmlNode) reads it into
+            // CaptionMLString from there; the <CaptionML> child element written below, inside
+            // <Properties>, is NOT that member and leaves it empty. Measured over the 235
+            // PageDefinition documents of Business Foundation + System Application at BC
+            // 28.1.49838.53910: the symbol file states Caption on 196 pages, BC writes the
+            // attribute on exactly those 196, and "ENU=" + the stated text equals BC's value on
+            // all 196 with zero disagreements. Write-iff-stated, verbatim.
+            //
+            // Trap: this must stay ABOVE the <Properties> element. XmlWriter refuses an
+            // attribute once the writer has entered element content, and the throw returns a
+            // null document rather than a diagnostic -- the same failure the SourceObject
+            // attribute ordering note below records.
+            // IsNullOrEmpty, not IsNullOrWhiteSpace, and Caption skips the OrNullIfBlank its
+            // neighbours use: pages 1433 and 9260 state a Caption of one SPACE and BC writes
+            // CaptionML="ENU= ". Either tidy-up drops the attribute on both.
+            if (!string.IsNullOrEmpty(page.Caption))
+                w.WriteAttributeString("CaptionML", "ENU=" + page.Caption);
 
             w.WriteStartElement("Properties");
             w.WriteAttributeString("SourceExtensionType", "ModernDev");
@@ -407,7 +425,16 @@ public static partial class RecordPatches
         }
 
         Scalar("UsageCategory", page.UsageCategory);
-        Scalar("HelpLink", page.HelpLink);
+        EmitPageHelpLink(w, page);
+        // #4282. BC does NOT write the AL expression here -- it writes the fixed marker
+        // "DataCaptionExprCode" recording that the page HAS a caption expression, and the
+        // expression itself compiles into the page's own IL. Measured over the same 235
+        // documents: 32 pages state DataCaptionExpression, BC writes DataCaptionExpr on exactly
+        // those 32, and the value is "DataCaptionExprCode" on all 32 with no other value
+        // anywhere. So this is write-iff-stated with a constant, and writing the AL text would
+        // be a different wrong answer rather than the missing one.
+        if (!string.IsNullOrEmpty(page.DataCaptionExpression))
+            w.WriteAttributeString("DataCaptionExpr", "DataCaptionExprCode");
         if (page.IsPreview) w.WriteAttributeString("IsPreview", "1");
 
         // BC's emitter writes these four as a MultiLanguage attribute, and its own
@@ -426,6 +453,46 @@ public static partial class RecordPatches
         EmitInherentMask(w, page, "InherentEntitlements", page.InherentEntitlements);
         EmitInherentMask(w, page, "InherentPermissions", page.InherentPermissions);
     }
+
+    /// <summary>
+    /// The page's <c>HelpLink</c> — which BC's emitter writes on EVERY page, resolving two AL
+    /// properties and a default into one attribute (#4282).
+    ///
+    /// <para><b>Observably equivalent:</b> the rule is a total three-way partition over what the
+    /// symbol file states, and it reproduces BC's value on every page with no exceptions.
+    /// Measured over the 235 PageDefinition documents of Business Foundation + System
+    /// Application at BC 28.1.49838.53910 — 6 state <c>HelpLink</c> and BC writes it verbatim;
+    /// 36 state <c>ContextSensitiveHelpPage</c>, a RELATIVE path, and BC writes
+    /// <see cref="HelpLinkBase"/> + that path; the remaining 193 state neither and BC writes the
+    /// bare base. 6 + 36 + 193 = 235, and each arm matched BC's exact string on every page it
+    /// covers. See docs/dependency-page-properties.md#helplink.</para>
+    ///
+    /// <para><b>Trap for a later editor:</b> <c>ContextSensitiveHelpPage</c> is never a URL, and
+    /// an ISV page may state one that already looks absolute. This concatenates unconditionally
+    /// because that is what BC was measured doing on all 36; if a page ever states an absolute
+    /// value, re-measure rather than adding a guess at a scheme check.</para>
+    /// </summary>
+    private static void EmitPageHelpLink(XmlWriter w, BcAppSymbolCache.PageSymbol page)
+    {
+        if (!string.IsNullOrEmpty(page.HelpLink))
+        {
+            w.WriteAttributeString("HelpLink", page.HelpLink);
+            return;
+        }
+
+        w.WriteAttributeString(
+            "HelpLink",
+            string.IsNullOrEmpty(page.ContextSensitiveHelpPage)
+                ? HelpLinkBase
+                : HelpLinkBase + page.ContextSensitiveHelpPage);
+    }
+
+    /// <summary>
+    /// The documentation root BC joins a page's relative <c>ContextSensitiveHelpPage</c> to, and
+    /// writes alone for a page declaring no help at all. The trailing slash is part of it:
+    /// BC's own values concatenate with no separator (<c>…/business-central/ui-enter-date-ranges</c>).
+    /// </summary>
+    private const string HelpLinkBase = "https://learn.microsoft.com/dynamics365/business-central/";
 
     /// <summary>
     /// One inherent-permission mask: the symbol file states AL permission LETTERS

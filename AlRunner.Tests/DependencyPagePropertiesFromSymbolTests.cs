@@ -19,6 +19,13 @@
 //     RefreshOnActivate   sym absent -> BC "0" (207);       sym "1" -> "1" (29)
 //     UsageCategory       written iff stated, verbatim (68 pages, 6 distinct enum names)
 //     HelpLink            written iff stated, verbatim (6 pages state it)
+//                         SUPERSEDED by #4282: that row is the SYMBOL side only. BC's emitter
+//                         writes HelpLink on ALL 235 pages of the 28.1.49838.53910 ground truth,
+//                         deriving it from ContextSensitiveHelpPage or a base URL when the page
+//                         states no HelpLink. The runner now does the same -- see
+//                         DependencyPageDerivedPropertiesTests and
+//                         docs/dependency-page-properties.md#helplink. Nothing else in this
+//                         block is affected; the rest really are write-iff-stated.
 //     InsertAllowed       sym "0" -> "0" (121), "1" -> "1" (1), absent -> absent (114)
 //     ModifyAllowed       sym "0" -> "0" (80),  "1" -> "1" (11), absent -> absent (145)
 //     DeleteAllowed       sym "0" -> "0" (101), "1" -> "1" (6),  absent -> absent (129)
@@ -271,6 +278,9 @@ public class DependencyPagePropertiesFromSymbolTests
     /// carrying the value it states. <c>UsageCategory</c> and <c>HelpLink</c> go through
     /// verbatim; the four ML strings take BC's own <c>ENU=</c> prefix, which is the form its
     /// emitter writes on all 21/21/28/6 pages stating them.
+    ///
+    /// <para><c>HelpLink</c> is the exception and is asserted here only in its stated-value arm:
+    /// BC derives it for a page stating nothing, so it has no absent case (#4282).</para>
     /// </summary>
     [Fact]
     public void PageProperties_ScalarsAreWrittenOnlyWhenStated()
@@ -296,7 +306,13 @@ public class DependencyPagePropertiesFromSymbolTests
             // for a silent page would be a different document from the one BC emits.
             var silent = ReadProperties(SilentPageId);
             Assert.False(silent.HasAttribute("UsageCategory"));
-            Assert.False(silent.HasAttribute("HelpLink"));
+            // NOT HelpLink (#4282). It is the one scalar in this method BC DERIVES rather than
+            // copies, so a page stating nothing still gets the base URL; asserting its absence
+            // here pinned the defect. Its three arms are
+            // DependencyPageDerivedPropertiesTests' subject.
+            Assert.Equal(
+                "https://learn.microsoft.com/dynamics365/business-central/",
+                silent.GetAttribute("HelpLink"));
             Assert.False(silent.HasAttribute("AboutTitleML"));
             Assert.False(silent.HasAttribute("AboutTextML"));
             Assert.False(silent.HasAttribute("AdditionalSearchTermsML"));
