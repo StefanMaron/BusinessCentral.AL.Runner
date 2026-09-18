@@ -23,6 +23,7 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FAILURES: list[str] = []
+UNMEASURED: list[str] = []
 
 
 def check(name: str, cond: bool, detail: str = "") -> None:
@@ -101,8 +102,16 @@ print("...and the guard is INERT when gh is present")
 # half that keeps a widened predicate from silently converting every verdict into "could not
 # measure" — a far worse defect than the one this file exists to fix.
 if shutil.which("gh") is None:
-    check("gh is on PATH, so the inert-direction checks can run", False,
-          "no gh here, so this half is UNMEASURED — it is not a pass")
+    # UNMEASURED, not failed — and routed around check() deliberately, because check() knows only
+    # pass and fail, so anything reported through it can only ever exit 0 or 1.
+    #
+    # This guard exists because ci-wait.py spelled "could not measure" as its measured-negative
+    # code. Reporting its own could-not-measure as exit 1 is that defect one level up, and it is
+    # the more dangerous copy: a caller sweeping tools/test_*.py reads 1 as "this guard caught
+    # something", which is the opposite of what happened (#4346).
+    UNMEASURED.append(
+        "the inert-direction half needs gh on PATH and there is none here. The absence half above "
+        "ran and is reported; this half asserted nothing, which is not the same as passing.")
 else:
     # Call require_gh() directly rather than driving the whole tool: the property is "the guard
     # does not fire when gh is present", and reaching it through a real PR or corpus run costs
@@ -119,7 +128,15 @@ else:
               f"it raised with gh present: {detail if fired else ''}")
 
 print()
+# Order matters: a real failure outranks an unmeasured half. Both can happen at once — the absence
+# direction can catch a regression on a box with no gh — and reporting 3 there would hide a
+# measured negative behind "could not measure", which is the same conflation pointed the other way.
 if FAILURES:
     print(f"{len(FAILURES)} failed, 0 passed")
     sys.exit(1)
+if UNMEASURED:
+    for note in UNMEASURED:
+        print(f"  UNMEASURED {note}")
+    print(f"{len(UNMEASURED)} check group(s) could not be measured; nothing here is a pass")
+    sys.exit(3)
 print("all checks passed")
