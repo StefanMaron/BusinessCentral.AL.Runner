@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **tools:** refuse a mutation that did not apply, and say which of three ways
 - **tools:** detect the unattributed-commit merge block before arming
 - **test-data:** explain a setup singleton whose only row is still blank
 - **paths:** relocation knobs for the symbols cache and ~/.cache/al-runner
