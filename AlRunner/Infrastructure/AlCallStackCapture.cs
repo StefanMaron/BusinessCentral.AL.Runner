@@ -389,6 +389,12 @@ public static class AlCallStackCapture
     /// </summary>
     private static bool? GetIsTrigger(NavMethodScope scope)
     {
+        // BC decides this from the SCOPE TYPE first, not from the flags field — see
+        // IsScopeTypeATrigger. Only when that answers "not a trigger type" does BC consult
+        // MethodScopeFlags, so the flags read below is the fallback arm, exactly as in
+        // MethodSourceInfo.IsTrigger.
+        if (IsScopeTypeATrigger(scope.GetType())) return true;
+
         if (_tMethodScopeFlags == null || _fiMsFlags == null)
         {
             WarnUnknownTriggerOnce(_fiMsFlags == null
@@ -476,6 +482,38 @@ public static class AlCallStackCapture
             WarnUnknownLineOnce($"reading the source spans threw {ex.GetType().Name}");
             return null;
         }
+    }
+
+    /// <summary>
+    /// True when <paramref name="scopeType"/> derives from <c>NavTriggerMethodScope&lt;&gt;</c>,
+    /// which is how BC itself decides a frame is a trigger (#4368).
+    /// </summary>
+    /// <remarks>
+    /// BC's own call-stack formatter, <c>CallStackElement.GetText</c>, appends "(Trigger)" from
+    /// <c>MethodSourceInfo.IsTrigger</c>, whose FIRST arm walks the scope type's base chain for
+    /// <c>NavTriggerMethodScope&lt;&gt;</c> and only falls back to <c>MethodScopeFlags</c> when
+    /// the scope type is unavailable. So the type is the primary answer and the flag is the
+    /// fallback — the reverse of what this method used to do.
+    ///
+    /// Trap: the flags fallback CANNOT answer true for an AL-emitted scope, so removing this walk
+    /// silently reverts to never rendering "(Trigger)". <c>NavTriggerMethodScope&lt;TParent&gt;</c>
+    /// is a marker type: it adds no members and chains
+    /// <c>base(applicationObject)</c> → <c>NavMethodScope(TParent, bool)</c> →
+    /// <c>NavMethodScope(obj, MethodScopeFlags.None, eventSource)</c>, so BC's own ctor takes the
+    /// <c>GetMethodScopeFlags()</c> branch, and no override of that method returns IsTrigger
+    /// (measured on 28.1.49838.53910 and 27.0.38460.53934; #4368).
+    ///
+    /// Matching on the open generic rather than the name keeps a differently-named future subclass
+    /// of it answering true, as BC's own walk does.
+    /// </remarks>
+    private static bool IsScopeTypeATrigger(Type? scopeType)
+    {
+        for (var t = scopeType; t != null && t != typeof(NavMethodScope); t = t.BaseType)
+        {
+            if (t.IsGenericType && t.GetGenericTypeDefinition() == typeof(NavTriggerMethodScope<>))
+                return true;
+        }
+        return false;
     }
 
     // ── Third-state markers and their one-shot diagnostics (#4345) ───────────────

@@ -70,7 +70,12 @@ public sealed class AlCallStackCaptureUnmeasurableReadTests
     private static (NavMethodScope Scope, FieldInfo FlagsField, IDisposable Restore) BuildFrame()
     {
         var appObject = (NavRecord)RuntimeHelpers.GetUninitializedObject(typeof(Codeunit70345));
-        var scope = (NavMethodScope)RuntimeHelpers.GetUninitializedObject(typeof(NavTriggerMethodScope<NavRecord>));
+        // A PLAIN scope type, deliberately not NavTriggerMethodScope<> (#4368). GetIsTrigger
+        // now answers from the scope TYPE first, as BC does, and only consults the flags field
+        // when the type is not a trigger type. A trigger-typed fixture would short-circuit
+        // before the flags read, so every row below — the two measured answers AND the two
+        // unmeasurable-handle rows — would stop exercising the path it names.
+        var scope = (NavMethodScope)RuntimeHelpers.GetUninitializedObject(typeof(NavMethodScope<NavRecord>));
 
         // NavMethodScope.ApplicationObject reads NavMethodScope<TParent>.Parent.
         var parentBackingField = typeof(NavMethodScope<NavRecord>).GetField(
@@ -199,11 +204,41 @@ public sealed class AlCallStackCaptureUnmeasurableReadTests
             Assert.NotNull(frame);
             Assert.Contains(ObjectNameInFrame, frame);
             Assert.Contains($"(CodeUnit {ObjectIdInFrame})", frame);
-            Assert.Contains("NavTriggerMethodScope", frame);   // the method name, still rendered
+            Assert.Contains("NavMethodScope", frame);   // the method name, still rendered
 
             // CLASSIFICATION — unmeasurable is neither of BC's two answers.
             Assert.Contains(AlCallStackCapture.UnknownTriggerMarker, frame);
             Assert.DoesNotContain("(Trigger)", frame);
+        }
+    }
+
+    // The interaction between #4345's third state and #4368's type walk, in the direction the
+    // repointing above would otherwise stop covering. A TRIGGER-typed scope is decided by its
+    // type, which no cached flags handle can make unmeasurable — so nulling those handles must
+    // still render BC's "(Trigger)" and must NOT reach the unknown marker. Without this row,
+    // reverting the type walk would leave every test in this file green.
+    [Theory]
+    [InlineData("_tMethodScopeFlags")]
+    [InlineData("_fiMsFlags")]
+    public void ATriggerTypedScope_StaysMeasurable_EvenWithTheFlagsHandlesUnresolved(string handleField)
+    {
+        var (_, _, restore) = BuildFrame();
+        using (restore)
+        {
+            var triggerScope = (NavMethodScope)RuntimeHelpers.GetUninitializedObject(
+                typeof(NavTriggerMethodScope<NavRecord>));
+            typeof(NavMethodScope<NavRecord>).GetField(
+                "<Parent>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .SetValue(triggerScope, RuntimeHelpers.GetUninitializedObject(typeof(Codeunit70345)));
+
+            Static(handleField).SetValue(null, null);
+
+            var frame = Render(triggerScope);
+
+            Assert.NotNull(frame);
+            Assert.Contains($"(CodeUnit {ObjectIdInFrame})", frame);
+            Assert.Contains("(Trigger)", frame);
+            Assert.DoesNotContain(AlCallStackCapture.UnknownTriggerMarker, frame);
         }
     }
 
@@ -240,7 +275,7 @@ public sealed class AlCallStackCaptureUnmeasurableReadTests
     // a scope type carrying no SourceSpansAttribute is GENUINELY ABSENT — it really has no
     // line number — so it must stay the existing "omit the line number" pass, with no
     // marker and no diagnostic. Collapsing it into the unmeasurable rows would swap a false
-    // green for a false red. NavTriggerMethodScope<NavRecord> carries no such attribute,
+    // green for a false red. NavMethodScope<NavRecord> carries no such attribute,
     // so this is that row, reached through the ordinary path with both handles resolved.
     [Fact]
     public void AScopeTypeWithNoSourceSpans_OmitsTheLineNumber_WithNoUnknownMarker()

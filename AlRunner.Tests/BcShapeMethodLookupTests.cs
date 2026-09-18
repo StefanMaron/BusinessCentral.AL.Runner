@@ -324,13 +324,23 @@ public sealed class BcShapeMethodLookupTests
     // was resolved name-only in MetadataPatches.cs to force sandbox during tests, and #3514 found no
     // service-tier assembly calls it, so the whole seam went. One GetMethod site left the diff and the
     // count fell by ONE. A deletion moves only this counter, per the note above.
+    //
+    // 69 -> 68 by #4365, a CONVERSION rather than a deletion: MethodScopePatches.cs resolved
+    // NavMethodScope.GetMethodScopeFlags name-only and treated the null as "this subtype does not
+    // override it", which it cannot mean — the member is `virtual protected` on NavMethodScope
+    // itself, so a null can only be BC having renamed or removed it. It became
+    // BcShape.RequiredMethod, so absence refuses by name. One site converted and the count fell by
+    // ONE; MethodScopePatches.cs still contributes 1, which is the unrelated
+    // RemapToALExceptionAndThrow lookup and is deliberately untouched. A conversion moves BOTH
+    // counters, per the #3581 note above — BcInternalsNullForgivingGuardTests' `converted` is
+    // computed from the source, so it needs no edit here, but check it when the next one lands.
 
     /// <summary>
     /// Every remaining name-only method lookup that could reach a Microsoft-shipped type. Lower
     /// it as sites are converted; it may never rise. On a mismatch the assertion prints the
     /// per-file breakdown, which is the number to put here.
     /// </summary>
-    private const int NameOnlyBcTypedMethodLookups = 69;
+    private const int NameOnlyBcTypedMethodLookups = 68;
 
     /// <summary>The floor is not cosmetic: a scan that silently narrowed to a handful of files
     /// would report a small number and read as progress. AlRunner/ holds ~195 sources.</summary>

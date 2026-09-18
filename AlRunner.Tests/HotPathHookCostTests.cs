@@ -26,6 +26,7 @@
 // timing threshold, which would be flaky and would not say what broke.
 using System;
 using System.IO;
+using AlRunner.Infrastructure;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -181,22 +182,61 @@ public sealed class HotPathHookCostTests
     public void MethodScopeFlagsLookup_HappensOncePerScopeType()
     {
         BcRuntime.ResetGetMethodScopeFlagsCacheForTests();
+        try
+        {
+            var first = BcRuntime.ResolveGetMethodScopeFlags(typeof(ScopeWithFlags));
+            Assert.NotNull(first);
+            Assert.Equal("GetMethodScopeFlags", first.Name);
+            Assert.Equal(42, first.Invoke(new ScopeWithFlags(), null));
+            Assert.Equal(1, BcRuntime.GetMethodScopeFlagsLookupCount);
 
-        var first = BcRuntime.ResolveGetMethodScopeFlags(typeof(ScopeWithFlags));
-        Assert.NotNull(first);
-        Assert.Equal("GetMethodScopeFlags", first!.Name);
-        Assert.Equal(42, first.Invoke(new ScopeWithFlags(), null));
-        Assert.Equal(1, BcRuntime.GetMethodScopeFlagsLookupCount);
+            for (var i = 0; i < 20; i++)
+                Assert.Same(first, BcRuntime.ResolveGetMethodScopeFlags(typeof(ScopeWithFlags)));
+            Assert.Equal(1, BcRuntime.GetMethodScopeFlagsLookupCount);
 
-        for (var i = 0; i < 20; i++)
-            Assert.Same(first, BcRuntime.ResolveGetMethodScopeFlags(typeof(ScopeWithFlags)));
-        Assert.Equal(1, BcRuntime.GetMethodScopeFlagsLookupCount);
+            // A second type costs exactly one more lookup, not one per call. Since #4365 that
+            // second type REFUSES rather than answering null — the outcome changed, the cost
+            // contract did not, and this test is about the cost contract. The refusal has to be
+            // memoised for the same reason a null was: a scope type BC no longer declares the
+            // member on is reached on every AL method entry, so re-deriving it there puts the
+            // reflection lookup back exactly where this cache exists to remove it.
+            Assert.Throws<BcShapeGapException>(
+                () => BcRuntime.ResolveGetMethodScopeFlags(typeof(ScopeWithoutFlags)));
+            Assert.Equal(2, BcRuntime.GetMethodScopeFlagsLookupCount);
+            Assert.Throws<BcShapeGapException>(
+                () => BcRuntime.ResolveGetMethodScopeFlags(typeof(ScopeWithoutFlags)));
+            Assert.Equal(2, BcRuntime.GetMethodScopeFlagsLookupCount);
 
-        // A second type costs exactly one more lookup, not one per call.
-        Assert.Null(BcRuntime.ResolveGetMethodScopeFlags(typeof(ScopeWithoutFlags)));
-        Assert.Equal(2, BcRuntime.GetMethodScopeFlagsLookupCount);
-        Assert.Null(BcRuntime.ResolveGetMethodScopeFlags(typeof(ScopeWithoutFlags)));
-        Assert.Equal(2, BcRuntime.GetMethodScopeFlagsLookupCount);
+            // ...and it stays at 2 however many times the refusing type is asked, which is the
+            // claim a two-call check cannot make: a factory re-entered per call would read 21.
+            for (var i = 0; i < 19; i++)
+                Assert.Throws<BcShapeGapException>(
+                    () => BcRuntime.ResolveGetMethodScopeFlags(typeof(ScopeWithoutFlags)));
+            Assert.Equal(2, BcRuntime.GetMethodScopeFlagsLookupCount);
+        }
+        finally { BcRuntime.ResetGetMethodScopeFlagsCacheForTests(); }
+    }
+
+    [Fact]
+    public void ARefusedMethodScopeFlagsLookup_RaisesAFreshExceptionEachTime()
+    {
+        // The memoised refusal must not hand the SAME exception object back: a cached instance
+        // accumulates whatever the first throw site put on it, so the second AL frame to hit
+        // the gap would report the first frame's stack trace and diagnose the wrong caller.
+        BcRuntime.ResetGetMethodScopeFlagsCacheForTests();
+        try
+        {
+            var a = Assert.Throws<BcShapeGapException>(
+                () => BcRuntime.ResolveGetMethodScopeFlags(typeof(ScopeWithoutFlags)));
+            var b = Assert.Throws<BcShapeGapException>(
+                () => BcRuntime.ResolveGetMethodScopeFlags(typeof(ScopeWithoutFlags)));
+
+            Assert.NotSame(a, b);
+            // Same message though — the gap itself is a property of the type, not of the call.
+            Assert.Equal(a.Message, b.Message);
+            Assert.Contains("GetMethodScopeFlags", a.Message, StringComparison.Ordinal);
+        }
+        finally { BcRuntime.ResetGetMethodScopeFlagsCacheForTests(); }
     }
 
     [Fact]
