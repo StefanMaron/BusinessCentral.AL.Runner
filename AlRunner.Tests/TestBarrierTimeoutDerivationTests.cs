@@ -56,12 +56,23 @@ public sealed class TestBarrierTimeoutDerivationTests
     {
         var src = Source();
 
-        // The deadline half: whatever AddSeconds is given, it must be the constant.
-        var deadline = System.Text.RegularExpressions.Regex.Match(src, @"AddSeconds\(([^)]*)\)");
-        Assert.True(deadline.Success,
+        // The deadline half: EVERY AddSeconds call must be given the constant.
+        //
+        // All matches, for the same reason as the message half below — and this assertion had the
+        // bug the message half was fixed for, one line above it. `Regex.Match` is first-match-wins,
+        // so an earlier correct call satisfied it while the real deadline was hardcoded: measured
+        // GREEN with a 300s wait reporting 60s, which is the #3435 symptom this file exists to
+        // prevent. The sibling guard (SpawnTimeoutMessageDerivationTests, lines 152-156) already
+        // says why, from review of #4275: "deriving from SOME cap is not deriving from THIS
+        // site's cap".
+        var deadlines = System.Text.RegularExpressions.Regex.Matches(src, @"AddSeconds\(([^;]*?)\)");
+        Assert.True(deadlines.Count > 0,
             "no AddSeconds(...) call found in TestBarrier.cs, so this test is measuring nothing "
             + "about the deadline. The wait was restructured — re-point this.");
-        Assert.Equal("ReleaseWaitSeconds", deadline.Groups[1].Value.Trim());
+        foreach (System.Text.RegularExpressions.Match deadline in deadlines)
+        {
+            Assert.Equal("ReleaseWaitSeconds", deadline.Groups[1].Value.Trim());
+        }
 
         // The message half: EVERY `within …s` phrase must interpolate the same constant.
         //
@@ -70,6 +81,11 @@ public sealed class TestBarrierTimeoutDerivationTests
         // measured in review, GREEN with `within 60s` in the actual throw. Requiring every
         // occurrence to be derived removes the ordering dependency entirely: a second phrase can
         // only help if it is correct too.
+        // Constraint worth knowing before adding prose to this file: the pattern ends at any `s`
+        // before a space or quote, not at a unit boundary, so a sentence like "within 5
+        // milliseconds of the ack" reds with Actual: "5 millisecond". Loud and actionable rather
+        // than silent, which is the right direction — but it is a constraint on the file's
+        // wording, not only on the cap.
         var phrases = System.Text.RegularExpressions.Regex.Matches(src, @"within ([^""]{0,40}?)s[ ""]");
         Assert.True(phrases.Count > 0,
             "no `within …s` phrase found in TestBarrier.cs at all — the message was reworded, so "
