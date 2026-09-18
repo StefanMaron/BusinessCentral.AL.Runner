@@ -106,3 +106,28 @@ it. Both now share one decoder that resolves the flag by **member name**.
 
 `Codeunit58` in the System Application is a concrete case the old fallback would have got wrong:
 its attribute carries `Options = 1` (`SingleInstance`), which `& 1` reports as manual binding.
+
+## The two absences
+
+The shared decoder can fail to find two different members, and only one of them is an answer.
+
+| what is missing | what it means | what the decoder does |
+|---|---|---|
+| the derived `IsEventManualBinding` property | BC computes the flag some other way, or has dropped the property | fall through to the `Options` enum and read the flag by member name |
+| an `EventManualBinding` member on the `Options` enum | the flag genuinely is not declared | `false` — the same answer a codeunit carrying no attribute gets, and what BC's own derived property returns for one that declares nothing |
+| `Options` itself | the attribute carries the flag somewhere this code cannot read | **refuse** — `BcShapeGapException`, member `NavCodeunitOptionsAttribute.Options` |
+
+The third row is the one that used to be a silent `false`. A `false` there says "not manual
+binding" when it means "I could not find out", and the cost is not a missing answer but a wrong
+one: every manual-binding codeunit is reported as automatic, and BC's `BindSubscription` /
+`UnBindSubscription` unbind its subscribers with nothing said. That is
+`guards-need-a-third-state.md` § "A reflection bind that answers null is unmeasurable, not
+absent" — a `null` from a reflection lookup means "I could not find it", never "it is not
+needed".
+
+The middle row is deliberately *not* a refusal, for the same rule's constraint: a genuinely
+absent thing stays a pass, and only an unmeasurable one becomes the third state.
+`AlRunner.Tests/CodeunitManualBindingOptionsTests.cs` pins the pair —
+`OptionsEnumWithNoEventManualBindingMember_AnswersFalseRatherThanTestingBitZero` and
+`AttributeWithoutAnOptionsMember_RefusesRatherThanAnsweringFalse` — so a change that collapsed
+the two into one verdict reds exactly one of them.

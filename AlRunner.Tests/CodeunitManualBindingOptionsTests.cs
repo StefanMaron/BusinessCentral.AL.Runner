@@ -96,6 +96,23 @@ namespace AlRunner.Tests.BcAttributeShapeWithoutTheFlagMember
     }
 }
 
+namespace AlRunner.Tests.BcAttributeShapeWithoutOptions
+{
+    /// <summary>
+    /// A <c>NavCodeunitOptionsAttribute</c> carrying NEITHER the derived
+    /// <c>IsEventManualBinding</c> property NOR <c>Options</c> — the shape a BC rename of the
+    /// options member would produce. Distinct from
+    /// <c>BcAttributeShapeWithoutTheFlagMember</c>, where <c>Options</c> IS present and merely
+    /// declares no <c>EventManualBinding</c> member: there the read SUCCEEDS and false is the
+    /// right answer, here the read cannot be performed at all and false would be invented.
+    /// </summary>
+    [AttributeUsage(AttributeTargets.Class)]
+    public sealed class NavCodeunitOptionsAttribute : Attribute
+    {
+        public NavCodeunitOptionsAttribute() { }
+    }
+}
+
 namespace AlRunner.Tests
 {
     [Collection(BcEngineCollection.Name)]
@@ -247,6 +264,49 @@ public abstract class Codeunit{id} : Microsoft.Dynamics.Nav.Runtime.NavCodeunit
 
             Assert.False(BindingAnswerForMetaBuiltById(61747));
             Assert.False(AlRunner.BcRuntime.IsManualBindingCodeunitType(type));
+        }
+
+        /// <summary>
+        /// The third state. An attribute with no <c>Options</c> member at all is a read the
+        /// runner CANNOT PERFORM, not an absent flag — so it refuses rather than answering
+        /// <c>false</c>, which would report every manual-binding codeunit as automatic and
+        /// silently unbind its subscribers.
+        ///
+        /// <para>The arm above is the one this is paired with, and the pair is the whole
+        /// claim: there <c>Options</c> is present and merely lacks
+        /// <c>EventManualBinding</c>, the read succeeds, and <c>false</c> is correct
+        /// (<c>guards-need-a-third-state.md</c>'s "keep the genuinely-absent case a pass").
+        /// A change that made both refuse, or both answer false, would leave exactly one of
+        /// these two red.</para>
+        /// </summary>
+        [SkippableFact]
+        public void AttributeWithoutAnOptionsMember_RefusesRatherThanAnsweringFalse()
+        {
+            RequireEngine();
+
+            const string attr =
+                "AlRunner.Tests.BcAttributeShapeWithoutOptions.NavCodeunitOptionsAttribute";
+
+            // Two ids so each reader sees a type the other has not touched. One id would work
+            // today — the dispatcher's _manualBindingTypeCache is a ConcurrentDictionary and
+            // GetOrAdd stores nothing for a factory that threw, and the meta path memoizes no
+            // answer at all — but that is a property of the caches, not of the claim under
+            // test, and separate ids keep this arm independent of it.
+            var type = CompileAndLoadCodeunit(61748, $"[{attr}()]");
+            CompileAndLoadCodeunit(61749, $"[{attr}()]");
+
+            var viaDispatcher = Assert.Throws<AlRunner.Infrastructure.BcShapeGapException>(
+                () => AlRunner.BcRuntime.IsManualBindingCodeunitType(type));
+            Assert.Equal("NavCodeunitOptionsAttribute.Options", viaDispatcher.Member);
+            Assert.Contains("silently unbind every manual subscriber", viaDispatcher.Detail);
+
+            // The meta path is the OTHER reader and reaches the same decoder by its own route,
+            // so a refusal added to one of them only would leave this arm green.
+            var meta = AlRunner.BcRuntime.EnsureCodeunitMetaById(61749);
+            Assert.NotNull(meta);
+            var viaMeta = Assert.Throws<AlRunner.Infrastructure.BcShapeGapException>(
+                () => AlRunner.BcRuntime.NCLMetaCodeunit_get_IsEventManualBinding(meta!));
+            Assert.Equal("NavCodeunitOptionsAttribute.Options", viaMeta.Member);
         }
     }
 }
