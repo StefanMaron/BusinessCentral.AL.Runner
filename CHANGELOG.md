@@ -353,6 +353,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **guards:** derive the suite-loop guard's reachability probe from the workflow tree, not a single file
 - **guards:** widen the exit-code-collapse drift guard to any `|| ident=` inside a suite loop
 - **tools:** pin test_doc_pointers.py's CODE_TREES enumeration
 - **corpus:** pin IsInTryScope inheritance via Record.Truncate() in a try function
