@@ -14,6 +14,7 @@ Run: python3 tools/test_gh_absence_is_undetermined.py
 """
 from __future__ import annotations
 
+import importlib.util
 import os
 import shutil
 import subprocess
@@ -30,6 +31,15 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         return
     FAILURES.append(name)
     print(f"  FAIL {name}" + (f" {detail}" if detail else ""))
+
+
+def _load(script: str):
+    """Import a tools/ script by path — the filenames are hyphenated, so `import` cannot."""
+    spec = importlib.util.spec_from_file_location(
+        script.replace("-", "_").removesuffix(".py"), os.path.join(HERE, script))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def path_without_gh() -> str:
@@ -70,10 +80,43 @@ for script, args in (
     check(f"...and {script} points at the mcp__github__* route (github-access.md)",
           "mcp__github__" in out, out[-200:])
     # The specific wrong answer this replaced.
-    check(f"...and {script} does not exit 1, which for ci-wait.py means a check FAILED",
-          rc != 1, f"exit {rc}")
+    # Exit 1 means something different in each tool and neither is "nothing was measured":
+    # a failing required check in ci-wait.py, a no-match/disagreement/failure in
+    # corpus-pass-count.py. Both send a reader somewhere real, which is why neither may be
+    # reported for a missing binary.
+    check(f"...and {script} does not exit 1, its own measured-negative code", rc != 1, f"exit {rc}")
     check(f"...and {script} does not crash with a traceback",
           "Traceback (most recent call last)" not in out, out[-200:])
+
+print()
+print("...and the guard is INERT when gh is present")
+# The control in this PR's first revision ran the gh-present path against the UNMUTATED predicate,
+# where require_gh() is a no-op by construction — so it restated the code rather than testing it,
+# and could not fail. Both of these walk straight through it (#4329, found in review):
+#
+#   if shutil.which("gh") is None:  ->  if True:          10/10 green, ci-wait returns 3 for
+#   ... or os.environ.get("CI") != "\x00never"            EVERY pr, including genuinely red ones
+#
+# So assert the other direction directly: with gh on PATH the guard must not fire. That is the
+# half that keeps a widened predicate from silently converting every verdict into "could not
+# measure" — a far worse defect than the one this file exists to fix.
+if shutil.which("gh") is None:
+    check("gh is on PATH, so the inert-direction checks can run", False,
+          "no gh here, so this half is UNMEASURED — it is not a pass")
+else:
+    # Call require_gh() directly rather than driving the whole tool: the property is "the guard
+    # does not fire when gh is present", and reaching it through a real PR or corpus run costs
+    # four network calls (~29s) and makes this guard fail on an offline box for a reason that has
+    # nothing to do with its subject.
+    for script in ("ci-wait.py", "corpus-pass-count.py"):
+        mod = _load(script)
+        try:
+            mod.require_gh()
+            fired = False
+        except mod.GhUnavailable as exc:
+            fired, detail = True, str(exc)
+        check(f"{script}'s require_gh() is inert when gh is on PATH", not fired,
+              f"it raised with gh present: {detail if fired else ''}")
 
 print()
 if FAILURES:

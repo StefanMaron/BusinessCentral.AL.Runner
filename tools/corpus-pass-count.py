@@ -94,9 +94,14 @@ class GhUnavailable(Exception):
 
     github-access.md: web and remote Claude Code sessions have no `gh` at all, so this is a
     supported environment rather than a broken box. What is NOT supported is answering as though
-    a measurement happened: this tool's exit 1 means "a required check failed", and reporting that
-    for a missing binary sends an agent to diagnose a red PR that is not red
+    a measurement happened: this tool's exit 1 means the codeunit matched NOTHING, or the legs
+    disagree on the count, or something failed -- each of which sends a reader to look at the
+    corpus run. Reporting one of those for a missing binary points at a run that is fine
     (guards-need-a-third-state.md, #4329).
+
+    Exit 3 is this tool's existing "could not measure" -- fetch_jobs() already uses it for a
+    failed `gh api`, and main() for a run with no `/ test` legs -- so this reuses the convention
+    rather than inventing one.
     """
 
 
