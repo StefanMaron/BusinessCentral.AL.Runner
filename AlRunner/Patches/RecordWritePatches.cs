@@ -713,9 +713,12 @@ public static partial class BcRuntime
     }
 
     // ── System fields (2000000001-2000000004) stamping helpers ──────────────────────
-    // Called via Cecil-prepended IL at the start of NavRecord.ALInsertAsync and
-    // ALModifyAsync. Both helpers are (NavRecord)→void so the Cecil prepend is the
-    // same minimal `ldarg.0; call` pair as AssignAutoIncrement above.
+    // Called via Cecil-prepended IL at the start of NavRecord.InsertAsync(DataError,bool,
+    // bool,bool) and NavRecord.ModifyAsync(DataError,bool,bool,bool) — the DATA-LAYER
+    // funnels, not the AL entry points, because a page save reaches only the funnels
+    // (#4142; docs/page-save-data-layer-prepends.md). Both helpers are (NavRecord)→void so
+    // the Cecil prepend is the same minimal `ldarg.0; call` pair as AssignAutoIncrement
+    // above.
 
     private static readonly System.Guid _sessionUserGuid = System.Guid.NewGuid();
     private static System.Guid GetOrCreateSessionUserGuid() => _sessionUserGuid;
@@ -758,7 +761,8 @@ public static partial class BcRuntime
 
     /// <summary>
     /// Stamps SystemCreatedAt/By/ModifiedAt/By on Insert. Called via Cecil prepend
-    /// on NavRecord.ALInsertAsync(DataError,bool,bool).
+    /// on NavRecord.InsertAsync(DataError,bool,bool,bool) — the funnel both AL's
+    /// Rec.Insert() and NavForm.SaveRecordAsync reach (#4142).
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void StampSystemFieldsOnInsert(Microsoft.Dynamics.Nav.Runtime.NavRecord self)
@@ -779,7 +783,9 @@ public static partial class BcRuntime
 
     /// <summary>
     /// Stamps only SystemModifiedAt/By on Modify. NEVER touches SystemCreatedAt/By.
-    /// Called via Cecil prepend on NavRecord.ALModifyAsync.
+    /// Called via Cecil prepend on NavRecord.ModifyAsync(DataError,bool,bool,bool) — the
+    /// funnel both AL's Rec.Modify() and NavForm.SaveRecordAsync reach (#4142). Not the
+    /// 3-arg ModifyAsync, which forwards to the 4-arg: prepending both stamps twice.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void StampSystemFieldsOnModify(Microsoft.Dynamics.Nav.Runtime.NavRecord self)
@@ -823,7 +829,7 @@ public static partial class BcRuntime
     /// then calls the real ALInsertAsync body via MethodInfo.Invoke (bypasses the hook).
     /// NOTE: this JmpHook-mode replacement is intentionally NOT installed — see notes
     /// at the hook discovery site. AutoIncrement is delivered via Cecil prepend on
-    /// NavRecord.ALInsertAsync(DataError,bool,bool) calling AssignAutoIncrement above.
+    /// NavRecord.InsertAsync(DataError,bool,bool,bool) calling AssignAutoIncrement above.
     /// Kept as reference for the equivalence claim.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]

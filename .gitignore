@@ -110,3 +110,9 @@ AlRunner/graphify-out/
 # here. It is never committed -- there is no gitlink and no .gitmodules entry,
 # and `git ls-tree origin/main tests/al-language` answers nothing.
 tests/al-language/
+
+# tools/apply-mutation.py writes <file>.mutation-backup beside the file it mutates, and a
+# mutation is meant to be restored within the same session. One committed by accident would
+# ship the pre-mutation copy of a source file AND make --restore refuse every later mutation
+# on that path, since a live backup is what it refuses on.
+*.mutation-backup

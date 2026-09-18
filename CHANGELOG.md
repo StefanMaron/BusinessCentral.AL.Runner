@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **tools:** refuse a mutation that did not apply, and say which of three ways
 - **tools:** detect the unattributed-commit merge block before arming
 - **test-data:** explain a setup singleton whose only row is still blank
 - **paths:** relocation knobs for the symbols cache and ~/.cache/al-runner
@@ -26,6 +27,8 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **records:** run the data-layer prepends on the page-save insert/modify route
+- **tools:** classify a process guard by its exit code, not a summary regex
 - **preflight:** an SDK off PATH is not a missing SDK
 - **testpage:** Cancel must not discard the host page's pending write
 - **startup:** route both Ncl.dll reads through the retry helper again
@@ -251,6 +254,7 @@ All notable changes to this project are documented here. Format based on
 - **integer-vt:** judge a half-open range against the base window, not the envelope-widened span
 
 ### Documentation
+- **incidents:** a spread, not a range — "2 to 11" read as a bound and was not one
 - **scope:** drop a dead swallowed-refusal citation, keep the trap it illustrated
 - **dispatch:** record that the cross-assembly remap is reached by nothing
 - **claude:** strings -el is the wrong instrument for .NET member names
@@ -330,6 +334,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **guards:** follow indirect dispatch in BuiltInCancelIsNotADiscardTests' closure walk
 - **testpage:** close the depth bound on BuiltInCancelIsNotADiscardTests
 - **tools:** read the non-vacuity fixture from build()'s output, not its argument
 - **spawn:** derive the last six timeout messages -- #4275's population reaches zero

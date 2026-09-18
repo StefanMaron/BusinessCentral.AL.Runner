@@ -26,8 +26,27 @@ are claiming to prove:
    return the default.
 2. **Confirm the mutation LANDED** — re-read the mutated region or diff it. A mutation that
    silently no-ops leaves the test **green**, which reads as "my test is broken" when it means
-   "I changed nothing". Force a clean rebuild when you mutated a build input (`.csproj`, an
-   MSBuild target, a generator), since an incremental build may skip the compile entirely.
+   "I changed nothing".
+
+   `tools/apply-mutation.py` does this for you. Three codes are measured answers — **0 applied,
+   1 not applied, 2 ambiguous** — because a mutator that detects zero matches but not two has the
+   same hole one step along; **3 refused** is the fourth, and means nothing was measured at all
+   (a live backup, an I/O failure, bad usage). Never read a 3 as either a caught mutation or a
+   stale anchor. Prefer it to `sed`:
+
+   ```bash
+   tools/apply-mutation.py <file> --anchor-file a.txt --replacement-file b.txt   # exit 0 = applied
+   tools/apply-mutation.py <file> --restore
+   ```
+
+   **After a review-driven repair, re-confirm every mutation still ANCHORS.** A repair that
+   touches the line a mutation anchors on invalidates that mutation, and the invalidation is
+   green — so "all rows identical to the previous revision" is exactly what a row that stopped
+   applying produces (#4316, measured on PR #4308). The lines a reviewer sends you back to change
+   are by construction the interesting ones, which are the lines the mutations target.
+
+   Force a clean rebuild when you mutated a build input (`.csproj`, an MSBuild target, a
+   generator), since an incremental build may skip the compile entirely.
 3. **Rebuild and re-run. Confirm RED — and that the RED is the assertion, not the build.**
    A mutation that breaks the compile also exits non-zero, and a run with compile errors prints
    no `Total:` line at all. Check the error text says `Assert`, not `error CS`. Restore.
@@ -72,6 +91,20 @@ durations and the text `REFUSING TO SKIP` are not enough either, because a mutat
 itself produces both and is a genuine red. Pipe the run through `tools/mutation-verdict.py` before
 believing a red: exit 1 is a real one, 4 a build break, 5 the engine guard, 3 unmeasured (#3957;
 `docs/incidents/tdd.md`).
+
+**A `tools/test_*.py` guard is a PROCESS, not a `dotnet test` suite, and needs `--exit`.** Those
+guards print many different summary shapes, so the tool cannot read them and answered `3
+unmeasured` for every one — including greens — which is indistinguishable from "your mutation was
+not measured, try again" (#4314). Pass the guard's exit code:
+
+```bash
+python3 tools/test_no_racing_label_edit.py > g.txt 2>&1; rc=$?
+tools/mutation-verdict.py --exit $rc g.txt
+```
+
+Trap: **exit 1 is ambiguous** — an unhandled Python exception exits 1 too, so a guard that
+crashed before judging anything looks exactly like one that caught your mutation. The tool
+downgrades a red whose log carries a traceback; do not hand-read that number instead.
 
 **Trap: a failed mutation and a working guard look identical.** Measured twice in one session
 (#3895): a backslash edit that a heredoc collapsed, so the file never changed; and a
