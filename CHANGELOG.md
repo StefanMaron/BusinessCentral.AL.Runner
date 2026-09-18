@@ -27,6 +27,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **codeunit-binding:** refuse when [NavCodeunitOptions] has no Options member, and pin what the meta stash buys
 - **tools:** a missing gh is UNDETERMINED (3), not a failing check (1)
 - **tools:** excuse a refusal arm only when permissions genuinely block its case
 - **records:** run the data-layer prepends on the page-save insert/modify route
