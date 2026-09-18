@@ -288,11 +288,16 @@ on the rest of its population.
 `+ 4` for skipped cases, then `set(_REFUSAL_LINES)` for the trace. Each looks exactly like the
 value it replaces, and each passes.
 
-**Round 7 is the one worth reading.** `_REFUSAL_LINES` holds bare integers; the standard library
-executes every one of those numbers in its own files — 58 distinct `(file, line)` collisions
-covering all ten arms, `tokenize.py` hitting one 93 times. Deleting the tracer's file filter left
-all 51 checks green at `10/10`, and deleting the filter *and* removing a case from the roster
-still read `10/10`, with that arm "reached" only by `tempfile.py`.
+**Round 7 is the one worth reading.** `_REFUSAL_LINES` holds bare integers, and the standard
+library executes those same numbers in its own files. The collision count depends entirely on how
+much foreign code runs, so quote the workload with it rather than the number alone: a probe doing
+`re.compile` + `tokenize` + `mkdtemp` collides **10** times across **6** of the ten arms
+(`_parser.py:117` seven times), and a heavier workload reaches more. What matters is that the
+count is never zero for any realistic workload, not its size.
+
+The consequence is what the count is for: deleting the tracer's file filter left all 51 checks
+green at `10/10`, and deleting the filter *and* removing a case from the roster still read
+`10/10`, with that arm "reached" only by `tempfile.py`.
 
 Two lessons, and the second is the one that actually ended the regress:
 

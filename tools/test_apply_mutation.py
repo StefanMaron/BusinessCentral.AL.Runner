@@ -459,6 +459,12 @@ check("...and it prints the usage", "--anchor-file" in _out.getvalue(), _out.get
 # the documented interface. It was lost once in this PR's own history -- a manual `mv` recovery
 # committed 100644 -- and nothing caught it: every test imports the module, which works either
 # way, so the only symptom was `Permission denied` from the documented command (round 7).
+# Limit, measured in review rather than assumed: os.access reads the WORKING TREE while the
+# defect lives in the index, so a repository with core.fileMode=false plus
+# `update-index --chmod=-x` commits 100644 with this check still passing. It catches that one
+# clone downstream instead of at the introducing commit. An index-based check would catch it
+# earlier but needs a git repository to answer at all, trading a property that always holds for
+# a new "could not measure" state -- the wrong trade for this guard.
 check("the tool is executable, as the documented recipe invokes it",
       os.access(_AM_FILE, os.X_OK),
       f"{_AM_FILE} is not executable — `tools/apply-mutation.py <file>` fails with Permission "
