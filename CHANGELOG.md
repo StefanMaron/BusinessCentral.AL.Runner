@@ -27,6 +27,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **testpage:** refuse an unreadable FormResult shape instead of sending CloseAction::None
 - **tools:** test_doc_pointers.py must scan the test tree and tooling, not just AlRunner/
 - **callstack:** AlCallStackCapture must not spell an unmeasurable trigger read as "not a trigger"
 - **ci:** the guard-suite loops must keep exit 3 distinguishable from exit 1
