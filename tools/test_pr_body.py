@@ -28,6 +28,7 @@ pb = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(pb)
 
 FAILURES: list[str] = []
+UNMEASURED: list[str] = []
 
 
 def check(name: str, cond: bool, detail: str = "") -> None:
@@ -603,14 +604,23 @@ CASES = [
     ("colon restatement of a declared target", "Closes #2783\n\nIt closes: #2783 indeed.\n"),
 ]
 
+# Both branches below already SAID "NOT a pass" and then let the run end at "all checks passed",
+# exit 0 -- the message knew the answer and the exit code contradicted it. Exit 0 is the worst
+# place to put a third state: 1 at least makes a sweep stop and look, while 0 is what a passing
+# run returns, so nothing ever looks (guards-need-a-third-state.md, #4355).
 if not shutil.which("bash") or not os.path.exists(SH):
-    print("  SKIP parity: bash or check_closing_reference.sh unavailable "
-          "(this is NOT a pass -- the port is unverified in this environment)")
+    UNMEASURED.append(
+        "bash or check_closing_reference.sh is unavailable, so the shell/python parity of the "
+        "closing-reference port was not verified here. Every other check in this file ran.")
+    print("  UNMEASURED parity: bash or check_closing_reference.sh unavailable")
 else:
     probe = subprocess.run(["bash", "-c", "printf 'a' | command grep -qP 'a'"],
                            capture_output=True)
     if probe.returncode != 0:
-        print("  SKIP parity: grep has no -P here (NOT a pass -- port unverified)")
+        UNMEASURED.append(
+            "this grep has no -P, so the shell side of the parity check could not run. Every "
+            "other check in this file ran.")
+        print("  UNMEASURED parity: grep has no -P here")
     else:
         for name, body in CASES:
             env = dict(os.environ, PR_TITLE="a title", PR_BODY=body, PR_COMMITS="")
@@ -815,7 +825,14 @@ check("#3589: the printed diff carries the em dash as UTF-8, not as cp1252 0x97"
       DASH_UTF8 in _child.stdout and DASH_CP1252 not in _child.stdout, _detail)
 
 print()
+# A real failure outranks an unmeasured half, for the reason #4346 states: both can occur at once,
+# and reporting 3 then would hide a measured negative behind "could not measure".
 if FAILURES:
     print(f"FAILED: {len(FAILURES)} check(s): {', '.join(FAILURES)}")
     sys.exit(1)
+if UNMEASURED:
+    for _note in UNMEASURED:
+        print(f"  UNMEASURED {_note}")
+    print(f"{len(UNMEASURED)} check group(s) could not be measured; nothing here is a pass")
+    sys.exit(3)
 print("all checks passed")
