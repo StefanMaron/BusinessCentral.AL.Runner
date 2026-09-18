@@ -6161,8 +6161,15 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
             }
             else
             {
+                // #4272: the launched bundle is not the whole set. This session compiled and
+                // is executing its sibling SOURCE dependencies too, and a line of one resolved
+                // to nothing — reported as "no executable AL statement on this line in this
+                // file", a claim about AL made about a file nobody read. Reached only after
+                // compiledTcs, so the registry those roots come from is already populated.
                 sourceMap = AlRunner.Infrastructure.AlCoverageSourceMap.Build(
-                    new[] { bundleDir }, relativeTo: null);
+                    AlRunner.Infrastructure.AlCoverageSourceMap.RootsWithParsedSourceDependencies(
+                        new[] { bundleDir }),
+                    relativeTo: null);
             }
         }
         catch (Exception ex)
@@ -7173,8 +7180,11 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             // theoretical TOCTOU. See ServerCancelTests.Cancel_AfterRunTestsCompletes_IsNoop.
             System.Threading.Interlocked.CompareExchange(ref activeRunCts, null, cts);
 
-            // #2042: built from sourcePaths (the SAME roots the run just compiled),
-            // matching the CLI --coverage path's AlCoverageSourceMap.Build call —
+            // #2042: built from the SAME roots the run just compiled, matching the CLI
+            // --coverage path's AlCoverageSourceMap.Build call. #4272: req.SourcePaths alone
+            // was not that set — it is what RunAllBundlesForServer was given, and the compile
+            // also parses sibling SOURCE dependencies discovered from it, whose executed
+            // statements were tracked and then dropped for want of a root —
             // scopes whose owning object isn't found here (framework/dependency
             // assemblies outside the bundle under test) are silently excluded, same
             // as --coverage. Only built when requested: reflection-scanning every
@@ -7186,7 +7196,9 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             if (requestCoverage || collectPerTestForSelection)
             {
                 var covSourceMap = AlRunner.Infrastructure.AlCoverageSourceMap.Build(
-                    req.SourcePaths, relativeTo: null);
+                    AlRunner.Infrastructure.AlCoverageSourceMap.RootsWithParsedSourceDependencies(
+                        req.SourcePaths),
+                    relativeTo: null);
                 // #3884: a table built from a map that could not read everything is short, and
                 // the response has to say so — otherwise the client gets an ordinary success
                 // and no way to tell an uncovered statement from an unread one.
@@ -7525,7 +7537,9 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             IReadOnlyList<AlRunner.Infrastructure.SourceScanFailure>? scanFailures = configScanFailures;
             if (req.Coverage == true || req.PerTestCoverage == true)
             {
-                var covSourceMap = AlRunner.Infrastructure.AlCoverageSourceMap.Build(sourcePaths, relativeTo: null);
+                var covSourceMap = AlRunner.Infrastructure.AlCoverageSourceMap.Build(
+                    AlRunner.Infrastructure.AlCoverageSourceMap.RootsWithParsedSourceDependencies(sourcePaths),
+                    relativeTo: null);
                 // #3884, same as runTests: a short table must not go out as an ordinary success.
                 if (covSourceMap.IsIncomplete)
                     scanFailures = scanFailures is { Count: > 0 }

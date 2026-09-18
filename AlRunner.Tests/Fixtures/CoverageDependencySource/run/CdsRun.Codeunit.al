@@ -1,9 +1,9 @@
-codeunit 70870 "CDS Tests"
+// #4272. The execute-handler counterpart of main/CdsTests.Codeunit.al: OnRun calls the
+// sibling SOURCE dependency's Twice() and never its Never(), so the same two controls apply
+// to HandleServerExecute's coverage map as to the CLI's.
+codeunit 70880 "CDS Run"
 {
-    Subtype = Test;
-
-    [Test]
-    procedure DependencyMethodExecutes()
+    trigger OnRun()
     var
         Subject: Codeunit "CDS Subject";
         Actual: Integer;
@@ -18,7 +18,7 @@ codeunit 70870 "CDS Tests"
     // (AlCoverageTracker.GetHitTrackedTypes), so this is absent from it exactly as Never() is —
     // and that symmetry is the control: it says the dependency is treated like any other parsed
     // root, not dumped wholesale.
-    procedure NeverInConsumer(Value: Integer): Integer
+    procedure NeverInRunConsumer(Value: Integer): Integer
     begin
         exit(Value * 5);
     end;
