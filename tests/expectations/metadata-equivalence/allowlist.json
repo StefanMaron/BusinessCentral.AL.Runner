@@ -736,9 +736,22 @@
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
     },
     {
-      "member": "PageDefinition.#methodsField.<presence>",
-      "reason": "Page methods. SymbolReference.json carries a Methods array on 107 of the 235 pages measured, so this is a datum the runner has and does not read. Reclassified from a scope boundary to a gap: EmitPageXml emits no <Methods> element at all, and the values are present, typed and unambiguous in the symbol file the runner already parses for this page. Tracked on #3784. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
-      "issue": 4267
+      "member": "PageMethodDefinition.#parametersField.<presence>",
+      "reason": "Page method PARAMETERS -- the page-side twin of MetaMethod.Parameters.<presence>, and the same gap for the same reason. #4267 landed the page <Methods> subtree, so BC's <Parameters> children are now reported absent on the methods the runner DOES emit: 5 <Method> elements over the 5 pages BC emits <Methods> for (Business Foundation + System Application, 28.1.49838.53910), carrying 5 <Parameter> elements between them -- e.g. Page 2610 Feature Management OnOpenFeatureMgtPage, whose first parameter BC writes as Name=\"featureIDFilter\" RuntimeType=\"ByRef<NavText>\". ONE-DIRECTIONAL: the runner states no parameter it cannot derive, so nothing here manufactures agreement. NOT DERIVED WITH THE REST because the symbol file states the parameter list in AL's spelling and BC emits the RUNTIME's, differing in both the name casing and the type name -- the two unmeasured mappings #4084 sets out, which apply verbatim to a page method because BC's emitter writes one parameter shape for both object kinds. Tracked on #4084, which stays open and is NOT closed by #4267's pull request. NOT versionContingent: BC writes parameters for every emitted method that declares any, so this population cannot shrink without the derivation having changed -- which is what the stale check should report. See docs/dependency-page-methods.md#parameters-are-not-derived.",
+      "issue": 4084,
+      "direction": "bc-only"
+    },
+    {
+      "member": "PageMethodDefinition.Parameters.<presence>",
+      "reason": "Page method PARAMETERS -- the page-side twin of MetaMethod.Parameters.<presence>, and the same gap for the same reason. #4267 landed the page <Methods> subtree, so BC's <Parameters> children are now reported absent on the methods the runner DOES emit: 5 <Method> elements over the 5 pages BC emits <Methods> for (Business Foundation + System Application, 28.1.49838.53910), carrying 5 <Parameter> elements between them -- e.g. Page 2610 Feature Management OnOpenFeatureMgtPage, whose first parameter BC writes as Name=\"featureIDFilter\" RuntimeType=\"ByRef<NavText>\". ONE-DIRECTIONAL: the runner states no parameter it cannot derive, so nothing here manufactures agreement. NOT DERIVED WITH THE REST because the symbol file states the parameter list in AL's spelling and BC emits the RUNTIME's, differing in both the name casing and the type name -- the two unmeasured mappings #4084 sets out, which apply verbatim to a page method because BC's emitter writes one parameter shape for both object kinds. Tracked on #4084, which stays open and is NOT closed by #4267's pull request. NOT versionContingent: BC writes parameters for every emitted method that declares any, so this population cannot shrink without the derivation having changed -- which is what the stale check should report. See docs/dependency-page-methods.md#parameters-are-not-derived.",
+      "issue": 4084,
+      "direction": "bc-only"
+    },
+    {
+      "member": "PageMethodDefinition.Microsoft.Dynamics.Nav.Types.Metadata.IMetaPageMethodDefinition.Parameters.<presence>",
+      "reason": "Page method PARAMETERS -- the page-side twin of MetaMethod.Parameters.<presence>, and the same gap for the same reason. #4267 landed the page <Methods> subtree, so BC's <Parameters> children are now reported absent on the methods the runner DOES emit: 5 <Method> elements over the 5 pages BC emits <Methods> for (Business Foundation + System Application, 28.1.49838.53910), carrying 5 <Parameter> elements between them -- e.g. Page 2610 Feature Management OnOpenFeatureMgtPage, whose first parameter BC writes as Name=\"featureIDFilter\" RuntimeType=\"ByRef<NavText>\". ONE-DIRECTIONAL: the runner states no parameter it cannot derive, so nothing here manufactures agreement. NOT DERIVED WITH THE REST because the symbol file states the parameter list in AL's spelling and BC emits the RUNTIME's, differing in both the name casing and the type name -- the two unmeasured mappings #4084 sets out, which apply verbatim to a page method because BC's emitter writes one parameter shape for both object kinds. Tracked on #4084, which stays open and is NOT closed by #4267's pull request. NOT versionContingent: BC writes parameters for every emitted method that declares any, so this population cannot shrink without the derivation having changed -- which is what the stale check should report. See docs/dependency-page-methods.md#parameters-are-not-derived.",
+      "issue": 4084,
+      "direction": "bc-only"
     },
     {
       "member": "PageDefinition.#triggersField.<presence>",
@@ -786,11 +799,6 @@
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
     },
     {
-      "member": "PageDefinition.Methods.<presence>",
-      "reason": "Page methods. SymbolReference.json carries a Methods array on 107 of the 235 pages measured, so this is a datum the runner has and does not read. Reclassified from a scope boundary to a gap: EmitPageXml emits no <Methods> element at all, and the values are present, typed and unambiguous in the symbol file the runner already parses for this page. Tracked on #3784. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
-      "issue": 4267
-    },
-    {
       "member": "PageDefinition.Microsoft.Dynamics.Nav.Types.Metadata.IMetaPageDefinition.ActionContainers.<presence>",
       "reason": "Page actions. SymbolReference.json carries an Actions array on 106 of the 235 pages measured, with their properties, so this is a datum the runner has and does not read. Reclassified from a scope boundary to a gap: EmitPageXml emits no <ActionContainers> element at all, and the values are present, typed and unambiguous in the symbol file the runner already parses for this page. Tracked on #3784. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
       "issue": 4282
@@ -800,11 +808,6 @@
       "reason": "The page's control tree, which the runner does not reconstruct TODAY. A cost and scope decision, not a limit of the symbol file, and deliberately not a claim that the values cannot be obtained: SymbolReference.json carries the control tree with its SourceExpression as AL text (Rec.\"No.\"), while BC's document carries the compiled DataColumnName -- which IS the field number, resolvable through table metadata the runner already builds. Measured with this harness's own ground truth on BC 28.1.49838.53910: every Rec-bound control whose source table is in the bundle resolves exactly, 442 of 442 with zero wrong numbers, the residuals being two understood normalisation categories (field names differing in case or spacing, and controls bound to a page VARIABLE, which BC names \"Control\" + the id of the first control bound to that variable). Control ids are identical in both sources, so each derived value is independently checkable against the ground truth. The resolution machinery already exists and is in use -- EmitSubFormLinkXml resolves SubFormLink field names to numeric ids off the part's and the host's SourceTable. What is missing is the work, tracked on #2460 for actions; this entry records that it has not been done, never that it could not be.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
-    },
-    {
-      "member": "PageDefinition.Microsoft.Dynamics.Nav.Types.Metadata.IMetaPageDefinition.Methods.<presence>",
-      "reason": "Page methods. SymbolReference.json carries a Methods array on 107 of the 235 pages measured, so this is a datum the runner has and does not read. Reclassified from a scope boundary to a gap: EmitPageXml emits no <Methods> element at all, and the values are present, typed and unambiguous in the symbol file the runner already parses for this page. Tracked on #3784. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
-      "issue": 4267
     },
     {
       "member": "PageDefinition.Microsoft.Dynamics.Nav.Types.Metadata.IMetaPageDefinition.Triggers.<presence>",
