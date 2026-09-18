@@ -27,6 +27,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **records:** run the data-layer prepends on the page-save insert/modify route
 - **tools:** classify a process guard by its exit code, not a summary regex
 - **preflight:** an SDK off PATH is not a missing SDK
 - **testpage:** Cancel must not discard the host page's pending write
