@@ -33,9 +33,9 @@ different questions, and the second is the specification.**
 | `ActionContainers` (element) | 106 state `Actions` | **235** | every page gets one | left, see below |
 | `ViewContainers` (element) | 4 state `Views` | **91** | not a plain read | left |
 
-### `HelpLink` — the three-way partition
+### HelpLink
 
-The one `<Properties>` scalar BC derives rather than copies, and a total rule with no
+A three-way partition, and the one `<Properties>` scalar BC derives rather than copies, and a total rule with no
 exceptions on this build:
 
 | the page states | count | BC writes |
