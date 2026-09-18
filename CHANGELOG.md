@@ -27,6 +27,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **truncate:** measure whether guards 5 and 7 can be answered faithfully
 - **patches:** implement BC's MethodScope flag selection in the right order, so IsTrigger and inherited IsInTryScope survive
 - **testpage:** refuse an unreadable FormResult shape instead of sending CloseAction::None
 - **tools:** test_doc_pointers.py must scan the test tree and tooling, not just AlRunner/
