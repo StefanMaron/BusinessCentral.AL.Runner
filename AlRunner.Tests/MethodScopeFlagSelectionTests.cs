@@ -82,7 +82,7 @@ public sealed class MethodScopeFlagSelectionTests
 
         // And the virtual call really would have answered something else, so the assertion
         // above is a genuine preference rather than two routes coinciding.
-        var virtualAnswer = BcRuntime.ResolveGetMethodScopeFlags(scope.GetType())!.Invoke(scope, null)!;
+        var virtualAnswer = BcRuntime.ResolveGetMethodScopeFlags(scope.GetType()).Invoke(scope, null)!;
         Assert.NotEqual(Ordinal(argument), Ordinal(virtualAnswer));
     }
 
@@ -95,7 +95,7 @@ public sealed class MethodScopeFlagSelectionTests
         var none = Enum.ToObject(FlagsEnumType(), 0);
 
         var selected = Select(scope, none);
-        var virtualAnswer = BcRuntime.ResolveGetMethodScopeFlags(scope.GetType())!.Invoke(scope, null)!;
+        var virtualAnswer = BcRuntime.ResolveGetMethodScopeFlags(scope.GetType()).Invoke(scope, null)!;
 
         Assert.Equal(Ordinal(virtualAnswer), Ordinal(selected));
         // NavMethodScope<TParent> answers IsStackFrame, so the fallback is not vacuously zero —

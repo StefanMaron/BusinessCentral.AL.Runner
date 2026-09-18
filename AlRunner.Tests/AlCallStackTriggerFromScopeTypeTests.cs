@@ -123,7 +123,7 @@ public sealed class AlCallStackTriggerFromScopeTypeTests
         var isTrigger = Convert.ToInt64(flagsField.FieldType.GetField("IsTrigger")!.GetRawConstantValue());
 
         var virtualAnswer = Convert.ToInt64(
-            BcRuntime.ResolveGetMethodScopeFlags(scope.GetType())!.Invoke(scope, null)!);
+            BcRuntime.ResolveGetMethodScopeFlags(scope.GetType()).Invoke(scope, null)!);
 
         Assert.Equal(0, virtualAnswer & isTrigger);
     }

@@ -86,10 +86,23 @@ public static partial class BcRuntime
     // execution unit -- and it used to do a Type.GetMethod("GetMethodScopeFlags", NonPublic |
     // Instance) lookup each time. A reflection member lookup walks the type's method table and
     // allocates; the answer depends only on the concrete scope type, of which a run has a
-    // handful. Resolved once per type instead. A null answer is cached too: "this subtype does
-    // not override it" is as stable as the type itself, and re-asking would put the lookup back
-    // on the path for exactly the types that cannot benefit from it.
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, MethodInfo?>
+    // handful. Resolved once per type instead.
+    //
+    // A REFUSAL is cached too, and that is load-bearing rather than incidental. The bind is
+    // required (#4365, below), so the only way it can fail is BC no longer declaring the
+    // member -- a property of the type, exactly as stable as a successful bind, and never
+    // something a later call could answer differently. Letting the BcShapeGapException escape
+    // the GetOrAdd factory instead would leave the dictionary empty and re-derive the refusal
+    // on EVERY AL method entry, which is the per-call reflection lookup this cache exists to
+    // remove: the failing path would be the one paying it. So the outcome is cached either
+    // way, and `Raise` re-throws a fresh exception per call so each carries its own stack.
+    private readonly record struct GetMethodScopeFlagsBind(MethodInfo? Method, BcShapeGapException? Gap)
+    {
+        internal MethodInfo Raise()
+            => Method ?? throw new BcShapeGapException(Gap!.Surface, Gap.Member, Gap.Detail, Gap.DocLink);
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, GetMethodScopeFlagsBind>
         _getMethodScopeFlagsByType = new();
 
     private static int _getMethodScopeFlagsLookups;
@@ -104,7 +117,11 @@ public static partial class BcRuntime
         Interlocked.Exchange(ref _getMethodScopeFlagsLookups, 0);
     }
 
-    internal static MethodInfo? ResolveGetMethodScopeFlags(Type scopeType)
+    /// <summary>
+    /// The concrete scope type's <c>GetMethodScopeFlags</c>, or a <see cref="BcShapeGapException"/>
+    /// naming it. Resolved once per type, refusals included.
+    /// </summary>
+    internal static MethodInfo ResolveGetMethodScopeFlags(Type scopeType)
         => _getMethodScopeFlagsByType.GetOrAdd(scopeType, static t =>
         {
             Interlocked.Increment(ref _getMethodScopeFlagsLookups);
@@ -114,13 +131,29 @@ public static partial class BcRuntime
             // only mean BC renamed or removed the member, which is unmeasurable rather than
             // absent (guards-need-a-third-state.md). Carrying on with ordinal-0 flags would be
             // indistinguishable at the field from a scope that genuinely has no flags.
-            return BcShape.RequiredMethod(
-                t, "GetMethodScopeFlags", BindingFlags.NonPublic | BindingFlags.Instance,
-                surface: "NavMethodScope..ctor",
-                member: "NavMethodScope.GetMethodScopeFlags",
-                detail: "the per-scope-type MethodScopeFlags fallback the ctor reads when its " +
-                        "flags argument is None; without it a scope's flags cannot be established");
-        });
+            //
+            // Caught rather than thrown so the REFUSAL lands in the dictionary: see the
+            // GetMethodScopeFlagsBind remarks above for why a throw out of this factory would
+            // put a reflection lookup back on every AL method entry.
+            try
+            {
+                return new GetMethodScopeFlagsBind(
+                    BcShape.RequiredMethod(
+                        t, "GetMethodScopeFlags", BindingFlags.NonPublic | BindingFlags.Instance,
+                        surface: "NavMethodScope..ctor",
+                        member: "NavMethodScope.GetMethodScopeFlags",
+                        detail: "the per-scope-type MethodScopeFlags fallback the ctor reads when " +
+                                "its flags argument is None; without it a scope's flags cannot be " +
+                                "established"),
+                    null);
+            }
+            catch (BcShapeGapException gap)
+            {
+                // Only this type. Anything else out of a reflection bind is not a statement
+                // about BC's layout and must not be memoised as one.
+                return new GetMethodScopeFlagsBind(null, gap);
+            }
+        }).Raise();
 
     /// <summary>
     /// BC's flag selection: the ctor's <paramref name="flagsArgument"/> when it is non-zero,
@@ -139,7 +172,7 @@ public static partial class BcRuntime
 
         // A non-nullable enum return, so a successful Invoke cannot be null (#4365); the bind
         // itself already refused above if BC no longer declares the member.
-        return ResolveGetMethodScopeFlags(self.GetType())!.Invoke(self, null)!;
+        return ResolveGetMethodScopeFlags(self.GetType()).Invoke(self, null)!;
     }
 
     /// <summary>
