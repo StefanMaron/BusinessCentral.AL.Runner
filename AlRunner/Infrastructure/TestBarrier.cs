@@ -39,6 +39,17 @@ public static class TestBarrier
     private static readonly string? BarrierDir =
         Environment.GetEnvironmentVariable("AL_RUNNER_TEST_BARRIER_DIR");
 
+    /// <summary>The bound on the release wait, and the single source of the figure the timeout
+    /// message reports (#4309). Derived rather than repeated: a literal in the message is
+    /// invisible while it happens to match the deadline and wrong the moment one of them moves.
+    /// Measured for real on #3435 — a cap squeezed to 3s still reported "did not exit within
+    /// 120s", sending a reader to look for a two-minute hang that never happened.
+    ///
+    /// In SECONDS rather than the milliseconds its spawn-site siblings use: there is no `/ 1000`
+    /// in the message here, so seconds is what both the deadline and the sentence want, and
+    /// milliseconds would move the duplication into a divisor instead of removing it.</summary>
+    private const int ReleaseWaitSeconds = 60;
+
     /// <summary>
     /// No-op unless AL_RUNNER_TEST_BARRIER_DIR is set on THIS process (see the
     /// class doc comment for why that's safe). When set, blocks — polling every
@@ -47,17 +58,19 @@ public static class TestBarrier
     /// Bounded at 60s: a harness bug that forgets to drop the release file must
     /// fail loud with a clear message, not hang the test run (and CI) forever.
     /// </summary>
+
     public static void WaitForRelease()
     {
         if (BarrierDir == null) return;
 
         var releaseFile = Path.Combine(BarrierDir, "release");
-        var deadline = DateTime.UtcNow.AddSeconds(60);
+        var deadline = DateTime.UtcNow.AddSeconds(ReleaseWaitSeconds);
         while (!File.Exists(releaseFile))
         {
             if (DateTime.UtcNow > deadline)
                 throw new TimeoutException(
-                    $"TestBarrier.WaitForRelease: no release file at '{releaseFile}' within 60s " +
+                    $"TestBarrier.WaitForRelease: no release file at '{releaseFile}' "
+                    + $"within {ReleaseWaitSeconds}s " +
                     "— the test harness should have created it right after observing the event " +
                     "it was waiting for (see AlRunner.Tests.ServerCancelTests).");
             Thread.Sleep(5);
