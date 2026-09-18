@@ -159,6 +159,10 @@ CODE_TREES = (
     ("tools", "*.py"),
     ("scripts", "*.js"),
     (".github/scripts", "*"),
+    # tests/runner-extras only: tests/expectations is surface 4 (its Doc values),
+    # tests/archive is history by declaration like docs/archive/, and
+    # tests/al-language is the read-only corpus, which must never be scanned here.
+    ("tests/runner-extras", "*"),
 )
 
 
