@@ -1653,6 +1653,34 @@ while the suite still reports green.
 These are not architectural limits. They can be fixed; report them at
 https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
 
+<a id="packaged-dependency-coverage"></a>
+
+- **`--coverage` attributes only AL the runner compiled from source.** A statement executed in a
+  dependency consumed as a precompiled `.app` runs, and its hit is counted, but it does not
+  appear in the Cobertura report — measured end to end on BC `28.1.49838.53910` with System
+  Application as the dependency: 98 scope types recorded hits, 1 class in the report
+  ([#4273](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4273)).
+
+  **Not an exclusion, and deliberately recorded here rather than as one.** The cause is that BC
+  emits two scope shapes: AL the runner compiles gets a per-method scope class carrying
+  `[SourceSpans]`, while a shipped `.app` uses Ncl's generic `ALMethodScope<T>`, which carries
+  none — so the tracker's type-level read finds nothing. Everything a fix needs is present on the
+  scope *instance* (`GetDeclaringMethodInfo()` resolved the AL method, its method-level
+  `[SourceSpans]` and its object id on every one of eight packaged scopes measured), which is why
+  this is a gap rather than a limit.
+
+  That accounts for the 8,357 ordinary methods. The packaged assembly's other 155 scopes — the
+  ones that *do* carry the attribute at type level — drop out for a **second, independent**
+  reason: they are event publishers with empty bodies, so each holds a single span, which is BC's
+  never-instrumented trailing sentinel, and contributes no line either way. A fix for the first
+  reason alone leaves that correct and unchanged.
+
+  Two things a reader is likely to assume and should not. The `.app` **does** ship its AL source
+  (1,319 `.al` files in System Application), so "no source on disk" is not the reason; and
+  supplying that source does not help — adding it as a coverage root grew the source map from 1
+  entry to 1,054 and changed the report by zero classes. The full measurement, and what a fix
+  still owes, are in [`coverage-attribution.md`](coverage-attribution.md).
+
 <a id="runtime-shape-gaps"></a>
 
 - **Runtime shape gaps outside the virtual tables — the runner refuses rather than answering
