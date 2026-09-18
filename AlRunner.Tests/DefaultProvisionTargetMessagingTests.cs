@@ -31,6 +31,13 @@ public sealed class DefaultProvisionTargetMessagingTests
     /// Same shape as BcVersionDefaultDocumentationTests.SpawnTimeoutMs (#3487).</summary>
     private const int SpawnTimeoutMs = 60_000;
 
+    /// <summary>How long to watch stderr for the target line — a DIFFERENT cap from
+    /// <see cref="SpawnTimeoutMs"/>, which bounds the whole spawn. Its own constant rather than a
+    /// second use of that one: folding two caps into one name makes the next person to move either
+    /// figure move both. Derived into the message for the reason #4275 gives — a literal is
+    /// invisible while it matches and wrong the moment the cap moves.</summary>
+    private const int LineWatchTimeoutMs = 30_000;
+
     private static readonly string RepoRoot = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
 
@@ -151,7 +158,7 @@ public sealed class DefaultProvisionTargetMessagingTests
             proc.BeginOutputReadLine();
             proc.BeginErrorReadLine();
 
-            var signalled = found.Wait(30_000);
+            var signalled = found.Wait(LineWatchTimeoutMs);
             try { proc.Kill(entireProcessTree: true); } catch { }
             proc.WaitForExit(5_000);
 
@@ -159,7 +166,8 @@ public sealed class DefaultProvisionTargetMessagingTests
             lock (errSb) captured = errSb.ToString();
 
             Assert.True(signalled,
-                $"expected line never appeared within 30s (CDN unreachable from this environment?):\n{captured}");
+                $"expected line never appeared within {LineWatchTimeoutMs / 1000}s "
+                + $"(CDN unreachable from this environment?):\n{captured}");
             Assert.DoesNotContain("KNOWN-DEGRADED", captured);
         }
         finally

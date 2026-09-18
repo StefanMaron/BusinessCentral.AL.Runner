@@ -46,6 +46,14 @@ namespace AlRunner.Tests;
 
 public sealed class PrecompileNclShadowHopTests
 {
+    /// <summary>The cap this file's subprocess spawns actually apply, and the single source of
+    /// the figure their timeout messages report (#4275). Derived rather than repeated: a literal
+    /// in the message is invisible while it happens to match, and wrong the moment the cap moves.
+    /// Measured for real on #3435 — a cap squeezed to 3s still reported "did not exit within 120s".
+    /// This file ASSERTS rather than throws, which is why it sat outside the guard until #4275
+    /// widened its anchor; the hardcoded figure is the same defect either way.</summary>
+    private const int SpawnTimeoutMs = 300_000;
+
     private const string NclFileName = "Microsoft.Dynamics.Nav.Ncl.dll";
 
     private static readonly string RepoRoot = Path.GetFullPath(
@@ -157,7 +165,7 @@ public sealed class PrecompileNclShadowHopTests
         p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
         p.BeginOutputReadLine();
         p.BeginErrorReadLine();
-        Assert.True(p.WaitForExit(300_000), "--precompile did not exit within 300s");
+        Assert.True(p.WaitForExit(SpawnTimeoutMs), $"--precompile did not exit within {SpawnTimeoutMs / 1000}s");
         p.WaitForExit();
         lock (sb) return (sb.ToString(), p.ExitCode);
     }
