@@ -253,8 +253,10 @@ public static class AlCallStackCapture
             if (objNumber == 0) return null;
             if (objName == null) objName = objNumber.ToString();
 
-            bool isTrigger = GetIsTrigger(scope);
-            int lineNo = GetRelativeLine(scope.GetType(), stmtNo);
+            // Both are three-way (#4345): null means the answer could not be measured, and is
+            // rendered as a runner-side marker rather than silently as BC's negative answer.
+            bool? isTrigger = GetIsTrigger(scope);
+            int? lineNo = GetRelativeLine(scope.GetType(), stmtNo);
 
             var (appName, publisher, version) = GetAppMeta(scope.GetType().Assembly);
 
@@ -263,9 +265,10 @@ public static class AlCallStackCapture
             AppendQuoted(sb, objName);
             sb.Append('(').Append(objType).Append(' ').Append(objNumber).Append(").");
             sb.Append(methodName);
-            if (isTrigger) sb.Append("(Trigger)");
-            if (lineNo >= 0)
-                sb.Append(" line ").Append(lineNo);
+            if (isTrigger == true) sb.Append("(Trigger)");
+            else if (isTrigger == null) sb.Append(UnknownTriggerMarker);
+            if (lineNo == null) sb.Append(UnknownLineMarker);
+            else if (lineNo >= 0) sb.Append(" line ").Append(lineNo.Value);
             if (appName != null)
                 sb.Append(" - ").Append(appName).Append(" by ").Append(publisher).Append(" version ").Append(version);
 
@@ -370,38 +373,95 @@ public static class AlCallStackCapture
         sb.Append('"');
     }
 
-    private static bool GetIsTrigger(NavMethodScope scope)
+    /// <summary>
+    /// Whether this frame is an AL trigger: <c>true</c>/<c>false</c> only from a read that
+    /// SUCCEEDED, and <c>null</c> when the answer could not be measured at all.
+    /// <para>
+    /// #4345: every unmeasurable exit here used to answer <c>false</c>, which is not a neutral
+    /// sentinel — it is the load-bearing claim "this frame is not a trigger", rendered into
+    /// AL-visible call-stack text. It does not throw, for three reasons specific to this call
+    /// path: the only caller is <see cref="FormatFrame"/>, whose <c>catch</c> would turn a
+    /// throw into a DROPPED frame; <see cref="BuildStack"/> appends a frame only when it
+    /// rendered, with no marker and no counter, so a stack would read complete while missing a
+    /// frame from the middle; and the cause is process-global cached state, so the loss would
+    /// be the entire AL stack rather than one frame.
+    /// </para>
+    /// </summary>
+    private static bool? GetIsTrigger(NavMethodScope scope)
     {
-        if (_tMethodScopeFlags == null || _fiMsFlags == null) return false;
+        if (_tMethodScopeFlags == null || _fiMsFlags == null)
+        {
+            WarnUnknownTriggerOnce(_fiMsFlags == null
+                ? "NavMethodScope.flags field handle"
+                : "MethodScopeFlags enum type handle");
+            return null;
+        }
         try
         {
             var flags = _fiMsFlags.GetValue(scope);
-            if (flags == null) return false;
-            // IsTrigger = 0x40 in MethodScopeFlags
+            if (flags == null)
+            {
+                WarnUnknownTriggerOnce("NavMethodScope.flags read back null");
+                return null;
+            }
             var isTriggerField = _tMethodScopeFlags.GetField("IsTrigger");
-            if (isTriggerField == null) return false;
+            if (isTriggerField == null)
+            {
+                WarnUnknownTriggerOnce("MethodScopeFlags declares no IsTrigger member");
+                return null;
+            }
             var trigVal = (int)(isTriggerField.GetRawConstantValue() ?? 0);
             return (Convert.ToInt32(flags) & trigVal) != 0;
         }
-        catch { return false; }
+        catch (Exception ex)
+        {
+            WarnUnknownTriggerOnce($"reading MethodScopeFlags.IsTrigger threw {ex.GetType().Name}");
+            return null;
+        }
     }
 
-    private static int GetRelativeLine(Type scopeType, int statementNumber)
+    /// <summary>
+    /// The frame's line number, <c>-1</c> when the frame genuinely HAS none, and <c>null</c>
+    /// when the answer could not be measured.
+    /// <para>
+    /// #4345: unlike <see cref="GetIsTrigger"/>, this method's exits do not all mean the same
+    /// thing, and conflating them would trade one defect for its mirror image
+    /// (<c>.claude/rules/guards-need-a-third-state.md</c>: "a genuinely absent thing must stay
+    /// a pass"). A scope type carrying no <c>SourceSpansAttribute</c>, or an empty span array,
+    /// really has no line number — that stays <c>-1</c>, rendering no line, exactly as before.
+    /// Only an unresolved cached attribute handle, or a throw, is unmeasurable.
+    /// </para>
+    /// </summary>
+    private static int? GetRelativeLine(Type scopeType, int statementNumber)
     {
-        if (_tSourceSpansAttr == null || _tSignatureSpanAttr == null) return -1;
+        // Unmeasurable: EnsureReflInit never bound these, so nothing can be read for ANY frame.
+        if (_tSourceSpansAttr == null || _tSignatureSpanAttr == null)
+        {
+            WarnUnknownLineOnce(_tSourceSpansAttr == null
+                ? "SourceSpansAttribute type handle"
+                : "SignatureSpanAttribute type handle");
+            return null;
+        }
         try
         {
             var srcAttr  = scopeType.GetCustomAttribute(_tSourceSpansAttr);
             var sigAttr  = scopeType.GetCustomAttribute(_tSignatureSpanAttr);
+            // Genuinely absent: this scope type carries no span attribute, so it HAS no line.
             if (srcAttr == null || sigAttr == null) return -1;
 
             var encodedSpans = _piEncodedSpans?.GetValue(srcAttr) as long[];
+            // Genuinely absent: an attribute present but declaring no spans.
             if (encodedSpans == null || encodedSpans.Length == 0) return -1;
 
-            // Clamp: IsAtExitStatement uses last span; statementNumber is 1-based
+            // Clamp: IsAtExitStatement uses last span; statementNumber is 1-based.
             var idx = statementNumber == int.MaxValue
                 ? encodedSpans.Length - 1
                 : Math.Min(statementNumber, encodedSpans.Length - 1);
+            // Genuinely absent, and unreachable as written: the Length == 0 guard above already
+            // returned, so Length >= 1 makes Length - 1 >= 0, and Math.Min of that with a
+            // statementNumber cannot go below 0 for a non-negative statementNumber. Kept as a
+            // floor against a negative statementNumber, which would be a frame with no locatable
+            // statement rather than a failed read.
             if (idx < 0) return -1;
 
             var encodedSpan    = encodedSpans[idx];
@@ -410,7 +470,59 @@ public static class AlCallStackCapture
             // Bit layout is shared with AlCoverageTracker — see AlSourceSpanCodec.
             return AlSourceSpanCodec.RelativeLine(encodedSpan, encodedSigSpan);
         }
-        catch { return -1; }
+        catch (Exception ex)
+        {
+            // Unmeasurable: the read started and failed. Distinct from the -1 rows above.
+            WarnUnknownLineOnce($"reading the source spans threw {ex.GetType().Name}");
+            return null;
+        }
+    }
+
+    // ── Third-state markers and their one-shot diagnostics (#4345) ───────────────
+    //
+    // Both markers are deliberately unmistakable for BC output. BC emits `MethodName(Trigger)`
+    // and ` line 12`; a spelling such as `(Trigger?)` would read as BC's own answer with a
+    // question mark, which is precisely the confusion these exist to prevent. They are
+    // constants rather than call-site literals so a test can assert on them without
+    // duplicating the string.
+
+    /// <summary>Rendered in place of <c>(Trigger)</c> when trigger-ness could not be read.</summary>
+    internal const string UnknownTriggerMarker = "(al-runner:trigger-unknown)";
+
+    /// <summary>Rendered in place of <c> line N</c> when the line number could not be read.</summary>
+    /// <remarks>Deliberately does NOT start with <c>" line "</c>: BC emits <c> line 12</c>, and a
+    /// marker beginning that way would read as BC output whose number went missing.</remarks>
+    internal const string UnknownLineMarker = " (al-runner:line-unknown)";
+
+    // Latched per process, not per frame: every unmeasurable exit above reads an
+    // EnsureReflInit-cached static, so whatever nulls one nulls it for EVERY frame of every
+    // stack. A per-frame write would print once per frame per exception.
+    private static bool _warnedUnknownTrigger;
+    private static bool _warnedUnknownLine;
+
+    private static void WarnUnknownTriggerOnce(string what)
+    {
+        if (_warnedUnknownTrigger) return;
+        _warnedUnknownTrigger = true;
+        WriteWarning($"AL call stack: cannot tell whether frames are triggers ({what} " +
+                     $"unresolved); affected frames are marked '{UnknownTriggerMarker}'.");
+    }
+
+    private static void WarnUnknownLineOnce(string what)
+    {
+        if (_warnedUnknownLine) return;
+        _warnedUnknownLine = true;
+        WriteWarning($"AL call stack: cannot read frame line numbers ({what} unresolved); " +
+                     $"affected frames are marked '{UnknownLineMarker.TrimStart()}'.");
+    }
+
+    // FormatFrame runs under the FirstChanceException handler, whose own catch carries
+    // "FCE handler must never throw" — so the diagnostic must not become the thing that
+    // throws while reporting an exception (a closed Console.Error during shutdown, say).
+    private static void WriteWarning(string message)
+    {
+        try { Console.Error.WriteLine($"warning: {message}"); }
+        catch { /* a diagnostic is never worth failing the capture it describes */ }
     }
 
     private static (string? Name, string? Publisher, string? Version) GetAppMeta(Assembly asm)
