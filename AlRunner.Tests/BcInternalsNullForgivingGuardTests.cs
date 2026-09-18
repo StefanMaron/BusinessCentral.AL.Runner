@@ -283,7 +283,16 @@ public sealed class BcInternalsNullForgivingGuardTests
         // would silently restore the positional-ctor defaults the conversion exists to replace,
         // which is "answer WRONG instead of failing" rather than a neutral sentinel. Absence of
         // the helper TYPE stays a legitimate null, and is deliberately NOT shape-checked.
-        Assert.Equal(98, converted);
+        //
+        // 98 -> 99 for the Options read in BcRuntime.ReadEventManualBindingFromAttribute
+        // (CodeunitPatches.MetaCodeunit.cs, #4289). A null there used to answer false, which
+        // reports every manual-binding codeunit as automatic and lets BC's own
+        // BindSubscription/UnBindSubscription unbind its subscribers with nothing said. The
+        // SIBLING absence one branch down — an Options enum declaring no EventManualBinding
+        // member — is a read that SUCCEEDED and stays a false; the split is pinned by
+        // AlRunner.Tests/CodeunitManualBindingOptionsTests and written up in
+        // docs/codeunit-manual-binding.md#the-two-absences.
+        Assert.Equal(99, converted);
     }
 
     /// <summary>
