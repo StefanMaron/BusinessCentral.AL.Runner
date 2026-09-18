@@ -151,9 +151,22 @@ public static partial class BcRuntime
     /// </summary>
     private static bool IsDeleteEventSubscribed(object record, object metaTable)
     {
+        // Every field this reads is bound by ResolveGuard5Shape, which REFUSES rather than
+        // returning when any of them is null — so reaching this method with one null is
+        // impossible by construction. It is re-asserted rather than assumed because the failure
+        // it would otherwise produce is silent: a `return false` here permits a Truncate() BC
+        // refuses, and nothing anywhere says the guard stopped measuring
+        // (.claude/rules/guards-need-a-third-state.md — a reflection bind answering null is
+        // unmeasurable, not absent).
         if (_mMtIsEventSubscribed == null || _navTriggerEventType == null
             || _mResolveAppGroup == null || _pRecSession == null)
-            return false; // shape unavailable: EnsureTruncateValidationShape already refused loudly.
+            throw new AlRunner.Infrastructure.BcShapeGapException(
+                "Record.Truncate()",
+                "NCLMetaTable.IsEventSubscribed / NavCurrentThread.ResolveAppGroup",
+                "the delete-subscriber guard was reached with an unbound member "
+                + $"(Session={_pRecSession != null}, IsEventSubscribed={_mMtIsEventSubscribed != null}, "
+                + $"TriggerEventType={_navTriggerEventType != null}, "
+                + $"ResolveAppGroup={_mResolveAppGroup != null})");
 
         var session = _pRecSession.GetValue(record);
         var appGroup = _mResolveAppGroup.Invoke(null, new[] { session });
@@ -298,11 +311,16 @@ public static partial class BcRuntime
                                  && m.GetParameters().Length == 1
                                  && m.ReturnType == appGroupType);
 
-        if (_pRecSession == null || _mMtIsEventSubscribed == null || _mResolveAppGroup == null)
+        // _navTriggerEventType is checked HERE, not left to follow from _mMtIsEventSubscribed.
+        // It does follow today — but a guard that is correct only by a neighbour's construction
+        // is one edit away from permitting a Truncate() BC refuses, and that edit is silent.
+        if (_pRecSession == null || _mMtIsEventSubscribed == null || _mResolveAppGroup == null
+            || _navTriggerEventType == null)
             throw new AlRunner.Infrastructure.BcShapeGapException(
                 "Record.Truncate()",
                 "NCLMetaTable.IsEventSubscribed / NavCurrentThread.ResolveAppGroup",
                 $"could not bind the delete-subscriber guard (Session={_pRecSession != null}, "
+                + $"TriggerEventType={_navTriggerEventType != null}, "
                 + $"IsEventSubscribed={_mMtIsEventSubscribed != null}, "
                 + $"ResolveAppGroup={_mResolveAppGroup != null})");
     }
