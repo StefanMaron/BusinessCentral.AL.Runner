@@ -10,6 +10,7 @@
 //
 // This file keeps the six guards that are faithful on the skeleton and skips only guard 4.
 // See docs/limitations.md#truncate-security-filter-validation.
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 
@@ -94,15 +95,23 @@ public static partial class BcRuntime
         // FlowFieldsHelper.AnyFiltersOnFlowFields read. Tracked by #4374.
     }
 
+    /// <summary>
+    /// Raises BC's own NavCSideTruncateException, so `asserterror` and TryFunction classify it
+    /// exactly as they do BC's throw: it derives from NavCSideException, which NavRecord's
+    /// `catch (NavCSideException) when (dataError == DataError.TrapError)` traps for the boolean
+    /// `if Rec.Truncate() then` form. A plain Exception here would tear through that catch.
+    /// </summary>
+    [DoesNotReturn]
     private static void ThrowTruncate(string message)
     {
-        // The real type, so `asserterror` and TryFunction classify it exactly as they do BC's own
-        // throw: NavCSideTruncateException derives from NavCSideException, which NavRecord's
-        // `catch (NavCSideException) when (dataError == DataError.TrapError)` traps for the
-        // boolean `if Rec.Truncate() then` form. A plain Exception here would tear through it.
-        if (_navCSideTruncateExceptionType != null
-            && Activator.CreateInstance(_navCSideTruncateExceptionType, message) is Exception ex)
-            throw ex;
+        // The exception is constructed HERE and thrown on the same expression, never assigned to
+        // a local and re-thrown. `throw someLocal;` resets the stack trace to the throw site,
+        // which is the #1955 / #2925 / #2948 defect RethrowPreservesOriginFrameTests ratchets
+        // against — and it would be a poor thing to reintroduce in the patch that exists to make
+        // AL call stacks read faithfully. A brand-new exception takes `throw new`/`throw <ctor>`;
+        // ExceptionDispatchInfo is for a caught exception that already has frames to preserve.
+        if (_navCSideTruncateExceptionType != null)
+            throw (Exception)Activator.CreateInstance(_navCSideTruncateExceptionType, message)!;
 
         // Could not bind BC's exception type: refuse loudly rather than let the Truncate proceed,
         // which would be the silent-fake this file exists to remove.
