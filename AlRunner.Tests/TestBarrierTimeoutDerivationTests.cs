@@ -31,8 +31,10 @@ public sealed class TestBarrierTimeoutDerivationTests
     /// assertions passed against a message that had been regressed to a literal — the check was
     /// blind to exactly what it was written for.</para>
     ///
-    /// <para>Comments still go, because the doc comment above <c>WaitForRelease</c> legitimately
-    /// says "Bounded at 60s" in prose and must neither satisfy nor break this.</para>
+    /// <para>Comments still go, so prose in this file can neither satisfy nor break the guard.
+    /// Deliberately no example: an earlier revision quoted one, the quoted prose was then deleted,
+    /// and the justification was left citing text that no longer existed — a stale quotation reads
+    /// as evidence, which makes it worse than a stale figure (#4352).</para>
     /// </summary>
     private static string Source() => CSharpSource.CommentsBlanked(
         File.ReadAllText(Path.Combine(RepoRoot, "AlRunner", "Infrastructure", "TestBarrier.cs")));
