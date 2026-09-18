@@ -161,11 +161,8 @@ public sealed class SpawnTimeoutMessageDerivationTests
                 // throw lives in an `if (!p.WaitForExit(...))` body, and so does the Assert.Fail
                 // site, whose wait is in the `try` and whose message is in the `catch`.
                 //
-                // Two earlier versions of this comment were wrong in the same direction and each
-                // was caught by measuring rather than reading: the first claimed the check covered
-                // a site it did not, the second named that one site as THE bound when the real
-                // figure is 42. A comment that understates a gap is worse than none, because it
-                // tells the next reader the ground is covered.
+                // Re-derive the split rather than trusting the 9: it moves as sites are added,
+                // and two earlier versions of this comment overstated the coverage (#4332).
                 //
                 // Not closed by widening the slice to a line window: the window size would be a
                 // constant with no principle behind it, and a wait can precede its message by any
