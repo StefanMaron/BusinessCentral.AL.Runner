@@ -59,12 +59,12 @@ git -C "$REPO" config user.email test@example.com
 git -C "$REPO" config user.name Test
 
 mkdir -p "$REPO/AlRunner/Patches" "$REPO/docs"
-echo one > "$REPO/docs/start.md"
+echo one > "$REPO/docs/start.md"   # doc-pointer-fixture: files made in a scratch repo
 git -C "$REPO" add -A && git -C "$REPO" commit -qm "A: base"
 A=$(git -C "$REPO" rev-parse HEAD)
 
 git -C "$REPO" checkout -q -b pr
-echo pr > "$REPO/docs/pr-only.md"
+echo pr > "$REPO/docs/pr-only.md"  # doc-pointer-fixture
 git -C "$REPO" add -A && git -C "$REPO" commit -qm "P: the pull request"
 P=$(git -C "$REPO" rev-parse HEAD)
 
@@ -85,7 +85,7 @@ check_eq "merge-base(base.sha, merge ref) is base.sha, so the three-dot range co
 
 collapsed=$(git -C "$REPO" diff --name-only "$A"...HEAD)
 check_eq "the old form attributes a base-branch commit to the pull request" \
-  "$(printf 'AlRunner/Patches/Intervening.cs\ndocs/pr-only.md')" "$collapsed"
+  "$(printf 'AlRunner/Patches/Intervening.cs\ndocs/pr-only.md')" "$collapsed"  # doc-pointer-fixture
 
 if printf '%s\n' "$collapsed" | command grep -q '^AlRunner/Patches/Intervening.cs$'; then
   ok "the wrongly attributed file is one the corpus-linkage guard treats as in scope"
@@ -97,7 +97,7 @@ fi
 
 got=$(cd "$REPO" && BASE_SHA="$A" HEAD_SHA="$P" "$SCRIPT" 2>/dev/null)
 check_eq "explicit endpoints return exactly the pull request's own files" \
-  "docs/pr-only.md" "$got"
+  "docs/pr-only.md" "$got"  # doc-pointer-fixture
 
 rc=0
 (cd "$REPO" && BASE_SHA="$A" HEAD_SHA="$P" "$SCRIPT" >/dev/null 2>&1) || rc=$?
@@ -107,7 +107,7 @@ check_eq "a non-empty diff exits 0" "0" "$rc"
 # result must depend on the endpoints, not on the working tree.
 git -C "$REPO" checkout -q --detach "$M"
 got=$(cd "$REPO" && BASE_SHA="$A" HEAD_SHA="$P" "$SCRIPT" 2>/dev/null)
-check_eq "the answer does not depend on what is checked out" "docs/pr-only.md" "$got"
+check_eq "the answer does not depend on what is checked out" "docs/pr-only.md" "$got"  # doc-pointer-fixture
 git -C "$REPO" checkout -q --detach "$R"
 
 # --- Refusals: every one of these used to be a plausible-looking wrong answer -

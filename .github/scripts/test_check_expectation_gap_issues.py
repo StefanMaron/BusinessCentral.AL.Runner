@@ -380,12 +380,12 @@ check("...and names the allowlist entry it could not check",
 # false red on 77 correct entries, which is guards-need-a-third-state.md's
 # "a genuinely absent thing must stay a pass".
 
-rc, out = run_allow(allow(diff(outOfScope=True, Doc="docs/x.md#y")),
+rc, out = run_allow(allow(diff(outOfScope=True, Doc="docs/x.md#y")),  # doc-pointer-fixture
                     states={}, argv=REPORT)
 check("an entry with no 'issue' at all is a clean pass, not a finding",
       rc == 0 and "::warning" not in out, f"rc={rc}: {out}")
 
-rc, out = run_allow(allow(diff(outOfScope=True, Doc="docs/x.md#y"),
+rc, out = run_allow(allow(diff(outOfScope=True, Doc="docs/x.md#y"),  # doc-pointer-fixture
                           diff(member="M2", issue=f"{ISSUE}/3784")),
                     states={key3784: "closed"}, argv=REPORT)
 check("...and does not stop the entries beside it being swept", "3784" in out, out)
