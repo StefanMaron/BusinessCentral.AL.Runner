@@ -244,7 +244,7 @@ The unfiltered suite is for CI; it spends most of its time in tests that spawn t
    dotnet test AlRunner.Tests --filter "FullyQualifiedName~GuardTests"               # 280 tests
    ```
 
-   The loop above runs **40** guards (`tools/test_*.py`); `.github/scripts/test_*` holds a further
+   The loop above runs **41** guards (`tools/test_*.py`); `.github/scripts/test_*` holds a further
    **20**, run by `pr-gate.yml` rather than by this loop. Treat both as a scale, not a contract,
    and trust `ls tools/test_*.py` over this sentence: the line this replaced said "21 of each",
    and at the commit that wrote it the sets were already **21 and 18** — never equal, so the
