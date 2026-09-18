@@ -1475,7 +1475,9 @@ about the runner's placeholder group rather than about BC.
 does not populate in the shape `IsCompleteExpressionLarge` and `FlowFieldsHelper
 .AnyFiltersOnFlowFields` read.
 
-So a `Truncate()` that real BC refuses for reason 4, 5 or 7 **succeeds here**. Tracked by #4374.
+So a `Truncate()` that real BC refuses for reason 4, 5 or 7 **succeeds here**. Guards 5 and 7
+are tracked by #4374; guard 4 is deliberate and stays, because the state it reads does not
+exist here at all.
 Guard 3 is pinned upstream by corpus codeunit 60923, where a real service tier adjudicates it.
 
 Measured on `Microsoft.Dynamics.Nav.Ncl.dll` build `28.1.49838.53910` (sha256 `49b11d9b`); the
