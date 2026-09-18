@@ -91,13 +91,34 @@ the system fields are contributed by the storage layer, which sits below both en
 so a before-image snapshotted above the storage layer cannot contain them. The previous
 placement made `xRec` carry values real BC would not have put there.
 
-**Measured, not argued:** the full corpus at `34fd028e` (corpus PR #379's head) went from
-`3545 pass / 3 fail` to `3548 pass / 0 fail` across this change, with no test moving in the
-other direction. That corpus includes the suites that pin `xRec` on both routes — codeunit
-60179 (`OnModify_xRec_MirrorsRecValues_WhenCalledFromCode`) and codeunit 60235
-(`Record_Modify_FromPage_xRecHoldsPreviousValue`) — and both stayed green.
+**Measured, not argued.** The full corpus at `34fd028e` (corpus PR #379's head, BC
+28.1.49838.53910) was run before the change and twice after against one cache root:
 
-The honest limit: no corpus test asserts a **system field or an AutoIncrement value read off
-`xRec`**, so the corpus confirms that nothing observable regressed rather than that the new
-`xRec` content is what a service tier answers. Settling that needs a corpus test that reads
-`xRec.SystemCreatedAt` inside `OnInsert`, which does not exist upstream today.
+| run | total | failures |
+|---|---|---|
+| before | 3548 | **3**, all in `Codeunit60562` — the three new page arms |
+| after, cold | 3548 | 0 |
+| after, warm | 3548 | 0 |
+
+Read from each run's `--out` classification (`all_failures`), not from the summary line. The
+total is identical in all three, so nothing disappeared rather than being fixed, and the only
+tests that moved are the three that were meant to. Cold and warm agree exactly.
+
+That corpus includes the suites pinning `xRec` on both routes — codeunit 60179
+(`OnModify_xRec_MirrorsRecValues_WhenCalledFromCode`) and codeunit 60235
+(`Record_Modify_FromPage_xRecHoldsPreviousValue`) — and both stayed green across the move.
+
+### Two limits, stated rather than resolved
+
+**No corpus test reads a system field or an AutoIncrement value off `xRec`.** So the corpus
+confirms that nothing observable regressed; it does not confirm that the new `xRec` content is
+what a service tier answers. Settling that needs an upstream test reading `xRec.SystemCreatedAt`
+inside `OnInsert`, which does not exist today.
+
+**The page-MODIFY arm never went red.** `PageSave_ModifiedRow_MovesModifiedStampAndLeavesCreatedStamp`
+passed against the unfixed runner too, because its row was seeded by `Record.Insert` — already
+stamped — and BC's datetime granularity makes `SystemModifiedAt >= previous` true whether or not
+the modify re-stamped. The corpus therefore adjudicates the page-modify **rule** on real BC but
+does not discriminate the runner's modify-funnel binding; what does is
+`AlRunner.Tests/PageSaveDataLayerPrependBindingTests.ModifyFunnel_CarriesTheSystemModifiedStamp`,
+which reads the rewritten IL and goes red under two independent mutations.
