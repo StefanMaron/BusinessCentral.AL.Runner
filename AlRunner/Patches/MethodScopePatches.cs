@@ -108,8 +108,65 @@ public static partial class BcRuntime
         => _getMethodScopeFlagsByType.GetOrAdd(scopeType, static t =>
         {
             Interlocked.Increment(ref _getMethodScopeFlagsLookups);
-            return t.GetMethod("GetMethodScopeFlags", BindingFlags.NonPublic | BindingFlags.Instance);
+            // Required, not optional (#4365): GetMethodScopeFlags is `virtual protected` on
+            // NavMethodScope itself and GetMethod(NonPublic | Instance) resolves protected base
+            // members, so a null here cannot mean "this subtype does not declare it" — it can
+            // only mean BC renamed or removed the member, which is unmeasurable rather than
+            // absent (guards-need-a-third-state.md). Carrying on with ordinal-0 flags would be
+            // indistinguishable at the field from a scope that genuinely has no flags.
+            return BcShape.RequiredMethod(
+                t, "GetMethodScopeFlags", BindingFlags.NonPublic | BindingFlags.Instance,
+                surface: "NavMethodScope..ctor",
+                member: "NavMethodScope.GetMethodScopeFlags",
+                detail: "the per-scope-type MethodScopeFlags fallback the ctor reads when its " +
+                        "flags argument is None; without it a scope's flags cannot be established");
         });
+
+    /// <summary>
+    /// BC's flag selection: the ctor's <paramref name="flagsArgument"/> when it is non-zero,
+    /// otherwise the concrete scope type's <c>GetMethodScopeFlags()</c>.
+    /// </summary>
+    /// <remarks>
+    /// Trap: the order is load-bearing and reads as arbitrary. IsTrigger (64) and IsTest (128)
+    /// reach the field ONLY through the argument — no GetMethodScopeFlags override in any
+    /// provisioned binary returns either (measured on 28.1.49838.53910 and 27.0.38460.53934;
+    /// #4368) — so preferring the virtual call makes both unreachable.
+    /// </remarks>
+    private static object SelectMethodScopeFlags(
+        Microsoft.Dynamics.Nav.Runtime.NavMethodScope self, object? flagsArgument)
+    {
+        if (flagsArgument != null && Convert.ToInt64(flagsArgument) != 0) return flagsArgument;
+
+        // A non-nullable enum return, so a successful Invoke cannot be null (#4365); the bind
+        // itself already refused above if BC no longer declares the member.
+        return ResolveGetMethodScopeFlags(self.GetType())!.Invoke(self, null)!;
+    }
+
+    /// <summary>
+    /// BC's <c>if (parentScope.IsInTryScope &amp;&amp; !IsRootScope) flags |= IsInTryScope;</c>.
+    /// Without it a frame nested inside an AL <c>try</c> function does not inherit the bit, so
+    /// only a literal TryMethodScope ever carries it (#4368).
+    /// </summary>
+    /// <remarks>
+    /// Reads the parent's <c>flags</c> FIELD rather than its <c>IsInTryScope</c> property: the
+    /// property is on a Cecil-rewritable surface, and the field is what BC's own ctor ORs into.
+    /// The scope being constructed is never the root scope here — the runner's root is the
+    /// pre-built <c>_skeletonRootScope</c>, never a ctor-replacement product — so BC's
+    /// <c>!IsRootScope</c> term is satisfied by construction; it is still spelled out so a future
+    /// root-scope path cannot silently inherit the bit.
+    /// </remarks>
+    private static object InheritIsInTryScope(
+        object scopeFlags, Microsoft.Dynamics.Nav.Runtime.NavMethodScope self, object? parent)
+    {
+        if (_fMsFlags == null || parent == null || ReferenceEquals(parent, self)) return scopeFlags;
+
+        var isInTryScope = Convert.ToInt64(
+            Enum.Parse(_fMsFlags.FieldType, "IsInTryScope"));
+        var parentFlags = Convert.ToInt64(_fMsFlags.GetValue(parent) ?? 0L);
+        if ((parentFlags & isInTryScope) == 0) return scopeFlags;
+
+        return Enum.ToObject(_fMsFlags.FieldType, Convert.ToInt64(scopeFlags) | isInTryScope);
+    }
     /// <summary>
     /// Full replacement for NavMethodScope..ctor(NavApplicationObjectBase, MethodScopeFlags, bool).
     ///
@@ -139,7 +196,7 @@ public static partial class BcRuntime
     public static void NavMethodScopeCtorReplacement(
         Microsoft.Dynamics.Nav.Runtime.NavMethodScope self,
         Microsoft.Dynamics.Nav.Runtime.NavApplicationObjectBase applicationObject,
-        object flags,   // MethodScopeFlags — superseded by GetMethodScopeFlags()
+        object flags,   // MethodScopeFlags
         bool eventSource)
     {
         // Capture the actual current scope (our parent) BEFORE we update CurrentMethodScope.
@@ -175,17 +232,20 @@ public static partial class BcRuntime
             // 3. NavMethodScope.parentScope = actual parent scope at entry (enables correct
             //    CurrentMethodScope restoration in NavMethodScope_Dispose).
             if (_fMsParentScope != null) FieldPoke.SetInstance(_fMsParentScope, self, actualParent);
-            // 4. NavMethodScope.flags — resolve via virtual GetMethodScopeFlags() on the concrete subtype.
-            //    NavMethodScope<T> → IsStackFrame; TryMethodScope → IsInTryScope; etc.
+            // 4. NavMethodScope.flags — BC's own rule, in BC's own order (#4368).
+            //
+            //    The real ctor is `flags = (flags == None) ? GetMethodScopeFlags() : flags;`
+            //    followed by `if (parentScope.IsInTryScope && !IsRootScope) flags |= IsInTryScope;`
+            //    (28.1.49838.53910 IL at IL_0056/IL_0068). The PARAMETER wins when non-zero;
+            //    GetMethodScopeFlags() is the fallback. This used to ignore the parameter and
+            //    keep only the virtual call — the inverse — and to drop the try-scope
+            //    inheritance, so IsInTryScope was set only on a literal TryMethodScope and never
+            //    on a frame nested inside one.
             if (_fMsFlags != null)
             {
-                try
-                {
-                    var getFlags = ResolveGetMethodScopeFlags(self.GetType());
-                    var scopeFlags = getFlags != null ? getFlags.Invoke(self, null) : null;
-                    FieldPoke.SetInstance(_fMsFlags, self, scopeFlags ?? Enum.ToObject(_fMsFlags.FieldType, 0));
-                }
-                catch { /* leave flags at default 0 on reflection error */ }
+                var scopeFlags = SelectMethodScopeFlags(self, flags);
+                FieldPoke.SetInstance(
+                    _fMsFlags, self, InheritIsInTryScope(scopeFlags, self, actualParent));
             }
             // 5. NavMethodScope.StackDepth = 2 (_skeletonRootScope.StackDepth=1)
             if (_fMsStackDepth != null)  FieldPoke.SetInstance(_fMsStackDepth,  self, 2);
