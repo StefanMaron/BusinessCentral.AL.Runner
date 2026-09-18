@@ -115,11 +115,11 @@ public sealed class BuiltInCancelIsNotADiscardTests
     /// candidate for the 57 <c>constrained. call</c> sites in the closure.</para>
     /// <para>Trap: this matches on NAME AND ARITY and asks nothing about interfaces, so an
     /// ordinary static helper or operator overload of the right shape IS enqueued at a site it
-    /// could never run at — the 57 call <c>get_Zero/0</c>, <c>op_Checked*/2</c>, <c>Min/2</c>,
-    /// <c>Max/2</c>, <c>CreateChecked/1</c>, and a nested type with a plain <c>operator +</c> was
-    /// measured being enqueued and its store reported as an offender. Harmless only because
-    /// <strong>0</strong> universe statics match any of the 58 today; re-measure rather than
-    /// reasoning from "nothing here implements System.Numerics", which is not what this asks
+    /// could never run at — a nested type with a plain <c>operator +</c> was measured being
+    /// enqueued and its store reported as an offender. Harmless only because <strong>0</strong>
+    /// universe statics match any of the 58 today; re-measure rather than reasoning from
+    /// "nothing here implements System.Numerics", which is not what this asks. The exhaustive
+    /// name/arity histogram of the 57 is in docs/closure-walk-indirect-dispatch.md#census
     /// (#4320 review).</para>
     /// <para>Trap: read off the <see cref="MethodReference"/>, never its definition — it must
     /// still answer for a callee that will not resolve. And do not narrow it by the type
@@ -137,15 +137,16 @@ public sealed class BuiltInCancelIsNotADiscardTests
     /// re-enter the universe through a member of one that the instruction does not name — an
     /// async method's state machine handed to <c>AsyncTaskMethodBuilder.Start&lt;T&gt;</c> is the
     /// live shape, and it is a generic <em>method</em> argument.
-    /// <para>Two narrowings, and BOTH are load-bearing against false REDs on ordinary C# over a
-    /// type nested in the host (#4320 review). The DECLARING type's generic arguments are not
-    /// read at all: that refused <c>new List&lt;Row&gt;()</c> (3) and
-    /// <c>EqualityComparer&lt;Row&gt;.Default.Equals</c> (2). And the argument type must declare
-    /// something out-of-universe code could actually dispatch INTO — a body that is
-    /// <c>virtual</c> or <c>static</c>, the same set <see cref="IndirectTargetsInUniverse"/>
-    /// treats as reachable. Without that second test <c>Enumerable.Count&lt;Row&gt;</c> is
-    /// refused (1), because it IS a generic method call and the first narrowing does not touch
-    /// it. A plain data type has no such member, so nothing can re-enter through it.</para>
+    /// <para>Two narrowings are at work — the declaring type's arguments are not read, and the
+    /// argument type must declare a <c>virtual</c> or <c>static</c> body, the same set
+    /// <see cref="IndirectTargetsInUniverse"/> treats as reachable — and both are load-bearing
+    /// against false REDs on ordinary C# over a type nested in the host. Which one suppresses
+    /// which shape is measured per call site in
+    /// docs/closure-walk-indirect-dispatch.md#what-the-fix-does; that table is the only copy.</para>
+    /// <para>Trap for a mutation: the ternary returns <c>Empty</c> before anything a term added
+    /// to the second branch could see, so ADDING the declaring type's arguments there lands,
+    /// executes and changes nothing — <c>Failed: 0, Passed: 16</c>, which reads as a weak test.
+    /// Dropping that narrowing means replacing the whole body (#4320 review).</para>
     /// <para>The async state machine passes both: <c>Start&lt;TStateMachine&gt;</c> is a generic
     /// method, and the state machine declares <c>MoveNext</c> — virtual, with a body, holding the
     /// store. <c>AGenericLocalOverAUniverseTypeIsNotRefused</c> anchors the absence, which is the
@@ -522,14 +523,15 @@ public sealed class BuiltInCancelIsNotADiscardTests
             public void Invoke() { _fixture._pendingNewRow = false; }
         }
 
-        // Ordinary C# over types nested in the host, covering BOTH narrowings — each line is
-        // refused if one of them is dropped, and the two are not interchangeable:
-        //   * Row is a plain data type, so the DISPATCHABLE test suppresses it. It reaches the
-        //     refusal through `Enumerable.Count<Row>`, a generic METHOD, which dropping the
-        //     declaring-type branch does not touch.
-        //   * ThroughInterface has a virtual body, so the dispatchable test does NOT suppress it.
-        //     It reaches the refusal only through `List<ThroughInterface>`'s DECLARING type, so it
-        //     is refused exactly when that branch is (wrongly) read.
+        // Ordinary C# over types nested in the host. Two terms here are load-bearing and are NOT
+        // interchangeable — each anchors one narrowing, and the two red at disjoint call sites:
+        //   * `Enumerable.Count(rows)` is a generic METHOD call over Row, a plain data type. It
+        //     is the only anchor for the DISPATCHABLE test; delete it and that narrowing becomes
+        //     a line nothing measures.
+        //   * `List<ThroughInterface>` names a type with a virtual body through its DECLARING
+        //     type, so it is the only anchor for not reading declaring-type arguments.
+        // The other locals are controls and anchor neither. Per-site table:
+        // docs/closure-walk-indirect-dispatch.md#what-the-fix-does
         private sealed class Row { public int Value; }
 
         internal int EntryWithGenericLocals()
@@ -669,10 +671,9 @@ public sealed class BuiltInCancelIsNotADiscardTests
         Assert.Contains(walk.Unfollowable, u => u.Contains("EntryAsync"));
     }
 
-    // The anchor for a DELETED clause, which is the only kind of anchor an absence can have.
-    // Reading the DECLARING type's generic arguments as well refused all three of these shapes
-    // (3 + 1 + 2 refusals) and FLOOR 5 made that a RED on correct code. Re-add that line and this
-    // reds; nothing else does, because none of these is a generic METHOD call (#4320 review).
+    // The anchor for two DELETED clauses, which is the only kind of anchor an absence can have.
+    // Dropping either narrowing in isolation reds this, at disjoint call sites of the entry it
+    // walks. docs/closure-walk-indirect-dispatch.md#what-the-fix-does
     [Fact]
     public void AGenericLocalOverAUniverseTypeIsNotRefused()
     {

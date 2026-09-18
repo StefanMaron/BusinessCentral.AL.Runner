@@ -54,19 +54,24 @@ Two different answers, because the two shapes are not equally decidable.
   such refusal into a **false RED on correct code**. Counted per call site in the fixture entry
   `EntryWithGenericLocals`, re-measured after the declaring-type line came out:
 
-  | shape (call sites) | shipped | narrowing 1 dropped (2 kept) | both dropped |
-  |---|---|---|---|
-  | `List<Row>` — `.ctor`, `Add`, `get_Item`×2, `get_Count` (5) | 0 | 0 | **5** |
-  | `EqualityComparer<Row>` — `get_Default`, `Equals` (2) | 0 | 0 | **2** |
-  | `Enumerable.Count<Row>` (1) | 0 | 0 | **1** |
-  | `List<ThroughInterface>` — `.ctor`, `Add`, `get_Count` (3) | 0 | **3** | **3** |
+  | shape (call sites) | shipped | N1 dropped | N2 dropped | both dropped |
+  |---|---|---|---|---|
+  | `List<Row>` — `.ctor`, `Add`, `get_Item`×2, `get_Count` (5) | 0 | 0 | 0 | **5** |
+  | `EqualityComparer<Row>` — `get_Default`, `Equals` (2) | 0 | 0 | 0 | **2** |
+  | `Enumerable.Count<Row>` (1) | 0 | 0 | **1** | **1** |
+  | `List<ThroughInterface>` — `.ctor`, `Add`, `get_Count` (3) | 0 | **3** | 0 | **3** |
 
-  Read the middle column against the last one: it is the **whole** column-2 total, so `Row` is
-  suppressed by narrowing 2 rather than by narrowing 1, and only `ThroughInterface` — which has a
-  virtual body — is attributable to the declaring-type branch. A review that attributed all of
-  these to that branch would have removed it and left the eight `Row` refusals standing.
-  Conversely `Enumerable.Count<Row>` **is** a generic *method* call, so narrowing 1 does not
-  touch it, and dropping narrowing 2 alone leaves exactly that one refusing.
+  **N1 and N2 red at DISJOINT call sites**, which is what makes the single test
+  `AGenericLocalOverAUniverseTypeIsNotRefused` a genuine anchor for both rather than one test
+  reddening twice for one reason. Dispatchability, measured per nested type:
+  `Row: plain [.ctor]`, `ThroughInterface: DISPATCHABLE [.ctor, Go:v]`.
+
+  Read the N1 column: every entry in it is `ThroughInterface`, so `Row` — `List<Row>` included,
+  which *is* a declaring-type generic instance — is suppressed by **N2**, not by N1. A reading
+  that attributed all of these to the declaring-type branch would have removed it and left the
+  eight `Row` refusals standing. The N2 column is the mirror: `Enumerable.Count<Row>` **is** a
+  generic *method* call, so N1 never touched it, and it is the only site N2 alone leaves
+  refusing.
 
   The `async` shape passes both tests, which is why it still refuses:
   `AsyncTaskMethodBuilder.Start<TStateMachine>` is a generic method, and the state machine
@@ -146,10 +151,23 @@ all 58, exactly **one** yields any in-universe candidate: `IDisposable::Dispose(
 `LiveNavTestPage::Dispose()`.
 
 **Why the other 57 yield none is not "nothing here implements `System.Numerics`" — the filter
-never asks about interfaces.** It matches **name and arity**. The 57 sites call `get_Zero/0`,
-`op_Checked*/2`, `Min/2`, `Max/2`, `CreateChecked/1` and `op_Equality/2`, and **0** universe
-methods carry those shapes today — measured directly as **0 static candidates across all 58
-sites**, out of **18** universe statics with a body that were eligible to match. That is a measurement about *this* universe, not a property of
+never asks about interfaces.** It matches **name and arity**, and **0** universe methods carry any
+of those shapes today: measured directly as **0 static candidates across all 58 sites**, out of
+**18** universe statics with a body that were eligible to match.
+
+The 57 sites are **15 distinct name/arity shapes**, and this histogram is exhaustive — it sums to
+57, so a prose list that stops short of it understates what the filter is being asked:
+
+| shape | sites | | shape | sites | | shape | sites |
+|---|---|---|---|---|---|---|---|
+| `get_Zero/0` | 15 | | `CreateChecked/1` | 4 | | `op_LessThanOrEqual/2` | 2 |
+| `op_CheckedSubtraction/2` | 9 | | `get_One/0` | 4 | | `Max/2` | 1 |
+| `op_CheckedAddition/2` | 6 | | `op_LessThan/2` | 3 | | `op_CheckedMultiply/2` | 1 |
+| `op_GreaterThanOrEqual/2` | 5 | | `Min/2` | 2 | | `op_CheckedUnaryNegation/1` | 1 |
+| | | | `op_CheckedDivision/2` | 2 | | `op_Equality/2` | 1 |
+| | | | | | | `op_GreaterThan/2` | 1 |
+
+That is a measurement about *this* universe, not a property of
 the design: an ordinary static helper or an operator overload of a matching shape would be
 enqueued at a site it can never run at, and a store inside it would be reported as an offender on
 the headline row. Constructed and measured — a nested type with a plain `operator +` produced
