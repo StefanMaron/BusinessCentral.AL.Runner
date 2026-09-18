@@ -275,19 +275,11 @@ public static partial class BcRuntime
         {
             foreach (var attr in t.GetCustomAttributes(inherit: false))
             {
-                var at = attr.GetType();
-                if (at.Name != "NavCodeunitOptionsAttribute") continue;
-                var isManual = at.GetProperty("IsEventManualBinding",
-                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                if (isManual != null)
-                {
-                    try { return (bool)isManual.GetValue(attr)!; } catch { }
-                }
-                var optionsProp = at.GetProperty("Options",
-                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                var v = optionsProp?.GetValue(attr);
-                if (v != null)
-                    return (Convert.ToInt32(v) & 1) != 0; // EventManualBinding flag = 1
+                if (attr.GetType().Name != "NavCodeunitOptionsAttribute") continue;
+                // One decoder, shared with NCLMetaCodeunit_get_IsEventManualBinding above —
+                // the summary's "two answers here would let the two paths drift" was true and
+                // the two copies HAD drifted together onto the same wrong mask (#4289).
+                return ReadEventManualBindingFromAttribute(attr);
             }
             return false;
         });
