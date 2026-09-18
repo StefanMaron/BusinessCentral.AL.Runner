@@ -331,6 +331,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **guards:** follow indirect dispatch in BuiltInCancelIsNotADiscardTests' closure walk
 - **testpage:** close the depth bound on BuiltInCancelIsNotADiscardTests
 - **tools:** read the non-vacuity fixture from build()'s output, not its argument
 - **spawn:** derive the last six timeout messages -- #4275's population reaches zero
