@@ -292,7 +292,21 @@ internal static partial class BcAppSymbolCache
         // which 1,129 declare Enabled and 1,101 declare Visible — all of them answered true,
         // because the synthesized page metadata reconstructs no action tree for BC's own
         // ActionDefinition lookup to find. There is no Editable: AL does not give an action one.
-        Dictionary<int, ActionDeclaredPropertiesSymbol>? MemberIdToDeclaredProperties = null);
+        Dictionary<int, ActionDeclaredPropertiesSymbol>? MemberIdToDeclaredProperties = null,
+        // The methods BC's emitter writes as <Method>, in the symbol file's own array order
+        // (#4267). Read by the SAME ReadAttributedMethods the codeunit path uses, because BC's
+        // ObjectMetadataEmitter writes one method table and this is it: over Business Foundation
+        // + System Application at 28.1.49838.53910 (Ncl.dll sha256 49b11d9b), 235 pages, 107
+        // state a non-empty Methods array and BC emits <Methods> on exactly the 5 that state an
+        // event-publisher attribute.
+        //
+        // TRAP: 107 is NOT the number of pages that get a subtree. 105 of those 107 state only
+        // ordinary public procedures, which BC's emitter does not write. The filter is
+        // EmittedMethodAttributeKinds, shared with codeunits, so the two cannot drift.
+        //
+        // Null when the page states no Methods array, keeping "states none" distinct from
+        // "states an empty list" for the consumer — same contract as CodeunitMethodSymbol.
+        List<CodeunitMethodSymbol>? AttributedMethods = null);
 
     /// <summary>
     /// The <c>Enabled</c> / <c>Visible</c> one action DECLARES, exactly as the compiler wrote
@@ -1455,7 +1469,11 @@ internal static partial class BcAppSymbolCache
             isPreview,
             insertAllowedStated, modifyAllowedStated, deleteAllowedStated,
             delayedInsertStated, multipleNewLinesStated,
-            unreadableBooleans, actionDeclaredProperties);
+            unreadableBooleans, actionDeclaredProperties,
+            // #4267. The SAME reader the codeunit path uses — BC's emitter writes one method
+            // table for both kinds, so a second reader here would be a second spelling of one
+            // rule, free to drift.
+            ReadAttributedMethods(page));
     }
 
     /// <summary>
