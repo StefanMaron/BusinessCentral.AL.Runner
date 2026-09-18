@@ -4798,7 +4798,9 @@ if (coverageEnabled)
     //
     // #3965: the execution bundles are not the whole set. A sibling SOURCE dependency is
     // compiled and executed without being a bundle, so RootsWithParsedSourceDependencies adds
-    // the dirs the run actually parsed; a packaged .app dep adds nothing, which is correct.
+    // the dirs the run actually parsed. A packaged .app dep adds nothing here and cannot be
+    // rescued by adding one — its statements execute and are dropped for a different reason,
+    // one step earlier (#4273). See docs/coverage-attribution.md.
     var coverageSourceMap = AlRunner.Infrastructure.AlCoverageSourceMap.Build(
         AlRunner.Infrastructure.AlCoverageSourceMap.RootsWithParsedSourceDependencies(bundles),
         relativeTo: AlRunner.Infrastructure.WorkingDirectory.TryGet());   // #3120: null → absolute filenames
