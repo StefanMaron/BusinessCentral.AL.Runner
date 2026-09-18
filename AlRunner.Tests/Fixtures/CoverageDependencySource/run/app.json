@@ -1,0 +1,25 @@
+{
+  "id": "e2c59a73-8f46-4da5-9371-a0493af6dd53",
+  "name": "Runner Tests Fixture - Coverage Dependency Source Run",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "#4272: an OnRun-bearing consumer of the same sibling SOURCE dependency, so the server's execute handler has a coverage site to measure.",
+  "description": "AlRunner#4272: HandleServerExecute builds its coverage source map from sourcePaths alone, the same defect #3965 fixed on the CLI. main/ cannot serve this because its only codeunit is Subtype = Test and execute runs the lowest-object-id OnRun-bearing codeunit.",
+  "dependencies": [
+    {
+      "id": "c9a37e51-6d24-4b83-a15f-8e2760d4bb31",
+      "name": "Runner Tests Fixture - Coverage Dependency Source Subject",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    }
+  ],
+  "idRanges": [
+    {
+      "from": 70880,
+      "to": 70889
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "OnPrem"
+}
