@@ -293,8 +293,9 @@ library executes those same numbers in its own files. The collision count depend
 much foreign code runs, so what is worth recording is the **floor**, not a headline figure. Even
 the most trivial probe — one `re.compile("x")` plus a `tokenize` pass and a `mkdtemp` — collides
 **6** times across **5** of the ten arms; a realistic pattern reaches 9-10 across 6. The
-per-collision repeat count is not a property of that description at all: it swings from 2 to 11
-with the regex alone, so any single number for it is an artefact of a pattern nobody wrote down
+per-collision repeat count is not a property of that description at all: it moves with the regex
+alone, and independent runs while writing this recorded 2, 7, 9, 11, 13 and 15 — a spread, not a
+range to quote back, so any single number for it is an artefact of a pattern nobody wrote down
 (measured three ways while correcting an earlier figure here that was exactly that). What matters
 is that the floor is well above zero for any workload.
 
