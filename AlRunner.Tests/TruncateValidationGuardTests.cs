@@ -135,6 +135,112 @@ public sealed class TruncateValidationGuardTests
         Assert.Null(EnterOn(scope));
     }
 
+    // ── Guards 5 and 7 (#4374): drive the RESOLVER, do not describe BC ─────────────────────
+
+    // These call EnsureTruncateValidationShape -- the production resolver -- and assert on the
+    // static fields it binds. That is deliberate and was a review finding: the first version of
+    // this section asserted facts about typeof(NavRecord) and BC's metadata instead, which hold
+    // whatever the resolver does, so every one of them stayed green under a mutation that made
+    // guard 5 silently permit a Truncate() BC refuses. A test that names the thing is not a test
+    // that drives it (.claude/rules/tdd.md).
+    //
+    // Reflection is used to reach them because the resolver and its fields are private to the
+    // partial class; the alternative -- widening them for a test -- would change shipped surface
+    // to suit the test, which is the wrong direction.
+
+    private static void ResolveShapeFor(Type recordType)
+    {
+        // The resolver latches after its first call, so an earlier test (or an earlier run of
+        // this one) would make it a no-op and every assertion below would read whatever that
+        // call left. Clearing the latch is what makes this drive the production code rather
+        // than inspect a leftover.
+        Static("_truncateValidationResolved").SetValue(null, false);
+        typeof(BcRuntime)
+            .GetMethod("EnsureTruncateValidationShape", BindingFlags.NonPublic | BindingFlags.Static)!
+            .Invoke(null, new object[] { recordType });
+    }
+
+    private static object? Resolved(string field) => Static(field).GetValue(null);
+
+    // Guard 5's four members must all be bound after the resolver runs. This is the test the
+    // reviewer's mutation B -- `_navTriggerEventType = null` in ResolveGuard5Shape -- must red:
+    // that field is read by IsDeleteEventSubscribed, and a null there used to take an early
+    // `return false`, i.e. "no delete subscriber", permitting a Truncate() BC refuses.
+    [SkippableFact]
+    public void EnsureTruncateValidationShape_BindsEveryMemberGuard5Reads()
+    {
+        TestArtifacts.SkipIfMissing();
+        ResolveShapeFor(typeof(NavRecord));
+
+        Assert.NotNull(Resolved("_pRecSession"));
+        Assert.NotNull(Resolved("_mMtIsEventSubscribed"));
+        Assert.NotNull(Resolved("_mResolveAppGroup"));
+        // The one the early-return read and the refusal check originally omitted.
+        Assert.NotNull(Resolved("_navTriggerEventType"));
+
+        // ...and it is the enum carrying BC's delete ordinals, not merely some enum. Pins the
+        // 5/6 literals IsDeleteEventSubscribed passes against what they must mean.
+        var triggerEventType = (Type)Resolved("_navTriggerEventType")!;
+        Assert.True(triggerEventType.IsEnum);
+        Assert.Equal("OnBeforeDeleteEvent", Enum.GetName(triggerEventType, 5));
+        Assert.Equal("OnAfterDeleteEvent", Enum.GetName(triggerEventType, 6));
+    }
+
+    // Guard 7's chain, same shape. Reviewer mutation C -- "MarkedRecords" -> "MarkedRecordsXX"
+    // in ResolveGuard7Shape -- must red here.
+    [SkippableFact]
+    public void EnsureTruncateValidationShape_BindsEveryMemberGuard7Reads()
+    {
+        TestArtifacts.SkipIfMissing();
+        ResolveShapeFor(typeof(NavRecord));
+
+        Assert.NotNull(Resolved("_pRecRecordImplementation"));
+        Assert.NotNull(Resolved("_pImplTableState"));
+        Assert.NotNull(Resolved("_pTsFiltersAndMarks"));
+        Assert.NotNull(Resolved("_pFamMarkedRecords"));
+        Assert.NotNull(Resolved("_pFamFilters"));
+        Assert.NotNull(Resolved("_pMrIsCompleteExpressionLarge"));
+        Assert.NotNull(Resolved("_pFfdAnyFiltersOnFlowFields"));
+    }
+
+    // The #4378 defect, and the arm that discriminates it in BOTH directions.
+    //
+    // NCLMetaTable was resolved from `recordType.Assembly`. For an AL-emitted record that is the
+    // emitted business-application assembly, which holds no BC types, so the lookup returned null
+    // and guards 2, 5 and 6 -- every guard reading the metatable -- were silently inert for every
+    // AL table. NavRecord cannot show this: its own assembly IS Ncl, so both the broken and the
+    // fixed resolver bind it. A record type declared OUTSIDE Ncl is what separates them, which is
+    // exactly what an AL-emitted record is.
+    [SkippableFact]
+    public void EnsureTruncateValidationShape_BindsTheMetaTable_ForARecordTypeDeclaredOutsideNcl()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        // A NavRecord subclass declared in THIS assembly, standing in for an emitted AL record.
+        // Its assembly has no BC types in it -- the precondition that made the old lookup fail.
+        Assert.Null(typeof(RecordDeclaredOutsideNcl).Assembly
+            .GetType("Microsoft.Dynamics.Nav.Runtime.NCLMetaTable"));
+
+        ResolveShapeFor(typeof(RecordDeclaredOutsideNcl));
+
+        // Guards 2 and 6 read these two off the metatable type. Both null is the #4378 defect;
+        // reinstating `recordType.Assembly` in the resolver reds exactly this test.
+        Assert.NotNull(Resolved("_pMtSupportsTruncation"));
+        Assert.NotNull(Resolved("_pMtMediaFieldCount"));
+
+        // Guard 5 binds through the same metatable type, so it goes inert with them.
+        Assert.NotNull(Resolved("_mMtIsEventSubscribed"));
+    }
+
+    /// <summary>
+    /// Stands in for an AL-emitted record: a NavRecord whose declaring assembly is not Ncl.
+    /// Never instantiated — the resolver reads its type, not an instance.
+    /// </summary>
+    private sealed class RecordDeclaredOutsideNcl : NavRecord
+    {
+        private RecordDeclaredOutsideNcl() : base(null!, default, default) { }
+    }
+
     // ── plumbing ────────────────────────────────────────────────────────────────────────────
 
     // EnterOn/ExitOn invoke the PRODUCTION EnterTryScope/ExitTryScope. They do not reimplement
