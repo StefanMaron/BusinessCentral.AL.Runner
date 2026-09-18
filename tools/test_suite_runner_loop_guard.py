@@ -26,6 +26,13 @@ things (`.claude/rules/tdd.md`, "a mutation that reds everything proves
 coverage exists; one that reds exactly the right subset proves the tests
 discriminate").
 
+A third group pins that the scan is not BLIND -- that it reaches the end of
+every workflow file rather than merely declining to flag one. That property was
+asserted for pr-gate.yml alone, so a never-closing heredoc in any other workflow
+left the rest of that file unscanned with all 31 assertions green (#4379, found
+by a reviewer on PR #4377). Its population is derived by globbing the workflow
+directory, never listed, so a workflow added tomorrow is probed the day it lands.
+
 Exit codes: 0 clean, 1 an assertion failed, 3 could not measure.
 """
 
@@ -338,6 +345,91 @@ check(
     "the widened pattern flags nothing in the real workflow tree",
     live == [],
     f"false positive(s): {live}",
+)
+
+
+# ------------------------------------- every file the scan walks must be REACHED
+#
+# The probe above covers pr-gate.yml alone, and that is the whole of #4379: a
+# heredoc that never closes in any OTHER workflow blinds the scan there with all
+# 31 assertions still green. `scan_text` `continue`s every line while a heredoc
+# region is open, so a region that never closes swallows the file to EOF.
+# Measured on this tree: breaking the closer of bc-tests.yml's one genuine
+# heredoc (`<<EOF` at :499, closed at :508) hides 869 of its 1368 lines (64%),
+# and the suite still reported `31 passed, 0 failed`.
+#
+# The population is DERIVED, never listed. A probe keyed on an explicit set of
+# filenames needs editing whenever a workflow is added, which is the
+# enumeration-staleness #4367 had to fix -- and there the ADDITION direction was
+# the one already broken when somebody measured it. Globbing the directory means
+# a workflow added tomorrow is probed the day it lands, and a file that stops
+# being reachable reds by name.
+#
+# Asked of the guard's OWN `scan_text`, not a re-implementation of it. #4377's
+# author wrote a probe that re-walked the file itself and it therefore reported
+# pre-fix numbers after the fix: a probe that re-implements the scan cannot
+# observe the scan being blinded, which is the property under test.
+PROBE = (
+    "          suites=(tools/test_*.py)\n"
+    '          for s in "${suites[@]}"; do\n'
+    '            python3 "$s" || __reach_probe=1\n'
+    "          done\n"
+)
+
+WORKFLOW_FILES = sorted(WORKFLOWS.glob("*.yml")) + sorted(WORKFLOWS.glob("*.yaml"))
+if not WORKFLOW_FILES:
+    print(f"UNMEASURED: {WORKFLOWS} holds no workflow files to probe", file=sys.stderr)
+    print("1 check group(s) could not be measured; nothing here is a pass")
+    raise SystemExit(3)
+
+unreached = []
+for wf in WORKFLOW_FILES:
+    rel = str(wf.relative_to(ROOT))
+    body = wf.read_text(encoding="utf-8")
+    if not body.endswith("\n"):
+        body += "\n"
+    # The file's own findings are the baseline (0 today, asserted just above);
+    # appending the probe must add exactly one more. Anything else means the
+    # walk never reached the end of this file.
+    before = len(scan_text(rel, body))
+    after = len(scan_text(rel, body + PROBE))
+    if after != before + 1:
+        unreached.append(f"{rel} ({before} -> {after}, expected {before + 1})")
+
+check(
+    f"the scan reaches the end of all {len(WORKFLOW_FILES)} workflow files",
+    unreached == [],
+    "the walk never reaches the end of: " + ", ".join(unreached)
+    + " -- everything past that point is invisible while every other assertion "
+      "stays green. A heredoc region that never closes is the known cause "
+      "(#4362, #4379); the next assertion says whether that is this one, and a "
+      "green there means the walk stops for some other reason",
+)
+
+# Why, for the reader of a red: which heredoc region runs to EOF. This is the
+# diagnosis the probe above cannot give -- the probe says WHICH FILE went blind,
+# this says WHERE. It is a strictly weaker property on its own (a region that
+# never opens, or a moved anchor, blinds a file without leaving an open region),
+# so it is a second assertion rather than a replacement.
+runaway = []
+for wf in WORKFLOW_FILES:
+    rel = str(wf.relative_to(ROOT))
+    open_delim, open_line = None, 0
+    for n, line in enumerate(wf.read_text(encoding="utf-8").splitlines(), 1):
+        if open_delim is not None:
+            if line.strip() == open_delim:
+                open_delim = None
+            continue
+        m = HEREDOC_OPEN.search(DQ_STRING.sub('""', line))
+        if m:
+            open_delim, open_line = m.group(1), n
+    if open_delim is not None:
+        runaway.append(f"{rel}:{open_line} <<{open_delim} never closes")
+
+check(
+    "no heredoc region in the workflow tree runs to EOF",
+    runaway == [],
+    "; ".join(runaway) + " -- every line after it is skipped by the scan",
 )
 
 
