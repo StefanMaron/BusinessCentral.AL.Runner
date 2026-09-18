@@ -1669,6 +1669,12 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   `[SourceSpans]` and its object id on every one of eight packaged scopes measured), which is why
   this is a gap rather than a limit.
 
+  That accounts for the 8,357 ordinary methods. The packaged assembly's other 155 scopes — the
+  ones that *do* carry the attribute at type level — drop out for a **second, independent**
+  reason: they are event publishers with empty bodies, so each holds a single span, which is BC's
+  never-instrumented trailing sentinel, and contributes no line either way. A fix for the first
+  reason alone leaves that correct and unchanged.
+
   Two things a reader is likely to assume and should not. The `.app` **does** ship its AL source
   (1,319 `.al` files in System Application), so "no source on disk" is not the reason; and
   supplying that source does not help — adding it as a coverage root grew the source map from 1

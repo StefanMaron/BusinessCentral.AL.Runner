@@ -22,6 +22,19 @@ attribution:
 Only question 4 is about source on disk. #3965 and #4272 were both failures of question 4, which
 is why widening the root set fixed them.
 
+**There is a fifth gate, downstream of all four, and leaving it out makes this document look
+wrong.** Both callers then ask `AlCoverageInstrumentedStatements.Find(scopeType)` for the span
+indices BC actually backed with a `StmtHit`/`CStmtHit` call, and emit a line only for those. BC
+always emits one trailing span beyond the highest instrumented index — a sentinel at the method's
+closing `end;`, which can never register a hit — so **a scope whose `EncodedSpans` holds exactly
+one entry has the sentinel and nothing else: zero coverable statements.** It passes questions 1-3
+and contributes no line either way.
+
+That is not a footnote here, because it is the only reason the packaged assembly's 155
+attributable scopes do not appear in the report. Measured on the System Application assembly:
+**all 155 have exactly 1 span**, against `1 span × 26` and `≥2 spans × 8,331` at method level.
+They are event publishers, and an event publisher has an empty body.
+
 ## The two scope shapes BC's compiler emits, and where `[SourceSpans]` sits
 
 A statement hit is keyed on `scope.GetType()`, and BC's compiler produces **two different runtime
@@ -40,9 +53,15 @@ Measured, on the runner-emitted dependency assembly for fixture
 `Twice_Scope_1516892452`, both carrying type-level `[SourceSpans]`, zero method-level.
 
 Measured, on the packaged System Application assembly (11,022 types, 8,512 `[SourceSpans]`
-applications): **155 type-level and 8,357 method-level.** Every one of the 155 is an
-`On*_Scope` class — integration-event publisher scopes — so the ordinary AL method of a packaged
-app is in the 8,357, where the runner does not look.
+applications): **155 type-level and 8,357 method-level.** The ordinary AL method of a packaged app
+is in the 8,357, where the runner does not look.
+
+All 155 are event-publisher scopes, and the check for that is the **attribute, not the name**:
+every one of the 155 backing methods carries `Microsoft.Dynamics.Nav.Types.NavEventAttribute`
+(155 of 155, none without). A name test gets this wrong — 152 of the 155 are `On*_Scope`, and the
+three that are not (`ProcessSharePointFileMetadata_Scope`, `ProcessSharePointListItemMetadata_Scope`,
+`GetPrinterSelectionsPage_Scope`) are event publishers exactly like the rest. All 155 do end in
+`_Scope`, and their outermost declaring types are `Codeunit` × 149, `Page` × 5, `XmlPort` × 1.
 
 ## What that produces on a real run
 
@@ -99,9 +118,14 @@ exactly that.
 
 What a fix still has to answer, none of which #4273 measured:
 
-- **Cost.** `OnStmtHit` runs on every AL statement. `GetDeclaringMethodInfo()` per hit is a
-  virtual call on the hottest path in the runner; a per-scope-type cache does not work, because
-  one generic type serves thousands of methods.
+- **Cost, and it is worse than a dispatch.** `OnStmtHit` runs on every AL statement.
+  `GetDeclaringMethodInfo` is **`internal` and non-virtual** — measured on
+  `Microsoft.Dynamics.Nav.Ncl.dll` sha256 `49b11d9b…`: `attrs = Assembly, HideBySig`,
+  `isVirtual = False`, a **376-byte** IL body plus a 58-byte closure helper
+  `<GetDeclaringMethodInfo>b__24_0`. So the runner cannot simply call it — it needs reflection or
+  a cached delegate — and what it then runs per statement is substantial rather than a cheap
+  virtual dispatch. A per-scope-**type** cache does not rescue this, because one generic type
+  serves thousands of methods.
 - **A method-keyed hit table.** `_hits` is `(Type, int)` and `AlCoverageInstrumentedStatements.Find`
   takes a `Type`; both need method-keyed analogues.
 - **Where the reported file path points.** The package's entries are URL-double-encoded
@@ -123,3 +147,13 @@ measures both:
 Disjoint, in one run each. A refusal that wants to name its own cause can already tell them
 apart; what it cannot do is tell either of them from a genuine "this object has no executable
 statements", which is the part that stays hard.
+
+**One bound on that, and it decides where such a refusal may live.** A question-1 failure is also
+what every non-AL framework type produces — `ALMethodScope<T>` is one, but so is any other class
+that never carried `[SourceSpans]`. The discrimination is therefore only meaningful where the
+population is already known to be AL that executed, i.e. the **hit-tracked** paths
+(`CollectStatementTable`, `CollectPerTestStatementTable`, and the `StmtHit`-time resolver), which
+is where the 97 above were counted. It is meaningless in `Collect`, which scans every loaded
+assembly and whose question-1 rejections are overwhelmingly types that are not AL at all. Since
+`TryResolveScope` is shared by both, a third state added inside it would inherit the wrong
+population; the caller is what knows which it has.
