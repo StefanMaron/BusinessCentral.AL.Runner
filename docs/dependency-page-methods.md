@@ -113,6 +113,38 @@ not close it.
 The runner states no parameter it cannot derive, so nothing manufactures agreement in the
 direction that matters.
 
+## Nothing outside BC's own object model reads a page's method table
+
+The element is not AL-observable, and that is measured rather than assumed — it is what makes
+#4267's runner PR declare `Corpus-NA:` rather than opening a corpus PR.
+
+A Mono.Cecil scan of **all 495 readable assemblies** in the 28.1.49838.53910 artifact directory
+(6 unreadable, native or non-managed) for call sites of
+`Microsoft.Dynamics.Nav.Types.Metadata.PageDefinition::get_Methods` finds **22**, and every one
+of them is inside `Microsoft.Dynamics.Nav.Types.dll` itself — the object model's own `.ctor`,
+`Freeze`, `WithMergedMultiLanguage` and equality plumbing. No service assembly, no runtime
+engine, nothing else.
+
+The control matters, because a zero — or a count confined to one assembly — is exactly what a
+scan pointed at the wrong subject also returns. Two run in the same invocation:
+
+| symbol | call sites | outside `…Nav.Types.dll` |
+|---|---:|---|
+| `PageDefinition::get_Methods` | 22 | **none** |
+| `PageDefinition::get_Properties` (control) | 38 | yes — `Microsoft.Dynamics.Nav.Service.dll`, `NsDataAccess::GetResourceDefinedFormTable` and `NSErrorActionInvocation::GetPageToOpen` |
+
+A first attempt scanned `Microsoft.Dynamics.Nav.Ncl.dll` alone and answered 0 for every needle,
+which read like a finding and was not: `PageDefinition` is defined in
+`Microsoft.Dynamics.Nav.Types.dll` and Ncl.dll does not reference it at all.
+
+The second, independent route to the same answer: the **Page Metadata** virtual table
+(2000000138) exposes no method column — `RecordPatches.PageMetadataVirtualTable.cs` answers `id`,
+`name`, `caption`, `editable`, `pagetype`, `sourcetable`, `cardpageid`, the Insert/Modify/Delete
+trio, `sourcetabletemporary`, `sourcetableview`, `delayedinsert`, `showfilter`,
+`multiplenewlines`, `savevalues`, `autosplitkey`, `datacaptionfields`, `linksallowed`,
+`populateallfields` and nothing about methods. So there is no AL statement that reads a page's
+method table either directly or through a virtual table.
+
 ## What pins this
 
 | claim | pinned by |
