@@ -156,16 +156,20 @@ public static partial class BcRuntime
     /// root-scope path cannot silently inherit the bit.
     /// </remarks>
     private static object InheritIsInTryScope(
-        object scopeFlags, Microsoft.Dynamics.Nav.Runtime.NavMethodScope self, object? parent)
+        FieldInfo flagsField, object scopeFlags,
+        Microsoft.Dynamics.Nav.Runtime.NavMethodScope self, object? parent)
     {
-        if (_fMsFlags == null || parent == null || ReferenceEquals(parent, self)) return scopeFlags;
+        // `flagsField` is passed in rather than read from the _fMsFlags static so this stays a
+        // pure function of its arguments: a static read here would silently no-op whenever the
+        // static is unset, which is exactly the shape that hides a dropped inheritance.
+        if (parent == null || ReferenceEquals(parent, self)) return scopeFlags;
 
         var isInTryScope = Convert.ToInt64(
-            Enum.Parse(_fMsFlags.FieldType, "IsInTryScope"));
-        var parentFlags = Convert.ToInt64(_fMsFlags.GetValue(parent) ?? 0L);
+            Enum.Parse(flagsField.FieldType, "IsInTryScope"));
+        var parentFlags = Convert.ToInt64(flagsField.GetValue(parent) ?? 0L);
         if ((parentFlags & isInTryScope) == 0) return scopeFlags;
 
-        return Enum.ToObject(_fMsFlags.FieldType, Convert.ToInt64(scopeFlags) | isInTryScope);
+        return Enum.ToObject(flagsField.FieldType, Convert.ToInt64(scopeFlags) | isInTryScope);
     }
     /// <summary>
     /// Full replacement for NavMethodScope..ctor(NavApplicationObjectBase, MethodScopeFlags, bool).
@@ -245,7 +249,8 @@ public static partial class BcRuntime
             {
                 var scopeFlags = SelectMethodScopeFlags(self, flags);
                 FieldPoke.SetInstance(
-                    _fMsFlags, self, InheritIsInTryScope(scopeFlags, self, actualParent));
+                    _fMsFlags, self,
+                    InheritIsInTryScope(_fMsFlags, scopeFlags, self, actualParent));
             }
             // 5. NavMethodScope.StackDepth = 2 (_skeletonRootScope.StackDepth=1)
             if (_fMsStackDepth != null)  FieldPoke.SetInstance(_fMsStackDepth,  self, 2);
