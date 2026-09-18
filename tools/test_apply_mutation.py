@@ -12,12 +12,14 @@ Run: python3 tools/test_apply_mutation.py
 """
 from __future__ import annotations
 
+import ast
 import importlib.util
 import inspect
 import io
 import os
 import sys
 import tempfile
+import textwrap
 from contextlib import redirect_stdout
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -449,6 +451,34 @@ check("...and heavy work in OTHER files traces to empty too, so line numbers are
 # A hand-written map here would be the `+ 4` constant again with a better name -- a number
 # asserting coverage nobody measured (#4321 round 5, #4328). This derives it, so an arm that moves
 # or splits changes the answer instead of going stale.
+def _calls_chmod(fn) -> bool:
+    """Does fn actually CALL chmod, rather than merely containing the word?
+
+    A substring test over `inspect.getsource` was the first version and it is satisfied by the
+    word in a COMMENT — measured at real root (`unshare --user --map-root-user`): adding
+    `# nothing here calls chmod` to a non-permission case and marking it gated went green at 6/10
+    with its arm excused untested, which is the exact regression #4328 exists to prevent.
+
+    So parse and look for a call whose callee is named chmod. Comments are not in the AST.
+    """
+    try:
+        src = textwrap.dedent(inspect.getsource(fn))
+    except (OSError, TypeError):
+        return False
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        callee = node.func
+        name = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", None)
+        if name == "chmod":
+            return True
+    return False
+
+
 def _arms_by_case() -> dict[str, set[int]]:
     """Map each permission-gated case to the refusal lines it would reach, by the call it breaks."""
     src = open(_AM_FILE, encoding="utf-8").read().split("\n")
@@ -479,6 +509,47 @@ def _arms_by_case() -> dict[str, set[int]]:
 
 _ARMS_BY_CASE = _arms_by_case()
 
+# The backward walk is otherwise UNFALSIFIABLE. It differs from a forward walk on exactly one
+# entry — rollback, whose message spans two lines so a forward search lands on the SUCCESS return
+# below it — and that entry belongs to the one case NOT in PERMISSION_GATED, so its mapping is
+# never consumed and reverting the direction stays green at real root (measured under
+# `unshare --user --map-root-user`, #4333 review). Assert the mapping itself, which is the thing
+# the direction decides.
+for _case, _lines in _ARMS_BY_CASE.items():
+    check(f"the arm map resolves {_case} to exactly one refusal line", len(_lines) == 1,
+          f"{_case} -> {sorted(_lines)}; a case that maps to no arm excuses nothing and one that "
+          f"maps to several excuses too much")
+    check(f"...and {_case} maps to a line that RETURNS refused, not one below it",
+          _lines <= _REFUSAL_LINES, f"{_case} -> {sorted(_lines)} not in {sorted(_REFUSAL_LINES)}")
+
+# Every excusable arm is an I/O-failure HANDLER by definition — that is what "permissions blocked
+# the call" means — so each mapped line must sit inside an `except`. This is what discriminates
+# the walk direction: the rollback handler (inside `except OSError`) and the success return two
+# lines below it are both refusal lines, and only the handler is under an except.
+#
+# An earlier version of this check asked whether the mapped line was the lowest refusal line at or
+# above itself, which is true of EVERY refusal line and so pinned nothing — it passed the forward
+# walk it was written to catch.
+_am_src = open(_AM_FILE, encoding="utf-8").read().split("\n")
+
+def _inside_except(line_no: int) -> bool:
+    """Is this line in the body of an `except` clause? Walk up past its own continuations."""
+    indent = len(_am_src[line_no - 1]) - len(_am_src[line_no - 1].lstrip())
+    for j in range(line_no - 2, max(line_no - 12, -1), -1):
+        stripped = _am_src[j].strip()
+        if not stripped:
+            continue
+        if len(_am_src[j]) - len(_am_src[j].lstrip()) < indent:
+            return stripped.startswith("except")
+    return False
+
+for _case, _lines in _ARMS_BY_CASE.items():
+    for _ln in _lines:
+        check(f"{_case} maps to a refusal inside an `except`, not one merely below it",
+              _inside_except(_ln),
+              f"{_case} -> line {_ln}, which is not in an except body; a permission-blocked call "
+              f"can only be answered by its own handler, so this mapping excuses the wrong arm")
+
 _reached: set[int] = set()
 _skipped_arms: set[int] = set()
 _gated = {n for n, _ in PERMISSION_GATED}
@@ -488,14 +559,10 @@ for _name, _fn in REFUSAL_ARMS:
         # otherwise a free pass: adding a non-permission case to PERMISSION_GATED excused its arm
         # with nothing objecting (measured while writing this). So require the case to actually
         # use the mechanism the gate is about — a chmod — read out of its own source.
-        try:
-            _body = inspect.getsource(_fn)
-        except (OSError, TypeError):
-            _body = ""
-        check(f"{_name} is permission-gated because it chmods, not merely because it is listed",
-              "chmod" in _body,
-              f"{_name} sits in PERMISSION_GATED but its body calls no chmod, so the gate is not "
-              f"what stops it — excusing its arm would hide an untested refusal")
+        check(f"{_name} is permission-gated because it CALLS chmod, not merely mentions it",
+              _calls_chmod(_fn),
+              f"{_name} sits in PERMISSION_GATED but its body makes no chmod CALL, so the gate is "
+              f"not what stops it — excusing its arm would hide an untested refusal")
         # Establish WHICH arms this case would have covered, by reading the source rather than
         # by asserting a number: run it where it works and it reaches these lines. Here it cannot
         # run, so those lines are excused -- and only those.
