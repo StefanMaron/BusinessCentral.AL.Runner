@@ -147,13 +147,9 @@ public static partial class RecordPatches
             // attribute once the writer has entered element content, and the throw returns a
             // null document rather than a diagnostic -- the same failure the SourceObject
             // attribute ordering note below records.
-            //
-            // IsNullOrEmpty, NOT IsNullOrWhiteSpace, and page.Caption deliberately does not go
-            // through TryParsePageSymbol's OrNullIfBlank the way UsageCategory and HelpLink do:
-            // pages 1433 "Satisfaction Survey" and 9260 "Customer Experience Survey" state a
-            // Caption of a SINGLE SPACE, and BC writes CaptionML="ENU= " for both. Either
-            // "simplification" drops the attribute on those two and states no caption where BC
-            // states a blank one.
+            // IsNullOrEmpty, not IsNullOrWhiteSpace, and Caption skips the OrNullIfBlank its
+            // neighbours use: pages 1433 and 9260 state a Caption of one SPACE and BC writes
+            // CaptionML="ENU= ". Either tidy-up drops the attribute on both.
             if (!string.IsNullOrEmpty(page.Caption))
                 w.WriteAttributeString("CaptionML", "ENU=" + page.Caption);
 
