@@ -261,6 +261,7 @@ All notable changes to this project are documented here. Format based on
 - **integer-vt:** judge a half-open range against the base window, not the envelope-widened span
 
 ### Documentation
+- **guards:** drop a quotation that outlived the prose it quoted
 - **harness:** drop the cap figure from TestBarrier's prose, leaving one spelling
 - **incidents:** a spread, not a range — "2 to 11" read as a bound and was not one
 - **scope:** drop a dead swallowed-refusal citation, keep the trap it illustrated
