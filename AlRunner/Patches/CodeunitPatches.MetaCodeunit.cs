@@ -197,7 +197,7 @@ public static partial class BcRuntime
     /// either side into the other and a BC shape change starts reading as a routine negative
     /// (#4319; <c>guards-need-a-third-state.md</c> § "A reflection bind that answers null is
     /// unmeasurable, not absent"; the table is in
-    /// docs/codeunit-manual-binding.md#the-three-ways-of-not-getting-an-answer).</para>
+    /// docs/codeunit-manual-binding.md#what-the-decoder-concludes).</para>
     /// </summary>
     private static bool ReadEventManualBindingFromAttribute(object attr)
     {

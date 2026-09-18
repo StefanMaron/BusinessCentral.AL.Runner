@@ -298,12 +298,9 @@ internal static class BcShape
     /// decodes as option FLAGS, and it draws the same line: a member that exists but holds an
     /// uninterpretable shape is the same "BC's layout moved" case as an absent one.
     ///
-    /// <para>Folding it into the caller's negative answer is the specific harm — a flags decoder
-    /// that shrugs reports "this option is not set", which is a load-bearing claim rather than a
-    /// neutral sentinel, and it is indistinguishable at every call site from a real read (#4319).
-    /// Null and wrong-type refuse separately so the message names which of the two it was: they
-    /// mean BC stopped populating the member and BC re-typed it, and those have different
-    /// remedies.</para>
+    /// <para>Null and wrong-type refuse separately so the message names which of the two it was:
+    /// they mean BC stopped populating the member and BC re-typed it, and those have different
+    /// remedies (#4319).</para>
     /// </summary>
     public static Enum RequiredEnum(object? value, string member, string surface, string detail)
     {

@@ -107,10 +107,13 @@ it. Both now share one decoder that resolves the flag by **member name**.
 `Codeunit58` in the System Application is a concrete case the old fallback would have got wrong:
 its attribute carries `Options = 1` (`SingleInstance`), which `& 1` reports as manual binding.
 
-## The three ways of not getting an answer
+## What the decoder concludes
 
-The shared decoder can come away without a flag in four different ways, and only two of
-them are answers.
+The table's first row is a **fall-through**, not a conclusion: it routes to the `Options`
+enum and the rows below decide. Of the four conclusions under it, **exactly one is an
+answer** — the `EventManualBinding`-member row, which reads `false` — and the other three
+refuse. Count them off the third column rather than off this sentence; the two disagreeing
+is the defect #4319's own first revision shipped.
 
 | what is missing | what it means | what the decoder does |
 |---|---|---|
@@ -120,7 +123,7 @@ them are answers.
 | `Options` reads as `null` | BC kept the member and stopped populating it | **refuse** — same member, message says `read as null` |
 | `Options` holds a non-enum | BC re-typed the member | **refuse** — same member, message says `holds a <Type>, which is not an enum` |
 
-The third row is the one that used to be a silent `false`. A `false` there says "not manual
+The `Options`-itself row is the one #4318 changed. A `false` there says "not manual
 binding" when it means "I could not find out", and the cost is not a missing answer but a wrong
 one: every manual-binding codeunit is reported as automatic, and BC's `BindSubscription` /
 `UnBindSubscription` unbind its subscribers with nothing said. That is
@@ -128,10 +131,11 @@ one: every manual-binding codeunit is reported as automatic, and BC's `BindSubsc
 absent" — a `null` from a reflection lookup means "I could not find it", never "it is not
 needed".
 
-The middle row is deliberately *not* a refusal, for the same rule's constraint: a genuinely
-absent thing stays a pass, and only an unmeasurable one becomes the third state.
+The `EventManualBinding`-member row is deliberately *not* a refusal, for the same rule's
+constraint: a genuinely absent thing stays a pass, and only an unmeasurable one becomes the
+third state.
 
-The last two rows were a silent `false` until #4319. They are on the refusing side of
+The `null` and non-enum rows were a silent `false` until #4319. They are on the refusing side of
 `BcShapeGapException`'s own line, which its file header draws as *"the read could not be
 performed. The type/field/property is absent, **or it is present and holding something of a
 shape the runner cannot use**"* — `BcShape.RequiredEnumerable` is the worked case beside it, and
@@ -144,17 +148,29 @@ this" send a reader to different places, and one message covering both would nam
 
 ## The option mask, and a flag that does not fit an Int64
 
-BC's own `NavCodeunitOptionsAttribute.get_IsEventManualBinding` is four IL instructions on
+BC's own `NavCodeunitOptionsAttribute.get_IsEventManualBinding` is a seven-instruction body on
 28.1.49838.53910 (`Microsoft.Dynamics.Nav.Ncl.dll`, sha256
-`49b11d9b541e82959604b68b4ff6b4990fa06db0ffa48dd5b49284cf63507788`):
+`49b11d9b541e82959604b68b4ff6b4990fa06db0ffa48dd5b49284cf63507788`), reproduced whole — the
+count is Cecil's own `Instructions.Count`, and an excerpt that silently drops the prologue and
+the `ret` is how this paragraph first claimed four:
 
 ```
+ldarg.0
 call     NavCodeunitOptions NavCodeunitOptionsAttribute::get_Options()
 ldc.i4.2
 and
 ldc.i4.0
 cgt.un          // (Options & 2) != 0
+ret
 ```
+
+`cgt.un` against `ldc.i4.0` is the C# lowering of `!= 0`. `HasFlag` would not look like this: it
+compiles either to `ceq` against the flag constant or to a `call Enum::HasFlag`, so the
+distinction below is visible in the IL rather than inferred from it.
+
+`get_IsSingleInstance` is the **same seven instructions with `ldc.i4.1`**, which is what makes
+#4289 concrete: the stale mask both readers used was not an arbitrary wrong constant, it was
+this neighbouring property's.
 
 So the mask is `(Options & flag) != 0`, **not** `Enum.HasFlag`'s `(Options & flag) == flag`.
 The two agree for a single-bit flag — `EventManualBinding = 2` — and diverge for a

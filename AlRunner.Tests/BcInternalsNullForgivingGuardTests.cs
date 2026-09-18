@@ -291,7 +291,7 @@ public sealed class BcInternalsNullForgivingGuardTests
         // SIBLING absence one branch down — an Options enum declaring no EventManualBinding
         // member — is a read that SUCCEEDED and stays a false; the split is pinned by
         // AlRunner.Tests/CodeunitManualBindingOptionsTests and written up in
-        // docs/codeunit-manual-binding.md#the-three-ways-of-not-getting-an-answer.
+        // docs/codeunit-manual-binding.md#what-the-decoder-concludes.
         //
         // 99 stays 99 at #4319, which widened that same decoder to refuse an Options that
         // reads as null or holds a non-enum. Not an oversight: this counter's population is
