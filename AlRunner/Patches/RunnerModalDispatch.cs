@@ -399,7 +399,33 @@ public static class RunnerModalDispatch
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
             Surface, $"{form.GetType().Name}.CloseForm", Detail);
 
-        var formResultType = closeForm.GetParameters()[0].ParameterType;
+        // The bind above filters on NAME ONLY, and must: BcShape.FindMethod's `types:` filter is
+        // SequenceEqual over exact parameter TYPES, and the parameter type is precisely what this
+        // method is discovering, so there is nothing to pass it. That leaves the arity unchecked
+        // here, where the old bind checked it — and parameter 0 is the read being performed, so a
+        // parameterless CloseForm would index past the end and raise a bare
+        // IndexOutOfRangeException naming no surface, no member and no remedy: the exact shape
+        // this method was changed to stop producing (#4363).
+        //
+        // Decided in BOTH directions, because the old arity filter was `== 1` and this is not:
+        //   0 parameters  -> REFUSE. The read cannot be performed at all.
+        //   1 parameter   -> resolve, as before.
+        //   2 or more     -> RESOLVE, deliberately. The read is of parameter 0's type, which a
+        //                    member appended after it does not make unperformable; BC adding a
+        //                    persistData-style flag must not stop the runner naming the
+        //                    CloseAction. The old `== 1` bind answered null here, which the caller
+        //                    turned into CloseAction::None — so accepting it is strictly better
+        //                    than what it replaces. If a future BC reorders the parameters so that
+        //                    parameter 0 is no longer the FormResult, the IsEnum refusal below is
+        //                    what catches it.
+        var parameters = closeForm.GetParameters();
+        if (parameters.Length == 0)
+            throw new BcShapeGapException(
+                Surface, $"{form.GetType().Name}.CloseForm(formResult)",
+                $"BC's CloseForm declares no parameter, so the FormResult enum the runner reads "
+                + $"OK off has nowhere to be read from — {Detail}");
+
+        var formResultType = parameters[0].ParameterType;
         if (!formResultType.IsEnum)
             throw new BcShapeGapException(
                 Surface, $"{form.GetType().Name}.CloseForm(formResult)",

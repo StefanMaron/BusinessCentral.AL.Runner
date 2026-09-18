@@ -67,6 +67,26 @@ public class NonModalCloseActionShapeGapTests
         public void CloseForm(FormResultWithoutOk formResult) { _ = formResult; }
     }
 
+    /// <summary>
+    /// BC kept the NAME and dropped the parameter. The bind resolves — it filters on name only,
+    /// because the parameter type is precisely what it is discovering — and the read of
+    /// GetParameters()[0] is then the thing that cannot be performed.
+    /// </summary>
+    private sealed class FormWithParameterlessCloseForm
+    {
+        public void CloseForm() { }
+    }
+
+    /// <summary>
+    /// BC added a second parameter. Two-parameter CloseForm is DELIBERATELY accepted: the read
+    /// this method performs is of parameter 0's type, and a member appended after it does not
+    /// make that read unperformable. See the arity guard's comment at the call site.
+    /// </summary>
+    private sealed class FormWithTwoParameterCloseForm
+    {
+        public void CloseForm(FaithfulFormResult formResult, bool persistData) { _ = formResult; _ = persistData; }
+    }
+
     // ── POSITIVE: the read succeeds, and the answer is the OK MEMBER, not the ordinal ────
 
     [Fact]
@@ -103,8 +123,16 @@ public class NonModalCloseActionShapeGapTests
 
         Assert.Contains("CloseForm", ex.Message);
         Assert.Contains(BcShapeGapException.Prefix, ex.Message);
+
         // The AL-observable stake belongs in the message: a reader must see that the alternative
-        // to refusing was a wrong CloseAction, not a missing one.
+        // to refusing was a WRONG CloseAction, not a missing one.
+        //
+        // Asserted against BOTH structured fields separately, not against Message. Message
+        // concatenates Surface and Detail, and each of them independently carries the literal, so
+        // an assertion on Message alone stays green when either one loses it and cannot say which
+        // string supplies the stake. These two say exactly that, and each fails on its own.
+        Assert.Contains("OnQueryClosePage", ex.Surface);
+        Assert.Contains("OnQueryClosePage", ex.Detail);
         Assert.Contains("OnQueryClosePage", ex.Message);
     }
 
@@ -139,12 +167,58 @@ public class NonModalCloseActionShapeGapTests
         foreach (var form in new object[]
                  {
                      new FormWithNoCloseForm(), new FormWithNonEnumParameter(),
-                     new FormWithEnumLackingOk(),
+                     new FormWithEnumLackingOk(), new FormWithParameterlessCloseForm(),
                  })
         {
             Assert.Throws<BcShapeGapException>(
                 () => AlRunner.Patches.RunnerModalDispatch.NonModalCloseResult(form));
         }
+    }
+
+    // ── ARITY: the bind filters on NAME only, so parameter 0 may not be there ───────────
+
+    /// <summary>
+    /// The bind cannot filter on arity — BcShape.FindMethod's `types:` filter is SequenceEqual
+    /// over exact parameter TYPES, and the parameter type is the very thing being discovered, so
+    /// there is nothing to pass it. That leaves GetParameters()[0] as an unguarded read, and on a
+    /// parameterless CloseForm it raised a bare IndexOutOfRangeException naming no surface, no
+    /// member and no remedy — the exact shape this whole change exists to remove, reintroduced at
+    /// its own fix site. This test pins the exception TYPE and that the message names the
+    /// AL-observable surface, so the two failure modes stay distinguishable: a test asserting only
+    /// "it throws" passes on the unguarded code too.
+    /// </summary>
+    [Fact]
+    public void NonModalCloseResult_RefusesWhenCloseFormTakesNoParameter_RatherThanIndexingPastItsEnd()
+    {
+        var ex = Assert.Throws<BcShapeGapException>(
+            () => AlRunner.Patches.RunnerModalDispatch.NonModalCloseResult(
+                new FormWithParameterlessCloseForm()));
+
+        Assert.Contains("CloseForm", ex.Message);
+        Assert.Contains(BcShapeGapException.Prefix, ex.Message);
+        // Same stake as every other refusal here: the alternative was a WRONG CloseAction. Pinned
+        // per structured field for the reason given above — Message alone cannot discriminate.
+        Assert.Contains("OnQueryClosePage", ex.Surface);
+        Assert.Contains("OnQueryClosePage", ex.Detail);
+        // And it must say what it actually found, so a reader can tell this refusal from the
+        // absent-member one above without reading the source.
+        Assert.Contains("declares no parameter", ex.Message);
+    }
+
+    /// <summary>
+    /// The other direction, decided deliberately rather than inherited: a TWO-parameter CloseForm
+    /// resolves and answers OK. The previous arity-filtered bind returned null here, which the
+    /// caller turned into CloseAction::None — so accepting it is strictly better than what it
+    /// replaced, and the read being performed (parameter 0's type) is genuinely available.
+    /// </summary>
+    [Fact]
+    public void NonModalCloseResult_AcceptsATwoParameterCloseForm_BecauseParameterZeroIsStillReadable()
+    {
+        var result = AlRunner.Patches.RunnerModalDispatch.NonModalCloseResult(
+            new FormWithTwoParameterCloseForm());
+
+        Assert.Equal(FaithfulFormResult.OK, result);
+        Assert.Equal(1, Convert.ToInt32(result));
     }
 
     private static void Assert_ContainsAny(string haystack, params string[] needles)
