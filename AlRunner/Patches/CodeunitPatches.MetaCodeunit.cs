@@ -205,7 +205,7 @@ public static partial class BcRuntime
         }
         var options = BcShape.Property(t, "Options", BcShape.AnyInstance,
             "codeunit event binding (IsEventManualBinding)",
-            "[NavCodeunitOptionsAttribute] exposes no readable IsEventManualBinding property and "
+            "NavCodeunitOptionsAttribute exposes no readable IsEventManualBinding property and "
             + "no Options member, so the runner cannot tell a manual-binding codeunit from an "
             + "automatic one; answering false would silently unbind every manual subscriber")
             .GetValue(attr);
