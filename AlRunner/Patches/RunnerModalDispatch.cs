@@ -30,6 +30,7 @@
 //   decision that matters (which handler, what it does, what OK/Cancel means) stays in BC's
 //   code and in the AL handler.
 using System.Reflection;
+using AlRunner.Infrastructure;
 using Microsoft.Dynamics.Nav.Runtime;
 
 namespace AlRunner.Patches;
@@ -363,20 +364,72 @@ public static class RunnerModalDispatch
 
     /// <summary>
     /// The CloseAction BC's own client uses for a NON-modal page it closes on a
-    /// [PageHandler]'s behalf: FormResult.OK, measured on real BC 28.4.53241.0 (corpus "MQC
-    /// Tests" arm g). Read off the FormResult enum BC's own CloseForm declares rather than
-    /// hardcoding 1, so a renumbering in a future Ncl cannot silently change which action the
-    /// trigger sees.
+    /// [PageHandler]'s behalf: <c>Microsoft.Dynamics.Nav.Types.FormResult.OK</c>, measured on
+    /// real BC 28.4.53241.0 (corpus "MQC Tests" arm g). Read off the enum BC's own CloseForm
+    /// declares rather than hardcoding 1, so a renumbering in a future Ncl cannot silently
+    /// change which action the trigger sees.
+    ///
+    /// <para><b>Every read here is REQUIRED, and a read that cannot be performed refuses.</b>
+    /// This method used to answer <c>null</c> from each of these exits, and the caller handed
+    /// that null to <see cref="TryQueryCloseForm"/>, where <c>Convert.ToInt32(null)</c> returns
+    /// <b>0 without throwing</b> — so it did not take the skip path, it raised BC's
+    /// QueryCloseForm(0). BC's <c>NavForm.QueryCloseFormAsync</c> casts that argument
+    /// <c>(FormResult)closeActionValue</c> straight into RaiseOnQueryClosePageAsync, so ordinal
+    /// 0 arrives in user-written OnQueryClosePage as <c>CloseAction::None</c> — doing exactly
+    /// what the paragraph above promises cannot happen, by a route it does not cover. Issue
+    /// #4363; the mechanism is guards-need-a-third-state.md § "A reflection bind that answers
+    /// null is unmeasurable, not absent".</para>
+    ///
+    /// <para>Trap for a later editor: there is no legitimate "absent" case to preserve here.
+    /// `FormResult` is a TypeRef into <c>Microsoft.Dynamics.Nav.Types.dll</c>, and all six
+    /// distinct Types.dll binaries provisioned on this box declare it with <c>None = 0</c> and
+    /// <c>OK = 1</c>, so none of these refusals can fire on a BC the runner has seen — a null
+    /// from any of them means BC's shape moved, never that OK was not wanted.</para>
     /// </summary>
-    private static object? NonModalCloseResult(object form)
+    internal static object NonModalCloseResult(object form)
     {
-        var closeForm = form.GetType().GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-            .FirstOrDefault(m => m.Name == "CloseForm" && m.GetParameters().Length == 1);
-        var formResultType = closeForm?.GetParameters()[0].ParameterType;
-        if (formResultType == null || !formResultType.IsEnum) return null;
-        return Enum.TryParse(formResultType, "OK", out var ok) ? ok : null;
+        const string Surface = "TestPage page dispatch (OnQueryClosePage CloseAction)";
+        const string Detail =
+            "without it the runner cannot tell which CloseAction BC's client would raise "
+            + "OnQueryClosePage with, and answering the enum's ordinal 0 would silently send "
+            + "CloseAction::None where OK was measured (#4363)";
+
+        var closeForm = BcShape.RequiredMethod(
+            form.GetType(), "CloseForm",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+            Surface, $"{form.GetType().Name}.CloseForm", Detail);
+
+        var formResultType = closeForm.GetParameters()[0].ParameterType;
+        if (!formResultType.IsEnum)
+            throw new BcShapeGapException(
+                Surface, $"{form.GetType().Name}.CloseForm(formResult)",
+                $"its parameter is a {formResultType.Name}, which is not an enum, so no OK "
+                + $"member can be read from it — {Detail}");
+
+        return Enum.TryParse(formResultType, "OK", out var ok) && ok != null
+            ? ok
+            : throw new BcShapeGapException(
+                Surface, $"{formResultType.Name}.OK",
+                $"BC's {formResultType.Name} declares no member named OK — {Detail}");
     }
 
+    /// <summary>
+    /// Close <paramref name="form"/> through BC's own CloseForm, which raises OnClosePage.
+    ///
+    /// <para><b>Ordinal 0 — FormResult.None — is the DELIBERATE argument here, not a fallback
+    /// from a failed read.</b> Both call sites pass <c>result: null</c> as a literal, and the
+    /// reason is at the modal one: passing the handler's real result would also turn on
+    /// CloseFormAsync's <c>StoreSaveValues(..., persistData: true)</c>, a second behaviour
+    /// change nothing here has measured. So this line is NOT the #4363 defect, which was
+    /// <see cref="NonModalCloseResult"/> reaching an ordinal-0 CloseAction from four reflection
+    /// exits that had failed — a different route, a different observable (OnQueryClosePage
+    /// rather than OnClosePage), and one this method never received.</para>
+    ///
+    /// <para>Trap: a later editor who gives this method a non-null caller owes that caller's
+    /// value the same treatment <see cref="NonModalCloseResult"/> now gets — a required read
+    /// that refuses — because the <c>IsInstanceOfType</c> test below silently falls back to
+    /// ordinal 0 for anything it does not recognise.</para>
+    /// </summary>
     private static void TryCloseForm(object form, object? result)
     {
         var closeForm = form.GetType().GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
