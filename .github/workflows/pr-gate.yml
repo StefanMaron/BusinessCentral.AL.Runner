@@ -417,21 +417,19 @@ jobs:
 
       - name: Run every tools/test_*.py
         run: |
-          # Fails if any suite fails AND if the glob matched nothing -- an empty
-          # run reporting success is the "green tick meaning nothing ran" this
-          # job exists to prevent.
+          # The loop lives in .github/scripts/run_guard_suites.sh so it can be
+          # unit-tested (test_run_guard_suites.sh). It fails if any suite fails,
+          # if any suite could not measure, and if the glob matched nothing -- an
+          # empty run reporting success is the "green tick meaning nothing ran"
+          # this job exists to prevent -- and it reports those three outcomes
+          # DISTINGUISHABLY, which the `|| rc=1` it replaces did not (#4359).
           shopt -s nullglob
           suites=(tools/test_*.py)
           if [ ${#suites[@]} -eq 0 ]; then
             echo "::error::no tools/test_*.py found -- this job would pass without running anything"
             exit 1
           fi
-          rc=0
-          for s in "${suites[@]}"; do
-            echo "=== $s"
-            python3 "$s" || rc=1
-          done
-          exit $rc
+          bash .github/scripts/run_guard_suites.sh "tools/test_*.py" "${suites[@]}"
 
   github-scripts-tests:
     name: .github/scripts/ unit tests
@@ -454,21 +452,16 @@ jobs:
         run: |
           git config --global user.email "test@example.com"
           git config --global user.name "Test"
+          # Same script, same reason, as tools-tests above: this job carried a
+          # byte-identical `|| rc=1`, so it had #4359's defect too even though
+          # the issue was filed against its sibling.
           shopt -s nullglob
           suites=(.github/scripts/test_*.py .github/scripts/test_*.sh)
           if [ ${#suites[@]} -eq 0 ]; then
             echo "::error::no .github/scripts/test_* found -- this job would pass without running anything"
             exit 1
           fi
-          rc=0
-          for s in "${suites[@]}"; do
-            echo "=== $s"
-            case "$s" in
-              *.py) python3 "$s" || rc=1 ;;
-              *)    bash "$s"    || rc=1 ;;
-            esac
-          done
-          exit $rc
+          bash .github/scripts/run_guard_suites.sh ".github/scripts/test_*" "${suites[@]}"
 
   scripts-tests:
     name: scripts/ unit tests
@@ -497,18 +490,15 @@ jobs:
       - name: Run every scripts/tests/*.test.py
         if: steps.changed.outputs.run == 'true'
         run: |
+          # The third `|| rc=1` in this file, and the third to lose a guard's
+          # could-not-measure (#4359).
           shopt -s nullglob
           suites=(scripts/tests/*.test.py)
           if [ ${#suites[@]} -eq 0 ]; then
             echo "::error::no scripts/tests/*.test.py found"
             exit 1
           fi
-          rc=0
-          for s in "${suites[@]}"; do
-            echo "=== $s"
-            python3 "$s" || rc=1
-          done
-          exit $rc
+          bash .github/scripts/run_guard_suites.sh "scripts/tests/*.test.py" "${suites[@]}"
 
   expectation-gap-issue-consistency:
     name: A PR closing a gap issue must not leave its known-gap entry behind
