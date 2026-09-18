@@ -301,7 +301,15 @@ public sealed class BcInternalsNullForgivingGuardTests
         // has been. A site can therefore be deliberately converted without moving this
         // number; a reader expecting it to move on every such change would read the flat
         // count as a conversion that was undone.
-        Assert.Equal(99, converted);
+        //
+        // 99 -> 105 for guard 7 of Record.Truncate() (TruncateValidationPatches.cs, #4374): the
+        // six-hop chain RecordImplementation -> TableState -> FiltersAndMarks ->
+        // {MarkedRecords, Filters} -> {IsCompleteExpressionLarge, AnyFiltersOnFlowFields} was six
+        // `?.` lookups, so a null anywhere along it propagated to the end and the guard read "no
+        // marks, no FlowField filters" — permitting a Truncate() real BC refuses. All six are now
+        // BcShape.Property, which is why this counter moves by exactly six; the matching drop to
+        // zero is in SilentReflectionLookupRatchetTests, whose baseline stays 0 for this file.
+        Assert.Equal(105, converted);
     }
 
     /// <summary>

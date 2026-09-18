@@ -166,7 +166,7 @@ public sealed class TruncateValidationGuardTests
     // reviewer's mutation B -- `_navTriggerEventType = null` in ResolveGuard5Shape -- must red:
     // that field is read by IsDeleteEventSubscribed, and a null there used to take an early
     // `return false`, i.e. "no delete subscriber", permitting a Truncate() BC refuses.
-    [Fact]
+    [SkippableFact]
     public void EnsureTruncateValidationShape_BindsEveryMemberGuard5Reads()
     {
         TestArtifacts.SkipIfMissing();
@@ -188,7 +188,7 @@ public sealed class TruncateValidationGuardTests
 
     // Guard 7's chain, same shape. Reviewer mutation C -- "MarkedRecords" -> "MarkedRecordsXX"
     // in ResolveGuard7Shape -- must red here.
-    [Fact]
+    [SkippableFact]
     public void EnsureTruncateValidationShape_BindsEveryMemberGuard7Reads()
     {
         TestArtifacts.SkipIfMissing();
@@ -211,7 +211,7 @@ public sealed class TruncateValidationGuardTests
     // AL table. NavRecord cannot show this: its own assembly IS Ncl, so both the broken and the
     // fixed resolver bind it. A record type declared OUTSIDE Ncl is what separates them, which is
     // exactly what an AL-emitted record is.
-    [Fact]
+    [SkippableFact]
     public void EnsureTruncateValidationShape_BindsTheMetaTable_ForARecordTypeDeclaredOutsideNcl()
     {
         TestArtifacts.SkipIfMissing();

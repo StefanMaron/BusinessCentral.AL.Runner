@@ -326,33 +326,44 @@ public static partial class BcRuntime
     }
 
     /// <summary>
-    /// Binds guard 7. Required for the same reason as guard 5: an unbindable
-    /// FiltersAndMarks cannot answer "are there marks / FlowField filters", and answering
-    /// "no" would permit a Truncate() BC refuses.
+    /// Binds guard 7's chain: <c>RecordImplementation → TableState → FiltersAndMarks →
+    /// {MarkedRecords, Filters} → {IsCompleteExpressionLarge, AnyFiltersOnFlowFields}</c>.
+    ///
+    /// <para>Every hop goes through <see cref="AlRunner.Infrastructure.BcShape.Property"/>, so a
+    /// member BC has renamed refuses AT THAT HOP and names it. The shape this replaced was a
+    /// chain of <c>?.</c> lookups: a null anywhere along it propagated to the end, guard 7 then
+    /// read "no marks, no FlowField filters", and a <c>Truncate()</c> BC refuses **succeeded**
+    /// — the silent-fake this very file exists to remove, one level down
+    /// (.claude/rules/guards-need-a-third-state.md § "A reflection bind that answers null is
+    /// unmeasurable, not absent"; caught by SilentReflectionLookupRatchetTests, #3663).</para>
+    ///
+    /// <para>Trap: the per-hop refusal is what makes the message useful — an aggregated check
+    /// after six <c>?.</c> hops can say only "something in the chain moved", and BC renaming
+    /// <c>Filters</c> would read identically to BC renaming <c>TableState</c>.</para>
     /// </summary>
     private static void ResolveGuard7Shape(Type recordType)
     {
-        _pRecRecordImplementation = FindPropertyUpHierarchy(recordType, "RecordImplementation");
-        _pImplTableState = _pRecRecordImplementation?.PropertyType.GetProperty("TableState", AnyInstance);
-        _pTsFiltersAndMarks = _pImplTableState?.PropertyType.GetProperty("FiltersAndMarks", AnyInstance);
-        _pFamMarkedRecords = _pTsFiltersAndMarks?.PropertyType.GetProperty("MarkedRecords", AnyInstance);
-        _pFamFilters = _pTsFiltersAndMarks?.PropertyType.GetProperty("Filters", AnyInstance);
-        _pMrIsCompleteExpressionLarge = _pFamMarkedRecords?.PropertyType
-            .GetProperty("IsCompleteExpressionLarge", AnyInstance);
-        _pFfdAnyFiltersOnFlowFields = _pFamFilters?.PropertyType
-            .GetProperty("AnyFiltersOnFlowFields", AnyInstance);
+        const string Surface = "Record.Truncate() (marks / FlowField-filter guard)";
 
-        if (_pRecRecordImplementation == null || _pImplTableState == null || _pTsFiltersAndMarks == null
-            || _pFamMarkedRecords == null || _pFamFilters == null
-            || _pMrIsCompleteExpressionLarge == null || _pFfdAnyFiltersOnFlowFields == null)
-            throw new AlRunner.Infrastructure.BcShapeGapException(
-                "Record.Truncate()",
-                "RecordImplementation.TableState.FiltersAndMarks",
-                $"could not bind the marks/FlowField guard (impl={_pRecRecordImplementation != null}, "
-                + $"tableState={_pImplTableState != null}, fam={_pTsFiltersAndMarks != null}, "
-                + $"marked={_pFamMarkedRecords != null}, filters={_pFamFilters != null}, "
-                + $"isLarge={_pMrIsCompleteExpressionLarge != null}, "
-                + $"anyFlow={_pFfdAnyFiltersOnFlowFields != null})");
+        // The first hop is up the record's own hierarchy — NavRecord declares
+        // RecordImplementation, but the runtime type is an AL-emitted subclass.
+        _pRecRecordImplementation = FindPropertyUpHierarchy(recordType, "RecordImplementation")
+            ?? throw new AlRunner.Infrastructure.BcShapeGapException(
+                Surface, $"{recordType.Name}.RecordImplementation",
+                "property not found on the record type or any base — BC's record layout moved");
+
+        _pImplTableState = AlRunner.Infrastructure.BcShape.Property(
+            _pRecRecordImplementation.PropertyType, "TableState", AnyInstance, Surface);
+        _pTsFiltersAndMarks = AlRunner.Infrastructure.BcShape.Property(
+            _pImplTableState.PropertyType, "FiltersAndMarks", AnyInstance, Surface);
+        _pFamMarkedRecords = AlRunner.Infrastructure.BcShape.Property(
+            _pTsFiltersAndMarks.PropertyType, "MarkedRecords", AnyInstance, Surface);
+        _pFamFilters = AlRunner.Infrastructure.BcShape.Property(
+            _pTsFiltersAndMarks.PropertyType, "Filters", AnyInstance, Surface);
+        _pMrIsCompleteExpressionLarge = AlRunner.Infrastructure.BcShape.Property(
+            _pFamMarkedRecords.PropertyType, "IsCompleteExpressionLarge", AnyInstance, Surface);
+        _pFfdAnyFiltersOnFlowFields = AlRunner.Infrastructure.BcShape.Property(
+            _pFamFilters.PropertyType, "AnyFiltersOnFlowFields", AnyInstance, Surface);
     }
 
     private static PropertyInfo? FindPropertyUpHierarchy(Type? t, string name)
