@@ -20,9 +20,11 @@ import subprocess
 import sys
 
 failures: list[str] = []
+ran: list[str] = []
 
 
 def check(name: str, ok: bool, detail: str = "") -> None:
+    ran.append(name)
     print(f"  {'ok  ' if ok else 'FAIL'} {name}")
     if not ok:
         if detail:
@@ -108,6 +110,17 @@ if failures:
     print(f"FAILED: {len(failures)} check(s): {failures}")
     sys.exit(1)
 if unmeasured:
+    # The UNMEASURED note claims the rule-text checks still ran. Assert that rather than saying
+    # it: re-widening the gate to cover them again makes the claim false, and the only thing that
+    # changes is an exit code nobody would look twice at (3 either way). Measured in review of
+    # #4355 — the message became a lie with nothing catching it.
+    #
+    # Counting checks that RAN, not the gate's own flag: a flag would restate the branch it is
+    # about, while the count is what the sentence actually promises.
+    if not ran:
+        print("  FAIL the UNMEASURED note says other checks still ran, and NONE did — the gate "
+              "is wider than its stated reason, which is the defect #4355 fixed")
+        sys.exit(1)
     for note in unmeasured:
         print(f"  UNMEASURED {note}")
     print(f"{len(unmeasured)} check group(s) could not be measured; nothing here is a pass")
