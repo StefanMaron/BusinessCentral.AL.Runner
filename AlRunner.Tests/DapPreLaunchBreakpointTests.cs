@@ -25,6 +25,13 @@ namespace AlRunner.Tests;
 
 public class DapPreLaunchBreakpointTests
 {
+    /// <summary>How long to wait for the DAP `exited` event, and the single source of the figure
+    /// the failure message reports (#4275). In MILLISECONDS despite the call site wanting a
+    /// TimeSpan, so the message derives it the same way every other site in this family does —
+    /// `TimeSpan.FromSeconds(60)` beside a hardcoded "within 60s" is the defect, and expressing
+    /// the cap in seconds would just move the duplication into the divisor.</summary>
+    private const int ExitedWaitTimeoutMs = 60_000;
+
     private static readonly string FixtureSrc = Path.GetFullPath(Path.Combine(
         AppContext.BaseDirectory, "..", "..", "..", "Fixtures", "DapTwoObjects"));
 
@@ -407,7 +414,8 @@ public class DapPreLaunchBreakpointTests
         JsonElement exited;
         try
         {
-            exited = await dap.ReadUntilEventAsync("exited", TimeSpan.FromSeconds(60), events);
+            exited = await dap.ReadUntilEventAsync(
+                "exited", TimeSpan.FromMilliseconds(ExitedWaitTimeoutMs), events);
         }
         catch (TimeoutException)
         {
@@ -415,7 +423,7 @@ public class DapPreLaunchBreakpointTests
                 e => e.GetProperty("event").GetString() == "stopped");
             Assert.Fail(stopped.ValueKind == JsonValueKind.Object
                 ? $"the run stopped at a breakpoint the client had removed: {stopped}"
-                : $"no `exited` within 60s and no `stopped` either; events: "
+                : $"no `exited` within {ExitedWaitTimeoutMs / 1000}s and no `stopped` either; events: "
                     + string.Join(" | ", events.Select(e => e.GetProperty("event").GetString())));
             throw;   // unreachable; Assert.Fail does not return
         }

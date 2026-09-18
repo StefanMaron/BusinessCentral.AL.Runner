@@ -41,6 +41,7 @@ public sealed class SpawnTimeoutMessageDerivationTests
         // #4275 widening 1: failure paths that ASSERT rather than throw. The guard's anchor was
         // `throw new TimeoutException(`, so these nine were outside it entirely — each spells its
         // own cap twice, once in the wait and once in the message.
+        "DapPreLaunchBreakpointTests.cs",
         "CoverageDependencySourceTests.cs",
         "CoverageTests.cs",
         "HandlerLoopJitTierGuardTests.cs",
@@ -139,13 +140,38 @@ public sealed class SpawnTimeoutMessageDerivationTests
                 // a cap constant, and it must appear in the DIVISION that produces the figure, not
                 // merely somewhere in the statement. The `/ 1000` half is what makes this stronger
                 // than co-occurrence — a name mentioned in passing does not satisfy it.
-                var derivesFromACap = Regex.IsMatch(stmt, @"\b\w*TimeoutMs\s*/\s*1000\b");
-                if (!derivesFromACap)
+                var reported = Regex.Matches(stmt, @"\b(\w*TimeoutMs)\s*/\s*1000\b")
+                    .Select(m => m.Groups[1].Value).Distinct().ToArray();
+                if (reported.Length == 0)
                 {
                     offenders.Add($"{file}: a timeout message does not derive its figure from a "
                                   + $"*TimeoutMs cap: {Compact(stmt)}");
                     continue;
                 }
+
+                // Deriving from SOME cap is not deriving from THIS site's cap. Dropping the exact
+                // name made that reachable for the first time: cross-wiring a site so it waits on
+                // one constant and reports another passed, leaving a message that says 30s beside
+                // a 60s wait — the very shape #3435 measured, now spelled with two correct-looking
+                // identifiers (found in review of #4275).
+                //
+                // Only checks a cap the statement itself applies, and that bound is REAL rather
+                // than theoretical: DefaultProvisionTargetMessagingTests waits on line 160 and
+                // asserts on line 167, so `applied` is empty there and cross-wiring it stays
+                // GREEN. Measured, not assumed — I wrote this check believing it caught that case
+                // and the mutation said otherwise.
+                //
+                // Not closed by widening the slice to a line window: the window size would be a
+                // constant with no principle behind it, and a wait can precede its assertion by
+                // any distance. What closes it is a site keeping its wait and its message in one
+                // statement, which the nine sites this PR rewrote now do.
+                var applied = Regex.Matches(stmt, @"(?:WaitForExit|Wait|FromMilliseconds)\(\s*(\w*TimeoutMs)\s*\)")
+                    .Select(m => m.Groups[1].Value).Distinct().ToArray();
+                var crossed = applied.Length > 0 && !applied.Intersect(reported).Any();
+                if (crossed)
+                    offenders.Add($"{file}: waits on {string.Join("/", applied)} but reports "
+                                  + $"{string.Join("/", reported)} — the figure is derived from a "
+                                  + $"cap this site does not apply: {Compact(stmt)}");
 
                 // Co-occurrence is weaker than derivation, and the gap is reachable by accident:
                 // appending the constant to an otherwise-hardcoded message ("...within 120s...
@@ -282,13 +308,21 @@ public sealed class SpawnTimeoutMessageDerivationTests
     /// </summary>
     /// <summary>
     /// Every offset in <paramref name="source"/> where a failure path that reports a timeout
-    /// begins, with the anchor that matched.
+    /// begins, with the anchor that matched. Scanned as TEXT, deliberately — the `within` filter
+    /// in the caller is what decides membership, and a token walk here would buy nothing it does
+    /// not already get.
     ///
     /// <para>A `throw` was the only anchor until #4275's first widening, and a failure path that
     /// ASSERTS was invisible to it — nine sites across eight files, each spelling its cap twice:
     /// <c>Assert.True(p.WaitForExit(240_000), "runner did not exit within 240s")</c>. The
     /// hardcoded figure is the defect whether a throw or an assert carries it, so the anchor is
     /// about *reporting a timeout*, not about the statement kind.</para>
+    ///
+    /// <para>The set is three spellings and was two until review: `Assert.Fail(` carried a live
+    /// hardcoded figure in DapPreLaunchBreakpointTests, invisible because I had pinned the two
+    /// spellings in front of me rather than the population. Scanned by the OBSERVABLE — every
+    /// `within &lt;N&gt;s` literal in the assembly — `Assert.False(` and a bare `.Wait(` carry zero
+    /// live sites, so this set is complete as measured rather than as guessed (#4275).</para>
     ///
     /// <para>Trap: `Assert.True(` is far more common than the throw was, and most uses have
     /// nothing to do with timeouts. The caller's existing `within` filter is what keeps the
@@ -302,6 +336,7 @@ public sealed class SpawnTimeoutMessageDerivationTests
         {
             "throw new " + nameof(TimeoutException) + "(",
             "Assert.True(",
+            "Assert.Fail(",
         };
 
         foreach (var anchor in anchors)
