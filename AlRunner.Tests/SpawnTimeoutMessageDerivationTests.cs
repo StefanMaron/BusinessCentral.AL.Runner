@@ -285,9 +285,12 @@ public sealed class SpawnTimeoutMessageDerivationTests
     /// <para>Scanned with comments BLANKED and literals KEPT. Both halves are load-bearing and in
     /// opposite directions: literals must survive because the defect IS a literal, so
     /// <c>CodeOnly</c> would blank the very thing being looked for; comments must go because the
-    /// #3435 narrative is quoted in 40-odd of these files' doc comments, and a raw text scan
-    /// reports every one of them. Measured: 55 raw matches over the tracked test tree, 54 of them
-    /// prose.</para>
+    /// #3435 narrative is quoted in most of these files' doc comments, and a raw text scan
+    /// reports every one of them. Deliberately no count: the figure moves whenever anyone edits
+    /// the prose — including the commit that added this sentence — and the population it would
+    /// have to name (these 48 files, not the test tree) is the distinction such a number is
+    /// likeliest to be quoted without. The property is what matters: over the listed files every
+    /// raw match is prose, and this check reports zero of them.</para>
     ///
     /// <para>The anchor set does not bound this one. The scan above can only see a literal inside
     /// a statement one of its three anchors matched, so a figure in a helper that BUILDS a message
