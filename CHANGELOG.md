@@ -352,6 +352,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **corpus:** pin IsInTryScope inheritance via Record.Truncate() in a try function
 - **guards:** per-site spawn-timeout literal check in the derivation cohort
 - **guards:** a timeout message that ASSERTS is the same defect as one that throws
 - **guards:** follow indirect dispatch in BuiltInCancelIsNotADiscardTests' closure walk
