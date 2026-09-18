@@ -299,7 +299,18 @@ internal static partial class BcAppSymbolCache
         // same contract as CodeunitMethodSymbol. What the emitter does with this list, the
         // counts behind it and the trap in them: RecordPatches.EmitPageMethodsXml and
         // docs/dependency-page-methods.md.
-        List<CodeunitMethodSymbol>? AttributedMethods = null);
+        List<CodeunitMethodSymbol>? AttributedMethods = null,
+        // AL's `ContextSensitiveHelpPage`, verbatim and relative — "ui-enter-date-ranges", never
+        // a URL. It is HelpLink's other source, not a property of its own: BC's emitter resolves
+        // the two into the one HelpLink attribute it writes on every page. Which of them wins,
+        // and the base URL the relative form is joined to, is RecordPatches.EmitPageHelpLink's
+        // question — nothing is joined or defaulted here (#4282).
+        string? ContextSensitiveHelpPage = null,
+        // AL's `DataCaptionExpression` — the caption EXPRESSION source text, e.g.
+        // `Rec."Related Table Caption"`. Carried verbatim and deliberately not parsed: BC's
+        // emitter does not write this text at all, only a fixed marker that the page HAS one.
+        // See RecordPatches.EmitPagePropertiesXml (#4282).
+        string? DataCaptionExpression = null);
 
     /// <summary>
     /// The <c>Enabled</c> / <c>Visible</c> one action DECLARES, exactly as the compiler wrote
@@ -1442,6 +1453,8 @@ internal static partial class BcAppSymbolCache
         props.TryGetValue("InstructionalText", out var instructionalText);
         props.TryGetValue("InherentEntitlements", out var inherentEntitlements);
         props.TryGetValue("InherentPermissions", out var inherentPermissions);
+        props.TryGetValue("ContextSensitiveHelpPage", out var contextSensitiveHelpPage);
+        props.TryGetValue("DataCaptionExpression", out var dataCaptionExpression);
 
         static string? OrNullIfBlank(string? v) => string.IsNullOrWhiteSpace(v) ? null : v;
 
@@ -1466,7 +1479,9 @@ internal static partial class BcAppSymbolCache
             // #4267. The SAME reader the codeunit path uses — BC's emitter writes one method
             // table for both kinds, so a second reader here would be a second spelling of one
             // rule, free to drift.
-            ReadAttributedMethods(page));
+            ReadAttributedMethods(page),
+            OrNullIfBlank(contextSensitiveHelpPage),
+            OrNullIfBlank(dataCaptionExpression));
     }
 
     /// <summary>

@@ -776,17 +776,6 @@
       "issue": 4282
     },
     {
-      "member": "PageDefinition.CaptionML.<presence>",
-      "reason": "A multi-language caption element the runner emits only when the symbol file states that property. BC's emitter writes the element whenever the AL declares the property, including where its resolved value is empty, so BC-present / runner-null is the same scope boundary as the *MLString member declared beside it: the runner reads no translation resources at all (docs/limitations.md), so the only language it could ever state is the one already in the symbol file.",
-      "outOfScope": true,
-      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
-    },
-    {
-      "member": "PageDefinition.CaptionMLString",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 185 pages declare Caption and the runner writes CaptionML only for those, while BC's emitter states a caption on 196 -- so the gap is both the unread property and the cases where BC derives one the symbol file does not spell out. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 4282
-    },
-    {
       "member": "PageDefinition.CaptionTranslationKey",
       "reason": "A translation-file lookup id for a page-level property. Same boundary as the seven TranslationKey.* entries already in this file and for the same measured reason: the runner reads no .xlf or Translations/ resources anywhere, so a key it could state would address a file it never opens. Separately derivable rather than impossible -- the FNV-1a-32 construction in TranslationKeysAreDerivable_NotAPermanentLimit reproduces BC's own keys -- so this is a scope boundary that the runner gaining translation support invalidates.",
       "outOfScope": true,
@@ -863,20 +852,10 @@
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
     },
     {
-      "member": "PageProperties.#dataCaptionExprField",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.DataCaptionExpr, declared in this file with the measurement.",
-      "issue": 4282
-    },
-    {
       "member": "PageProperties.#extensionsWithPromotedActionSyntaxField",
       "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
-    },
-    {
-      "member": "PageProperties.#helpLinkField",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.HelpLink, declared in this file with the measurement.",
-      "issue": 4282
     },
     {
       "member": "PageProperties.#isPreviewField",
@@ -945,11 +924,6 @@
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
     },
     {
-      "member": "PageProperties.DataCaptionExpr",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 31 pages declare DataCaptionExpression; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 4282
-    },
-    {
       "member": "PageProperties.EntityCaptionTranslationKey",
       "reason": "A translation-file lookup id for a page-level property. Same boundary as the seven TranslationKey.* entries already in this file and for the same measured reason: the runner reads no .xlf or Translations/ resources anywhere, so a key it could state would address a file it never opens. Separately derivable rather than impossible -- the FNV-1a-32 construction in TranslationKeysAreDerivable_NotAPermanentLimit reproduces BC's own keys -- so this is a scope boundary that the runner gaining translation support invalidates.",
       "outOfScope": true,
@@ -966,11 +940,6 @@
       "reason": "The set of extension app ids whose pageextensions use promoted-action syntax against this page. A property of the MERGED runtime view across installed extensions, which the build-time per-app oracle documents from the compiler's side while the runner emits a per-app document -- the same class as the merged-runtime entries the table side already declares.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
-    },
-    {
-      "member": "PageProperties.HelpLink",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 6 pages declare HelpLink and BC states a default for the rest; the runner never writes the attribute at all. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 4282
     },
     {
       "member": "PageProperties.InstructionalTextTranslationKey",
