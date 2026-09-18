@@ -33,14 +33,18 @@ namespace AlRunner.Tests;
 
 public sealed class PageSaveDataLayerPrependBindingTests
 {
+    // Cecil's MethodReference.FullName carries the RETURN TYPE. Omitting it makes every
+    // `==` comparison below false and every `DoesNotContain` true — the three positive arms go
+    // red for the wrong reason and the three negative arms pass vacuously, which is the half
+    // nothing would have reported. Measured on this file before the prefix was added.
     private const string AutoIncrement =
-        "AlRunner.BcRuntime::AssignAutoIncrement(Microsoft.Dynamics.Nav.Runtime.NavRecord)";
+        "System.Void AlRunner.BcRuntime::AssignAutoIncrement(Microsoft.Dynamics.Nav.Runtime.NavRecord)";
 
     private const string StampOnInsert =
-        "AlRunner.BcRuntime::StampSystemFieldsOnInsert(Microsoft.Dynamics.Nav.Runtime.NavRecord)";
+        "System.Void AlRunner.BcRuntime::StampSystemFieldsOnInsert(Microsoft.Dynamics.Nav.Runtime.NavRecord)";
 
     private const string StampOnModify =
-        "AlRunner.BcRuntime::StampSystemFieldsOnModify(Microsoft.Dynamics.Nav.Runtime.NavRecord)";
+        "System.Void AlRunner.BcRuntime::StampSystemFieldsOnModify(Microsoft.Dynamics.Nav.Runtime.NavRecord)";
 
     /// <summary>
     /// The Cecil-rewritten Ncl the test host itself loaded — the very bytes the prepends were
