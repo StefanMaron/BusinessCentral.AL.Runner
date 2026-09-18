@@ -107,15 +107,18 @@ it. Both now share one decoder that resolves the flag by **member name**.
 `Codeunit58` in the System Application is a concrete case the old fallback would have got wrong:
 its attribute carries `Options = 1` (`SingleInstance`), which `& 1` reports as manual binding.
 
-## The two absences
+## The three ways of not getting an answer
 
-The shared decoder can fail to find two different members, and only one of them is an answer.
+The shared decoder can come away without a flag in four different ways, and only two of
+them are answers.
 
 | what is missing | what it means | what the decoder does |
 |---|---|---|
 | the derived `IsEventManualBinding` property | BC computes the flag some other way, or has dropped the property | fall through to the `Options` enum and read the flag by member name |
 | an `EventManualBinding` member on the `Options` enum | the flag genuinely is not declared | `false` — the same answer a codeunit carrying no attribute gets, and what BC's own derived property returns for one that declares nothing |
 | `Options` itself | the attribute carries the flag somewhere this code cannot read | **refuse** — `BcShapeGapException`, member `NavCodeunitOptionsAttribute.Options` |
+| `Options` reads as `null` | BC kept the member and stopped populating it | **refuse** — same member, message says `read as null` |
+| `Options` holds a non-enum | BC re-typed the member | **refuse** — same member, message says `holds a <Type>, which is not an enum` |
 
 The third row is the one that used to be a silent `false`. A `false` there says "not manual
 binding" when it means "I could not find out", and the cost is not a missing answer but a wrong
@@ -127,6 +130,55 @@ needed".
 
 The middle row is deliberately *not* a refusal, for the same rule's constraint: a genuinely
 absent thing stays a pass, and only an unmeasurable one becomes the third state.
+
+The last two rows were a silent `false` until #4319. They are on the refusing side of
+`BcShapeGapException`'s own line, which its file header draws as *"the read could not be
+performed. The type/field/property is absent, **or it is present and holding something of a
+shape the runner cannot use**"* — `BcShape.RequiredEnumerable` is the worked case beside it, and
+`BcShape.RequiredEnum` is the flags sibling this added. What separates them from the
+`EventManualBinding`-member row is not how much was read but whether the decode ran to
+completion: an enum lacking the member yields a defined answer, a string or a null yields none.
+
+They refuse with different messages on purpose. "BC stopped populating this" and "BC re-typed
+this" send a reader to different places, and one message covering both would name neither.
+
+## The option mask, and a flag that does not fit an Int64
+
+BC's own `NavCodeunitOptionsAttribute.get_IsEventManualBinding` is four IL instructions on
+28.1.49838.53910 (`Microsoft.Dynamics.Nav.Ncl.dll`, sha256
+`49b11d9b541e82959604b68b4ff6b4990fa06db0ffa48dd5b49284cf63507788`):
+
+```
+call     NavCodeunitOptions NavCodeunitOptionsAttribute::get_Options()
+ldc.i4.2
+and
+ldc.i4.0
+cgt.un          // (Options & 2) != 0
+```
+
+So the mask is `(Options & flag) != 0`, **not** `Enum.HasFlag`'s `(Options & flag) == flag`.
+The two agree for a single-bit flag — `EventManualBinding = 2` — and diverge for a
+multi-bit one, so the decoder spells BC's test rather than the idiomatic .NET one.
+`NavCodeunitOptions` is `[Flags]`, `Int32`-backed, `SingleInstance = 1`,
+`EventManualBinding = 2`.
+
+The decoder used to evaluate that mask through `Convert.ToInt64` inside a `try` whose `catch`
+returned `false`. Measured, on that conversion:
+
+| input | `Convert.ToInt64` | old decoder | correct |
+|---|---|---|---|
+| `Int32`-backed `EventManualBinding = 2` | `2` | `true` | `true` |
+| `UInt64`-backed `EventManualBinding = 0x8000000000000000` | **`OverflowException`** | `false` | **`true`** |
+| `UInt64`-backed enum, `Options = SingleInstance` | **`OverflowException`** | `false` | `false` |
+
+`Convert.ToInt64` is the **only** reachable throw on that path: `Enum.Parse` is handed a name
+`Enum.GetNames` returned a moment earlier, and cannot fail for one — measured over both enums
+above, every name round-trips. So the `catch` was reachable, and its `false` was a wrong answer
+about a value that decodes exactly, not a gap to refuse over. The fix is arithmetic, not a
+third state: `OptionBits` reinterprets the bits through the underlying type
+(`Convert.ToUInt64` for a `ulong`-backed enum, an unchecked widening of `Convert.ToInt64`
+otherwise), and the `catch` is gone rather than converted — an untested refusal path is
+indistinguishable from a never-fire path (`guards-need-a-third-state.md`).
 `AlRunner.Tests/CodeunitManualBindingOptionsTests.cs` pins the pair —
 `OptionsEnumWithNoEventManualBindingMember_AnswersFalseRatherThanTestingBitZero` and
 `AttributeWithoutAnOptionsMember_RefusesRatherThanAnsweringFalse` — so a change that collapsed

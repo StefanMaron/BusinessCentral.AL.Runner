@@ -113,6 +113,72 @@ namespace AlRunner.Tests.BcAttributeShapeWithoutOptions
     }
 }
 
+namespace AlRunner.Tests.BcAttributeShapeWithNonEnumOptions
+{
+    /// <summary>
+    /// <c>Options</c> is present and holds a <see cref="string"/> — a change to the member's
+    /// TYPE rather than a rename, which is what separates this from
+    /// <c>BcAttributeShapeWithoutOptions</c>. The lookup succeeds and hands back something no
+    /// option flag can be decoded from, so <c>false</c> here would be invented rather than read.
+    ///
+    /// <para>The value deliberately SPELLS the flag: a decoder that fell back to matching text
+    /// would answer <c>true</c>, and one that shrugged would answer <c>false</c>. Both are
+    /// answers to a question that was never asked.</para>
+    /// </summary>
+    [AttributeUsage(AttributeTargets.Class)]
+    public sealed class NavCodeunitOptionsAttribute : Attribute
+    {
+        public NavCodeunitOptionsAttribute(string options) => Options = options;
+
+        public string Options { get; }
+    }
+}
+
+namespace AlRunner.Tests.BcAttributeShapeWithNullOptions
+{
+    /// <summary>
+    /// <c>Options</c> is present, reference-typed, and reads as <c>null</c>. Kept apart from
+    /// <c>BcAttributeShapeWithNonEnumOptions</c> because the two undecodable reads send a reader
+    /// to different places — one says BC re-typed the member, the other that it stopped
+    /// populating it — and a message that could not tell them apart would name neither.
+    /// </summary>
+    [AttributeUsage(AttributeTargets.Class)]
+    public sealed class NavCodeunitOptionsAttribute : Attribute
+    {
+        public NavCodeunitOptionsAttribute() { }
+
+        public string? Options => null;
+    }
+}
+
+namespace AlRunner.Tests.BcAttributeShapeWithWideOptions
+{
+    /// <summary>
+    /// An <c>Options</c> enum backed by <see cref="ulong"/> whose <c>EventManualBinding</c>
+    /// member exceeds <see cref="long.MaxValue"/>. This is the ONLY reachable route into the
+    /// decoder's former <c>catch { return false; }</c>: measured, <c>Convert.ToInt64</c> raises
+    /// <see cref="OverflowException"/> on this value, while <c>Enum.Parse</c> cannot fail at all
+    /// for a name that came from <c>Enum.GetNames</c>. The value decodes perfectly — the old
+    /// instrument simply could not carry it — so the answer here is <c>true</c>, not a refusal.
+    /// </summary>
+    [Flags]
+    public enum NavCodeunitOptions : ulong
+    {
+        None = 0,
+        SingleInstance = 1,
+        EventManualBinding = 0x8000_0000_0000_0000,
+    }
+
+    /// <inheritdoc cref="AlRunner.Tests.BcAttributeShapeWithoutDerivedProperty.NavCodeunitOptionsAttribute"/>
+    [AttributeUsage(AttributeTargets.Class)]
+    public sealed class NavCodeunitOptionsAttribute : Attribute
+    {
+        public NavCodeunitOptionsAttribute(NavCodeunitOptions options) => Options = options;
+
+        public NavCodeunitOptions Options { get; }
+    }
+}
+
 namespace AlRunner.Tests
 {
     [Collection(BcEngineCollection.Name)]
@@ -307,6 +373,115 @@ public abstract class Codeunit{id} : Microsoft.Dynamics.Nav.Runtime.NavCodeunit
             var viaMeta = Assert.Throws<AlRunner.Infrastructure.BcShapeGapException>(
                 () => AlRunner.BcRuntime.NCLMetaCodeunit_get_IsEventManualBinding(meta!));
             Assert.Equal("NavCodeunitOptionsAttribute.Options", viaMeta.Member);
+        }
+
+        /// <summary>
+        /// <c>Options</c> present but holding a non-enum. The read SUCCEEDED, which is why this
+        /// looks like the <c>false</c> arm and is not one: what came back is a value the decoder
+        /// cannot get a bit out of, and <c>BcShapeGapException</c>'s own header puts "present and
+        /// holding something of a shape the runner cannot use" on the refusing side of the line,
+        /// next to its worked <c>RequiredEnumerable</c> case.
+        ///
+        /// <para>Paired against
+        /// <see cref="OptionsEnumWithNoEventManualBindingMember_AnswersFalseRatherThanTestingBitZero"/>:
+        /// there the value IS an enum and merely lacks the member, the decode runs to completion,
+        /// and <c>false</c> is the read answer. A change collapsing the two reds exactly one of
+        /// them (#4319).</para>
+        /// </summary>
+        [SkippableFact]
+        public void OptionsHoldingANonEnum_RefusesRatherThanAnsweringFalse()
+        {
+            RequireEngine();
+
+            const string attr =
+                "AlRunner.Tests.BcAttributeShapeWithNonEnumOptions.NavCodeunitOptionsAttribute";
+
+            // Two ids for the reason the sibling refusal arm gives: one per reader, so neither
+            // arm depends on how the other reader's cache treats a factory that threw.
+            var type = CompileAndLoadCodeunit(61750, $"[{attr}(\"EventManualBinding\")]");
+            CompileAndLoadCodeunit(61751, $"[{attr}(\"EventManualBinding\")]");
+
+            var viaDispatcher = Assert.Throws<AlRunner.Infrastructure.BcShapeGapException>(
+                () => AlRunner.BcRuntime.IsManualBindingCodeunitType(type));
+            Assert.Equal("NavCodeunitOptionsAttribute.Options", viaDispatcher.Member);
+            Assert.Contains("holds a String, which is not an enum", viaDispatcher.Detail);
+            Assert.Contains("silently unbind every manual subscriber", viaDispatcher.Detail);
+
+            var meta = AlRunner.BcRuntime.EnsureCodeunitMetaById(61751);
+            Assert.NotNull(meta);
+            var viaMeta = Assert.Throws<AlRunner.Infrastructure.BcShapeGapException>(
+                () => AlRunner.BcRuntime.NCLMetaCodeunit_get_IsEventManualBinding(meta!));
+            Assert.Equal("NavCodeunitOptionsAttribute.Options", viaMeta.Member);
+            Assert.Contains("holds a String, which is not an enum", viaMeta.Detail);
+        }
+
+        /// <summary>
+        /// <c>Options</c> present, reference-typed, reading as <c>null</c>. Refuses like the
+        /// wrong-type arm and must say so DIFFERENTLY — the two causes have different remedies,
+        /// and a message that folded them together would send a reader to the wrong one.
+        /// </summary>
+        [SkippableFact]
+        public void OptionsReadingAsNull_RefusesAndNamesTheNullRatherThanAWrongType()
+        {
+            RequireEngine();
+
+            const string attr =
+                "AlRunner.Tests.BcAttributeShapeWithNullOptions.NavCodeunitOptionsAttribute";
+
+            var type = CompileAndLoadCodeunit(61752, $"[{attr}()]");
+            CompileAndLoadCodeunit(61753, $"[{attr}()]");
+
+            var viaDispatcher = Assert.Throws<AlRunner.Infrastructure.BcShapeGapException>(
+                () => AlRunner.BcRuntime.IsManualBindingCodeunitType(type));
+            Assert.Equal("NavCodeunitOptionsAttribute.Options", viaDispatcher.Member);
+            Assert.Contains("read as null", viaDispatcher.Detail);
+            // The discrimination, not decoration: a refusal that reported every undecodable
+            // Options the same way would pass every other assertion in this arm.
+            Assert.DoesNotContain("is not an enum", viaDispatcher.Detail);
+
+            var meta = AlRunner.BcRuntime.EnsureCodeunitMetaById(61753);
+            Assert.NotNull(meta);
+            var viaMeta = Assert.Throws<AlRunner.Infrastructure.BcShapeGapException>(
+                () => AlRunner.BcRuntime.NCLMetaCodeunit_get_IsEventManualBinding(meta!));
+            Assert.Equal("NavCodeunitOptionsAttribute.Options", viaMeta.Member);
+            Assert.Contains("read as null", viaMeta.Detail);
+        }
+
+        /// <summary>
+        /// An <c>Options</c> flag whose value does not fit an <see cref="long"/>. The decoder used
+        /// to mask through <c>Convert.ToInt64</c> inside a <c>try</c> whose <c>catch</c> answered
+        /// <c>false</c>; on a ulong-backed enum that conversion overflows, so a codeunit that
+        /// DOES declare manual binding was reported as automatic.
+        ///
+        /// <para>Not a refusal: the value decodes exactly, the old instrument just could not
+        /// carry it. Both directions are asserted, because a decoder that answered <c>true</c>
+        /// unconditionally would satisfy the positive arm alone.</para>
+        /// </summary>
+        [SkippableFact]
+        public void WideOptionsEnum_WhoseFlagExceedsInt64_DecodesRatherThanAnsweringFalse()
+        {
+            RequireEngine();
+
+            const string attr =
+                "AlRunner.Tests.BcAttributeShapeWithWideOptions.NavCodeunitOptionsAttribute";
+            const string en =
+                "AlRunner.Tests.BcAttributeShapeWithWideOptions.NavCodeunitOptions";
+
+            var manual = CompileAndLoadCodeunit(61754, $"[{attr}({en}.EventManualBinding)]");
+            var single = CompileAndLoadCodeunit(61755, $"[{attr}({en}.SingleInstance)]");
+            CompileAndLoadCodeunit(61756, $"[{attr}({en}.EventManualBinding)]");
+            CompileAndLoadCodeunit(61757, $"[{attr}({en}.SingleInstance)]");
+
+            Assert.True(AlRunner.BcRuntime.IsManualBindingCodeunitType(manual),
+                "EventManualBinding = 0x8000000000000000 overflows Convert.ToInt64, which the "
+                + "old catch turned into 'this codeunit does not declare manual binding'");
+            Assert.False(AlRunner.BcRuntime.IsManualBindingCodeunitType(single),
+                "SingleInstance = 1 carries none of the EventManualBinding bit; this arm stays "
+                + "GREEN under the old code too, so it is the control rather than the proof");
+
+            Assert.True(BindingAnswerForMetaBuiltById(61756),
+                "the meta reader reaches the same decoder by its own route");
+            Assert.False(BindingAnswerForMetaBuiltById(61757));
         }
     }
 }

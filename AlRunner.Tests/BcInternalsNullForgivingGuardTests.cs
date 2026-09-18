@@ -291,7 +291,7 @@ public sealed class BcInternalsNullForgivingGuardTests
         // SIBLING absence one branch down — an Options enum declaring no EventManualBinding
         // member — is a read that SUCCEEDED and stays a false; the split is pinned by
         // AlRunner.Tests/CodeunitManualBindingOptionsTests and written up in
-        // docs/codeunit-manual-binding.md#the-two-absences.
+        // docs/codeunit-manual-binding.md#the-three-ways-of-not-getting-an-answer.
         Assert.Equal(99, converted);
     }
 
