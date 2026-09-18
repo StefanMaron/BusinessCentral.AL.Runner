@@ -131,6 +131,15 @@ print()
 # Order matters: a real failure outranks an unmeasured half. Both can happen at once — the absence
 # direction can catch a regression on a box with no gh — and reporting 3 there would hide a
 # measured negative behind "could not measure", which is the same conflation pointed the other way.
+#
+# That ranking is only sound because the two halves are INDEPENDENT: path_without_gh() builds its
+# own symlink directory and hands it to every subprocess, so the absence half never consults the
+# ambient PATH and its result is identical whether or not gh is installed here. A failure from a
+# sealed measurement carries full weight even when the other half could not run.
+#
+# Trap: make the absence half read the ambient PATH and this justification evaporates silently —
+# the halves become entangled, a failure from one is no longer trustworthy while the other is
+# unmeasured, and nothing here would fail to say so (#4346, found in review).
 if FAILURES:
     print(f"{len(FAILURES)} failed, 0 passed")
     sys.exit(1)
