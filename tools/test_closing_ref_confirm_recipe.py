@@ -96,6 +96,13 @@ if HAVE_JQ:
     check("the UNsubstituted pattern over-matches, as the rule warns",
           json.loads(generic) == [1, 2, 3], generic.strip())
 
+# Named so the UNMEASURED guard below can assert on these specific checks rather than on "any
+# check ran", which a sibling check elsewhere in the file would satisfy.
+RULE_TEXT_CHECKS = {
+    "the rule still tells the reader to substitute the real issue number",
+    "...and still frames this as a confirmation of a zero, never a claim",
+}
+
 rule = open(".claude/rules/check-open-prs-before-claiming.md", encoding="utf-8").read()
 check("the rule still tells the reader to substitute the real issue number",
       "Substitute the real issue number" in rule)
@@ -110,16 +117,20 @@ if failures:
     print(f"FAILED: {len(failures)} check(s): {failures}")
     sys.exit(1)
 if unmeasured:
-    # The UNMEASURED note claims the rule-text checks still ran. Assert that rather than saying
-    # it: re-widening the gate to cover them again makes the claim false, and the only thing that
-    # changes is an exit code nobody would look twice at (3 either way). Measured in review of
-    # #4355 — the message became a lie with nothing catching it.
+    # The UNMEASURED note claims the RULE-TEXT checks still ran, so assert exactly that. Naming
+    # them rather than counting: a count is satisfied by any other check running, so gating only
+    # these two while leaving a third ungated kept `ran` non-empty and the sentence false —
+    # measured in review of #4355, after an earlier revision pinned the count and called it done.
     #
-    # Counting checks that RAN, not the gate's own flag: a flag would restate the branch it is
-    # about, while the count is what the sentence actually promises.
-    if not ran:
-        print("  FAIL the UNMEASURED note says other checks still ran, and NONE did — the gate "
-              "is wider than its stated reason, which is the defect #4355 fixed")
+    # Bound, measured rather than assumed: DELETING this block is not pinned by anything here — a
+    # no-jq run then exits 3 with the note's claim unchecked, which is the #4355 defect returning.
+    # Nothing in a single file can pin its own deletion; that needs a guard over the guards, and
+    # inventing one for a single site would be machinery without a second instance to justify it.
+    # Stated so the next editor knows the floor rather than discovering it (#4355, review round 2).
+    if not RULE_TEXT_CHECKS <= set(ran):
+        print("  FAIL the UNMEASURED note says the rule-text checks still ran, and "
+              f"{sorted(RULE_TEXT_CHECKS - set(ran))} did not — the gate is wider than its stated "
+              "reason, which is the defect #4355 fixed")
         sys.exit(1)
     for note in unmeasured:
         print(f"  UNMEASURED {note}")
