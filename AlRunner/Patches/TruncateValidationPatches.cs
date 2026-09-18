@@ -27,6 +27,24 @@ public static partial class BcRuntime
     private static PropertyInfo? _pMtMediaFieldCount;    // NCLMetaTable.MediaFieldCount
     private static Type? _navCSideTruncateExceptionType;
 
+    // Guard 5 — the delete-event subscription check.
+    private static PropertyInfo? _pRecSession;           // NavRecord.Session
+    private static MethodInfo? _mResolveAppGroup;        // NavCurrentThread.ResolveAppGroup(NavSession)
+    private static MethodInfo? _mMtIsEventSubscribed;    // NCLMetaTable.IsEventSubscribed(NavTriggerEventType, NavAppGroup)
+    private static Type? _navTriggerEventType;           // read off IsEventSubscribed's own signature
+
+    // Guard 7 — marked records / FlowField filters.
+    private static PropertyInfo? _pRecRecordImplementation; // NavRecord.RecordImplementation
+    private static PropertyInfo? _pImplTableState;          // RecordImplementation.TableState
+    private static PropertyInfo? _pTsFiltersAndMarks;       // TableState.FiltersAndMarks
+    private static PropertyInfo? _pFamMarkedRecords;        // FiltersAndMarks.MarkedRecords
+    private static PropertyInfo? _pFamFilters;              // FiltersAndMarks.Filters
+    private static PropertyInfo? _pMrIsCompleteExpressionLarge;
+    private static PropertyInfo? _pFfdAnyFiltersOnFlowFields;
+
+    private const BindingFlags AnyInstance =
+        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+
     /// <summary>
     /// Replacement for NavRecord.ValidateTruncateSupport(NavRecord).
     ///
@@ -78,21 +96,98 @@ public static partial class BcRuntime
 
         // Guard 4 — RequiresSecurityFiltersValidation. SKIPPED; see the summary above.
 
-        // Guard 5 — OnBeforeDelete/OnAfterDelete subscribers. Skipped rather than faked: the
-        // check is NCLMetaTable.IsEventSubscribed(NavTriggerEventType, NavAppGroup), whose second
-        // argument comes from NavCurrentThread.ResolveAppGroup — the skeleton app-group resolution
-        // NavApplicationObjectBaseCtorReplacement deliberately does not perform (it pins
-        // BaseGroupId = 0), so any answer here would be about the runner's placeholder group
-        // rather than about BC. Tracked by #4374.
+        // Guard 5 — OnBeforeDelete/OnAfterDelete subscribers.
+        if (metaTable != null && IsDeleteEventSubscribed(record, metaTable))
+            ThrowTruncate("Truncate is not supported when the OnBeforeDelete and/or OnAfterDelete "
+                + "event is subscribed. Please remove the events subscriptions or use DeleteAll.");
 
         // Guard 6 — MediaFieldCount.
         if (metaTable != null && _pMtMediaFieldCount?.GetValue(metaTable) is int mediaFields && mediaFields > 0)
             ThrowTruncate("Truncate is not supported when the field has Media and/or MediaSet fields.");
 
-        // Guard 7 — marked records / FlowField filters. Skipped: both read
-        // RecordImplementation.TableState.FiltersAndMarks, which the runner's in-memory provider
-        // does not populate in the shape BC's IsCompleteExpressionLarge and
-        // FlowFieldsHelper.AnyFiltersOnFlowFields read. Tracked by #4374.
+        // Guard 7 — marked records, then FlowField filters. Two separate BC guards reading one
+        // FiltersAndMarks, in this order.
+        var filtersAndMarks = ReadFiltersAndMarks(record);
+        if (filtersAndMarks != null)
+        {
+            var marked = _pFamMarkedRecords!.GetValue(filtersAndMarks);
+            if (marked != null && _pMrIsCompleteExpressionLarge!.GetValue(marked) is true)
+                ThrowTruncate("Too many marks to truncate, use DeleteAll or use different filtering.");
+
+            // BC: FlowFieldsHelper.AnyFiltersOnFlowFields(f) => f.Filters?.AnyFiltersOnFlowFields
+            // ?? false — a null Filters is "no filters", which is a legitimate false, not a gap.
+            var filters = _pFamFilters!.GetValue(filtersAndMarks);
+            if (filters != null && _pFfdAnyFiltersOnFlowFields!.GetValue(filters) is true)
+                ThrowTruncate("Truncate does not support filters on FlowFields.");
+        }
+    }
+
+    /// <summary>
+    /// BC's guard 5: <c>NCLMetaTable.IsEventSubscribed(OnBeforeDeleteEvent | OnAfterDeleteEvent,
+    /// NavCurrentThread.ResolveAppGroup(record.Session))</c>.
+    ///
+    /// <para>Faithful on the skeleton because both sides of the app-group comparison are the
+    /// runner's own, and they agree: <c>ResolveAppGroup</c> reads
+    /// <c>session.OverriddenAppGroup ?? session.NavAppGroup</c>, and BcRuntime sets
+    /// <c>OverriddenAppGroup = NavAppGroup.BaseGroup</c> on the skeleton session, while
+    /// <c>EventSubscriberPatches.BuildSubscription</c> stamps that same <c>BaseGroup</c> on every
+    /// subscription it registers. BC narrows by <c>SubscriberNavAppGroup.GroupId</c>
+    /// (<c>NavEventScope.GetAppGroupSubscriberStartIndex</c>), so one group id on both sides is
+    /// the whole of what the comparison needs. Measured in-process on this fixture set:
+    /// <c>groupId=0</c> either side, <c>onBeforeDelete=True</c> for the subscribed table and
+    /// <c>False</c> for three unsubscribed ones.</para>
+    ///
+    /// <para>Citation: Ncl 28.1.49838.53910 (sha256 49b11d9b) —
+    /// <c>NavRecord.ValidateTruncateSupport</c>, <c>NavCurrentThread.TryResolveAppGroup</c>,
+    /// <c>NavEventScope.HasSubscribersForAppGroup</c>. The registry this reads is BC's own and is
+    /// already load-bearing in the runner: <c>NavRecord.InsertAsync</c> calls the trigger handler
+    /// only once <c>IsEventSubscribed</c> says yes, and #3576 removed a constant-true rewrite of
+    /// it (<c>IsEventSubscribedNotConstantTests</c>). Corpus codeunit 60518 adjudicates the
+    /// AL-observable claim on a real service tier.</para>
+    ///
+    /// <para>Trap: this answers about the app group the runner actually runs in. A future change
+    /// that gives published apps distinct group ids must keep the subscription's stamped group and
+    /// the session's resolved group in step, or this silently stops matching.</para>
+    /// </summary>
+    private static bool IsDeleteEventSubscribed(object record, object metaTable)
+    {
+        if (_mMtIsEventSubscribed == null || _navTriggerEventType == null
+            || _mResolveAppGroup == null || _pRecSession == null)
+            return false; // shape unavailable: EnsureTruncateValidationShape already refused loudly.
+
+        var session = _pRecSession.GetValue(record);
+        var appGroup = _mResolveAppGroup.Invoke(null, new[] { session });
+        if (appGroup == null)
+            throw new AlRunner.Infrastructure.BcShapeGapException(
+                "Record.Truncate()", "NavCurrentThread.ResolveAppGroup",
+                "returned null; BC's own body falls back to NavAppGroup.BaseGroup and never does");
+
+        // Ordinals 5 and 6 are OnBeforeDeleteEvent / OnAfterDeleteEvent, the same pair
+        // EventSubscriberPatches.ResolveEventOrdinalFromName registers under.
+        foreach (var ordinal in new[] { 5, 6 })
+        {
+            var subscribed = _mMtIsEventSubscribed.Invoke(
+                metaTable, new[] { Enum.ToObject(_navTriggerEventType, ordinal), appGroup });
+            if (subscribed is true) return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// <c>record.RecordImplementation.TableState.FiltersAndMarks</c>, or null when the record has
+    /// no table state to read — which is an ordinary state for a record that has never been
+    /// opened, not a gap. A failure to BIND any step is a gap and refuses in
+    /// <see cref="EnsureTruncateValidationShape"/> instead.
+    /// </summary>
+    private static object? ReadFiltersAndMarks(object record)
+    {
+        if (_pRecRecordImplementation == null || _pImplTableState == null || _pTsFiltersAndMarks == null)
+            return null;
+        var impl = _pRecRecordImplementation.GetValue(record);
+        if (impl == null) return null;
+        var tableState = _pImplTableState.GetValue(impl);
+        if (tableState == null) return null;
+        return _pTsFiltersAndMarks.GetValue(tableState);
     }
 
     /// <summary>
@@ -140,8 +235,16 @@ public static partial class BcRuntime
         _pRecIsTemporary = FindPropertyUpHierarchy(recordType, "IsTemporary");
         _pRecMetaTable = FindPropertyUpHierarchy(recordType, "MetaTable");
 
-        var ncl = recordType.Assembly;
-        var metaTableType = ncl.GetType("Microsoft.Dynamics.Nav.Runtime.NCLMetaTable");
+        // NOT recordType.Assembly: for an AL-emitted record that is the emitted BUSINESS
+        // APPLICATION assembly, which has no BC types in it, so NCLMetaTable resolved to null and
+        // guards 2 and 6 were silently inert for every AL table (measured on this fixture set —
+        // `metaTableType=NULL`). Take the type from the MetaTable property's own declared type,
+        // which is a BC type whatever assembly the record came from, and fall back to a scan.
+        var metaTableType = _pRecMetaTable?.PropertyType
+            ?? recordType.Assembly.GetType("Microsoft.Dynamics.Nav.Runtime.NCLMetaTable")
+            ?? AppDomain.CurrentDomain.GetAssemblies()
+                .Select(a => a.GetType("Microsoft.Dynamics.Nav.Runtime.NCLMetaTable"))
+                .FirstOrDefault(t => t != null);
         _pMtSupportsTruncation = metaTableType?.GetProperty("SupportsTruncation");
         _pMtMediaFieldCount = metaTableType?.GetProperty("MediaFieldCount");
 
@@ -152,6 +255,86 @@ public static partial class BcRuntime
             ?? AppDomain.CurrentDomain.GetAssemblies()
                 .Select(a => a.GetType("Microsoft.Dynamics.Nav.Types.Exceptions.NavCSideTruncateException"))
                 .FirstOrDefault(t => t != null);
+
+        ResolveGuard5Shape(recordType, metaTableType);
+        ResolveGuard7Shape(recordType);
+    }
+
+    /// <summary>
+    /// Binds guard 5. Every member here is REQUIRED: a null bind means "BC moved and we cannot
+    /// tell whether a delete subscriber exists", which is not the same as "there is no
+    /// subscriber" — and resolving it toward the latter would silently permit a Truncate() BC
+    /// refuses, the exact silent-fake this file exists to remove
+    /// (.claude/rules/guards-need-a-third-state.md).
+    /// </summary>
+    private static void ResolveGuard5Shape(Type recordType, Type? metaTableType)
+    {
+        _pRecSession = FindPropertyUpHierarchy(recordType, "Session");
+
+        // NavTriggerEventType lives in Types.dll while NCLMetaTable lives in Ncl.dll, so the
+        // enum is read off IsEventSubscribed's OWN signature rather than resolved by name —
+        // a namespace guess binds nothing and would read as "no overload".
+        //
+        // Walked up the hierarchy because IsEventSubscribed is declared on the BASE type
+        // NCLMetaApplicationObject, not on NCLMetaTable: a plain GetMethods on the derived type
+        // binds nothing, which is indistinguishable from "BC removed it" (measured — the first
+        // run of this guard refused with IsEventSubscribed=False for exactly this reason).
+        for (var t = metaTableType; t != null && _mMtIsEventSubscribed == null; t = t.BaseType)
+            _mMtIsEventSubscribed = t.GetMethods(AnyInstance | BindingFlags.DeclaredOnly)
+                .FirstOrDefault(m => m.Name == "IsEventSubscribed"
+                                     && m.ReturnType == typeof(bool)
+                                     && m.GetParameters().Length == 2
+                                     && m.GetParameters()[0].ParameterType.IsEnum);
+        _navTriggerEventType = _mMtIsEventSubscribed?.GetParameters()[0].ParameterType;
+        var appGroupType = _mMtIsEventSubscribed?.GetParameters()[1].ParameterType;
+
+        var navCurrentThread = metaTableType?.Assembly
+            .GetType("Microsoft.Dynamics.Nav.Runtime.NavCurrentThread");
+        // ResolveAppGroup is overloaded; the no-arg one is [Obsolete] and much more expensive.
+        // Bind the session-taking overload by its parameter type, not by arity alone.
+        _mResolveAppGroup = navCurrentThread?.GetMethods(BindingFlags.Static | BindingFlags.Public
+                | BindingFlags.NonPublic)
+            .FirstOrDefault(m => m.Name == "ResolveAppGroup"
+                                 && m.GetParameters().Length == 1
+                                 && m.ReturnType == appGroupType);
+
+        if (_pRecSession == null || _mMtIsEventSubscribed == null || _mResolveAppGroup == null)
+            throw new AlRunner.Infrastructure.BcShapeGapException(
+                "Record.Truncate()",
+                "NCLMetaTable.IsEventSubscribed / NavCurrentThread.ResolveAppGroup",
+                $"could not bind the delete-subscriber guard (Session={_pRecSession != null}, "
+                + $"IsEventSubscribed={_mMtIsEventSubscribed != null}, "
+                + $"ResolveAppGroup={_mResolveAppGroup != null})");
+    }
+
+    /// <summary>
+    /// Binds guard 7. Required for the same reason as guard 5: an unbindable
+    /// FiltersAndMarks cannot answer "are there marks / FlowField filters", and answering
+    /// "no" would permit a Truncate() BC refuses.
+    /// </summary>
+    private static void ResolveGuard7Shape(Type recordType)
+    {
+        _pRecRecordImplementation = FindPropertyUpHierarchy(recordType, "RecordImplementation");
+        _pImplTableState = _pRecRecordImplementation?.PropertyType.GetProperty("TableState", AnyInstance);
+        _pTsFiltersAndMarks = _pImplTableState?.PropertyType.GetProperty("FiltersAndMarks", AnyInstance);
+        _pFamMarkedRecords = _pTsFiltersAndMarks?.PropertyType.GetProperty("MarkedRecords", AnyInstance);
+        _pFamFilters = _pTsFiltersAndMarks?.PropertyType.GetProperty("Filters", AnyInstance);
+        _pMrIsCompleteExpressionLarge = _pFamMarkedRecords?.PropertyType
+            .GetProperty("IsCompleteExpressionLarge", AnyInstance);
+        _pFfdAnyFiltersOnFlowFields = _pFamFilters?.PropertyType
+            .GetProperty("AnyFiltersOnFlowFields", AnyInstance);
+
+        if (_pRecRecordImplementation == null || _pImplTableState == null || _pTsFiltersAndMarks == null
+            || _pFamMarkedRecords == null || _pFamFilters == null
+            || _pMrIsCompleteExpressionLarge == null || _pFfdAnyFiltersOnFlowFields == null)
+            throw new AlRunner.Infrastructure.BcShapeGapException(
+                "Record.Truncate()",
+                "RecordImplementation.TableState.FiltersAndMarks",
+                $"could not bind the marks/FlowField guard (impl={_pRecRecordImplementation != null}, "
+                + $"tableState={_pImplTableState != null}, fam={_pTsFiltersAndMarks != null}, "
+                + $"marked={_pFamMarkedRecords != null}, filters={_pFamFilters != null}, "
+                + $"isLarge={_pMrIsCompleteExpressionLarge != null}, "
+                + $"anyFlow={_pFfdAnyFiltersOnFlowFields != null})");
     }
 
     private static PropertyInfo? FindPropertyUpHierarchy(Type? t, string name)

@@ -1457,27 +1457,41 @@ function (#4371). The replacement now runs the guards. What it does **not** run:
 | 2 | `!MetaTable.SupportsTruncation` -> "The table does not support truncation." | runs |
 | 3 | `CurrentMethodScope.IsInTryScope` -> "Truncate is not supported in try functions." | runs |
 | 4 | `RequiresSecurityFiltersValidation(Delete)` -> `NavPermissionException` | **skipped** |
-| 5 | `IsEventSubscribed(OnBeforeDelete/OnAfterDelete)` -> "Truncate is not supported when the OnBeforeDelete and/or OnAfterDelete event is subscribed..." | **skipped** |
+| 5 | `IsEventSubscribed(OnBeforeDelete/OnAfterDelete)` -> "Truncate is not supported when the OnBeforeDelete and/or OnAfterDelete event is subscribed..." | runs (#4374) |
 | 6 | `MediaFieldCount > 0` -> "Truncate is not supported when the field has Media and/or MediaSet fields." | runs |
-| 7 | marked records / FlowField filters -> two more messages | **skipped** |
+| 7 | marked records -> "Too many marks to truncate..."; FlowField filters -> "Truncate does not support filters on FlowFields." | runs (#4374) |
 
 **Guard 4** reads `recordImplementation.RequiresSecurityFiltersValidation`, which answers true on
 the skeleton because the runner populates no security-filter state for it to consult. Running it
 refused every `Truncate()` with a `NavPermissionException`, which is what made the whole method a
 no-op in the first place. Skipping exactly one guard is the narrower fix.
 
-**Guard 5** calls `NCLMetaTable.IsEventSubscribed(NavTriggerEventType, NavAppGroup)`, whose second
-argument comes from `NavCurrentThread.ResolveAppGroup`. `NavApplicationObjectBaseCtorReplacement`
-deliberately skips app-group resolution and pins `BaseGroupId = 0`, so any answer here would be
-about the runner's placeholder group rather than about BC.
+**Guards 5 and 7 were skipped until #4374, on a premise that measurement did not support.** Both
+were believed to depend on state the runner does not populate; both turned out to read state it
+already maintains, so the fix was to stop skipping them rather than to build anything new:
 
-**Guard 7** reads `RecordImplementation.TableState.FiltersAndMarks`, which the in-memory provider
-does not populate in the shape `IsCompleteExpressionLarge` and `FlowFieldsHelper
-.AnyFiltersOnFlowFields` read.
+- **Guard 5** asks `NCLMetaTable.IsEventSubscribed(OnBeforeDeleteEvent | OnAfterDeleteEvent,
+  ResolveAppGroup(session))`. Both sides of that app-group comparison are the runner's own and they
+  agree: `BcRuntime` sets `OverriddenAppGroup = NavAppGroup.BaseGroup` on the skeleton session,
+  which is what `ResolveAppGroup` returns, and `EventSubscriberPatches.BuildSubscription` stamps
+  that same `BaseGroup` on every subscription it registers into BC's own `NavEventScope`. BC
+  narrows by `SubscriberNavAppGroup.GroupId`, so one group id on both sides is all the comparison
+  needs. The registry is already load-bearing elsewhere — `NavRecord.InsertAsync` fires table
+  triggers only once `IsEventSubscribed` says yes, and #3576 removed a constant-true rewrite of it.
+- **Guard 7** reads `RecordImplementation.TableState.FiltersAndMarks`, which *is* populated:
+  measured in-process, `MarkedRecords` is non-null exactly when `MARKEDONLY` is set and
+  `Filters.AnyFiltersOnFlowFields` is true exactly when a filter sits on a FlowField.
 
-So a `Truncate()` that real BC refuses for reason 4, 5 or 7 **succeeds here**. Guards 5 and 7
-are tracked by #4374; guard 4 is deliberate and stays, because the state it reads does not
-exist here at all.
+Both refusals re-raise BC's own `NavCSideTruncateException` with BC's own message text, so
+`asserterror` / `Assert.ExpectedError` classify them as they do a real tier's. Corpus codeunit
+60518 adjudicates both on a real service tier, each paired with a negative control.
+
+Guard 7's marks arm fires on BC's *expression-size* limit, not on the presence of marks: measured
+here, 50 marks truncate and 3000 raise "Too many marks to truncate...", which is BC's own
+`MarkedRecords.IsCompleteExpressionLarge` deciding, not a runner threshold.
+
+So a `Truncate()` that real BC refuses for reason 4 **succeeds here**; guard 4 is deliberate and
+stays, because the state it reads does not exist here at all.
 Guard 3 is pinned upstream by corpus codeunit 60923, where a real service tier adjudicates it.
 
 Measured on `Microsoft.Dynamics.Nav.Ncl.dll` build `28.1.49838.53910` (sha256 `49b11d9b`); the
