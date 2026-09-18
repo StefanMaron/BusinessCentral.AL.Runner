@@ -663,10 +663,10 @@ public static partial class BcRuntime
         return shared;
     }
 
-    // NavDialog.ALOpen — UI dialog open. Real impl reaches Tree.Session which is null.
-    // No-op for skeleton tests; AL test code just needs the call to not throw.
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void NavDialog_ALOpen(object self, Guid automationId, string message, object[] getters) { }
+    // NavDialog_ALOpen used to live here, a no-op backing an orphaned JmpHook registration on
+    // the claim that BC's real ALOpen reaches a null Tree.Session. Deleted with the registration
+    // — Dialog.Open runs BC's real body today and returns cleanly (#1883 follow-up; the evidence
+    // is in BcRuntime.cs's ApplyAllPatches beside the deleted registration).
 
     // ALSystemString_ALLowercase / ALSystemString_ALUppercase used to live here, backing an
     // orphaned JmpHook registration in BcRuntime.cs (JmpHook disabled by default, so BC's real

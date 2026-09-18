@@ -80,6 +80,21 @@ public static partial class BcRuntime
         }
     }
 
+    /// <summary>
+    /// Resolves <c>NavNCLDialogException</c> out of the loaded Types assembly. This is the
+    /// exception <see cref="NavMethodScopeCtorReplacement"/> throws when the recursion ceiling
+    /// above is exceeded, so AL traps the refusal as an AL error with a call stack instead of a
+    /// raw CLR fault. <paramref name="typesAsm"/> is Microsoft.Dynamics.Nav.Types.
+    /// </summary>
+    /// <remarks>
+    /// Its initialisation used to sit inside BcRuntime's NavDialog.ALError hook block, whose
+    /// other contents were dead JmpHook registrations — so deleting that dead code would also
+    /// have silently downgraded the refusal to an InvalidOperationException (#1883). It lives
+    /// here now, beside its only consumer, where nothing about NavDialog guards it.
+    /// </remarks>
+    internal static Type? ResolveNavNCLDialogExceptionType(Assembly? typesAsm) =>
+        typesAsm?.GetType("Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLDialogException");
+
     // ── GetMethodScopeFlags, resolved once per concrete scope type ───────────────────────
     //
     // This ctor replacement runs on EVERY AL method call -- NavMethodScope is the per-AL-frame

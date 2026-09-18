@@ -51,7 +51,7 @@ public static partial class BcRuntime
     private static FieldInfo? _fMsTopLevelAppObj;      // NavMethodScope.<TopLevelApplicationObject>k__BackingField
     private static FieldInfo? _fSessCurrentScope;      // NavSession.<CurrentMethodScope>k__BackingField
     private static MethodInfo? _mCreateTreeHandler;    // TreeHandler.CreateTreeHandler
-    private static Type? _navNCLDialogExceptionType;   // NavNCLDialogException (for NavDialog.ALError replacement)
+    private static Type? _navNCLDialogExceptionType;   // NavNCLDialogException — thrown by NavMethodScopeCtorReplacement's recursion-depth refusal
 
     // MEMORY LEAK FIX fields (see MethodScopePatches.NavMethodScope_Dispose) — private
     // doubly-linked-list fields declared on the ABSTRACT TreeHandler base class. Must be
@@ -1782,24 +1782,11 @@ public static partial class BcRuntime
         // session field is null (the root has no session to propagate), so it returns
         // _skeletonSession instead.
 
-        // ALTelemetryHelper.LogALErrorTelemetry — called before creating NavNCLDialogException;
-        // NREs through SessionContextHelper.GetALScope → NavGlobal.get_NCLMetadata on skeleton.
-        // No-op is safe because the throw still happens immediately after.
-        // The type lives in Microsoft.Dynamics.Nav.Runtime.AL namespace (not Runtime directly).
-        foreach (var telTypeName in new[] {
-            "Microsoft.Dynamics.Nav.Runtime.ALTelemetryHelper",       // older builds
-            "Microsoft.Dynamics.Nav.Runtime.AL.ALTelemetryHelper" })  // 27.x+
-        {
-            var telType = navNcl.GetType(telTypeName);
-            if (telType == null) continue;
-            foreach (var m in telType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
-                .Where(m => m.Name == "LogALErrorTelemetry"))
-            {
-                var p = m.GetParameters().Length;
-                var noop = p switch { 2 => nameof(NoOp2), 3 => nameof(NoOp3), 4 => nameof(NoOp4), _ => null };
-                if (noop != null) Hook(m, noop, $"ALTelemetryHelper.LogALErrorTelemetry/{p}");
-            }
-        }
+        // ALTelemetryHelper.LogALErrorTelemetry/3 and /4 used to be Hook()ed to no-ops here, on
+        // a stale "NREs through NavGlobal.get_NCLMetadata" claim. Both are on NavDialog.ALError's
+        // own path, so every AL error raised today already runs their real bodies with the
+        // registrations inert, and the error still arrives with its exact text (#1883, deleted
+        // with the rest of the NavDialog cluster below).
 
         // SessionTransactionExtensions.Rollback is Cecil-owned (see NclCecilRewrite.cs block
         // 8f). NavMethodScope.AssertError calls it after catching an AL error, and it is what
@@ -2485,16 +2472,13 @@ public static partial class BcRuntime
         // NavSession.GetPermissionSet (both 3-arg overloads) is Cecil-owned (see
         // NclCecilRewrite.cs, Batch 8).
 
-        // NavDialog.ALOpen — UI dialog open NREs reaching Tree.Session on skeleton. No-op.
-        var navDialogType2 = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavDialog");
-        if (navDialogType2 != null)
-        {
-            foreach (var m in navDialogType2.GetMethods(BindingFlags.Public | BindingFlags.Instance)
-                .Where(m => m.Name == "ALOpen" && m.GetParameters().Length == 3))
-            {
-                Hook(m, nameof(NavDialog_ALOpen), $"NavDialog.ALOpen/3");
-            }
-        }
+        // NavDialog.ALOpen — used to Hook() a no-op here on the claim that opening a UI dialog
+        // NREs reaching Tree.Session on the skeleton. Orphaned under the default Cecil-only mode
+        // (#1883), and the claim is stale: driven from AL against the un-hooked build,
+        // `Dialog.Open('text')` and `Dialog.Open('#1#####')` + Update + Close both return
+        // cleanly through BC's real ALOpen → ALOpenAsync. Deleting the no-op is also the more
+        // faithful state, because the real body sets `isOpen`/`AutomationId` that the
+        // Cecil-owned ALClose()/ALUpdateAsync read and the no-op left unset.
 
         // ALSystemString.ALLowercase / ALUppercase — used to Hook() InvariantCulture-backed
         // replacements here on the theory that the real impls reach Session.Culture, which is
@@ -2566,39 +2550,23 @@ public static partial class BcRuntime
         // exercised by the corpus's `NotificationAddAction_AddsActionWithoutError` /
         // `Notification_AddAction_WithDescription_Succeeds` tests and passes. Deleted.
         //
-        // NavDialog.ALError(NavSession, Guid, NavALErrorInfo) — NREs when accessing diagnostics on
-        // the skeleton session. Throw NavNCLDialogException so asserterror traps it correctly.
-        var navDialogType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavDialog");
-        if (navDialogType != null && typesAsm != null)
-        {
-            _navNCLDialogExceptionType = typesAsm.GetType(
-                "Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLDialogException");
-            foreach (var m in navDialogType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
-                .Where(m => m.Name == "ALError"))
-            {
-                var ps = m.GetParameters();
-                // Only hook overloads that take NavALErrorInfo as the last param.
-                if (ps.Length < 1 || ps[ps.Length - 1].ParameterType.Name != "NavALErrorInfo")
-                    continue;
-                // Guid (16 bytes) occupies 2 x64 register slots on Linux .NET 8.
-                // 2-arg (Guid, NavALErrorInfo):          slots = Guid-lo, Guid-hi, errorInfo  → 3 params ✓
-                // 3-arg (NavSession, Guid, NavALErrorInfo): slots = session, Guid-lo, Guid-hi, errorInfo → 4 params
-                //   This 3-arg overload is only called from ALLogInternalError (Internal-type errors),
-                //   which we already no-op; no-op the overload itself too as belt-and-suspenders.
-                bool hasSession = ps.Length >= 2 && ps[0].ParameterType.Name == "NavSession";
-                var replacementName = hasSession ? nameof(NoOp4) : nameof(NavDialogALError_NavALErrorInfo);
-                Hook(m, replacementName, $"NavDialog.ALError/{ps.Length}");
-            }
-            // NavDialog.ALLogInternalError — calls ALError internally; no-op so Dialog.LogInternalError
-            // behaves like a trace (matching existing AL Runner behavior). All static overloads.
-            foreach (var m in navDialogType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
-                .Where(m => m.Name == "ALLogInternalError"))
-            {
-                var np = m.GetParameters().Length;
-                var noop = np switch { 3 => nameof(NoOp3), 4 => nameof(NoOp4), 5 => nameof(NoOp5), _ => null };
-                if (noop != null) Hook(m, noop, $"NavDialog.ALLogInternalError/{np}");
-            }
-        }
+        // NavDialog.ALError / ALLogInternalError — used to Hook() replacements here on the claim
+        // that ALError NREs reaching diagnostics on the skeleton session. Orphaned under the
+        // default Cecil-only mode (#1883), and the claim is stale: BC's real bodies run today and
+        // are strictly MORE faithful than the replacements were. Driven per entry point from AL
+        // against the un-hooked build, `Error(ErrorInfo)` throws NavNCLDialogException carrying
+        // the exact message; under [ErrorBehavior(Collect)] BC's own session.ErrorCollection
+        // collects it and execution continues; and an ErrorType::Internal ErrorInfo throws BC's
+        // masked, correlation-carrying text — where the deleted replacement returned SILENTLY,
+        // so a live hook would have swallowed the error entirely. Pinned upstream by corpus
+        // codeunit 60758, which the runner measures on every leg.
+        //
+        // The registrations went; this lookup must NOT. It is deliberately outside any NavDialog
+        // conditional because its consumer is elsewhere: MethodScopePatches'
+        // NavMethodScopeCtorReplacement throws this type for the recursion-depth refusal, so AL
+        // traps it as an AL error with a call stack rather than a raw CLR fault. Corpus codeunit
+        // 60035's RecursionDepth_PastTheCeiling_IsRefused is what goes red if this is lost.
+        _navNCLDialogExceptionType = ResolveNavNCLDialogExceptionType(typesAsm);
 
         // NavALErrorInfo.LogAddActionFailure(string) — used to Hook() a no-op stub here (private
         // static telemetry). That JmpHook.Apply call was an orphan under the default Cecil-only
