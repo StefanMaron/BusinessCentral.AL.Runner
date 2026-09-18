@@ -27,6 +27,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **ci:** the guard-suite loops must keep exit 3 distinguishable from exit 1
 - **tools:** two guards spelled could-not-measure as exit 0, the success state
 - **metadata-conversion:** emit a page's derived HelpLink, root CaptionML and DataCaptionExpr marker
 - **tools:** the guard about exit-code conflation was conflating its own
