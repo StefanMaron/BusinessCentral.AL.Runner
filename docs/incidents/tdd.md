@@ -290,10 +290,13 @@ value it replaces, and each passes.
 
 **Round 7 is the one worth reading.** `_REFUSAL_LINES` holds bare integers, and the standard
 library executes those same numbers in its own files. The collision count depends entirely on how
-much foreign code runs, so quote the workload with it rather than the number alone: a probe doing
-`re.compile` + `tokenize` + `mkdtemp` collides **10** times across **6** of the ten arms
-(`_parser.py:117` seven times), and a heavier workload reaches more. What matters is that the
-count is never zero for any realistic workload, not its size.
+much foreign code runs, so what is worth recording is the **floor**, not a headline figure. Even
+the most trivial probe — one `re.compile("x")` plus a `tokenize` pass and a `mkdtemp` — collides
+**6** times across **5** of the ten arms; a realistic pattern reaches 9-10 across 6. The
+per-collision repeat count is not a property of that description at all: it swings from 2 to 11
+with the regex alone, so any single number for it is an artefact of a pattern nobody wrote down
+(measured three ways while correcting an earlier figure here that was exactly that). What matters
+is that the floor is well above zero for any workload.
 
 The consequence is what the count is for: deleting the tracer's file filter left all 51 checks
 green at `10/10`, and deleting the filter *and* removing a case from the roster still read
