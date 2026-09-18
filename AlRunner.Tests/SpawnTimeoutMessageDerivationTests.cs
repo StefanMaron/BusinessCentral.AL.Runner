@@ -236,12 +236,19 @@ public sealed class SpawnTimeoutMessageDerivationTests
     /// <c>return null</c> left the suite GREEN. The check the widening exists to make possible had
     /// therefore never been shown to fire (#4332, found in review). These cases make it fire.</para>
     ///
-    /// <para>Measured over these cases: METHOD scope reports the four true cross-wires, STATEMENT
-    /// scope reports one — the single case where wait and message share a statement. The other
-    /// three are exactly the shapes the live tree is made of: a <c>throw</c> inside
-    /// <c>if (!WaitForExit(...))</c>, a <c>try</c>/<c>catch</c> pair, and a local function. The
-    /// two correct multi-cap cases must stay silent, which is what stops "catches more" from being
-    /// satisfied by a check that simply reports everything.</para>
+    /// <para>Measured over these cases: every <c>CrossWire_</c> case is reported under METHOD
+    /// scope, and <c>CrossWire_SameStatement</c> is the only one STATEMENT scope also sees —
+    /// the rest put wait and message in different statements, which is the shape the live tree
+    /// is made of (a <c>throw</c> inside <c>if (!WaitForExit(...))</c>, a <c>try</c>/<c>catch</c>
+    /// pair). Every <c>Correct_</c> case must stay SILENT under both, which is what stops
+    /// "catches more" from being satisfied by a check that simply reports everything.</para>
+    ///
+    /// <para><c>Correct_LocalFunctionIgnoresOuterWait</c> is one of the silent ones, not a
+    /// cross-wire: the <see cref="LocalFunctionStatementSyntax"/> clause is load-bearing only in
+    /// the FALSE-POSITIVE direction. Dropping it makes the walk reach <c>Outer</c> and report a
+    /// cross-wire the local function does not have; it can never make a real one go unreported,
+    /// because <c>Outer.ToString()</c> contains the local function's text and so the cap is found
+    /// either way.</para>
     /// </summary>
     [Theory]
     // Wait and message in DIFFERENT statements of one method — invisible to statement scope, and
