@@ -31,6 +31,15 @@ suite glob opens a region, the matching `done` closes it, and a heredoc body is
 skipped. That is enough to place a `||` inside a suite loop and no more; it
 does not know shell grammar and does not try to.
 
+THE TRAP IN THAT, WHICH SHIPPED ONCE AND WAS CAUGHT IN REVIEW. A line-based
+skip that never finds its closer latches to end of file, and a blinded scan
+reports the SAME `0 findings` as a clean one. `echo "messages<<PR_COMMITS_EOF"`
+in pr-gate.yml is a string, not a heredoc operator, and reading it as one hid
+500 of that file's 592 lines -- the file carrying all three original copies of
+the defect. `DQ_STRING` below is the fix; `test_suite_runner_loop_guard.py`'s
+real-file assertions are what would now catch a repeat, because no assertion
+over a fixture can.
+
 THE FALSE-POSITIVE MEASUREMENT (#4362), which is why the context gate exists.
 Run against `.github/workflows/` at ebd78d54:
 
@@ -102,6 +111,21 @@ SANCTIONED = "run_guard_suites.sh"
 # shape (this guard's own fixtures do) must not be a finding.
 HEREDOC_OPEN = re.compile(r"<<-?\s*['\"]?([A-Za-z_][A-Za-z_0-9]*)['\"]?")
 
+# A double-quoted STRING is not shell syntax, and `<<` inside one is not a
+# heredoc operator. pr-gate.yml:92 writes GitHub's own multiline-output protocol
+# as `echo "messages<<PR_COMMITS_EOF"`, whose closer is `echo "PR_COMMITS_EOF"`
+# -- a line that never strips to the bare delimiter. So a skip armed on that
+# line NEVER closes, and it swallowed 500 of pr-gate.yml's 592 lines (84%): the
+# one file that carried all three original copies of #4359's defect, blinded
+# (#4362, caught in review of PR #4377).
+#
+# Blanking quoted interiors before looking for the operator takes the
+# heredoc-skipped line count across the tree from 559 to 9, leaves the live tree
+# at 0 findings, and restores detection inside pr-gate.yml. It is deliberately
+# only applied to the HEREDOC search: the finding patterns must still see the
+# real text, since `python3 "$s" || rc=1` carries the command in quotes.
+DQ_STRING = re.compile(r'"[^"]*"')
+
 
 def scan_text(name: str, text: str) -> list[tuple[str, int, str]]:
     """Return [(name, lineno, stripped)] for each discarded status in a suite loop.
@@ -123,7 +147,9 @@ def scan_text(name: str, text: str) -> list[tuple[str, int, str]]:
                 heredoc = None
             continue
 
-        m = HEREDOC_OPEN.search(line)
+        # Quoted interiors blanked so a `<<DELIM` inside a string literal is
+        # not read as a heredoc opener -- see DQ_STRING above.
+        m = HEREDOC_OPEN.search(DQ_STRING.sub('""', line))
         if m:
             heredoc = m.group(1)
             continue

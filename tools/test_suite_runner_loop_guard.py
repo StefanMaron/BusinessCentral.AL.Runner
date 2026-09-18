@@ -36,7 +36,13 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 
 try:
-    from test_suite_runner_loops_preserve_exit_codes import scan_text
+    from test_suite_runner_loops_preserve_exit_codes import (
+        DQ_STRING,
+        HEREDOC_OPEN,
+        LOOP_OPEN,
+        SUITE_GLOB,
+        scan_text,
+    )
 except ImportError as exc:  # the guard is gone or unimportable: unmeasured
     print(f"UNMEASURED: cannot import the guard under test: {exc}", file=sys.stderr)
     print("1 check group(s) could not be measured; nothing here is a pass")
@@ -44,10 +50,13 @@ except ImportError as exc:  # the guard is gone or unimportable: unmeasured
 
 
 FAILURES: list[str] = []
+PASSED = 0
 
 
 def check(label: str, ok: bool, detail: str = "") -> None:
     if ok:
+        global PASSED
+        PASSED += 1
         print(f"ok   - {label}")
     else:
         print(f"FAIL - {label}{(': ' + detail) if detail else ''}")
@@ -233,6 +242,84 @@ check(
 )
 
 
+# ------------------------------- the REAL file, with the defect put back into it
+#
+# THE ASSERTION THIS SUITE WAS MISSING, and the gap underneath the bug it caught
+# (#4362, found in review of PR #4377). Every other assertion here runs on a
+# synthetic fixture, and the one assertion that did touch the real tree is a
+# NEGATIVE one -- "nothing is flagged" -- which passes whatever the code does if
+# the walk never reaches the lines. It did not: instrumented, 0 of 4,920 real
+# lines across all 15 workflow files ever sat inside an open suite region,
+# because a heredoc skip armed on `echo "messages<<PR_COMMITS_EOF"` (a STRING,
+# not a heredoc operator) swallowed 500 of pr-gate.yml's 592 lines. The guard
+# was blind on the one file that carried all three original copies of #4359's
+# defect, and every fixture assertion stayed green.
+#
+# So: reintroduce the defect into a copy of the REAL pr-gate.yml, and require a
+# finding. A fixture cannot stand in for this -- the whole failure was that the
+# fixtures and the real file differ in a way the fixtures cannot express.
+PR_GATE = ROOT / ".github" / "workflows" / "pr-gate.yml"
+if not PR_GATE.is_file():
+    print(f"UNMEASURED: no pr-gate.yml at {PR_GATE}", file=sys.stderr)
+    print("1 check group(s) could not be measured; nothing here is a pass")
+    raise SystemExit(3)
+
+REAL = PR_GATE.read_text(encoding="utf-8")
+CALL = 'bash .github/scripts/run_guard_suites.sh "tools/test_*.py" "${suites[@]}"'
+if CALL not in REAL:
+    # The sanctioned call moved or was reworded. That is not a pass: this
+    # assertion cannot be made, and saying so is the third state.
+    print(f"UNMEASURED: the sanctioned call is not in {PR_GATE.name}; "
+          "re-anchor this assertion", file=sys.stderr)
+    print("1 check group(s) could not be measured; nothing here is a pass")
+    raise SystemExit(3)
+
+
+def with_defect(fallback: str) -> str:
+    """The real pr-gate.yml with its sanctioned call replaced by #4359's loop."""
+    return REAL.replace(
+        "          " + CALL,
+        '          rc=0\n'
+        '          for s in "${suites[@]}"; do\n'
+        '            echo "=== $s"\n'
+        f'            python3 "$s" || {fallback}\n'
+        "          done\n"
+        "          exit $rc",
+    )
+
+
+for fallback in MUST_CATCH:
+    found = scan_text("pr-gate.yml", with_defect(fallback))
+    check(
+        f"the REAL pr-gate.yml with `|| {fallback}` put back is a finding",
+        len(found) >= 1,
+        "0 findings -- the walk is not reaching pr-gate.yml's suite job "
+        "(a latched heredoc skip does exactly this)",
+    )
+
+# The control for the ten above: the file AS IT IS must stay silent, or they
+# would pass on a guard that simply flags everything in pr-gate.yml.
+check(
+    "the REAL pr-gate.yml, unmodified, is NOT a finding",
+    scan_text("pr-gate.yml", REAL) == [],
+    f"got {scan_text('pr-gate.yml', REAL)}",
+)
+
+# And the walk must actually REACH the suite job -- the property whose absence
+# made the negative assertion vacuous. Asked of the GUARD's own walk rather than
+# a copy of it: a probe that re-implements the scan cannot observe the scan
+# being blinded, which is the mistake that produced this whole section. Inject a
+# discard into the real file at the suite job and require the guard to see it;
+# if the walk never gets there, it cannot.
+_reachable = scan_text("pr-gate.yml", with_defect("__reach_probe=1"))
+check(
+    "the guard's own walk reaches pr-gate.yml's suite job",
+    len(_reachable) >= 1,
+    "0 findings for an injected discard: the scan is blind on this file "
+    "(a latched heredoc skip, a moved anchor, or a region that never opens)",
+)
+
+
 # ------------------------------------------------------- the live tree is clean
 #
 # The measurement #4362 asked for, kept as an assertion rather than a paragraph:
@@ -260,5 +347,5 @@ if FAILURES:
     for f in FAILURES:
         print(f"  - {f}")
     raise SystemExit(1)
-print(f"{20 - len(FAILURES)} passed, 0 failed")
+print(f"{PASSED} passed, 0 failed")
 raise SystemExit(0)
