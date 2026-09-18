@@ -155,16 +155,22 @@ public sealed class SpawnTimeoutMessageDerivationTests
                 // a 60s wait — the very shape #3435 measured, now spelled with two correct-looking
                 // identifiers (found in review of #4275).
                 //
-                // Only checks a cap the statement itself applies, and that bound is REAL rather
-                // than theoretical: DefaultProvisionTargetMessagingTests waits on line 160 and
-                // asserts on line 167, so `applied` is empty there and cross-wiring it stays
-                // GREEN. Measured, not assumed — I wrote this check believing it caught that case
-                // and the mutation said otherwise.
+                // COVERAGE, measured rather than described: this sees only a cap the statement
+                // ITSELF applies, which is 9 of the 51 in-scope sites. The other 42 put the wait
+                // a statement or more away from the message — every `throw` site does, since the
+                // throw lives in an `if (!p.WaitForExit(...))` body, and so does the Assert.Fail
+                // site, whose wait is in the `try` and whose message is in the `catch`.
+                //
+                // Two earlier versions of this comment were wrong in the same direction and each
+                // was caught by measuring rather than reading: the first claimed the check covered
+                // a site it did not, the second named that one site as THE bound when the real
+                // figure is 42. A comment that understates a gap is worse than none, because it
+                // tells the next reader the ground is covered.
                 //
                 // Not closed by widening the slice to a line window: the window size would be a
-                // constant with no principle behind it, and a wait can precede its assertion by
-                // any distance. What closes it is a site keeping its wait and its message in one
-                // statement, which the nine sites this PR rewrote now do.
+                // constant with no principle behind it, and a wait can precede its message by any
+                // distance. The 9 it does cover are the ones where a single statement both waits
+                // and reports, which is where a cross-wire is easiest to introduce by editing.
                 var applied = Regex.Matches(stmt, @"(?:WaitForExit|Wait|FromMilliseconds)\(\s*(\w*TimeoutMs)\s*\)")
                     .Select(m => m.Groups[1].Value).Distinct().ToArray();
                 var crossed = applied.Length > 0 && !applied.Intersect(reported).Any();
@@ -293,20 +299,6 @@ public sealed class SpawnTimeoutMessageDerivationTests
     }
 
     /// <summary>
-    /// The string literals in <paramref name="stmt"/> that mention SpawnTimeoutMs and do NOT
-    /// interpolate — so the braces reach the reader verbatim.
-    ///
-    /// Roslyn rather than a regex, because the regex could not see raw strings: it matched on
-    /// pairs of quotes, so `"""..."""` split into an empty match plus a bare-looking middle and
-    /// the interpolated `$"""` / `$$"""` forms were reported as if they printed their braces.
-    /// A token walk has no such blind spot — interpolated text is an InterpolatedStringTextToken
-    /// rather than a literal, and every raw form is its own token kind (#3527, #4275).
-    ///
-    /// One implementation, read by the scan AND by the [Theory]. An earlier revision gave the
-    /// [Theory] its own copy of the matching logic, which made it unable to fail: a mutation of
-    /// the scan left every case green (a pin must read production code).
-    /// </summary>
-    /// <summary>
     /// Every offset in <paramref name="source"/> where a failure path that reports a timeout
     /// begins, with the anchor that matched. Scanned as TEXT, deliberately — the `within` filter
     /// in the caller is what decides membership, and a token walk here would buy nothing it does
@@ -345,6 +337,20 @@ public sealed class SpawnTimeoutMessageDerivationTests
                 yield return (i, anchor);
     }
 
+    /// <summary>
+    /// The string literals in <paramref name="stmt"/> that mention SpawnTimeoutMs and do NOT
+    /// interpolate — so the braces reach the reader verbatim.
+    ///
+    /// Roslyn rather than a regex, because the regex could not see raw strings: it matched on
+    /// pairs of quotes, so `"""..."""` split into an empty match plus a bare-looking middle and
+    /// the interpolated `$"""` / `$$"""` forms were reported as if they printed their braces.
+    /// A token walk has no such blind spot — interpolated text is an InterpolatedStringTextToken
+    /// rather than a literal, and every raw form is its own token kind (#3527, #4275).
+    ///
+    /// One implementation, read by the scan AND by the [Theory]. An earlier revision gave the
+    /// [Theory] its own copy of the matching logic, which made it unable to fail: a mutation of
+    /// the scan left every case green (a pin must read production code).
+    /// </summary>
     private static IEnumerable<string> NonInterpolatedSpawnTimeoutStrings(string stmt)
     {
         foreach (var node in CSharpSyntaxTree.ParseText(stmt).GetRoot().DescendantNodes())
