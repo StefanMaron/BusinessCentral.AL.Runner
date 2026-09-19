@@ -32,6 +32,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **codeunit:** a codeunit variable the runner could not load names itself, instead of BC's 'object with ID 0'
 - **hooks:** audit and resolve the NavDialog orphaned-hook cluster
 - **ci:** pr-body.py must admit the same whitespace as the gate, so CRLF trailers declare
 - **ci:** a closing clause inside a fenced code block is a stray, not a declaration
