@@ -150,6 +150,36 @@ jobs:
           PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: bash .github/scripts/check_closing_reference.sh
 
+  reject-deferred-scope:
+    name: A PR must not close an issue whose work it defers
+    runs-on: ubuntu-latest
+    # #4293. reject-bad-closing-references above owns whether a closing
+    # reference FIRES -- missing (#2121), unintended (#2128), or a branch
+    # declaring nothing (#3678). This job owns a reference that fires exactly
+    # as intended, on an issue the PR only PARTLY addresses. "Closes #N" is
+    # binary and scope is not, so the deferred half is orphaned on merge and
+    # nobody notices, because a closed issue looks finished.
+    #
+    # Measured twice in two days, the second time to the issue filed about the
+    # first: #4253 closed #4249 while deferring two items to "#4249's own
+    # follow-up" (re-homed as #4255), and #4256 closed #4255 while deferring
+    # to "#4255's part 2" (re-homed as #4292).
+    #
+    # It keys on a deferral ROUTED AT a declared closing target, not on
+    # hedging language: this repository's own rules require authors to say
+    # what they did not fold, so a cue-phrase gate would fire on nearly every
+    # PR here. Over the 200 most recently merged PRs (#4017-#4389, 164 of them
+    # declaring a closing reference) a cue-phrase check flagged 12, of which
+    # 10 were the ordinary and correct queue-scan paragraph; keying on the
+    # destination of the deferral flags 2 -- exactly the two real instances.
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check the body does not defer work onto an issue it closes
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: bash .github/scripts/check_deferred_scope.sh
+
   require-corpus-linkage:
     name: AL-observable changes must declare corpus linkage
     runs-on: ubuntu-latest

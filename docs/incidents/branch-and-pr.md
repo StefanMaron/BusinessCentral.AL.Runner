@@ -45,3 +45,64 @@ it from the issue number. PR #3744 added `PR_HEAD_REF` to `check_closing_referen
 Blast radius when it landed: of the 5 open PRs at that moment, **none** would have been failed
 by the new direction.
 
+
+## `Closes` is binary, scope is not: three re-homings in two days (#4293)
+
+The parser behaved correctly every time. The mismatch was between a binary keyword and a
+non-binary scope, which is why none of the earlier closing-reference work (#2121, #2128, #2646,
+#3678 — all about whether a reference *fires*) covered it.
+
+| PR | closed | deferred to | where the work ended up |
+|---|---|---|---|
+| #4253 | #4249 | *"#4249's own follow-up"* — did not exist, and once #4249 closed, could not | re-homed as #4255 |
+| #4256 | #4255 | *"#4255's part 2"*, while its own landed doc comment said it *"does NOT close reachability in general"* | re-homed as #4292 |
+| #4291 | #4255 | the same two items | **filed #4292 42 minutes before merging** — the correct shape |
+
+Neither orphaning was caught by CI; #4253's was caught in review, and #4256's only because an
+implementation agent dispatched at #4255 arrived to find it closed and reopened it.
+
+### Why the gate keys on the deferral's destination
+
+The obvious key — hedging language — is unusable here, because this repository's own rules
+*require* authors to say what they did not fold (`batch-sibling-issues-by-file.md` point 5,
+"even when nothing folds"). Measured over the 200 most recently merged PRs (#4017–#4389, 164 of
+which declare a closing reference):
+
+| key | flagged | true positives |
+|---|---|---|
+| a cue phrase (`not folded`, `deferred to`, `belongs in … follow-up`) near a declared target | **12** | 2 |
+| the deferral **routed at** a declared target (`#N's own follow-up`, `stays on #N`) | **2** | 2 |
+
+All 10 false positives of the first key were the ordinary queue-scan paragraph, deferring a
+*different, separately-numbered* issue — which is a home. The distinguishing property is where
+the work is sent, not that some work was left.
+
+### Two false positives found while building it, each a different over-reach
+
+- **Body-wide exemption.** A first Pass 3 exempted any body naming a non-closing issue number.
+  Bodies here cite dozens of issues as background, so it exempted **all three** real bodies,
+  including both true positives. The exemption now needs an explicit filing *destination*
+  (`filed as #4292`, `tracked by #N`) — #4291's body contains both `filed about**, one cycle
+  later: #4253` (a citation) and `filed as **#4292**` (the home), and only the second is an
+  assertion that the remainder will outlive the merge.
+- **The copula.** PR #4176 says *"This is #3482's second half"* — the PR **is** the remainder,
+  completing the issue, and #3482 closed once and was never reopened. A bare possessive arm
+  flagged it; the arm now requires a routing verb, because a possessive noun phrase is only a
+  destination when something is being sent to it.
+
+### What the mutations found
+
+Two gaps, both invisible to reasoning and both found by executing the mutation:
+
+- **First-vs-last number extraction.** Every arm's capture group is the last `#N` in the match,
+  and both extractions took the first. On the exemption side that **refused a correctly-homed
+  body** — the false-positive direction.
+- **Arm overlap masking an arm.** Deleting `stay|stays` from the possessive arm left all 36
+  tests green, because `They stay on #4255` — #4256's own words — is caught by the *destination*
+  arm instead. Each arm now has a case reachable by no other, and reaching one alone is fiddly:
+  `stay in #N's own follow-up` is matched by both, so the pinning cases use a separated verb
+  (`stay, unmeasured, in`) and a preposition the destination arm lacks (`inside`).
+
+One mutation measured nothing and looked like a finding: an edit referencing an undefined
+`STRAY_ANY_RE` under `set -u` failed on the unbound variable, so the suite stayed green and the
+row read as a gap in the tests. Re-run with a real regex, it was caught (`Failed: 1`).
