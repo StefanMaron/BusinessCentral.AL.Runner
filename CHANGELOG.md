@@ -29,6 +29,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **hooks:** refuse a CI wait the harness will background, not only one the agent flags
 - **agent-docs:** pin the GuardTests count and refuse a foreign worktree cwd
 - **tooling:** refuse a mutation verdict from a binary older than the last --restore
 - **process:** find a reviewer's verdict line by marker, not by position
