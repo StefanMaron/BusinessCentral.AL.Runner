@@ -98,34 +98,28 @@ def cannot_measure(label: str, detail: str = "") -> None:
             print(f"      {line}")
 
 
-# The labels the step was ACTUALLY handed, read back out of what build() made.
+# The labels the step was ACTUALLY handed are read back by the harness, out of
+# the environment block it executed the step with -- see harness.drive_step.
 #
-# #4305: this used to return build()'s ARGUMENT, so a builder that stopped
+# #4305: the read used to return build()'s ARGUMENT, so a builder that stopped
 # honouring it left the non-vacuity check below comparing the edit against a
 # list nothing was driven with -- measured green (13 passed, exit 0) with the
 # builder ignoring its input and the real race present.
 #
-# Trap: there is no one expression that reads it, and picking either one for
-# both jobs rebuilds the same defect. In issue-label-hygiene.yml,
+# #4315: the read then took the fixture through a SECOND channel, alongside the
+# one that drove the step, so a caller handing the two different values got a
+# green over a genuinely racing workflow. `drive_step` runs the step and reads
+# the fixture back inside one call, from the executed environment the caller
+# never holds, so there is nothing to mismatch.
+#
+# Trap: there is no one expression that reads the labels, and picking either one
+# for both jobs rebuilds the #4305 defect. In issue-label-hygiene.yml,
 # `strip-labels-on-close` reads the names out of its `LABELS:` env value;
 # `release-part-of-issues` is never given LABELS at all and reads them from
-# `gh issue view --json state,labels`, which the harness answers from
-# ISSUE_JSON. So the channel is part of each job's entry in JOBS, beside the
-# builder that writes it.
-def read_fixture(read_labels, env, issue_json) -> tuple[list[str] | None, str]:
-    """(label names, "") -- or (None, why) when the channel could not be read.
-
-    Returns rather than raises, because a fixture the guard cannot read back is
-    a measurement that did not happen: exiting 1 would send the reader to the
-    workflow for a fault in this file (`guards-need-a-third-state.md`).
-    """
-    try:
-        names = read_labels(env, issue_json)
-    except Exception as exc:  # any malformed channel, not one chosen shape
-        return None, f"{type(exc).__name__}: {exc}"
-    if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
-        return None, f"channel did not yield a list of label names: {names!r}"
-    return names, ""
+# `gh issue view --json state,labels`, which the harness answers from the
+# ISSUE_JSON it serialised into that same environment. So the reader is part of
+# each job's entry in JOBS, beside the builder that writes it -- but both now
+# read the ONE environment the step ran with.
 
 
 def tracked_files() -> list[str]:
@@ -297,7 +291,7 @@ else:
     JOBS = [
         ("strip-labels-on-close",
          lambda labels: ({"ISSUE": "42", "LABELS": json.dumps(labels)}, None),
-         lambda env, issue_json: json.loads(env["LABELS"])),
+         lambda ran: json.loads(ran["LABELS"])),
         ("release-part-of-issues",
          lambda labels: ({"PR_NUMBER": "999", "PR_BODY": "Part of #42",
                           "PR_HEAD_REF": "agent/fbk-2/issue-42",
@@ -305,7 +299,9 @@ else:
                           "EDIT_RC": "0"},
                          {"state": "OPEN",
                           "labels": [{"name": n} for n in labels]}),
-         lambda env, issue_json: [l["name"] for l in issue_json["labels"]]),
+         # ISSUE_JSON is what the stub answers `gh issue view` from, so this is
+         # the labels the step was told the issue carries.
+         lambda ran: [l["name"] for l in json.loads(ran["ISSUE_JSON"])["labels"]]),
     ]
     BASE = ["status: in-progress", "agent: fbk-2", "bug"]
 
@@ -316,15 +312,15 @@ else:
                            ) -> tuple[list[str], str, list[str] | None, str]:
             """The `gh issue edit` calls this job makes for an issue with these labels.
 
-            Also returns the fixture read back out of build()'s OUTPUT, through the
-            channel this job's step reads -- never `label_names`, which is what was
-            requested rather than what the step was handed (#4305). The two differ
-            exactly when build() stops honouring its argument, which is the case the
-            non-vacuity check below has to be able to see.
+            Also returns the fixture, read back by the harness out of the
+            environment it EXECUTED the step with -- never `label_names`, which
+            is what was requested rather than what the step was handed (#4305),
+            and never a second value this function holds alongside (#4315).
+            One call drives the step and reads it back, so the two cannot differ.
             """
             env, issue_json = build(label_names)
-            _rc, out, calls = harness.invoke(block, env, issue_json=issue_json)
-            fixture, why = read_fixture(read_labels, env, issue_json)
+            _rc, out, calls, fixture, why = harness.drive_step(
+                block, env, issue_json, read_labels)
             return ([c for c in calls if c.startswith("issue edit")], out,
                     fixture, why)
 
@@ -373,6 +369,123 @@ else:
                 f"added={added!r} was not all present in the fixture the step was "
                 f"handed={second_fixture!r}",
             )
+
+    # ---- what makes the two checks above one measurement rather than two ----
+    #
+    # #4315: they used to be driven by separate calls -- `invoke(env, issue_json)`
+    # for the race check and a reader handed the caller's own copies for the
+    # non-vacuity check. A caller passing a DIFFERENT fixture to each got both
+    # checks green over a genuinely racing workflow: the race check saw labels
+    # not including the one the edit adds, so found nothing in both lists, while
+    # the non-vacuity check was satisfied by the other fixture.
+    #
+    # These arms pin the property that closed it. They exercise the harness seam
+    # itself, not the workflow, because that is where the two channels were.
+    PROBE_BLOCK = harness.run_block("release-part-of-issues")
+    PROBE_ENV = {"PR_NUMBER": "999", "PR_BODY": "Part of #42",
+                 "PR_HEAD_REF": "agent/fbk-2/issue-42",
+                 "PR_LABELS": json.dumps(["agent: fbk-2"]), "EDIT_RC": "0"}
+    PROBE_LABELS = ["status: in-progress", "agent: fbk-2", "bug"]
+    PROBE_JSON = {"state": "OPEN",
+                  "labels": [{"name": n} for n in PROBE_LABELS]}
+
+    # 1. The reader is handed the environment the step EXECUTED with, not the
+    #    caller's copies. That is the whole of the fix: a reader given the
+    #    executed environment cannot be shown a fixture the step did not run
+    #    with, so there is no second channel to disagree with the first.
+    seen: list[dict] = []
+
+    def _capture(ran):
+        seen.append(dict(ran))
+        return [l["name"] for l in json.loads(ran["ISSUE_JSON"])["labels"]]
+
+    _rc, _out, probe_calls, probe_fixture, probe_why = harness.drive_step(
+        PROBE_BLOCK, PROBE_ENV, PROBE_JSON, _capture)
+    probe_edits = [c for c in probe_calls if c.startswith("issue edit")]
+    # Every label the reader answered is one the step's own `gh issue edit`
+    # named -- read off the resolved command, which is the step's behaviour
+    # rather than anything this file held. The edit removes the status:/agent:
+    # ones, so that subset is the overlap the two channels could disagree on.
+    edit_removals = set(harness.flag_values(probe_edits[0], "remove-label")) if probe_edits else set()
+    expected_removals = {n for n in PROBE_LABELS
+                         if n.startswith("status:") or n.startswith("agent:")}
+    check(
+        "drive_step hands the reader the environment the step EXECUTED with, so "
+        "the fixture the non-vacuity check inspects is the one that drove the "
+        "race check -- two channels is what let mismatched inputs pass green (#4315)",
+        len(seen) == 1
+        and seen[0].get("ISSUE_JSON") == json.dumps(PROBE_JSON)
+        and probe_fixture == PROBE_LABELS
+        and edit_removals == expected_removals,
+        f"reader saw {len(seen)} env(s); ISSUE_JSON="
+        f"{(seen[0].get('ISSUE_JSON') if seen else None)!r}; "
+        f"fixture={probe_fixture!r}; edit removed {sorted(edit_removals)!r}, "
+        f"expected {sorted(expected_removals)!r}",
+    )
+
+    # 2. ...and the reader is given ONE argument, so a caller cannot hand it a
+    #    fixture alongside. A two-argument reader would be passed the caller's
+    #    own `issue_json`, which is exactly the second channel removed here --
+    #    so the signature is load-bearing, not a style choice.
+    import inspect  # noqa: E402  (local: only this arm needs it)
+    try:
+        params = list(inspect.signature(harness.drive_step).parameters)
+    except (TypeError, ValueError) as exc:
+        params = [f"<unreadable: {exc}>"]
+    # A reader wanting a second argument gets NO fixture -- the seam has only
+    # the executed environment to give it, so the call fails and comes back as
+    # the unreadable-channel third state. It cannot quietly be handed the
+    # caller's `issue_json` instead, which is the channel #4315 was about.
+    two_arg_fixture, two_arg_why = harness.drive_step(
+        PROBE_BLOCK, PROBE_ENV, PROBE_JSON, lambda ran, alongside: [])[3:]
+    check(
+        "...and a reader wanting a fixture ALONGSIDE the executed environment "
+        "gets none -- the seam has only the one to give, so a second channel "
+        "cannot be reintroduced by widening the reader (#4315)",
+        params == ["block", "env", "issue_json", "read_labels"]
+        and two_arg_fixture is None and "TypeError" in two_arg_why,
+        f"drive_step params={params!r}; two-argument reader -> "
+        f"({two_arg_fixture!r}, {two_arg_why!r})",
+    )
+
+    # 3. THE THIRD STATE SURVIVES. A channel the reader cannot read must come
+    #    back as (None, why) so the caller spells it UNMEASURABLE and exits 3 --
+    #    never as a FAIL, which would send a reader to the workflow for a fault
+    #    in this file (`guards-need-a-third-state.md`). Both shapes: a reader
+    #    that raises, and one that answers something that is not a label list.
+    raised_fixture, raised_why = harness.drive_step(
+        PROBE_BLOCK, PROBE_ENV, PROBE_JSON,
+        lambda ran: json.loads(ran["NOT_A_KEY_THE_STEP_HAS"]))[3:]
+    shaped_fixture, shaped_why = harness.drive_step(
+        PROBE_BLOCK, PROBE_ENV, PROBE_JSON, lambda ran: "status: ready")[3:]
+    check(
+        "an unreadable channel still comes back as (None, why) rather than "
+        "raising or answering a label list -- that is what the caller above "
+        "spells UNMEASURABLE, and exit 3 rather than exit 1 depends on it",
+        raised_fixture is None and "KeyError" in raised_why
+        and shaped_fixture is None and "did not yield a list" in shaped_why,
+        f"raised -> ({raised_fixture!r}, {raised_why!r}); "
+        f"mis-shaped -> ({shaped_fixture!r}, {shaped_why!r})",
+    )
+
+    # 4. THE GREEN CONTROL. Everything above asserts the guard refuses
+    #    something; a guard that refused EVERYTHING would pass all of them by
+    #    construction. This is the arm that fails if the seam stops letting a
+    #    genuinely-fine reading through: an honest reader on the real workflow
+    #    yields a real label list, no refusal reason, and a resolved edit -- the
+    #    ordinary case the two jobs above are measured with.
+    ctl_rc, _ctl_out, ctl_calls, ctl_fixture, ctl_why = harness.drive_step(
+        PROBE_BLOCK, PROBE_ENV, PROBE_JSON,
+        lambda ran: [l["name"] for l in json.loads(ran["ISSUE_JSON"])["labels"]])
+    check(
+        "the control: an honest reader on the real workflow is NOT refused -- "
+        "a seam that answered (None, why) for everything would satisfy every "
+        "refusal arm above and measure nothing",
+        ctl_fixture == PROBE_LABELS and ctl_why == "" and ctl_rc == 0
+        and len([c for c in ctl_calls if c.startswith("issue edit")]) == 1,
+        f"rc={ctl_rc} fixture={ctl_fixture!r} why={ctl_why!r} "
+        f"edits={[c for c in ctl_calls if c.startswith('issue edit')]!r}",
+    )
 
 # The replacement recipe must actually be in the file agents read, in the safe
 # order. Absence here would mean the guard passes over a file that no longer
