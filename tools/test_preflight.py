@@ -2936,6 +2936,7 @@ try:
     _vwrite("base.txt", "base\n")
     _vg("add", "base.txt")
     _vg("commit", "-qm", "base")
+    _base_commit = _vg("rev-parse", "HEAD").stdout.strip()
 
     # --- branch A: the benign shape. The agent committed locally after the
     # squash landed, and every file its unpushed commits touched is byte-identical
@@ -3057,6 +3058,93 @@ try:
     check("verdict: no unpushed commits at all is UNKNOWN, not a silent carried",
           pf.classify_unpushed_work(_vrepo, tip=_carried_tip, unpushed=[],
                                     reference=_carried_merge).verdict == "unknown")
+
+    # ------------------------------- a path ABSENT from both sides is not "same"
+    # `_blob_at` reads `git rev-parse --verify -q`, and the flags are the arm.
+    # Without them git ECHOES the unresolvable argument back on stdout ("HEAD:
+    # gone.txt") and exits 128, so two absent paths yield the SAME string and
+    # compare equal -- a file the tip deleted and the reference still has would
+    # be the near miss, but the reachable one is a file absent from both, which
+    # a bare string compare calls carried. Measured in a throwaway repo:
+    # `git rev-parse HEAD:gone.txt` prints `HEAD:gone.txt`, twice, identically.
+    #
+    # A commit that DELETES a file is ordinary, so this is not a corner: it is
+    # what a cleanup commit looks like, and the verdict must not read its own
+    # error message as evidence that the work landed.
+    _vg("checkout", "-qb", "deleter", _carried_merge)
+    _vg("rm", "-q", "helper.txt")
+    _vg("commit", "-qm", "chore: drop the helper")
+    _del_tip = _vg("rev-parse", "HEAD").stdout.strip()
+    # The reference is an EARLIER commit that also lacks helper.txt -- the base,
+    # before the feature landed. helper.txt is absent from both sides.
+    _v = pf.classify_unpushed_work(_vrepo, tip=_del_tip, unpushed=[_del_tip],
+                                   reference=_base_commit)
+    check("verdict: a path absent from BOTH sides is differing, not silently same",
+          _v.verdict == "differs" and "helper.txt" in _v.differing,
+          f"{_v.verdict}: same={_v.same} differing={_v.differing}")
+
+    # The arm above RIDES ALONG under the obvious mutation and this one does not,
+    # which is why both are here. Strip `--verify -q` and git echoes the whole
+    # argument -- "<sha>:helper.txt" -- so two absent paths under DIFFERENT revs
+    # still produce different strings and the compare lands on "differs" for the
+    # wrong reason. Measured: only the check below goes red. Same rev on both
+    # sides is the shape where the echoes are byte-identical.
+    check("verdict: ...and _blob_at answers None for an absent path, never git's echo",
+          pf._blob_at(_vrepo, _del_tip, "helper.txt") is None,
+          repr(pf._blob_at(_vrepo, _del_tip, "helper.txt")))
+    check("verdict: ...so two absent paths under ONE rev do not compare equal either",
+          pf._blob_at(_vrepo, _del_tip, "gone-a.txt")
+          is pf._blob_at(_vrepo, _del_tip, "gone-b.txt") is None,
+          f"{pf._blob_at(_vrepo, _del_tip, 'gone-a.txt')!r} "
+          f"{pf._blob_at(_vrepo, _del_tip, 'gone-b.txt')!r}")
+    _vg("checkout", "-q", "main")
+
+    # ------------------------------ unpushed_commits: a failed read is not zero
+    # `--not --remotes` is the instrument, and it is sharper than the census
+    # count beside it: `unpushed_against_pr` compares HEAD against the PR's
+    # headRefOid, so it answers 1 for a head that merely differs -- including one
+    # that IS on a remote ref. Measured on the live set (#4385): two worktrees
+    # the census called "1 UNPUSHED COMMIT" have nothing outside the remotes.
+    # A remote ref has to exist for `--not --remotes` to exclude anything, so the
+    # fixture makes one: main as it stands is "pushed", and a commit made after
+    # it is not. Without this the arm passes for a repo with no remotes at all,
+    # where every commit is trivially "unpushed" and the flag is doing no work.
+    _vg("update-ref", "refs/remotes/origin/main", "main")
+    _vwrite("local-only.txt", "not pushed\n")
+    _vg("add", "local-only.txt")
+    _vg("commit", "-qm", "chore: after the last push")
+    _after_push = _vg("rev-parse", "HEAD").stdout.strip()
+    _main_head = _vg("rev-parse", "refs/remotes/origin/main").stdout.strip()
+    _uc = pf.unpushed_commits(_vrepo)
+    check("verdict: unpushed_commits lists the commit no remote ref contains",
+          _uc == [_after_push], f"{_uc!r} vs [{_after_push}]")
+    check("verdict: ...and EXCLUDES everything the remote ref already reaches",
+          _uc is not None and _main_head not in _uc, f"{_uc!r}")
+    _vg("reset", "-q", "--hard", "HEAD~1")
+    _vg("update-ref", "-d", "refs/remotes/origin/main")
+    # And the third state, which is the one that decides a verdict: a read that
+    # FAILED must be None, never []. An empty list renders as "nothing unpushed",
+    # which is the success state for a measurement that never happened
+    # (`guards-need-a-third-state.md`), and classify_unpushed_work would then
+    # answer "unknown -- no unpushed commits" for a worktree it could not read at
+    # all, hiding the git failure behind a plausible sentence.
+    check("verdict: a rev-list that cannot run answers None, not an empty list",
+          pf.unpushed_commits(os.path.join(_v_tmp, "not-a-repo")) is None,
+          repr(pf.unpushed_commits(os.path.join(_v_tmp, "not-a-repo"))))
+    _vfail = pf.verdict_for_worktree(os.path.join(_v_tmp, "not-a-repo"),
+                                     {"number": 9, "mergeCommit": {"oid": _carried_merge}})
+    check("verdict: ...and an unreadable worktree reaches the report as UNKNOWN",
+          _vfail.verdict == "unknown", f"{_vfail.verdict}: {_vfail.detail}")
+
+    # ---------------------------- verdict_for_worktree needs a merge commit
+    # A PR with no mergeCommit (never merged, or the field absent) has no
+    # snapshot of main to compare against. Deliberately NOT falling back to
+    # origin/main: the arms above measured that main's head answers "differs"
+    # for work that landed, so the fallback would manufacture false alarms.
+    _vnomerge = pf.verdict_for_worktree(_vrepo, {"number": 7})
+    check("verdict: a PR with no merge commit is UNKNOWN, not compared against main",
+          _vnomerge.verdict == "unknown" and "merge commit" in _vnomerge.detail,
+          f"{_vnomerge.verdict}: {_vnomerge.detail}")
 
     # --------------------------------------- the verdict never reaps anything
     # The safety property the issue is explicit about: trading a false keep for a
