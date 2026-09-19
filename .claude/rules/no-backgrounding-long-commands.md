@@ -26,12 +26,20 @@ One mechanism — a child process of your turn dies with your turn — in three 
 - **`run_in_background: true`** makes the process a detached child, not a subscription. No
   flag, wrapper or phrasing of a `Bash` call earns you a wake-up.
 - **The harness backgrounding it FOR you**, with a message saying you will be notified. That
-  promise does not hold for anything started inside your own turn.
+  promise does not hold for anything started inside your own turn — and this shape is not
+  optional, so asking for the foreground does not avoid it. The harness moves any foreground
+  `Bash` call to the background at a hard **600s** cap, which the call's own `timeout` field
+  does not raise. Measured over all 828 transcripts on this box: **95** CI waits were
+  auto-backgrounded and **all 95** had `run_in_background` unset (#4288). The notification you
+  then get reports the **wrapper's** exit status, not the tool's — `ci-verdicts.md` §0 owns
+  what that does to a verdict.
 
-A `PreToolUse` hook refuses `run_in_background` on a CI wait —
+A `PreToolUse` hook refuses a CI wait on the **duration it asks for**, not on the flag —
 `.claude/hooks/refuse-stash-and-ci-waits.py`, which reads `gh run watch`,
-`gh pr checks --watch`, `ci-wait.py` without `--timeout 0`, and a sleep loop polling CI as
-that shape; a backgrounded local run that is not a CI wait is still yours to judge (#3707).
+`gh pr checks --watch`, `ci-wait.py` whose `--timeout` is absent or at/above the 600s cap,
+and a sleep loop polling CI as that shape. A `--timeout 0` read, a value under the cap, and a
+backgrounded local run that is not a CI wait all stay allowed (#3707, #4288). Trap: gating that
+refusal on `run_in_background` is what made it refuse none of the 95.
 
 **If you are about to end a turn while local work you launched is still running, that is the
 bug.** Correct shapes, in order of preference: run it in the foreground; push first so the loss

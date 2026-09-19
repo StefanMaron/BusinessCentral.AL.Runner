@@ -32,6 +32,19 @@ that is true. Redirect to a file and check `$?`, or use `${PIPESTATUS[0]}`. Meas
 night. It is the same class as the trap below — an answer that could not have come out any
 other way.
 
+**A completion notification's "exit code" is the WRAPPER's, and you do not choose whether a
+wait gets one.** The harness moves any foreground `Bash` call to the background at a hard
+**600s** cap, which the call's own `timeout` field does not raise — every one of the 52 calls
+declaring above it, spanning 660000 to 3600000 ms, reported `within its 600s timeout`. The task notification then reports the shell wrapper's
+status, so `ci-wait.py` exiting **2** ("STILL RUNNING … This is NOT a verdict") arrives as
+`completed (exit code 0)`. Measured on PR #4286 (#4288): the reviewer asked for the foreground,
+got backgrounded anyway, and the `0` it was handed was the compound command's last element.
+**Read the tool's own printed verdict out of the output file; never the notification's number.**
+Trap: this is not the backgrounding rule's territory — `run_in_background` was unset on **all
+95** auto-backgrounded CI waits across the 828 transcripts on this box, so the flag says nothing
+about whether it happened. `.claude/hooks/refuse-stash-and-ci-waits.py` now refuses on the **requested duration**
+for that reason.
+
 **And when you report a surprising exit code, say how you captured it.** Reading directly
 protects you; it does nothing for a wrong number already written down. #3341 reported `rc=0`
 beside a GraphQL failure, which is impossible directly (`rc=1`) and exact under `| tail` — that
