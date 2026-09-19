@@ -7,13 +7,11 @@
 // PageProperties/@AnalysisModeEnabled on 94 of 235 pages and the runner writes it on none, and
 // the object diff reports ONE of them — page 8350, the only page where BC says "0".
 //
-// This is not "report defaults". Reporting every unwritten member on every object would bury
-// the signal: measured over the same two bundles, a raw attribute-presence diff over whole
-// documents is 88,884 rows, and 5,399 even after scoping to elements both sides build. What is
-// reported here is the strictly smaller set the object diff CANNOT see — 2,096 of those 5,399,
-// across 41 distinct (kind, element, attribute, value) shapes. The other 3,303 already fail as
-// value differences and are deliberately left to MetadataObjectDiff, so nothing is reported
-// twice. Full table: docs/metadata-equivalence.md#unobservable-omissions.
+// This is not "report defaults". Two things keep it to the set the object diff cannot see: only
+// elements BOTH sides build are considered, and only attributes whose removal leaves BC's own
+// object unchanged are reported. An omission the value comparison already reports is therefore
+// not reported again. The measured populations are in
+// docs/metadata-equivalence.md#unobservable-omissions, where they can be re-run.
 //
 // It is a third state rather than a difference (.claude/rules/guards-need-a-third-state.md):
 // the two objects AGREE on the member. What is being reported is that the harness cannot tell
@@ -121,8 +119,8 @@ public static class MetadataDocumentPresenceDiff
         {
             // Only elements the OTHER side builds too. An element it does not build at all is
             // already reported by MetadataObjectDiff as a <presence> difference, and every
-            // attribute on it would repeat that one finding: measured, scoping to paired
-            // elements is what takes the page population from 80,864 rows to 3,066.
+            // attribute on it would repeat that one finding once per attribute — which on a page
+            // means every ordinary field control, none of which the runner builds.
             if (!otherElements.TryGetValue(path, out var counterpart)) continue;
 
             foreach (var attribute in element.Attributes.Cast<XmlAttribute>().ToArray())
@@ -156,22 +154,13 @@ public static class MetadataDocumentPresenceDiff
                     continue;
                 }
 
-                // MaxDifferences = 1: the question is whether the stripped object differs AT
-                // ALL, and the list is discarded. Measured on BC 28.1.49838.53910 over both
-                // ground-truth bundles, the harness class runs in 1 m 22 s with an unlimited
-                // walk per attribute and 1 m 15 s with the limit — a modest saving, kept
-                // because the discarded list is pure waste, not because it is decisive.
-                var asked = options is null
-                    ? new MetadataObjectDiffOptions { MaxDifferences = 1 }
-                    : new MetadataObjectDiffOptions
-                    {
-                        MaxDepth = options.MaxDepth,
-                        RecurseNamespacePrefixes = options.RecurseNamespacePrefixes,
-                        PairByIdMembers = options.PairByIdMembers,
-                        IdPropertyNames = options.IdPropertyNames,
-                        MaxDifferences = 1,
-                    };
-                if (MetadataObjectDiff.Compare(intact, strippedObject, objectKey, asked).Count == 0)
+                // The SAME options the value comparison used for this kind, so the two answers
+                // are about one pairing rule. An earlier revision passed a capped copy here, to
+                // stop the walk after the first difference since this question is yes/no and
+                // the list is discarded. It was removed: measured on this box the cap was worth
+                // about half a second of a twelve-second class, which is inside the run-to-run
+                // spread, and the justification written into it had been a figure nobody took.
+                if (MetadataObjectDiff.Compare(intact, strippedObject, objectKey, options).Count == 0)
                     found.Add(new MetadataUnobservableOmission(
                         objectKey, path, element.LocalName, attribute.LocalName,
                         attribute.Value, statedBy));

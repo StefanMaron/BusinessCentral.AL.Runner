@@ -159,8 +159,9 @@ public sealed class MetadataDocumentPresenceDiffTests
     public void Attributes_on_an_element_the_other_side_does_not_build_are_not_reported()
     {
         // The runner reconstructs only a page's part controls, so BC's ordinary field controls
-        // are absent from its document entirely. Reporting every attribute on every such
-        // element is what took the measured page population from 3,066 rows to 80,864.
+        // are absent from its document entirely, each already reported once by
+        // MetadataObjectDiff as a <presence> difference. Reporting every attribute on every such
+        // element would repeat that finding once per attribute.
         var bc = new XmlDocument();
         bc.LoadXml("<PageDefinition ID=\"8350\"><Properties AnalysisModeEnabled=\"1\"/>" +
                    "<Controls><Control Name=\"Only in BC\" Editable=\"1\"/></Controls></PageDefinition>");
