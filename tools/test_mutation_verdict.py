@@ -278,6 +278,56 @@ check("...and with no assembly in the directory newer than the restore it still 
 os.remove(_dep)
 os.remove(_stamp)
 
+# THE CONTROL THIS CHECK MOST NEEDED, and the one whose absence let the defect ship: a
+# mutation in a file no build reads. `--restore` stamps EVERY mutation, so keying the refusal
+# on mtimes alone made it unclearable for those -- the demanded rebuild is a legitimate no-op,
+# nothing gains an mtime, and the refusal then poisons unrelated later runs until someone
+# deletes the stamp by hand. Measured on the first revision: mutate tools/mutation-verdict.py,
+# restore, `dotnet build` (exit 0, 2.06s no-op), still UNMEASURED with gap=261s; a second
+# rebuild did not move it. Not a corner case -- 41 tools/test_*.py guards, 20
+# .github/scripts/test_*, and the PR that introduced this check is itself such a change.
+#
+# Same shape as the dependency case above, one population further out: refusal arms all pass
+# while an honest path is refused, so only a control can find it (#4343, found in review).
+os.utime(_dll, (_now - 600, _now - 600))          # nothing in the directory is newer
+for _mutated, _label in (("tools/mutation-verdict.py", "a Python tool"),
+                         ("tools/test_no_racing_label_edit.py", "a tools/test_*.py guard"),
+                         (".claude/rules/tdd.md", "a markdown rule"),
+                         ("tests/expectations/known-gaps-x.json", "a JSON manifest")):
+    with open(_stamp, "w", encoding="utf-8") as _fh:
+        _fh.write(f"{_now:.6f}\n{_mutated}\n")
+    _r = mv.classify(_log(_red_body), mv.read_restore_stamp(_d))
+    check(f"CONTROL: a restored mutation in {_label} still gets a real verdict",
+          _r.verdict == mv.RED,
+          f"{_mutated} -> {mv.NAMES[_r.verdict]}: {_r.reason}. No rebuild can clear this, so "
+          f"refusing would be permanent rather than corrective")
+
+# ...and the discrimination survives: a build input with the same stale directory still refuses.
+for _mutated, _label in (("AlRunner/Patches/RecordPatches.CodeunitSubscriberWitness.cs", ".cs"),
+                         ("AlRunner.Tests/AlRunner.Tests.csproj", ".csproj"),
+                         ("Directory.Build.props", ".props")):
+    with open(_stamp, "w", encoding="utf-8") as _fh:
+        _fh.write(f"{_now:.6f}\n{_mutated}\n")
+    _r = mv.classify(_log(_red_body), mv.read_restore_stamp(_d))
+    check(f"...and a restored mutation in {_label} STILL refuses, because a rebuild clears it",
+          _r.verdict == mv.UNMEASURED, f"{_mutated} -> {mv.NAMES[_r.verdict]}: {_r.reason}")
+
+# The predicate itself, both directions, so a later editor cannot widen it by accident.
+for _path in ("a/b.cs", "X.CSPROJ", "d.props", "e.targets", "f.sln", "g.resx"):
+    check(f"is_build_input({_path!r}) is True", mv.is_build_input(_path))
+for _path in ("t.py", "r.md", "m.json", "s.sh", "w.yml", "n.al", "x"):
+    check(f"is_build_input({_path!r}) is False", not mv.is_build_input(_path))
+
+# A stamp with NO second line is from a writer predating the field, or truncated. It must stay
+# conservative -- treated as a build input -- rather than skipping the staleness question, which
+# would quietly disable the whole check for anyone holding an older stamp.
+with open(_stamp, "w", encoding="utf-8") as _fh:
+    _fh.write(f"{_now:.6f}\n")
+_legacy = mv.classify(_log(_red_body), mv.read_restore_stamp(_d))
+check("a stamp naming no path is treated as a build input, not as absent",
+      _legacy.verdict == mv.UNMEASURED, f"got {mv.NAMES[_legacy.verdict]}: {_legacy.reason}")
+os.remove(_stamp)
+
 # A log that does not name its assembly cannot be judged stale -- absence of evidence. The
 # caller keeps its ordinary verdict rather than refusing on a file it never identified.
 _unnamed = mv.classify(_red_body, (_now, "/repo/.mutation-restore-stamp"))

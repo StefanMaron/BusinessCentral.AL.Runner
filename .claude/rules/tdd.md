@@ -57,8 +57,11 @@ are claiming to prove:
    engine-bootstrap ordering recommends `--no-build` elsewhere. `tools/mutation-verdict.py`
    refuses (exit 3) a run whose output directory predates the last `--restore`, so you do not
    have to remember; a `--restore` that cannot record the stamp refuses rather than reporting
-   success. Trap: the mutated code usually lives in a **dependency**, so the rebuild leaves the
-   named test assembly untouched — judge the directory, never one assembly.
+   success. Two traps, both found by controls rather than by the refusal arms: the mutated code
+   usually lives in a **dependency**, so the rebuild leaves the named test assembly untouched —
+   judge the directory, never one assembly; and a mutation in a file no build reads (a `.py`
+   guard, a rule, a manifest) has **no rebuild that could clear it**, so the check must skip
+   those rather than refuse forever.
 
    Same root as the `-p:` row below (a binary that no longer matches the source), opposite
    direction: that one strands the mutation *out* of the build and reads green, this one strands

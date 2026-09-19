@@ -652,6 +652,15 @@ check("`*<SUFFIX>` is an ignore rule, so a backup is never committed",
       f"*{am.SUFFIX}" in _ignored,
       f"SUFFIX is {am.SUFFIX!r} and .gitignore has no `*{am.SUFFIX}` line — renaming one without "
       f"the other commits the backup")
+# STAMP_NAME is the same cross-file contract and had the same comment CLAIMING this pin, with
+# no pin behind it: deleting the .gitignore line while leaving STAMP_NAME intact returned 0
+# from both guards (#4343, found in review, by a control that should have redded and did not).
+# A comment asserting coverage that does not exist is worse than no comment.
+check("`<STAMP_NAME>` is an ignore rule, so a restore stamp is never committed",
+      am.STAMP_NAME in _ignored,
+      f"STAMP_NAME is {am.STAMP_NAME!r} and .gitignore has no `{am.STAMP_NAME}` line — a "
+      f"committed stamp refuses every verdict in a fresh clone, naming a restore nobody on "
+      f"that box performed, until someone deletes the file by hand")
 
 print("the three codes are distinct")
 check("APPLIED, NOT-APPLIED and AMBIGUOUS are three different values",

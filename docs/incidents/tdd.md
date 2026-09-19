@@ -392,3 +392,56 @@ Mutating `STAMP_NAME` to `.mutation-restore-stamp-RENAMED` left an untracked fil
 repository root, because the ignore rule carries the literal. Same cross-file contract as `SUFFIX`,
 and the reason `test_mutation_verdict.py` pins that the two tools name the same file: that mutation
 is invisible to `test_apply_mutation.py` on its own, which reported GREEN.
+
+### The same defect twice, one population further out each time
+
+The first revision keyed the refusal on the assembly the log names. The second keyed it on the
+output directory. **Both were caught by a control, and neither by a refusal arm** — the refusal
+direction passed throughout in both rounds.
+
+| round | honest path wrongly refused | found by |
+|---|---|---|
+| 1 | a rebuilt **dependency** (`al-runner.dll` fresh, `AlRunner.Tests.dll` stale) | the author's own end-to-end GREEN control |
+| 2 | a mutation in a **file no build reads** — a `.py` guard, a rule, a manifest | review |
+
+Round 2 is the worse of the two, because the refusal is **unclearable**: `--restore` stamps every
+mutation, the demanded rebuild is a legitimate no-op, nothing gains an mtime, and the stamp is
+deleted by no code path — so it then refuses *unrelated* later runs. Reproduced on the PR head:
+mutate `tools/mutation-verdict.py`, restore, `dotnet build` (exit 0, 2.06s no-op) → still
+`UNMEASURED`, `gap=261s`; a second rebuild did not move it. The printed `remedy: rebuild, then
+re-run` could not work.
+
+Not a corner case: 41 `tools/test_*.py` guards, 20 `.github/scripts/test_*`, and the PR
+introducing the check was itself such a change.
+
+**The fix was already in hand and being discarded.** `--restore` wrote the mutated path on the
+stamp's second line from the first revision, and `read_restore_stamp` called `fh.readline()`
+once. Reading the second line and skipping the check for non-build-inputs is the whole fix.
+
+The lesson is narrower than "write controls": a guard's refusal arms cannot find a path that
+*should not* be refused, because they all pass. Only a control naming the honest path can, and
+the honest population has to be enumerated deliberately — a build input is not the same set as
+"a file I might mutate".
+
+### A comment claiming a pin that was never written
+
+`apply-mutation.py`'s `STAMP_NAME` carried a comment saying `test_apply_mutation.py` fails if it
+and `.gitignore` drift. It did not: deleting the `.gitignore` line while leaving `STAMP_NAME`
+intact returned 0 from both guards. Only `SUFFIX` had that pin, and the comment was written by
+analogy to it.
+
+Found by a **control that should have redded and did not** — the same instrument as the finding
+above, in its other direction. The claim was true of the neighbouring constant and copied across,
+which is exactly the shape `guards-need-a-third-state.md` records as "a guard that is safe only by
+accident of a neighbour is not safe".
+
+Fixed by adding the pin rather than deleting the claim, since the hazard is real: a committed
+stamp refuses every verdict in a fresh clone, naming a restore nobody on that box performed.
+
+### A defence that cannot fire on its documented input
+
+`classify_exit`'s staleness check needs the `Test run for …dll (` line. Measured over **all 41**
+`tools/test_*.py` guards: **zero** emit it — they are processes, not `dotnet test` suites. So the
+check is defence in depth for the case where `--exit` is handed a dotnet log, and not protection
+for Python guards; what protects those is the build-input gate. Both the code comment and the PR
+body now say so, rather than claiming the broader thing.

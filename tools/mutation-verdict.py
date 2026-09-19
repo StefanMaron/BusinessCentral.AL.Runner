@@ -89,12 +89,35 @@ TEST_RUN_FOR_RE = re.compile(r"^Test run for (.+?\.dll)\s*\(", re.M)
 STAMP_NAME = ".mutation-restore-stamp"
 
 
+# What a rebuild can actually put into the build output. A mutation in anything else -- a
+# Python guard, a markdown rule, a JSON manifest -- leaves nothing for `dotnet build` to
+# rewrite, so no assembly gains an mtime and a staleness check keyed on mtimes could never
+# clear (#4343, found in review). Extensions rather than a directory list, because
+# `AlRunner.Tests/` holds `.cs` AND `.json` fixtures and only the first is compiled.
+BUILD_INPUT_SUFFIXES = (".cs", ".csproj", ".props", ".targets", ".sln", ".resx", ".razor")
+
+
+def is_build_input(path: str) -> bool:
+    """Can `dotnet build` turn a change to this file into a new assembly?
+
+    The question the staleness check must ask FIRST. `--restore` stamps every mutation,
+    including files no build reads; demanding a rebuild for those prints a remedy that cannot
+    work and refuses every later run until the stamp is deleted by hand.
+    """
+    return path.lower().endswith(BUILD_INPUT_SUFFIXES)
+
+
 def read_restore_stamp(start: str | None = None) -> tuple[float | None, str]:
     """The time of the last `apply-mutation.py --restore`, or None if there was none.
 
     Returns (when, detail). `None` is the ordinary case and a PASS: most runs follow no
     mutation at all, and a check that refused without one would refuse everything
     (guards-need-a-third-state.md -- a genuinely absent thing stays a pass).
+
+    `None` is ALSO the answer when the stamped file is not a build input, for the same
+    reason: no rebuild can clear it, so refusing would be permanent rather than corrective.
+    The stamp's second line carries that path -- it was written from the first revision and
+    read by nothing, which is what made the defect possible (#4343, found in review).
 
     Looked up by walking up from `start` to the `.git` entry, matching where
     `apply-mutation.py` writes it. A stamp that exists but cannot be parsed is NOT treated as
@@ -121,9 +144,16 @@ def read_restore_stamp(start: str | None = None) -> tuple[float | None, str]:
     try:
         with open(stamp, encoding="utf-8") as fh:
             first = fh.readline().strip()
-        return float(first), stamp
+            mutated = fh.readline().strip()
+        when = float(first)
     except (OSError, ValueError) as exc:
         return float("inf"), f"{stamp} exists but could not be read ({exc})"
+    # A stamp naming no path is from a writer that predates this field, or a truncated file.
+    # Treat it as a build input -- the conservative direction, since that is the case the
+    # check exists for -- rather than silently skipping the staleness question entirely.
+    if mutated and not is_build_input(mutated):
+        return None, ""
+    return when, stamp
 
 
 def stale_binary(text: str, stamp_when: float | None, stamp_detail: str) -> str:
@@ -281,6 +311,13 @@ def classify_exit(code: int, text: str = "",
     first because an earlier revision refused on code 2 while citing a condition that produces
     code 1, the second because the fix for that regressed three unittest-based guards.
     """
+    # Defence in depth, and honestly bounded: this cannot fire on the input it is documented
+    # for. `stale_binary` needs the `Test run for …dll (` line, and measured over all 41
+    # tools/test_*.py guards, ZERO emit it -- they are processes, not dotnet suites. It is
+    # kept because --exit also accepts a dotnet log (the CLI reads one either way) and
+    # because the alternative is a classifier that silently cannot refuse; it is NOT a claim
+    # that Python guards are protected. What protects those is the build-input gate in
+    # read_restore_stamp, which stops their stamps refusing anything at all (#4343).
     when, detail = stamp if stamp is not None else read_restore_stamp()
     why = stale_binary(text, when, detail)
     if why:
