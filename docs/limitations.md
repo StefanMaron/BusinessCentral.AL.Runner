@@ -1476,16 +1476,29 @@ registers nothing, and the registry stays empty. Measured on `28.1.49838.53910`:
 Microsoft's own proxy assemblies, which is what the missing file would have caused. Nothing is
 re-implemented and no value is invented.
 
-#### The id is the CRM SDK major, not the V-number in the file name
+#### The id is chosen here; BC does not validate it
 
-BC enforces this itself: a second registration for one id throws unless
-`value.SdkVersion.Major == version`, and `XrmService.SdkVersion` reads the **file version of the
-`Microsoft.Xrm.Sdk.dll` that proxy resolves against**. The page's own control over
-`Rec."Proxy Version"` is captioned `SDK Version`, which is BC's name for the same number.
+An earlier version of this section claimed BC enforces `id == SdkVersion.Major`. **It does not**,
+and the correction matters because a later reader would otherwise treat the id as determined by BC
+rather than chosen by this runner.
 
-Measured on `28.1.49838.53910`: `Microsoft.Xrm.Sdk.dll` reports FileVersion `9.2.49.6443`, so
-V100 registers under **9** — not 100. Deriving ids from the file names would give 9 → 91 and
-10 → 100, which BC would reject on re-registration and which no BC surface ever shows.
+Reading `XrmServiceProvider.RegisterXrmService`, the only `SdkVersion.Major != version` comparison
+is on the **`else if`** branch — reached only when that id is *already* registered. A first
+registration takes the `TryGetValue` → `Add` path, where the sole validation is the `XrmService`
+constructor's `version <= 0`. And `XrmService.SdkVersion` is initialised to `new Version(0, 0)` and
+set lazily when the proxy actually loads, so that branch's own `Major > 0` precondition is false on
+a fresh registry regardless. Measured: registering `V91` under 9 and `V100` under 10 both succeed,
+and re-registering an id is a silent no-op.
+
+**BC's real id source is `item.Version`, read from `DataSources/DataSources.json`** — the file the
+artifact layout does not carry. That missing field is the whole problem, so the runner has to supply
+the number from somewhere.
+
+It reads the shipped `Microsoft.Xrm.Sdk.dll`'s file version, because `XrmService.SdkVersion` reports
+that same number at runtime: the id and what the proxy says about itself then agree, which is the
+property the JSON gives a real service tier. Measured on `28.1.49838.53910`, FileVersion
+`9.2.49.6443` → V100 registers under **9**. The page's control over `Rec."Proxy Version"` is
+captioned `SDK Version`, which is consistent with that choice — but consistency is not enforcement.
 
 #### V91 is skipped on Linux, and that is faithful
 

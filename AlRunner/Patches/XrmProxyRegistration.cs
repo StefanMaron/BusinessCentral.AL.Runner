@@ -14,12 +14,15 @@
 // -> InitializeProxyVersionList -> DotNet CrmHelper.GetProxyIdList() -> XrmServiceProvider.ProxyIds,
 // measured on 28.1.49838.53910 (issue #3515). Proven by tests/runner-extras/crm-proxy-version.
 //
-// Trap: BC asserts id == SdkVersion.Major when a second registration arrives for one id
-// (XrmServiceProvider.RegisterXrmService, the `value.SdkVersion.Major != version` branch), so the
-// id is NOT the V-number in the file name. Measured on 28.1.49838.53910: V100 reports SdkVersion
-// 9.2.49.6443, so its id is 9, not 100; V91 cannot report one at all, because its getter reads
-// Host/Microsoft.Xrm.Sdk.dll, a Windows out-of-process host that does not ship in the artifact
-// directory. See docs/limitations.md#the-id-is-the-crm-sdk-major-not-the-v-number-in-the-file-name.
+// Trap: BC does NOT validate the id against the proxy's SDK version on a first registration, so
+// nothing here is checked by BC and the id this chooses is the id callers get. In
+// XrmServiceProvider.RegisterXrmService the only `SdkVersion.Major != version` comparison sits on
+// the `else if` branch — reached only when that id is ALREADY registered — and `XrmService.SdkVersion`
+// is `new Version(0, 0)` until the proxy loads, so its `Major > 0` precondition is false on a fresh
+// registry anyway. The `TryGetValue` -> `Add` path validates only `version <= 0`. BC's own id source
+// is `item.Version` read from DataSources/DataSources.json, which the artifact layout does not carry;
+// reading the shipped SDK's file version is this runner's substitute for that missing field, not a
+// rule BC enforces. See docs/limitations.md#the-id-is-chosen-here-bc-does-not-validate-it.
 using System.Diagnostics;
 using System.Reflection;
 using AlRunner.Infrastructure;
@@ -109,10 +112,12 @@ internal static class XrmProxyRegistration
     /// The id a proxy assembly must be registered under: the major of the CRM SDK it binds to.
     /// </summary>
     /// <remarks>
-    /// BC derives this at runtime through <c>XrmService.SdkVersion</c>, which reads the file
-    /// version of the <c>Microsoft.Xrm.Sdk.dll</c> that proxy resolves against — and BC enforces
-    /// <c>SdkVersion.Major == version</c> on re-registration. Reading the same file, from the same
-    /// place that proxy reads it, keeps the two definitions the same one.
+    /// <para><b>BC does not enforce this</b>, and the comment at the top of this file says why: on a
+    /// first registration the id is accepted unchecked. BC's own id comes from <c>item.Version</c> in
+    /// <c>DataSources/DataSources.json</c>, a file the artifact layout does not ship. Reading the
+    /// shipped SDK's file version is this runner's substitute for that missing field — chosen because
+    /// <c>XrmService.SdkVersion</c> reports the same number at runtime, so the id and what the proxy
+    /// says about itself agree, which is the property the JSON gives a real service tier.</para>
     ///
     /// Each proxy resolves its SDK from its own location, so this must not probe a fallback: V91
     /// reads <c>Host/Microsoft.Xrm.Sdk.dll</c> and V100 reads the copy beside itself. Falling back
