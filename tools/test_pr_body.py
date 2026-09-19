@@ -686,13 +686,17 @@ check("#4393 control: the fenced clause in a CRLF body is still a stray",
       (pb.stray_closing_reference(_n, pb.declared_targets(_n)) or (None,))[0] == 2125,
       str(pb.stray_closing_reference(_n, pb.declared_targets(_n))))
 
-# PRE-EXISTING, and deliberately pinned as-is rather than "fixed" here: on RAW
-# (un-normalised) CRLF text, declared_targets finds nothing, because
-# CANONICAL_LINE_RE ends [ \t]*$ and a trailing \r does not match. That predates
-# #4393 -- measured identically on base 907235171 -- and is out of scope for a
-# fence fix. Pinned so a later change to CANONICAL_LINE_RE is a deliberate one.
-check("#4393 pre-existing: raw un-normalised CRLF declares nothing (norm() is the caller's job)",
-      pb.declared_targets(_b) == [], str(pb.declared_targets(_b)))
+# #4396 is that deliberate change. The line this replaced pinned raw CRLF as
+# declaring NOTHING and said a later change to CANONICAL_LINE_RE should be
+# deliberate; GitHub's own behaviour is what makes it so. Two merged PRs on this
+# repository carry a wholly CRLF body whose trailer reads "Closes #N\r", and
+# GitHub closed the named issue on merge both times: PR #3967 -> #3964, PR #3899
+# -> #3881 (closingIssuesReferences, read back from the API). So a trailing CR is
+# part of a REAL declaration, the permissive shell gate had it right, and this
+# port -- which every caller reaches through norm() but which check_body() also
+# applies to a --body-file the caller may hand it raw -- had it wrong.
+check("#4396 raw un-normalised CRLF declares the target, as GitHub does",
+      pb.declared_targets(_b) == [2783], str(pb.declared_targets(_b)))
 
 # STATED GAP (raised in review): CommonMark 4.5 says a BACKTICK fence's info
 # string may not contain a backtick, so "```x`y" is not a fence opener. Both
@@ -702,6 +706,75 @@ check("#4393 pre-existing: raw un-normalised CRLF declares nothing (norm() is th
 _b = "Closes #2783\n\n```x`y\nCloses #2125\n"
 check("#4393 STATED GAP: a backtick in the info string still opens a fence",
       2125 not in pb.declared_targets(_b), str(pb.declared_targets(_b)))
+
+# --------------------------------------------------------------------------
+print("\n#4396: SEP and CANONICAL_LINE_RE must admit the same whitespace as the gate")
+# --------------------------------------------------------------------------
+# The gate writes both constants with [[:space:]]; this port wrote them with
+# [ \t]. Those differ on CR, VT and FF, so the two disagreed about what a
+# declaration is -- with the GATE permissive, and the gate turned out to be the
+# one that matches GitHub.
+#
+# The direction was settled by GitHub, not by argument. A trailing CR is not a
+# hypothetical: a body stored with CRLF line endings puts one at the end of
+# EVERY line, including the trailer, and CANONICAL_LINE_RE is $-anchored. Two
+# merged PRs here prove GitHub honours it -- #3967 ("Closes #3964\r" -> closed
+# #3964) and #3899 ("Closes #3881\r" -> closed #3881). Narrowing the shell to
+# match this port would have FAILED both of those correct PRs; widening this
+# port makes both files agree with GitHub instead of with each other.
+#
+# Why an explicit class and not \s: \s admits \n, and STRAY_RE runs against the
+# WHOLE body rather than a line at a time, so \s would let one clause span a
+# line break and match a keyword against the next line's number. The shell is
+# immune to that only because grep is line-oriented; this port is not.
+for _n, _c in [("CR", "\r"), ("VT", "\v"), ("FF", "\f")]:
+    check(f"#4396 a {_n} before the keyword still declares",
+          pb.declared_targets(f"{_c}Closes #123") == [123],
+          str(pb.declared_targets(f"{_c}Closes #123")))
+    check(f"#4396 a {_n} inside the keyword/number separator still declares",
+          pb.declared_targets(f"Closes{_c}#123") == [123],
+          str(pb.declared_targets(f"Closes{_c}#123")))
+    check(f"#4396 a trailing {_n} after the reference still declares",
+          pb.declared_targets(f"Closes #123{_c}") == [123],
+          str(pb.declared_targets(f"Closes #123{_c}")))
+
+# GREEN CONTROLS. Every row above passes for a class widened to "anything", so
+# these are the rows that fail if the class stops discriminating. A newline must
+# NOT be admitted, or a clause spans lines and STRAY_RE fires on the wrong number.
+check("#4396 control: a plain trailer still declares",
+      pb.declared_targets("Closes #123") == [123], str(pb.declared_targets("Closes #123")))
+check("#4396 control: space and tab still declare",
+      pb.declared_targets(" Closes #123") == [123] and pb.declared_targets("\tCloses #123") == [123],
+      "")
+check("#4396 control: prose with a keyword is still not a declaration",
+      pb.declared_targets("This does not close #123.") == [],
+      str(pb.declared_targets("This does not close #123.")))
+# The newline control asserts on STRAY_RE ITSELF, not on
+# stray_closing_reference(): that function splits the body on "\n" and runs the
+# regex one line at a time, so it is structurally immune to a cross-line match
+# and answers None whatever WS admits. Asserting through it measured the
+# splitting, not the class -- a mutation widening WS to "\s" left it green while
+# STRAY_RE really did match "closes\n#999" across the break. Pin the property
+# where it lives, so the row fails if WS ever admits a newline.
+check("#4396 control: a newline is NOT separator whitespace, so no clause spans lines",
+      pb.STRAY_RE.search("Some prose that closes\n#999 later.") is None,
+      str(pb.STRAY_RE.search("Some prose that closes\n#999 later.")))
+# ...and the same shape WITH a real separator character does fire, so the row
+# above is pinned to the newline rather than to the sentence being unmatchable.
+check("#4396 control: the same shape with a CR instead of the newline IS a stray",
+      (pb.stray_closing_reference("Some prose that closes\r#999 later.", []) or (None,))[0] == 999,
+      str(pb.stray_closing_reference("Some prose that closes\r#999 later.", [])))
+check("#4396 control: STRAY_RE matches the CR shape it is pinned against",
+      pb.STRAY_RE.search("Some prose that closes\r#999 later.") is not None, "")
+
+# The real merged bodies, reduced to their load-bearing shape: a wholly CRLF
+# body declares its trailer and nothing else.
+_crlf = "Closes #3964\r\n\r\nSome prose.\r\n"
+check("#4396 a wholly CRLF body declares its trailer (PR #3967's shape)",
+      pb.declared_targets(_crlf) == [3964], str(pb.declared_targets(_crlf)))
+check("#4396 control: that CRLF body raises no stray",
+      pb.stray_closing_reference(_crlf, pb.declared_targets(_crlf)) is None,
+      str(pb.stray_closing_reference(_crlf, pb.declared_targets(_crlf))))
 
 # --------------------------------------------------------------------------
 print("\nparity with .github/scripts/check_closing_reference.sh")
@@ -757,6 +830,18 @@ CASES = [
     # "   Closes #2783" is a legal trailer and the boundary is one space wide.
     # Listed so the two files are pinned to agreeing about the gap too.
     ("indented code block is not modelled", "Closes #2783\n\nprose:\n\n    closed #2125\n"),
+    # #4396: CR, VT and FF. The gate's [[:space:]] admitted them and this port's
+    # [ \t] did not, so the two disagreed about what a declaration is -- and the
+    # existing rows are all ordinary text, which is why a 700-body sweep of them
+    # found nothing. A wholly CRLF body is the reachable instance: it puts a CR
+    # at the end of every line, trailer included.
+    ("CRLF body declares its trailer", "Closes #2783\r\n\r\nSome prose.\r\n"),
+    ("CR before the keyword", "\rCloses #2783\n"),
+    ("CR inside the separator", "Closes\r#2783\n"),
+    ("VT inside the separator", "Closes\v#2783\n"),
+    ("FF before the keyword", "\fCloses #2783\n"),
+    ("CR-separated foreign keyword is a stray", "Closes #2783\n\nThis does not close\r#2125.\n"),
+    ("CR-separated restatement of a declared target", "Closes #2783\n\nIt closes\r#2783 indeed.\n"),
 ]
 
 # Both branches below already SAID "NOT a pass" and then let the run end at "all checks passed",
