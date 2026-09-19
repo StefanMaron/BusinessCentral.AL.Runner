@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **preflight:** give --reap a carried/differs verdict per kept worktree
 - **tools:** one script for the comment-vs-code ratio, three-dot against the merge base
 - **tools:** refuse a mutation that did not apply, and say which of three ways
 - **tools:** detect the unattributed-commit merge block before arming
