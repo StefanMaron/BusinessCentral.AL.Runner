@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **testpage:** serve a TableRelation-only lookup through BC's own lookup-mode RunModal
 - **ci:** flag a PR that closes an issue while deferring that issue's own work
 - **tools:** a review-claim signal, so a second reviewer pass is a decision rather than an accident
 - **preflight:** give --reap a carried/differs verdict per kept worktree
