@@ -83,9 +83,15 @@ def run_block(job_id: str) -> str:
     raise AssertionError(f"no run: step in job {job_id}")
 
 
-def invoke(block: str, env: dict[str, str], issue_json: dict | None = None
-           ) -> tuple[int, str, list[str]]:
-    """Run one step's shell with a stubbed gh; return rc, stdout, gh calls."""
+def invoke(block: str, env: dict[str, str], issue_json: dict | None = None,
+           read_labels=None) -> tuple[int, str, list[str]]:
+    """Run one step's shell with a stubbed gh; return rc, stdout, gh calls.
+
+    `read_labels` makes this the ONLY channel the fixture travels down. It is
+    called with the environment block the step was actually executed with, and
+    what it returns is appended to the result as a fourth element -- see
+    `drive_step`, which is what callers should use.
+    """
     tmp = tempfile.mkdtemp(prefix="label-hygiene-")
     try:
         bindir = os.path.join(tmp, "bin")
@@ -131,9 +137,55 @@ def invoke(block: str, env: dict[str, str], issue_json: dict | None = None
             # on a Windows box without pretending the runner behaves that way.
             raw = open(log, encoding="utf-8", newline="").read().replace(chr(13), "")
             calls = [ln for ln in raw.splitlines() if ln]
-        return proc.returncode, proc.stdout + proc.stderr, calls
+        if read_labels is None:
+            return proc.returncode, proc.stdout + proc.stderr, calls
+        # Read back from `full`, the environment the subprocess was handed --
+        # not from `env` or `issue_json`, which are the caller's copies. A
+        # reader given the executed environment cannot be shown a fixture the
+        # step did not run with.
+        return (proc.returncode, proc.stdout + proc.stderr, calls,
+                _read_back(read_labels, full))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _read_back(read_labels, executed_env: dict[str, str]
+               ) -> tuple[list[str] | None, str]:
+    """(label names, "") -- or (None, why) when the channel could not be read.
+
+    Returns rather than raises: a fixture the caller cannot read back is a
+    measurement that did not happen, and a caller must be able to spell that as
+    its third state rather than as a failure of the thing under test
+    (`guards-need-a-third-state.md`).
+    """
+    try:
+        names = read_labels(executed_env)
+    except Exception as exc:  # any malformed channel, not one chosen shape
+        return None, f"{type(exc).__name__}: {exc}"
+    if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+        return None, f"channel did not yield a list of label names: {names!r}"
+    return names, ""
+
+
+def drive_step(block: str, env: dict[str, str], issue_json: dict | None,
+               read_labels) -> tuple[int, str, list[str], list[str] | None, str]:
+    """Run a step and read its label fixture back out of the same execution.
+
+    The two used to be separate calls, so a caller could drive the step with one
+    fixture and read the non-vacuity fixture out of another -- a false green over
+    a genuinely racing workflow, because the race check saw labels not including
+    the one under test while the non-vacuity check was satisfied by the other
+    fixture (#4315). Here there is one fixture and one call, so the mismatch has
+    no expression: `read_labels` is handed the environment block the step was
+    executed with, which the caller never holds.
+
+    `read_labels(executed_env)` takes ONE argument for that reason. A two-argument
+    form would have to be passed the caller's `issue_json` alongside, which is the
+    second channel this exists to remove.
+    """
+    rc, out, calls, (fixture, why) = invoke(block, env, issue_json=issue_json,
+                                            read_labels=read_labels)
+    return rc, out, calls, fixture, why
 
 
 def flag_values(call: str, flag: str) -> list[str]:
