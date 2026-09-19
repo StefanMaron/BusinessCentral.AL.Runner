@@ -47,6 +47,25 @@ are claiming to prove:
 
    Force a clean rebuild when you mutated a build input (`.csproj`, an MSBuild target, a
    generator), since an incremental build may skip the compile entirely.
+
+   **And rebuild after `--restore` too, because the mutation is still in the binary until you
+   do.** `--no-build` then re-measures the mutant, and the red that produces is deterministic,
+   narrow, on the *right* arm for the hypothesis, and survives running the class alone — every
+   property that normally ends an investigation (#4343, measured: five identical `Failed: 2`
+   runs after a clean restore; one rebuild gave 2/2). It is the one trap in this section that
+   fails toward a **red**, so "distrust a surprising green" does not catch it, and the repo's own
+   engine-bootstrap ordering recommends `--no-build` elsewhere. `tools/mutation-verdict.py`
+   refuses (exit 3) a run whose output directory predates the last `--restore`, so you do not
+   have to remember; a `--restore` that cannot record the stamp refuses rather than reporting
+   success. Two traps, both found by controls rather than by the refusal arms: the mutated code
+   usually lives in a **dependency**, so the rebuild leaves the named test assembly untouched —
+   judge the directory, never one assembly; and a mutation in a file no build reads (a `.py`
+   guard, a rule, a manifest) has **no rebuild that could clear it**, so the check must skip
+   those rather than refuse forever.
+
+   Same root as the `-p:` row below (a binary that no longer matches the source), opposite
+   direction: that one strands the mutation *out* of the build and reads green, this one strands
+   it *in* and reads red.
 3. **Rebuild and re-run. Confirm RED — and that the RED is the assertion, not the build.**
    A mutation that breaks the compile also exits non-zero, and a run with compile errors prints
    no `Total:` line at all. Check the error text says `Assert`, not `error CS`. Restore.
@@ -163,6 +182,15 @@ a fixture with one id repeated would have passed the author's mutation and looke
 
 **Corollary: re-running the author's mutation is the weakest check a reviewer can make.** It tests
 the same hypothesis by the same route. Pick your own.
+
+**And when one side of a two-sided boundary is pinned, ask immediately whether the other is.** A
+reader and a writer sharing a rule — a path convention, a name, a stop condition — usually get one
+test, and the asymmetry is invisible from either file alone. Measured (#4343): deleting the
+repository-root stop from `mutation-verdict.py`'s stamp lookup left **all 89 assertions green**,
+while the identical stop in `apply-mutation.py` was pinned; the unguarded walk then read a foreign
+worktree's stamp and refused an honest run. Trap: the obvious fix — stop walking — passes the new
+test too, so pin **both** directions, that the walk stops at the boundary *and* still finds what is
+inside it.
 
 A required step, not a tool: no framework, no CI job. One rebuild.
 

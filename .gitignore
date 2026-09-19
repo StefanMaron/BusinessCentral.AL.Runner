@@ -116,3 +116,8 @@ tests/al-language/
 # ship the pre-mutation copy of a source file AND make --restore refuse every later mutation
 # on that path, since a live backup is what it refuses on.
 *.mutation-backup
+# tools/apply-mutation.py --restore writes this at the repository root, and
+# tools/mutation-verdict.py reads it to refuse a verdict from a binary older than the last
+# restore (#4343). Committing one would refuse every verdict in a fresh clone, naming a
+# restore nobody on that box performed, until someone deleted the file.
+.mutation-restore-stamp

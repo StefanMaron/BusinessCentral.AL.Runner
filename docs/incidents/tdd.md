@@ -329,3 +329,252 @@ Two incidental traps, both of which cost real time:
   it by hand with `mv` then dropped the file's exec bit, which was committed as `100644` and made
   the documented `tools/apply-mutation.py <file>` invocation fail with `Permission denied` for
   everyone — while every test kept passing, because they import the module.
+
+
+## #4343 — a restored mutation is still in the binary, and the red it produces looks like a finding
+
+Filed from a reviewer's account of nearly filing a false finding on PR #4335. The reviewer
+restored its mutation with `tools/apply-mutation.py --restore`, re-ran with `--no-build`, and got
+`Failed: 1` on `ACodeunitsSubscriber_DoesNotSilenceThePageWithTheSameId` — across five runs, and
+again with the class run alone. That is the exact shape of the cross-collection leak it had been
+asked to look for. Rebuilding gave `2/2` and `56/56`.
+
+### Re-derived before building on it
+
+The issue said plainly that the five-run figure was the reviewer's measurement, not its author's.
+Reproduced independently on this branch, mutating `RegisterPageSubscriberWitness` in
+`AlRunner/Patches/RecordPatches.CodeunitSubscriberWitness.cs` to pass `CodeunitTypePrefix` — the
+cross-kind leak the arm exists to catch:
+
+| step | result |
+|---|---|
+| baseline, built | `Failed: 0, Passed: 2` |
+| mutated, built | `Failed: 2, Passed: 0` — correctly caught |
+| **restored in source, `--no-build` ×5** | **`Failed: 2` five times**, `mutation-verdict.py` reporting a confident RED each time |
+| rebuilt | `Failed: 0, Passed: 2` |
+
+### Why this one is worse than the traps already in the rule
+
+Every other mutation trap in `tdd.md` fails toward a **green** that reads as coverage, and the
+reader is told to distrust a surprising green. This fails toward a **red**, which is what a
+reviewer is hunting, and it has all three properties that normally *end* an investigation:
+deterministic, narrow, and on the right arm for the hypothesis. Running the class alone — the
+usual cross-check — reproduces it, because the binary does not change.
+
+And two correct practices point in opposite directions. `--no-build` is recommended elsewhere in
+this repository (build → bootstrap → `dotnet test --no-build --settings engine.runsettings`,
+because a build restores a pristine `Ncl.dll`). An agent following both lands on a stale binary.
+The remedy is therefore not "stop using `--no-build`".
+
+### Why the stamp, and not the two cheaper options
+
+The issue named three. Touching the file already happens — which is *why* a plain `dotnet test`
+recovers and only `--no-build` bites — and a printed warning on restore is read or not read. Only
+recording the restore and refusing the verdict cannot be skipped by a reader in a hurry, and it
+fits `mutation-verdict.py`'s existing `3 unmeasured` rather than inventing a fourth code.
+
+### The false-refusal mode, found by its own control
+
+The first implementation compared the restore stamp against the assembly named on the log's
+`Test run for …` line. Its end-to-end GREEN control failed: after a restore at 02:03:20,
+`dotnet build` wrote `al-runner.dll` at 02:03:52 while `AlRunner.Tests.dll` stayed at 01:54:28,
+because no test source had changed. The mutated code almost always lives in a **dependency**, so
+keying on the named assembly refuses a run that was correctly rebuilt — this check's own version
+of the defect it exists to catch. Fixed by reading the newest `.dll` in the output directory.
+
+Worth recording that the control is what caught it. The refusal direction passed throughout; only
+the "a real verdict must still get through" arm could have found this, which is the argument for
+pairing every refusal mutation with a control.
+
+### A leftover the `.gitignore` entry exists for
+
+Mutating `STAMP_NAME` to `.mutation-restore-stamp-RENAMED` left an untracked file behind at the
+repository root, because the ignore rule carries the literal. Same cross-file contract as `SUFFIX`,
+and the reason `test_mutation_verdict.py` pins that the two tools name the same file: that mutation
+is invisible to `test_apply_mutation.py` on its own, which reported GREEN.
+
+### The same defect twice, one population further out each time
+
+The first revision keyed the refusal on the assembly the log names. The second keyed it on the
+output directory. **Both were caught by a control, and neither by a refusal arm** — the refusal
+direction passed throughout in both rounds.
+
+| round | honest path wrongly refused | found by |
+|---|---|---|
+| 1 | a rebuilt **dependency** (`al-runner.dll` fresh, `AlRunner.Tests.dll` stale) | the author's own end-to-end GREEN control |
+| 2 | a mutation in a **file no build reads** — a `.py` guard, a rule, a manifest | review |
+
+Round 2 is the worse of the two, because the refusal is **unclearable**: `--restore` stamps every
+mutation, the demanded rebuild is a legitimate no-op, nothing gains an mtime, and the stamp is
+deleted by no code path — so it then refuses *unrelated* later runs. Reproduced on the PR head:
+mutate `tools/mutation-verdict.py`, restore, `dotnet build` (exit 0, 2.06s no-op) → still
+`UNMEASURED`, `gap=261s`; a second rebuild did not move it. The printed `remedy: rebuild, then
+re-run` could not work.
+
+Not a corner case: 41 `tools/test_*.py` guards, 20 `.github/scripts/test_*`, and the PR
+introducing the check was itself such a change.
+
+**The fix was already in hand and being discarded.** `--restore` wrote the mutated path on the
+stamp's second line from the first revision, and `read_restore_stamp` called `fh.readline()`
+once. Reading the second line and skipping the check for non-build-inputs is the whole fix.
+
+The lesson is narrower than "write controls": a guard's refusal arms cannot find a path that
+*should not* be refused, because they all pass. Only a control naming the honest path can, and
+the honest population has to be enumerated deliberately — a build input is not the same set as
+"a file I might mutate".
+
+### A comment claiming a pin that was never written
+
+`apply-mutation.py`'s `STAMP_NAME` carried a comment saying `test_apply_mutation.py` fails if it
+and `.gitignore` drift. It did not: deleting the `.gitignore` line while leaving `STAMP_NAME`
+intact returned 0 from both guards. Only `SUFFIX` had that pin, and the comment was written by
+analogy to it.
+
+Found by a **control that should have redded and did not** — the same instrument as the finding
+above, in its other direction. The claim was true of the neighbouring constant and copied across,
+which is exactly the shape `guards-need-a-third-state.md` records as "a guard that is safe only by
+accident of a neighbour is not safe".
+
+Fixed by adding the pin rather than deleting the claim, since the hazard is real: a committed
+stamp refuses every verdict in a fresh clone, naming a restore nobody on that box performed.
+
+**And the pin added to fix it was itself green on the mutation it was written to catch.** It
+asked `am.STAMP_NAME in open(".gitignore").read()` — a substring test, and the name is a
+substring of every rename of itself. Measured on three shapes (`-RENAMED`, `XYZ`, and a
+`#`-comment-out): guard rc=0 in all three while `git check-ignore` reported the path **not
+ignored**, which is exactly the hazard the check's own message describes. Only outright deletion
+redded.
+
+Four lines above it sat the sentence "a comment asserting coverage that does not exist is worse
+than no comment", and this file recorded the weak pin as the fix. **A weak pin is the same defect
+wearing the fix's clothes** — the third round of one shape in one PR.
+
+The remedy is to ask the tool that owns the question: `git check-ignore -q`, which discriminates
+all three shapes, because a substring test cannot separate "the rule is present" from "the rule's
+name appears in a comment". The neighbouring `SUFFIX` pin had the identical weakness, pre-existing
+and copied from; both were fixed together, since a known-weak pin beside a fixed one is
+`guards-need-a-third-state.md`'s "safe only by accident of a neighbour".
+
+### "Not listed" means "skip the check", so a wrong entry restores the defect
+
+`BUILD_INPUT_SUFFIXES` listed `.sln`, which this repository does not have, and omitted `.slnx`,
+which it does and which four workflows build. Measured with a stale binary: `.slnx` → `RED`
+(check skipped), `.sln` → `UNMEASURED`. Counted with `git ls-files`: `.cs` 1223, `.csproj` 7,
+`.props` 1, `.targets` 1, `.slnx` 1, `.sln` 0.
+
+Low severity — no `.slnx` mutation appears in any recorded incident — but the direction is
+asymmetric and that is the general point: **a missing extension silently restores the original
+defect for that file type, while a spare one costs only a refusal a real rebuild clears.** So the
+list errs toward listing, and is pinned against `git ls-files` rather than against a hand-written
+roster, so the same omission cannot recur for a file type added later.
+
+Considered and rejected (agreeing with the reviewer): inverting the predicate to "did any assembly
+get newer". That is what `stale_binary` already computes, and it cannot separate *"nothing needed
+rebuilding"* from *"the user forgot"* — which is the original defect.
+
+### A defence that cannot fire on its documented input
+
+`classify_exit`'s staleness check needs the `Test run for …dll (` line. Measured over **all 41**
+`tools/test_*.py` guards: **zero** emit it — they are processes, not `dotnet test` suites. So the
+check is defence in depth for the case where `--exit` is handed a dotnet log, and not protection
+for Python guards; what protects those is the build-input gate. Both the code comment and the PR
+body now say so, rather than claiming the broader thing.
+
+### The fourth instance, at the outermost layer: the census that passes over nothing
+
+Rounds 1-3 were checks that failed to catch something. This one is the *census that pins the
+list* — the outermost guard, added in round 3 precisely so the `.slnx` omission could not
+recur — and it could report a pass having asserted nothing.
+
+`git ls-files` **raising** and `git ls-files` **succeeding with empty stdout** are different
+events with the same falsy value, and only the first was handled. The second is reachable:
+`git init` a directory and `git ls-files` exits 0, zero bytes, no stderr. Then `if _tracked:`
+skipped both tree-keyed assertions and the run reported `all passed`.
+
+The same "green because it never looked" shape as the three rounds above, one layer further
+out, and in the file that records the through-line — which is what made it worth fixing rather
+than noting, since it is not live under CI (a real checkout always has tracked files).
+
+Now three refusals with distinct causes, each verified to fire:
+
+| state | how it was produced | message |
+|---|---|---|
+| git raises | `git` off `PATH` | `git ls-files could not be run: [Errno 2] …` |
+| git succeeds, empty | a stub `git` exiting 0 with no output | `git ls-files succeeded but listed no tracked files` |
+| git succeeds, wrong tree | a stub printing `a.txt`, `b.md` | `returned 2 path(s) but no .cs/.csproj among them — the census is reading the wrong tree` |
+
+The third is not the reported defect. It is the fourth-mechanism shape from
+`verify-execution-not-the-tick.md` — a correct instrument reading the wrong subject — and a
+census that inspected two irrelevant paths would otherwise have passed every extension check
+vacuously.
+
+### Two correct numbers for "what does the build-input mutation red", and they differ 6x
+
+Reported as 24; re-derived as **4**. Both are right, and they measure different mutations:
+
+| target | mutation | reds |
+|---|---|---|
+| the call site (`M4`) | `if mutated and not is_build_input(mutated)` → `if False` | **4** — exactly the four non-build-input controls |
+| the predicate | `return path.lower().endswith(...)` → `return False` | **24** |
+| the predicate, inverted | → `return True` | 11 |
+
+The call-site mutation disables the gate while leaving `is_build_input` answering truthfully, so
+only the four controls that depend on the gate move. Mutating the predicate to a constant also
+reds every direct assertion *about the predicate* — the both-directions cases and the tree
+census — which is a coarser result: it proves coverage exists rather than that the tests
+discriminate (`tdd.md`, "choose the mutation to test a property, not to produce a red").
+
+Worth recording because neither figure is wrong and a reader comparing them would assume one
+was. **A mutation count is meaningless without naming the target** — and the two targets are the
+predicate and its own call site, in the same file, each a plausible reading of "the build-input
+mutation".
+
+(An earlier draft of this paragraph said "three lines apart". They are 47 apart. A wrong number
+inside a note about numbers is the shape this repository keeps re-learning, so the distance is
+now stated as the relationship rather than as a count that rots on the next edit.)
+
+### The fifth instance, and the sharper rule it gives: check BOTH sides of a boundary
+
+`read_restore_stamp` walks up from a directory looking for the stamp and stops at the repository
+root. Deleting that stop — `if os.path.exists(os.path.join(d, ".git")): break` — left **all 89
+assertions green**.
+
+Not dead code. Measured on a nested fixture: pristine returns `(None, '')`, the mutant returns a
+real timestamp read from a **foreign repository's** stamp.
+
+**Live, not theoretical.** `.claude/worktrees/` is nested *inside* the main repository tree, so a
+stamp at the outer root sits above a worktree's `.git` file. Without the stop, one agent's
+walk-up reaches another agent's stamp and answers `UNMEASURED` on an honest run — a false refusal
+no rebuild clears, which is round 2's defect arriving by a different route. This work created a
+dozen such worktrees.
+
+No existing case reached it, because every reader-side test put the stamp directly in
+`mkdtemp()`, so the walk exited on iteration one and the boundary never executed.
+
+**The tell was an asymmetry, and it is the generalisable part.** The *writer's* identical boundary
+in `apply-mutation.py` was pinned — removing it reds the worktree-`.git`-file test — while the
+*reader's* was not. Same boundary, same file pair, one side guarded.
+
+> When one side of a two-sided boundary is pinned, ask immediately whether the other is.
+
+That is narrower and more actionable than "write controls", and it would have found this in one
+query rather than five rounds.
+
+The pair added for it discriminates in both directions: deleting the stop reds the two boundary
+arms; replacing the walk with an unconditional `break` — the degenerate "fix" that stops crossing
+the boundary by never walking at all — reds **only** the control asserting a stamp inside the
+repository is still found.
+
+### The through-line, after five rounds
+
+Every one of the five was found by a control, or by a mutation aimed at a check's own blind side.
+**None was found by the check's own arms**, and round 4's instance was inside the guard written to
+prevent round 3's.
+
+| round | the check | how it failed | found by |
+|---|---|---|---|
+| 1 | staleness vs the named assembly | refused a correctly rebuilt dependency | the author's GREEN control |
+| 2 | staleness vs mtimes | refused forever for a non-build-input | review |
+| 3 | the `.gitignore` pin | substring test, green on rename and comment-out | a control that should have redded |
+| 4 | the tree census | passed over an empty-but-successful read | review |
+| 5 | the reader's repository boundary | unpinned, while the writer's was pinned | the asymmetry |

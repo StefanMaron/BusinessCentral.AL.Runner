@@ -26,12 +26,21 @@ The original is saved beside the file as `<file>.mutation-backup` and `--restore
 back. Restoring from a copy is deliberate: `git checkout -- <path>` discards an
 uncommitted FIX along with the mutation, silently and with no reflog entry
 (`no-git-stash-with-worktrees.md`).
+
+A successful `--restore` also records the moment it happened, in `.mutation-restore-stamp`
+at the repository root, so `tools/mutation-verdict.py` can REFUSE a verdict for a run whose
+test binary is older than the restore. A mutation restored in the SOURCE is still live in
+the BINARY until something rebuilds, and the red that produces is deterministic, narrow and
+about nothing (#4343). The stamp is the only one of the possible remedies a reader in a
+hurry cannot skip: touching the file already happens (which is why a plain `dotnet test`
+recovers and only `--no-build` bites), and a printed warning is read or not read.
 """
 from __future__ import annotations
 
 import argparse
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
@@ -51,6 +60,35 @@ APPLIED, NOT_APPLIED, AMBIGUOUS, REFUSED = 0, 1, 2, 3
 # this constant, so a mutated SUFFIX cannot find the backup the unmutated code wrote. Recover by
 # renaming the file by hand; the backup is never destroyed, only unfindable.
 SUFFIX = ".mutation-backup"
+# Written at the repository root on every successful --restore, and read by
+# tools/mutation-verdict.py, which refuses a verdict for a run whose test binary predates it
+# (#4343). Keep in step with `.gitignore`, which carries this literal --
+# `test_apply_mutation.py` fails if they drift, for the same reason the backup suffix is
+# pinned there: a committed stamp would refuse every verdict in a fresh clone until someone
+# deleted it, and the refusal would name a restore nobody on that box performed.
+STAMP_NAME = ".mutation-restore-stamp"
+
+
+def stamp_path(path: str) -> str:
+    """Where the restore stamp for `path` lives: the repository root, else beside the file.
+
+    One stamp per repository rather than one per mutated file, because the question it answers
+    is about the BUILD, which is repository-wide: a restore in any file invalidates a binary
+    built before it, whoever mutated what. Resolved by walking up to the `.git` entry -- a
+    worktree has a `.git` FILE rather than a directory, so this tests existence, not isdir
+    (every agent here works in `.claude/worktrees/<id>-issue-<N>`, so the directory-only form
+    would silently fall through to the per-file branch for every real caller).
+    """
+    d = os.path.dirname(os.path.abspath(path)) or os.getcwd()
+    while True:
+        if os.path.exists(os.path.join(d, ".git")):
+            return os.path.join(d, STAMP_NAME)
+        parent = os.path.dirname(d)
+        if parent == d:
+            # No repository above us: keep the stamp beside the file rather than writing to
+            # the filesystem root. mutation-verdict.py looks in both places for this reason.
+            return os.path.join(os.path.dirname(os.path.abspath(path)), STAMP_NAME)
+        d = parent
 
 
 def apply(path: str, anchor: str, replacement: str) -> tuple[int, str]:
@@ -125,7 +163,25 @@ def restore(path: str) -> tuple[int, str]:
         os.remove(backup)
     except OSError as exc:
         return REFUSED, f"could not restore {path} from {backup}: {exc} — the backup is left in place"
-    return APPLIED, "restored from the backup and removed it"
+
+    # Record the restore so mutation-verdict.py can refuse a verdict from a binary that still
+    # carries the mutation (#4343). A stamp that could not be written is a REFUSAL, not a
+    # footnote on a success: the file IS restored, but the protection the caller is about to
+    # rely on is absent, and a success message here would be read as "safe to re-run".
+    # guards-need-a-third-state.md -- could-not-measure must never be spelled as measured.
+    stamp = stamp_path(path)
+    try:
+        with open(stamp, "w", encoding="utf-8") as fh:
+            fh.write(f"{time.time():.6f}\n{path}\n")
+    except OSError as exc:
+        return REFUSED, (
+            f"restored {path} from the backup, but could not write the restore stamp {stamp}: "
+            f"{exc}. The SOURCE is correct; the BINARY still carries the mutation until you "
+            f"rebuild, and mutation-verdict.py cannot detect that without this stamp. Rebuild "
+            f"before your next run rather than passing --no-build.")
+    return APPLIED, (
+        f"restored from the backup and removed it; recorded the restore in {stamp}. "
+        f"REBUILD before the next run — --no-build would measure the still-mutated binary.")
 
 
 def main(argv: list[str]) -> int:
