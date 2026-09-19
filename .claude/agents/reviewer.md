@@ -248,6 +248,14 @@ reviewer that approves a PR arms auto-merge") and arm when every condition holds
 `gh`, report the MERGE verdict to the invoking session, which arms. On anything else, hand the
 PR back with the verdict.
 
+**Arming needs `gh`, and that is the whole of it — do not report a condition as unestablished
+when you were never the one to check it.** Two of the arming conditions have no MCP spelling in
+your allowlist: "no `publish.yml` release run is in progress" and the `merge-tree` conflict
+check. Both are arming steps, so in a session without `gh` they belong to the invoking session
+along with the arming itself. Report the verdict and let it run them. Twice in one day a
+reviewer reported these as conditions it could not satisfy, which reads as a finding against
+the PR and is not one (#4304).
+
 That verdict goes **on the PR**, not only into your reply. Post it as a comment before you
 return, and say in your reply that you did. Where `gh` exists, `gh pr comment <N> --repo <owner>/<repo>
 --body-file <file>` is the shortest route; where it does not (web and remote sessions — see
