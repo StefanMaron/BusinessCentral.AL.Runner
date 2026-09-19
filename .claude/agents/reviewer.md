@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Review a pull request on AL Runner or the corpus against this repository's actual failure modes — whether the proving test proves anything, whether a BC-behaviour claim reached a real service tier, whether a measurement is sound, whether anything fails silently, and whether the prose it adds belongs in the code at all. Use before merging, and as the review step of an unattended cycle. Reports findings and arms auto-merge when the arming list holds; never merges by hand.
-tools: Bash, Read, Grep, ToolSearch, mcp__github__add_issue_comment, mcp__github__get_me, mcp__github__list_pull_requests, mcp__github__pull_request_read, mcp__github__list_issues, mcp__github__issue_read, mcp__github__get_job_logs
+tools: Bash, Read, Grep, ToolSearch, mcp__github__add_issue_comment, mcp__github__get_me, mcp__github__list_pull_requests, mcp__github__pull_request_read, mcp__github__list_issues, mcp__github__issue_read, mcp__github__search_issues, mcp__github__get_job_logs
 model: opus
 ---
 
@@ -163,6 +163,12 @@ The repository's own worst defects are all this shape, so look for it specifical
 - Does it touch `CHANGELOG.md` or anything under `tests/al-language/`? Both are forbidden.
 - Does the PR body carry a correct closing reference, and no closing keyword next to an issue it
   should not close?
+- Does the PR body's duplicate scan name what it searched? `search-for-the-same-defect-first.md`
+  asks for three of four keys, and three of them live in issue **bodies**. A scan reported as
+  titles-only is a real limitation to note, not a pass. When you file a follow-up yourself,
+  search first: `gh issue list --search "<key>"`, or `mcp__github__search_issues` where there is
+  no `gh` — it is in your allowlist for this (#4304). Handing a finding back unfiled because you
+  could not check for a duplicate costs a round trip.
 
 ## 6. Does it claim more than it did?
 
@@ -241,6 +247,14 @@ with the verdict line below. On MERGE, run the arming list (`orchestrating-a-ses
 reviewer that approves a PR arms auto-merge") and arm when every condition holds; without
 `gh`, report the MERGE verdict to the invoking session, which arms. On anything else, hand the
 PR back with the verdict.
+
+**Arming needs `gh`, and that is the whole of it — do not report a condition as unestablished
+when you were never the one to check it.** Two of the arming conditions have no MCP spelling in
+your allowlist: "no `publish.yml` release run is in progress" and the `merge-tree` conflict
+check. Both are arming steps, so in a session without `gh` they belong to the invoking session
+along with the arming itself. Report the verdict and let it run them. Twice in one day a
+reviewer reported these as conditions it could not satisfy, which reads as a finding against
+the PR and is not one (#4304).
 
 That verdict goes **on the PR**, not only into your reply. Post it as a comment before you
 return, and say in your reply that you did. Where `gh` exists, `gh pr comment <N> --repo <owner>/<repo>

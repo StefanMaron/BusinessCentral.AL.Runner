@@ -23,6 +23,19 @@ Search on at least three of these, because any one of them alone misses:
   has. `71 members`, `1,018 tests`, `356 failures`: whoever filed the sibling almost certainly quoted
   their number too.
 
+**Three of those four keys live in issue BODIES, not titles**, so a title scan cannot deliver
+them. With `gh`, that is `gh issue list --search`. Without it — web and remote sessions have no
+`gh` (`github-access.md`) — the only full-text search over bodies is `mcp__github__search_issues`,
+which every agent this rule binds must therefore be able to call:
+
+Requires-Tool: impl-agent mcp__github__search_issues
+Requires-Tool: reviewer mcp__github__search_issues
+
+Those two lines are checked by `.github/scripts/check_agent_mcp_tools.py`, which fails the build
+if a named agent's `tools:` allowlist cannot discharge the duty this rule imposes. Four agents
+across both types reported the gap in one day and each correctly declined to claim a search it
+had not run (#4304); nothing compared the duty against the allowlist, so nothing went red.
+
 When you find one, decide and **record the decision on the issue**: fold it in (with its own
 RED→GREEN, per `batch-sibling-issues-by-file.md`), or state why it is genuinely distinct. Both
 outcomes are useful; a silent overlap is not.
