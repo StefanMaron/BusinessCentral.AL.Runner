@@ -94,7 +94,19 @@ STAMP_NAME = ".mutation-restore-stamp"
 # rewrite, so no assembly gains an mtime and a staleness check keyed on mtimes could never
 # clear (#4343, found in review). Extensions rather than a directory list, because
 # `AlRunner.Tests/` holds `.cs` AND `.json` fixtures and only the first is compiled.
-BUILD_INPUT_SUFFIXES = (".cs", ".csproj", ".props", ".targets", ".sln", ".resx", ".razor")
+#
+# The direction of a wrong entry is asymmetric, which is why this list is checked rather than
+# guessed: a MISSING extension silently restores the original defect for that file type (the
+# check is skipped and a stale binary answers), while a SPARE one costs only a refusal that a
+# real rebuild clears. So err toward listing.
+#
+# `.slnx` and not `.sln`: this repository's solution is `AlRunner.slnx`, which four workflows
+# build, and there is no `.sln` at all -- the first revision listed the one that does not exist
+# and omitted the one that does (#4343, review round 2). Counted with `git ls-files`: .cs 1223,
+# .csproj 7, .props 1, .targets 1, .slnx 1, .sln 0. `.sln`, `.resx` and `.razor` are kept for
+# the asymmetry above; they are zero here today and free to carry.
+BUILD_INPUT_SUFFIXES = (".cs", ".csproj", ".props", ".targets",
+                        ".slnx", ".sln", ".resx", ".razor")
 
 
 def is_build_input(path: str) -> bool:

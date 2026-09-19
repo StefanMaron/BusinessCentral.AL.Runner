@@ -438,6 +438,40 @@ accident of a neighbour is not safe".
 Fixed by adding the pin rather than deleting the claim, since the hazard is real: a committed
 stamp refuses every verdict in a fresh clone, naming a restore nobody on that box performed.
 
+**And the pin added to fix it was itself green on the mutation it was written to catch.** It
+asked `am.STAMP_NAME in open(".gitignore").read()` — a substring test, and the name is a
+substring of every rename of itself. Measured on three shapes (`-RENAMED`, `XYZ`, and a
+`#`-comment-out): guard rc=0 in all three while `git check-ignore` reported the path **not
+ignored**, which is exactly the hazard the check's own message describes. Only outright deletion
+redded.
+
+Four lines above it sat the sentence "a comment asserting coverage that does not exist is worse
+than no comment", and this file recorded the weak pin as the fix. **A weak pin is the same defect
+wearing the fix's clothes** — the third round of one shape in one PR.
+
+The remedy is to ask the tool that owns the question: `git check-ignore -q`, which discriminates
+all three shapes, because a substring test cannot separate "the rule is present" from "the rule's
+name appears in a comment". The neighbouring `SUFFIX` pin had the identical weakness, pre-existing
+and copied from; both were fixed together, since a known-weak pin beside a fixed one is
+`guards-need-a-third-state.md`'s "safe only by accident of a neighbour".
+
+### "Not listed" means "skip the check", so a wrong entry restores the defect
+
+`BUILD_INPUT_SUFFIXES` listed `.sln`, which this repository does not have, and omitted `.slnx`,
+which it does and which four workflows build. Measured with a stale binary: `.slnx` → `RED`
+(check skipped), `.sln` → `UNMEASURED`. Counted with `git ls-files`: `.cs` 1223, `.csproj` 7,
+`.props` 1, `.targets` 1, `.slnx` 1, `.sln` 0.
+
+Low severity — no `.slnx` mutation appears in any recorded incident — but the direction is
+asymmetric and that is the general point: **a missing extension silently restores the original
+defect for that file type, while a spare one costs only a refusal a real rebuild clears.** So the
+list errs toward listing, and is pinned against `git ls-files` rather than against a hand-written
+roster, so the same omission cannot recur for a file type added later.
+
+Considered and rejected (agreeing with the reviewer): inverting the predicate to "did any assembly
+get newer". That is what `stale_binary` already computes, and it cannot separate *"nothing needed
+rebuilding"* from *"the user forgot"* — which is the original defect.
+
 ### A defence that cannot fire on its documented input
 
 `classify_exit`'s staleness check needs the `Test run for …dll (` line. Measured over **all 41**

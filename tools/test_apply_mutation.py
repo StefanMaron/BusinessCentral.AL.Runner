@@ -646,21 +646,51 @@ print("the backup suffix is the one .gitignore actually excludes")
 # SUFFIX is a cross-file contract: .gitignore carries the literal, so renaming SUFFIX leaves
 # every test green AND starts committing backups -- a pre-mutation copy of a source file in the
 # history, and a stranded backup that makes --restore refuse later (#4316, review round 6).
-_gitignore = os.path.join(os.path.dirname(HERE), ".gitignore")
-_ignored = open(_gitignore, encoding="utf-8").read() if os.path.exists(_gitignore) else ""
+# ASK GIT, do not scan the file. `name in open(".gitignore").read()` is a substring test, so
+# it passes for every RENAME of the name it checks (`-RENAMED`, `XYZ`) and for a `#`-commented
+# rule -- all three of which leave the path genuinely NOT ignored. Measured on all three
+# (#4343, review round 2): guard rc=0 while `git check-ignore` reported not-ignored, which is
+# precisely the hazard each check's own message describes. Only outright deletion redded.
+#
+# The substring form was here for SUFFIX before this change and was copied to STAMP_NAME; both
+# are fixed together, because a known-weak pin beside a fixed one is the "safe only by accident
+# of a neighbour" shape (guards-need-a-third-state.md).
+#
+# Third state: `git check-ignore` needs a git repository and the binary. Where neither can be
+# reached we cannot measure, so this REFUSES rather than passing -- and that is why the answer
+# is a tri-state rather than a bool.
+def _git_ignores(name: str) -> str:
+    """"yes" / "no" / a reason the question could not be asked."""
+    import subprocess
+    root = os.path.dirname(HERE)
+    if not os.path.exists(os.path.join(root, ".git")):
+        return "unmeasured: not a git repository"
+    try:
+        r = subprocess.run(["git", "check-ignore", "-q", "--no-index", name],
+                           cwd=root, capture_output=True)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"unmeasured: could not run git check-ignore ({exc})"
+    # 0 = ignored, 1 = not ignored, anything else = git itself failed.
+    if r.returncode == 0:
+        return "yes"
+    if r.returncode == 1:
+        return "no"
+    return f"unmeasured: git check-ignore exited {r.returncode} ({r.stderr.decode().strip()})"
+
+_suffix_ignored = _git_ignores("probe" + am.SUFFIX)
 check("`*<SUFFIX>` is an ignore rule, so a backup is never committed",
-      f"*{am.SUFFIX}" in _ignored,
-      f"SUFFIX is {am.SUFFIX!r} and .gitignore has no `*{am.SUFFIX}` line — renaming one without "
-      f"the other commits the backup")
-# STAMP_NAME is the same cross-file contract and had the same comment CLAIMING this pin, with
-# no pin behind it: deleting the .gitignore line while leaving STAMP_NAME intact returned 0
-# from both guards (#4343, found in review, by a control that should have redded and did not).
-# A comment asserting coverage that does not exist is worse than no comment.
+      _suffix_ignored == "yes",
+      f"git check-ignore says {_suffix_ignored!r} for a `probe{am.SUFFIX}` path — SUFFIX is "
+      f"{am.SUFFIX!r} and .gitignore does not actually ignore it (a renamed or commented-out "
+      f"rule reads as present to a substring test), so the backup gets committed")
+# STAMP_NAME is the same cross-file contract and had the same comment CLAIMING this pin with no
+# pin behind it (#4343, found in review by a control that should have redded and did not).
+_stamp_ignored = _git_ignores(am.STAMP_NAME)
 check("`<STAMP_NAME>` is an ignore rule, so a restore stamp is never committed",
-      am.STAMP_NAME in _ignored,
-      f"STAMP_NAME is {am.STAMP_NAME!r} and .gitignore has no `{am.STAMP_NAME}` line — a "
-      f"committed stamp refuses every verdict in a fresh clone, naming a restore nobody on "
-      f"that box performed, until someone deletes the file by hand")
+      _stamp_ignored == "yes",
+      f"git check-ignore says {_stamp_ignored!r} for {am.STAMP_NAME!r} — a committed stamp "
+      f"refuses every verdict in a fresh clone, naming a restore nobody on that box performed, "
+      f"until someone deletes the file by hand")
 
 print("the three codes are distinct")
 check("APPLIED, NOT-APPLIED and AMBIGUOUS are three different values",

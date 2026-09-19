@@ -313,10 +313,37 @@ for _mutated, _label in (("AlRunner/Patches/RecordPatches.CodeunitSubscriberWitn
           _r.verdict == mv.UNMEASURED, f"{_mutated} -> {mv.NAMES[_r.verdict]}: {_r.reason}")
 
 # The predicate itself, both directions, so a later editor cannot widen it by accident.
-for _path in ("a/b.cs", "X.CSPROJ", "d.props", "e.targets", "f.sln", "g.resx"):
+for _path in ("a/b.cs", "X.CSPROJ", "d.props", "e.targets", "f.sln", "f.slnx", "g.resx"):
     check(f"is_build_input({_path!r}) is True", mv.is_build_input(_path))
 for _path in ("t.py", "r.md", "m.json", "s.sh", "w.yml", "n.al", "x"):
     check(f"is_build_input({_path!r}) is False", not mv.is_build_input(_path))
+
+# Pin the list against the TREE, not against a hand-written roster, because a missing entry is
+# the dangerous direction: "not listed" means "skip the staleness check", so an omitted build
+# input silently restores the original defect for that file type. The first revision listed
+# `.sln` -- which this repository does not have -- and omitted `.slnx`, which four workflows
+# build (#4343, review round 2). A spare entry costs only a refusal a real rebuild clears, so
+# this asserts coverage of what exists rather than equality with it.
+import subprocess as _sp
+_root = os.path.dirname(HERE)
+try:
+    _tracked = _sp.run(["git", "ls-files"], cwd=_root, capture_output=True, text=True, check=True).stdout
+except (OSError, _sp.SubprocessError) as _exc:  # no git, no verdict -- say so, do not pass
+    check("the build-input list could be checked against the tree", False, f"git ls-files: {_exc}")
+    _tracked = ""
+if _tracked:
+    # Every extension a .NET build compiles that this repository actually HAS must be listed.
+    _have = {("." + _l.rsplit(".", 1)[-1].lower()) for _l in _tracked.split("\n")
+             if "." in _l.rsplit("/", 1)[-1]}
+    for _ext in (".cs", ".csproj", ".props", ".targets", ".slnx", ".sln"):
+        if _ext in _have:
+            check(f"{_ext} exists in the tree and IS treated as a build input",
+                  mv.is_build_input("x" + _ext),
+                  f"{_ext} is tracked here but not in BUILD_INPUT_SUFFIXES, so a mutation in one "
+                  f"skips the staleness check and a stale binary answers for it")
+    check("the repository's solution file is a build input",
+          not any(_l.endswith(".slnx") for _l in _tracked.split("\n")) or mv.is_build_input("a.slnx"),
+          "AlRunner.slnx is tracked and built by four workflows but is not a build input here")
 
 # A stamp with NO second line is from a writer predating the field, or truncated. It must stay
 # conservative -- treated as a build input -- rather than skipping the staleness question, which
