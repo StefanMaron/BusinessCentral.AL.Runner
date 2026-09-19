@@ -196,14 +196,60 @@ def _ref_number(fragment: str) -> int | None:
     return int(nums[-1]) if nums else None
 
 
+# A code fence is not a declaration site (#4393). A line whose ENTIRE content is
+# a closing clause matches CANONICAL_LINE_RE wherever it sits, so a clause inside
+# a fenced block was recorded as a DECLARED TARGET: exit 0, the number printed as
+# declared, and the issue closing on merge with no error for anyone to read.
+#
+# Deliberately conservative -- demoting a real declaration fails a CORRECT PR --
+# so this models only what CommonMark 0.31.2 section 4.5 decides unambiguously,
+# and INDENTED code blocks (4.4) are left alone because "   Closes #123" is a
+# legal trailer and the boundary is one invisible space away. The reasoning, and
+# why a fenced clause becomes a STRAY rather than becoming invisible, is in
+# .github/scripts/check_closing_reference.sh, which is the server-side gate; this
+# is the local preflight and tools/test_pr_body.py asserts parity between them.
+FENCE_OPEN_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})")
+
+
+def fenced_lines(body: str) -> list[bool]:
+    """Per-line: is this line inside a fenced code block?
+
+    The opening and closing fence lines count as inside. Neither can match
+    CANONICAL_LINE_RE anyway, and it keeps the rule free of a special case.
+    """
+    out: list[bool] = []
+    marker = ""
+    for line in body.split("\n"):
+        if not marker:
+            m = FENCE_OPEN_RE.match(line)
+            if m:
+                marker = m.group(1)
+                out.append(True)
+            else:
+                out.append(False)
+            continue
+        out.append(True)
+        stripped = line.strip()
+        # Closes only on a run of the SAME character, at least as long as the
+        # opener, alone on the line: that is what makes nesting work and what
+        # stops backticks closing a tilde fence.
+        if stripped and set(stripped) == {marker[0]} and len(stripped) >= len(marker):
+            marker = ""
+    return out
+
+
 def declared_targets(body: str) -> list[int]:
     """Issue numbers declared by a CANONICAL trailer line ("Closes #123" alone).
 
     A standalone line is a declaration a reviewer can see; the same text inside a
-    sentence is a stray (it still closes on merge, which is the bug).
+    sentence -- or inside a code fence (#4393) -- is a stray (it still closes on
+    merge, which is the bug).
     """
     out: list[int] = []
-    for line in body.split("\n"):
+    fenced = fenced_lines(body)
+    for i, line in enumerate(body.split("\n")):
+        if fenced[i]:
+            continue
         if CANONICAL_LINE_RE.match(line):
             # {SEP}, not a hardcoded "[ \t]+". This is a THIRD copy of the
             # keyword/reference shape; the shell script has the same one, and
@@ -222,10 +268,14 @@ def stray_closing_reference(body: str, declared: list[int]) -> tuple[int, str] |
 
     Returns (issue number, the offending line) or None.
     """
-    for line in body.split("\n"):
+    fenced = fenced_lines(body)
+    for i, line in enumerate(body.split("\n")):
         if not line.strip():
             continue
-        if CANONICAL_LINE_RE.match(line):
+        # #4393: withhold the canonical exemption inside a fence, or skipping the
+        # line in declared_targets alone would give the WORST outcome -- the issue
+        # undeclared, still closing on merge, and still no error anywhere.
+        if not fenced[i] and CANONICAL_LINE_RE.match(line):
             continue
         for m in STRAY_RE.finditer(line):
             n = _ref_number(m.group(0))

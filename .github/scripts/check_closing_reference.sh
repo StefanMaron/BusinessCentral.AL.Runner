@@ -170,6 +170,87 @@ extract_number() {
   printf '%s' "$1" | command grep -oE '[0-9]+' | tail -1
 }
 
+# --- A code fence is not a declaration site (#4393) --------------------------
+#
+# A line whose ENTIRE content is a closing clause matches CANONICAL_LINE_RE
+# wherever it sits. Inside a fenced code block that made the clause a DECLARED
+# TARGET: the gate exited 0, printed the number as declared, and the issue
+# closed on merge with nothing for anyone to read -- the silent direction of
+# this script's own bug class, found while working #4294 and measured across
+# nine fence shapes (backtick, tilde, info string, four-marker, nested,
+# unclosed, ...), all of which slipped.
+#
+# The fix treats such a line as a STRAY instead. That is not a new rule: the
+# error message above already says "GitHub's parser does not see markdown, so
+# backticks and fences do not protect the text", and the code-span shape
+# (`closed #789`) already fired. The two differ by one character; now they
+# agree. A fenced clause naming an ALREADY-DECLARED target stays exempt via
+# is_declared, so documenting your own closing reference in a fence is free.
+#
+# DELIBERATELY CONSERVATIVE, because the two directions do not cost the same
+# here and the expensive one is the opposite of the usual. Demoting a real
+# declaration fails a PR that is CORRECT, for a reason invisible in a rendered
+# body. So this models only what CommonMark 0.31.2 section 4.5 decides without
+# ambiguity, and any shape it does not model keeps its pre-#4393 behavior:
+#
+#   * a fence opens on >= 3 backticks or >= 3 tildes, optionally indented and
+#     optionally followed by an info string;
+#   * it closes only on >= as many of the SAME character with nothing else on
+#     the line -- which is what makes nesting work and what keeps a tilde fence
+#     from being closed by backticks;
+#   * an unclosed fence runs to the end of the body.
+#
+# NOT modelled, on purpose: INDENTED code blocks (CommonMark 4.4, four spaces).
+# CANONICAL_LINE_RE allows leading whitespace, so "   Closes #123" is a legal
+# trailer today; four spaces would be an indented code block. That boundary is
+# one space wide and invisible to the author, and demoting a four-space trailer
+# would fail a correct PR for a reason nobody can see. test_check_closing_reference.sh
+# pins that gap as a passing arm so it is a recorded decision, not an oversight.
+# [ \t], NOT [[:space:]], and the difference is load-bearing: [[:space:]] also
+# matches CR, VT and FF, while tools/pr-body.py's port uses [ \t]. That made a
+# line led by one of those three open a fence in Python and not here -- with
+# Python the PERMISSIVE side, which is the dangerous one, since it would declare
+# a hidden target while this gate called the same line a stray. The shell was
+# narrowed to match rather than the reverse: CommonMark 0.31.2 section 4.5 allows
+# up to three SPACES of indentation (section 2.1 names U+0020, it does not fold
+# the others in), a bare CR is a line terminator rather than indentation, and VT
+# and FF have no block-indentation semantics at all. Narrowing also makes this
+# see FEWER fences, so it strictly reduces false positives -- and a false
+# positive fails a CORRECT PR, which is the expensive direction for this check.
+# Keep the two classes identical; test_check_closing_reference.sh and
+# tools/test_pr_body.py pin CR/VT/FF against space/tab controls in both.
+FENCE_OPEN_RE='^[ \t]*(```+|~~~+)'
+fence_marker=""
+
+# Updates fence_marker for one line, and answers whether THAT line is inside a
+# fenced block. The opening and closing fence lines themselves count as inside:
+# neither can match CANONICAL_LINE_RE anyway, and calling them inside keeps the
+# rule "a line is a declaration only outside a fence" true without a special case.
+line_is_fenced() {
+  local line="$1" marker
+  if [ -z "$fence_marker" ]; then
+    # The strip must use the SAME class as FENCE_OPEN_RE above, or the marker
+    # keeps a leading character the regex did not intend to allow and the
+    # length/character comparisons below are made against the wrong string.
+    marker=$(printf '%s' "$line" | command grep -oP "$FENCE_OPEN_RE" | command sed -e 's/^[ \t]*//')
+    if [ -n "$marker" ]; then
+      fence_marker="$marker"
+      return 0
+    fi
+    return 1
+  fi
+  # Inside a fence. It closes on a line that is nothing but a run of the same
+  # character, at least as long as the opener -- the length test is what makes a
+  # ``` line inside a ```` block content rather than a close.
+  local close_char="${fence_marker:0:1}" close_len="${#fence_marker}" stripped run
+  stripped=$(printf '%s' "$line" | command sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+  run=$(printf '%s' "$stripped" | command grep -oP "^\Q$close_char\E+" || true)
+  if [ -n "$run" ] && [ "${#run}" -eq "${#stripped}" ] && [ "${#run}" -ge "$close_len" ]; then
+    fence_marker=""
+  fi
+  return 0
+}
+
 declared_targets=""
 is_declared() {
   local n="$1" t
@@ -181,7 +262,13 @@ is_declared() {
 
 # --- Pass 1: collect canonical declared targets from PR_BODY, line by line --
 
+fence_marker=""
 while IFS= read -r line; do
+  # #4393: a clause inside a fence is not a declaration. Pass 2 sees it as a
+  # stray, so it still fails the check -- loudly, which is the whole point.
+  if line_is_fenced "$line"; then
+    continue
+  fi
   if printf '%s' "$line" | command grep -qiP "$CANONICAL_LINE_RE"; then
     # ${SEP}, not a hardcoded "[[:space:]]+". This extraction is a THIRD copy of
     # the keyword/reference shape, and when the separator was widened in the two
@@ -210,10 +297,22 @@ stray_source=""
 # invisible, so commit messages get no exemption. A commit line naming an
 # ALREADY-DECLARED target still passes, via the is_declared check below.
 check_stray_in_text() {
-  local text="$1" source="$2" skip_canonical="${3:-1}" line
+  local text="$1" source="$2" skip_canonical="${3:-1}" line fenced
+  fence_marker=""
   while IFS= read -r line; do
+    # Track the fence on EVERY line, including blank and skipped ones, or the
+    # state desynchronises from Pass 1 and a later line gets the wrong verdict.
+    fenced=0
+    if [ "$skip_canonical" = "1" ] && line_is_fenced "$line"; then
+      fenced=1
+    fi
     [ -z "$line" ] && continue
-    if [ "$skip_canonical" = "1" ] && printf '%s' "$line" | command grep -qiP "$CANONICAL_LINE_RE"; then
+    # #4393: the canonical exemption is what made a fenced clause invisible
+    # here. Withhold it inside a fence and the clause is reported as the stray
+    # it is. Without this, Pass 1's skip alone would produce the WORST outcome:
+    # the issue undeclared, still closing on merge, and still no error.
+    if [ "$fenced" = "0" ] && [ "$skip_canonical" = "1" ] \
+       && printf '%s' "$line" | command grep -qiP "$CANONICAL_LINE_RE"; then
       continue
     fi
     if printf '%s' "$line" | command grep -qiP "$STRAY_MATCH_RE"; then
