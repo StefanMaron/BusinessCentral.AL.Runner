@@ -113,6 +113,60 @@ public sealed class DateVirtualTableProviderTests
     }
 
     [Fact]
+    public void BcsPeriodWalk_AbsorbsTheBoundaryOverflow_SoNoRunnerSideRangeCheckIsNeeded()
+    {
+        // #3513. The runner's own DateMissingSpans computed the not-yet-materialised parts of a
+        // requested window with `start.AddDays(-1)` / `end.AddDays(1)` and threw
+        // ArgumentOutOfRangeException at the representable boundary, failing a keyed Get on
+        // 2000000007. That method went with the store (#3506), so the question this pins is not
+        // "is the arithmetic guarded" but "why does BC's replacement not need a guard".
+        //
+        // BC's answer is to let it throw and stop: DateDataProvider.EnumeratePeriods calls
+        // ToNextPeriodStart — unguarded AddTicks/AddMonths/AddYears, one arm per period type —
+        // inside `try { ... } catch (ArgumentOutOfRangeException) { break; }`, and
+        // CountPeriodsWithinRange wraps its own bound arithmetic the same way, returning zero
+        // periods. So the overflow IS the terminator, and a runner-side clamp would be both
+        // redundant and a divergence: it would invent a row BC does not carry.
+        //
+        // That makes the catch load-bearing rather than defensive. If a BC version dropped it,
+        // the boundary walk would throw again — the #3513 failure, reached through Microsoft's
+        // code instead of ours — so this asserts the shape is still there.
+        var provider = Ncl.GetType("Microsoft.Dynamics.Nav.Runtime.DateDataProvider");
+        Assert.True(provider != null, "Microsoft.Dynamics.Nav.Runtime.DateDataProvider is gone from Ncl.");
+
+        var walker = provider!.GetMethod("ToNextPeriodStart",
+            BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static);
+        Assert.True(walker != null,
+            "DateDataProvider.ToNextPeriodStart is gone. It is the per-period-type step whose "
+            + "overflow at the representable boundary ends the walk; without it the shape this "
+            + "test reasons about no longer exists.");
+
+        // The walk itself must still be the compiler-generated iterator BC ships, because that
+        // is where the catch lives. A rewritten EnumeratePeriods returning an eager list would
+        // compile, answer the ordinary cases identically, and reintroduce #3513 at the edge.
+        var enumerate = provider.GetMethod("EnumeratePeriods",
+            BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
+        Assert.True(enumerate != null, "DateDataProvider.EnumeratePeriods is gone.");
+
+        var stateMachine = provider.GetNestedTypes(BindingFlags.NonPublic | BindingFlags.Public)
+            .Any(t => t.Name.Contains("EnumeratePeriods", StringComparison.Ordinal));
+        Assert.True(stateMachine,
+            "DateDataProvider.EnumeratePeriods is no longer a compiler-generated iterator. The "
+            + "catch(ArgumentOutOfRangeException) that ends the walk at the representable "
+            + "boundary lives in that state machine (#3513).");
+
+        // And the counting half, which decides how many periods the walk will yield before it
+        // starts. Its own catch is what turns an out-of-range bound into zero rows rather than
+        // an exception reaching AL.
+        var counter = provider.GetMethod("CountPeriodsWithinRange",
+            BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static
+            | BindingFlags.Instance);
+        Assert.True(counter != null,
+            "DateDataProvider.CountPeriodsWithinRange is gone. It bounds the walk and absorbs an "
+            + "out-of-range filter bound into a zero-period answer (#3513).");
+    }
+
+    [Fact]
     public void TheFlowFieldPathNoLongerMaterialisesTheDateWindowBehindTheFormula()
     {
         // #3507. FlowFieldPatches called EnsureDateStoreFullyMaterialised before the formula's
