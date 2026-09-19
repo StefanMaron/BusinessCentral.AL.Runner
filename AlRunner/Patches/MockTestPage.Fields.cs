@@ -139,14 +139,27 @@ internal sealed class LiveNavTestField : ITestField
         // rendered to text was validated as a NavText and refused, and text the test wrote
         // itself was refused the same way — including the ISO spelling BC's own message
         // recommends. See TestPageTemporalValue.
+        // #3501: DateFormula needed an arm here for the same reason the temporal types did, but
+        // it failed LOUDER-looking and worse. Falling through to ToNavValue produced a NavText,
+        // and a DateFormula field does not refuse one: ALValidateAsync below stored a TRUNCATED
+        // formula and raised nothing, so SetValue('<1D>') left the field holding '<' and
+        // SetValue('3D') left it holding '3'. A wrong value that no message reports is the
+        // failure mode loud-failures.md exists to prevent, and it is why this arm is not
+        // optional on the Rec-bound side even though the page-variable side is what threw.
+        //
+        // Ordered before the temporal arm only for readability; the two are mutually exclusive
+        // because TryResolveDateFormula answers false for anything but NavType.DateFormula and
+        // TryResolve answers false for DateFormula.
         var navValue = CurrentOption() is { } option
             ? TestPageOptionValue.Resolve(option, value, OptionCaptions(),
                 $"TestPage SetValue (field {_fieldNo})")
             : FieldType == NavType.Boolean
                 ? TestPageBooleanValue.Resolve(value, Caption)
-                : TestPageTemporalValue.TryResolve(FieldType, value, out var temporal)
-                    ? temporal!
-                    : ALCompiler.ToNavValue(value);
+                : TestPageTemporalValue.TryResolveDateFormula(FieldType, value, out var formula)
+                    ? formula!
+                    : TestPageTemporalValue.TryResolve(FieldType, value, out var temporal)
+                        ? temporal!
+                        : ALCompiler.ToNavValue(value);
 
         // MinValue/MaxValue (#2495): measured against real BC (28.1/28.4), a bounded field's
         // MinValue/MaxValue is enforced on a TestPage control WRITE, but NOT on Rec.Validate
@@ -508,6 +521,21 @@ internal sealed class PageVariableTestField : ITestField
                         $"testpage-temporal-value — '{value}' is not a {FieldType} this BC build "
                         + "can evaluate, and a page-variable control has no field validate "
                         + "behind it to refuse the value itself."),
+            // #3501: a DateFormula binding needs the same treatment for the same reason, and
+            // without it the NavText fall-through below reached the page's own generated setter
+            // and came back as "Unable to cast object of type 'NavText' to type
+            // 'NavDateFormula'" — naming neither the control nor the value the test wrote.
+            // The refusal is a typed throw rather than a decline for the reason the temporal
+            // arm above states: a page variable has no field validate behind it, so nothing
+            // downstream would raise a refusal naming the value.
+            NavDateFormula =>
+                TestPageTemporalValue.TryResolveDateFormula(FieldType, value, out var formula)
+                    ? formula!
+                    : throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                        $"TestPage SetValue (control {_controlId})",
+                        $"testpage-dateformula-value — '{value}' is not a date formula this BC "
+                        + "build can evaluate, and a page-variable control has no field validate "
+                        + "behind it to refuse the value itself."),
             _ => ALCompiler.ToNavValue(value),
         };
 
@@ -539,6 +567,11 @@ internal sealed class PageVariableTestField : ITestField
         NavBoolean => NavType.Boolean,
         NavCode => NavType.Code,
         NavDate => NavType.Date,
+        // #3501: without this the control claimed Text, so BC's ALSetValue picked Text metadata
+        // for a typed DateFormula argument and ToBoundValue's DateFormula arm never saw the
+        // control's real type. Both halves are needed: this one routes the WRITE, and the arm
+        // in ToBoundValue performs it.
+        NavDateFormula => NavType.DateFormula,
         // #3384: without these two the control claimed Text, so BC's ALSetValue picked Text
         // metadata for a DateTime/Time argument before ToBoundValue ever saw it.
         NavDateTime => NavType.DateTime,
