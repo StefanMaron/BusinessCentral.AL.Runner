@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **ci:** flag a PR that closes an issue while deferring that issue's own work
 - **tools:** a review-claim signal, so a second reviewer pass is a decision rather than an accident
 - **preflight:** give --reap a carried/differs verdict per kept worktree
 - **tools:** one script for the comment-vs-code ratio, three-dot against the merge base
