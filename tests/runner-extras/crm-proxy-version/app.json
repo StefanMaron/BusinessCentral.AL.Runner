@@ -1,0 +1,19 @@
+{
+  "id": "2b5c1e74-9a03-4f58-8b16-7c0d2e93a145",
+  "name": "Runner Extras - CRM Proxy Version",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves the runner registers the Xrm proxy versions BC's service tier registers at startup.",
+  "description": "Issue #3515. BaseApp's CRM/CDS Connection Setup pages call GetLastProxyVersionItem, which fills a TempStack record from the DotNet CrmHelper.GetProxyIdList() and then FindLasts it. GetProxyIdList returns XrmServiceProvider.ProxyIds, the key set of a static registry the service tier fills from DataSources/DataSources.json at NavEnvironment construction. The runner's flattened artifact directory has no such file, so the registry stayed empty and the FindLast threw.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 66000,
+      "to": 66019
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "17.0",
+  "target": "OnPrem"
+}
