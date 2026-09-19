@@ -19,6 +19,7 @@ import io
 import os
 import sys
 import tempfile
+import time
 import textwrap
 from contextlib import redirect_stdout
 
@@ -281,8 +282,36 @@ PERMISSION_GATED = [
 # so it runs as any user on any platform. It sat here until the chmod check above rejected it —
 # I had grouped it by "it is about an I/O failure" rather than by what actually stops it, which is
 # the same confusion the census exists to prevent (#4328).
+def _unwritable_stamp():
+    # The restore stamp (#4343) records WHEN the mutation was restored, so mutation-verdict.py
+    # can refuse a verdict from a binary built before it. If the stamp cannot be written the
+    # restore itself still succeeded, and reporting APPLIED would read as "safe to re-run" on a
+    # box where nothing can detect the stale binary.
+    #
+    # Blocked with a DIRECTORY at the stamp path rather than a chmod, so it runs as root too and
+    # stays out of PERMISSION_GATED -- the same reasoning as _unrollbackable above.
+    d, f, a, r = _fresh()
+    with open(f, encoding="utf-8") as fh:
+        pristine = fh.read()          # read it, never restate it: _fresh owns this body
+    with redirect_stdout(io.StringIO()):
+        am.main(["apply-mutation.py", f, "--anchor-file", a, "--replacement-file", r])
+    os.mkdir(am.stamp_path(f))
+    with redirect_stdout(io.StringIO()) as out:
+        rc = am.main(["apply-mutation.py", f, "--restore"])
+    # The refusal must be about the STAMP alone: the source file is restored either way, and a
+    # reader who took this for a failed restore would go looking for a backup that is gone.
+    with open(f, encoding="utf-8") as fh:
+        after = fh.read()
+    check("...and a stamp that cannot be written still leaves the SOURCE restored",
+          after == pristine, f"{after!r} != {pristine!r}")
+    check("...and the refusal says the binary, not the source, is what is still wrong",
+          "SOURCE is correct" in out.getvalue() and "BINARY still carries" in out.getvalue(),
+          out.getvalue())
+    return rc
+
 REFUSAL_ARMS += PERMISSION_GATED + [
     ("a backup that cannot be rolled back", _unrollbackable),
+    ("a restore stamp that cannot be written", _unwritable_stamp),
 ]
 
 def _missing_anchor():
@@ -505,6 +534,8 @@ def _arms_by_case() -> dict[str, set[int]]:
         "an unreadable backup during --restore": refusal_of("could not restore {path}"),
         # os.replace rollback on the byte-identical path
         "a backup that cannot be rolled back": refusal_of("could not be rolled back"),
+        # writes the restore stamp after a successful restore (#4343)
+        "a restore stamp that cannot be written": refusal_of("could not write the restore stamp"),
     }
 
 _ARMS_BY_CASE = _arms_by_case()
@@ -648,6 +679,69 @@ check("...and removes the backup, so a stale one cannot restore the wrong revisi
 with redirect_stdout(io.StringIO()) as out:
     rc = am.main(["apply-mutation.py", p, "--restore"])
 check("--restore with no backup refuses rather than reporting success", rc == am.REFUSED, out.getvalue())
+
+print("the restore stamp (#4343)")
+# --restore records when it happened so mutation-verdict.py can refuse a verdict from a binary
+# built before it. Without the stamp, `--no-build` after a restore re-measures the mutant and
+# reds the same arm every time -- deterministic, narrow, and about nothing.
+d = tempfile.mkdtemp()
+os.mkdir(os.path.join(d, ".git"))  # a repo root, which is where the stamp belongs
+p = os.path.join(d, "s.cs")
+a, r = os.path.join(d, "a"), os.path.join(d, "r")
+for f, body in ((p, "original\n"), (a, "original"), (r, "mutated")):
+    with open(f, "w", encoding="utf-8") as fh:
+        fh.write(body)
+with redirect_stdout(io.StringIO()):
+    am.main(["apply-mutation.py", p, "--anchor-file", a, "--replacement-file", r])
+before = time.time()
+with redirect_stdout(io.StringIO()) as out:
+    rc = am.main(["apply-mutation.py", p, "--restore"])
+stamp = os.path.join(d, am.STAMP_NAME)
+check("--restore writes the stamp at the repository root, not beside the file",
+      rc == am.APPLIED and os.path.exists(stamp),
+      f"rc={rc}, expected {stamp}, dir holds {sorted(os.listdir(d))}")
+check("...and it carries a parseable time no earlier than the restore",
+      float(open(stamp, encoding="utf-8").readline()) >= before - 1,
+      open(stamp, encoding="utf-8").read())
+check("...and the success message tells the reader to REBUILD",
+      "REBUILD" in out.getvalue(), out.getvalue())
+
+# A worktree's `.git` is a FILE, and every agent here works in one. Resolving the root with
+# isdir would fall through to the per-file branch for every real caller, so the stamp would
+# land in AlRunner/Patches/ while mutation-verdict.py looked at the repository root.
+d2 = tempfile.mkdtemp()
+with open(os.path.join(d2, ".git"), "w", encoding="utf-8") as fh:
+    fh.write("gitdir: /elsewhere/.git/worktrees/x\n")
+os.mkdir(os.path.join(d2, "sub"))
+check("a worktree's `.git` FILE resolves the root just as a directory does",
+      am.stamp_path(os.path.join(d2, "sub", "x.cs")) == os.path.join(d2, am.STAMP_NAME),
+      am.stamp_path(os.path.join(d2, "sub", "x.cs")))
+
+# The REFUSED arm: the restore succeeded but the protection the caller is about to rely on is
+# absent. Reporting APPLIED here would read as "safe to re-run" on a box where nothing can
+# detect the stale binary (guards-need-a-third-state.md).
+d3 = tempfile.mkdtemp()
+os.mkdir(os.path.join(d3, ".git"))
+p3 = os.path.join(d3, "s.cs")
+a3, r3 = os.path.join(d3, "a"), os.path.join(d3, "r")
+for f, body in ((p3, "original\n"), (a3, "original"), (r3, "mutated")):
+    with open(f, "w", encoding="utf-8") as fh:
+        fh.write(body)
+with redirect_stdout(io.StringIO()):
+    am.main(["apply-mutation.py", p3, "--anchor-file", a3, "--replacement-file", r3])
+# A DIRECTORY at the stamp path makes the open() fail without touching permissions, so this
+# case is reached as root too -- where a chmod 0o500 would not refuse anything.
+os.mkdir(os.path.join(d3, am.STAMP_NAME))
+with redirect_stdout(io.StringIO()) as out:
+    rc = am.main(["apply-mutation.py", p3, "--restore"])
+check("a restore whose stamp cannot be written REFUSES rather than reporting success",
+      rc == am.REFUSED, f"got {rc}: {out.getvalue()}")
+check("...and says the source is restored but the binary is not, so nothing is silently lost",
+      "SOURCE is correct" in out.getvalue() and "BINARY still carries" in out.getvalue(),
+      out.getvalue())
+with open(p3, encoding="utf-8") as fh:
+    check("...and the file really WAS restored, so the refusal is about the stamp alone",
+          fh.read() == "original\n", fh.read())
 
 if FAILURES:
     print(f"\n{len(FAILURES)} failed, {0} passed")

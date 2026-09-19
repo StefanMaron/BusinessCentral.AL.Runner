@@ -30,6 +30,17 @@ Exit 5 is keyed on the FIRST LINE of a failure's `Error Message:`. Neither the g
 text anywhere in the block nor a sub-millisecond duration is enough: a mutation of the
 guard itself fails the guard's own tests in < 1 ms with `REFUSING TO SKIP` nested under
 `Actual:`, and that red is genuine (fixture in tools/test_mutation_verdict.py).
+
+A run whose test binary is OLDER than the last `apply-mutation.py --restore` is UNMEASURED,
+whatever it printed (#4343). A mutation restored in the source is still live in the binary
+until something rebuilds, so `--no-build` after a restore produces a red that is
+deterministic, narrow, on the right arm for the hypothesis, and survives running the class
+alone -- every property that normally ENDS an investigation. Measured on this repository:
+five identical `Failed: 2` runs after a clean restore; one rebuild gave 2/2.
+
+It is the only trap in this family that fails toward a RED. The rest fail toward a green
+that reads as coverage, and a reader told to distrust a surprising green has no defence
+here, because a red is what a reviewer is hunting.
 """
 from __future__ import annotations
 
@@ -70,6 +81,77 @@ TRACEBACK_RE = re.compile(r"^Traceback \(most recent call last\):$", re.M)
 # traceback alone cannot separate "crashed" from "caught". What does: a run that reached its
 # verdict prints its own summary, and one that died before judging does not.
 JUDGED_RE = re.compile(r"^Ran \d+ tests?\b", re.M)
+# `dotnet test` names the assembly it ran on its first line. That is the only thing in the log
+# that identifies the BINARY the verdict is about, which is the question a staleness check asks
+# -- the summary line names `AlRunner.Tests.dll` without a path, and a filter names source
+# symbols that may live in a different assembly from the mutation.
+TEST_RUN_FOR_RE = re.compile(r"^Test run for (.+?\.dll)\s*\(", re.M)
+STAMP_NAME = ".mutation-restore-stamp"
+
+
+def read_restore_stamp(start: str | None = None) -> tuple[float | None, str]:
+    """The time of the last `apply-mutation.py --restore`, or None if there was none.
+
+    Returns (when, detail). `None` is the ordinary case and a PASS: most runs follow no
+    mutation at all, and a check that refused without one would refuse everything
+    (guards-need-a-third-state.md -- a genuinely absent thing stays a pass).
+
+    Looked up by walking up from `start` to the `.git` entry, matching where
+    `apply-mutation.py` writes it. A stamp that exists but cannot be parsed is NOT treated as
+    absent: it is reported so the caller can refuse, because "no mutation was restored" and
+    "a restore happened and I cannot tell when" have opposite consequences and only the first
+    is safe to proceed on.
+    """
+    d = os.path.abspath(start or os.getcwd())
+    seen = []
+    while True:
+        cand = os.path.join(d, STAMP_NAME)
+        if os.path.exists(cand):
+            seen.append(cand)
+            break
+        if os.path.exists(os.path.join(d, ".git")):
+            break
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+    if not seen:
+        return None, ""
+    stamp = seen[0]
+    try:
+        with open(stamp, encoding="utf-8") as fh:
+            first = fh.readline().strip()
+        return float(first), stamp
+    except (OSError, ValueError) as exc:
+        return float("inf"), f"{stamp} exists but could not be read ({exc})"
+
+
+def stale_binary(text: str, stamp_when: float | None, stamp_detail: str) -> str:
+    """Why this run's binary cannot carry the current source, or "" if it can.
+
+    Compares the mtime of the assembly the log names against the restore stamp. An assembly
+    the log does not name, or one that is no longer on disk, yields "" -- absence of evidence,
+    and the caller keeps its ordinary verdict. Only a binary demonstrably OLDER than the
+    restore refuses; that is the case with an actual wrong answer behind it.
+    """
+    if stamp_when is None:
+        return ""
+    if stamp_when == float("inf"):
+        return (f"a mutation restore stamp is present but unreadable ({stamp_detail}), so "
+                f"whether this run's binary predates the restore could not be established")
+    m = TEST_RUN_FOR_RE.search(text)
+    if not m:
+        return ""
+    dll = m.group(1)
+    try:
+        built = os.path.getmtime(dll)
+    except OSError:
+        return ""
+    if built >= stamp_when:
+        return ""
+    return (f"the test binary {dll} was built {stamp_when - built:.0f}s BEFORE the last "
+            f"`apply-mutation.py --restore` ({stamp_detail}), so it still carries the mutation "
+            f"the source no longer has. Rebuild and re-run — --no-build measured the mutant")
 
 
 @dataclass
@@ -99,7 +181,17 @@ def first_message_lines(text: str) -> dict[str, str]:
     return out
 
 
-def classify(text: str) -> Result:
+def classify(text: str, stamp: tuple[float | None, str] | None = None) -> Result:
+    # The staleness check runs BEFORE anything reads the numbers, because it invalidates every
+    # one of them equally: a binary that predates the restore measured the mutant, so its RED,
+    # its GREEN and its counts are all about code the source no longer has. Ordering it after
+    # the summary parse would let the ENGINE_NOT_BOOTSTRAPPED and BUILD_BROKE arms return a
+    # verdict on that binary.
+    when, detail = stamp if stamp is not None else read_restore_stamp()
+    why = stale_binary(text, when, detail)
+    if why:
+        return Result(UNMEASURED, reason=why)
+
     sums = SUMMARY_RE.findall(text)
     build_error = BUILD_ERROR_RE.search(text) is not None
     if not sums and build_error:
@@ -148,7 +240,8 @@ def classify(text: str) -> Result:
     return r
 
 
-def classify_exit(code: int, text: str = "") -> Result:
+def classify_exit(code: int, text: str = "",
+                  stamp: tuple[float | None, str] | None = None) -> Result:
     """Classify a guard that is a PROCESS rather than a `dotnet test` suite.
 
     The `tools/test_*.py` guards print many different summary shapes — "all checks passed",
@@ -170,6 +263,11 @@ def classify_exit(code: int, text: str = "") -> Result:
     first because an earlier revision refused on code 2 while citing a condition that produces
     code 1, the second because the fix for that regressed three unittest-based guards.
     """
+    when, detail = stamp if stamp is not None else read_restore_stamp()
+    why = stale_binary(text, when, detail)
+    if why:
+        return Result(UNMEASURED, reason=why)
+
     if code == GREEN:
         return Result(GREEN, reason="the guard exited 0: it passed, so the mutation was NOT caught")
     if code == RED:
@@ -215,6 +313,9 @@ def main(argv: list[str]) -> int:
     if r.verdict == ENGINE_NOT_BOOTSTRAPPED:
         print("  remedy: build Release, run tools/engine-test-bootstrap.sh, re-run with "
               "--settings engine.runsettings -- again after EVERY build")
+    if "apply-mutation.py --restore" in r.reason or "restore stamp" in r.reason:
+        print("  remedy: rebuild, then re-run. A restored mutation stays live in the binary, "
+              "so --no-build re-measures the mutant and reds the same arm every time")
     return r.verdict
 
 

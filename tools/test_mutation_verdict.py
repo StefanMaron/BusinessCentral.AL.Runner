@@ -174,6 +174,146 @@ for code, want in ((0, 0), (1, 1), (3, 3)):
         rc = mv.main(["mutation-verdict.py", "--exit", str(code), os.devnull])
     check(f"CLI --exit {code} answers {want}", rc == want, f"got {rc}: {out.getvalue()}")
 
+print("a binary older than the last --restore (#4343)")
+# The trap this exists for fails toward a RED, which is the opposite direction from every
+# other mutation trap in tdd.md. A mutation restored in the SOURCE is still live in the
+# BINARY until something rebuilds, so `--no-build` after a restore reds precisely the arm the
+# mutation targeted -- deterministically, and again when the class is run alone, because the
+# binary does not change. Re-derived on this repository before this test was written: five
+# identical `Failed: 2` runs after a clean restore of a cross-kind leak in
+# RecordPatches.CodeunitSubscriberWitness.cs; one rebuild gave 2/2.
+#
+# The assertion is about the VERDICT, not a warning string: a test that pinned only the
+# message would pass while a caller still read `RED` as a result, which is the same shape as
+# every other defect in this family (#4343).
+import tempfile as _tf
+import time as _time
+
+_d = _tf.mkdtemp()
+_dll = os.path.join(_d, "AlRunner.Tests.dll")
+with open(_dll, "w", encoding="utf-8") as _fh:
+    _fh.write("binary")
+_stamp = os.path.join(_d, mv.STAMP_NAME)
+
+
+def _log(body: str) -> str:
+    """A dotnet-test log whose first line names our temp assembly, as dotnet test's does."""
+    return f"Test run for {_dll} (.NETCoreApp,Version=v8.0)\n" + body
+
+
+def _set_times(built: float, restored: float) -> tuple[float | None, str]:
+    os.utime(_dll, (built, built))
+    with open(_stamp, "w", encoding="utf-8") as fh:
+        fh.write(f"{restored:.6f}\n/repo/AlRunner/Patches/Whatever.cs\n")
+    return mv.read_restore_stamp(_d)
+
+_now = _time.time()
+
+# The defect: binary built 60s BEFORE the restore, and the log is a convincing narrow red.
+_red_body = fixture("genuine-red-guard-mutation.txt")
+_stale = mv.classify(_log(_red_body), _set_times(_now - 60, _now))
+check("a RED from a binary older than the last restore is UNMEASURED, not RED",
+      _stale.verdict == mv.UNMEASURED, f"got {mv.NAMES[_stale.verdict]}: {_stale.reason}")
+check("  ...and the reason names the stale binary and the rebuild",
+      _dll in _stale.reason and "Rebuild" in _stale.reason, _stale.reason)
+
+# THE CONTROL. Same log, same stamp, binary built AFTER the restore: a real verdict must
+# survive, or the check has only been proved able to refuse, never to discriminate.
+_fresh = mv.classify(_log(_red_body), _set_times(_now, _now - 60))
+check("CONTROL: the same RED from a binary built AFTER the restore is still RED",
+      _fresh.verdict == mv.RED, f"got {mv.NAMES[_fresh.verdict]}: {_fresh.reason}")
+
+# A GREEN is invalidated by a stale binary just as a RED is: the binary measured the mutant,
+# so "the mutation was not caught" is a statement about code the source no longer has.
+_green_stale = mv.classify(_log(fixture("green.txt")), _set_times(_now - 60, _now))
+check("a GREEN from a stale binary is UNMEASURED too, not GREEN",
+      _green_stale.verdict == mv.UNMEASURED, f"got {mv.NAMES[_green_stale.verdict]}: {_green_stale.reason}")
+_green_fresh = mv.classify(_log(fixture("green.txt")), _set_times(_now, _now - 60))
+check("CONTROL: ...and a GREEN from a fresh binary is still GREEN",
+      _green_fresh.verdict == mv.GREEN, f"got {mv.NAMES[_green_fresh.verdict]}: {_green_fresh.reason}")
+
+# The check must not fire when no mutation was restored, which is almost every run. A guard
+# that refused without a stamp would refuse everything (guards-need-a-third-state.md: a
+# genuinely absent thing stays a pass).
+os.remove(_stamp)
+check("no stamp at all is not a refusal: read_restore_stamp answers None",
+      mv.read_restore_stamp(_d)[0] is None, repr(mv.read_restore_stamp(_d)))
+_no_stamp = mv.classify(_log(_red_body), (None, ""))
+check("...and a RED with no stamp anywhere is still RED",
+      _no_stamp.verdict == mv.RED, f"got {mv.NAMES[_no_stamp.verdict]}: {_no_stamp.reason}")
+
+# An UNREADABLE stamp is the third state, deliberately not folded into "absent": a restore
+# happened and when is unknown, which is not safe to proceed on, while no restore is.
+with open(_stamp, "w", encoding="utf-8") as _fh:
+    _fh.write("not-a-timestamp\n")
+_unreadable = mv.read_restore_stamp(_d)
+check("an unreadable stamp is NOT read as absent", _unreadable[0] == float("inf"), repr(_unreadable))
+_u = mv.classify(_log(_red_body), _unreadable)
+check("...and it refuses the verdict rather than reporting the RED",
+      _u.verdict == mv.UNMEASURED, f"got {mv.NAMES[_u.verdict]}: {_u.reason}")
+os.remove(_stamp)
+
+# A log that does not name its assembly cannot be judged stale -- absence of evidence. The
+# caller keeps its ordinary verdict rather than refusing on a file it never identified.
+_unnamed = mv.classify(_red_body, (_now, "/repo/.mutation-restore-stamp"))
+check("a log naming no assembly keeps its verdict rather than refusing",
+      _unnamed.verdict == mv.RED, f"got {mv.NAMES[_unnamed.verdict]}: {_unnamed.reason}")
+
+# The same refusal must reach the PROCESS-guard path. A tools/test_*.py guard is classified by
+# its exit code and never parses a summary, so a staleness check wired only into classify()
+# would leave --exit answering a confident RED off the same stale binary.
+_proc_stale = mv.classify_exit(1, _log("12 passed, 1 failed"), _set_times(_now - 60, _now))
+check("--exit 1 from a stale binary is UNMEASURED, not RED",
+      _proc_stale.verdict == mv.UNMEASURED, f"got {mv.NAMES[_proc_stale.verdict]}: {_proc_stale.reason}")
+_proc_fresh = mv.classify_exit(1, _log("12 passed, 1 failed"), _set_times(_now, _now - 60))
+check("CONTROL: --exit 1 from a fresh binary is still RED",
+      _proc_fresh.verdict == mv.RED, f"got {mv.NAMES[_proc_fresh.verdict]}: {_proc_fresh.reason}")
+
+# And the CLI, which is what an agent actually invokes, reaches the refusal and prints the
+# remedy. A verdict only reachable from the library would not protect the documented recipe.
+_set_times(_now - 60, _now)
+_logfile = os.path.join(_d, "run.txt")
+with open(_logfile, "w", encoding="utf-8") as _fh:
+    _fh.write(_log(_red_body))
+_cwd = os.getcwd()
+try:
+    os.chdir(_d)
+    with redirect_stdout(io.StringIO()) as out:
+        _rc = mv.main(["mutation-verdict.py", _logfile])
+finally:
+    os.chdir(_cwd)
+check("CLI: a stale-binary RED exits 3 (UNMEASURED), not 1", _rc == mv.UNMEASURED,
+      f"got {_rc}: {out.getvalue()}")
+check("CLI: ...and prints the rebuild remedy", "rebuild" in out.getvalue().lower(), out.getvalue())
+
+# apply-mutation.py must actually WRITE the stamp this tool reads, or the two halves agree on
+# a filename and nothing ever produces one. Cross-file contract, same shape as the SUFFIX /
+# .gitignore pin in test_apply_mutation.py.
+_am_spec = importlib.util.spec_from_file_location("apply_mutation", os.path.join(HERE, "apply-mutation.py"))
+_am = importlib.util.module_from_spec(_am_spec)
+_am_spec.loader.exec_module(_am)
+check("apply-mutation.py and mutation-verdict.py name the same stamp file",
+      _am.STAMP_NAME == mv.STAMP_NAME, f"{_am.STAMP_NAME!r} vs {mv.STAMP_NAME!r}")
+
+_d2 = _tf.mkdtemp()
+_src = os.path.join(_d2, "s.cs")
+for _name, _body in ((_src, "original\n"), (os.path.join(_d2, "a"), "original"),
+                     (os.path.join(_d2, "r"), "mutated")):
+    with open(_name, "w", encoding="utf-8") as _fh:
+        _fh.write(_body)
+with redirect_stdout(io.StringIO()):
+    _am.main(["apply-mutation.py", _src, "--anchor-file", os.path.join(_d2, "a"),
+              "--replacement-file", os.path.join(_d2, "r")])
+_before = _time.time()
+with redirect_stdout(io.StringIO()) as out:
+    _rc = _am.main(["apply-mutation.py", _src, "--restore"])
+_written = _am.stamp_path(_src)
+check("--restore still succeeds and now writes a stamp",
+      _rc == _am.APPLIED and os.path.exists(_written), f"rc={_rc} stamp={_written}: {out.getvalue()}")
+check("...and mutation-verdict.py reads back a time at or after the restore",
+      (mv.read_restore_stamp(_d2)[0] or 0) >= _before - 1, repr(mv.read_restore_stamp(_d2)))
+check("...and the message tells the reader to rebuild", "REBUILD" in out.getvalue(), out.getvalue())
+
 if FAILURES:
     print(f"\n{len(FAILURES)} failure(s)")
     sys.exit(1)
