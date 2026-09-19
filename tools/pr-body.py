@@ -180,9 +180,27 @@ REF = f"(?:{REF_HASH}|{REF_URL})"
 # that script is the server-side gate, this is only the local preflight, and
 # tools/test_pr_body.py asserts parity between the two on a case list that now
 # includes the colon forms.
-SEP = r"[ \t]*[,;:]?[ \t]*"
+#
+# WS, not "[ \t]" (#4396): the gate writes these two constants with [[:space:]],
+# which also admits CR, VT and FF, and the gate is the side that matches GitHub.
+# A CRLF-stored body puts a CR at the end of every line including the trailer,
+# and CANONICAL_LINE_RE is $-anchored, so "Closes #N\r" was a declaration the
+# gate saw and this port did not. GitHub sees it too: PR #3967 ("Closes #3964\r")
+# closed #3964 and PR #3899 ("Closes #3881\r") closed #3881, both read back from
+# closingIssuesReferences. Narrowing the gate instead would have failed both of
+# those correct PRs, which is the expensive direction for this check.
+#
+# NOT "\s", which also admits "\n": STRAY_RE runs against the whole body rather
+# than one line at a time, so "\s" would let a clause span a line break and hand
+# the keyword to the NEXT line's number. The gate escapes that only because grep
+# is line-oriented. Keep this class and the gate's identical; test_pr_body.py and
+# test_check_closing_reference.sh pin CR/VT/FF against space/tab/newline controls
+# on both sides.
+WS = r"[ \t\r\v\f]"
 
-CANONICAL_LINE_RE = re.compile(rf"^[ \t]*(?:{KEYWORDS}){SEP}{REF}[ \t]*\.?[ \t]*$", re.I)
+SEP = rf"{WS}*[,;:]?{WS}*"
+
+CANONICAL_LINE_RE = re.compile(rf"^{WS}*(?:{KEYWORDS}){SEP}{REF}{WS}*\.?{WS}*$", re.I)
 STRAY_RE = re.compile(rf"\b(?:{KEYWORDS}){SEP}{REF}", re.I)
 
 

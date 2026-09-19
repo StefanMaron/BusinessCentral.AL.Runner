@@ -1134,6 +1134,75 @@ assert_exit "#4393 control: the escape hatch still works with a fence in the bod
 some code
 \`\`\`"
 
+# --- #4396: SEP and CANONICAL_LINE_RE stay PERMISSIVE about CR, VT and FF ----
+#
+# This script writes both constants with [[:space:]]; tools/pr-body.py's port
+# wrote them with [ \t], and the two differ on CR, VT and FF. The port was
+# widened to match rather than this script narrowed, because THIS side is the
+# one that matches GitHub:
+#
+#   * a body stored with CRLF line endings carries a CR at the end of every
+#     line, the trailer included, and CANONICAL_LINE_RE is $-anchored;
+#   * GitHub honours that trailer. PR #3967's body ends its trailer
+#     "Closes #3964\r" and closed #3964 on merge; PR #3899's "Closes #3881\r"
+#     closed #3881. Both read back from closingIssuesReferences.
+#
+# Narrowing this script to [ \t] was measured against those two real bodies and
+# failed BOTH of them -- a false positive on a correct PR, which is the
+# expensive direction: the cheapest way for an author to clear it is to delete
+# the sentence that tripped it.
+#
+# So these rows pin the permissiveness as DELIBERATE. A future narrowing of
+# SEP or CANONICAL_LINE_RE turns them red rather than silently failing correct
+# PRs, which is the whole reason they are here.
+
+assert_exit "#4396 a CR before the keyword still declares" 0 "fix: something" \
+  "$(printf '\rCloses #123')"
+assert_exit "#4396 a CR inside the keyword/number separator still declares" 0 "fix: something" \
+  "$(printf 'Closes\r#123')"
+assert_exit "#4396 a trailing CR after the reference still declares" 0 "fix: something" \
+  "$(printf 'Closes #123\r')"
+assert_exit "#4396 a VT inside the separator still declares" 0 "fix: something" \
+  "$(printf 'Closes\v#123')"
+assert_exit "#4396 an FF before the keyword still declares" 0 "fix: something" \
+  "$(printf '\fCloses #123')"
+
+# The reachable instance, as PR #3967 really is: every line CRLF-terminated.
+assert_exit "#4396 a wholly CRLF body declares its trailer (PR #3967's shape)" 0 "fix: something" \
+  "$(printf 'Closes #123\r\n\r\nSome prose about the change.\r\n')"
+
+# ...and the number really is recorded, not merely "the script exited 0 for
+# some other reason". assert_exit alone cannot tell those apart: a body the
+# tracker made invisible ALSO exits non-zero, and one that hits the escape
+# hatch exits 0 while declaring nothing.
+assert_declared() {
+  local desc="$1" body="$2" wanted="$3" out
+  out=$(declared_line "$body")
+  if printf '%s' "$out" | command grep -qE "(^| )$wanted( |$)"; then
+    echo "ok   - $desc"
+    pass=$((pass + 1))
+  else
+    echo "FAIL - $desc: #$wanted was NOT recorded as a declared target ($out)"
+    fail=$((fail + 1))
+  fi
+}
+
+assert_declared "#4396 the CRLF trailer's number is the DECLARED target, not just an exit 0" \
+  "$(printf 'Closes #123\r\n\r\nSome prose about the change.\r\n')" "123"
+assert_declared "#4396 a CR in the separator declares the number it precedes" \
+  "$(printf 'Closes\r#123')" "123"
+
+# GREEN CONTROLS. Every row above passes for a class widened to "anything", so
+# these are the rows that discriminate: prose must still not declare, and a
+# foreign keyword separated by a CR must still be caught as a stray.
+assert_exit "#4396 control: a plain trailer still declares" 0 "fix: something" "Closes #123"
+assert_exit "#4396 control: prose with a keyword and no # is still not a reference" 1 "fix: something" \
+  "This fixes 3 bugs in the parser. No issue number here at all."
+assert_exit "#4396 control: a CR-separated FOREIGN keyword is still a stray" 1 "fix: something" \
+  "$(printf 'Closes #123\n\nThis does not close\r#999.')"
+assert_not_declared "#4396 control: the CR-separated foreign number is not declared" \
+  "$(printf 'Closes #123\n\nThis does not close\r#999.')" "999"
+
 echo ""
 echo "$pass passed, $fail failed"
 if [ "$fail" -ne 0 ]; then
