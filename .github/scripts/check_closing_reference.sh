@@ -206,7 +206,20 @@ extract_number() {
 # one space wide and invisible to the author, and demoting a four-space trailer
 # would fail a correct PR for a reason nobody can see. test_check_closing_reference.sh
 # pins that gap as a passing arm so it is a recorded decision, not an oversight.
-FENCE_OPEN_RE='^[[:space:]]*(```+|~~~+)'
+# [ \t], NOT [[:space:]], and the difference is load-bearing: [[:space:]] also
+# matches CR, VT and FF, while tools/pr-body.py's port uses [ \t]. That made a
+# line led by one of those three open a fence in Python and not here -- with
+# Python the PERMISSIVE side, which is the dangerous one, since it would declare
+# a hidden target while this gate called the same line a stray. The shell was
+# narrowed to match rather than the reverse: CommonMark 0.31.2 section 4.5 allows
+# up to three SPACES of indentation (section 2.1 names U+0020, it does not fold
+# the others in), a bare CR is a line terminator rather than indentation, and VT
+# and FF have no block-indentation semantics at all. Narrowing also makes this
+# see FEWER fences, so it strictly reduces false positives -- and a false
+# positive fails a CORRECT PR, which is the expensive direction for this check.
+# Keep the two classes identical; test_check_closing_reference.sh and
+# tools/test_pr_body.py pin CR/VT/FF against space/tab controls in both.
+FENCE_OPEN_RE='^[ \t]*(```+|~~~+)'
 fence_marker=""
 
 # Updates fence_marker for one line, and answers whether THAT line is inside a
@@ -216,7 +229,10 @@ fence_marker=""
 line_is_fenced() {
   local line="$1" marker
   if [ -z "$fence_marker" ]; then
-    marker=$(printf '%s' "$line" | command grep -oP "$FENCE_OPEN_RE" | command sed -e 's/^[[:space:]]*//')
+    # The strip must use the SAME class as FENCE_OPEN_RE above, or the marker
+    # keeps a leading character the regex did not intend to allow and the
+    # length/character comparisons below are made against the wrong string.
+    marker=$(printf '%s' "$line" | command grep -oP "$FENCE_OPEN_RE" | command sed -e 's/^[ \t]*//')
     if [ -n "$marker" ]; then
       fence_marker="$marker"
       return 0

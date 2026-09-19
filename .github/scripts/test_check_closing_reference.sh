@@ -938,6 +938,104 @@ else
   fail=$((fail + 1))
 fi
 
+# --- #4393: the two implementations must agree on WHAT COUNTS AS INDENTATION
+#
+# Found in review of this PR. The shell used [[:space:]] and the Python port
+# used [ \t]; those differ on CR, VT and FF, so a line led by one of them opened
+# a fence in Python and not in the shell -- with Python the PERMISSIVE side,
+# which is the dangerous one: it would declare a hidden target while the gate
+# called the same line a stray.
+#
+# Narrowed the SHELL to match Python rather than the reverse. CommonMark 0.31.2
+# section 4.5 says the opening fence "may be preceded by up to three spaces of
+# indentation" -- spaces, per section 2.1, not whitespace generally. A bare CR is
+# a LINE TERMINATOR, so inside an already-split line it is not indentation at
+# all; VT and FF have no block-indentation semantics (2.2 counts indentation in
+# spaces, with tabs expanded). Narrowing also makes the shell see FEWER fences,
+# so it strictly reduces false positives, and a false positive fails a CORRECT
+# PR -- the expensive direction here. Spec answer and safe answer agree.
+#
+# THE PROBE SHAPE MATTERS, and the obvious one does not work. A lead character
+# before a fence that is later CLOSED is invisible: the closing marker ends the
+# block either way, so both implementations agree on every later line. The
+# discriminating shape is an UNCLOSED one -- lead character, marker, then a
+# trailer. If the lead opens a fence the trailer is swallowed; if it does not,
+# the trailer declares. Measured before writing the arm, because the first
+# version of it asserted the wrong side and passed for the wrong reason.
+#
+# Table-driven over the class: a single arm keyed on \r would be a spelling
+# check, and VT and FF diverged identically without being reachable from it.
+assert_lead_not_indentation() {
+  local desc="$1" lead="$2" out
+  out=$(PR_TITLE="fix: something" PR_BODY="Closes #123
+
+${lead}\`\`\`
+Closes #999" "$SCRIPT" 2>/dev/null | command grep -oE "declared target\(s\):.*")
+  # The lead character is not indentation, so no fence opens, so the trailer for
+  # #999 is an ordinary line and IS declared.
+  if printf '%s' "$out" | command grep -qE "(^| )999( |$)"; then
+    echo "ok   - $desc"
+    pass=$((pass + 1))
+  else
+    echo "FAIL - $desc: it opened a fence and swallowed the trailer ($out)"
+    fail=$((fail + 1))
+  fi
+}
+
+assert_lead_is_indentation() {
+  local desc="$1" lead="$2" out rc
+  PR_TITLE="fix: something" PR_BODY="Closes #123
+
+${lead}\`\`\`
+Closes #999" "$SCRIPT" >/dev/null 2>&1
+  rc=$?
+  # A space or a tab IS indentation, so the fence opens, runs to end of body, and
+  # swallows the trailer -- leaving #999 undeclared. Pass 2 then reports it as a
+  # stray, which is exit 1. This is the control: it fails if the narrowing goes
+  # too far and stops treating spaces and tabs as indentation.
+  if [ "$rc" = "1" ]; then
+    echo "ok   - $desc"
+    pass=$((pass + 1))
+  else
+    echo "FAIL - $desc: expected the fence to open (exit 1), got exit $rc"
+    fail=$((fail + 1))
+  fi
+}
+
+# The three characters [[:space:]] matches and [ \t] does not.
+assert_lead_not_indentation "#4393 a bare CR before a fence marker is not indentation" "$(printf '\r')"
+assert_lead_not_indentation "#4393 a bare VT before a fence marker is not indentation" "$(printf '\v')"
+assert_lead_not_indentation "#4393 a bare FF before a fence marker is not indentation" "$(printf '\f')"
+
+# CONTROLS: the two characters that ARE indentation must keep opening a fence.
+# Without these, narrowing the class to nothing at all would pass every arm above.
+assert_lead_is_indentation "#4393 control: a space before a fence marker IS indentation" " "
+assert_lead_is_indentation "#4393 control: a tab before a fence marker IS indentation" "$(printf '\t')"
+assert_lead_is_indentation "#4393 control: three spaces before a fence marker IS indentation" "   "
+
+# And an ordinary CRLF body must be unaffected: CR as a LINE ENDING is normal
+# and common, and only a BARE CR inside a line is not indentation. The fenced
+# clause names an undeclared issue, so this stays exit 1 as a stray.
+CRLF_FENCE="$(printf '%s' '```')"
+assert_exit "#4393 control: an ordinary CRLF body is unaffected" 1 "fix: something" \
+  "$(printf 'Closes #123\r\n\r\n%s\r\nclosed #789\r\n%s' "$CRLF_FENCE" "$CRLF_FENCE")"
+
+# STATED GAP, raised in review of this PR: CommonMark 0.31.2 section 4.5 says a
+# BACKTICK fence's info string may not contain a backtick, so "\`\`\`x`y" does not
+# open a fence. (A tilde fence has no such restriction.) Both implementations
+# treat it as an opener, so they AGREE -- there is no parity risk here, and the
+# only cost is a false positive, which fails loudly with the number named.
+# Reaching the defect at all needs an unclosed pseudo-fence AND a later
+# declaration. Pinned as the current behavior rather than implemented, to keep
+# this diff to the defect it is about; a fix belongs with a real CommonMark
+# info-string parser, not another special case in a line-oriented script.
+assert_exit "#4393 STATED GAP: a backtick in a backtick fence's info string still opens a fence" 1 \
+  "fix: something" \
+  "Closes #123
+
+\`\`\`x\`y
+Closes #789"
+
 # --- #4393 GREEN CONTROLS: the over-refusal direction -----------------------
 #
 # Every arm above passes for a tracker that refuses everything. These are the

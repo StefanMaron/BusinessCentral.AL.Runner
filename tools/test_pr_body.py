@@ -637,6 +637,73 @@ check("#4393 a fenced restatement of the declared target is not a stray",
       str(pb.stray_closing_reference(_b, pb.declared_targets(_b))))
 
 # --------------------------------------------------------------------------
+print("\n#4393: what counts as INDENTATION before a fence marker")
+# --------------------------------------------------------------------------
+# Found in review. The shell gate used [[:space:]] and this port used [ \t];
+# those differ on CR, VT and FF, so a line led by one of the three opened a fence
+# here and not there -- with THIS side permissive, which is the dangerous
+# direction: it would declare a hidden target while the gate called the same line
+# a stray. The shell was narrowed to match, per CommonMark 0.31.2 section 4.5
+# ("up to three spaces of indentation" -- spaces, section 2.1, not whitespace
+# generally); a bare CR is a line terminator, and VT and FF have no
+# block-indentation semantics at all.
+#
+# Pinned on BOTH sides: this file holds the Python half, and the shell half lives
+# in test_check_closing_reference.sh. The parity sweep alone would not have found
+# it -- its cases were all built from ordinary text.
+#
+# The probe shape is an UNCLOSED fence on purpose. A lead character before a
+# fence that is later closed is invisible: the closing marker ends the block
+# either way. Unclosed, the lead decides whether a following trailer is swallowed.
+
+# CR, VT, FF are NOT indentation: no fence opens, so the trailer declares.
+for _name, _lead in [("CR", "\r"), ("VT", "\v"), ("FF", "\f")]:
+    _b = f"Closes #2783\n\n{_lead}```\nCloses #2125\n"
+    check(f"#4393 a bare {_name} before a fence marker is not indentation",
+          2125 in pb.declared_targets(_b), str(pb.declared_targets(_b)))
+
+# CONTROLS: space and tab ARE indentation, so the fence opens, runs to end of
+# body and swallows the trailer. Without these, narrowing the class to nothing
+# would pass every case above.
+for _name, _lead in [("a space", " "), ("a tab", "\t"), ("three spaces", "   ")]:
+    _b = f"Closes #2783\n\n{_lead}```\nCloses #2125\n"
+    check(f"#4393 control: {_name} before a fence marker IS indentation",
+          2125 not in pb.declared_targets(_b), str(pb.declared_targets(_b)))
+
+# An ordinary CRLF body is unaffected -- CR as a LINE ENDING is normal and
+# common; only a BARE CR inside a line is not indentation. Asserted through
+# norm(), which is what every real caller applies first (GitHub stores bodies
+# with CRLF), so this is the path that actually runs.
+_b = "Closes #2783\r\n\r\n```\r\nclosed #2125\r\n```\r\n"
+check("#4393 control: an ordinary CRLF body declares only the real trailer",
+      pb.declared_targets(pb.norm(_b)) == [2783],
+      str(pb.declared_targets(pb.norm(_b))))
+
+# ...and the fenced clause in that same body is still a stray, so CRLF does not
+# reopen the #4393 hole by a different route.
+_n = pb.norm(_b)
+check("#4393 control: the fenced clause in a CRLF body is still a stray",
+      (pb.stray_closing_reference(_n, pb.declared_targets(_n)) or (None,))[0] == 2125,
+      str(pb.stray_closing_reference(_n, pb.declared_targets(_n))))
+
+# PRE-EXISTING, and deliberately pinned as-is rather than "fixed" here: on RAW
+# (un-normalised) CRLF text, declared_targets finds nothing, because
+# CANONICAL_LINE_RE ends [ \t]*$ and a trailing \r does not match. That predates
+# #4393 -- measured identically on base 907235171 -- and is out of scope for a
+# fence fix. Pinned so a later change to CANONICAL_LINE_RE is a deliberate one.
+check("#4393 pre-existing: raw un-normalised CRLF declares nothing (norm() is the caller's job)",
+      pb.declared_targets(_b) == [], str(pb.declared_targets(_b)))
+
+# STATED GAP (raised in review): CommonMark 4.5 says a BACKTICK fence's info
+# string may not contain a backtick, so "```x`y" is not a fence opener. Both
+# implementations treat it as one, so they AGREE -- no parity risk, and the only
+# cost is a loud false positive. Pinned rather than fixed, to keep this diff to
+# the defect it is about.
+_b = "Closes #2783\n\n```x`y\nCloses #2125\n"
+check("#4393 STATED GAP: a backtick in the info string still opens a fence",
+      2125 not in pb.declared_targets(_b), str(pb.declared_targets(_b)))
+
+# --------------------------------------------------------------------------
 print("\nparity with .github/scripts/check_closing_reference.sh")
 # --------------------------------------------------------------------------
 # The server-side gate is that shell script. If this Python port drifts from it,
