@@ -106,12 +106,10 @@ public static class MetadataDocumentPresenceDiff
         string statedBy,
         List<MetadataUnobservableOmission> found)
     {
-        // Parsed once and reused as the baseline for every strip of this document. A null here
-        // means the caller handed a document its own reader refuses, so no verdict about any
-        // attribute on it is available — say so rather than returning an empty list, which is
-        // indistinguishable from "every omission is observable".
-        var baseline = parse(statingDoc);
-        if (baseline is null)
+        // One probe read, ONLY to tell "this document is unreadable" from "this document has
+        // no unobservable omission". The per-attribute baseline below is parsed again each
+        // time, and that is not redundant — see ParseCold.
+        if (parse(statingDoc) is null)
         {
             found.Add(new MetadataUnobservableOmission(
                 objectKey, "", "<document>", "<unreadable>", "",
@@ -136,9 +134,20 @@ public static class MetadataDocumentPresenceDiff
                 // join from the attribute to an object member would be a guess, and it would
                 // guess in the direction that RESTORES the blind spot: a member whose name
                 // coincidentally matches a reported difference reads as observable.
-                var stripped = CloneWithout(statingDoc, path, attribute);
-                var strippedObject = parse(stripped);
-                if (strippedObject is null)
+                // BOTH sides parsed fresh, for this one question. Reusing a single baseline
+                // across strips makes the verdict depend on walk ORDER: MetadataObjectDiff
+                // reads every readable member, which FORCES BC's lazily-built state, so a
+                // baseline that earlier walks have warmed no longer matches a document just
+                // parsed. Measured on BC 28.1.49838.53910 — MetaReport holds a LazyEx whose
+                // IsValueCreated reads False on a cold object and True on a warmed one, and a
+                // reused baseline reported Report 9810's PromotedActionCategoriesML as
+                // observable on the strength of `LazyEx`1.IsValueCreated 'True' -> 'False'`,
+                // a difference about this harness rather than about either derivation.
+                // Deliberately NOT fixed by ignoring LazyEx: the next lazily-built member BC
+                // adds would reintroduce it silently.
+                var intact = parse(statingDoc);
+                var strippedObject = parse(CloneWithout(statingDoc, path, attribute));
+                if (intact is null || strippedObject is null)
                 {
                     found.Add(new MetadataUnobservableOmission(
                         objectKey, path, element.LocalName, attribute.LocalName, attribute.Value,
@@ -147,7 +156,22 @@ public static class MetadataDocumentPresenceDiff
                     continue;
                 }
 
-                if (MetadataObjectDiff.Compare(baseline, strippedObject, objectKey, options).Count == 0)
+                // MaxDifferences = 1: the question is whether the stripped object differs AT
+                // ALL, and the list is discarded. Measured on BC 28.1.49838.53910 over both
+                // ground-truth bundles, the harness class runs in 1 m 22 s with an unlimited
+                // walk per attribute and 1 m 15 s with the limit — a modest saving, kept
+                // because the discarded list is pure waste, not because it is decisive.
+                var asked = options is null
+                    ? new MetadataObjectDiffOptions { MaxDifferences = 1 }
+                    : new MetadataObjectDiffOptions
+                    {
+                        MaxDepth = options.MaxDepth,
+                        RecurseNamespacePrefixes = options.RecurseNamespacePrefixes,
+                        PairByIdMembers = options.PairByIdMembers,
+                        IdPropertyNames = options.IdPropertyNames,
+                        MaxDifferences = 1,
+                    };
+                if (MetadataObjectDiff.Compare(intact, strippedObject, objectKey, asked).Count == 0)
                     found.Add(new MetadataUnobservableOmission(
                         objectKey, path, element.LocalName, attribute.LocalName,
                         attribute.Value, statedBy));

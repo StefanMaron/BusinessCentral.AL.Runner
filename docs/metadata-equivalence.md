@@ -1504,6 +1504,111 @@ already covered by the translation-key entries. Every one is *BC states a value,
 it off* — no member is rendered with a wrong value derived from a right input. The three groups,
 and which is a defect, are on **#3926**.
 
+<a id="unobservable-omissions"></a>
+## The third state: omissions the comparison cannot observe (#4357)
+
+`MetadataObjectDiff` compares two PARSED objects. An attribute a document omits and an attribute
+a document states with the reader's own default are therefore **the same value**, so a member the
+runner never writes is invisible on every object whose BC-written value happens to equal that
+default.
+
+`AlRunner/Metadata/MetadataDocumentPresenceDiff.cs` is the answer, and
+`tests/expectations/metadata-equivalence/unobservable-omissions.json` is where the result is
+declared. It is deliberately a separate file from `allowlist.json`: an allowlist entry says the
+two derivations **disagree** and it is tolerated; an entry there says they **agree** and the
+agreement is not evidence.
+
+<a id="unobservable-the-worked-case"></a>
+### The worked case
+
+Measured on BC `28.1.49838.53910` (`Microsoft.Dynamics.Nav.Ncl.dll` sha256 `49b11d9b…`,
+`Microsoft.Dynamics.Nav.Types.dll` sha256 `c91ede8f…`):
+
+* BC's emitter states `PageProperties/@AnalysisModeEnabled` on **94** of the 235 pages in the two
+  bundles — 93 as `"1"` and page 8350 as `"0"` — and the runner's document states it on none.
+* Deleting the two `AnalysisModeEnabled` entries from `allowlist.json` makes the harness report
+  `x1`, not `x94`: only page 8350. The reader's absent-attribute answer is `True`, which is what
+  BC's own `"1"` parses to, so the other 93 agree.
+* Reflection over `PageProperties` on that build says why. It declares
+  `OnAfterGetCurrentRecordEnabledSpecified` and `CardFormIDSpecified` — `XmlSerializer`-style
+  presence flags, which the object comparison already walks and already reports — and declares no
+  companion at all for `AnalysisModeEnabled` or `IsPreview`.
+
+So a PageType-based derivation for `AnalysisModeEnabled` would go harness-green whether or not it
+got those 93 pages right. That is the defect: not a wrong value, a measurement that cannot fail.
+
+<a id="unobservable-how-it-decides"></a>
+### How an omission is judged, and why it is not a name join
+
+For every attribute one document states at an element **both** sides build, the mechanism removes
+that attribute from a copy of the stating document, hands the copy to BC's own reader, and asks
+whether the resulting object differs at all. No difference means the omission is unobservable.
+
+BC's reader decides, rather than a join from the attribute name to an object member. A name join
+fails in the direction that restores the blind spot: a member whose name coincidentally matches a
+reported difference reads as observable, and nothing says so.
+
+Two things it deliberately does not do:
+
+* **It does not report defaults.** A raw attribute-presence diff over whole documents is **88,884**
+  rows over the two bundles, which buries the signal — a page's ordinary field controls are absent
+  from the runner's document entirely, and every attribute on each of them counts.
+* **It does not repeat the value comparison.** Scoping to elements both sides build takes that to
+  **5,399**, and keeping only the omissions whose parsed objects agree takes it to **2,096** across
+  41 distinct (kind, element, attribute, value) shapes. The other **3,303** already fail as value
+  differences and are left to `MetadataObjectDiff`.
+
+<a id="unobservable-the-walk-warms-what-it-reads"></a>
+### The walk WARMS what it reads, so each question gets a cold pair
+
+`MetadataObjectDiff` reads every readable member, which **forces** BC's lazily-built state. A
+single parsed baseline reused across strips therefore stops matching a document just parsed, and
+the verdict starts depending on walk order.
+
+Measured: `MetaReport` holds a `LazyEx<T>` whose `IsValueCreated` reads `False` on a cold object
+and `True` on a warmed one. With one reused baseline, Report 9810's
+`PromotedActionCategoriesML` was reported observable on the strength of
+`LazyEx\`1.IsValueCreated 'True' -> 'False'` — a difference about the harness rather than about
+either derivation, and it moved in and out depending on how much of the previous strip's walk had
+run. Both sides are parsed fresh per question instead. Deliberately **not** fixed by ignoring
+`LazyEx`: the next lazily-built member BC adds would reintroduce it silently.
+
+<a id="unobservable-what-it-found"></a>
+### What it found, and what that costs
+
+**22** entries, **2,086** occurrences, every one in the same direction — BC states the attribute,
+the runner's document omits it. None is triaged; **#4400** is where that happens, and every entry
+names it. The largest are `Codeunit.CodeUnit.MetadataVersion` (558),
+`Codeunit.CodeUnit.EventSubscriberInstance` (558), `Codeunit.CodeUnit.TestIsolation` (529),
+`Codeunit.EventPublisherAttribute.GlobalVarAccess` (122) and
+`Page.Properties.AnalysisModeEnabled` (93); the full table is on #4400.
+
+Nine entries carry `versionContingent`, and the threshold is stated rather than felt: **fewer than
+10 of the 1,286 compared objects carry it on the measured build**, a population one BC version's
+object churn can remove. The other thirteen are required to match, so a landed fix must delete
+them.
+
+The harness class costs **1 m 22 s** with this pass against **13 s** without it, on this box, over
+both bundles. `MetadataObjectDiffOptions.MaxDifferences` is what keeps that from being worse: the
+strip asks a yes/no question and discards the list, so the walk stops after the first difference —
+**1 m 15 s** with the limit against **1 m 22 s** without. A modest saving, kept because the
+discarded list is pure waste.
+
+<a id="unobservable-an-entry-that-matched-nothing"></a>
+### An entry that matched nothing, and why nothing said so
+
+`allowlist.json`'s `PageProperties.IsPreview` covers **zero** differences on this build: removing
+it leaves the harness green at 13/13. Its reason states that `IsPreview` is *"Not in
+SymbolReference.json in any form"*, which `AlRunner/Patches/BcAppSymbolCache.cs` contradicts — it
+reads `IsPreview` out of the symbol file, and `DependencyPageMetadataXml.cs` writes it when
+stated. Page 332 therefore agrees for a real reason and page 1998's `"0"` agrees by
+default-coincidence.
+
+The entry is `versionContingent`, which exempts it from the unused-entry check **and from nothing
+else** — so an entry whose reason had gone stale sat there un-flagged. That is the reading this
+whole section exists to correct: a `versionContingent` entry sitting quietly is not evidence that
+the difference it describes would be reported.
+
 <a id="running-it"></a>
 ## Running it
 

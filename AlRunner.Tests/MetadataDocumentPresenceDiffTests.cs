@@ -222,6 +222,41 @@ public sealed class MetadataDocumentPresenceDiffTests
         Assert.StartsWith(MetadataDocumentPresenceDiff.ActualSide, whole.StatedBy, StringComparison.Ordinal);
     }
 
+    // ---- the walk WARMS what it reads, so a reused baseline answers by walk order ----------
+
+    /// <summary>
+    /// A member that reads false on a cold instance and true on a warmed one — the shape of
+    /// <c>LazyEx&lt;T&gt;.IsValueCreated</c>, which BC's MetaReport exposes and which
+    /// <see cref="MetadataObjectDiff"/> FORCES simply by reading every readable member.
+    /// </summary>
+    private sealed class Latching
+    {
+        private bool _read;
+        public bool Warmed { get { var before = _read; _read = true; return before; } }
+        public string Attributes { get; init; } = "";
+    }
+
+    [Fact]
+    public void A_second_unobservable_omission_on_one_document_is_still_reported()
+    {
+        // Two attributes, both genuinely unobservable: this parse ignores them entirely, so
+        // stripping either changes nothing. A mechanism that parsed ONE baseline and reused it
+        // would report the first and miss the second, because the first comparison warms the
+        // baseline and the second then differs on Warmed alone — a difference about the
+        // harness, reported as though it were about the derivation.
+        var bc = Doc("AnalysisModeEnabled=\"1\" QueryCategory=\"Lists\"");
+        var runner = Doc("");
+
+        static object? ParseIgnoringAttributes(XmlDocument _) => new Latching();
+
+        var reported = MetadataDocumentPresenceDiff.Compare(
+            bc, runner, ParseIgnoringAttributes, "Page 8350");
+
+        Assert.Equal(
+            new[] { "Properties.AnalysisModeEnabled", "Properties.QueryCategory" },
+            reported.Select(r => r.Signature).OrderBy(x => x, StringComparer.Ordinal).ToArray());
+    }
+
     // ---- the clone must not write through to the caller's document --------------------------
 
     [Fact]
