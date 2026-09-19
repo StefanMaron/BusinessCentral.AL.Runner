@@ -133,6 +133,28 @@ returns that pull request. Ask for the head branch with `--head`, which reads th
 
 ## Step 3 — Implement (strict TDD)
 
+### Check the cwd you INHERITED before you write anything
+
+Your starting working directory is whatever the dispatching session's shell last held, and
+three times in one session that was **another identity's live worktree** — once for a
+*resumed* agent, which picked the value back out of its own transcript, so no
+coordinator-side reset prevents it (#4340). A commit made from there lands on that loop's
+branch whatever your own branch says (#3014).
+
+```bash
+pwd
+tools/preflight.py --agent-id <AGENT-ID>   # its `branch-ownership` row
+```
+
+FAIL means the directory is not yours — do not `cd` out and carry on quietly; build your own
+worktree below and use **absolute paths** into it. `branch-ownership` judges the directory
+name before it looks up any pull request, so a merged, closed or never-opened PR cannot make
+a foreign worktree read as free, and a name it cannot attribute is a WARN rather than a pass.
+
+**Re-check it after a resume**, not only at dispatch: the assertion has to hold at your first
+*write*, and a resumed turn starts from the transcript's cwd rather than from wherever the
+previous turn ended.
+
 ### Namespace every path you write to
 
 The scratchpad directory in your prompt is shared by every agent of this session, and a path

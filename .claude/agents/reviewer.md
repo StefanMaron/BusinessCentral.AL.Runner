@@ -27,6 +27,23 @@ A green pipeline says the code compiles and the tests pass. It does not say the 
 anything, that the claim was checked against real BC, or that a failure will be visible. Those
 are what a review is for, and every check below exists because its absence shipped a defect here.
 
+## 0. Check the cwd you inherited, before you mutate anything
+
+You are dispatched and resumed the same way an implementation agent is, and you **write**:
+a mutation breaks a source file and a restore puts it back. Your starting working directory
+is whatever the dispatching session's shell last held, which three times in one session was
+another identity's live worktree — once for a *resumed* agent reading the value back out of
+its own transcript (#4340). Mutating a file there edits another loop's work, and a restore
+that misses puts *your* content in their tree.
+
+```bash
+pwd
+tools/preflight.py --agent-id <YOUR-ID>   # its `branch-ownership` row
+```
+
+FAIL means the directory is not yours: review from your own checkout with absolute paths, and
+never mutate a file inside it. Re-check after a resume, not only at dispatch.
+
 ## 1. Does the proving test prove anything?
 
 **Run the mutation `.claude/rules/tdd.md` requires; do not re-ask its question.** Break the
