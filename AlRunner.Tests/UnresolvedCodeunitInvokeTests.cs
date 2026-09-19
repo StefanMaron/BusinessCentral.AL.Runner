@@ -29,8 +29,9 @@
 // either installed, in which case its code is present, or it is not, in which case the AL
 // does not compile. There is no AL a corpus test could write that reaches it. The
 // corpus-expressible sibling claims (what real BC does with an unassigned codeunit variable,
-// and with a variable whose codeunit exists) are asserted upstream in corpus codeunit 60998;
-// see the PR body for the verdict.
+// and with a variable whose codeunit exists) are asserted upstream in corpus codeunit 60966
+// "Test Codeunit Var Dispatch", over fixture 60959 ALTDispatchProbe; see the PR body for the
+// verdict.
 //
 // The specific method id used below is not meaningful: NoOpCodeunit declares no members, so
 // EVERY method id is unhandled, which is the whole point.
