@@ -143,13 +143,77 @@ for name, cmd in BACKGROUND_ALLOWED:
     ok, d = allows(REFUSE, cmd, background=True)
     check(name, ok, d)
 
-print("\nthe same CI-wait shapes in the FOREGROUND -- allowed (only backgrounding is refused)")
+# #4288: the flag is not what decides whether a wait runs in the background. The
+# harness moves a FOREGROUND command to the background at a hard 600s cap -- measured
+# over every transcript on this box: 66 CI waits were auto-backgrounded and all 66 had
+# run_in_background unset, so a refusal gated on that flag refused none of them. The
+# declared `timeout` does not raise the cap: 600000, 900000, 1600000, 2400000, 3000000
+# and 3600000 ms all produced `within its 600s timeout`.
+HARNESS_BACKGROUND_CAP_S = 600
+
+print("\nCI waits the HARNESS will background -- refused whatever the flag says (#4288)")
+CI_WAIT_OVER_CAP = [
+    ("ci-wait.py --timeout 1500, the shape measured on PR #4286",
+     "tools/ci-wait.py 4286 --timeout 1500 > ci.txt 2>&1; echo \"ci-wait exit=$?\""),
+    ("ci-wait.py --timeout 2400, the commonest shape in the transcripts",
+     "python3 tools/ci-wait.py 3110 --timeout 2400 2>&1 | tail -40"),
+    ("ci-wait.py with no --timeout at all defaults above the cap",
+     "tools/ci-wait.py 3707"),
+    ("--timeout=1500 in the equals spelling",
+     "tools/ci-wait.py 4286 --timeout=1500"),
+    ("a `timeout` wrapper does not make it a read",
+     "timeout 2700 tools/ci-wait.py 3023 --timeout 3000"),
+    ("gh run watch blocks with no deadline of its own",
+     "gh run watch 33966349085 --repo o/r --exit-status --interval 30"),
+    ("gh pr checks --watch likewise", "gh pr checks 3707 --watch"),
+]
+for name, cmd in CI_WAIT_OVER_CAP:
+    ok, d = blocks(REFUSE, cmd, "--timeout 0")
+    check(name, ok, d)
+
+r = fire(REFUSE, "tools/ci-wait.py 4286 --timeout 1500")
+check("the over-cap refusal says the harness backgrounds it, not the agent",
+      "harness" in r.stderr.lower(), r.stderr[:240])
+check("the over-cap refusal names the 600s cap",
+      str(HARNESS_BACKGROUND_CAP_S) in r.stderr, r.stderr[:240])
+check("the over-cap refusal warns the notification's exit code is the wrapper's",
+      "wrapper" in r.stderr.lower(), r.stderr[:240])
+
+# GREEN CONTROL. A hook that refuses every CI wait would pass every arm above and
+# would also break the one form the rules mandate. These must stay allowed, and they
+# are what distinguishes a correct hook from an over-refusing one.
+print("\nCI reads UNDER the cap -- still allowed, in the foreground (the green control)")
+CI_WAIT_UNDER_CAP = [
+    ("--timeout 0 is one pass, the mandated form", "tools/ci-wait.py 3707 --timeout 0"),
+    ("--timeout 0 with a redirect and an exit echo",
+     "tools/ci-wait.py 4286 --timeout 0 > ci.txt 2>&1; echo \"ci-wait exit=$?\"; cat ci.txt"),
+    ("--timeout=0 in the equals spelling", "tools/ci-wait.py 3707 --timeout=0"),
+    ("--timeout 120, comfortably under the cap", "tools/ci-wait.py 3707 --timeout 120"),
+    ("--timeout 599, the last value under the cap", "tools/ci-wait.py 3707 --timeout 599"),
+    ("a single gh run view read", "gh run view 123 --json conclusion"),
+    ("gh pr checks without --watch", "gh pr checks 3707"),
+    ("a poll loop of --timeout 0 reads is the documented shape",
+     "for i in 1 2 3; do tools/ci-wait.py 4286 --timeout 0 && break; command sleep 30; done"),
+]
+for name, cmd in CI_WAIT_UNDER_CAP:
+    ok, d = allows(REFUSE, cmd)
+    check(name, ok, d)
+
+# The boundary itself: 600 is at the cap and must be refused, 599 allowed above.
+ok, d = blocks(REFUSE, "tools/ci-wait.py 3707 --timeout 600", "--timeout 0")
+check("--timeout 600 is AT the cap and refused", ok, d)
+
+# Non-CI background work is untouched by this widening.
+print("\nnon-CI work is unaffected by the cap rule")
 for name, cmd in [
-    ("foreground gh run watch", "gh run watch 12345"),
-    ("foreground ci-wait with a timeout", "tools/ci-wait.py 3707 --timeout 600"),
+    ("a long foreground corpus run", "dotnet run --project AlRunner -- run --bundle x.json"),
+    ("a long foreground test sweep", "dotnet test AlRunner.Tests"),
+    ("a detached runner run", "al-runner run --bundle app.json"),
 ]:
     ok, d = allows(REFUSE, cmd)
     check(name, ok, d)
+    ok, d = allows(REFUSE, cmd, background=True)
+    check(name + " (backgrounded)", ok, d)
 
 print("\nnon-Bash tools are never the business of either hook")
 for hook in (REFUSE, NAV):
