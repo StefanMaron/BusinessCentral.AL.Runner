@@ -1570,6 +1570,51 @@ public static partial class NclCecilRewrite
                 Console.Error.WriteLine("[Cecil] Rewrote NavTestExecution.set_EffectivePermissionSets → store only (NavSession.Permissions is null in the runner)");
             }
 
+            // NavTestExecution.InvokeHandler — preserve the AL handler's stack on rethrow (#3500).
+            //
+            // BC's catch arm is `catch (TargetInvocationException ex) { throw ex.GetBaseException(); }`
+            // and `throw <existing object>` RESETS the stack trace, so a handler failure reports
+            // InvokeHandler as its origin and nothing about where it was raised. Measured on
+            // Microsoft BaseApp surface run 34169134540: 126 failures with that top frame, of which
+            // 68 NREs had no attributable origin at all.
+            //
+            // Diagnostic only: the SAME exception object, type and message still propagates to the
+            // same caller, so nothing AL can observe about control flow changes — the justification
+            // is on HandlerStackPreservation.RethrowPreservingStack.
+            //
+            // This replaces ONE instruction rather than the body. InvokeHandler's body calls the
+            // private InvokeHandlerAsync and reads the private field executingTestCodeUnit, so a
+            // ReplaceBodyWithHelper would have to re-implement both reflectively — and both paths
+            // funnel their TargetInvocationException into this one catch arm, so substituting the
+            // arm's `callvirt GetBaseException` covers the awaitable branch and the direct
+            // handler.Invoke branch at once. BC's try block, its two `leave` targets and its
+            // exception-handler region are untouched.
+            //
+            // PRECOMPILED-DLL RESPECT: this is the runtime engine (Ncl.dll), the "modify freely"
+            // row of precompiled-dll-respect.md. One memberRef is added (the helper) and one
+            // memberRef reference is dropped from this body; no type, member or signature in Ncl is
+            // renamed, removed or reordered, so no R2R caller's offsets move.
+            //
+            // TRAP: the helper's declared return type must stay `Exception`. BC's next instruction
+            // is `throw`, which consumes what this call leaves on the stack — a void helper emits
+            // an unbalanced body that Cecil writes happily and only the JIT rejects, as a bare
+            // InvalidProgramException naming no method of ours (#3328).
+            //
+            // Derivation, the six distinct Ncl binaries this was verified against, and what a
+            // preserved trace looks like: docs/handler-stack-preservation.md.
+            {
+                var navTestExecT = nclMod.GetType(Rt + "NavTestExecution")
+                    ?? throw new InvalidOperationException("NavTestExecution not found — Ncl shape changed; do not commit");
+                var invokeHandler = navTestExecT.Methods.FirstOrDefault(mm =>
+                        mm.Name == "InvokeHandler" && mm.HasBody && mm.HasThis && mm.Parameters.Count == 2)
+                    ?? throw new InvalidOperationException(
+                        "[Cecil] NavTestExecution.InvokeHandler(MethodInfo, object[]) not found — Ncl shape "
+                        + "changed; every handler failure would keep reporting InvokeHandler as its origin "
+                        + "with no stack behind it (#3500). Do not commit.");
+
+                RewriteHandlerRethrowToPreserveStack(asm.MainModule, invokeHandler);
+            }
+
             // NavTenant.GetReportSettingsOverride(int) → null. The real body lazily
             // reads the tenant's "Report Settings Override" table by spinning up a
             // full SYSTEM SESSION (NavUserAuthentication etc. — service-tier only).
@@ -2200,6 +2245,95 @@ public static partial class NclCecilRewrite
         il.InsertBefore(start, il.Create(OpCodes.Callvirt, setIsBackground));
         ctor.Body.MaxStackSize += 2;
         Console.Error.WriteLine("[Cecil] ExecutionScheduler..ctor: SchedulerLoop thread → IsBackground=true before Start() (#2704: foreground thread outlived Main)");
+    }
+
+    /// <summary>
+    /// The <c>GetBaseException</c> call sites inside <paramref name="method"/>'s
+    /// <c>TargetInvocationException</c> catch handlers, and nowhere else.
+    ///
+    /// <para>Scoped to the handler regions rather than matching the whole body, because
+    /// "the instruction that resets the stack" is defined by being the rethrow arm — a
+    /// <c>GetBaseException</c> BC might one day call inside the TRY block would be an
+    /// ordinary read, and substituting a rethrow for it would change control flow. Split
+    /// out and internal so the selection is provable against a constructed body, with no
+    /// BC artifacts required (the shape <c>AssertHelperArityMatches</c> uses).</para>
+    /// </summary>
+    internal static List<Instruction> FindCatchRethrowSites(MethodDefinition method)
+    {
+        var found = new List<Instruction>();
+        var body = method.Body;
+        if (body == null) return found;
+
+        foreach (var handler in body.ExceptionHandlers)
+        {
+            if (handler.HandlerType != ExceptionHandlerType.Catch) continue;
+            if (handler.CatchType?.FullName != "System.Reflection.TargetInvocationException") continue;
+
+            // Walk the handler's instruction range: [HandlerStart, HandlerEnd). HandlerEnd is
+            // the first instruction AFTER the handler and may be null when the handler runs to
+            // the end of the body, so stop on null too.
+            for (var i = handler.HandlerStart; i != null && i != handler.HandlerEnd; i = i.Next)
+            {
+                if (i.OpCode != OpCodes.Callvirt && i.OpCode != OpCodes.Call) continue;
+                if (i.Operand is not MethodReference mr) continue;
+                if (mr.Name != "GetBaseException") continue;
+                if (mr.DeclaringType?.FullName != "System.Exception") continue;
+                found.Add(i);
+            }
+        }
+        return found;
+    }
+
+    /// <summary>
+    /// Substitute <see cref="AlRunner.Patches.HandlerStackPreservation.RethrowPreservingStack"/>
+    /// for the <c>GetBaseException</c> call in <paramref name="method"/>'s
+    /// <c>TargetInvocationException</c> catch arm, so the following <c>throw</c> preserves the
+    /// original stack instead of resetting it (#3500).
+    ///
+    /// <para>Refuses on any count but exactly one. Zero means BC's shape moved and every handler
+    /// failure keeps reporting no origin; more than one means the arm this is aimed at is no
+    /// longer the only rethrow, and rewriting all of them would be a guess. Both are
+    /// <c>guards-need-a-third-state.md</c>'s "could not measure", not a pass.</para>
+    /// </summary>
+    private static void RewriteHandlerRethrowToPreserveStack(ModuleDefinition module, MethodDefinition method)
+    {
+        var sites = FindCatchRethrowSites(method);
+        if (sites.Count != 1)
+            throw new InvalidOperationException(
+                $"[Cecil] expected exactly ONE Exception::GetBaseException() inside a "
+                + $"TargetInvocationException catch arm of {method.FullName}, found {sites.Count}. "
+                + "BC's InvokeHandler shape has changed; without this rewrite every "
+                + "[HandlerFunctions] failure reports NavTestExecution.InvokeHandler as its origin "
+                + "and discards the stack that would name the real one (#3500). Do not commit.");
+
+        var helperMi = typeof(AlRunner.Patches.HandlerStackPreservation).GetMethod(
+            nameof(AlRunner.Patches.HandlerStackPreservation.RethrowPreservingStack),
+            BindingFlags.Public | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "[Cecil] HandlerStackPreservation.RethrowPreservingStack not found");
+
+        // Both sides take one Exception and leave one Exception, so the evaluation stack is
+        // unchanged and the following `throw` still balances. Asserted rather than assumed:
+        // the JIT is the only other thing that would notice, and it reports an
+        // InvalidProgramException naming no method of ours (#3328).
+        if (helperMi.ReturnType != typeof(Exception)
+            || helperMi.GetParameters().Length != 1
+            || helperMi.GetParameters()[0].ParameterType != typeof(Exception))
+            throw new InvalidOperationException(
+                "[Cecil] HandlerStackPreservation.RethrowPreservingStack must be "
+                + "Exception -> Exception to stand in for Exception::GetBaseException(); it is "
+                + $"{helperMi.ReturnType.Name} over {helperMi.GetParameters().Length} parameter(s). "
+                + "Emitting the call anyway would unbalance the body and fail only at JIT time (#3328).");
+
+        var il = method.Body.GetILProcessor();
+        // Replace in place: every branch and exception-handler boundary that pointed at this
+        // instruction keeps pointing at the new one, which an insert-then-remove pair would not
+        // guarantee for the handler's own HandlerStart.
+        il.Replace(sites[0], il.Create(OpCodes.Call, module.ImportReference(helperMi)));
+
+        Console.Error.WriteLine(
+            $"[Cecil] Rewrote {method.DeclaringType.Name}.{method.Name} rethrow → "
+            + "HandlerStackPreservation.RethrowPreservingStack (keeps the AL handler's own stack, #3500)");
     }
 
     private static void AddRuntimeOwned(HashSet<string> set)
