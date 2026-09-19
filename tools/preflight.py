@@ -733,6 +733,26 @@ def unpushed_against_pr(head: str, pr: Optional[dict]) -> Optional[int]:
     zero. The PR's headRefOid is the surviving record of what was actually
     pushed. Returns None when there is no PR, because "cannot prove anything was
     pushed" must not be rendered as "nothing is unpushed".
+
+    **The 1 is a flag, not a count, and the census renders it as a count.** Any
+    head differing from headRefOid answers exactly 1, whether one commit or
+    twenty sit on top of it -- so "1 local commit(s) were never pushed" in the
+    worktree census means "at least one", and a reader who takes it literally
+    will under-estimate. Only reachable once the upstream ref is gone: the caller
+    prefers `rev-list --count @{u}..HEAD` and falls back here, so a worktree
+    whose remote-tracking branch still exists gets a true count from that path
+    instead. Measured over the 77 live worktrees while writing this: eleven whose
+    PR head differs hold 2-6 commits outside every remote, and all eleven still
+    resolve `@{u}`, so none of them reaches this function today.
+
+    It also cannot distinguish "ahead of what was pushed" from "diverged from
+    it": a head that is neither an ancestor nor a descendant of headRefOid also
+    answers 1. Both readings are deliberately left as they are. Over-reporting
+    keeps a worktree, which is the safe direction, and this is the only
+    instrument that survives GitHub deleting the head branch. What wants a real
+    count is `unpushed_commits`, which asks `--not --remotes` (#4385) -- but that
+    answers 0 for a merged branch whose remote ref has been pruned, so the two
+    are complementary rather than one superseding the other.
     """
     if not pr or not pr.get("headRefOid"):
         return None
