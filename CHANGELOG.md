@@ -32,6 +32,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **testpage:** evaluate text into a DateFormula control instead of casting it
 - **coverage:** make the code-coverage start surface fail where the cause is
 - **date-virtual-table:** boundary keyed Get on 2000000007
 - **codeunit:** a codeunit variable the runner could not load names itself, instead of BC's 'object with ID 0'
