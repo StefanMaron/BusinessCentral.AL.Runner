@@ -1483,7 +1483,9 @@ public static partial class BcRuntime
 
     internal static string BuildMissingCodeunitMessageForTests(int id) => BuildMissingCodeunitMessage(id);
 
-    private static string BuildMissingCodeunitMessage(int id)
+    // internal rather than private: NoOpCodeunit (below, a separate class) reports the same
+    // diagnostic when AL calls a PROCEDURE on a codeunit this returned a stand-in for.
+    internal static string BuildMissingCodeunitMessage(int id)
     {
         if (_knownDependencyCodeunits.TryGetValue(id, out var known))
         {
@@ -1583,10 +1585,49 @@ public static partial class BcRuntime
 /// (130000-139999) that is not present in the test assembly. RunAsync (via the
 /// hooked NavCodeunit_DoRunAsync) reflects for an OnRun method; this class has
 /// none, so the call returns successfully without doing anything. This honors the
-/// runner contract documented in tests/bucket-1/codeunit-runtime/128-codeunit-not-found.
+/// runner contract documented in tests/archive/bucket-1/codeunit-runtime/128-codeunit-not-found.
+///
+/// <para><b>The no-op covers <c>Codeunit.Run</c> only.</b> A PROCEDURE call on a codeunit
+/// variable dispatches through <c>NavApplicationObjectBase.Invoke</c> -> <c>OnInvoke</c>,
+/// whose unmodified base body throws <c>NavNCLMissingMethodException</c> naming
+/// <b>object id 0</b> — an id this instance does not have (its <c>ObjectId.ObjectNumber</c>
+/// is the real one) and which sends the reader nowhere. The overrides below report the id
+/// the runner actually failed to resolve, plus the remedy, via the same
+/// <see cref="BcRuntime.BuildMissingCodeunitMessage"/> an out-of-range id already gets
+/// (#3516: 35 failures on the Microsoft BaseApp surface, 19 in tests Microsoft runs).</para>
 /// </summary>
 public sealed class NoOpCodeunit : Microsoft.Dynamics.Nav.Runtime.NavCodeunit
 {
+    private readonly int _objectId;
+
     public NoOpCodeunit(Microsoft.Dynamics.Nav.Runtime.ITreeObject parent, int objectId)
-        : base(parent, objectId) { }
+        : base(parent, objectId) => _objectId = objectId;
+
+    /// <summary>
+    /// Not observably equivalent to real BC, and deliberately so: the surface has no faithful
+    /// answer. Real BC never reaches this state — a codeunit whose app is installed has its
+    /// code, and one whose app is not does not compile — so there is no BC behaviour to match
+    /// (<c>loud-failures.md</c>: a surface the runner cannot support throws, naming the API and
+    /// the reason). What it replaces is not BC behaviour either but a bare
+    /// <c>NavNCLMissingMethodException</c> reporting an object id of 0, which is false about
+    /// this instance. Citation: issue #3516, and
+    /// <c>AlRunner.Tests/UnresolvedCodeunitInvokeTests</c>, whose two control arms pin the
+    /// behaviours that must NOT change — <c>Codeunit.Run</c> still no-ops here, and a codeunit
+    /// the runner DID resolve still reports BC's own missing-method exception.
+    ///
+    /// Trap: <c>OnInvokeAsync</c> below is a separate base virtual with the identical body, and
+    /// <c>NavApplicationObjectBase.InvokeAsync</c> picks between them on <c>__IsAsync</c>.
+    /// Overriding one only leaves the other population reporting id 0.
+    /// </summary>
+    protected override object OnInvoke(int methodId, object[] arguments)
+        => throw Missing(methodId);
+
+    /// <inheritdoc cref="OnInvoke"/>
+    protected override System.Threading.Tasks.ValueTask<object> OnInvokeAsync(int methodId, object[] arguments)
+        => throw Missing(methodId);
+
+    private InvalidOperationException Missing(int methodId) => new(
+        $"AL called method id {methodId} on codeunit {_objectId}, which the runner could not " +
+        $"load, so there is no method to dispatch to. " +
+        BcRuntime.BuildMissingCodeunitMessage(_objectId));
 }
