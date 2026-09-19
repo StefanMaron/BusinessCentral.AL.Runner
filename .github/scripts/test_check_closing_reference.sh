@@ -688,6 +688,47 @@ else
   fail=$((fail + 1))
 fi
 
+# ...and the message must explain WHY the reported number can be the wrong one, not
+# only offer the rewrite. Deleting the whole comma-handoff paragraph left the suite
+# at 96/0 while the arm above still passed, because that arm greps the
+# recommendation: the remedy was pinned and the reasoning behind it was not. Found
+# in review of #4294, not by the author.
+#
+# The pattern is chosen to survive a meaning-PRESERVING rewrite and die on a
+# meaning-DROPPING one, which is the whole difficulty -- an editor tightening this
+# message is the realistic threat, and a grep for a memorable phrase passes right
+# through that. Measured over three rewrites and four truncations before picking it:
+# the slogan "READ THE NUMBER ABOVE" failed ALL THREE rewrites and still matched a
+# truncation that kept the slogan and dropped the claim, i.e. exactly backwards.
+#
+# So key on the CLAIM -- the keyword binds to a LATER number, not the preceding one
+# -- via two independent halves, both of which a rewrite that keeps the meaning must
+# keep, and neither of which survives dropping it:
+#   1. the direction: "NEXT"/"FOLLOWING"/"following" number
+#   2. that the flagged number may not be the author's subject
+MSG_DIRECTION='(NEXT|FOLLOWING|following|next) number'
+MSG_SUBJECT='(not always the one|often not the number|not the number your|rather than the one before|not the preceding)'
+if printf '%s' "$msg" | command grep -qE "$MSG_DIRECTION" \
+   && printf '%s' "$msg" | command grep -qE "$MSG_SUBJECT"; then
+  echo "ok   - #4294 the error message explains that the keyword binds to the FOLLOWING number"
+  pass=$((pass + 1))
+else
+  echo "FAIL - #4294 the error message does not explain the comma handoff (the number it names may not be the author's subject)"
+  fail=$((fail + 1))
+fi
+
+# The example is worth its own arm: the claim above is abstract, and a reader
+# scanning a blocked build reads the concrete row first. Keyed on the RELATIONSHIP
+# the example demonstrates (a second number closing while a first does not), not on
+# the literal numbers, so renumbering the example is free and deleting it is not.
+if printf '%s' "$msg" | command grep -qE "closes #[0-9]+, not #[0-9]+"; then
+  echo "ok   - #4294 the error message carries a worked example of the handoff"
+  pass=$((pass + 1))
+else
+  echo "FAIL - #4294 the error message has no worked 'closes #X, not #Y' example of the handoff"
+  fail=$((fail + 1))
+fi
+
 echo ""
 echo "$pass passed, $fail failed"
 if [ "$fail" -ne 0 ]; then
