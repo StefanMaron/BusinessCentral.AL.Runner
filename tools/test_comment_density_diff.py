@@ -21,7 +21,9 @@ Run: python3 tools/test_comment_density_diff.py
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -359,10 +361,43 @@ print()
 print("the tool reports, it does not judge")
 # #4347 declines to set a threshold: "A ratio gate would be a policy decision
 # nobody has made." Pinned so a later pass adding one has to argue for it.
-src = open(os.path.join(HERE, "comment-density.py"), encoding="utf-8").read()
-check("diff mode exposes no pass/fail threshold flag",
-      "--max-ratio" not in src and "--fail-over" not in src,
-      "a threshold flag appeared; #4347 says that is a policy decision")
+#
+# Asked of the PARSER, and as an ALLOWLIST, because the two obvious spellings
+# fail differently and both fail silently:
+#
+#   "--max-ratio" not in <source text>  -- answers "does this string appear",
+#       not "is the rule in force". A flag named --ratio-ceiling passed it while
+#       live in the parser (measured; the suite stayed 26/0).
+#   a DENYLIST of suspicious names -- same defect one step along: it bounds the
+#       names somebody thought of, and the population it must bound is the ones
+#       they did not.
+#
+# An allowlist inverts the default: any NEW option reds until a human classifies
+# it, which is the decision #4347 says nobody has made. Adding a reporting flag
+# means adding it here, and that is the point rather than a cost.
+REPORTING_OPTIONS = {
+    "-h", "--help",      # argparse's own
+    "--base", "--head", "--since", "--path", "--repo", "--json",
+}
+declared = {opt for action in cd.diff_parser()._actions
+            for opt in action.option_strings}
+unclassified = declared - REPORTING_OPTIONS
+check("diff mode declares only reporting options, no policy gate",
+      not unclassified,
+      f"unclassified option(s) {sorted(unclassified)}: if one sets a threshold "
+      "or gates an exit code, #4347 says that is a policy decision nobody has "
+      "made; if it only reports, add it to REPORTING_OPTIONS")
+# Reachability: an allowlist over an EMPTY set passes vacuously, so a parser
+# that stopped declaring anything -- or a _actions read that silently returned
+# nothing -- would read as compliance.
+check("control: the parser really declared options to classify",
+      len(declared) >= len(REPORTING_OPTIONS), f"got {sorted(declared)}")
+# And the exit code stays out of the measurement's reach in the other direction:
+# run_diff returns 0 or 3, never a verdict about the number it printed.
+check("diff mode's exit codes are report/unmeasurable only",
+      set(re.findall(r"^\s+return (\d)\b", inspect.getsource(cd.run_diff),
+                     re.M)) <= {"0", "3"},
+      "run_diff grew an exit code that is not 0 (reported) or 3 (unmeasurable)")
 
 print()
 if FAILURES:

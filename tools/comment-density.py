@@ -207,9 +207,16 @@ def _git(repo: str, *args: str) -> subprocess.CompletedProcess:
 def resolve_commit(repo: str, ref: str) -> str:
     """Resolve `ref` to a commit SHA, or raise Unmeasurable.
 
-    `--verify -q` is not optional: without it `git rev-parse` ECHOES an unknown
-    argument back on stdout and exits 128, so a caller comparing strings reports
-    success for a commit git has never heard of (ci-verdicts.md).
+    The `--verify -q` flags and the `returncode` clause are deliberately
+    redundant: measured on git 2.55.0 against an unknown ref, the plain form
+    echoes the argument back on stdout and exits 128, while `--verify -q` exits
+    1 with empty stdout. So each of the two checks below catches an unknown ref
+    on its own, and removing either one alone leaves the suite green.
+
+    Kept anyway, because the failure they guard is the silent one
+    `ci-verdicts.md` documents -- a caller comparing echoed strings reports
+    success for a commit git has never heard of. Belt and braces on a refusal
+    path is cheap; discovering which single clause was load-bearing is not.
     """
     p = _git(repo, "rev-parse", "--verify", "-q", f"{ref}^{{commit}}")
     sha = p.stdout.strip()
@@ -379,24 +386,36 @@ def run_diff(args: argparse.Namespace) -> int:
     return 0
 
 
+def diff_parser() -> argparse.ArgumentParser:
+    """Build the `diff` parser.
+
+    A function rather than inline in `main` so a test can enumerate the options
+    it declares. #4347 asks this mode to report without judging, and the only
+    check that can hold that is one reading the parser: a scan of the source for
+    particular flag spellings passes for every name outside the list it happens
+    to carry (`tools/test_comment_density_diff.py`).
+    """
+    ap = argparse.ArgumentParser(
+        prog="comment-density.py diff",
+        description="Comment/code split of the lines a branch ADDS, "
+                    "three-dot against the merge base.")
+    ap.add_argument("--base", default=DEFAULT_BASE,
+                    help=f"branch point to measure from (default {DEFAULT_BASE}); "
+                         "its merge base with --head is what is used")
+    ap.add_argument("--head", default="HEAD", help="head to measure (default HEAD)")
+    ap.add_argument("--since", metavar="REF",
+                    help="report the DELTA from this earlier head to --head, "
+                         "both measured from the same merge base")
+    ap.add_argument("--path", action="append", metavar="P",
+                    help=f"path scope, repeatable (default {' '.join(DEFAULT_PATHS)})")
+    ap.add_argument("--repo", default=".", help="repository to read (default .)")
+    ap.add_argument("--json", action="store_true", help="machine-readable output")
+    return ap
+
+
 def main(argv: list[str]) -> int:
     if argv and argv[0] == "diff":
-        ap = argparse.ArgumentParser(
-            prog="comment-density.py diff",
-            description="Comment/code split of the lines a branch ADDS, "
-                        "three-dot against the merge base.")
-        ap.add_argument("--base", default=DEFAULT_BASE,
-                        help=f"branch point to measure from (default {DEFAULT_BASE}); "
-                             "its merge base with --head is what is used")
-        ap.add_argument("--head", default="HEAD", help="head to measure (default HEAD)")
-        ap.add_argument("--since", metavar="REF",
-                        help="report the DELTA from this earlier head to --head, "
-                             "both measured from the same merge base")
-        ap.add_argument("--path", action="append", metavar="P",
-                        help=f"path scope, repeatable (default {' '.join(DEFAULT_PATHS)})")
-        ap.add_argument("--repo", default=".", help="repository to read (default .)")
-        ap.add_argument("--json", action="store_true", help="machine-readable output")
-        return run_diff(ap.parse_args(argv[1:]))
+        return run_diff(diff_parser().parse_args(argv[1:]))
 
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
