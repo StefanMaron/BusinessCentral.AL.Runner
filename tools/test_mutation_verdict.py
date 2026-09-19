@@ -214,8 +214,8 @@ _red_body = fixture("genuine-red-guard-mutation.txt")
 _stale = mv.classify(_log(_red_body), _set_times(_now - 60, _now))
 check("a RED from a binary older than the last restore is UNMEASURED, not RED",
       _stale.verdict == mv.UNMEASURED, f"got {mv.NAMES[_stale.verdict]}: {_stale.reason}")
-check("  ...and the reason names the stale binary and the rebuild",
-      _dll in _stale.reason and "Rebuild" in _stale.reason, _stale.reason)
+check("  ...and the reason names the output directory and the rebuild",
+      os.path.dirname(_dll) in _stale.reason and "Rebuild" in _stale.reason, _stale.reason)
 
 # THE CONTROL. Same log, same stamp, binary built AFTER the restore: a real verdict must
 # survive, or the check has only been proved able to refuse, never to discriminate.
@@ -251,6 +251,31 @@ check("an unreadable stamp is NOT read as absent", _unreadable[0] == float("inf"
 _u = mv.classify(_log(_red_body), _unreadable)
 check("...and it refuses the verdict rather than reporting the RED",
       _u.verdict == mv.UNMEASURED, f"got {mv.NAMES[_u.verdict]}: {_u.reason}")
+os.remove(_stamp)
+
+# The false-refusal mode, and the one that cost a round trip to find: the mutated code usually
+# lives in a DEPENDENCY, so rebuilding it leaves the named test assembly untouched -- no test
+# source changed. Measured end-to-end here: after a restore at 02:03:20, `dotnet build` wrote
+# al-runner.dll at 02:03:52 while AlRunner.Tests.dll stayed at 01:54:28. Keying on the named
+# assembly alone refused that correctly-rebuilt run, which is this check's own version of the
+# defect it exists to catch.
+_dep = os.path.join(_d, "al-runner.dll")
+with open(_dep, "w", encoding="utf-8") as _fh:
+    _fh.write("dependency")
+os.utime(_dll, (_now - 600, _now - 600))          # test assembly: untouched by the rebuild
+with open(_stamp, "w", encoding="utf-8") as _fh:
+    _fh.write(f"{_now - 60:.6f}\n/repo/AlRunner/Patches/Whatever.cs\n")
+os.utime(_dep, (_now, _now))                      # the dependency IS newer than the restore
+_dep_rebuilt = mv.classify(_log(_red_body), mv.read_restore_stamp(_d))
+check("a rebuilt DEPENDENCY clears the refusal, though the named test assembly is older",
+      _dep_rebuilt.verdict == mv.RED, f"got {mv.NAMES[_dep_rebuilt.verdict]}: {_dep_rebuilt.reason}")
+
+# ...and the discrimination survives it: with NOTHING in the directory rebuilt, it still refuses.
+os.utime(_dep, (_now - 600, _now - 600))
+_none_rebuilt = mv.classify(_log(_red_body), mv.read_restore_stamp(_d))
+check("...and with no assembly in the directory newer than the restore it still refuses",
+      _none_rebuilt.verdict == mv.UNMEASURED, f"got {mv.NAMES[_none_rebuilt.verdict]}: {_none_rebuilt.reason}")
+os.remove(_dep)
 os.remove(_stamp)
 
 # A log that does not name its assembly cannot be judged stale -- absence of evidence. The

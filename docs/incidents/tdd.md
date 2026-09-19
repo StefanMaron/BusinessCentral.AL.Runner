@@ -329,3 +329,66 @@ Two incidental traps, both of which cost real time:
   it by hand with `mv` then dropped the file's exec bit, which was committed as `100644` and made
   the documented `tools/apply-mutation.py <file>` invocation fail with `Permission denied` for
   everyone — while every test kept passing, because they import the module.
+
+
+## #4343 — a restored mutation is still in the binary, and the red it produces looks like a finding
+
+Filed from a reviewer's account of nearly filing a false finding on PR #4335. The reviewer
+restored its mutation with `tools/apply-mutation.py --restore`, re-ran with `--no-build`, and got
+`Failed: 1` on `ACodeunitsSubscriber_DoesNotSilenceThePageWithTheSameId` — across five runs, and
+again with the class run alone. That is the exact shape of the cross-collection leak it had been
+asked to look for. Rebuilding gave `2/2` and `56/56`.
+
+### Re-derived before building on it
+
+The issue said plainly that the five-run figure was the reviewer's measurement, not its author's.
+Reproduced independently on this branch, mutating `RegisterPageSubscriberWitness` in
+`AlRunner/Patches/RecordPatches.CodeunitSubscriberWitness.cs` to pass `CodeunitTypePrefix` — the
+cross-kind leak the arm exists to catch:
+
+| step | result |
+|---|---|
+| baseline, built | `Failed: 0, Passed: 2` |
+| mutated, built | `Failed: 2, Passed: 0` — correctly caught |
+| **restored in source, `--no-build` ×5** | **`Failed: 2` five times**, `mutation-verdict.py` reporting a confident RED each time |
+| rebuilt | `Failed: 0, Passed: 2` |
+
+### Why this one is worse than the traps already in the rule
+
+Every other mutation trap in `tdd.md` fails toward a **green** that reads as coverage, and the
+reader is told to distrust a surprising green. This fails toward a **red**, which is what a
+reviewer is hunting, and it has all three properties that normally *end* an investigation:
+deterministic, narrow, and on the right arm for the hypothesis. Running the class alone — the
+usual cross-check — reproduces it, because the binary does not change.
+
+And two correct practices point in opposite directions. `--no-build` is recommended elsewhere in
+this repository (build → bootstrap → `dotnet test --no-build --settings engine.runsettings`,
+because a build restores a pristine `Ncl.dll`). An agent following both lands on a stale binary.
+The remedy is therefore not "stop using `--no-build`".
+
+### Why the stamp, and not the two cheaper options
+
+The issue named three. Touching the file already happens — which is *why* a plain `dotnet test`
+recovers and only `--no-build` bites — and a printed warning on restore is read or not read. Only
+recording the restore and refusing the verdict cannot be skipped by a reader in a hurry, and it
+fits `mutation-verdict.py`'s existing `3 unmeasured` rather than inventing a fourth code.
+
+### The false-refusal mode, found by its own control
+
+The first implementation compared the restore stamp against the assembly named on the log's
+`Test run for …` line. Its end-to-end GREEN control failed: after a restore at 02:03:20,
+`dotnet build` wrote `al-runner.dll` at 02:03:52 while `AlRunner.Tests.dll` stayed at 01:54:28,
+because no test source had changed. The mutated code almost always lives in a **dependency**, so
+keying on the named assembly refuses a run that was correctly rebuilt — this check's own version
+of the defect it exists to catch. Fixed by reading the newest `.dll` in the output directory.
+
+Worth recording that the control is what caught it. The refusal direction passed throughout; only
+the "a real verdict must still get through" arm could have found this, which is the argument for
+pairing every refusal mutation with a control.
+
+### A leftover the `.gitignore` entry exists for
+
+Mutating `STAMP_NAME` to `.mutation-restore-stamp-RENAMED` left an untracked file behind at the
+repository root, because the ignore rule carries the literal. Same cross-file contract as `SUFFIX`,
+and the reason `test_mutation_verdict.py` pins that the two tools name the same file: that mutation
+is invisible to `test_apply_mutation.py` on its own, which reported GREEN.

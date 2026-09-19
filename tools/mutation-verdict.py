@@ -143,15 +143,33 @@ def stale_binary(text: str, stamp_when: float | None, stamp_detail: str) -> str:
     if not m:
         return ""
     dll = m.group(1)
+    out_dir = os.path.dirname(dll)
+    if not os.path.isdir(out_dir):
+        return ""
+
+    # Read the NEWEST assembly in the output directory, not the one the log names. The mutated
+    # code usually lives in a DEPENDENCY -- `al-runner.dll` here -- and rebuilding it leaves
+    # AlRunner.Tests.dll untouched, because no test source changed. Keying on the named
+    # assembly alone refuses a run that was correctly rebuilt, which is this check's own
+    # false-refusal mode and the mirror of the defect it exists to catch
+    # (guards-need-a-third-state.md: a genuinely absent thing must stay a pass).
+    #
+    # Measured while building this: after a restore at 02:03:20, `dotnet build` produced
+    # al-runner.dll at 02:03:52 while AlRunner.Tests.dll stayed at 01:54:28 -- a correct
+    # rebuild that the named-assembly form called stale.
+    newest = 0.0
     try:
-        built = os.path.getmtime(dll)
+        for name in os.listdir(out_dir):
+            if name.endswith(".dll"):
+                newest = max(newest, os.path.getmtime(os.path.join(out_dir, name)))
     except OSError:
         return ""
-    if built >= stamp_when:
+    if newest == 0.0 or newest >= stamp_when:
         return ""
-    return (f"the test binary {dll} was built {stamp_when - built:.0f}s BEFORE the last "
-            f"`apply-mutation.py --restore` ({stamp_detail}), so it still carries the mutation "
-            f"the source no longer has. Rebuild and re-run — --no-build measured the mutant")
+    return (f"every assembly in {out_dir} was built at least {stamp_when - newest:.0f}s BEFORE "
+            f"the last `apply-mutation.py --restore` ({stamp_detail}), so the binary still "
+            f"carries the mutation the source no longer has. Rebuild and re-run — --no-build "
+            f"measured the mutant")
 
 
 @dataclass
