@@ -106,3 +106,67 @@ Two gaps, both invisible to reasoning and both found by executing the mutation:
 One mutation measured nothing and looked like a finding: an edit referencing an undefined
 `STRAY_ANY_RE` under `set -u` failed on the unbound variable, so the suite stayed green and the
 row read as a gap in the tests. Re-run with a real regex, it was caught (`Failed: 1`).
+## The discriminator is a preposition, not the tense (#4294)
+
+Filed as a tense problem: `reject-bad-closing-references` fired on two loops' PRs within four
+hours, both writing a true past-tense statement that one issue closed another, in the queue-scan
+paragraph two rules require. The remedy proposed was vocabulary — prefer *settled*, *subsumed*,
+*superseded*.
+
+**The tense framing does not reproduce.** The issue's own first row, `#3153 closed via #4153`,
+exits **0** through both the shell gate and `tools/pr-body.py`'s port. Re-measuring the class
+showed what actually decides it: `SEP` matches at most one punctuation mark and cannot span a
+word, so the keyword reaches the number only when nothing but punctuation is in between.
+
+| clause | verdict | why |
+|---|---|---|
+| `closed #4249` | **fires** | keyword adjacent to the number |
+| `closed: #4249` | **fires** | colon is in `SEP` (#3094, which closed #2942 for real) |
+| `#111 - closed, #222 - open` | **fires on #222** | comma is in `SEP`, and it reaches *forward* |
+| `closed via #4153` | clean | `via` is a word; `SEP` cannot span it |
+| `closed by #4153` | clean | same |
+| `fixed in #4153` | clean | same |
+| `#456 (closed) and #789 (open)` | clean | `) and (` separates keyword from number |
+
+So the author does not have to give up the verb — `closed via #N` says exactly what they meant
+and is safe. That is a cheaper instruction than a vocabulary list, and it is the one the gate's
+message now prints.
+
+### The sub-shape nobody had named: the comma reaches forward
+
+`#111 - closed, #222 - open` closes **#222**. The author is tabulating states and the word
+`closed` belongs to #111; the separator hands it to the next number on the line. Every
+instrument reports this correctly and none of them says the number is not the one you meant —
+the old message named `issue number 4255` with no hint that the sentence was about #4249.
+
+Note which separator this is. The colon and the semicolon were both pinned in
+`test_check_closing_reference.sh` after #3094; the **comma**, in the same `[,;:]` class, had no
+case at all. A table row is the shape that produces it.
+
+### A second hole, in the other direction, found by the same sweep
+
+A line whose **entire** content is `<keyword> #N` matches `CANONICAL_LINE_RE` wherever it sits —
+including inside a fenced code block — so it is read as a **declaration**:
+
+```
+Closes #123
+
+(a fence containing a bare clause on its own line)
+```
+
+prints `Closing reference OK: declared target(s): 123 789` and exits **0**. The issue closes on
+merge and no error is produced for anyone to read. `tools/pr-body.py`'s port behaves identically,
+so this is not a parity break.
+
+It is narrow: a bullet, a blockquote marker, a table pipe or any other text on the line breaks
+the canonical match and the stray check sees it again. Both edges are now pinned, and the hole
+itself is pinned at what the script does **today** rather than fixed here — a fence-aware parser
+has its own false-positive surface and is a different question from #4294's.
+
+### Documenting it reproduces it
+
+The agent on #4293 recorded hitting the gate three times while writing about this shape, once
+inside a code span. Markdown is not protection: GitHub's parser does not see it. Anything
+quoting the defect has to write `#<N>` or put a preposition in, which is why the test arms above
+use `#789` inside deliberately safe framings and the rule text writes `#111`/`#222` rather than
+real numbers.

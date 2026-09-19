@@ -546,6 +546,149 @@ assert_exit_branch "a digit after the number is part of the number, not a suffix
 assert_exit_branch "letters glued to the number are not an issue branch, so the check stands down" 0 \
   "agent/fbk-2/issue-3678abc" "fix: something" "Closes #123"
 
+# --- #4294: the historical mention in a queue scan -----------------------------
+#
+# This block also PINS the pre-publish recipe in .claude/rules/branch-and-pr.md
+# (marked there with Recipe-pinned-by). That recipe tells an author to run this
+# very script over a body before publishing it; the arms below are what make the
+# advice worth following, because they are what says the script still answers
+# correctly on the shapes an author actually writes.
+#
+# Two loops tripped this within four hours, both writing a TRUE statement about
+# an issue that was already shut, in the queue-scan paragraph
+# batch-sibling-issues-by-file.md point 5 and search-for-the-same-defect-first.md
+# both require. The author is writing history, not a directive, so there is
+# nothing to notice -- unlike the negation cases (#2127, #2486), where the author
+# is at least thinking about closing behaviour while writing.
+#
+# What actually discriminates is NOT the tense. It is whether a WORD separates
+# the keyword from the reference, because SEP matches at most one punctuation
+# mark and cannot span a word. Measured on this script, both directions:
+#
+#   fires:  "closed #4249"   "closed: #4249"   "closed, #4255"
+#   clean:  "closed via #4249"   "closed by #4249"   "fixed in #4249"
+#
+# So the safe rewrite keeps the author's verb and adds a preposition. That is
+# worth pinning from BOTH sides: the fires-side arms stop a future narrowing of
+# SEP from silently letting a real close through, and the clean-side arms stop a
+# future widening from eating the rewrite this script's own error message now
+# recommends.
+
+# The fires side. Each is a true past-tense sentence about an already-closed
+# issue that would nonetheless close it again on merge.
+assert_exit "#4294 a past-tense 'closed #N' in a queue scan fires" 1 "fix: something" \
+  "Closes #123
+
+Queue scan: #456 closed #789 with two items left homeless."
+
+assert_exit "#4294 a past-tense colon form 'closed: #N' fires" 1 "fix: something" \
+  "Closes #123
+
+Already closed: #789."
+
+# The sub-shape nobody had named: in a state table the comma hands the keyword
+# to the NEXT number on the line, so the issue that closes is not the one the
+# word is about. Here the author is describing #456; the gate reports #789, and
+# GitHub would close #789.
+assert_exit "#4294 a comma in a state table fires on the FOLLOWING number" 1 "fix: something" \
+  "Closes #123
+
+| #456 - closed, #789 - open |"
+
+# The comma separator is in SEP alongside the colon and semicolon, but only
+# those two were pinned. Comma is the one a table row produces.
+assert_exit "#4294 a bare stray comma form 'fixes, #N' fires" 1 "fix: something" \
+  "Closes #123
+
+Superseded, fixes, #456 stays open."
+
+# Backticks are not protection: GitHub's parser does not see markdown. Recorded
+# on #4294 by the agent that hit it while DOCUMENTING this defect -- quoting the
+# offending text in a code span reproduced it.
+assert_exit "#4294 a code span around the clause does not protect it" 1 "fix: something" \
+  "Closes #123
+
+The offending shape is \`closed #789\` in a queue scan."
+
+# A fenced block is not protection either -- and it fails in the OTHER
+# direction, which is worse. A line whose ENTIRE content is "<keyword> #N"
+# matches CANONICAL_LINE_RE wherever it sits, fence included, so it is read as a
+# DECLARATION: the gate prints "declared target(s): 123 789", exits 0, and #789
+# closes on merge with no error for anyone to read. Measured here and identical
+# in tools/pr-body.py's port, so this is not a parity break. Filed separately --
+# the issue is named in the PR body that added this block -- because a
+# fence-aware parser has its own false-positive surface and is not #4294's
+# subject. This case pins what the script does TODAY, so the follow-up has a
+# starting point and any change to it is deliberate rather than accidental.
+assert_exit "#4294 a bare clause alone on a fenced line is read as a DECLARATION (known hole)" 0 \
+  "fix: something" \
+  "Closes #123
+
+\`\`\`
+closed #789
+\`\`\`"
+
+# Anything else on the line breaks the canonical match, and the stray check sees
+# it again -- which is why the code-span case above fires and the bare one does
+# not. These two arms bracket the hole, so a future fix that moves its edge is
+# visible here rather than silent.
+assert_exit "#4294 a fenced clause with other text on the line fires normally" 1 \
+  "fix: something" \
+  "Closes #123
+
+\`\`\`
+  # closed #789
+\`\`\`"
+
+# The clean side: the rewrite the error message recommends must keep passing.
+# Without these, narrowing SEP is the only failure this block can detect, and a
+# widening that ate the recommended rewrite would ship green.
+assert_exit "#4294 the recommended rewrite 'closed via #N' passes" 0 "fix: something" \
+  "Closes #123
+
+Queue scan: #456 closed via #789."
+
+assert_exit "#4294 'was closed by #N' passes" 0 "fix: something" \
+  "Closes #123
+
+#456 was closed by #789."
+
+assert_exit "#4294 'fixed in #N' passes" 0 "fix: something" \
+  "Closes #123
+
+That was fixed in #789."
+
+assert_exit "#4294 'settled by #N' carries no keyword at all and passes" 0 "fix: something" \
+  "Closes #123
+
+#456 was settled by #789."
+
+# A parenthesised state word with no keyword-adjacent number is prose, not a
+# reference -- the separator cannot span the ") and (" between them. This is the
+# form an author can reach for when a table row is what they want.
+assert_exit "#4294 a state word in parentheses after the number passes" 0 "fix: something" \
+  "Closes #123
+
+The queue scan found #456 (closed) and #789 (open)."
+
+# The message the author reads must name the rewrite, not only 'see #N'. An
+# author whose sentence is about what HAPPENED to an issue cannot use 'see #N'
+# without losing the meaning, which is why both loops reworded and one of them
+# reworded into the defect again.
+run_and_capture_stderr() {
+  PR_TITLE="fix: something" PR_BODY="$1" PR_HEAD_REF="" "$SCRIPT" 2>&1 >/dev/null
+}
+msg="$(run_and_capture_stderr "Closes #123
+
+Queue scan: #456 closed #789 with two items homeless.")"
+if printf '%s' "$msg" | command grep -q "closed via #789"; then
+  echo "ok   - #4294 the error message names the preposition rewrite for the reported number"
+  pass=$((pass + 1))
+else
+  echo "FAIL - #4294 the error message does not name the preposition rewrite ('closed via #789')"
+  fail=$((fail + 1))
+fi
+
 echo ""
 echo "$pass passed, $fail failed"
 if [ "$fail" -ne 0 ]; then

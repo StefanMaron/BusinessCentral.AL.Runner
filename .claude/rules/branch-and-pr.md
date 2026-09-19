@@ -37,5 +37,16 @@ Three traps that parser sets:
 - **A trailing `(#N)` already in the PR title** survives into the merge commit and the squash appends a second one; `generate_changelog.py` strips both (#2109). Nothing guards this — watch for it when GitHub is about to append its own.
 - **A CI-skip spelling anywhere in a commit message or PR body** (`[skip ci]`, `[ci skip]`, `[no ci]`, `[skip actions]`, `[actions skip]`, `***NO_CI***`) skips every workflow on the merge commit, including the one required check on `main`; `reject-ci-skip-directives` blocks it before merge (#2116).
 - **Both guards read the commit messages too**, not only the title and body, so a body that is clean does not clear you (#2491).
+- **A true PAST-TENSE mention fires the same way, and that is the shape agents actually write.** The examples above are all *"this does NOT close #N"*, where the author is at least thinking about closing behaviour. A queue scan is different: the sentence is history, the issue is already shut, and there is nothing to notice — two loops tripped it in four hours (#4294), in exactly the paragraph `batch-sibling-issues-by-file.md` point 5 and `search-for-the-same-defect-first.md` require. **What discriminates is not the tense but whether a WORD separates the keyword from the number**, because the separator matches at most one punctuation mark: `closed #N`, `closed: #N` and `closed, #N` all fire, while `closed via #N`, `closed by #N` and `fixed in #N` are clean. So keep your verb and add a preposition. **Trap: in a table row or a list the comma hands the keyword to the NEXT number**, so `#111 - closed, #222 - open` closes **#222** — the one the sentence is not about. **Second trap: markdown is not protection** — GitHub's parser does not see it, so a code span or a fence reproduces the defect, which is how the agent documenting it hit it twice. Pinned in `test_check_closing_reference.sh`; the gate's message now names the rewrite.
+- **Run the gate over your body before you publish it** — the only thing that catches this before CI does. `tools/pr-body.py` runs a port of the same check as part of an edit, and the gate itself reads three environment variables and nothing else:
+
+<!-- Recipe-pinned-by: .github/scripts/test_check_closing_reference.sh -->
+```bash
+PR_TITLE="$(git log -1 --format=%s)" PR_BODY="$(cat body.md)" \
+  PR_HEAD_REF="$(git rev-parse --abbrev-ref HEAD)" \
+  bash .github/scripts/check_closing_reference.sh
+```
+
+`PR_HEAD_REF` is not optional when your branch is `agent/<id>/issue-<N>`: without it the branch check stands down entirely, so a body missing its `Closes`/`Part of` declaration passes locally and fails on CI. Measured: `Closes #123` on `agent/x/issue-4294` exits 0 with the variable unset and 1 with it set.
 
 History: docs/incidents/branch-and-pr.md
