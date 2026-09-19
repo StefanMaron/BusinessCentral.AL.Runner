@@ -2061,10 +2061,11 @@ internal sealed partial class RunnerPageInstance
     /// this one is NOT parameterless — matching only zero-arity methods is why it read as
     /// "the control declares no OnLookup trigger" for a control that plainly declares one.
     ///
-    /// A control with genuinely no OnLookup gets its lookup from a TableRelation, which would
-    /// open the related table's list page; the runner cannot stand that up, so it refuses by
-    /// name rather than doing nothing — doing nothing let a test invoke a lookup, observe no
-    /// change, and compare two empty strings successfully.
+    /// A control with genuinely no OnLookup gets its lookup from a TableRelation, which opens
+    /// the related table's lookup page — served since #3518 through BC's own lookup-mode
+    /// RunModal (see RunnerPageInstance.RelationLookup.cs). Only the shapes with nothing to
+    /// resolve refuse, and they refuse by name rather than doing nothing — doing nothing let a
+    /// test invoke a lookup, observe no change, and compare two empty strings successfully.
     /// </summary>
     internal NavText? RaiseOnLookup(int controlId, NavText current,
         NavRecord? sourceRecord = null, int sourceFieldNo = 0)
@@ -2119,11 +2120,13 @@ internal sealed partial class RunnerPageInstance
     /// <c>InvokeFieldTriggerHandlerAsync</c> also dispatches to the right tableextension instance
     /// when the trigger came from one. Invoking the handler directly skips all three.</para>
     ///
-    /// <para>A field with NEITHER trigger keeps refusing: its lookup comes from a TableRelation,
-    /// which on real BC opens the related table's list page, and the runner cannot stand that up.
-    /// Doing nothing there is what let a test invoke a lookup, observe no change, and compare two
-    /// empty strings successfully. A control not bound to a source-table field at all — a page
-    /// global — has no table field to fall back to and lands in the same refusal.</para>
+    /// <para>A field with NEITHER trigger gets its lookup from its TableRelation, and since
+    /// #3518 that is served rather than refused — see
+    /// <see cref="RaiseTableRelationLookup"/>, which opens the related table's lookup page
+    /// through BC's own lookup-mode RunModal. Two shapes still refuse, from there, each naming
+    /// its own cause: a field with no relation, and a relation whose target table declares no
+    /// lookup page. A control not bound to a source-table field at all — a page global — has
+    /// neither, and refuses here.</para>
     /// </summary>
     private NavText? RaiseSourceFieldOnLookup(int controlId, NavRecord? sourceRecord, int sourceFieldNo)
     {
@@ -2134,9 +2137,8 @@ internal sealed partial class RunnerPageInstance
             throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 $"TestPage lookup on control {controlId} (page {_pageId})",
                 "testpage-lookup — the control declares no OnLookup trigger and is not bound to a "
-                + "source-table field, so there is no table-field OnLookup to fall back to and its "
-                + "lookup would come from a TableRelation, which the runner cannot stand up. "
-                + "See docs/scope.md");
+                + "source-table field, so there is neither a table-field OnLookup to fall back to "
+                + "nor a TableRelation to resolve a lookup page from. See docs/scope.md");
 
         var has = AlRunner.Patches.RecordPatches.TryHasFieldLookupTrigger(sourceRecord, sourceFieldNo);
 
@@ -2160,12 +2162,13 @@ internal sealed partial class RunnerPageInstance
                 + "an OnLookup trigger on this BC build, so the runner cannot tell a field with a "
                 + "table trigger from one whose lookup comes from a TableRelation");
 
+        // The THIRD route, and no longer a refusal (#3518). Neither trigger exists, so the
+        // lookup comes from the field's TableRelation — which BC's own static
+        // NavForm.RunModalAsync serves end to end. See RunnerPageInstance.RelationLookup.cs;
+        // the two shapes with nothing to resolve still refuse, from there, each naming its own
+        // cause rather than sharing this site's old text.
         if (has != true)
-            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                $"TestPage lookup on control {controlId} (page {_pageId})",
-                "testpage-lookup — neither the control nor its source table field declares an "
-                + "OnLookup trigger, so the lookup comes from a TableRelation and would open the "
-                + "related table's list page, which the runner cannot stand up. See docs/scope.md");
+            return RaiseTableRelationLookup(controlId, sourceRecord, sourceFieldNo);
 
         sourceRecord.LookupAsync(sourceFieldNo).GetAwaiter().GetResult();
         return null;

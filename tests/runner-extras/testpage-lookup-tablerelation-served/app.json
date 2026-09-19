@@ -1,0 +1,18 @@
+{
+  "id": "6f3f542a-6fef-4604-a708-79115c56d335",
+  "name": "Runner Extras - TestPage Lookup TableRelation Served",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #3518: a TestPage lookup whose only source is a TableRelation opens the related table's LookupPageId page through BC's own lookup-mode RunModal, so a declared [ModalPageHandler] serves it; a field with no relation at all does nothing (BC's measured behaviour), while a relation to a table with no lookup page still refuses by name.",
+  "description": "Runner-specific claim about the runner's DISPATCH, not about AL. That real BC opens the related table's lookup page and writes the selection back is proven upstream in the al-language corpus (TRL Tests, codeunit 60569) against a real service tier. What is asserted here is which of the runner's paths a given shape takes. Of the two shapes with nothing to open, only one is a runner boundary: corpus run 35445556865 measured on all eight cloud legs that BC raises nothing for a field with no TableRelation at all, so the runner must not either; a relation whose target table declares no lookup page is still refused by name, because no corpus test has measured what BC's client does there.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65790,
+      "to": 65799
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}
