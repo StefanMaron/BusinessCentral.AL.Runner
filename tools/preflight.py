@@ -1069,6 +1069,32 @@ def collect_worktrees(repo: str, prs: dict, measure: bool = True) -> list[tuple]
 
 WORKTREE_DIR = re.compile(r'[\\/]\.claude[\\/]worktrees[\\/]')
 
+# The worktree directory an agent is standing in, e.g. `stma-auto-1-issue-4340` out of
+# `.claude/worktrees/stma-auto-1-issue-4340/AlRunner`. Accepts either separator, because
+# this runs on Windows boxes too, and takes the segment immediately after `worktrees`
+# rather than the last one -- an agent's cwd is frequently a subdirectory of its worktree.
+_WORKTREE_SEGMENT = re.compile(
+    r'[\\/]\.claude[\\/]worktrees[\\/](?P<name>[^\\/]+)')
+
+# `<identity>-issue-<N>`, the layout `.claude/agents/impl-agent.md` mandates. The identity
+# itself may contain hyphens (`stma-auto-1`), so the `-issue-<N>` suffix is what bounds it.
+_WORKTREE_NAME = re.compile(r'^(?P<identity>.+)-issue-(?P<issue>\d+)$')
+
+
+def worktree_identity(cwd: str) -> Optional[str]:
+    """The agent identity a worktree path names, or None if it names none.
+
+    None is deliberately NOT "nobody owns it": a directory whose name this cannot parse
+    is unattributed, which is the third state rather than a pass
+    (`guards-need-a-third-state.md`). The caller must not read it as ownership.
+    """
+    m = _WORKTREE_SEGMENT.search(cwd)
+    if not m:
+        return None
+    n = _WORKTREE_NAME.match(m.group("name"))
+    return n.group("identity") if n else None
+
+
 
 def agent_label(pr: Optional[dict]) -> Optional[str]:
     for label in (pr or {}).get("labels") or []:
@@ -1098,6 +1124,43 @@ def judge_branch_ownership(*, cwd: str, branch: Optional[str], pr: Optional[dict
     if not WORKTREE_DIR.search(cwd.replace("\\", "/")) and not WORKTREE_DIR.search(cwd):
         return CheckResult(name=name, status="PASS", command=cmd,
                            summary="not standing in an agent worktree; nothing to compare")
+
+    # The DIRECTORY NAME first, before any pull-request lookup (#4340). An agent inherits
+    # its coordinator's shell cwd -- three times in one session that was another identity's
+    # live worktree, once via a RESUMED agent reading the value back out of its own
+    # transcript, which no coordinator-side reset can prevent. The name is conclusive on
+    # its own and costs no network call, so a merged, closed or never-opened pull request
+    # cannot launder a foreign directory into a PASS, and an unreadable `gh` cannot
+    # downgrade the refusal.
+    here = worktree_identity(cwd)
+    if here is not None and agent_id and here != agent_id:
+        return CheckResult(
+            name=name, status="FAIL", command=cmd,
+            summary=f"standing in `.claude/worktrees/{here}-issue-...`, which belongs to "
+                    f"`agent: {here}` and not to `agent: {agent_id}`",
+            remedy=f"Stop: writing here lands in another loop's worktree, and a commit made "
+                   f"from it goes onto that loop's branch whatever your own branch is "
+                   f"(#3014, #4340). This is usually an INHERITED cwd rather than a "
+                   f"deliberate cd. Take your own worktree at "
+                   f".claude/worktrees/{agent_id}-issue-<N> on branch "
+                   f"agent/{agent_id}/issue-<N>, and use absolute paths into it.")
+    if here is None:
+        return CheckResult(
+            name=name, status="WARN", command=cmd,
+            summary=f"standing in an agent worktree whose directory name does not carry an "
+                    f"`<identity>-issue-<N>`, so which loop it belongs to cannot be "
+                    f"established from the path",
+            remedy="Rename the worktree to .claude/worktrees/<your-id>-issue-<N>, or confirm "
+                   "by hand whose it is before writing in it; an unparseable name is not "
+                   "evidence that it is yours.")
+    if not agent_id:
+        return CheckResult(
+            name=name, status="WARN", command=cmd,
+            summary=f"standing in `.claude/worktrees/{here}-issue-...` but this run declared "
+                    f"no identity to compare it against",
+            remedy="Re-run with --agent-id <your-identity> (or set AL_RUNNER_AGENT_ID); "
+                   "without one, a foreign worktree and your own look identical.")
+
     if not branch:
         return CheckResult(
             name=name, status="WARN", command=cmd,
