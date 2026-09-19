@@ -2887,6 +2887,202 @@ check("toolchain: the check runs before the artifacts check that depends on it",
 # -------------------------------------------------- END toolchain (#4200)
 
 
+
+# ------------------------------------------- the reap verdict (#4385)
+print()
+print("preflight.py -- a verdict per kept worktree (#4385)")
+
+# `--reap` keeps a worktree whose PR merged but which holds unpushed commits,
+# and says only WHICH CONDITION held it. Nobody can tell from that whether the
+# work is duplicated in the squash or lost, so 18 such worktrees accumulated.
+#
+# Every obvious instrument false-negatives here, measured on the live set before
+# this was written (#4385, and the coordinator's comment on it):
+#
+#   git diff origin/main...<tip>   never empty -- the branches are weeks behind,
+#                                  so a three-dot diff shows the whole fork delta
+#   git cherry origin/main <br>    "+" for every branch: it compares patch-ids,
+#                                  and a squash collapses N commits into one new
+#                                  patch, so the ids never match
+#   git diff origin/main..<tip>    DIFFERS for all 50 files on one branch, because
+#     -- <file>                    main moved since the merge
+#
+# What discriminates is narrower than any of those, and it is what
+# classify_unpushed_work() below implements: compare the TIP's blob for each file
+# the unpushed commits touched against the MERGE COMMIT's blob -- the snapshot of
+# main as the squash landed it, not main as it is now.
+
+_v_tmp = tempfile.mkdtemp(prefix="preflight-verdict-")
+try:
+    _venv = dict(os.environ,
+                 GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@e",
+                 GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@e",
+                 GIT_CONFIG_GLOBAL=os.path.join(_v_tmp, "nogitconfig"),
+                 GIT_CONFIG_SYSTEM=os.path.join(_v_tmp, "nogitconfig"))
+    _vrepo = os.path.join(_v_tmp, "r")
+    os.makedirs(_vrepo)
+
+    def _vg(*args, cwd=_vrepo):
+        return subprocess.run(["git", *args], cwd=cwd, check=True,
+                              capture_output=True, text=True, env=_venv)
+
+    def _vwrite(rel, text, cwd=_vrepo):
+        path = os.path.join(cwd, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    _vg("init", "-q", "-b", "main")
+    _vwrite("base.txt", "base\n")
+    _vg("add", "base.txt")
+    _vg("commit", "-qm", "base")
+
+    # --- branch A: the benign shape. The agent committed locally after the
+    # squash landed, and every file its unpushed commits touched is byte-identical
+    # to the merge commit. This is the GREEN CONTROL: a verdict function that
+    # always answered "cannot tell" would pass every refusal arm below, and only
+    # this arm catches it.
+    # TWO commits, not one, and that is load-bearing for the `git cherry` arm
+    # below: a ONE-commit branch squashes to the same patch it already had, so
+    # the patch-ids still match and `git cherry` answers "-" (upstream) --
+    # correctly. It is the collapse of N>1 patches into ONE that destroys the
+    # id. Measured while writing this, in a throwaway repo: a one-commit branch
+    # gives "-", a two-commit branch gives "+" for both. So the instrument is
+    # not simply broken; it is blind exactly where these worktrees live, and a
+    # fixture with one commit would have "refuted" it into agreeing.
+    _vg("checkout", "-qb", "carried")
+    _vwrite("feature.txt", "final content\n")
+    _vg("add", "feature.txt")
+    _vg("commit", "-qm", "feat: part one")
+    _vwrite("helper.txt", "helper\n")
+    _vg("add", "helper.txt")
+    _vg("commit", "-qm", "feat: part two")
+    _carried_tip = _vg("rev-parse", "HEAD").stdout.strip()
+    _carried_first = _vg("rev-parse", "HEAD~1").stdout.strip()
+
+    _vg("checkout", "-q", "main")
+    _vg("merge", "--squash", "carried")
+    _vg("commit", "-qm", "feat: the work (#1)")
+    _carried_merge = _vg("rev-parse", "HEAD").stdout.strip()
+
+    # main moves on afterwards, touching an UNRELATED file. This is what makes a
+    # comparison against origin/main rather than the merge commit wrong.
+    _vwrite("later.txt", "someone else\n")
+    _vg("add", "later.txt")
+    _vg("commit", "-qm", "chore: later work on main")
+
+    # --- branch B: content that genuinely never reached main.
+    _vg("checkout", "-qb", "lost", _carried_merge)
+    _vwrite("rescue-me.txt", "never pushed anywhere\n")
+    _vg("add", "rescue-me.txt")
+    _vg("commit", "-qm", "feat: unlanded")
+    _lost_tip = _vg("rev-parse", "HEAD").stdout.strip()
+
+    _vg("checkout", "-q", "main")
+
+    # ---------------------------------------------------------------- CARRIED
+    _v = pf.classify_unpushed_work(_vrepo, tip=_carried_tip,
+                                   unpushed=[_carried_tip, _carried_first],
+                                   reference=_carried_merge)
+    check("verdict: a tip whose touched files all match the merge commit is CARRIED",
+          _v.verdict == "carried", f"{_v.verdict}: {_v.detail}")
+    check("verdict: ...and it names how many files it compared, not just the word",
+          _v.same == 2 and _v.differing == [], f"same={_v.same} differing={_v.differing}")
+
+    # ------------------------------------------------------------------ LOST
+    _v = pf.classify_unpushed_work(_vrepo, tip=_lost_tip,
+                                   unpushed=[_lost_tip],
+                                   reference=_carried_merge)
+    check("verdict: a tip holding a file the merge commit never had is DIFFERS",
+          _v.verdict == "differs", f"{_v.verdict}: {_v.detail}")
+    check("verdict: ...and it names the file, so a human knows where to look",
+          _v.differing == ["rescue-me.txt"], f"differing={_v.differing}")
+
+    # ------------------------------------------ the three-dot diff, refuted here
+    # Asserted against real git rather than argued: this is the instrument the
+    # issue body proposed, and the reason the verdict cannot use it.
+    _three = subprocess.run(["git", "diff", "--name-only", f"main...{_carried_tip}"],
+                            cwd=_vrepo, env=_venv, capture_output=True, text=True)
+    check("verdict: `git diff main...<tip>` is NON-empty for a fully carried branch",
+          _three.stdout.strip() != "",
+          "the trap did not reproduce; the carried arm above proves nothing extra")
+
+    # ------------------------------------------------- git cherry, refuted here
+    _cherry = subprocess.run(["git", "cherry", "main", "carried"],
+                             cwd=_vrepo, env=_venv, capture_output=True, text=True)
+    _marks = [ln.split()[0] for ln in _cherry.stdout.splitlines() if ln.strip()]
+    check("verdict: `git cherry` reports BOTH squash-carried commits as NOT upstream",
+          _marks == ["+", "+"], f"cherry={_cherry.stdout!r}")
+
+    # ------------------------------------------------- reference = origin/main
+    # The same carried tip judged against main's CURRENT head rather than the
+    # merge commit. main moved only in an unrelated file, so this still answers
+    # carried -- which is what makes the next arm the discriminating one.
+    _v = pf.classify_unpushed_work(_vrepo, tip=_carried_tip,
+                                   unpushed=[_carried_tip, _carried_first],
+                                   reference="main")
+    check("verdict: an unrelated later commit on main does not disturb the verdict",
+          _v.verdict == "carried", f"{_v.verdict}: {_v.detail}")
+
+    # ...but when main LATER EDITS one of the touched files, comparing against
+    # main's head answers "differs" for work that demonstrably landed. That is
+    # the whole reason the reference is the merge commit.
+    _vwrite("feature.txt", "final content\nplus a later fix\n")
+    _vg("add", "feature.txt")
+    _vg("commit", "-qm", "fix: later edit to the same file")
+    _v_head = pf.classify_unpushed_work(_vrepo, tip=_carried_tip,
+                                        unpushed=[_carried_tip, _carried_first],
+                                        reference="main")
+    _v_merge = pf.classify_unpushed_work(_vrepo, tip=_carried_tip,
+                                         unpushed=[_carried_tip, _carried_first],
+                                         reference=_carried_merge)
+    check("verdict: against main's HEAD a carried file reads as differing once main edits it",
+          _v_head.verdict == "differs", f"{_v_head.verdict}: {_v_head.detail}")
+    check("verdict: ...while against the MERGE COMMIT the same tip is still carried",
+          _v_merge.verdict == "carried", f"{_v_merge.verdict}: {_v_merge.detail}")
+
+    # ------------------------------------------------------- the third state
+    # guards-need-a-third-state.md: a reference that cannot be read must not be
+    # rendered as either answer. "carried" would invite a delete; "differs" would
+    # cry wolf on every worktree forever.
+    _v = pf.classify_unpushed_work(_vrepo, tip=_carried_tip,
+                                   unpushed=[_carried_tip, _carried_first],
+                                   reference="0" * 40)
+    check("verdict: an unreadable reference is UNKNOWN, neither carried nor differs",
+          _v.verdict == "unknown", f"{_v.verdict}: {_v.detail}")
+    _v = pf.classify_unpushed_work(_vrepo, tip="0" * 40, unpushed=["0" * 40],
+                                   reference=_carried_merge)
+    check("verdict: an unreadable tip is UNKNOWN too",
+          _v.verdict == "unknown", f"{_v.verdict}: {_v.detail}")
+    check("verdict: no unpushed commits at all is UNKNOWN, not a silent carried",
+          pf.classify_unpushed_work(_vrepo, tip=_carried_tip, unpushed=[],
+                                    reference=_carried_merge).verdict == "unknown")
+
+    # --------------------------------------- the verdict never reaps anything
+    # The safety property the issue is explicit about: trading a false keep for a
+    # false delete is strictly worse. A CARRIED verdict is a report to a human.
+    _d = pf.disposition(pf.Worktree(path="/w/c", head=_carried_tip, branch="carried"),
+                        pr={"number": 1, "state": "MERGED", "headRefOid": "x" * 40},
+                        dirty=False, unpushed=1)
+    check("verdict: a CARRIED worktree is still NOT reapable",
+          not _d.reapable, _d.reason)
+finally:
+    shutil.rmtree(_v_tmp, ignore_errors=True)
+
+# --------------------------------------- uncommitted work has its own verdict
+# Nothing could have carried an uncommitted change, so the verdict for those
+# three worktrees is a different question: WHAT is uncommitted, so a human can
+# see at a glance whether it is a stray build artifact or real work.
+check("verdict: uncommitted work is summarised by path, never called carried",
+      pf.summarise_uncommitted(" M AlRunner/Foo.cs\n?? scratch.txt\n")
+      == (2, ["AlRunner/Foo.cs", "scratch.txt"]))
+check("verdict: an empty status is no uncommitted work",
+      pf.summarise_uncommitted("") == (0, []))
+check("verdict: a rename reports its destination, which is the path that exists",
+      pf.summarise_uncommitted("R  old.txt -> new.txt\n") == (1, ["new.txt"]))
+
+# -------------------------------------------------- END reap verdict (#4385)
+
 # -------------------------------------------------- END artifacts probe (#3878)
 
 
