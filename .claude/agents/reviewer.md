@@ -216,10 +216,40 @@ added more comment than code, so a gate at 1:1 would fire on nearly everything a
 within a week. It is there so the trend is visible at the moment someone is creating it.
 
 ```bash
-gh pr diff <N> --repo <owner>/<repo> -- 'AlRunner/*' | awk '
-  /^\+\+\+/ {next} /^\+[[:space:]]*(\/\/|\*|\/\*)/ {c++; next} /^\+[[:space:]]*[^[:space:]]/ {k++}
-  END {printf "+%d comment / +%d code\n", c, k}'
+tools/comment-density.py diff --head <branch>              # what this branch added
+tools/comment-density.py diff --since <round-1-head>       # what THIS REVIEW added
 ```
+
+**Use the tool, not a hand-rolled diff.** The figure is three-dot against a merge base resolved
+to a SHA, and the base is the whole difficulty: `gh pr diff` and `git diff origin/main..HEAD`
+both attribute every commit `main` has gained since the branch point to the branch. Measured on
+#4347's own subject, PR #4336 — truth `+19 comment / +9 code`, two-dot against a `main` twelve
+days ahead: **`+78 comment / +218 code`**, the branch credited with 24x the code it wrote. The
+error grows with the distance, so it is smallest exactly when someone checks it by hand and
+largest on the long-lived branches where the number matters.
+
+The classifier is not what was wrong — the same `awk` one-liner this block used to carry agrees
+with the tool to the line when handed the correct base. Do not read this as "the old recipe
+miscounted comments"; read it as "a ratio is a claim about a base, and the base has to be stated"
+(#4347: *"a number that four reviewers compute four ways is not a trend"*).
+
+### Say what your own asks cost in prose
+
+`--since` exists because the absolute figure blends the author's contribution with the review's.
+On #4336 the author arrived at `+10 comment / +9 code` and the PR left review at `+19 / +9` — a
+review-driven delta of **`+9 comment / +0 code`**, asked for by the reviewer that then reported
+the ratio as rising. Every step there was correct: the comment genuinely over-claimed its scope,
+narrowing it was the right ask, and the narrowing honestly took nine lines.
+
+So when you ask for a comment to be corrected, **say what you expect the correction to cost**,
+and prefer the cheaper shape where one exists. A claim whose *scope* is wrong is usually fixed by
+a pointer rather than a narrowing — `// Scope: measured on the CLI site only; #4344.` is one line
+and sends the reader somewhere versioned, which is the split `loud-failures.md` already asks for.
+Rewriting the claim in place is right when the claim itself is wrong, not when it is merely
+broader than what was measured.
+
+This does not license asking for less justification. `loud-failures.md` governs that: a reviewer
+may ask for one to be shortened, never removed, and may never accept a patch that has none.
 
 ## Reviewing a change to how agents work
 
