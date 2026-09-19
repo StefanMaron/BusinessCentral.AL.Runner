@@ -228,6 +228,13 @@ PENDING_REQUIRED_CONTEXTS: list[str] = [
     # #3677's gate: pr-gate.yml's reject-changelog-edits job. Makes no network
     # call, so it is meant to be promoted, unlike the entry above it.
     "CHANGELOG.md must not be changed in a pull request",
+    # #4293's gate: pr-gate.yml's reject-deferred-scope job. Makes no network
+    # call, so it is meant to be promoted. Listed here rather than promoted in
+    # the same pass for the reason the #3089 comment above sets out: ci-wait.py
+    # treats RULESET_CONTEXTS as a FLOOR, so a name promoted before the by-hand
+    # ruleset edit returns exit 3 UNDETERMINED for every agent in the
+    # repository until a maintainer catches up.
+    "A PR must not close an issue whose work it defers",
 ]
 
 REPO = "StefanMaron/BusinessCentral.AL.Runner"

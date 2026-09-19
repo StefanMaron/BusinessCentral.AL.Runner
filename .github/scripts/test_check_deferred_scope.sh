@@ -96,6 +96,57 @@ do
 Closes #500"
 done
 
+echo "--- each ROUTING ARM is pinned on its own (pin the population) ---"
+# The table above proves the arms COLLECTIVELY catch each construction, and
+# that is not the same as proving each arm carries its weight: a phrase
+# matched by two arms stays RED when either is gutted. Measured -- deleting
+# "stay|stays" from the POSSESSIVE arm's verb list left all 30 tests green,
+# because "They stay on #4255" (#4256's own words) is caught by the
+# destination arm instead. Each case below is reachable by exactly ONE arm,
+# so gutting that arm's verb list reds here and nowhere else.
+
+# Possessive arm only. Reaching it ALONE is fiddly and the fiddle is the
+# point: "stay in #500's own follow-up" is also matched by the destination
+# arm, because that arm accepts "in". Measured -- a first draft of these two
+# cases used exactly that phrasing, and deleting "stay|stays" from the
+# possessive arm's verb list still left all 36 green. The separator below
+# ("stay, unmeasured, in") and the preposition below it ("inside") are
+# outside the destination arm's shape, so only the possessive arm can match.
+assert_rc "possessive arm alone: verb separated from the preposition" 1 \
+"Both of those stay, unmeasured, in #500's own follow-up.
+
+Closes #500"
+
+assert_rc "possessive arm alone: a preposition the destination arm lacks" 1 \
+"Both items stay inside #500's own follow-up.
+
+Closes #500"
+
+# Destination arm only: no possessive noun phrase anywhere.
+assert_rc "destination arm alone: 'remains on #500'" 1 \
+"Item 2 remains on #500 until someone measures it.
+
+Closes #500"
+
+# Belong-destination arm only.
+assert_rc "belong-destination arm alone: 'belongs to #500'" 1 \
+"The rest belongs to #500 and is not folded here.
+
+Closes #500"
+
+# Defer arm only.
+assert_rc "defer arm alone: 'deferring to #500'" 1 \
+"I am deferring to #500 for the second measurement.
+
+Closes #500"
+
+# Trailing-possessive arm only: the possessive comes FIRST and the deferral
+# verb follows it, which the leading-verb arm cannot see.
+assert_rc "trailing-possessive arm alone: '#500's part 2 is deferred'" 1 \
+"#500's part 2 is deferred until the BC leg runs.
+
+Closes #500"
+
 echo "--- GREEN controls: the gate must not refuse the honest path ---"
 # A guard that refuses everything passes every refusal arm. These are what
 # separate a working gate from one that has started reding the correct shape,
