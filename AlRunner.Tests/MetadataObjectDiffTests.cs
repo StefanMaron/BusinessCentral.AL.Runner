@@ -468,4 +468,81 @@ public sealed class MetadataObjectDiffTests
     {
         public List<NoId> Items { get; } = new();
     }
+
+    // ---- MaxDifferences (#4357) -------------------------------------------------------------
+
+    /// <summary>
+    /// A pair disagreeing on several members at once, so a truncated walk and a full one give
+    /// visibly different counts and both are non-zero.
+    /// </summary>
+    private static (FakeTable, FakeTable) ThreeWaysApart()
+        => (new FakeTable { Id = 1, Caption = "a", Scope = Scope.Cloud },
+            new FakeTable { Id = 2, Caption = "b", Scope = Scope.OnPrem });
+
+    [Fact]
+    public void MaxDifferences_is_unlimited_by_default()
+    {
+        var (a, b) = ThreeWaysApart();
+        Assert.Equal(3, MetadataObjectDiff.Compare(a, b, "T", Opts()).Count);
+    }
+
+    [Fact]
+    public void MaxDifferences_stops_the_walk_after_that_many()
+    {
+        var (a, b) = ThreeWaysApart();
+        var opts = new MetadataObjectDiffOptions
+        {
+            RecurseNamespacePrefixes = new[] { Prefix },
+            MaxDifferences = 1,
+        };
+        Assert.Single(MetadataObjectDiff.Compare(a, b, "T", opts));
+    }
+
+    [Fact]
+    public void MaxDifferences_never_turns_a_difference_into_none()
+    {
+        // The property MetadataDocumentPresenceDiff relies on, and the only one it relies on:
+        // a truncated walk is not a COUNT, but `Count == 0` still means "these are equal".
+        // A limit that could suppress the FIRST difference would make every unobservable
+        // verdict wrong in the silent direction.
+        var (a, b) = ThreeWaysApart();
+        var opts = new MetadataObjectDiffOptions
+        {
+            RecurseNamespacePrefixes = new[] { Prefix },
+            MaxDifferences = 1,
+        };
+        Assert.NotEmpty(MetadataObjectDiff.Compare(a, b, "T", opts));
+
+        var same = new FakeTable { Id = 1, Caption = "a", Scope = Scope.Cloud };
+        var alsoSame = new FakeTable { Id = 1, Caption = "a", Scope = Scope.Cloud };
+        Assert.Empty(MetadataObjectDiff.Compare(same, alsoSame, "T", opts));
+    }
+
+    [Fact]
+    public void MaxDifferences_truncates_a_nested_walk_too()
+    {
+        // The limit has to be checked inside the member loop as well as at the top of Walk:
+        // a type with many differing members would otherwise record all of them before the
+        // next recursion gets a chance to stop.
+        var a = new FakeTable
+        {
+            Id = 1,
+            Fields = { new FakeField { Id = 1, Name = "x", Classification = "p" } },
+        };
+        var b = new FakeTable
+        {
+            Id = 2,
+            Fields = { new FakeField { Id = 1, Name = "y", Classification = "q" } },
+        };
+        var opts = new MetadataObjectDiffOptions
+        {
+            RecurseNamespacePrefixes = new[] { Prefix },
+            PairByIdMembers = new HashSet<string>(new[] { "FakeTable.Fields" }, StringComparer.Ordinal),
+            MaxDifferences = 2,
+        };
+        Assert.Equal(2, MetadataObjectDiff.Compare(a, b, "T", opts).Count);
+        Assert.True(MetadataObjectDiff.Compare(a, b, "T", Opts()).Count > 2,
+            "the unlimited walk must find MORE than the limit, or this test is not measuring " +
+            "truncation at all.");
+    }
 }
