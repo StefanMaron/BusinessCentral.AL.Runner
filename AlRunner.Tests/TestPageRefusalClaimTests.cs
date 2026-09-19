@@ -509,8 +509,24 @@ public sealed class TestPageRefusalClaimTests
         new object[] { "MockTestPage*.cs", "so it cannot be used to locate a row" },
         new object[] { "MockTestPage*.cs", "is not an acceptable value" },
         new object[] { "MockTestPage*.cs", "is not one of the option's values" },
-        new object[] { "RunnerPageInstance.cs", "would open the related table's list page" },
-        new object[] { "RunnerPageInstance.cs", "so there is no table-field OnLookup to fall back to" },
+        // #3518 replaced BOTH TableRelation-lookup markers that used to sit here, and the two
+        // were replaced for DIFFERENT reasons — which is why neither was simply reworded.
+        //
+        //   "would open the related table's list page"  — the refusal is GONE. That lookup is
+        //       now served through BC's own lookup-mode RunModal, so there is no throw left to
+        //       pin. The shape it covered is measured by corpus codeunit 60569 "TRL Tests".
+        //
+        //   "so there is no table-field OnLookup to fall back to" — the SENTENCE changed, not
+        //       the refusal: a control bound to a page global still refuses permanently, and
+        //       the marker below is its current rendering. The old wording additionally claimed
+        //       the lookup "would come from a TableRelation", which is false for a control that
+        //       has no source-table field at all.
+        new object[] { "RunnerPageInstance.cs", "nor a TableRelation to resolve a lookup page from" },
+        // The one TableRelation-lookup shape that still refuses, now in its own file: a
+        // relation that RESOLVES to a table declaring no lookup page. Deliberately not merged
+        // with the row above — no corpus test has measured what BC's client does here, which is
+        // exactly why it refuses rather than answering silence by analogy (#3518).
+        new object[] { "RunnerPageInstance.RelationLookup.cs", "declares no LookupPageId or DrillDownPageId" },
     };
 
     [Theory]
@@ -547,15 +563,33 @@ public sealed class TestPageRefusalClaimTests
     }
 
     [Fact]
-    public void RunnerPageInstance_KeepsItsTwoUncontestedPermanentCitations()
+    public void RunnerPageInstance_KeepsItsUncontestedPermanentCitations()
     {
-        // NOT exact, and the reason is recorded rather than hidden: the third permanent
-        // citation in this file is the RunObject action refusal, which #2931 reclassifies as
+        // NOT exact, and the reason is recorded rather than hidden: one permanent citation in
+        // this file is the RunObject action refusal, which #2931 reclassifies as
         // not-yet-implemented on the strength of a real-service-tier measurement (corpus PR
-        // #172, all 8 BC legs). That site is #2931's to decide and is untouched here, so this
-        // asserts the two lookup refusals #2999 named and allows either outcome for the third.
+        // #172, all 8 BC legs). That site is #2931's to decide and is untouched here.
+        //
+        // Was "2 or 3" until #3518, which REMOVED one of the two lookup refusals #2999 named --
+        // the TableRelation one, now served -- on the strength of its own service-tier
+        // measurement: corpus codeunit 60569, run 35445556865, all eight cloud legs. The
+        // page-global refusal stays, so the floor drops by exactly one.
         var count = Regex.Matches(CodeOf("RunnerPageInstance.cs"), "docs/scope\\.md").Count;
-        Assert.True(count is 2 or 3,
-            $"expected the 2 TableRelation-lookup citations (+ optionally #2931's RunObject one), found {count}");
+        Assert.True(count is 1 or 2,
+            $"expected the page-global lookup citation (+ optionally #2931's RunObject one), found {count}");
+    }
+
+    [Fact]
+    public void RelationLookup_KeepsExactlyItsOneRemainingRefusal()
+    {
+        // EXACT, and it is the assertion that stops #3518's narrowing from drifting in either
+        // direction. Of the shapes a TableRelation lookup can reach, exactly ONE still refuses:
+        // a relation that resolves to a table with no LookupPageId or DrillDownPageId.
+        //
+        // A second citation appearing here means a shape started refusing that BC serves --
+        // including, specifically, the no-relation-at-all shape, which real BC answers with
+        // silence (corpus codeunit 60569, run 35445556865, eight cloud legs). Zero means the
+        // last measured boundary was swept away with the ones that were wrong.
+        Assert.Equal(1, Regex.Matches(CodeOf("RunnerPageInstance.RelationLookup.cs"), "docs/scope\\.md").Count);
     }
 }
