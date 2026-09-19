@@ -26,6 +26,7 @@
 // difference rather than an assertion about one number.
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
@@ -275,10 +276,16 @@ public class HandlerRethrowStackPreservationTests
     }
 
     /// <summary>
-    /// Build `try { nop } catch (<paramref name="catchType"/>) { [call getBase]; throw }`.
+    /// Build `try { nop; [call getBase x tryCallCount] } catch (<paramref name="catchType"/>)
+    /// { [call getBase x callCount]; throw }`.
+    ///
+    /// <para><paramref name="tryCallCount"/> is what lets a test put the call in the TRY block,
+    /// which is the half of the locator's scoping the catch-type arms cannot reach: a locator
+    /// matching on catch type alone, but walking the whole body, is correct for every fixture
+    /// whose try block is a bare <c>Nop</c>.</para>
     /// </summary>
     private static MethodDefinition BodyWithCatch(
-        Type catchType, bool includeGetBaseExceptionCall, int callCount = 1)
+        Type catchType, bool includeGetBaseExceptionCall, int callCount = 1, int tryCallCount = 0)
     {
         var (module, m) = NewMethod();
         var il = m.Body.GetILProcessor();
@@ -288,12 +295,15 @@ public class HandlerRethrowStackPreservationTests
         var handlerStart = il.Create(OpCodes.Nop);
         var end = il.Create(OpCodes.Ret);
 
+        var getBase = module.ImportReference(
+            typeof(Exception).GetMethod(nameof(Exception.GetBaseException))!);
+
         il.Append(tryStart);
+        for (int i = 0; i < tryCallCount; i++)
+            il.Append(il.Create(OpCodes.Callvirt, getBase));
         il.Append(leave);
         il.Append(handlerStart);
 
-        var getBase = module.ImportReference(
-            typeof(Exception).GetMethod(nameof(Exception.GetBaseException))!);
         if (includeGetBaseExceptionCall)
             for (int i = 0; i < callCount; i++)
                 il.Append(il.Create(OpCodes.Callvirt, getBase));
@@ -312,6 +322,18 @@ public class HandlerRethrowStackPreservationTests
         });
         return m;
     }
+
+    /// <summary>
+    /// The instructions of <paramref name="m"/> that call <c>Exception::GetBaseException</c>,
+    /// in body order — so a test can name the try-block call and the handler call apart and
+    /// assert WHICH one the locator returned, not merely how many.
+    /// </summary>
+    private static List<Instruction> GetBaseExceptionCalls(MethodDefinition m) =>
+        m.Body.Instructions
+            .Where(i => (i.OpCode == OpCodes.Callvirt || i.OpCode == OpCodes.Call)
+                && i.Operand is MethodReference mr
+                && mr.Name == "GetBaseException")
+            .ToList();
 
     [Fact]
     public void Locator_FindsTheCallInATargetInvocationExceptionCatchArm()
@@ -354,5 +376,100 @@ public class HandlerRethrowStackPreservationTests
             BodyWithCatch(typeof(TargetInvocationException), includeGetBaseExceptionCall: true, callCount: 2));
 
         Assert.Equal(2, sites.Count);
+    }
+
+    [Fact]
+    public void Locator_IgnoresTheCallInTheTryBlockOfAMatchingHandler()
+    {
+        // The catch TYPE matches here, so the catch-type arms above cannot reject this body;
+        // only the [HandlerStart, HandlerEnd) range can. A GetBaseException BC might one day
+        // call inside the try block is an ordinary read, and substituting a rethrow for it
+        // would change control flow (NclCecilRewrite.Runtime.cs, FindCatchRethrowSites).
+        var m = BodyWithCatch(
+            typeof(TargetInvocationException), includeGetBaseExceptionCall: false, tryCallCount: 1);
+
+        // The body really does contain the call — otherwise this arm asserts the empty set
+        // for the wrong reason and would pass against a locator that walks nothing at all.
+        Assert.Single(GetBaseExceptionCalls(m));
+
+        Assert.Empty(NclCecilRewrite.FindCatchRethrowSites(m));
+    }
+
+    [Fact]
+    public void Locator_WithACallInBothBlocks_ReturnsOnlyTheHandlerOne()
+    {
+        // The control for the arm above: an exclusion test alone is satisfied by a locator
+        // that finds NOTHING, so this pins that the handler site is still found while the
+        // try-block site is still rejected, and asserts WHICH instruction came back by
+        // identity rather than by count.
+        var m = BodyWithCatch(
+            typeof(TargetInvocationException), includeGetBaseExceptionCall: true, tryCallCount: 1);
+
+        var all = GetBaseExceptionCalls(m);
+        Assert.Equal(2, all.Count);
+        var inTryBlock = all[0];
+        var inHandler = all[1];
+
+        var sites = NclCecilRewrite.FindCatchRethrowSites(m);
+
+        Assert.Same(inHandler, Assert.Single(sites));
+        Assert.DoesNotContain(inTryBlock, sites);
+    }
+
+    [Fact]
+    public void Locator_IgnoresAFilterHandlerEvenWhenItsCatchTypeMatches()
+    {
+        // The handler-KIND dimension, which the catch-type and range arms cannot reach.
+        // A `finally` would not discriminate: its CatchType is null, so the catch-type guard
+        // rejects it anyway and the kind guard could be deleted unnoticed. A FILTER handler
+        // can carry a CatchType, so only `HandlerType != Catch` rejects this body — and its
+        // handler range is entered by the filter's own evaluation, not by BC's rethrow arm.
+        var m = BodyWithFilterHandler(typeof(TargetInvocationException));
+
+        Assert.Single(GetBaseExceptionCalls(m));
+
+        Assert.Empty(NclCecilRewrite.FindCatchRethrowSites(m));
+    }
+
+    /// <summary>
+    /// Build `try { nop } filter { ... } handler { call getBase; throw }` with a
+    /// <paramref name="catchType"/> set — the one shape where the catch-type guard passes
+    /// and only the handler-kind guard rejects the body.
+    /// </summary>
+    private static MethodDefinition BodyWithFilterHandler(Type catchType)
+    {
+        var (module, m) = NewMethod();
+        var il = m.Body.GetILProcessor();
+
+        var tryStart = il.Create(OpCodes.Nop);
+        var leave = il.Create(OpCodes.Leave_S, il.Create(OpCodes.Ret));
+        var filterStart = il.Create(OpCodes.Ldc_I4_1);
+        var endfilter = il.Create(OpCodes.Endfilter);
+        var handlerStart = il.Create(OpCodes.Nop);
+        var end = il.Create(OpCodes.Ret);
+
+        var getBase = module.ImportReference(
+            typeof(Exception).GetMethod(nameof(Exception.GetBaseException))!);
+
+        il.Append(tryStart);
+        il.Append(leave);
+        il.Append(filterStart);
+        il.Append(endfilter);
+        il.Append(handlerStart);
+        il.Append(il.Create(OpCodes.Callvirt, getBase));
+        il.Append(il.Create(OpCodes.Throw));
+        il.Append(end);
+        leave.Operand = end;
+
+        m.Body.ExceptionHandlers.Add(new ExceptionHandler(ExceptionHandlerType.Filter)
+        {
+            CatchType = module.ImportReference(catchType),
+            TryStart = tryStart,
+            TryEnd = filterStart,
+            FilterStart = filterStart,
+            HandlerStart = handlerStart,
+            HandlerEnd = end,
+        });
+        return m;
     }
 }
