@@ -707,7 +707,30 @@ fi
 #   1. the direction: "NEXT"/"FOLLOWING"/"following" number
 #   2. that the flagged number may not be the author's subject
 MSG_DIRECTION='(NEXT|FOLLOWING|following|next) number'
-MSG_SUBJECT='(not always the one|often not the number|not the number your|rather than the one before|not the preceding)'
+# MSG_SUBJECT was five fixed phrases, which is a spelling check wearing a concept's
+# clothes: one inserted word ("may not BE the number your clause concerns") missed
+# every alternative. Review measured 4 of 6 plausible rewrites false-FAILING -- the
+# same defect the G2/G3 pair exists to reject, one level down, and invisible to the
+# author because the rewrites it was validated against were the author's own.
+#
+# Widened toward the RELATIONSHIP the half asserts -- the number this message named
+# may not be the thing the author's sentence was about -- which English carries by
+# two routes, so both are admitted:
+#   (a) a NEGATION landing on the author's subject ("not ... your clause concerns")
+#   (b) a CONTRAST with the preceding number ("rather than the one before", "but to")
+#
+# Requiring the negation to LAND on a subject-bearing phrase is what keeps this from
+# becoming merely loose. A bare "[^.]{0,60}" after "not" admitted three adversarial
+# texts that keep the direction half and drop the claim -- the realistic one being
+# "If the NEXT number is not the one you declared, add a standalone trailer line",
+# which is plausible text this message could legitimately gain.
+#
+# Measured before adopting, against the REAL grep -E rather than a Python probe:
+# 6/6 reviewer rewrites pass, 3/3 author rewrites pass, 6/6 meaning-dropping
+# truncations rejected, 7/7 adversarial texts rejected. The reviewer's own concrete
+# suggestion -- admit an optional verb between "not" and "the" -- was measured at
+# 4/6 and REGRESSED a rewrite that already passed, so it is not what landed.
+MSG_SUBJECT='(not|need not)[^.]{0,60}(your (sentence|clause|row|prose|text)|sentence.s subject|you meant|what your|number your|(is|was) (about|describing)|concerns)|(rather than|instead of|and not|, not|but to|but the)[^.]{0,40}(the one before|the preceding|preceding number|first number|#[0-9]+)|not[^.]{0,30}(the preceding|the one before|preceding number)'
 if printf '%s' "$msg" | command grep -qE "$MSG_DIRECTION" \
    && printf '%s' "$msg" | command grep -qE "$MSG_SUBJECT"; then
   echo "ok   - #4294 the error message explains that the keyword binds to the FOLLOWING number"
