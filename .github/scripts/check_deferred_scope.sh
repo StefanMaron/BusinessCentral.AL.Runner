@@ -143,11 +143,26 @@ for rx in "${ROUTED_RES[@]}"; do
   while IFS= read -r m; do
     [ -n "$m" ] || continue
     # tail, not head: every ROUTED_RES arm ends at its destination number,
-    # and an arm that begins with a routing verb can span an earlier "#N"
-    # ("The rest of #12's work belongs in #500's follow-up"). Taking the
-    # first would report the wrong issue, sending the author to the wrong
-    # remedy -- and on the exemption side below the same slip REFUSED a
-    # correctly-homed body, which is the false-positive direction.
+    # and an arm beginning with a routing verb can span an EARLIER "#N".
+    # Taking the first would report the wrong issue, sending the author to
+    # the wrong remedy -- and on the exemption side below the same slip
+    # REFUSED a correctly-homed body, the false-positive direction.
+    #
+    # Checkable example, which is the point of quoting one. Against a body
+    # declaring "Closes #500":
+    #
+    #   Item two belongs, per #12's triage, in #500's own follow-up.
+    #
+    # matches "belongs, per #12's triage, in #500's own follow-up", spanning
+    # BOTH numbers: tail -> 500 (declared, so exit 1, correct) and head -> 12
+    # (not declared, so exit 0 -- the gate goes silent on a real orphaning).
+    #
+    # Trap for a later editor: the example this replaced --
+    # "The rest of #12's work belongs in #500's follow-up" -- is exit 1 under
+    # BOTH, because the match starts at "belongs" and #12 falls outside the
+    # span. Try that one and the two forms look identical, which is an
+    # argument for "simplifying" this line. Any replacement example must be
+    # one where the routing verb PRECEDES the foreign number.
     num=$(printf '%s' "$m" | command grep -oP '#\K[0-9]+' | tail -1)
     [ -n "$num" ] || continue
     if is_declared "$num"; then

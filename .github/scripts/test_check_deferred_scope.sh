@@ -221,6 +221,70 @@ assert_rc "NO exemption from 'filed about #N' without a destination" 1 \
 
 Closes #500"
 
+echo "--- the tail -1 justification's own example (a comment is a claim) ---"
+# check_deferred_scope.sh justifies `tail -1` with a worked example. Prose
+# can stop matching the code with nothing failing, so the example is pinned
+# here: the routing verb precedes a FOREIGN number and the destination
+# follows it, so tail -> 500 (declared, exit 1) while head -> 12 (exit 0,
+# the gate silent on a real orphaning). If this assertion ever reds, the
+# comment's example is no longer demonstrating what it claims.
+assert_rc "the comment's example: verb precedes a foreign number" 1 \
+"Item two belongs, per #12's triage, in #500's own follow-up.
+
+Closes #500"
+
+# The example this replaced, kept as a NEGATIVE control on the prose: it is
+# exit 1 under both tail and head, so it demonstrates nothing about the
+# choice. It must stay exit 1 -- it is still a genuine orphaning -- but a
+# future editor must not mistake it for evidence.
+assert_rc "the rejected example is still caught, but proves nothing about tail" 1 \
+"The rest of #12's work belongs in #500's follow-up.
+
+Closes #500"
+
+echo "--- the exemption must not be satisfied BY THE CLOSING TARGET ITSELF ---"
+# The defect wearing the exemption's clothes: a deferral routed at the
+# declared target whose stated home is THAT SAME TARGET. The work is as
+# orphaned as if no home were named -- naming the issue that is about to
+# close is not giving the remainder somewhere to live.
+#
+# Pass 3 gets this right today via `if ! is_declared "$fnum"`, and nothing
+# pinned it: mutating that guard to `if true` left all 36 assertions green
+# while turning every case below into a silent pass. Table-driven over the
+# filing constructions rather than the one spelling, because the property is
+# "the routing destination and the exemption target are the same issue", not
+# any particular verb.
+for home in \
+  "tracked by #500" \
+  "filed as #500" \
+  "opened as #500" \
+  "re-homed to #500" \
+  "covered by #500" \
+  "the follow-up is #500"
+do
+  assert_rc "exemption naming the CLOSING TARGET as the home: ${home}" 1 \
+"The rest belongs in #500's own follow-up, ${home}.
+
+Closes #500"
+done
+
+# The control for that block: the identical sentences with a DIFFERENT number
+# as the home must still pass, or the arm above would be satisfied by a gate
+# that had simply stopped exempting anything.
+for home in \
+  "tracked by #777" \
+  "filed as #777" \
+  "opened as #777" \
+  "re-homed to #777" \
+  "covered by #777" \
+  "the follow-up is #777"
+do
+  assert_rc "...and the same shape with a real home still passes: ${home}" 0 \
+"The rest belongs in #500's own follow-up, ${home}.
+
+Closes #500"
+done
+
 echo "--- the third state: could not measure (guards-need-a-third-state.md) ---"
 
 unset_rc=$(env -u PR_BODY bash "$SCRIPT" >/dev/null 2>&1; echo $?)
