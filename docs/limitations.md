@@ -1738,6 +1738,37 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   entry to 1,054 and changed the report by zero classes. The full measurement, and what a fix
   still owes, are in [`coverage-attribution.md`](coverage-attribution.md).
 
+<a id="code-coverage-virtual-tables"></a>
+
+- **AL's `CODECOVERAGELOG(TRUE)` refuses: the runner cannot start BC's own code-coverage
+  recording.** BC builds a `CodeCoverageRecorder` over `session.NCLMetadata.CodeEnvironment`,
+  and the runner's skeleton `NCLMetadata` has none — `ALCodeEnvironment` is assigned in exactly
+  one place in `Ncl.dll`, `NCLMetadata`'s own constructor, which needs a `NavDatabase` and the
+  metadata loaders, so `MetadataPatches.InjectSkeletonSystemTenant` builds the object with
+  `GetUninitializedObject` and the field stays null by construction. Before
+  [#3517](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3517) that reached
+  BC's recorder constructor and raised a bare `ArgumentNullException (Parameter
+  'codeEnvironment')`, naming no AL API; the start now refuses by name with the
+  `not-yet-implemented` anchor (`AlRunner/Patches/CodeCoveragePatches.cs`).
+
+  **Only the start refuses.** `CODECOVERAGELOG()` still answers `false` and
+  `CODECOVERAGELOG(FALSE)` still no-ops, because BC answers both from a null-check over the
+  registered listeners without reading an `ALCodeEnvironment` — the same answers a real BC
+  session gives with nothing recording. Those three controls are pinned in
+  `tests/runner-extras/code-coverage-start-oos`.
+
+  **Why this presents as an unrelated failure.** A library helper that starts coverage, does
+  work and stops it reports the *stop* — BaseApp codeunit 9990 raises "Code coverage is not
+  running" — so the 30 measured failures in #3517 included 18 in one SCM codeunit and two
+  `MyNotifications` tests that are not about coverage at all.
+
+  **What a fix needs**, beyond the refusal: a real `ALCodeEnvironment` to assign scope ids
+  through (`GetOrAssignScopeId`), and the three `CodeCoverageDataProvider` virtual tables
+  `LoadDataIntoVirtualTable` fills. The statement-hit stream itself is already reachable — the
+  runner's own `--coverage` flag consumes it (`AlRunner/Infrastructure/AlCoverageReport.cs`) —
+  so this is a gap rather than a limit, which is why the refusal is `not-yet-implemented`
+  rather than a `docs/scope.md` section.
+
 <a id="runtime-shape-gaps"></a>
 
 - **Runtime shape gaps outside the virtual tables — the runner refuses rather than answering
