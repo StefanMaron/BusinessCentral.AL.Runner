@@ -209,11 +209,26 @@ agent review, since it posts under the account holder's name.
 
 ## The verdict line
 
-End every review comment with one verdict line:
+Every review comment carries exactly one verdict line, written **bare at the start of a line**:
 
 ```
 Verdict: MERGE|FIX-FIRST|HOLD (<reason, only for FIX-FIRST/HOLD>) — head <full 40-char sha>
 ```
+
+**The marker is what an arming step finds it by, so its shape is a contract, not style.**
+No leading whitespace, no bold, one per comment, and `MERGE`, `FIX-FIRST` or `HOLD` —
+nothing else. `tools/review-verdict.py` reads it and refuses anything it cannot use:
+
+| written | read as |
+|---|---|
+| `Verdict: MERGE — head <40-char sha>` | the verdict |
+| `  Verdict: ...` (indented) | **not a verdict** — indentation is how markdown marks quoted content, so a quoted verdict must not read as one issued now |
+| `**Verdict:** ...` (bold) | **not a verdict** — measured over 150 real reviews, bold is never the only marker and does occur as prose (`**Verdict: this meets the merge bar.** ...`), so accepting it would refuse the real line beneath it |
+| `Verdict: CHANGES ...` | **malformed** — not one of the three decisions; 6 of 150 reviews wrote this and no arming step can act on it |
+| two `Verdict:` lines | **malformed** — the tool refuses rather than guessing which one you meant |
+
+Writing the word elsewhere is fine and does not collide: `### Verdict`, "Verdict at the end."
+and a `| verdict |` table column all fail the anchor by construction.
 
 1. Before reading the diff, record the head: `gh pr view <N> --repo <owner>/<repo> --json
    headRefOid --jq .headRefOid`; without `gh`, `mcp__github__pull_request_read` with
@@ -224,8 +239,21 @@ Verdict: MERGE|FIX-FIRST|HOLD (<reason, only for FIX-FIRST/HOLD>) — head <full
    line as its last line with that full 40-character SHA. Different: review the new commits,
    record the new head as the reviewed head, then return to step 2.
 
-Done when the posted comment's last line is the verdict line and its head equals the PR's head
-at the moment you post.
+Done when the posted comment **contains** the verdict line, bare at the start of a line, with
+its head equal to the PR's head at the moment you post. Confirm it by reading the comment back
+the way the arming step will, rather than by looking at what you composed:
+
+```
+tools/review-verdict.py --pr <N> --repo <owner>/<repo> --field head
+```
+
+**Deliberately not "the last line".** It used to be, and the transport breaks that: without
+`gh` — every web and remote session (`github-access.md`) — a reviewer posts through
+`mcp__github__add_issue_comment` and an attribution footer is appended **after** the body, so
+the last line is the footer and the verdict is invisible to a positional check. Measured over
+the 60 most recent pull requests: of 150 verdict-bearing comments, **26 have a footer below the
+verdict line**, and that footer accounts for every one of the 26 positional failures (#4338).
+You cannot suppress it, so the contract does not depend on it.
 
 **Re-review of an unchanged diff.** With `<old>` the head in your previous verdict line and
 `<new>` the head from step 1, after `git fetch origin main <old> <new>`, in Bash:

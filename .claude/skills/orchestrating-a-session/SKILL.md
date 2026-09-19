@@ -203,9 +203,23 @@ Arm **only** when all of these hold. Any one missing means report it to the coor
   it is, so read that corpus PR by hand rather than re-firing.
 - No *other* PR in the same batch conflicts with it. Where two do — historically two submodule pin bumps to
   different revisions, say — arm only the one that must merge first and report the ordering.
-- **The newest comment on the PR whose last line begins `Verdict:` reads `Verdict: MERGE` with a
-  head equal to the PR's current head** (`gh pr view <N> --json headRefOid`); any other line, or none, sends the
-  PR back to its reviewer naming what is missing.
+- **The newest comment carrying a `Verdict:` line reads `Verdict: MERGE`, with a head equal to
+  the PR's current head.** Find it by the marker, never by position:
+
+  ```bash
+  tools/review-verdict.py --pr <N> --repo <owner>/<repo> \
+    --field decision --expect-head "$(gh pr view <N> --json headRefOid --jq .headRefOid)"
+  ```
+
+  Exit 0 with `MERGE` arms. **Exit 2 (no verdict line) and exit 3 (unusable, or the head moved)
+  both send the PR back to its reviewer naming which of the two it was** — they are distinct
+  because "nobody reviewed this" and "the review cannot be acted on" have different remedies.
+
+  **Do not read the comment's last line.** That was the contract and the transport broke it: a
+  reviewer without `gh` posts through `mcp__github__add_issue_comment`, which appends an
+  attribution footer below the body — 26 of 150 measured verdict comments end in that footer
+  rather than in their verdict (#4338). A positional read finds the footer, and then either
+  skips the staleness check or reads a head that is not there. Both are silent.
 - **No commit is attributed to another real GitHub account.**
   `tools/pr-attribution.py <N> [<N>...]` — the whole arming batch in one call. Such a commit makes
   the `main` ruleset's `require_extra_approval_for_unattributed_changes` refuse the merge until
