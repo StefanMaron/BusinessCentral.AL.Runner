@@ -1062,7 +1062,7 @@ public static partial class RecordPatches
             "Query.SetFilter/SetRange on a query column",
             $"query-column filter expression kind '{t.Name}' cannot be retargeted to the column's "
             + "source table field, so BC would evaluate it still keyed by NCLMetaQueryColumn "
-            + "(InvalidCastException inside TempTableDataProvider) — see docs/scope.md#queries "
+            + "(InvalidCastException inside TempTableDataProvider) — see docs/scope.md#navquery "
             + "and #3508");
     }
 
