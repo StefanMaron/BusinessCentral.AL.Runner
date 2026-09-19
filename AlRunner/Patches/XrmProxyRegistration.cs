@@ -19,7 +19,7 @@
 // id is NOT the V-number in the file name. Measured on 28.1.49838.53910: V100 reports SdkVersion
 // 9.2.49.6443, so its id is 9, not 100; V91 cannot report one at all, because its getter reads
 // Host/Microsoft.Xrm.Sdk.dll, a Windows out-of-process host that does not ship in the artifact
-// directory. See docs/limitations.md#crm-proxy-versions.
+// directory. See docs/limitations.md#the-id-is-the-crm-sdk-major-not-the-v-number-in-the-file-name.
 using System.Diagnostics;
 using System.Reflection;
 using AlRunner.Infrastructure;
