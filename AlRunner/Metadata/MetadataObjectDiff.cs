@@ -78,6 +78,25 @@ public sealed class MetadataObjectDiffOptions
     /// a type carrying both would otherwise pair on whichever reflection returned first.
     /// </summary>
     public IReadOnlyList<string> IdPropertyNames { get; init; } = new[] { "Id", "ID" };
+
+    /// <summary>
+    /// Stop the walk once this many differences have been recorded. Unlimited by default, so
+    /// the total comparison this type exists to provide is unchanged — the report has to list
+    /// every difference, not the first one.
+    ///
+    /// <para>It exists for callers asking a YES/NO question, where the list is thrown away:
+    /// <see cref="MetadataDocumentPresenceDiff"/> strips one attribute from a document and asks
+    /// only whether BC's reader then produces a different object, thousands of times per
+    /// bundle. Measured on BC 28.1.49838.53910 over both ground-truth bundles, walking every
+    /// difference for each of those ~5,400 questions took the harness from 13 s to 1 m 26 s;
+    /// with a limit of 1 it is 21 s.</para>
+    ///
+    /// <para>Trap: a truncated result is not a difference COUNT. Anything comparing counts, or
+    /// grouping by signature, must leave this unset — <c>acc.Count == 0</c> is the only
+    /// question a truncated walk answers, and it answers it exactly, because the walk stops
+    /// after the first recorded difference rather than before recording it.</para>
+    /// </summary>
+    public int MaxDifferences { get; init; } = int.MaxValue;
 }
 
 public static class MetadataObjectDiff
@@ -106,6 +125,7 @@ public static class MetadataObjectDiff
         MetadataObjectDiffOptions opts, List<MetadataDifference> acc,
         HashSet<(object, object)> comparedPairs)
     {
+        if (acc.Count >= opts.MaxDifferences) return;
         if (expected is null && actual is null) return;
         if (expected is null || actual is null)
         {
@@ -136,6 +156,7 @@ public static class MetadataObjectDiff
 
         foreach (var (name, get) in ReadableMembers(type))
         {
+            if (acc.Count >= opts.MaxDifferences) return;
             var memberPath = path.Length == 0 ? name : path + "." + name;
             object? ev, av;
             string? ethrow = null, athrow = null;
