@@ -610,16 +610,15 @@ assert_exit "#4294 a code span around the clause does not protect it" 1 "fix: so
 
 The offending shape is \`closed #789\` in a queue scan."
 
-# A fenced block is not protection either -- and it fails in the OTHER
-# direction, which is worse. A line whose ENTIRE content is "<keyword> #N"
-# matches CANONICAL_LINE_RE wherever it sits, fence included, so it is read as a
-# DECLARATION: the gate prints "declared target(s): 123 789", exits 0, and #789
-# closes on merge with no error for anyone to read. Measured here and identical
-# in tools/pr-body.py's port, so this is not a parity break. Tracked by #4393,
-# filed rather than fixed here because a fence-aware parser has its own
-# false-positive surface and is not #4294's subject. This case pins what the script does TODAY, so the follow-up has a
-# starting point and any change to it is deliberate rather than accidental.
-assert_exit "#4294 a bare clause alone on a fenced line is read as a DECLARATION (known hole)" 0 \
+# A fenced block is not protection either, and #4393 fixed the direction this
+# used to fail in. A line whose ENTIRE content is "<keyword> #N" used to match
+# CANONICAL_LINE_RE wherever it sat, fence included, so it was read as a
+# DECLARATION: the gate printed "declared target(s): 123 789", exited 0, and #789
+# closed on merge with no error for anyone to read. It is now a STRAY, which is
+# what the code-span arm directly above already did -- the two shapes differ by
+# one character and now agree. The full class (tilde fences, info strings,
+# nesting, unclosed fences) is table-driven further down.
+assert_exit "#4393 a bare clause alone on a fenced line is a STRAY, not a declaration" 1 \
   "fix: something" \
   "Closes #123
 
@@ -751,6 +750,291 @@ else
   echo "FAIL - #4294 the error message has no worked 'closes #X, not #Y' example of the handoff"
   fail=$((fail + 1))
 fi
+
+# --- #4393: a fence is not a declaration site -------------------------------
+#
+# The defect this block pins: a line whose ENTIRE content is a closing clause
+# matched CANONICAL_LINE_RE wherever it sat, so a clause inside a fenced code
+# block was recorded as a DECLARED TARGET. The gate exited 0, printed that
+# number as declared, and the issue closed on merge with no error anywhere.
+#
+# The fix makes such a line a STRAY. That is not a new rule: GitHub's parser
+# does not see markdown (the code-span arm above measures exactly that), so the
+# clause DOES close the issue. Treating it as a stray is the script agreeing
+# with what actually happens, and it is what the neighbouring "other text on the
+# line" arm already did.
+#
+# THE DIRECTION THAT MATTERS. Demoting a real declaration would fail a correct
+# PR, so the fence tracker is deliberately conservative -- it models only what
+# CommonMark 4.5 decides unambiguously, and every shape it does NOT model keeps
+# its previous behavior. The green controls below are what would catch an
+# over-refusing tracker; without them, a tracker that called every line fenced
+# would pass every red arm in this block.
+#
+# The shapes come from CommonMark 0.31.2 section 4.5, not from an idea of what a
+# fence looks like: a corpus invented by whoever wrote the parser would agree
+# with the parser by construction.
+
+# Opened and closed by backticks, the shape #4393 reported.
+assert_exit "#4393 backtick fence: a bare clause inside is a stray" 1 "fix: something" \
+  "Closes #123
+
+\`\`\`
+closed #789
+\`\`\`"
+
+# CommonMark 4.5 allows tildes as fence characters. The old code was
+# line-oriented and so had no opinion about either; a tracker that models only
+# backticks would leave this one silently declaring #789.
+assert_exit "#4393 tilde fence: a bare clause inside is a stray" 1 "fix: something" \
+  "Closes #123
+
+~~~
+closed #789
+~~~"
+
+# An info string after the opening fence is the normal way a body shows a
+# language. If the tracker requires a bare opening line, every realistic pasted
+# example keeps the defect.
+assert_exit "#4393 fence with an info string: a bare clause inside is a stray" 1 "fix: something" \
+  "Closes #123
+
+\`\`\`text
+closed #789
+\`\`\`"
+
+# Four or more markers are a legal fence (CommonMark 4.5: at least three), and a
+# fence is closed only by a run of the SAME character at least as long. This arm
+# and the next are what make nesting work; a tracker keyed on the literal
+# three-backtick string gets both wrong.
+assert_exit "#4393 four-backtick fence: a bare clause inside is a stray" 1 "fix: something" \
+  "Closes #123
+
+\`\`\`\`
+closed #789
+\`\`\`\`"
+
+# Nesting, which is why the closing rule is length-sensitive: the inner
+# three-backtick lines are CONTENT of the four-backtick fence, not a close
+# followed by a reopen. A tracker that toggles on any fence line would read the
+# clause as unfenced here and declare #789.
+assert_exit "#4393 nested fence: the inner clause is still fenced, so still a stray" 1 "fix: something" \
+  "Closes #123
+
+\`\`\`\`
+\`\`\`
+closed #789
+\`\`\`
+\`\`\`\`"
+
+# A tilde fence is not closed by backticks (CommonMark 4.5: same character), so
+# BOTH clauses here are inside one fence. The arm proves the tracker does not
+# treat the two characters as interchangeable -- if it did, the second clause
+# would read as unfenced and be declared.
+assert_exit "#4393 a tilde fence is not closed by backticks: both clauses are strays" 1 "fix: something" \
+  "Closes #123
+
+~~~
+closed #789
+\`\`\`
+closed #888
+~~~"
+
+# An unclosed fence runs to the end of the document (CommonMark 4.5). Bodies get
+# truncated and pasted half-finished, so this is not a hypothetical.
+assert_exit "#4393 an unclosed fence runs to end of body: the clause is a stray" 1 "fix: something" \
+  "Closes #123
+
+\`\`\`
+closed #789"
+
+# Already covered before #4393 and kept as a boundary: anything else on the line
+# breaks CANONICAL_LINE_RE, so the stray check saw it even when the fence did
+# not. The fix must not change this arm's verdict, only its reason.
+assert_exit "#4393 a fenced clause with other text on the line is still a stray" 1 "fix: something" \
+  "Closes #123
+
+\`\`\`
+  # closed #789
+\`\`\`"
+
+# --- #4393: the exit code alone cannot see the SAME-CHARACTER and WHOLE-LINE
+# rules, so these arms read the DECLARED TARGETS instead -------------------
+#
+# Found by mutation, not by inspection. Deleting the same-character test, and
+# deleting the whole-line test, each left every arm above GREEN: those bodies
+# exit 1 either way, because the FIRST clause is fenced under every variant and
+# check_stray_in_text returns on the first stray it finds. The exit code is
+# simply too coarse an observable for the property those arms claim.
+#
+# The finer observable is which numbers the script DECLARES. A fence rule that
+# closes too eagerly lets a LATER clause out of the fence, and that clause is
+# then recorded as a declared target -- the #4393 defect itself, one line deeper
+# in the body. So assert on stdout, and make the second clause the subject by
+# declaring the first one so the run reaches stdout at all.
+declared_line() {
+  PR_TITLE="fix: something" PR_BODY="$1" "$SCRIPT" 2>/dev/null | command grep -oE "declared target\(s\):.*"
+}
+
+assert_not_declared() {
+  local desc="$1" body="$2" unwanted="$3" out
+  out=$(declared_line "$body")
+  if printf '%s' "$out" | command grep -qE "(^| )$unwanted( |$)"; then
+    echo "FAIL - $desc: #$unwanted was recorded as a declared target ($out)"
+    fail=$((fail + 1))
+  else
+    echo "ok   - $desc"
+    pass=$((pass + 1))
+  fi
+}
+
+# SAME-CHARACTER rule. If backticks were allowed to close a tilde fence, #888
+# escapes the fence and is declared.
+assert_not_declared "#4393 a tilde fence is not closed by backticks: the later clause is not declared" \
+  "Closes #789
+
+~~~
+closed #789
+\`\`\`
+closed #888
+~~~" 888
+
+# WHOLE-LINE rule: a line that merely STARTS with the marker is content, not a
+# close (CommonMark 4.5 allows only trailing whitespace after a closing fence).
+assert_not_declared "#4393 a line merely STARTING with the marker does not close the fence" \
+  "Closes #789
+
+\`\`\`
+closed #789
+\`\`\`x not a close
+closed #888
+\`\`\`" 888
+
+# LENGTH rule, at the finer observable: a three-marker line inside a four-marker
+# fence is content. The exit-code arm above catches this one too; both edges.
+assert_not_declared "#4393 a shorter marker run does not close a longer fence" \
+  "Closes #789
+
+\`\`\`\`
+closed #789
+\`\`\`
+closed #888
+\`\`\`\`" 888
+
+# The mirror. Without it, every arm above passes for a tracker that never closes
+# a fence at all -- the over-refusal direction, at the finer observable.
+out=$(declared_line "Closes #789
+
+\`\`\`
+closed #789
+\`\`\`
+
+Closes #888")
+if printf '%s' "$out" | command grep -qE "(^| )888( |$)"; then
+  echo "ok   - #4393 a properly closed fence lets the following trailer declare normally"
+  pass=$((pass + 1))
+else
+  echo "FAIL - #4393 a properly closed fence did NOT let the following trailer declare ($out)"
+  fail=$((fail + 1))
+fi
+
+# --- #4393 GREEN CONTROLS: the over-refusal direction -----------------------
+#
+# Every arm above passes for a tracker that refuses everything. These are the
+# ones that do not: each is an honest declaration that MUST keep exiting 0, and
+# each sits at a place a fence tracker could plausibly get wrong.
+
+assert_exit "#4393 control: a plain trailer with no fence anywhere still passes" 0 "fix: something" \
+  "Closes #123"
+
+# Leading whitespace is legal on a trailer (CANONICAL_LINE_RE allows it) and is
+# also how CommonMark indents a fence inside a list. Up to three spaces must stay
+# a trailer.
+assert_exit "#4393 control: a trailer indented three spaces still passes" 0 "fix: something" \
+  "   Closes #123"
+
+# The trailer is OUTSIDE the fence; a tracker that never closes its fence would
+# swallow it and report the PR as having no closing reference at all.
+assert_exit "#4393 control: a trailer AFTER a closed fence still passes" 0 "fix: something" \
+  "\`\`\`
+some example code
+\`\`\`
+
+Closes #123"
+
+# The mirror: a trailer between two fences catches an off-by-one in which line
+# the close applies to.
+assert_exit "#4393 control: a trailer BETWEEN two fences still passes" 0 "fix: something" \
+  "\`\`\`
+a
+\`\`\`
+
+Closes #123
+
+\`\`\`
+b
+\`\`\`"
+
+# Same for tildes, and for a fence carrying an info string -- both are places the
+# close rule could be asymmetric with the open rule.
+assert_exit "#4393 control: a trailer after a closed TILDE fence still passes" 0 "fix: something" \
+  "~~~
+some example code
+~~~
+
+Closes #123"
+
+assert_exit "#4393 control: a trailer after a fence with an info string still passes" 0 "fix: something" \
+  "\`\`\`bash
+echo hi
+\`\`\`
+
+Closes #123"
+
+# The self-documenting case, and the reason this fix does not make writing about
+# closing references impossible: a fenced clause naming an ALREADY-DECLARED
+# target is a restatement, exempt via is_declared exactly as an inline one is.
+# This PR's own body has this shape.
+assert_exit "#4393 control: a fenced clause naming the DECLARED target is a harmless restatement" 0 \
+  "fix: something" \
+  "Closes #123
+
+\`\`\`
+Closes #123
+\`\`\`"
+
+# The colon form inside a fence is still a stray -- SEP is shared, so a fence
+# tracker must not accidentally narrow it.
+assert_exit "#4393 a fenced colon-form clause is a stray" 1 "fix: something" \
+  "Closes #123
+
+\`\`\`
+closes: #789
+\`\`\`"
+
+# STATED, TESTED GAP -- an indented code block (CommonMark 4.4, four spaces) is
+# deliberately NOT modelled. A trailer indented three spaces is legal and passes
+# (control above); four spaces is an indented code block. The boundary is one
+# space wide and invisible in a rendered body, and demoting a four-space trailer
+# would fail a correct PR for a reason its author cannot see. So this shape keeps
+# its pre-#4393 behavior, and this arm records that rather than leaving it to be
+# rediscovered as a bug.
+assert_exit "#4393 KNOWN GAP: an indented code block is not modelled, so its clause still declares" 0 \
+  "fix: something" \
+  "Closes #123
+
+prose:
+
+    closed #789"
+
+# The escape hatch and the Part-of path must not be swallowed by the tracker:
+# both are read from the body line by line the same way.
+assert_exit "#4393 control: the escape hatch still works with a fence in the body" 0 "docs: typo" \
+  "No linked issue: fixes a typo in README.md.
+
+\`\`\`
+some code
+\`\`\`"
 
 echo ""
 echo "$pass passed, $fail failed"

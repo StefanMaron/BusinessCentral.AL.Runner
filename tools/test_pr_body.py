@@ -575,6 +575,68 @@ check("...and nothing was written", f.edits == 0, f"edits={f.edits}")
 
 
 # --------------------------------------------------------------------------
+print("\n#4393: a code fence is not a declaration site")
+# --------------------------------------------------------------------------
+# The parity suite above asserts the STRAY verdict, which is too coarse to see
+# the same-character rule: a body whose FIRST fenced clause is a stray exits 1
+# whatever the later lines do, so a mutation removing that rule left the whole
+# suite green. Found by mutation, not by inspection.
+#
+# These assert on declared_targets, the finer observable: a fence rule that
+# closes too eagerly lets a LATER clause out of the fence, where it is recorded
+# as declared -- which is the #4393 defect itself, one line deeper in the body.
+
+FENCE_DECL_CASES = [
+    # (name, body, must_not_be_declared)
+    ("backtick fence", "Closes #2783\n\n```\nclosed #2125\n```\n", 2125),
+    ("tilde fence", "Closes #2783\n\n~~~\nclosed #2125\n~~~\n", 2125),
+    ("info string", "Closes #2783\n\n```text\nclosed #2125\n```\n", 2125),
+    ("unclosed fence", "Closes #2783\n\n```\nclosed #2125\n", 2125),
+    # The three rules the exit code cannot discriminate. The first clause names
+    # the ALREADY-DECLARED target so it is exempt, making the SECOND clause the
+    # subject of the assertion.
+    ("same-character: backticks do not close a tilde fence",
+     "Closes #2125\n\n~~~\nclosed #2125\n```\nclosed #2126\n~~~\n", 2126),
+    ("length: a shorter run does not close a longer fence",
+     "Closes #2125\n\n````\nclosed #2125\n```\nclosed #2126\n````\n", 2126),
+    ("whole line: a marker with trailing text does not close",
+     "Closes #2125\n\n```\nclosed #2125\n```x\nclosed #2126\n```\n", 2126),
+]
+for name, body, unwanted in FENCE_DECL_CASES:
+    check(f"#4393 ({name}): the fenced clause is not declared",
+          unwanted not in pb.declared_targets(body),
+          str(pb.declared_targets(body)))
+
+# GREEN CONTROLS at the same observable. Every case above passes for a tracker
+# that calls every line fenced, or that never closes a fence; these are the ones
+# that do not. Over-refusal fails a CORRECT PR, which is the expensive direction.
+FENCE_CONTROL_CASES = [
+    ("no fence at all", "Closes #2783\n", 2783),
+    ("indented three spaces", "   Closes #2783\n", 2783),
+    ("after a closed fence", "```\nexample\n```\n\nCloses #2783\n", 2783),
+    ("between two fences", "```\na\n```\n\nCloses #2783\n\n```\nb\n```\n", 2783),
+    ("after a closed tilde fence", "~~~\nexample\n~~~\n\nCloses #2783\n", 2783),
+    ("after a closed fence with an info string", "```bash\necho hi\n```\n\nCloses #2783\n", 2783),
+    ("after a nested fence closes", "````\n```\na\n```\n````\n\nCloses #2783\n", 2783),
+    # STATED GAP: indented code blocks (CommonMark 4.4) are deliberately not
+    # modelled -- "   Closes #2783" is a legal trailer and the boundary is one
+    # invisible space away, so demoting it would fail a correct PR.
+    ("KNOWN GAP: an indented code block still declares", "Closes #2783\n\nprose:\n\n    closed #2125\n", 2125),
+]
+for name, body, wanted in FENCE_CONTROL_CASES:
+    check(f"#4393 control ({name}): #{wanted} IS declared",
+          wanted in pb.declared_targets(body),
+          str(pb.declared_targets(body)))
+
+# A fenced clause naming an already-declared target is a restatement, exempt via
+# the declared list exactly as an inline one is -- which is why a PR may document
+# its own closing reference in a fence. This PR's body has that shape.
+_b = "Closes #2783\n\n```\nCloses #2783\n```\n"
+check("#4393 a fenced restatement of the declared target is not a stray",
+      pb.stray_closing_reference(_b, pb.declared_targets(_b)) is None,
+      str(pb.stray_closing_reference(_b, pb.declared_targets(_b))))
+
+# --------------------------------------------------------------------------
 print("\nparity with .github/scripts/check_closing_reference.sh")
 # --------------------------------------------------------------------------
 # The server-side gate is that shell script. If this Python port drifts from it,
@@ -602,6 +664,32 @@ CASES = [
     ("colon cross-repo inline", "Closes #2783\n\nNot this one, resolved: owner/repo#2125\n"),
     ("colon url inline", "Closes #2783\n\nThis does not close: https://github.com/o/r/issues/2125\n"),
     ("colon restatement of a declared target", "Closes #2783\n\nIt closes: #2783 indeed.\n"),
+    # #4393: a clause alone on a line inside a code fence used to match
+    # CANONICAL_LINE_RE and be recorded as a DECLARED TARGET -- in BOTH files, so
+    # they agreed with each other while both let an undeclared issue close
+    # silently. That is the #3094 failure mode again, and the only cure is
+    # listing the cases. Each row pins a distinct CommonMark 4.5 rule, because a
+    # tracker modelling only backticks passes the first and leaks the rest.
+    ("fenced bare clause", "Closes #2783\n\n```\nclosed #2125\n```\n"),
+    ("tilde-fenced bare clause", "Closes #2783\n\n~~~\nclosed #2125\n~~~\n"),
+    ("fenced bare clause with an info string", "Closes #2783\n\n```text\nclosed #2125\n```\n"),
+    ("nested fence keeps the inner clause fenced", "Closes #2783\n\n````\n```\nclosed #2125\n```\n````\n"),
+    ("unclosed fence runs to end of body", "Closes #2783\n\n```\nclosed #2125\n"),
+    ("a tilde fence is not closed by backticks", "Closes #2783\n\n~~~\nclosed #2125\n```\nclosed #2126\n~~~\n"),
+    ("fenced colon-form clause", "Closes #2783\n\n```\ncloses: #2125\n```\n"),
+    # The exemption survives: a fenced clause naming an already-declared target
+    # is a restatement. This PR's own body has that shape.
+    ("fenced restatement of the declared target", "Closes #2783\n\n```\nCloses #2783\n```\n"),
+    # GREEN CONTROLS. Every row above passes for a tracker that calls every line
+    # fenced; these are the rows that do not. Over-refusal fails a CORRECT PR,
+    # which is the expensive direction here.
+    ("declaration AFTER a closed fence", "```\nexample\n```\n\nCloses #2783\n"),
+    ("declaration BETWEEN two fences", "```\na\n```\n\nCloses #2783\n\n```\nb\n```\n"),
+    ("declaration after a closed tilde fence", "~~~\nexample\n~~~\n\nCloses #2783\n"),
+    # STATED GAP: indented code blocks (CommonMark 4.4) are not modelled, because
+    # "   Closes #2783" is a legal trailer and the boundary is one space wide.
+    # Listed so the two files are pinned to agreeing about the gap too.
+    ("indented code block is not modelled", "Closes #2783\n\nprose:\n\n    closed #2125\n"),
 ]
 
 # Both branches below already SAID "NOT a pass" and then let the run end at "all checks passed",
