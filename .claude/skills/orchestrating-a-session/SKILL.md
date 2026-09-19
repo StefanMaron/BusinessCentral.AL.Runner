@@ -128,6 +128,20 @@ Six implementation agents plus six unreviewed PRs is twelve, not six. Without th
 you will keep starting implementation agents whenever a slot frees, because starting one feels
 like progress and starting a reviewer feels like overhead - and the queue grows every hour.
 
+**Read the review signal before you dispatch, not the label.** `status: review-ready` cannot tell
+you whether a PR is already reviewed or being reviewed right now, and your sweep listing carries
+no field that can:
+
+```bash
+tools/review-claim.py --pr <N>     # 0 free, 1 claimed or already reviewed, 3 unreadable
+```
+
+Exit 1 prints the live claims and any verdict on the current head. Dispatching anyway is a fine
+decision — say in the brief that you know and what the second pass is for — but make it a
+decision. Measured across the 60 most recent PRs, **18 of 59 carried two or more verdicts on one
+head**, 17 of those 19 pairs under 15 minutes apart, which is inside a single review's own
+duration (#4284).
+
 **Batch three or four PRs per reviewer.** Larger batches go stale: a batch of six ran 93
 minutes, during which three PRs from the brief merged and two heads moved, so a third of the
 verdicts came back "no verdict on current head". Smaller batches lose the cross-PR findings that
