@@ -27,6 +27,13 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import scratch_git_config  # noqa: E402
+
+# Before the first git call: a box with commit.gpgsign=true would otherwise send
+# every scratch commit below through the user's signer (#4001).
+scratch_git_config.isolate()
+
 _spec = importlib.util.spec_from_file_location(
     "comment_density", os.path.join(HERE, "comment-density.py"))
 cd = importlib.util.module_from_spec(_spec)
@@ -150,18 +157,21 @@ with tempfile.TemporaryDirectory() as tmp:
     base = commit(repo, "base")
 
     lines = [f"var l{i} = {i};\n" for i in range(40)]
-    # Hunk 1: a line whose /* sits inside a string literal. A scanner that
-    # mishandles it opens a block comment that nothing later closes.
+    # Hunk 1: a line whose /* sits inside a string literal, FOLLOWED by another
+    # added line. The follower is load-bearing: the string-skip sets saw_code on
+    # its own line either way, so a scanner that fails to skip the literal is
+    # observable only on the NEXT line, which it swallows into the phantom block.
     lines.insert(2, 'var s = "/* not a comment";\n')
+    lines.insert(3, "var after = 1;\n")
     # Hunk 2, far away: plain code, which must stay code.
-    lines.insert(30, "var tail = 1;\n")
+    lines.insert(31, "var tail = 1;\n")
     write(repo, "AlRunner/B.cs", "".join(lines))
     head = commit(repo, "two hunks")
 
     r = cd.diff_counts(repo, base, head, ["AlRunner/"])
-    check("both added lines classify as code",
-          (r.added.comment, r.added.code) == (0, 2),
-          f"got comment={r.added.comment} code={r.added.code}, want 0/2")
+    check("all three added lines classify as code",
+          (r.added.comment, r.added.code) == (0, 3),
+          f"got comment={r.added.comment} code={r.added.code}, want 0/3")
     check("control: the fixture really produced two separate hunks",
           r.hunks >= 2, f"got {r.hunks} hunk(s)")
 
