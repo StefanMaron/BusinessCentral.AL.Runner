@@ -324,17 +324,37 @@ for _path in ("t.py", "r.md", "m.json", "s.sh", "w.yml", "n.al", "x"):
 # `.sln` -- which this repository does not have -- and omitted `.slnx`, which four workflows
 # build (#4343, review round 2). A spare entry costs only a refusal a real rebuild clears, so
 # this asserts coverage of what exists rather than equality with it.
+# Three outcomes, not two. `git ls-files` RAISING and `git ls-files` succeeding with EMPTY
+# stdout are different events with the same falsy value, and only the first was handled: an
+# empty read made `if _tracked:` skip every assertion below and the run reported all-passed
+# (#4343, review round 4). Empty-but-successful is reachable -- `git init` a directory and
+# `git ls-files` exits 0 with zero bytes -- so this is the census that pins the list passing
+# over nothing, which is the "green because it never looked" shape the rest of this PR is
+# about. A repository with zero tracked files is not a repository whose build inputs are all
+# covered; it is one nobody measured.
 import subprocess as _sp
 _root = os.path.dirname(HERE)
+_tracked, _why = "", ""
 try:
-    _tracked = _sp.run(["git", "ls-files"], cwd=_root, capture_output=True, text=True, check=True).stdout
-except (OSError, _sp.SubprocessError) as _exc:  # no git, no verdict -- say so, do not pass
-    check("the build-input list could be checked against the tree", False, f"git ls-files: {_exc}")
-    _tracked = ""
-if _tracked:
+    _tracked = _sp.run(["git", "ls-files"], cwd=_root, capture_output=True, text=True,
+                       check=True).stdout
+    if not _tracked.strip():
+        _why = "git ls-files succeeded but listed no tracked files"
+except (OSError, _sp.SubprocessError) as _exc:
+    _why = f"git ls-files could not be run: {_exc}"
+check("the build-input list could be checked against the tree", not _why,
+      f"{_why} — the assertions below pin BUILD_INPUT_SUFFIXES against what this repository "
+      f"actually holds, and none of them ran. Refusing rather than reporting a pass over an "
+      f"empty population")
+if not _why:
     # Every extension a .NET build compiles that this repository actually HAS must be listed.
     _have = {("." + _l.rsplit(".", 1)[-1].lower()) for _l in _tracked.split("\n")
              if "." in _l.rsplit("/", 1)[-1]}
+    # The census is worthless if it inspected nothing recognisable, so say what it saw.
+    check("the tree census found the extensions this repository is known to hold",
+          {".cs", ".csproj"} <= _have,
+          f"git ls-files returned {len(_tracked.splitlines())} path(s) but no .cs/.csproj among "
+          f"them — the census is reading the wrong tree, so its passes mean nothing")
     for _ext in (".cs", ".csproj", ".props", ".targets", ".slnx", ".sln"):
         if _ext in _have:
             check(f"{_ext} exists in the tree and IS treated as a build input",

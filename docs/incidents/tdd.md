@@ -479,3 +479,51 @@ rebuilding"* from *"the user forgot"* — which is the original defect.
 check is defence in depth for the case where `--exit` is handed a dotnet log, and not protection
 for Python guards; what protects those is the build-input gate. Both the code comment and the PR
 body now say so, rather than claiming the broader thing.
+
+### The fourth instance, at the outermost layer: the census that passes over nothing
+
+Rounds 1-3 were checks that failed to catch something. This one is the *census that pins the
+list* — the outermost guard, added in round 3 precisely so the `.slnx` omission could not
+recur — and it could report a pass having asserted nothing.
+
+`git ls-files` **raising** and `git ls-files` **succeeding with empty stdout** are different
+events with the same falsy value, and only the first was handled. The second is reachable:
+`git init` a directory and `git ls-files` exits 0, zero bytes, no stderr. Then `if _tracked:`
+skipped both tree-keyed assertions and the run reported `all passed`.
+
+The same "green because it never looked" shape as the three rounds above, one layer further
+out, and in the file that records the through-line — which is what made it worth fixing rather
+than noting, since it is not live under CI (a real checkout always has tracked files).
+
+Now three refusals with distinct causes, each verified to fire:
+
+| state | how it was produced | message |
+|---|---|---|
+| git raises | `git` off `PATH` | `git ls-files could not be run: [Errno 2] …` |
+| git succeeds, empty | a stub `git` exiting 0 with no output | `git ls-files succeeded but listed no tracked files` |
+| git succeeds, wrong tree | a stub printing `a.txt`, `b.md` | `returned 2 path(s) but no .cs/.csproj among them — the census is reading the wrong tree` |
+
+The third is not the reported defect. It is the fourth-mechanism shape from
+`verify-execution-not-the-tick.md` — a correct instrument reading the wrong subject — and a
+census that inspected two irrelevant paths would otherwise have passed every extension check
+vacuously.
+
+### Two correct numbers for "what does the build-input mutation red", and they differ 6x
+
+Reported as 24; re-derived as **4**. Both are right, and they measure different mutations:
+
+| target | mutation | reds |
+|---|---|---|
+| the call site (`M4`) | `if mutated and not is_build_input(mutated)` → `if False` | **4** — exactly the four non-build-input controls |
+| the predicate | `return path.lower().endswith(...)` → `return False` | **24** |
+| the predicate, inverted | → `return True` | 11 |
+
+The call-site mutation disables the gate while leaving `is_build_input` answering truthfully, so
+only the four controls that depend on the gate move. Mutating the predicate to a constant also
+reds every direct assertion *about the predicate* — the both-directions cases and the tree
+census — which is a coarser result: it proves coverage exists rather than that the tests
+discriminate (`tdd.md`, "choose the mutation to test a property, not to produce a red").
+
+Worth recording because neither figure is wrong and a reader comparing them would assume one
+was. **A mutation count is meaningless without naming the target**, and the two live three lines
+apart in the same file.
