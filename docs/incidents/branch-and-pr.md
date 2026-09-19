@@ -161,7 +161,7 @@ so this is not a parity break.
 It is narrow: a bullet, a blockquote marker, a table pipe or any other text on the line breaks
 the canonical match and the stray check sees it again. Both edges are now pinned, and the hole
 itself is pinned at what the script does **today** rather than fixed here — a fence-aware parser
-has its own false-positive surface and is a different question from #4294's.
+has its own false-positive surface and is a different question from #4294's. Tracked by #4393.
 
 ### Documenting it reproduces it
 

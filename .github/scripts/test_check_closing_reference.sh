@@ -615,10 +615,9 @@ The offending shape is \`closed #789\` in a queue scan."
 # matches CANONICAL_LINE_RE wherever it sits, fence included, so it is read as a
 # DECLARATION: the gate prints "declared target(s): 123 789", exits 0, and #789
 # closes on merge with no error for anyone to read. Measured here and identical
-# in tools/pr-body.py's port, so this is not a parity break. Filed separately --
-# the issue is named in the PR body that added this block -- because a
-# fence-aware parser has its own false-positive surface and is not #4294's
-# subject. This case pins what the script does TODAY, so the follow-up has a
+# in tools/pr-body.py's port, so this is not a parity break. Tracked by #4393,
+# filed rather than fixed here because a fence-aware parser has its own
+# false-positive surface and is not #4294's subject. This case pins what the script does TODAY, so the follow-up has a
 # starting point and any change to it is deliberate rather than accidental.
 assert_exit "#4294 a bare clause alone on a fenced line is read as a DECLARATION (known hole)" 0 \
   "fix: something" \
