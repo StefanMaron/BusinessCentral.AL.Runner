@@ -2326,8 +2326,39 @@ _inherited_detached = pf.judge_branch_ownership(
 check("a foreign worktree with a detached HEAD is a FAIL, not merely undetermined",
       _inherited_detached.status == "FAIL", _inherited_detached.summary)
 
+# An agent's cwd is usually a SUBDIRECTORY of its worktree, not the root -- which is what
+# `worktree_identity` takes the segment after `worktrees` for, rather than the last one.
+# Nothing here stood anywhere but a root until #4340's review, and a mutation reading the
+# last segment instead passed the whole suite while degrading a foreign SUBDIRECTORY from
+# FAIL to WARN: correct at the root, laundering one directory down. That is the shape the
+# third state exists to refuse, so it is pinned at both depths.
+_FOREIGN_SUBDIR = _FOREIGN_WT + "/AlRunner/Patches"
+
+_inherited_subdir = pf.judge_branch_ownership(
+    cwd=_FOREIGN_SUBDIR, branch="agent/stma-auto2-6/issue-4289", pr=None,
+    agent_id="stma-auto-1")
+check("a SUBDIRECTORY of a foreign worktree is a FAIL, not merely undetermined",
+      _inherited_subdir.status == "FAIL", _inherited_subdir.summary)
+check("...and it names the identity the enclosing worktree belongs to",
+      "stma-auto2-6" in _inherited_subdir.summary, _inherited_subdir.summary)
+
+_win_subdir = pf.judge_branch_ownership(
+    cwd=r"C:\repo\.claude\worktrees\stma-auto2-6-issue-4289\AlRunner\Patches",
+    branch="agent/stma-auto2-6/issue-4289", pr=None, agent_id="stma-auto-1")
+check("a foreign worktree subdirectory is refused with Windows separators too",
+      _win_subdir.status == "FAIL", _win_subdir.summary)
+
 # ---- and the directions it must NOT fire in, so the check discriminates rather than
 # ---- simply refusing everything.
+
+# The control for the two arms above: standing one directory down inside YOUR OWN worktree
+# is the ordinary case and must stay a PASS. Without it, a guard that simply refused every
+# subdirectory would satisfy the FAIL arms.
+_own_subdir = pf.judge_branch_ownership(
+    cwd="/repo/BusinessCentral.AL.Runner/.claude/worktrees/stma-auto-1-issue-4340/AlRunner/Patches",
+    branch="agent/stma-auto-1/issue-4340", pr=None, agent_id="stma-auto-1")
+check("a subdirectory of your OWN worktree is still a PASS",
+      _own_subdir.status == "PASS", _own_subdir.summary)
 
 _own_wt = pf.judge_branch_ownership(
     cwd="/repo/BusinessCentral.AL.Runner/.claude/worktrees/stma-auto-1-issue-4340",
