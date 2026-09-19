@@ -1444,6 +1444,65 @@ asserted upstream by codeunit 61202, where a real tier adjudicates it on every c
 
 ---
 
+### CRM proxy versions — registered from the shipped proxy assemblies, not from `DataSources.json`
+
+*The registry BaseApp's CRM/CDS surfaces read is populated here; the id comes from the shipped
+CRM SDK rather than from a configuration file the runner's artifact layout does not carry.*
+
+BaseApp's Dynamics 365 Connection Setup (page 5330) and CDS Connection Setup (page 7200) call
+`GetLastProxyVersionItem` from `OnOpenPage`. That fills a `Record TempStack temporary` from the
+DotNet `CrmHelper.GetProxyIdList()` and `FindLast`s it, so an empty list makes the page fail to
+open with `The TempStack table is empty` three frames below the trigger (#3515: 90 measured
+failures across four Tests-CRM_integration codeunits, 42 of them tests Microsoft runs).
+
+`GetProxyIdList()` returns `XrmServiceProvider.ProxyIds`, the key set of a static
+`Dictionary<int, XrmService>` that a service tier fills during `NavEnvironment` construction:
+
+```
+NavEnvironment..ctor
+  -> ExternalDataServiceManager.InitializeExternalDataServiceProviders("Xrm",
+                                XrmServiceProvider.RegisterXrmService)
+     -> reads <service tier>/DataSources/DataSources.json
+     -> RegisterXrmService(version, <path to Microsoft.Dynamics.Nav.Xrm.V*.dll>)
+```
+
+The runner runs that real constructor, but a BC **artifact** directory is flat: it ships the proxy
+assemblies and no `DataSources/DataSources.json`, so the config load returns null, the loop
+registers nothing, and the registry stays empty. Measured on `28.1.49838.53910`:
+`GetDataSourceDirectory()` resolves `<artifacts>/DataSources`, `exists=False`, while
+`Microsoft.Dynamics.Nav.Xrm.V91.dll` and `Microsoft.Dynamics.Nav.Xrm.V100.dll` are both present.
+
+`AlRunner/Patches/XrmProxyRegistration.cs` calls Microsoft's own `RegisterXrmService` with
+Microsoft's own proxy assemblies, which is what the missing file would have caused. Nothing is
+re-implemented and no value is invented.
+
+#### The id is the CRM SDK major, not the V-number in the file name
+
+BC enforces this itself: a second registration for one id throws unless
+`value.SdkVersion.Major == version`, and `XrmService.SdkVersion` reads the **file version of the
+`Microsoft.Xrm.Sdk.dll` that proxy resolves against**. The page's own control over
+`Rec."Proxy Version"` is captioned `SDK Version`, which is BC's name for the same number.
+
+Measured on `28.1.49838.53910`: `Microsoft.Xrm.Sdk.dll` reports FileVersion `9.2.49.6443`, so
+V100 registers under **9** — not 100. Deriving ids from the file names would give 9 → 91 and
+10 → 100, which BC would reject on re-registration and which no BC surface ever shows.
+
+#### V91 is skipped on Linux, and that is faithful
+
+`V91.SdkVersion` reads `Host/Microsoft.Xrm.Sdk.dll` — a Windows out-of-process host that does
+not ship in the artifact directory — so its SDK major cannot be read and it is not registered.
+BC's own loop behaves the same way: `InitializeExternalDataServiceProviders` catches
+`FileNotFoundException` per proxy, logs it, and continues, so a partial set is a state BC
+produces too. V100 is the newer proxy and the one a service tier defaults to.
+
+An empty registry is not a faithful state, so the runner prints a loud stderr line naming the
+consequence when nothing registers, rather than leaving the pages to fail three frames away.
+
+Proven by `tests/runner-extras/crm-proxy-version`, which pins both the registry and the page
+open end to end.
+
+---
+
 ### Truncate security filter validation
 
 *Six of BC's seven `Record.Truncate()` guards run here; the security-filter one does not.*
