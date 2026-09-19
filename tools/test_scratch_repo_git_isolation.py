@@ -32,6 +32,7 @@ ROOT = os.path.dirname(HERE)
 # path (relative to ROOT) -> the line the suite prints only when it fully passed
 SUITES = {
     "tools/test_agent_self_freshness.py": "all checks passed",
+    "tools/test_comment_density_diff.py": "all checks passed",
     "tools/test_corpus_checkout.py": "all corpus-checkout tests passed",
     "tools/test_preflight.py": "all checks passed",
     "tools/test_stale_origin_main_diff_recipe.py": "recipe-execution checks passed",
