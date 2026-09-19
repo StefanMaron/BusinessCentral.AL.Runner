@@ -108,3 +108,30 @@ That arm failed on the honest tool: the docstring explains *why* there is no suc
 substring test found its own rationale and reported it as the defect. Replaced with a call
 passing `--force` and requiring argparse to reject it — the property, not the spelling. It is the
 `a-substring-test-is-not-a-pin` shape, and it fired within a minute of being written.
+
+### Valid JSON of the wrong shape, and the two answers that pointed opposite ways
+
+Found in review of PR #4390. The first version checked that the comments payload *parsed* and
+never that it was a comment **list**, so `scan()` met whatever the JSON happened to contain.
+Reachable only through `--stdin` — `fetch()` tests the return code first, and `gh api` exits 1 on
+a 404 — which is exactly the path every session without `gh` uses (`github-access.md`).
+
+The reviewer quoted the 404 body. Sweeping the shapes found a second, worse one:
+
+| input | before | why |
+|---|---|---|
+| `{"message":"Not Found"}` — the real 404 body | **exit 1 = CLAIMED** | iterating a dict yields its KEYS, so the scan met a `str`; the uncaught `AttributeError` exits 1, colliding with this tool's own CLAIMED |
+| `{}` | **exit 0 = FREE** | no keys, so the loop body never ran; `scan()` returned empty and the tool printed a well-formed FREE |
+
+`{}` is the dangerous one and it is the one a single-literal arm would have missed. CLAIMED merely
+sends a reviewer away; FREE **invites** a second reviewer onto a PR nobody measured, which is the
+defect this tool exists to prevent, produced by the tool itself.
+
+The fix is a `shape_error()` predicate applied on **both** payload routes rather than only the one
+that was reported: a 200 whose body is not a list reaches `fetch()` just as easily. Pinned by eight
+table-driven arms over shapes that occur, plus two controls — an empty list is a real measurement,
+and a well-shaped list still answers CLAIMED — because a reporter answering 3 for everything would
+pass all eight.
+
+Same shape as the `--force` arm earlier on the same PR: keying a check on one spelling rather than
+on the property. Twice on one pull request is the reason the arms here are table-driven.

@@ -174,6 +174,45 @@ proc = subprocess.run(
 check("unparseable comments read UNREADABLE, never FREE",
       proc.returncode == UNREADABLE, proc.stdout + proc.stderr)
 
+# JSON that PARSES is not JSON of the right SHAPE, and the two wrong-shape
+# answers pointed in OPPOSITE directions before the fix, which is why one arm
+# keyed on one literal would not have covered this:
+#
+#   {"message":"Not Found"}  the real 404 body -> AttributeError, exit 1,
+#                            colliding with this tool's own CLAIMED
+#   {}                       no keys, so the scan loop never ran -> a
+#                            well-formed FREE from a payload measuring nothing
+#
+# FREE is the dangerous direction: CLAIMED merely sends a reviewer away, while
+# FREE invites a second reviewer onto a PR nobody measured. Table-driven so a
+# new shape is one row rather than a new arm keyed on a spelling.
+for shape, why in [
+        ('{"message":"Not Found"}', "the GitHub 404 body"),
+        ("{}", "an empty object -- the silent FREE before the fix"),
+        ('{"message":"Bad credentials"}', "any API error body"),
+        ('["x"]', "a list of non-objects"),
+        ("[null]", "a list containing null"),
+        ("null", "a bare null"),
+        ('"a string"', "a bare string"),
+        ("42", "a bare number"),
+]:
+    proc = subprocess.run(
+        [sys.executable, TOOL, "--pr", "4306", "--stdin", "--head", HEAD],
+        input=shape, capture_output=True, text=True, encoding="utf-8",
+        errors="replace")
+    check(f"valid JSON of the wrong shape reads UNREADABLE: {why}",
+          proc.returncode == UNREADABLE, proc.stdout + proc.stderr)
+
+# The control for the arms above: a reporter answering 3 for everything would
+# pass all eight. These two are the shapes that MUST still be measured.
+r = run([])
+check("control: an EMPTY comment list is a real measurement, not a wrong shape",
+      r.returncode == FREE, r.stdout + r.stderr)
+
+r = run([comment(f"Reviewing: stma-auto-9 — head {HEAD}", minutes=4)])
+check("control: a well-shaped list still answers CLAIMED after the shape check",
+      r.returncode == CLAIMED, r.stdout + r.stderr)
+
 proc = subprocess.run([sys.executable, TOOL, "--pr", "4306", "--stdin"],
                       input="[]", capture_output=True, text=True)
 check("--stdin without --head is refused rather than judged against nothing",

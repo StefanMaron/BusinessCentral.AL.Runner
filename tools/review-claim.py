@@ -133,6 +133,37 @@ def _parse_line(pattern: re.Pattern, line: str) -> tuple[str, str] | None:
     return rest[:h.start()].strip(), sha.lower()
 
 
+def shape_error(comments: object) -> str:
+    """Why this payload is not a comment list, or "" when it is.
+
+    JSON that PARSES is not JSON of the right shape, and the two failures look
+    nothing alike from here. `{"message":"Not Found"}` -- exactly what the
+    GitHub API returns for a 404 -- parses fine, and iterating a dict yields its
+    KEYS, so the scan met a `str` and raised AttributeError: Python's generic
+    exit 1, which collides with this tool's own CLAIMED. Meanwhile `{}` has no
+    keys at all, so the loop body never ran and the tool printed a well-formed
+    FREE from a payload that established nothing.
+
+    So the two wrong-shape answers pointed in OPPOSITE directions, and the
+    silent one was the dangerous one: CLAIMED merely sends a reviewer away,
+    while FREE invites a second reviewer onto a PR nobody measured. Neither may
+    be reported as a measurement (`guards-need-a-third-state.md`).
+
+    Unreachable on the live `gh` path, where `fetch()` tests the return code and
+    `gh api` exits 1 on a 404. It bites through --stdin, which is the path every
+    session without `gh` uses (`github-access.md`).
+    """
+    if not isinstance(comments, list):
+        return (f"the comments are a {type(comments).__name__}, not a list. "
+                "A GitHub error body such as {\"message\":\"Not Found\"} "
+                "parses as JSON and is not a comment list.")
+    for i, c in enumerate(comments):
+        if not isinstance(c, dict):
+            return (f"comment {i} is a {type(c).__name__}, not an object -- "
+                    "this is not a comments payload.")
+    return ""
+
+
 def scan(comments: list[dict]) -> tuple[list[dict], list[dict]]:
     """Every well-formed claim and verdict, oldest first."""
     claims: list[dict] = []
@@ -228,13 +259,19 @@ def fetch(pr: str, repo: str) -> list[dict]:
               file=sys.stderr)
         sys.exit(UNREADABLE)
     try:
-        return json.loads(stdout or "[]")
+        parsed = json.loads(stdout or "[]")
     except json.JSONDecodeError as exc:
         # A truncated or non-JSON response is a failed measurement, not a
         # claim-free PR: returning [] here would print FREE and send a second
         # reviewer at a PR someone may well be reviewing.
         print(f"could not parse the comments for PR {pr}: {exc}", file=sys.stderr)
         sys.exit(UNREADABLE)
+    bad = shape_error(parsed)
+    if bad:
+        print(f"the comments for PR {pr} are not a comment list: {bad}",
+              file=sys.stderr)
+        sys.exit(UNREADABLE)
+    return parsed
 
 
 def fetch_head(pr: str, repo: str) -> str:
@@ -297,6 +334,11 @@ def main() -> int:
             comments = json.loads(sys.stdin.read() or "[]")
         except json.JSONDecodeError as exc:
             print(f"could not parse the comments on stdin: {exc}", file=sys.stderr)
+            return UNREADABLE
+        bad = shape_error(comments)
+        if bad:
+            print(f"the comments on stdin are not a comment list: {bad}",
+                  file=sys.stderr)
             return UNREADABLE
         head = args.head.lower()
     else:
