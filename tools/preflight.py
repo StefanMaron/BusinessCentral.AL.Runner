@@ -312,6 +312,12 @@ class Worktree:
 class Disposition:
     reapable: bool
     reason: str
+    # Why the worktree is kept is one question; whether its unpushed work still
+    # exists anywhere else is a different one, and until #4385 nothing answered
+    # it. Appended and defaulted so every positional Disposition(...) call site
+    # keeps working.
+    verdict: Optional["UnpushedVerdict"] = None
+    uncommitted: Optional[tuple] = None
 
 
 @dataclass
@@ -583,6 +589,142 @@ def suggest_workers(*, tmp_free: int, repo_free: int, mem_available: int, cpus: 
                       detail=candidates)
 
 
+@dataclass
+class UnpushedVerdict:
+    """What became of a kept worktree's unpushed commits (#4385)."""
+    verdict: str                # carried | differs | unknown
+    same: int
+    differing: list
+    detail: str
+
+
+def _blob_at(repo: str, rev: str, path: str) -> Optional[str]:
+    """The blob id `rev:path` names, or None when there is no such blob.
+
+    `--verify -q` is not optional: without it `git rev-parse` ECHOES an unknown
+    argument back on stdout and exits 128, so a caller comparing two captured
+    strings reports a match for a commit git has never heard of
+    (`ci-verdicts.md` measured both directions of this).
+    """
+    r = run(["git", "-C", repo, "rev-parse", "--verify", "-q", f"{rev}:{path}"], timeout=60)
+    out = r.out.strip()
+    if not r.ok or not re.fullmatch(r"[0-9a-f]{40}", out):
+        return None
+    return out
+
+
+def _rev_exists(repo: str, rev: str) -> bool:
+    r = run(["git", "-C", repo, "rev-parse", "--verify", "-q", f"{rev}^{{commit}}"], timeout=60)
+    return r.ok and bool(re.fullmatch(r"[0-9a-f]{40}", r.out.strip()))
+
+
+def classify_unpushed_work(repo: str, *, tip: str, unpushed: list,
+                           reference: Optional[str]) -> UnpushedVerdict:
+    """Did a kept worktree's unpushed commits end up on main, or not?
+
+    `--reap` keeps such a worktree and says only which CONDITION held it, so 18
+    accumulated with nobody able to tell duplicated work from lost work (#4385).
+    This answers that question per worktree; it never removes anything.
+
+    The comparison is narrower than it looks, and every wider one measured here
+    false-negatives on a squash-merging repository:
+
+      * `git diff <ref>...<tip>` is never empty -- these branches are weeks
+        behind, so a three-dot diff renders the whole fork delta;
+      * `git cherry` compares patch-ids, and a squash collapses N commits into
+        one new patch, so no id survives;
+      * a two-dot per-file diff against main's CURRENT head answers "differs"
+        for work that demonstrably landed, because main moved afterwards.
+
+    So: take the files the UNPUSHED commits touched, and compare the TIP's blob
+    for each against the REFERENCE -- the PR's merge commit, which is main as the
+    squash landed it. Unchanged files are not consulted at all, which is what
+    keeps main's later commits out of the answer.
+
+    The reference being the merge commit rather than main's head is the load-
+    bearing choice, and `test_preflight.py` pins it by measuring one tip both
+    ways after main edits a carried file: main's head says "differs", the merge
+    commit says "carried", and only the second is true.
+
+    Trap: a "carried" verdict is about CONTENT AT THESE PATHS, not about intent.
+    A tip that is a strict subset of what merged -- the agent's local state
+    before the last review round, which is the common shape here -- reads as
+    carried for the files it touched and says nothing about files it never had.
+    That is the right answer for "is anything at risk", and it is not a claim
+    that the branch equals the merge.
+    """
+    if not unpushed:
+        return UnpushedVerdict("unknown", 0, [],
+                               "no unpushed commits were identified, so there is "
+                               "nothing to attribute")
+    if not reference or not _rev_exists(repo, reference):
+        return UnpushedVerdict("unknown", 0, [],
+                               f"the reference commit ({reference or 'none'}) could not be "
+                               f"read, so nothing was compared")
+    if not _rev_exists(repo, tip):
+        return UnpushedVerdict("unknown", 0, [],
+                               f"the worktree tip ({tip[:8]}) could not be read, so nothing "
+                               f"was compared")
+    touched: list = []
+    for commit in unpushed:
+        r = run(["git", "-C", repo, "show", "--format=", "--name-only", commit], timeout=120)
+        if not r.ok:
+            return UnpushedVerdict("unknown", 0, [],
+                                   f"the files touched by {commit[:8]} could not be listed, "
+                                   f"so the comparison would be partial")
+        for line in r.out.splitlines():
+            line = line.strip()
+            if line and line not in touched:
+                touched.append(line)
+    if not touched:
+        return UnpushedVerdict("unknown", 0, [],
+                               "the unpushed commits touch no files at all (an empty claim "
+                               "commit), so there is no content to attribute")
+    same = 0
+    differing: list = []
+    for path in sorted(touched):
+        a = _blob_at(repo, tip, path)
+        b = _blob_at(repo, reference, path)
+        if a is not None and a == b:
+            same += 1
+        else:
+            differing.append(path)
+    if not differing:
+        return UnpushedVerdict("carried", same, [],
+                               f"all {same} file(s) the unpushed commit(s) touch are "
+                               f"byte-identical to {reference[:8]}; the content is on main")
+    shown = ", ".join(differing[:4]) + (" ..." if len(differing) > 4 else "")
+    return UnpushedVerdict("differs", same, differing,
+                           f"{len(differing)} of {same + len(differing)} file(s) differ from "
+                           f"{reference[:8]}: {shown}")
+
+
+def summarise_uncommitted(status_porcelain: str) -> tuple:
+    """(count, paths) for an uncommitted tree, for the census line.
+
+    Nothing could have carried an uncommitted change, so these worktrees get no
+    carried/differs verdict -- only a list, which is what tells a human whether
+    the tree holds real work or a stray build artifact.
+
+    A rename line reports the DESTINATION, because that is the path that exists
+    on disk to go and look at.
+    """
+    paths: list = []
+    for line in status_porcelain.splitlines():
+        if len(line) < 4:
+            continue
+        rest = line[3:].strip()
+        if not rest:
+            continue
+        if " -> " in rest:
+            rest = rest.split(" -> ", 1)[1].strip()
+        if rest.startswith('"') and rest.endswith('"') and len(rest) > 1:
+            rest = rest[1:-1]
+        if rest not in paths:
+            paths.append(rest)
+    return (len(paths), paths)
+
+
 def unpushed_against_pr(head: str, pr: Optional[dict]) -> Optional[int]:
     """How many local commits the remote has never seen, judged by the PR.
 
@@ -591,6 +733,26 @@ def unpushed_against_pr(head: str, pr: Optional[dict]) -> Optional[int]:
     zero. The PR's headRefOid is the surviving record of what was actually
     pushed. Returns None when there is no PR, because "cannot prove anything was
     pushed" must not be rendered as "nothing is unpushed".
+
+    **The 1 is a flag, not a count, and the census renders it as a count.** Any
+    head differing from headRefOid answers exactly 1, whether one commit or
+    twenty sit on top of it -- so "1 local commit(s) were never pushed" in the
+    worktree census means "at least one", and a reader who takes it literally
+    will under-estimate. Only reachable once the upstream ref is gone: the caller
+    prefers `rev-list --count @{u}..HEAD` and falls back here, so a worktree
+    whose remote-tracking branch still exists gets a true count from that path
+    instead. Measured over the 77 live worktrees while writing this: eleven whose
+    PR head differs hold 2-6 commits outside every remote, and all eleven still
+    resolve `@{u}`, so none of them reaches this function today.
+
+    It also cannot distinguish "ahead of what was pushed" from "diverged from
+    it": a head that is neither an ancestor nor a descendant of headRefOid also
+    answers 1. Both readings are deliberately left as they are. Over-reporting
+    keeps a worktree, which is the safe direction, and this is the only
+    instrument that survives GitHub deleting the head branch. What wants a real
+    count is `unpushed_commits`, which asks `--not --remotes` (#4385) -- but that
+    answers 0 for a merged branch whose remote ref has been pruned, so the two
+    are complementary rather than one superseding the other.
     """
     if not pr or not pr.get("headRefOid"):
         return None
@@ -864,11 +1026,17 @@ def check_headroom(tmp_dir: str, repo: str, mounts: list[Mount], mem: dict,
 
 
 def pr_map(slug: Optional[str]) -> tuple[dict, str]:
-    """branch -> newest PR record. One API call, not one per branch."""
+    """branch -> newest PR record. One API call, not one per branch.
+
+    `mergeCommit` rides along because it is the reference the #4385 verdict
+    compares against -- main as the squash landed it, rather than main as it is
+    now. It costs nothing extra: the field set of one `gh pr list` call.
+    """
     if not slug or not shutil.which("gh"):
         return {}, "unavailable"
     r = run_retry(["gh", "pr", "list", "--repo", slug, "--state", "all", "--limit", "300",
-                   "--json", "number,headRefName,state,headRefOid,mergedAt"], timeout=90)
+                   "--json", "number,headRefName,state,headRefOid,mergedAt,mergeCommit"],
+                  timeout=90)
     if not r.ok:
         return {}, f"gh pr list failed: {(r.err or r.out).strip()[:200]}"
     try:
@@ -1037,7 +1205,8 @@ def worktree_dirt(worktree: str) -> tuple:
                          gitlink_workless=corpus_gitlink_is_workless(worktree))
 
 
-def collect_worktrees(repo: str, prs: dict, measure: bool = True) -> list[tuple]:
+def collect_worktrees(repo: str, prs: dict, measure: bool = True,
+                      verdicts: bool = True) -> list[tuple]:
     r = run(["git", "-C", repo, "worktree", "list", "--porcelain"])
     if not r.ok:
         return []
@@ -1063,8 +1232,65 @@ def collect_worktrees(repo: str, prs: dict, measure: bool = True) -> list[tuple]
                 size, complete = dir_size(wt.path)
                 wt.size_bytes = size
         d = disposition(wt, pr=pr, dirty=dirty, unpushed=unpushed, is_current=is_current)
+        # Why it is kept is now followed by what became of the work, for the
+        # worktrees where that is the open question (#4385). A verdict never
+        # changes `reapable`: trading a false keep for a false delete is the one
+        # way to make this worse than leaving it alone.
+        if exists and not d.reapable and verdicts:
+            if dirty:
+                st = run(["git", "-C", wt.path, "status", "--porcelain"], timeout=60)
+                if st.ok:
+                    d.uncommitted = summarise_uncommitted(st.out)
+            if unpushed:
+                d.verdict = verdict_for_worktree(wt.path, pr)
         rows.append((wt, pr, dirty, unpushed, d, exists))
     return rows
+
+
+def unpushed_commits(worktree: str) -> Optional[list]:
+    """Commits reachable from HEAD that no remote ref contains.
+
+    `--not --remotes` is the whole instrument, and it is sharper than the census
+    count it sits beside: `unpushed_against_pr` compares HEAD against the PR's
+    headRefOid and so answers 1 for a head that merely differs, including one
+    that IS on a remote ref under another name. Measured on the live set: two
+    worktrees the census called "1 UNPUSHED COMMIT" have nothing outside the
+    remotes at all.
+
+    None, never [], when the read fails -- an empty list would be rendered as
+    "nothing unpushed", which is the success state for a measurement that did not
+    happen (`guards-need-a-third-state.md`).
+    """
+    r = run(["git", "-C", worktree, "rev-list", "HEAD", "--not", "--remotes"], timeout=120)
+    if not r.ok:
+        return None
+    return [ln.strip() for ln in r.out.splitlines() if ln.strip()]
+
+
+def verdict_for_worktree(worktree: str, pr: Optional[dict]) -> UnpushedVerdict:
+    """The #4385 verdict for one kept worktree, reading git and the PR record.
+
+    The reference is the PR's merge commit when there is one, because that is
+    main at the moment the squash landed. Falling back to `origin/main` is
+    deliberately NOT done here: main moves, and a comparison against a moved main
+    answers "differs" for work that demonstrably landed -- pinned in
+    test_preflight.py by measuring one tip both ways.
+    """
+    head = run(["git", "-C", worktree, "rev-parse", "--verify", "-q", "HEAD"], timeout=60)
+    tip = head.out.strip()
+    if not head.ok or not re.fullmatch(r"[0-9a-f]{40}", tip):
+        return UnpushedVerdict("unknown", 0, [],
+                               "the worktree's HEAD could not be read")
+    commits = unpushed_commits(worktree)
+    if commits is None:
+        return UnpushedVerdict("unknown", 0, [],
+                               "the unpushed commits could not be listed")
+    reference = ((pr or {}).get("mergeCommit") or {}).get("oid")
+    if not reference:
+        return UnpushedVerdict("unknown", 0, [],
+                               f"PR #{(pr or {}).get('number', '?')} records no merge commit, "
+                               f"so there is no snapshot of main to compare against")
+    return classify_unpushed_work(worktree, tip=tip, unpushed=commits, reference=reference)
 
 
 WORKTREE_DIR = re.compile(r'[\\/]\.claude[\\/]worktrees[\\/]')
@@ -1247,6 +1473,35 @@ def check_branch_ownership(repo: str, agent_id: Optional[str],
                                   lookup_status=status)
 
 
+VERDICT_MARK = {"carried": "CARRIED ", "differs": "DIFFERS ", "unknown": "UNKNOWN "}
+
+
+def verdict_lines(d: Disposition) -> list:
+    """The indented verdict lines for one kept worktree, or none at all.
+
+    Rendered as its own line rather than appended to the reason, because the
+    reason answers "why is this here" and the verdict answers "is anything at
+    risk" -- a reader scanning 20 kept worktrees for the second should not have
+    to read to the end of the first.
+    """
+    out: list = []
+    v = d.verdict
+    if v is not None:
+        out.append(f"          -> {VERDICT_MARK.get(v.verdict, 'UNKNOWN ')}{v.detail}")
+        if v.verdict == "carried":
+            out.append("             The content is on main. Nothing is lost by removing "
+                       "this worktree, but --reap will not do it for you.")
+        elif v.verdict == "differs":
+            out.append("             Look before removing: `git -C <path> diff "
+                       "<merge-commit> HEAD -- <the files above>`.")
+    if d.uncommitted is not None:
+        count, paths = d.uncommitted
+        shown = ", ".join(paths[:4]) + (" ..." if len(paths) > 4 else "")
+        out.append(f"          -> UNCOMMITTED {count} path(s), which nothing could have "
+                   f"carried: {shown}")
+    return out
+
+
 def check_worktrees(rows: list[tuple], repo: str, pr_status: str) -> CheckResult:
     agents = [r for r in rows if not r[0].is_main]
     reapable = [r for r in agents if r[4].reapable]
@@ -1268,6 +1523,11 @@ def check_worktrees(rows: list[tuple], repo: str, pr_status: str) -> CheckResult
         suffix = (" -- " + ", ".join(flags)) if flags else ""
         detail.append(f"{mark}{human(wt.size_bytes):>9}  {os.path.basename(wt.path)}  "
                       f"[{wt.branch or 'detached'}] - {d.reason}{suffix}")
+        # The verdict on its own line, indented under the worktree it is about:
+        # "kept for unpushed commits" is the condition, this is what became of
+        # the work (#4385). Only printed when something was actually measured.
+        for line in verdict_lines(d):
+            detail.append(line)
     if pr_status != "ok":
         detail.append(f"pull-request states could not be read ({pr_status}); every worktree "
                       f"is therefore reported as merged-state unknown and kept.")
@@ -1289,15 +1549,22 @@ def check_worktrees(rows: list[tuple], repo: str, pr_status: str) -> CheckResult
     elif missing:
         status = "WARN"
         remedy = "Run `git worktree prune` to drop registrations for directories that are gone."
+    carried = [r for r in agents if (r[4].verdict or None) and r[4].verdict.verdict == "carried"]
+    differs = [r for r in agents if (r[4].verdict or None) and r[4].verdict.verdict == "differs"]
     summary = (f"{len(agents)} agent worktree(s), {human(total)}; {len(reapable)} reapable, "
                f"{len(dirty)} with uncommitted work")
+    if carried or differs:
+        summary += (f"; of those kept for unpushed work, {len(carried)} CARRIED on main and "
+                    f"{len(differs)} DIFFER")
     return CheckResult(name="worktrees", status=status, summary=summary,
                        command="git worktree list --porcelain + gh pr list --state all",
                        detail=detail, remedy=remedy,
                        data={"count": len(agents), "total_bytes": total,
                              "reapable": [r[0].path for r in reapable],
                              "dirty": [r[0].path for r in dirty],
-                             "missing": [r[0].path for r in missing]})
+                             "missing": [r[0].path for r in missing],
+                             "carried": [r[0].path for r in carried],
+                             "differs": {r[0].path: r[4].verdict.differing for r in differs}})
 
 
 def check_stale_scratch(tmp_dir: str, rows: list[tuple], stale_hours: float) -> CheckResult:
