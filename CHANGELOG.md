@@ -31,6 +31,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **process:** check the MCP tools rules REQUIRE of an agent, not only the ones its definition documents
 - **hooks:** refuse a CI wait the harness will background, not only one the agent flags
 - **agent-docs:** pin the GuardTests count and refuse a foreign worktree cwd
 - **tooling:** refuse a mutation verdict from a binary older than the last --restore
