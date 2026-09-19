@@ -611,6 +611,36 @@ internal static class TestPageTemporalValue
     }
 
     /// <summary>
+    /// The DateFormula arm (#3501). Separate entry point rather than a fourth member of
+    /// <see cref="TryResolve"/> above, because a DateFormula has no round-trip spelling to try
+    /// first: <see cref="TryResolveRoundTrip"/> is about the <c>MM/dd/yyyy HH:mm:ss</c> text
+    /// this runner's own <c>ValueToString</c> produces for a typed temporal, and a DateFormula
+    /// renders as its own formula text ('1D') on both routes. So there is exactly one step, and
+    /// it is BC's own evaluator.
+    ///
+    /// <para>Observably equivalent because it IS BC's evaluation: the value comes back from
+    /// <c>NavDateFormulaEvaluator</c>, reached through the same
+    /// <c>NavValueEvaluator.GetEvaluator(NavNclType)</c> switch BC's own
+    /// <c>CreateNavValueFromObject</c> dispatches a DateFormula through
+    /// (<c>NavNclType.NavDateFormula =&gt; NavDateFormulaEvaluator.Instance</c>, Ncl 28.1/28.4).
+    /// Adjudicated upstream by corpus codeunit 60601, whose eight arms cover both bindings and
+    /// both value shapes.</para>
+    ///
+    /// <para>Trap: answering false here is not a neutral decline. The caller's fall-through
+    /// builds a <c>NavText</c>, and a DateFormula binding does not coerce one — the page-variable
+    /// path raises InvalidCastException and the Rec-bound path stores a TRUNCATED value with no
+    /// error at all ('&lt;1D&gt;' becomes '&lt;'). So a decline here is a silent wrong answer on
+    /// one of the two bindings, which is why the refusal below throws rather than declining.</para>
+    /// </summary>
+    internal static bool TryResolveDateFormula(NavType type, string value, out NavValue? resolved)
+    {
+        resolved = null;
+        if (type != NavType.DateFormula) return false;
+
+        return TryEvaluateThroughBc(type, value, out resolved);
+    }
+
+    /// <summary>
     /// Step one: the spelling this runner's OWN <c>ValueToString</c> produces for a typed
     /// argument — <c>Convert.ToString(&lt;DateTime&gt;, InvariantCulture)</c>, the general
     /// date/time pattern <c>MM/dd/yyyy HH:mm:ss</c>. A <c>Time</c> arrives with
@@ -669,6 +699,7 @@ internal static class TestPageTemporalValue
         var member = type switch
         {
             NavType.Date => "NavDate",
+            NavType.DateFormula => "NavDateFormula",
             NavType.DateTime => "NavDateTime",
             _ => "NavTime",
         };
