@@ -96,6 +96,46 @@ transport is not.
   something else, or surface it. Leave the label alone. The same applies to a worktree carrying
   another identity's branch: the `agent:` label marks *the pool*, not a session.
 
+## The same question about REVIEW, where the three signals say nothing
+
+The signals above decide who is **implementing** an issue. None of them answers who is
+**reviewing** a pull request: `status: review-ready` means *ready for review* and is never
+rewritten while a review is in flight, so a PR reads identically whether nobody has looked at it
+or three agents already have.
+
+**Read the signal before dispatching a reviewer**, from the comment stream the verdict already
+lives in:
+
+```bash
+tools/review-claim.py --pr <N>     # 0 free, 1 claimed or already reviewed, 3 unreadable
+```
+
+**And post a claim before you start reviewing**, because the duplication is concentrated in the
+window a completion-time signal cannot cover:
+
+```bash
+tools/review-claim.py --pr <N> --post --agent-id <YOUR-ID>
+```
+
+Measured over the 60 most recent pull requests on 2026-09-19, counting only repeats on the
+**identical head**, where nothing about the PR changed between the passes: **18 of 59 PRs (31%)
+carry two or more verdicts on one head**, and **17 of those 19 pairs are under 15 minutes apart**
+(median 5.5 min) against a measured ~15.6 min/PR review. So the second reviewer usually started
+while the first was still running — #4306 has two verdicts on `4cfe233e` **123 seconds** apart —
+and a `status: reviewed` label written when a review *finishes* would have been too late for 17
+of the 19 (#4284).
+
+**Trap: this reports, it never blocks, and that is deliberate.** A second pass is sometimes
+right — the fourth pass on #4281 produced findings the first three did not. What was missing is
+not a lock but a signal, so that spending a second review is a decision someone made rather than
+an accident. The tool has no flag to route around, because nothing is in the way.
+
+**Second trap: a claim is about a HEAD, and it expires.** A claim naming a superseded head, or
+one older than 45 minutes, is reported and does not hold — a reviewer that died mid-pass must not
+lock a PR forever, which is the same judgement the abandoned-draft clause above makes. And exit 3
+is not exit 0: "nobody is reviewing this" and "I could not find out" send a coordinator to
+opposite actions.
+
 ## The claim signals, and what each is worth
 
 This rule owns the three signals, so any other document that needs them points here rather than
@@ -110,6 +150,8 @@ every collision behind this rule was a read that was too narrow, not a write tha
 - `github-access.md` — `gh` vs `mcp__github__*`; never assume `gh` exists
 - `no-git-stash-with-worktrees.md` — the other place where "shared by default" bites, and
   why one agent's cleanup lands in another's work
+- `tdd.md` — why a second independent pass is worth something: a reviewer re-running the
+  author's own mutation is the weakest check available, so duplication is capped, not banned
 - `public-posting-approval.md` — commenting on the issue to surface a collision is ungated
   on this repository, and carries its reasoning
 

@@ -50,3 +50,88 @@ Whether the lag is specific to REST-created pull requests or applies to `gh pr c
 not established; the sample is one PR, created by the REST route because the GraphQL one was
 failing. The remedy in the rule does not depend on the answer: the body carries the declaration
 immediately either way, so a zero result confirmed against the body is correct under both.
+
+## The review-side signal: 31% of PRs reviewed twice on the identical head (#4284)
+
+The rule's three signals decide implementation ownership. Nothing answered the same question
+for review, and the cost was invisible because nothing collides and nothing errors: every
+sweeping coordinator sees the same `status: review-ready` PR and dispatches at it.
+
+Filed after four independent reviewer passes landed on #4281 — one pass cost **215,560 tokens
+over 63 tool calls and about 15 minutes** on a PR already adjudicated. The filing agent then hit
+it twice more itself, on #4290 (four prior verdicts) and #4291, and its own issue comments record
+the correction that shaped the remedy: a `status: reviewed` label applied at completion "fixes
+the wrong half", because three of its five instances were near-simultaneous *starts*.
+
+### What the population says, against the five cited instances
+
+The five instances were a coordinator's own dispatches, so they sample one loop's behaviour.
+Scanning the 60 most recent pull requests on 2026-09-19 (59 carry at least one `Verdict:`
+comment) and counting only repeats on the **identical head SHA** — where nothing about the PR
+changed between the two passes, so the second is redundant by construction:
+
+| measure | value |
+|---|---|
+| PRs with ≥2 verdicts on one head | **18 of 59 (31%)** — 19 such pairs |
+| pairs under 15 min apart | **17 of 19**, median **5.5 min** |
+| the two outliers | 28.5 and 29.1 min |
+| measured review duration | ~15.6 min/PR (`orchestrating-a-session`) |
+
+`>1 verdict` alone is **46 of 59** and mostly legitimate: a FIX-FIRST the author has addressed
+needs re-reviewing at the new head. Keying on the same-head repeat is what separates the defect
+from healthy re-review, and getting that wrong would have produced a signal firing on three
+quarters of all PRs.
+
+The 17-of-19 figure is what decided the design. A review takes ~15 minutes; the median gap
+between redundant passes is 5.5. So the second reviewer usually started while the first was
+still running, and any signal written when a review *finishes* is written too late. #4306 is the
+clean instance: two verdicts on `4cfe233e`, **123 seconds** apart, each reviewer having checked
+and found nothing, both correct at the moment they looked.
+
+### Why it reports rather than blocks
+
+The issue is explicit that the duplicate passes were not worthless. #4281's fourth pass
+re-derived a 44-vs-41 discrepancy that three prior passes had described as one number being
+stale, and showed both were right at their times; #4306's second reviewer picked mutations
+overlapping neither the first's nor the author's ten. `tdd.md` says the same thing from the other
+end — re-running the author's mutation is the weakest check a reviewer can make, so an
+independent second pass picking its own is worth something.
+
+The defect is therefore that the duplication is **unchosen and unbounded**, not that it happens.
+`tools/review-claim.py` has no `--force` because nothing is in the way, and `--post` will write a
+second claim beside an existing one without complaint.
+
+### The guard arm that caught its own rationale
+
+The first version of `test_review_claim.py` pinned "no `--force`" with `"--force" not in src`.
+That arm failed on the honest tool: the docstring explains *why* there is no such flag, so the
+substring test found its own rationale and reported it as the defect. Replaced with a call
+passing `--force` and requiring argparse to reject it — the property, not the spelling. It is the
+`a-substring-test-is-not-a-pin` shape, and it fired within a minute of being written.
+
+### Valid JSON of the wrong shape, and the two answers that pointed opposite ways
+
+Found in review of PR #4390. The first version checked that the comments payload *parsed* and
+never that it was a comment **list**, so `scan()` met whatever the JSON happened to contain.
+Reachable only through `--stdin` — `fetch()` tests the return code first, and `gh api` exits 1 on
+a 404 — which is exactly the path every session without `gh` uses (`github-access.md`).
+
+The reviewer quoted the 404 body. Sweeping the shapes found a second, worse one:
+
+| input | before | why |
+|---|---|---|
+| `{"message":"Not Found"}` — the real 404 body | **exit 1 = CLAIMED** | iterating a dict yields its KEYS, so the scan met a `str`; the uncaught `AttributeError` exits 1, colliding with this tool's own CLAIMED |
+| `{}` | **exit 0 = FREE** | no keys, so the loop body never ran; `scan()` returned empty and the tool printed a well-formed FREE |
+
+`{}` is the dangerous one and it is the one a single-literal arm would have missed. CLAIMED merely
+sends a reviewer away; FREE **invites** a second reviewer onto a PR nobody measured, which is the
+defect this tool exists to prevent, produced by the tool itself.
+
+The fix is a `shape_error()` predicate applied on **both** payload routes rather than only the one
+that was reported: a 200 whose body is not a list reaches `fetch()` just as easily. Pinned by eight
+table-driven arms over shapes that occur, plus two controls — an empty list is a real measurement,
+and a well-shaped list still answers CLAIMED — because a reporter answering 3 for everything would
+pass all eight.
+
+Same shape as the `--force` arm earlier on the same PR: keying a check on one spelling rather than
+on the property. Twice on one pull request is the reason the arms here are table-driven.

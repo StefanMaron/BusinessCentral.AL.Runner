@@ -27,6 +27,30 @@ A green pipeline says the code compiles and the tests pass. It does not say the 
 anything, that the claim was checked against real BC, or that a failure will be visible. Those
 are what a review is for, and every check below exists because its absence shipped a defect here.
 
+## 0a. Say you are reviewing it, before you review it
+
+Nothing else does. `status: review-ready` means *ready for review* and does not change while a
+review is in flight, so the PR in your brief reads identically whether nobody has looked at it or
+three agents already have.
+
+```bash
+tools/review-claim.py --pr <N>                              # 0 free, 1 claimed, 3 unreadable
+tools/review-claim.py --pr <N> --post --agent-id <YOUR-ID>  # then claim it
+```
+
+**Exit 1 is not a refusal.** It prints the live claims and the verdicts already on this head;
+read them and decide whether a second pass is worth its ~15 minutes. Sometimes it plainly is — a
+FIX-FIRST the author has since addressed, or a merge-bar call worth a second opinion — and then
+say in your review that you knew and why. What exit 1 removes is spending the pass by accident.
+
+Measured on the 60 most recent PRs: **18 of 59 carried two or more verdicts on the identical
+head**, and **17 of those 19 pairs landed under 15 minutes apart** — the second reviewer started
+while the first was still running, which is why the claim goes up at the START of your pass and
+not with your verdict (#4284).
+
+**Exit 3 is not "free".** The comments could not be read, so nobody measured anything; say so
+rather than reviewing as though the PR were clear.
+
 ## 0. Check the cwd you inherited, before you mutate anything
 
 You are dispatched and resumed the same way an implementation agent is, and you **write**:
