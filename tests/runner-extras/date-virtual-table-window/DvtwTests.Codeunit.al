@@ -211,6 +211,123 @@ codeunit 64561 "Dvtw Tests"
         Assert.AreEqual(0, DateRec.Count(), 'Expected no Week-type row starting on Sunday 1 January 1950.');
     end;
 
+    [Test]
+    procedure Date_WalkToTheHighBoundary_CompletesForEveryPeriodType()
+    var
+        DateRec: Record Date;
+        PeriodType: Integer;
+        Rows: Integer;
+        Last: Date;
+    begin
+        // #3513. The deleted window arithmetic added or subtracted a day from a requested
+        // boundary to work out what was not materialised yet, and threw
+        // ArgumentOutOfRangeException when that boundary sat at the end of the representable
+        // range. BC's own provider reaches the same edge by a different route -
+        // ToNextPeriodStart, which does unguarded AddTicks/AddMonths/AddYears and is wrapped in
+        // a catch that ends the walk - so the iteration below is what drives that edge.
+        //
+        // Every period type, because ToNextPeriodStart has a separate arm for each and only the
+        // Date arm was covered before. What each type answers is BC's claim and is pinned
+        // upstream (corpus codeunit 60983); this asserts only that the walk terminates, reaches
+        // the representable edge, and yields rows - never an exact count.
+        for PeriodType := 0 to 4 do begin
+            Clear(DateRec);
+            DateRec.Reset();
+            DateRec.SetRange("Period Type", PeriodType);
+            DateRec.SetFilter("Period Start", '%1..', DMY2Date(1, 1, 9999));
+
+            Rows := 0;
+            Last := 0D;
+            if DateRec.FindSet() then
+                repeat
+                    Rows += 1;
+                    Last := DateRec."Period Start";
+                until (DateRec.Next() = 0) or (Rows > 1000);
+
+            Assert.IsTrue(Rows > 0,
+                StrSubstNo('Period type %1 yielded no row in the final year; the walk to the boundary found nothing.', PeriodType));
+            Assert.IsTrue(Rows <= 1000,
+                StrSubstNo('Period type %1 did not terminate within 1000 rows in the final year.', PeriodType));
+            Assert.IsTrue(Last >= DMY2Date(1, 1, 9999),
+                StrSubstNo('Period type %1 ended before the final year began.', PeriodType));
+            Assert.IsTrue(Last <= DMY2Date(31, 12, 9999),
+                StrSubstNo('Period type %1 produced a period start past the representable range.', PeriodType));
+        end;
+    end;
+
+    [Test]
+    procedure Date_KeyedGetAtEachPeriodTypesOwnBoundary_AnswersInsteadOfOverflowing()
+    var
+        DateRec: Record Date;
+        PeriodType: Integer;
+        FirstStart: Date;
+        LastStart: Date;
+    begin
+        // #3513's own shape - a keyed Get, which is how the reported failures reached the
+        // deleted code (TryGetByPrimaryKeyAsync -> DataAccess_DateWindowGuardForGet). The
+        // existing boundary arm covers period type Date; each of the other four begins and ends
+        // on its own date, so a Get there is a different primary key and a different walk.
+        //
+        // The endpoints come from the provider rather than being written in, so this stays a
+        // runner-side claim: it asserts that whatever the provider reports as its first and last
+        // row can then be fetched by key. The exact dates are upstream (corpus codeunit 60983).
+        for PeriodType := 0 to 4 do begin
+            Clear(DateRec);
+            DateRec.Reset();
+            DateRec.SetRange("Period Type", PeriodType);
+            Assert.IsTrue(DateRec.FindFirst(),
+                StrSubstNo('Period type %1 has no first row.', PeriodType));
+            FirstStart := DateRec."Period Start";
+
+            Clear(DateRec);
+            DateRec.Reset();
+            DateRec.SetRange("Period Type", PeriodType);
+            Assert.IsTrue(DateRec.FindLast(),
+                StrSubstNo('Period type %1 has no last row.', PeriodType));
+            LastStart := DateRec."Period Start";
+
+            Assert.IsTrue(FirstStart < LastStart,
+                StrSubstNo('Period type %1 reported a first row at or after its last.', PeriodType));
+
+            Clear(DateRec);
+            DateRec.Reset();
+            Assert.IsTrue(DateRec.Get(PeriodType, FirstStart),
+                StrSubstNo('Get found no row at period type %1 first period start.', PeriodType));
+            Assert.AreEqual(FirstStart, DateRec."Period Start",
+                StrSubstNo('Get at period type %1 first period start returned a different period.', PeriodType));
+
+            Clear(DateRec);
+            DateRec.Reset();
+            Assert.IsTrue(DateRec.Get(PeriodType, LastStart),
+                StrSubstNo('Get found no row at period type %1 last period start.', PeriodType));
+            Assert.AreEqual(LastStart, DateRec."Period Start",
+                StrSubstNo('Get at period type %1 last period start returned a different period.', PeriodType));
+        end;
+    end;
+
+    [Test]
+    procedure Date_KeyedGetOnePeriodPastEachEdge_AnswersFalseInsteadOfThrowing()
+    var
+        DateRec: Record Date;
+    begin
+        // The negative direction, and the one an overflow would corrupt rather than merely
+        // truncate. A Get for a date outside the table must answer false; the failure this
+        // guards against is an exception escaping from the boundary arithmetic instead.
+        //
+        // 0001-01-01 is before the first Date period start and is not a Year period start
+        // either, and 9999-12-27 is a Monday whose week would end past the representable range.
+        Assert.IsFalse(DateRec.Get(DateRec."Period Type"::Date, DMY2Date(1, 1, 1)),
+            'Get returned a row for 1 January of year 1, which precedes the first Date period.');
+
+        Clear(DateRec);
+        Assert.IsFalse(DateRec.Get(DateRec."Period Type"::Year, DMY2Date(1, 1, 1)),
+            'Get returned a row for the year-1 Year period, which the table does not carry.');
+
+        Clear(DateRec);
+        Assert.IsFalse(DateRec.Get(DateRec."Period Type"::Week, DMY2Date(27, 12, 9999)),
+            'Get returned a row for the week starting 27 December 9999, which would end past the representable range.');
+    end;
+
     [TryFunction]
     local procedure TryFindFirst(var DateRec: Record Date)
     begin

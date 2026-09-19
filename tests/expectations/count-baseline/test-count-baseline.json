@@ -7,7 +7,7 @@
         "app-group-visibility-b": { "tests": 9 },
         "app-group-visibility-c": { "tests": 9 },
         "bundle-page-over-dep-table": { "tests": 2 },
-        "date-virtual-table-window": { "tests": 8 },
+        "date-virtual-table-window": { "tests": 11 },
         "db-trigger-inject-timing": { "tests": 2 },
         "dep-tableext-invoke-dep": { "tests": 0 },
         "dep-tableext-invoke-main": { "tests": 4 },
