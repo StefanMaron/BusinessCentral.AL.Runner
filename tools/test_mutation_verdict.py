@@ -375,6 +375,49 @@ check("a stamp naming no path is treated as a build input, not as absent",
       _legacy.verdict == mv.UNMEASURED, f"got {mv.NAMES[_legacy.verdict]}: {_legacy.reason}")
 os.remove(_stamp)
 
+# THE READER'S REPOSITORY BOUNDARY, and it was unpinned while the WRITER's identical one was
+# not: deleting `if os.path.exists(os.path.join(d, ".git")): break` from read_restore_stamp
+# left all 89 assertions green (#4343, review round 5). Every other reader-side case puts the
+# stamp directly in mkdtemp(), so the walk exits on iteration one and never reaches the
+# boundary at all.
+#
+# Live, not theoretical: `.claude/worktrees/` is nested INSIDE the main repository tree, so a
+# stamp at the outer root sits ABOVE a worktree's `.git` file. Without the break, one agent's
+# walk-up reaches ANOTHER agent's stamp and answers UNMEASURED on an honest run -- a false
+# refusal no rebuild clears, which is round 2's defect arriving by a different route.
+#
+# The general lesson, and the reason this case exists: when one side of a two-sided boundary is
+# pinned, ask immediately whether the other is.
+_nest = _tf.mkdtemp()
+_outer_wt = os.path.join(_nest, "outer", "wt", "sub")
+os.makedirs(_outer_wt)
+with open(os.path.join(_nest, "outer", mv.STAMP_NAME), "w", encoding="utf-8") as _fh:
+    _fh.write(f"{_now:.6f}\nAlRunner/Foreign.cs\n")          # a build input, so it WOULD refuse
+with open(os.path.join(_nest, "outer", "wt", ".git"), "w", encoding="utf-8") as _fh:
+    _fh.write("gitdir: /elsewhere/.git/worktrees/x\n")        # a worktree: a .git FILE
+check("a stamp ABOVE a worktree's .git is not read -- the walk stops at the repository",
+      mv.read_restore_stamp(_outer_wt) == (None, ""),
+      f"{mv.read_restore_stamp(_outer_wt)} — .claude/worktrees/ is nested inside the main tree, "
+      f"so without this boundary one agent's run is refused by another agent's stamp, and no "
+      f"rebuild clears it")
+
+# A DIRECTORY .git stops it too (an ordinary clone), and the stamp inside the repository is
+# still found -- otherwise the boundary could be "fixed" by never walking at all.
+_dir_repo = os.path.join(_nest, "plain")
+os.makedirs(os.path.join(_dir_repo, "a", "b"))
+os.mkdir(os.path.join(_dir_repo, ".git"))
+with open(os.path.join(_nest, mv.STAMP_NAME), "w", encoding="utf-8") as _fh:
+    _fh.write(f"{_now:.6f}\nAlRunner/Foreign.cs\n")           # above the repository root
+check("...and a directory .git stops the walk as well as a worktree's .git file",
+      mv.read_restore_stamp(os.path.join(_dir_repo, "a", "b")) == (None, ""),
+      repr(mv.read_restore_stamp(os.path.join(_dir_repo, "a", "b"))))
+with open(os.path.join(_dir_repo, mv.STAMP_NAME), "w", encoding="utf-8") as _fh:
+    _fh.write(f"{_now:.6f}\nAlRunner/Own.cs\n")               # this repository's OWN stamp
+_own = mv.read_restore_stamp(os.path.join(_dir_repo, "a", "b"))
+check("CONTROL: a stamp INSIDE the repository is still found from a nested directory",
+      _own[0] is not None and _own[1] == os.path.join(_dir_repo, mv.STAMP_NAME),
+      f"{_own} — the boundary must stop the walk at the repository, not prevent it")
+
 # A log that does not name its assembly cannot be judged stale -- absence of evidence. The
 # caller keeps its ordinary verdict rather than refusing on a file it never identified.
 _unnamed = mv.classify(_red_body, (_now, "/repo/.mutation-restore-stamp"))

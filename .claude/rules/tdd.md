@@ -183,6 +183,15 @@ a fixture with one id repeated would have passed the author's mutation and looke
 **Corollary: re-running the author's mutation is the weakest check a reviewer can make.** It tests
 the same hypothesis by the same route. Pick your own.
 
+**And when one side of a two-sided boundary is pinned, ask immediately whether the other is.** A
+reader and a writer sharing a rule — a path convention, a name, a stop condition — usually get one
+test, and the asymmetry is invisible from either file alone. Measured (#4343): deleting the
+repository-root stop from `mutation-verdict.py`'s stamp lookup left **all 89 assertions green**,
+while the identical stop in `apply-mutation.py` was pinned; the unguarded walk then read a foreign
+worktree's stamp and refused an honest run. Trap: the obvious fix — stop walking — passes the new
+test too, so pin **both** directions, that the walk stops at the boundary *and* still finds what is
+inside it.
+
 A required step, not a tool: no framework, no CI job. One rebuild.
 
 ## Sister rules

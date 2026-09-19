@@ -525,5 +525,56 @@ census — which is a coarser result: it proves coverage exists rather than that
 discriminate (`tdd.md`, "choose the mutation to test a property, not to produce a red").
 
 Worth recording because neither figure is wrong and a reader comparing them would assume one
-was. **A mutation count is meaningless without naming the target**, and the two live three lines
-apart in the same file.
+was. **A mutation count is meaningless without naming the target** — and the two targets are the
+predicate and its own call site, in the same file, each a plausible reading of "the build-input
+mutation".
+
+(An earlier draft of this paragraph said "three lines apart". They are 47 apart. A wrong number
+inside a note about numbers is the shape this repository keeps re-learning, so the distance is
+now stated as the relationship rather than as a count that rots on the next edit.)
+
+### The fifth instance, and the sharper rule it gives: check BOTH sides of a boundary
+
+`read_restore_stamp` walks up from a directory looking for the stamp and stops at the repository
+root. Deleting that stop — `if os.path.exists(os.path.join(d, ".git")): break` — left **all 89
+assertions green**.
+
+Not dead code. Measured on a nested fixture: pristine returns `(None, '')`, the mutant returns a
+real timestamp read from a **foreign repository's** stamp.
+
+**Live, not theoretical.** `.claude/worktrees/` is nested *inside* the main repository tree, so a
+stamp at the outer root sits above a worktree's `.git` file. Without the stop, one agent's
+walk-up reaches another agent's stamp and answers `UNMEASURED` on an honest run — a false refusal
+no rebuild clears, which is round 2's defect arriving by a different route. This work created a
+dozen such worktrees.
+
+No existing case reached it, because every reader-side test put the stamp directly in
+`mkdtemp()`, so the walk exited on iteration one and the boundary never executed.
+
+**The tell was an asymmetry, and it is the generalisable part.** The *writer's* identical boundary
+in `apply-mutation.py` was pinned — removing it reds the worktree-`.git`-file test — while the
+*reader's* was not. Same boundary, same file pair, one side guarded.
+
+> When one side of a two-sided boundary is pinned, ask immediately whether the other is.
+
+That is narrower and more actionable than "write controls", and it would have found this in one
+query rather than five rounds.
+
+The pair added for it discriminates in both directions: deleting the stop reds the two boundary
+arms; replacing the walk with an unconditional `break` — the degenerate "fix" that stops crossing
+the boundary by never walking at all — reds **only** the control asserting a stamp inside the
+repository is still found.
+
+### The through-line, after five rounds
+
+Every one of the five was found by a control, or by a mutation aimed at a check's own blind side.
+**None was found by the check's own arms**, and round 4's instance was inside the guard written to
+prevent round 3's.
+
+| round | the check | how it failed | found by |
+|---|---|---|---|
+| 1 | staleness vs the named assembly | refused a correctly rebuilt dependency | the author's GREEN control |
+| 2 | staleness vs mtimes | refused forever for a non-build-input | review |
+| 3 | the `.gitignore` pin | substring test, green on rename and comment-out | a control that should have redded |
+| 4 | the tree census | passed over an empty-but-successful read | review |
+| 5 | the reader's repository boundary | unpinned, while the writer's was pinned | the asymmetry |
