@@ -2270,6 +2270,108 @@ _detached = pf.judge_branch_ownership(cwd=_WT, branch=None, pr=None, agent_id="f
 check("a detached HEAD in a worktree is undetermined, not a PASS",
       _detached.status == "WARN", _detached.summary)
 
+# -------------------------------------------------- an INHERITED foreign worktree cwd
+# (#4340)
+#
+# A dispatched agent inherits the coordinator's shell cwd, and three times in one
+# session that cwd was another identity's live worktree
+# (.claude/worktrees/stma-auto2-6-issue-4289, on open PR #4318's branch). The third
+# instance was a RESUMED agent picking the value back out of its own transcript, which
+# is why a coordinator-side reset cannot be the defence.
+#
+# Every case above happens to stand in a worktree whose name carries its own identity,
+# so the directory NAME was never a signal here -- ownership was decided entirely by a
+# network lookup of the branch's pull request. That leaves the defect: with no open PR
+# on the branch (merged, closed, or never opened), standing in a foreign identity's
+# worktree returned PASS.
+#
+# The directory name is conclusive on its own and costs no network call:
+# `.claude/worktrees/stma-auto2-6-issue-4289` is not stma-auto-1's, whatever any API
+# says. So it is judged BEFORE the pull-request lookup, and an unparseable name is the
+# third state rather than a pass (`guards-need-a-third-state.md`: unknown means refuse,
+# not proceed -- the trap being that a guard keyed on a list silently skips what it does
+# not recognise).
+
+_FOREIGN_WT = "/repo/BusinessCentral.AL.Runner/.claude/worktrees/stma-auto2-6-issue-4289"
+
+# The reported shape: no open PR heads the branch, so the lookup says nothing.
+_inherited = pf.judge_branch_ownership(cwd=_FOREIGN_WT,
+                                       branch="agent/stma-auto2-6/issue-4289",
+                                       pr=None, agent_id="stma-auto-1")
+check("a foreign identity's worktree is a FAIL even with no open PR on the branch",
+      _inherited.status == "FAIL", _inherited.summary)
+check("...and the refusal names the identity the directory belongs to",
+      "stma-auto2-6" in _inherited.summary, _inherited.summary)
+
+# The same directory while standing on a branch that IS the agent's own. The cwd is
+# still wrong: writes land in another loop's tree whatever HEAD says.
+_inherited_own_branch = pf.judge_branch_ownership(
+    cwd=_FOREIGN_WT, branch="agent/stma-auto-1/issue-4340", pr=None,
+    agent_id="stma-auto-1")
+check("a foreign worktree is a FAIL even when the branch checked out there is yours",
+      _inherited_own_branch.status == "FAIL", _inherited_own_branch.summary)
+
+# The lookup being unreadable must not downgrade a refusal the directory name already
+# settled: the name is local evidence and needs no network.
+_inherited_blind = pf.judge_branch_ownership(
+    cwd=_FOREIGN_WT, branch="agent/stma-auto2-6/issue-4289", pr=None,
+    agent_id="stma-auto-1", lookup_status="gh is not installed")
+check("an unreadable PR list does not downgrade a foreign-worktree refusal",
+      _inherited_blind.status == "FAIL", _inherited_blind.summary)
+
+# A detached HEAD is undetermined for the BRANCH question, but the directory name is
+# still conclusive, so the foreign cwd must win.
+_inherited_detached = pf.judge_branch_ownership(
+    cwd=_FOREIGN_WT, branch=None, pr=None, agent_id="stma-auto-1")
+check("a foreign worktree with a detached HEAD is a FAIL, not merely undetermined",
+      _inherited_detached.status == "FAIL", _inherited_detached.summary)
+
+# ---- and the directions it must NOT fire in, so the check discriminates rather than
+# ---- simply refusing everything.
+
+_own_wt = pf.judge_branch_ownership(
+    cwd="/repo/BusinessCentral.AL.Runner/.claude/worktrees/stma-auto-1-issue-4340",
+    branch="agent/stma-auto-1/issue-4340", pr=None, agent_id="stma-auto-1")
+check("your own worktree is still a PASS", _own_wt.status == "PASS", _own_wt.summary)
+
+# An identity is a prefix of another one. `stma-auto-1` must not be read as owning
+# `stma-auto-12-issue-9`, and the segment boundary is what decides it.
+_prefix = pf.judge_branch_ownership(
+    cwd="/repo/BusinessCentral.AL.Runner/.claude/worktrees/stma-auto-12-issue-9",
+    branch="agent/stma-auto-12/issue-9", pr=None, agent_id="stma-auto-1")
+check("an identity that is only a PREFIX of the directory's does not own it",
+      _prefix.status == "FAIL", _prefix.summary)
+
+# ...and the converse: the longer identity standing in its own directory is fine.
+_prefix_own = pf.judge_branch_ownership(
+    cwd="/repo/BusinessCentral.AL.Runner/.claude/worktrees/stma-auto-12-issue-9",
+    branch="agent/stma-auto-12/issue-9", pr=None, agent_id="stma-auto-12")
+check("the longer identity owns its own directory", _prefix_own.status == "PASS",
+      _prefix_own.summary)
+
+# Windows separators reach this function too -- WORKTREE_DIR already accepts both.
+_win = pf.judge_branch_ownership(
+    cwd=r"C:\repo\.claude\worktrees\stma-auto2-6-issue-4289",
+    branch="agent/stma-auto2-6/issue-4289", pr=None, agent_id="stma-auto-1")
+check("a foreign worktree is refused with Windows separators too",
+      _win.status == "FAIL", _win.summary)
+
+# The third state: a worktree directory whose name does not carry an identity at all
+# cannot be attributed, so it must not read as "yours". A guard that skips what it does
+# not recognise silently restores the defect.
+_unparseable = pf.judge_branch_ownership(
+    cwd="/repo/BusinessCentral.AL.Runner/.claude/worktrees/scratch",
+    branch="agent/stma-auto-1/issue-4340", pr=None, agent_id="stma-auto-1")
+check("a worktree name carrying no identity is undetermined, not a PASS",
+      _unparseable.status == "WARN", _unparseable.summary)
+
+# With no identity declared, the directory cannot be attributed either -- the existing
+# WARN for that case must not become a silent pass just because a name is present.
+_noid_wt = pf.judge_branch_ownership(
+    cwd=_FOREIGN_WT, branch="agent/stma-auto2-6/issue-4289", pr=None, agent_id=None)
+check("no identity declared is undetermined for the directory too, not a PASS",
+      _noid_wt.status == "WARN", _noid_wt.summary)
+
 # End to end against a real repository: the branch has to be READ, and reading it
 # from the wrong directory is exactly the mistake this check exists to catch.
 _own_tmp = tempfile.mkdtemp(prefix="preflight-ownership-")
@@ -2296,10 +2398,24 @@ try:
           _res.status == "FAIL" and "4242" in _res.summary, _res.summary)
     check("...and the pull request was asked for BY BRANCH, not looked up in a window",
           _asked == ["agent/fbk-9/issue-77"], str(_asked))
+    # Owning the PR is NOT a licence to stand in another identity's worktree (#4340).
+    # #3742 wrote this case as a PASS because the only question then was whose PR the
+    # BRANCH heads; the directory was incidental fixture reuse. Both questions must now
+    # hold, and fbk-1 writing in fbk-9's tree is the cross-worktree write #3014 describes
+    # whoever owns the pull request -- a commit made from here goes onto fbk-9's branch.
     _res_ok = pf.check_branch_ownership(_own_tmp, agent_id="fbk-1", cwd=_wt_path,
                                         lookup=_lookup)
-    check("...and the loop that owns that PR may stand in it",
-          _res_ok.status == "PASS", _res_ok.summary)
+    check("...but owning that PR does not license standing in another identity's worktree",
+          _res_ok.status == "FAIL", _res_ok.summary)
+    check("...and that refusal is about the DIRECTORY, naming whose it is",
+          "fbk-9" in _res_ok.summary and "worktrees" in _res_ok.summary,
+          _res_ok.summary)
+    # The loop whose worktree it is, standing in it with its own PR, is the real PASS.
+    _res_home = pf.check_branch_ownership(
+        _own_tmp, agent_id="fbk-9", cwd=_wt_path,
+        lookup=lambda b: (_pr(4242, ["agent: fbk-9"]), "ok"))
+    check("...while the loop whose worktree it is, on its own PR, is a PASS",
+          _res_home.status == "PASS", _res_home.summary)
     _res_main = pf.check_branch_ownership(_own_tmp, agent_id="fbk-9", cwd=_own_tmp,
                                           lookup=_lookup)
     check("...while the main checkout of the same repository is a PASS",
