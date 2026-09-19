@@ -196,6 +196,25 @@ rc, out = run(f"Looks good.\r\n\r\nVerdict: MERGE — head {SHA}\r\n\r\n---\r\n_
 check("a CRLF body yields a head with no stray carriage return",
       rc == 0 and out == SHA, f"rc={rc} out={out!r}")
 
+# ---------------------------------------------------------------- arm 7b
+# "could not read anything" is a fourth state, not a malformed verdict and above
+# all not exit 1: a verdict reader exiting 1 reads as "a verdict was found and
+# it was negative", which is the shape `ci-verdicts.md` records for a `ci-wait.py`
+# copy that hit a decode error and was taken for a failing required check.
+def run_pr(*args: str, path: str | None = None) -> int:
+    env = dict(os.environ)
+    if path is not None:
+        env["PATH"] = path
+    return subprocess.run(
+        [sys.executable, TOOL, "--pr", "999999", "--repo", "x/y", *args],
+        capture_output=True, text=True, env=env,
+    ).returncode
+
+
+rc = run_pr(path="")  # no `gh` on PATH at all: every web and remote session
+check("with no `gh` available, --pr exits 4 (unreadable), never 0, 2 or 1",
+      rc == 4, f"rc={rc}")
+
 # ---------------------------------------------------------------- arm 8
 # The prose and the tool must not drift apart: the contract other loops follow
 # is the prose, and nothing executes prose (#3955).

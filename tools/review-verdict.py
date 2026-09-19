@@ -42,16 +42,23 @@ reads a head SHA out of a sentence.
 
 THE THREE ANSWERS (`guards-need-a-third-state.md`)
 
-    0  found     -- one well-formed marker line; the requested field is on stdout
-    2  not found -- no marker line. NOT a fallback to the last line: an
-                    extractor that falls back has reproduced the defect, since
-                    it returns the footer, well-formed, and the caller then
-                    reads a head SHA that is not there.
-    3  malformed -- a marker line that cannot be used: an abbreviated head, an
-                    unknown decision, no head at all, or two marker lines. Kept
-                    distinct from 2 because "no verdict was posted" and "the
-                    verdict posted is unusable" send the reader to different
-                    remedies.
+    0  found      -- one well-formed marker line; the requested field is on stdout
+    2  not found  -- no marker line. NOT a fallback to the last line: an
+                     extractor that falls back has reproduced the defect, since
+                     it returns the footer, well-formed, and the caller then
+                     reads a head SHA that is not there.
+    3  malformed  -- a marker line that cannot be used: an abbreviated head, an
+                     unknown decision, no head at all, or two marker lines. Kept
+                     distinct from 2 because "no verdict was posted" and "the
+                     verdict posted is unusable" send the reader to different
+                     remedies.
+    4  unreadable -- the comments could not be fetched or parsed at all. Kept
+                     distinct from 3 for the same reason again: this one is a
+                     fact about the box, not about any review.
+
+Note what is NOT in that list: exit 1. A verdict reader exiting 1 reads as "a
+verdict was found and it was negative", so every failure mode here is given a
+code that cannot be mistaken for one.
 
 Two marker lines refuse rather than pick one: zero of the 150 measured comments
 carry two, so there is no established precedence to apply and guessing one makes
@@ -68,11 +75,34 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
 
-FOUND, NOT_FOUND, MALFORMED = 0, 2, 3
+# A verdict line carries an em dash, and its reason is free text a reviewer
+# wrote. Printing either through the console codec raises UnicodeEncodeError on
+# a cp1252 box -- the failure `ci-verdicts.md` records for a tool copied without
+# this sibling, where the exit code then means something else entirely.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import agent_stdio as _stdio
+except Exception:  # pragma: no cover - a copy detached from its sibling module
+    _stdio = None
+if _stdio is not None:
+    _stdio.enable_utf8_stdio()
+
+# Four answers, not three. UNREADABLE is deliberately distinct from MALFORMED:
+# "the verdict posted is unusable" is a fact about a review someone wrote, while
+# "I could not read the comments at all" is a fact about this box, and folding
+# the second into the first sends a coordinator to argue with a reviewer about a
+# verdict nobody has seen (`guards-need-a-third-state.md`).
+#
+# It is emphatically not exit 1 either. A verdict reader exiting 1 reads as "a
+# verdict was found and it was negative" -- the shape `ci-verdicts.md` records
+# for a `ci-wait.py` copy that hit a decode error on a cp1252 box and was taken
+# for "a required check failed".
+FOUND, NOT_FOUND, MALFORMED, UNREADABLE = 0, 2, 3, 4
 
 # Start of line, bare, no leading whitespace and no bold.
 #
@@ -139,15 +169,29 @@ def parse(line: str) -> tuple[dict[str, str] | None, str]:
 
 def body_from_pr(pr: str, repo: str) -> str:
     """The newest comment on the PR that carries a marker line."""
-    out = subprocess.run(
-        ["gh", "api", f"repos/{repo}/issues/{pr}/comments", "--paginate"],
-        capture_output=True, text=True)
+    try:
+        out = subprocess.run(
+            ["gh", "api", f"repos/{repo}/issues/{pr}/comments", "--paginate"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace")
+    except OSError as exc:  # no `gh` at all -- every web and remote session
+        print(f"could not run `gh`: {exc}. Without it, read the comment body "
+              "yourself and pipe it in with --stdin (`github-access.md`).",
+              file=sys.stderr)
+        sys.exit(UNREADABLE)
     if out.returncode:
         print(f"could not read comments for PR {pr}: {out.stderr.strip()}",
               file=sys.stderr)
-        sys.exit(MALFORMED)
-    for c in reversed(json.loads(out.stdout or "[]")):
-        if find_marker_lines(c["body"]):
+        sys.exit(UNREADABLE)
+    try:
+        comments = json.loads(out.stdout or "[]")
+    except json.JSONDecodeError as exc:
+        # A truncated or non-JSON response is a failed measurement, not a
+        # verdict-free PR: returning "" here would print "no verdict line" and
+        # send the reader to chase a reviewer who may well have posted one.
+        print(f"could not parse the comments for PR {pr}: {exc}", file=sys.stderr)
+        sys.exit(UNREADABLE)
+    for c in reversed(comments):
+        if find_marker_lines(c.get("body") or ""):
             return c["body"]
     return ""
 
