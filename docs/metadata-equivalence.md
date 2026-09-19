@@ -1550,13 +1550,20 @@ reported difference reads as observable, and nothing says so.
 
 Two things it deliberately does not do:
 
-* **It does not report defaults.** A raw attribute-presence diff over whole documents is **88,884**
-  rows over the two bundles, which buries the signal — a page's ordinary field controls are absent
-  from the runner's document entirely, and every attribute on each of them counts.
-* **It does not repeat the value comparison.** Scoping to elements both sides build takes that to
-  **5,399**, and keeping only the omissions whose parsed objects agree takes it to **2,096** across
-  41 distinct (kind, element, attribute, value) shapes. The other **3,303** already fail as value
-  differences and are left to `MetadataObjectDiff`.
+* **It does not report defaults.** Only elements BOTH sides build are considered. A page's
+  ordinary field controls are absent from the runner's document entirely — each already reported
+  once by `MetadataObjectDiff` as a `<presence>` difference — so without that scope every
+  attribute on every one of them would repeat that single finding.
+* **It does not repeat the value comparison.** Of the omissions that survive the scope, only
+  those whose parsed objects AGREE are reported. An omission the value comparison already fails
+  on is left to `MetadataObjectDiff`.
+
+What reaches the declaration file is what that leaves: **2,086** occurrences across **22**
+signatures over the 1,286 compared objects, which is the figure the harness itself prints and the
+only one on this page that the shipped code re-derives. The wider populations quoted while the
+design was being chosen — a whole-document presence diff, and the split between observable and
+unobservable omissions — came from throwaway instrumentation over dumped document pairs and are
+**not** re-derivable from the merged code, so they are deliberately not repeated here.
 
 <a id="unobservable-the-walk-warms-what-it-reads"></a>
 ### The walk WARMS what it reads, so each question gets a cold pair
@@ -1588,11 +1595,17 @@ Nine entries carry `versionContingent`, and the threshold is stated rather than 
 object churn can remove. The other thirteen are required to match, so a landed fix must delete
 them.
 
-The harness class costs **1 m 22 s** with this pass against **13 s** without it, on this box, over
-both bundles. `MetadataObjectDiffOptions.MaxDifferences` is what keeps that from being worse: the
-strip asks a yes/no question and discards the list, so the walk stops after the first difference —
-**1 m 15 s** with the limit against **1 m 22 s** without. A modest saving, kept because the
-discarded list is pure waste.
+**The cost, measured on this box after `RunAll()` was memoized.** 13 of this class's 14 tests
+call it, so before the memo the class paid for the whole comparison thirteen times and ran
+**1 m 24 s** — over `scripts/check-collection-weights.py`'s fail band, which is how CI found it.
+Memoized, the class is **12 s**; with the presence pass disabled it is **2 s**. So the honest
+incremental price of this coverage is about **10 s, once**, not the 72 s the thirteen repeats
+made it look like.
+
+An earlier revision also capped the per-attribute walk at the first difference, since the
+question is yes/no and the list is discarded. That was removed: measured here it was worth about
+half a second of the twelve, inside the run-to-run spread, and it had been justified in its own
+doc comment by a figure nobody had taken.
 
 <a id="unobservable-an-entry-that-matched-nothing"></a>
 ### An entry that matched nothing, and why nothing said so

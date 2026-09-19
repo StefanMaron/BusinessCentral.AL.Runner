@@ -53,25 +53,59 @@ public sealed class MetadataEquivalenceHarnessTests
     /// </summary>
     private IReadOnlyList<MetadataEquivalenceReport> RunAll()
     {
+        // Skip.IfNot FIRST, on every call including a memoized one. It is what makes each test
+        // skip on a box with no engine, and a memo consulted ahead of it would hand the cached
+        // reports to a test that should not have run.
         Skip.IfNot(_engine.Ready, _engine.SkipReason);
 
-        var bundles = MetadataEquivalenceBundleGate.RequireBundles();
-
-        var reports = new List<MetadataEquivalenceReport>();
-        foreach (var bundle in bundles)
+        lock (MemoLock)
         {
-            var app = MetadataEquivalenceHarness.FindAppPackage(bundle);
-            Assert.True(app is not null,
-                $"ground truth exists for {bundle.Label} but its .app is not on this box. The " +
-                "runner derives its side from that package's SymbolReference.json, so comparing " +
-                "against a different build would compare two things never meant to agree. " +
-                "Regenerate the bundle from the artifacts now present.");
-            reports.Add(MetadataEquivalenceHarness.Compare(bundle, app!));
-        }
+            // Memoized because 13 of this class's 14 tests call this, and xUnit builds a new
+            // instance per test, so an instance field would memoize nothing. The comparison is a
+            // pure read of one BC build's bundles against one set of registered packages, so the
+            // 13 runs produced 13 identical answers — measured across separate processes, the
+            // unobservable set came back byte-identical.
+            //
+            // The cost is the reason: this class ran 1 m 24 s paying for 13 comparisons, which
+            // put it over scripts/check-collection-weights.py's fail band and reddened the
+            // required context. One comparison is 12 s.
+            //
+            // Only a SUCCESSFUL run is stored. RequireBundles throws SkipException on a dev box
+            // with no bundle and MetadataGroundTruthMissingOnCiException on CI, and neither must
+            // be turned into a cached empty answer — the next call has to raise it again.
+            if (_memo is not null) return _memo;
 
-        WriteReportIfAsked(reports);
-        return reports;
+            var bundles = MetadataEquivalenceBundleGate.RequireBundles();
+
+            var reports = new List<MetadataEquivalenceReport>();
+            foreach (var bundle in bundles)
+            {
+                var app = MetadataEquivalenceHarness.FindAppPackage(bundle);
+                Assert.True(app is not null,
+                    $"ground truth exists for {bundle.Label} but its .app is not on this box. The " +
+                    "runner derives its side from that package's SymbolReference.json, so comparing " +
+                    "against a different build would compare two things never meant to agree. " +
+                    "Regenerate the bundle from the artifacts now present.");
+                reports.Add(MetadataEquivalenceHarness.Compare(bundle, app!));
+            }
+
+            WriteReportIfAsked(reports);
+            return _memo = reports;
+        }
     }
+
+    /// <summary>
+    /// The memoized comparison. Static because xUnit constructs this class once per test.
+    /// </summary>
+    private static IReadOnlyList<MetadataEquivalenceReport>? _memo;
+
+    /// <summary>
+    /// Belt and braces. <see cref="BcEngineCollection"/> already serialises this class, so no
+    /// two of its tests run at once; the lock costs nothing and removes the question rather
+    /// than leaving a static that is safe only by a neighbour's property
+    /// (<c>guards-need-a-third-state.md</c> on exactly that reasoning).
+    /// </summary>
+    private static readonly object MemoLock = new();
 
     [SkippableFact]
     public void Every_declared_app_is_actually_covered()
