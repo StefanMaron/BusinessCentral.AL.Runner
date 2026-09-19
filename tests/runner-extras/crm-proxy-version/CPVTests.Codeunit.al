@@ -85,6 +85,38 @@ codeunit 66001 "CPV Tests"
     end;
 
     [Test]
+    [HandlerFunctions('ConfirmHandler')]
+    procedure CDSConnectionSetupPage_Opens()
+    var
+        CDSConnectionSetupPage: TestPage "CDS Connection Setup";
+    begin
+        // The failure the issue actually reports: page 7200's OnOpenPage calls
+        // InitializeDefaultProxyVersion -> GetLastProxyVersionItem on a first open (Rec.Get()
+        // is false), so the empty registry made the page throw before any test body ran. The
+        // three tests above pin the registry; this one pins the surface that consumes it,
+        // because a populated registry that the page still cannot use would leave all 90
+        // reported failures in place while those three went green.
+        CDSConnectionSetupPage.OpenEdit();
+
+        // Reaching this line is already past the throw, but the value is what pins the fix:
+        // the page's control over Rec."Proxy Version" is captioned "SDK Version", which is BC's
+        // own name for the same number this registration derives from Microsoft.Xrm.Sdk.dll's
+        // file version. A page that opened against an empty registry could not show 9.
+        Assert.AreEqual(9, CDSConnectionSetupPage."SDK Version".AsInteger(),
+            'the page must show the proxy version InitializeDefaultProxyVersion resolved');
+
+        // The page's OnQueryClosePage confirms on exit while the connection is disabled; that
+        // is ordinary BC behaviour on this page and unrelated to #3515.
+        CDSConnectionSetupPage.Close();
+    end;
+
+    [ConfirmHandler]
+    procedure ConfirmHandler(Question: Text[1024]; var Reply: Boolean)
+    begin
+        Reply := true;
+    end;
+
+    [Test]
     procedure EmptyTempStack_StillErrorsOnFindLast()
     var
         TempStack: Record TempStack temporary;
