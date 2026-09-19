@@ -145,10 +145,10 @@ for name, cmd in BACKGROUND_ALLOWED:
 
 # #4288: the flag is not what decides whether a wait runs in the background. The
 # harness moves a FOREGROUND command to the background at a hard 600s cap -- measured
-# over every transcript on this box: 66 CI waits were auto-backgrounded and all 66 had
-# run_in_background unset, so a refusal gated on that flag refused none of them. The
-# declared `timeout` does not raise the cap: 600000, 900000, 1600000, 2400000, 3000000
-# and 3600000 ms all produced `within its 600s timeout`.
+# across all 828 transcripts on this box: 95 CI waits were auto-backgrounded and all 95
+# had run_in_background unset, so a refusal gated on that flag refused none of them. The
+# declared `timeout` does not raise the cap: all 52 calls declaring above it, spanning
+# 660000 to 3600000 ms, reported `within its 600s timeout`.
 HARNESS_BACKGROUND_CAP_S = 600
 
 print("\nCI waits the HARNESS will background -- refused whatever the flag says (#4288)")

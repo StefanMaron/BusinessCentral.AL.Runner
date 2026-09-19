@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""PreToolUse REFUSAL: `git stash` in any form, and a backgrounded CI wait.
+"""PreToolUse REFUSAL: `git stash` in any form, and a CI wait long enough that
+the harness will background it.
 
 Both are absolute rules with no legitimate exception, which is what makes them
 safe to block rather than advise: `refs/stash` is shared by every worktree of
@@ -8,10 +9,22 @@ backgrounded child process dies when the turn ends
 (`.claude/rules/no-backgrounding-long-commands.md`). Neither refusal is scoped
 to an agent context, because neither shape is correct in any session.
 
-What is deliberately NOT refused, so the coordinator keeps working: a
-backgrounded command that is not a CI wait -- a detached runner, build or test
-sweep -- and any CI-wait shape run in the FOREGROUND. Only the pairing of
-`run_in_background` with a CI wait is refused.
+The CI-wait refusal keys on the DURATION a command asks for, never on
+`run_in_background` -- because the agent does not decide whether a wait runs in
+the background. The harness moves any FOREGROUND Bash call to the background at
+a hard 600s cap, which the call's own `timeout` field does not raise, so the
+flag is unset precisely when the backgrounding happens: across every transcript
+on this box, 95 CI waits were auto-backgrounded and the flag was unset on 100%
+of them, so gating on it refused 0 of the 95 (#4288). The completion
+notification then reports the WRAPPER's exit status, so `ci-wait.py` exiting 2
+("STILL RUNNING ... This is NOT a verdict") arrives as "completed (exit code
+0)" -- `.claude/rules/ci-verdicts.md` section 0 owns what that does to a verdict.
+
+What is deliberately NOT refused, so the coordinator keeps working: a CI read
+that cannot be backgrounded -- `--timeout 0`, or a `--timeout` genuinely under
+the cap -- including a poll loop built from such reads; and any backgrounded
+command that is not a CI wait, such as a detached runner, build or test sweep,
+which stays the agent's own judgement.
 
 Exit 2 is what blocks a PreToolUse call and feeds stderr back to the model;
 exit 0 allows it. There is no third state here: this hook reads the command
@@ -113,8 +126,8 @@ def ci_wait_reason(segs: list):
     """The CI-wait shape in these segments, or None.
 
     A CI wait is refused on the duration it ASKS FOR, never on whether the caller
-    set `run_in_background`. Measured over every transcript on this box: 66 CI
-    waits were moved to the background by the harness and all 66 had the flag
+    set `run_in_background`. Measured across all 828 transcripts on this box: 95
+    CI waits were moved to the background by the harness and all 95 had the flag
     unset, so a refusal gated on the flag refused none of them (#4288).
     """
     sleeping = any(SLEEPS.match(s) for s in segs)

@@ -29,8 +29,8 @@ One mechanism — a child process of your turn dies with your turn — in three 
   promise does not hold for anything started inside your own turn — and this shape is not
   optional, so asking for the foreground does not avoid it. The harness moves any foreground
   `Bash` call to the background at a hard **600s** cap, which the call's own `timeout` field
-  does not raise. Measured over every transcript on this box: **66** CI waits were
-  auto-backgrounded and **all 66** had `run_in_background` unset (#4288). The notification you
+  does not raise. Measured over all 828 transcripts on this box: **95** CI waits were
+  auto-backgrounded and **all 95** had `run_in_background` unset (#4288). The notification you
   then get reports the **wrapper's** exit status, not the tool's — `ci-verdicts.md` §0 owns
   what that does to a verdict.
 
@@ -39,7 +39,7 @@ A `PreToolUse` hook refuses a CI wait on the **duration it asks for**, not on th
 `gh pr checks --watch`, `ci-wait.py` whose `--timeout` is absent or at/above the 600s cap,
 and a sleep loop polling CI as that shape. A `--timeout 0` read, a value under the cap, and a
 backgrounded local run that is not a CI wait all stay allowed (#3707, #4288). Trap: gating that
-refusal on `run_in_background` is what made it refuse none of the 66.
+refusal on `run_in_background` is what made it refuse none of the 95.
 
 **If you are about to end a turn while local work you launched is still running, that is the
 bug.** Correct shapes, in order of preference: run it in the foreground; push first so the loss
