@@ -26,6 +26,13 @@ the cap -- including a poll loop built from such reads; and any backgrounded
 command that is not a CI wait, such as a detached runner, build or test sweep,
 which stays the agent's own judgement.
 
+Neither refusal reads a DOCUMENT the command writes: a heredoc body, or a
+quoted argument spanning a newline, is prose rather than a command line, and
+refusing an agent for writing ABOUT the tool was 62% of everything this hook's
+CI-wait arm blocked (#4402). `command_text()` blanks those regions in a single
+left-to-right scan before anything is split into segments; what remains is
+judged exactly as before.
+
 Exit 2 is what blocks a PreToolUse call and feeds stderr back to the model;
 exit 0 allows it. There is no third state here: this hook reads the command
 string it was handed, so it cannot fail to measure. A payload it cannot parse
@@ -44,6 +51,21 @@ ALLOW = 0
 # decides anything, so `command grep -rn "git stash" .claude/rules` -- a search
 # of the docs -- is not read as running it.
 SEGMENT_SPLIT = re.compile(r'\|\||&&|[;|\n&()`]|\$\(')
+
+# ...but `\n` is in that split, and a DOCUMENT the command writes is split on
+# newlines too, so a prose line that happens to BEGIN with a refused tool's name
+# becomes a segment starting with it (#4402). The safety property above and that
+# defect are the same character class, so the fix is not to narrow the split but
+# to blank the regions bash never parses as commands before splitting at all --
+# in ONE interleaved scan, because neither order of two separate passes is safe
+# (see command_text).
+#
+# Measured 2026-09-20 by replaying this project's transcripts through the hook:
+# of 234 commands it refused as CI waits, 145 (62%) were refusals of PROSE --
+# heredoc bodies and multi-line `--body` arguments -- and 89 were real waits.
+# The population grows with every session, so re-derive rather than quoting the
+# absolute counts; the ratio is what the fix was judged on.
+HEREDOC_OPEN = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 # Leading noise a real invocation carries: keywords, env assignments, wrappers.
 # `timeout <dur>` and `setsid`/`stdbuf` carry an argument or none; stripping them is
 # what lets `timeout 2700 tools/ci-wait.py ...` be seen as the ci-wait call it is
@@ -106,9 +128,114 @@ CI_WAIT_MESSAGE = (
 )
 
 
+def command_text(cmd: str) -> str:
+    """`cmd` with every region bash does not parse as a command blanked out.
+
+    ONE left-to-right scan, not two passes. Two passes cannot be ordered safely
+    because each reads the other's region as text, and both orders leak
+    SILENTLY (#4402, PR #4417 review):
+
+      * heredocs first -- a `<<WORD` sitting inside quoted PROSE is read as a
+        real opener, so an unterminated "heredoc" swallows the rest of the
+        command and a wait after it is blanked away;
+      * quotes first -- an apostrophe inside a heredoc body (`it's`, ordinary
+        English) opens a quote that never closes, so the heredoc opener is
+        blanked before it is seen, and again the rest is swallowed.
+
+    Scanning once removes the question: a `<<` inside an open quote is not an
+    opener, and a quote inside an open heredoc body is not a quote.
+
+    Both halves are asserted, so do NOT refactor this back into two passes:
+    tools/test_agent_workflow_hooks.py's "a heredoc opener inside quoted prose"
+    and "an apostrophe inside a heredoc body" blocks fail for heredocs-first
+    and quotes-first respectively, and no ordering passes both. The whole
+    measured population cannot tell the three implementations apart -- it
+    contains neither shape -- so the arms are the only thing that does.
+
+    Newlines are preserved throughout, so text outside a document segments
+    byte-identically to the unblanked command.
+    """
+    out = list(cmd)
+    n = len(cmd)
+    i = 0
+    quote = None          # "'" or '"' while inside a quoted string
+    quote_start = 0
+    pending = []          # heredocs opened on this line, not yet consumed
+
+    def blank(a, b):
+        for k in range(a, min(b, n)):
+            if out[k] != "\n":
+                out[k] = " "
+
+    while i < n:
+        ch = cmd[i]
+
+        if quote is not None:
+            # Inside a quoted string: nothing opens a heredoc here.
+            if ch == "\\" and quote == '"' and i + 1 < n:
+                i += 2
+                continue
+            if ch == quote:
+                # Blank it only if it spanned a newline: a single-line quoted
+                # argument is still parsed as part of its command line, and
+                # blanking it would erase a poll URL or a `--timeout` value.
+                if "\n" in cmd[quote_start:i]:
+                    blank(quote_start, i + 1)
+                quote = None
+            i += 1
+            continue
+
+        if ch == "\\" and i + 1 < n:
+            i += 2
+            continue
+
+        if ch in "'\"":
+            quote, quote_start = ch, i
+            i += 1
+            continue
+
+        if ch == "<" and cmd.startswith("<<", i):
+            m = HEREDOC_OPEN.match(cmd, i)
+            if m:
+                pending.append(m.group(2))
+                i = m.end()
+                continue
+            i += 2
+            continue
+
+        if ch == "\n" and pending:
+            # Consume every body opened on the line just ended, in order.
+            j = i + 1
+            for delim in pending:
+                while j < n:
+                    eol = cmd.find("\n", j)
+                    if eol == -1:
+                        eol = n
+                    line = cmd[j:eol]
+                    blank(j, eol)
+                    j = eol + 1
+                    if line.lstrip("\t").rstrip() == delim:
+                        break
+                    if eol == n:
+                        break
+            pending = []
+            # An unterminated body runs to end-of-command, exactly as bash
+            # does. That is the LOUD direction: everything after it is blanked,
+            # but every segment BEFORE the opener has already been scanned, so
+            # a wait cannot be hidden by opening a heredoc after it.
+            i = min(j, n)
+            continue
+
+        i += 1
+
+    if quote is not None and "\n" in cmd[quote_start:]:
+        blank(quote_start, n)
+    return "".join(out)
+
+
 def segments(cmd: str) -> list:
     out = []
-    for raw in SEGMENT_SPLIT.split(cmd):
+    for raw in SEGMENT_SPLIT.split(command_text(cmd)):
         seg = LEADING_NOISE.sub("", raw.strip()).strip()
         if seg:
             out.append(seg)
