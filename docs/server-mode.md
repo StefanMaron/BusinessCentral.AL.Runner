@@ -353,6 +353,42 @@ Two more properties of the series, both since #2056:
   the same "requested vs found nothing" distinction `capturedValues` already
   makes.
 
+#### Coverage path shape
+
+**`coverage[].file` is an absolute, forward-slashed path, whatever the request's
+`sourcePaths` looked like.** The same holds for every other path this source map
+feeds: `loops[].file` (`iterationTracking`) and DAP `source.path` on stack frames.
+Forward slashes on every platform, so a consumer need not normalise separators.
+
+A consumer may therefore key on the string, and two requests naming one tree the
+same way get one spelling for it. That was not true before #4344: the map rendered
+each file from the spelling of the root it was reached through, and the roots come
+from two places that disagree —
+
+| root | spelling | why |
+|---|---|---|
+| the request's own `sourcePaths` | **as the caller wrote it** | `RootsWithParsedSourceDependencies` canonicalises only its dedup key |
+| a sibling source dependency, from the registry the compile populated | **absolute** | `Program.cs` registers folders computed from a `GetFullPath`'d bundle root |
+
+So a request passing a *relative* `sourcePaths` entry got a document mixing the
+two — the caller's relative spelling for its own bundle, an absolute path for the
+dependency — while an absolute `sourcePaths` got a uniform one. Nothing was
+ambiguous (both resolve against the server's working directory), but a tool keying
+on the filename string saw two coordinate systems in one document, decided by
+something that says nothing about the run.
+
+**What changed for a consumer:** a caller who passed a relative `sourcePaths`
+entry, and read back a path relative to the server's working directory, now reads
+an absolute one. A caller who passed absolute `sourcePaths` sees no change — that
+case already produced absolute paths throughout, which is the shape this section
+pins.
+
+**The CLI's Cobertura output is a different contract and is unchanged.** `--coverage`
+writes `filename` attributes *relative to the working directory*, because the
+document's own `<source>.</source>` element is the base they are read against
+(`AlCoverageReport.WriteCobertura`, #3120). Only the server and DAP paths, which
+have no such base element, are absolute.
+
 ### Loop iterations (`iterationTracking`)
 
 `iterationTracking: true` (#2056, `execute` only) opts into per-iteration
