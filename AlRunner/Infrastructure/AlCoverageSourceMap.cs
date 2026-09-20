@@ -199,13 +199,14 @@ public static class AlCoverageSourceMap
             // conventional src/ + test/ layout, because SafeDirectoryScan.Files recurses.
             //
             // That measurement was taken on the CLI --coverage site ALONE, which passes
-            // `relativeTo: WorkingDirectory.TryGet()`, and it does NOT extend to a caller passing
-            // `relativeTo: null` -- the three server/DAP sites #4272 added. Measured there: a
-            // RELATIVE sourcePath yields a document mixing coordinate systems, because registry
-            // dirs arrive already GetFullPath'd (Program.cs, bundleAbs) while the caller's own
-            // root keeps its spelling. Unambiguous, and nothing regressed -- the dependency file
-            // had no entry at all before -- but not "byte-identical". #4344 tracks making
-            // `relativeTo` consistent across the four Build sites.
+            // `relativeTo: WorkingDirectory.TryGet()`. It did NOT extend to a caller passing
+            // `relativeTo: null` -- the server/DAP sites #4272 added -- because registry dirs
+            // arrive already GetFullPath'd (Program.cs, bundleAbs) while the caller's own root
+            // keeps its spelling, so a RELATIVE sourcePath produced a map mixing coordinate
+            // systems. #4344 fixed that in Build rather than here: `relativeTo: null` now
+            // renders every file absolute, which is what its doc comment always promised. The
+            // spelling kept below therefore no longer reaches any consumer's output -- it
+            // survives only as this method's dedup input.
             //
             // Why it currently cannot matter is a fact about the CALLER, not about this method:
             // Program.cs registers the compile's own folders as source dirs and says that is the
@@ -291,9 +292,13 @@ public static class AlCoverageSourceMap
                 if (!symbolsByAppJson.TryGetValue(appJson ?? "", out var symbols))
                     symbolsByAppJson[appJson ?? ""] = symbols = AlMemberSyntaxIndex.PreprocessorSymbols(appJson);
 
+                // #4344: `relativeTo: null` is documented above as "else absolute", and the
+                // raw `file` is not — SafeDirectoryScan derives it from the root's own
+                // spelling, so a RELATIVE root rendered a relative filename beside an absolute
+                // one from a registry dir in the SAME map. See AbsolutePathOf.
                 var path = relativeTo != null
                     ? Path.GetRelativePath(relativeTo, file).Replace('\\', '/')
-                    : file.Replace('\\', '/');
+                    : AbsolutePathOf(file);
                 var parsed = ParseObjects(file, symbols, out var readFailure);
                 foreach (var o in parsed)
                     map.Add(o.Label, o.Id, path, o.LineOffset);
@@ -363,6 +368,26 @@ public static class AlCoverageSourceMap
             Console.Error.WriteLine(
                 $"[source-map] {failure.Path}: {failure.Reason}. Objects it declares are absent "
                 + "from the source map, so coverage and the debugger cannot attribute them.");
+    }
+
+    /// <summary>
+    /// A scanned file as an absolute, forward-slashed path — what <see cref="Build"/> renders
+    /// when no <c>relativeTo</c> is given (#4344). The scan hands back the root's own spelling,
+    /// so without this a relative root yields relative filenames beside absolute ones from a
+    /// registry dir, in one map (docs/server-mode.md#coverage-path-shape).
+    ///
+    /// <para>A path <c>GetFullPath</c> cannot resolve is returned as it stands, not thrown on:
+    /// it names a file the scan just listed and parsed, so dropping it would lose a real
+    /// measurement to a spelling problem. It is the same fallback the dedup key in
+    /// <see cref="RootsWithParsedSourceDependencies"/> and
+    /// <c>AlSourceLocationMap.ForgetEntriesDeclaredBy</c> already take.</para>
+    /// </summary>
+    private static string AbsolutePathOf(string file)
+    {
+        try { return Path.GetFullPath(file).Replace('\\', '/'); }
+        catch (ArgumentException) { return file.Replace('\\', '/'); }
+        catch (NotSupportedException) { return file.Replace('\\', '/'); }
+        catch (PathTooLongException) { return file.Replace('\\', '/'); }
     }
 
     /// <summary>The nearest app.json in <paramref name="dir"/> or an ancestor, or null. The

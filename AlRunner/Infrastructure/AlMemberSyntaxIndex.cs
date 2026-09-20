@@ -55,8 +55,14 @@ public sealed class AlMemberSyntaxIndex
         var index = new AlMemberSyntaxIndex();
         foreach (var m in members)
         {
-            if (!index._byFile.TryGetValue(m.FilePath, out var list))
-                index._byFile[m.FilePath] = list = new List<AlMemberSyntax>();
+            // Keyed through NormalizePath, the same function FindMember looks up with (#4344).
+            // Build's own members arrive already normalised, so this is a no-op for them; it is
+            // load-bearing for a caller constructing AlMemberSyntax values directly, which
+            // would otherwise key the index in whatever spelling it happened to hold and miss
+            // every lookup.
+            var key = NormalizePath(m.FilePath);
+            if (!index._byFile.TryGetValue(key, out var list))
+                index._byFile[key] = list = new List<AlMemberSyntax>();
             list.Add(m);
         }
         return index;
@@ -166,7 +172,34 @@ public sealed class AlMemberSyntaxIndex
         }
     }
 
-    private static string NormalizePath(string path) => path.Replace('\\', '/');
+    /// <summary>
+    /// The key both sides of this index agree on: absolute and forward-slashed. Used on the
+    /// insert side (<see cref="Build"/>) and the lookup side (<see cref="FindMember"/>), so
+    /// canonicalising here moves both together and they cannot drift apart.
+    ///
+    /// <para>#4344: forward-slashing alone was not enough once
+    /// <c>AlCoverageSourceMap.Build(..., relativeTo: null)</c> began rendering absolute paths.
+    /// <c>Program.cs</c>'s <c>execute</c> handler feeds ONE <c>sourcePaths</c> into both
+    /// builders and joins them on the file path — <c>AlScopeSyntaxResolver.Configure(
+    /// AlMemberSyntaxIndex.Build(sourcePaths), syntaxSourceMap)</c> — so a relative
+    /// <c>sourcePaths</c> left the map absolute and this index relative, and every
+    /// <c>FindMember</c> missed. Observable: <c>iterationTracking</c> loops and
+    /// <c>captureValues</c> write sets resolved for no scope at all.</para>
+    ///
+    /// <para>Trap: this is a JOIN key, not a displayed path, so nothing renders it and no
+    /// assertion about output catches a mismatch — only a lookup that returns null, which
+    /// reads as "that member has no loops". Both producers must canonicalise or neither.</para>
+    ///
+    /// <para>A path <c>GetFullPath</c> cannot resolve keeps its forward-slashed spelling
+    /// rather than throwing: both sides apply the same fallback, so they still agree.</para>
+    /// </summary>
+    private static string NormalizePath(string path)
+    {
+        try { return Path.GetFullPath(path).Replace('\\', '/'); }
+        catch (ArgumentException) { return path.Replace('\\', '/'); }
+        catch (NotSupportedException) { return path.Replace('\\', '/'); }
+        catch (PathTooLongException) { return path.Replace('\\', '/'); }
+    }
 
     private static string MemberName(NavSyntax.MethodOrTriggerDeclarationSyntax member) =>
         member.Name?.Identifier.ValueText ?? "?";
