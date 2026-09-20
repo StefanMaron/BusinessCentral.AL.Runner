@@ -365,6 +365,15 @@ public static partial class RecordPatches
                 w.WriteAttributeString("IncludeSender", method.IncludeSender ? "True" : "False");
                 if (method.Isolated) w.WriteAttributeString("Isolated", "True");
             }
+            // BC writes these on a PAGE document exactly as on a codeunit one — measured, not
+            // assumed: a probe app declaring an InherentPermissions method on both object kinds,
+            // emitted through BC's own compiler at 28.1.49838.53910, produced the same five
+            // attributes on the PageDefinition as on the CodeUnit. The shipped Microsoft apps
+            // the ground-truth bundles cover happen to have no such page (Base Application has
+            // exactly one, page 99000833), so the bundle's zero is a property of those apps and
+            // never of BC's emitter (#4339).
+            foreach (var (name, value) in InherentPermissionAttributes(method.InherentPermission))
+                w.WriteAttributeString(name, value);
             w.WriteEndElement(); // the attribute kind
             w.WriteEndElement(); // MethodAttributes
 

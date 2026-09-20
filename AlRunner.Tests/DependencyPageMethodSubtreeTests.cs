@@ -89,6 +89,11 @@ public class DependencyPageMethodSubtreeTests : IDisposable
     /// unknown abstains rather than reading as "no subscribers".</summary>
     private const int PublishersButNoWitnessPageId = 88267005;
 
+    /// <summary>A page stating an <c>InherentPermissions</c> method with its arguments — the
+    /// shape Base Application's page 99000833 "Check Prod. Order Status" states, and which BC's
+    /// own emitter writes on a PageDefinition with all five attributes (#4339).</summary>
+    private const int InherentPermissionsPageId = 88267006;
+
     private static string WriteApp(string dir, string symbolReferenceJson)
     {
         var appPath = Path.Combine(dir, Guid.NewGuid().ToString("N") + ".app");
@@ -166,6 +171,20 @@ public class DependencyPageMethodSubtreeTests : IDisposable
                 { "Id": 1100, "Name": "OnBeforeUnwitnessed",
                   "Attributes": [ { "Name": "IntegrationEvent" } ] }
               ]
+            },
+            {
+              "Id": 88267006,
+              "Name": "P4339 Inherent Permissions Page",
+              "Properties": [ { "Name": "PageType", "Value": "List" } ],
+              "Methods": [
+                { "Id": 1200, "Name": "SalesLineShowWarning",
+                  "Attributes": [ { "Name": "InherentPermissions", "Arguments": [
+                    { "Value": "TableData" }, { "Value": "99000765" }, { "Value": "r" } ] } ] },
+                { "Id": 1201, "Name": "ModifiesWithScope",
+                  "Attributes": [ { "Name": "InherentPermissions", "Arguments": [
+                    { "Value": "TableData" }, { "Value": "99000766" }, { "Value": "rm" },
+                    { "Value": "Entitlements" } ] } ] }
+              ]
             }
           ]
         }
@@ -205,7 +224,8 @@ public class DependencyPageMethodSubtreeTests : IDisposable
                 appPath,
                 new[] { PublishersAndSubscriberPageId },
                 new[] { PublishersOnlyPageId, PublishersAndSubscriberPageId,
-                        OrdinaryProceduresOnlyPageId, UnemittedAttributesPageId });
+                        OrdinaryProceduresOnlyPageId, UnemittedAttributesPageId,
+                        InherentPermissionsPageId });
 
         return appPath;
     }
@@ -365,5 +385,49 @@ public class DependencyPageMethodSubtreeTests : IDisposable
         Register();
 
         Assert.False(HasMethodsElement(UnemittedAttributesPageId));
+    }
+
+    /// <summary>
+    /// A PAGE's <c>InherentPermissionsMethodAttribute</c> carries the same four values BC writes
+    /// on a codeunit's (#4339) — asserted on the page renderer directly rather than only through
+    /// <c>DependencyPageMethodSubtreeRenderingParityTests</c>, which compares the two renderers
+    /// and would agree if BOTH wrote nothing.
+    ///
+    /// <para><b>That BC emits this on a page at all is measured, not assumed.</b> Neither app
+    /// the ground-truth bundles cover has a page stating one — all 24 elements BC writes there
+    /// are on codeunits — so the bundle's zero says nothing about BC's emitter. A probe app
+    /// declaring an <c>InherentPermissions</c> method on a page AND a codeunit, compiled through
+    /// BC's own compiler at 28.1.49838.53910 (<c>Ncl.dll</c> sha256 <c>49b11d9b…</c>), produced
+    /// the same five attributes on the PageDefinition as on the CodeUnit. Base Application's
+    /// page 99000833 "Check Prod. Order Status" is the one shipped page that states one, and the
+    /// first fixture row below is its shape.</para>
+    /// </summary>
+    [Fact]
+    public void PageInherentPermissionsAttribute_CarriesTheFourValuesFromItsArguments()
+    {
+        Register();
+
+        Assert.Equal(
+            new List<(int, string)> { (1200, "SalesLineShowWarning"), (1201, "ModifiesWithScope") },
+            Methods(InherentPermissionsPageId));
+
+        var attributes = AttributeElements(InherentPermissionsPageId);
+        Assert.Equal(2, attributes.Count);
+        Assert.All(attributes,
+            a => Assert.Equal("InherentPermissionsMethodAttribute", a.LocalName));
+
+        // Each value VARIES across the two rows, so a renderer writing a constant — or writing
+        // the second row's value for the first — reds rather than riding along.
+        Assert.Equal(new[] { "TableData", "TableData" },
+            attributes.Select(a => a.GetAttribute("InherentPermissionObjectType")));
+        Assert.Equal(new[] { "99000765", "99000766" },
+            attributes.Select(a => a.GetAttribute("InherentPermissionObjectId")));
+        Assert.Equal(new[] { "32", "160" },
+            attributes.Select(a => a.GetAttribute("InherentPermissionPermissionValue")));
+
+        // Absent scope argument -> 0, an explicit Entitlements -> 2. The pair is what stops a
+        // hardcoded 0 from passing, which every one of the 24 shipped elements would allow.
+        Assert.Equal(new[] { "0", "2" },
+            attributes.Select(a => a.GetAttribute("InherentPermissionScope")));
     }
 }

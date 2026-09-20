@@ -322,6 +322,62 @@ service-tier DLL dispatch — has measured nothing about its subscribers, and re
 silence as "no subscribers" restores exactly the 8 fabrications above
 (`.claude/rules/guards-need-a-third-state.md`). Unknown abstains.
 
+### The `InherentPermissions` method attribute
+
+BC writes **five** attributes on an `InherentPermissionsMethodAttribute` element, not one. The
+four beyond `Name` come from the AL attribute's own positional arguments —
+`InherentPermissions(ObjectType, ObjectId, Mask[, Scope])` — and until #4339 both method-table
+renderers wrote `Name` alone.
+
+| attribute | source | how it is derived |
+|---|---|---|
+| `InherentPermissionObjectType` | argument 0 | **verbatim**; `TableData`, `Codeunit`, `Page` |
+| `InherentPermissionObjectId` | argument 1 | **verbatim**; the symbol file already states a number, because the AL compiler resolved `Database::"No. Series Line"` before writing it |
+| `InherentPermissionPermissionValue` | argument 2 | the shared letter decode, [`#how-a-permission-mask-is-spelled`](#how-a-permission-mask-is-spelled) |
+| `InherentPermissionScope` | argument 3 | the **ordinal** of BC's `InherentPermissionsScope`, whose decompiled body is `{ Both, Permissions, Entitlements }`; absent ⇒ 0 |
+
+**What the shipped apps could and could not settle.** Over Business Foundation + System
+Application at 28.1.49838.53910 (`Microsoft.Dynamics.Nav.Ncl.dll` sha256 `49b11d9b…`), BC emits
+24 of these elements across 11 codeunits and **0 on pages**. Joining each back to its symbol
+entry, the mapping above reproduces all four values on **17 of 17** with zero disagreements.
+The other **7** — codeunits 306, 307, 309 and 8705 — have no symbol entry at all, because the
+methods carrying them are `local`; they are not rendered, for the same reason no event
+subscriber is ([`#one-of-the-three-kinds-is-invisible-to-symbolreferencejson`](#one-of-the-three-kinds-is-invisible-to-symbolreferencejson)).
+
+Two things those 24 elements **cannot** establish, because they do not vary:
+
+- **Scope is not a constant.** All 24 read `0`, so a hardcoded `0` would agree with every one
+  of them. `Both` and an absent argument are the same ordinal, which is what hides the mistake.
+  Base Application states the only shipped four-argument instance (codeunit 386
+  `SetGLRegisterNo`, `'Both'`) — and it too reads 0.
+- **BC does emit this on a page.** The bundle's `0 on pages` is a property of those two apps,
+  not of BC's emitter: of Base Application's 2,610 pages exactly **one** states an
+  `InherentPermissions` method (99000833 "Check Prod. Order Status", `SalesLineShowWarning`),
+  and neither measured app has any.
+
+**What settled both: a probe app through BC's own compiler.** A synthetic app declaring
+`InherentPermissions` methods on a page *and* a codeunit, emitted through
+`tools/gen-metadata-ground-truth.sh` at 28.1.49838.53910 (`[emit] success=True objects=3
+errors=0`):
+
+| declared | document | ObjectType | ObjectId | PermissionValue | Scope |
+|---|---|---|---:|---:|---:|
+| `(TableData, "Probe Table", 'r')` | CodeUnit | `TableData` | 70000 | 32 | 0 |
+| `(TableData, "Probe Table", 'r', ::Permissions)` | CodeUnit | `TableData` | 70000 | 32 | **1** |
+| `(TableData, "Probe Table", 'r', ::Entitlements)` | CodeUnit | `TableData` | 70000 | 32 | **2** |
+| `(Codeunit, ::"Probe Codeunit", 'X')` | CodeUnit | **`Codeunit`** | 70001 | 16 | 0 |
+| `(Page, ::"Probe Page", 'X')` | CodeUnit | **`Page`** | 70002 | 16 | 0 |
+| `(TableData, "Probe Table", 'rm')` | **PageDefinition** | `TableData` | 70000 | 160 | 0 |
+| `(TableData, "Probe Table", 'rimd', ::Both)` | **PageDefinition** | `TableData` | 70000 | 480 | 0 |
+
+So the page renderer writes the same four, and the scope ordinals are BC's own enum order.
+
+**An unreadable value refuses all four** rather than contributing a default, because three of
+four attributes would put a partial association in BC's slot — the failure the whole `<Methods>`
+derivation exists to avoid (`.claude/rules/guards-need-a-third-state.md`). Four shapes take four
+paths: an argument list shorter than three, a non-numeric object id, a mask letter outside
+`RIMDX`, and a scope name outside BC's three.
+
 <a id="what-adjudicated-this"></a>
 
 ## What adjudicated this

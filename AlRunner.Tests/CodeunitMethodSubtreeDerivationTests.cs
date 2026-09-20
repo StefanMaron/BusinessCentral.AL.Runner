@@ -99,6 +99,16 @@ public sealed class CodeunitMethodSubtreeDerivationTests : IDisposable
     /// sender argument at all.</summary>
     private const int PublisherFlags = 61065;
 
+    /// <summary>InherentPermissions methods whose arguments exercise all four of BC's emitted
+    /// attributes independently — a different object type, a different object id, a different
+    /// mask and each of the three scope ordinals (#4339).</summary>
+    private const int InherentPermissionArguments = 61066;
+
+    /// <summary>InherentPermissions methods the runner CANNOT read: one argument list too short
+    /// to carry the three required values, and one unreadable value in each of the three
+    /// positions that can have one (#4339).</summary>
+    private const int InherentPermissionsUnreadable = 61067;
+
     private readonly string _root;
 
     public CodeunitMethodSubtreeDerivationTests()
@@ -205,6 +215,49 @@ public sealed class CodeunitMethodSubtreeDerivationTests : IDisposable
                       "Attributes": [ { "Name": "InternalEvent", "Arguments": [
                         { "Value": "True" } ] } ] }
                   ]
+                },
+                {
+                  "Id": {{InherentPermissionArguments}},
+                  "Name": "Inherent Permission Arguments",
+                  "Properties": [],
+                  "Methods": [
+                    { "Id": 1001, "Name": "ScopeDefaulted",
+                      "Attributes": [ { "Name": "InherentPermissions", "Arguments": [
+                        { "Value": "TableData" }, { "Value": "9008" }, { "Value": "r" } ] } ] },
+                    { "Id": 1002, "Name": "ScopePermissions",
+                      "Attributes": [ { "Name": "InherentPermissions", "Arguments": [
+                        { "Value": "TableData" }, { "Value": "8912" }, { "Value": "ri" },
+                        { "Value": "Permissions" } ] } ] },
+                    { "Id": 1003, "Name": "ScopeEntitlements",
+                      "Attributes": [ { "Name": "InherentPermissions", "Arguments": [
+                        { "Value": "Codeunit" }, { "Value": "1306" }, { "Value": "X" },
+                        { "Value": "Entitlements" } ] } ] },
+                    { "Id": 1004, "Name": "ScopeBothIsTheDefaultOrdinal",
+                      "Attributes": [ { "Name": "InherentPermissions", "Arguments": [
+                        { "Value": "Page" }, { "Value": "9005" }, { "Value": "rimd" },
+                        { "Value": "Both" } ] } ] }
+                  ]
+                },
+                {
+                  "Id": {{InherentPermissionsUnreadable}},
+                  "Name": "Inherent Permissions Unreadable",
+                  "Properties": [],
+                  "Methods": [
+                    { "Id": 1101, "Name": "ArgumentsTooShort",
+                      "Attributes": [ { "Name": "InherentPermissions", "Arguments": [
+                        { "Value": "TableData" }, { "Value": "9008" } ] } ] },
+                    { "Id": 1102, "Name": "ObjectIdIsNotANumber",
+                      "Attributes": [ { "Name": "InherentPermissions", "Arguments": [
+                        { "Value": "TableData" }, { "Value": "No. Series Line" },
+                        { "Value": "r" } ] } ] },
+                    { "Id": 1103, "Name": "MaskLetterIsUnreadable",
+                      "Attributes": [ { "Name": "InherentPermissions", "Arguments": [
+                        { "Value": "TableData" }, { "Value": "9008" }, { "Value": "rq" } ] } ] },
+                    { "Id": 1104, "Name": "ScopeNameIsUnreadable",
+                      "Attributes": [ { "Name": "InherentPermissions", "Arguments": [
+                        { "Value": "TableData" }, { "Value": "9008" }, { "Value": "r" },
+                        { "Value": "Sideways" } ] } ] }
+                  ]
                 }
               ]
             }
@@ -244,7 +297,8 @@ public sealed class CodeunitMethodSubtreeDerivationTests : IDisposable
                 appPath,
                 new[] { PublishersAndSubscriber },
                 new[] { PublishersOnly, PublishersAndSubscriber, NoAttributedMethods,
-                        InherentPermissionsMethod, PublisherFlags });
+                        InherentPermissionsMethod, PublisherFlags, InherentPermissionArguments,
+                        InherentPermissionsUnreadable });
         }
 
         return appPath;
@@ -464,6 +518,166 @@ public sealed class CodeunitMethodSubtreeDerivationTests : IDisposable
 
         Assert.Equal("False", flags[4].GetAttribute("IncludeSender"));
         Assert.False(flags[4].HasAttribute("Isolated"));
+    }
+
+    /// <summary>
+    /// BC writes FIVE attributes on an <c>InherentPermissionsMethodAttribute</c> element, and the
+    /// four beyond <c>Name</c> come from the AL attribute's own POSITIONAL arguments —
+    /// <c>InherentPermissions(ObjectType, ObjectId, Mask[, Scope])</c> (#4339).
+    ///
+    /// <para>Each of the four is asserted through a value that VARIES across the fixture's rows,
+    /// so a renderer that dropped one, or that wrote a constant, reds this arm rather than
+    /// riding along on a value another row also has: the object types are TableData / Codeunit /
+    /// Page, the ids 9008 / 8912 / 1306 / 9005, the masks r / ri / X / rimd, and the scopes
+    /// defaulted / Permissions / Entitlements / Both.</para>
+    ///
+    /// <para><b>Where each value comes from, measured rather than inferred.</b> A probe app
+    /// carrying exactly these shapes was compiled through BC's own emitter at
+    /// 28.1.49838.53910 (<c>Microsoft.Dynamics.Nav.Ncl.dll</c> sha256 <c>49b11d9b…</c>) — see
+    /// docs/codeunit-metadata-from-bc.md#the-inherentpermissions-method-attribute. Type and id
+    /// pass through VERBATIM, the mask is the shared letter decode, and the scope is the
+    /// ORDINAL of <c>Microsoft.Dynamics.Nav.Runtime.Permissions.InherentPermissionsScope</c>,
+    /// whose decompiled body is <c>{ Both, Permissions, Entitlements }</c> — so <c>Both</c> and
+    /// an absent argument both answer 0.</para>
+    /// </summary>
+    [Fact]
+    public void The_four_InherentPermission_attributes_are_read_from_the_attributes_arguments()
+    {
+        Register();
+
+        var elements = AttributeElements(Projection(InherentPermissionArguments)).ToList();
+        Assert.Equal(4, elements.Count);
+        Assert.All(elements, e => Assert.Equal("InherentPermissionsMethodAttribute", e.LocalName));
+
+        // Argument 0, verbatim: three different object types, none of them inferred from the
+        // element's own name.
+        Assert.Equal(
+            new[] { "TableData", "TableData", "Codeunit", "Page" },
+            elements.Select(e => e.GetAttribute("InherentPermissionObjectType")));
+
+        // Argument 1, verbatim: already numeric in the symbol file, so this is a READ and not a
+        // table-name resolution.
+        Assert.Equal(
+            new[] { "9008", "8912", "1306", "9005" },
+            elements.Select(e => e.GetAttribute("InherentPermissionObjectId")));
+
+        // Argument 2, through the shared letter decoder: Read 1 / Insert 2 / Modify 4 /
+        // Delete 8 / Execute 16, each again at n+5 for a lowercase letter. "X" is 16 and "r"
+        // is 32, which is what makes case significant here as everywhere else.
+        Assert.Equal(
+            new[] { "32", "96", "16", "480" },
+            elements.Select(e => e.GetAttribute("InherentPermissionPermissionValue")));
+
+        // Argument 3, the enum ORDINAL. The first and last rows are the pair that matters: an
+        // absent argument and an explicit "Both" both answer 0, so a renderer hardcoding 0
+        // passes those two and fails the middle two.
+        Assert.Equal(
+            new[] { "0", "1", "2", "0" },
+            elements.Select(e => e.GetAttribute("InherentPermissionScope")));
+    }
+
+    /// <summary>
+    /// The four attributes are written on the <c>InherentPermissions</c> element ONLY. An
+    /// <c>EventPublisherAttribute</c> element carries <c>IncludeSender</c> and its own flags and
+    /// none of these, which is what stops the #4339 fix from writing them everywhere.
+    ///
+    /// <para>The four absences are asserted beside a POSITIVE drawn from the same run, so this
+    /// cannot pass because the renderer stopped writing them altogether: the same assertion run
+    /// against a renderer that writes the set unconditionally reds here, and against one that
+    /// writes it nowhere reds on the positive.</para>
+    /// </summary>
+    [Fact]
+    public void The_four_attributes_are_written_on_the_InherentPermissions_element_only()
+    {
+        Register();
+
+        var mixed = AttributeElements(Projection(InherentPermissionsMethod)).ToList();
+        Assert.Equal(2, mixed.Count);
+
+        var publisher = mixed[0];
+        Assert.Equal("EventPublisherAttribute", publisher.LocalName);
+        Assert.False(publisher.HasAttribute("InherentPermissionObjectType"));
+        Assert.False(publisher.HasAttribute("InherentPermissionObjectId"));
+        Assert.False(publisher.HasAttribute("InherentPermissionPermissionValue"));
+        Assert.False(publisher.HasAttribute("InherentPermissionScope"));
+
+        // The positive that makes the four absences above mean something: in the SAME run, an
+        // InherentPermissions element whose attribute states its arguments carries all four.
+        var stated = AttributeElements(Projection(InherentPermissionArguments)).First();
+        Assert.Equal("InherentPermissionsMethodAttribute", stated.LocalName);
+        Assert.True(stated.HasAttribute("InherentPermissionObjectType"));
+        Assert.True(stated.HasAttribute("InherentPermissionObjectId"));
+        Assert.True(stated.HasAttribute("InherentPermissionPermissionValue"));
+        Assert.True(stated.HasAttribute("InherentPermissionScope"));
+    }
+
+    /// <summary>
+    /// An <c>InherentPermissions</c> attribute stating NO arguments keeps its <c>Name</c> and
+    /// states none of the four — the runner's whole pre-#4339 output, and still the right answer
+    /// for a symbol file that carries nothing to write.
+    ///
+    /// <para>Writing a default instead would be the manufactured-agreement failure this
+    /// projection exists to avoid: BC emits 0 for <c>InherentPermissionScope</c> on all 24
+    /// elements measured, so a hardcoded 0 would look correct against the shipped apps while
+    /// stating a value the runner never read (loud-failures.md). <c>Both</c> and absent are the
+    /// same ordinal, which is exactly what makes that mistake invisible.</para>
+    /// </summary>
+    [Fact]
+    public void An_InherentPermissions_attribute_with_no_arguments_states_Name_alone()
+    {
+        Register();
+
+        var bare = AttributeElements(Projection(InherentPermissionsMethod)).Last();
+        Assert.Equal("InherentPermissionsMethodAttribute", bare.LocalName);
+        Assert.Equal("InherentPermissions", bare.GetAttribute("Name"));
+
+        Assert.False(bare.HasAttribute("InherentPermissionObjectType"));
+        Assert.False(bare.HasAttribute("InherentPermissionObjectId"));
+        Assert.False(bare.HasAttribute("InherentPermissionPermissionValue"));
+        Assert.False(bare.HasAttribute("InherentPermissionScope"));
+    }
+
+    /// <summary>
+    /// A value the runner cannot read refuses the WHOLE set rather than contributing a default:
+    /// the element keeps its <c>Name</c> and states none of the four, so it reads as stating
+    /// nothing rather than as stating three-quarters of an association
+    /// (guards-need-a-third-state.md).
+    ///
+    /// <para>Four separate shapes, because they take four different paths through the reader and
+    /// a single arm would not say which one fired: an argument list too SHORT to carry the three
+    /// required values, a non-numeric object id, a mask letter outside
+    /// <c>PermissionMaskLetters</c>, and a scope name outside BC's three. The fourth is the one
+    /// a lenient reader would silently turn into 0 — which is the value BC writes on every
+    /// element the shipped apps contain, so nothing downstream would look wrong.</para>
+    ///
+    /// <para>Non-vacuity is carried by the second assertion: the same run's readable codeunit
+    /// still renders all four, so these four refusals are each row's property rather than the
+    /// reader having stopped answering.</para>
+    /// </summary>
+    [Fact]
+    public void An_unreadable_InherentPermissions_value_refuses_all_four_rather_than_defaulting()
+    {
+        Register();
+
+        var refused = AttributeElements(Projection(InherentPermissionsUnreadable)).ToList();
+        Assert.Equal(4, refused.Count);
+
+        foreach (var element in refused)
+        {
+            Assert.Equal("InherentPermissionsMethodAttribute", element.LocalName);
+            Assert.Equal("InherentPermissions", element.GetAttribute("Name"));
+            Assert.False(element.HasAttribute("InherentPermissionObjectType"));
+            Assert.False(element.HasAttribute("InherentPermissionObjectId"));
+            Assert.False(element.HasAttribute("InherentPermissionPermissionValue"));
+            Assert.False(element.HasAttribute("InherentPermissionScope"));
+        }
+
+        // The readable codeunit in the SAME run still states all four, so the refusals above
+        // are about these four rows and not about the reader having gone quiet.
+        Assert.Equal(
+            new[] { "32", "96", "16", "480" },
+            AttributeElements(Projection(InherentPermissionArguments))
+                .Select(e => e.GetAttribute("InherentPermissionPermissionValue")));
     }
 
     /// <summary>
