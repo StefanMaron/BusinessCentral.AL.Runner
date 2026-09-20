@@ -173,10 +173,19 @@ SHELL_DASH_C = re.compile(
 # it to `\S*` reds nothing, because the value-less arm covers the same text once
 # the optional value is empty -- so do not cite it as load-bearing, and do not
 # read a green from mutating it as coverage (#4425, re-measured at #4428).
+#
+# `--` is the third grammar here and is NOT an option (#4432): it ENDS them, so
+# it sits OUTSIDE the repetition. After it the next word is the command whatever
+# it looks like -- `xargs -- -n 1 bash -c '<refused>'` execs `-n` and never runs
+# the tool, so allowing it is correct. Adding `--` to the alternation instead
+# would keep consuming and block it; that mutation reds five ALLOW arms.
+# Trap: `?` rather than `*`, because a SECOND `--` is an argument to the command
+# the first one introduced, not a terminator again -- `xargs -- -- bash -c` is
+# ALLOW, and `*` reds exactly that arm.
 ARGV_INTRO = re.compile(
     r'^(?:xargs(?:\s+(?:-[ILnPsEad]\s*\S+|-[A-Za-z0-9]\S*'
     r'|--(?:max-args|max-procs|max-chars|delimiter|arg-file)(?:=\S+|\s+\S+)'
-    r'|--[\w-]+(?:=\S+)?))*(?:\s+--(?=\s))?'
+    r'|--[\w-]+(?:=\S+)?))*(?:\s+--)?'
     r'|(?:\S+\s+)*?-exec(?:dir)?)\s+')
 
 GIT_OPTS = r'(?:\s+(?:-[A-Za-z]\s+\S+|-[A-Za-z]\S*|--[\w-]+(?:=\S+)?))*'

@@ -1178,16 +1178,30 @@ END_OF_OPTIONS_ALLOWED = [
      "git ls-files | xargs -n 1 -- git stash"),
     ("xargs --, then noise, then NO wrapper",
      "git ls-files | xargs -- timeout 30 git stash"),
-    # A non-shell whose `-c` is a config flag, reached across the terminator.
+    # A non-shell whose `-c` is a config flag, reached across the terminator: if
+    # the terminator let `engine-test-bootstrap.sh -c` read as a shell wrapper,
+    # the refused tool in the argument would surface. Both spellings, because
+    # the terminator may be first or follow an option.
     ("xargs -- running a bootstrap whose -c argument NAMES a refused tool",
      "ls | xargs -- tools/engine-test-bootstrap.sh -c 'git stash'"),
-    ("xargs -- running a bootstrap whose -c is a config flag",
-     "ls | xargs -- tools/engine-test-bootstrap.sh -c Debug"),
-    # The benign work that must keep flowing across the terminator.
-    ("xargs -- bash -c greping for the rule text",
-     "ls | xargs -- bash -c 'command grep -rn \"git stash\" .claude/rules'"),
+    ("xargs -n 1 -- running a bootstrap whose -c argument NAMES a refused tool",
+     "ls | xargs -n 1 -- tools/engine-test-bootstrap.sh -c 'git stash'"),
+    # A `--timeout 0` read reached ACROSS the terminator. It discriminates:
+    # dropping the harness cap to 0 makes the plain read refuse, and this arm
+    # moves with it -- which is what proves the intro reached the `ci-wait`
+    # call rather than leaving the command unexamined.
     ("a --timeout 0 read via xargs -- and noise",
      "echo 4432 | xargs -- timeout 30 bash -c 'tools/ci-wait.py 4432 --timeout 0'"),
+    # REGRESSION CONTROLS, not discriminating arms: both are ALLOW before and
+    # after, and stay ALLOW under every targeted break measured for this PR
+    # (over-consuming terminator, `\S*sh` shell name, unconditional intro
+    # strip, cap 0, unanchored GIT_STASH). They pin that ordinary work still
+    # flows across the terminator; they are NOT evidence the fix is correct,
+    # and the arms above are what carry that (#4432).
+    ("control: xargs -- bash -c greping for the rule text",
+     "ls | xargs -- bash -c 'command grep -rn \"git stash\" .claude/rules'"),
+    ("control: xargs -- running a bootstrap whose -c is a config flag",
+     "ls | xargs -- tools/engine-test-bootstrap.sh -c Debug"),
 ]
 for name, cmd in END_OF_OPTIONS_ALLOWED:
     ok, d = allows(REFUSE, cmd)
