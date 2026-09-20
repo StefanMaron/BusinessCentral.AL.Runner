@@ -35,6 +35,16 @@
 // base its `filename` attributes are read against (AlCoverageReport.WriteCobertura writes
 // exactly "."), so relative-to-cwd is that format's contract (#3120). This fix touches only
 // what `relativeTo: null` renders.
+//
+// TWO KINDS OF CONSUMER, and the second is the one a rendering change hides from.
+// The arms above pin what the map RENDERS. The arms at the bottom pin what JOINS on it:
+// Program.cs's `execute` handler feeds one sourcePaths into AlCoverageSourceMap.Build AND
+// AlMemberSyntaxIndex.Build and matches them on the file path, so making the map absolute
+// broke that lookup for a relative sourcePaths until AlMemberSyntaxIndex.NormalizePath was
+// canonicalised to match. A consumer that DISPLAYS a path prints whatever it is handed and
+// notices nothing; a consumer that MATCHES on it returns null, and "no loops for that scope"
+// is indistinguishable from "that scope has no loops". Nothing exercised a relative
+// sourcePaths through the server path, which is why CI stayed green through the regression.
 
 using AlRunner.Infrastructure;
 using Xunit;
@@ -244,5 +254,133 @@ public sealed class CoverageSourceMapPathCoordinateTests : IDisposable
         Assert.Equal(PathOf(viaAbsolute, 70941), PathOf(viaRelative, 70941));
         Assert.Equal("alpha/Alpha.Codeunit.al", PathOf(viaRelative, 70941));
         _ = absDir;
+    }
+
+    // ── the JOIN: a consumer that MATCHES on the path, not one that displays it ──────
+
+    /// <summary>
+    /// The map's path is not only rendered — it is also a <b>join key</b>. <c>Program.cs</c>'s
+    /// <c>execute</c> handler feeds ONE <c>sourcePaths</c> into two builders and joins them:
+    ///
+    /// <code>
+    /// var syntaxSourceMap = AlCoverageSourceMap.Build(sourcePaths, relativeTo: null);
+    /// AlScopeSyntaxResolver.Configure(AlMemberSyntaxIndex.Build(sourcePaths), syntaxSourceMap);
+    /// </code>
+    ///
+    /// <para>So making the map absolute (the fix above) silently broke that join for a
+    /// RELATIVE <c>sourcePaths</c>: the map went absolute while <c>AlMemberSyntaxIndex</c>
+    /// still keyed on the raw spelling, and every <c>FindMember</c> missed. The observable is
+    /// an absent record rather than a wrong value — <c>iterationTracking</c> loops and
+    /// <c>captureValues</c> write sets resolved for no scope at all.</para>
+    ///
+    /// <para>Measured while repairing this, with only the source-map change in the tree:
+    /// merge base <c>f566aeea</c> answered <c>found</c>, the unrepaired head answered
+    /// <c>NULL</c>. That is why this arm exists and why no rendering assertion caught it — a
+    /// display consumer prints whatever it is handed, while a keyed lookup returns null.</para>
+    /// </summary>
+    [SkippableFact]
+    public void MapPath_FromARelativeRoot_StillFindsTheMemberInTheSyntaxIndex()
+    {
+        RequireEngine();
+        var (relDir, _) = TwoDirs();
+
+        // Exactly the production pairing: one root spelling into both builders.
+        var map = AlCoverageSourceMap.Build(new[] { relDir }, relativeTo: null);
+        var index = AlMemberSyntaxIndex.Build(new[] { relDir });
+
+        var mapPath = PathOf(map, 70941);
+        Assert.True(Path.IsPathRooted(mapPath), "precondition: the map renders absolute");
+
+        Assert.NotNull(index.FindMember(mapPath, "Run", null));
+    }
+
+    /// <summary>
+    /// The same join with the root spelled absolutely — the arm that was already working, so a
+    /// repair that merely swapped which spelling wins would break it. Both spellings of one
+    /// tree must reach the same member.
+    /// </summary>
+    [SkippableFact]
+    public void MapPath_FromAnAbsoluteRoot_StillFindsTheMemberInTheSyntaxIndex()
+    {
+        RequireEngine();
+        var (relDir, _) = TwoDirs();
+        var absDir = Path.GetFullPath(relDir);
+
+        var map = AlCoverageSourceMap.Build(new[] { absDir }, relativeTo: null);
+        var index = AlMemberSyntaxIndex.Build(new[] { absDir });
+
+        Assert.NotNull(index.FindMember(PathOf(map, 70941), "Run", null));
+    }
+
+    /// <summary>
+    /// The index must join across a spelling MISMATCH between its two sides, which is the
+    /// state the production code was in: built from one spelling, looked up with another.
+    /// Pinning this means a future change to either side cannot reintroduce the defect by
+    /// moving only one of them.
+    /// </summary>
+    [SkippableFact]
+    public void SyntaxIndex_BuiltRelatively_IsFoundByAnAbsoluteLookup_AndViceVersa()
+    {
+        RequireEngine();
+        var (relDir, _) = TwoDirs();
+        var absFile = Path.GetFullPath(Path.Combine(relDir, "Alpha.Codeunit.al")).Replace('\\', '/');
+        var relFile = Path.Combine(relDir, "Alpha.Codeunit.al").Replace('\\', '/');
+        Assert.NotEqual(absFile, relFile);
+
+        var builtRelative = AlMemberSyntaxIndex.Build(new[] { relDir });
+        Assert.NotNull(builtRelative.FindMember(absFile, "Run", null));
+        Assert.NotNull(builtRelative.FindMember(relFile, "Run", null));
+
+        var builtAbsolute = AlMemberSyntaxIndex.Build(new[] { Path.GetFullPath(relDir) });
+        Assert.NotNull(builtAbsolute.FindMember(absFile, "Run", null));
+        Assert.NotNull(builtAbsolute.FindMember(relFile, "Run", null));
+    }
+
+    /// <summary>
+    /// <see cref="AlMemberSyntaxIndex.FromMembers"/> is a second, public entry point, and its
+    /// members do NOT have to come from <c>Build</c> — a caller can hand it
+    /// <c>AlMemberSyntax</c> values carrying any spelling. <c>Build</c>'s own members arrive
+    /// pre-normalised by <c>Parse</c>, so the insert-side call is a no-op on that path and a
+    /// mutation of it is absorbed there; this arm is what makes the line reachable, by handing
+    /// <c>FromMembers</c> a relative path directly and looking it up absolutely.
+    /// </summary>
+    [SkippableFact]
+    public void SyntaxIndex_FromMembers_KeysOnTheNormalisedPath_NotTheCallersSpelling()
+    {
+        RequireEngine();
+        var (relDir, _) = TwoDirs();
+        var relFile = Path.Combine(relDir, "Alpha.Codeunit.al");
+        Assert.False(Path.IsPathRooted(relFile), "the fixture must hand FromMembers a relative path");
+
+        // Parse with the RELATIVE spelling, then rewrite FilePath to that same relative
+        // spelling, which is what an external caller constructing members would hold.
+        var parsed = AlMemberSyntaxIndex.Parse(File.ReadAllText(relFile), relFile);
+        var members = parsed.Select(m => m with { FilePath = relFile }).ToList();
+        Assert.NotEmpty(members);
+
+        var index = AlMemberSyntaxIndex.FromMembers(members);
+
+        Assert.NotNull(index.FindMember(
+            Path.GetFullPath(relFile).Replace('\\', '/'), "Run", null));
+    }
+
+    /// <summary>
+    /// The negative direction, so the arms above cannot be satisfied by an index that matches
+    /// everything: a file that is genuinely not in the index still answers null.
+    /// </summary>
+    [SkippableFact]
+    public void SyntaxIndex_AFileItNeverIndexed_StillAnswersNull()
+    {
+        RequireEngine();
+        var (relDir, absDir) = TwoDirs();
+
+        var index = AlMemberSyntaxIndex.Build(new[] { relDir });
+
+        // beta/ was never handed to this index, and Alpha declares no member called "Absent".
+        Assert.Null(index.FindMember(
+            Path.Combine(absDir, "Beta.Codeunit.al").Replace('\\', '/'), "Run", null));
+        Assert.Null(index.FindMember(
+            Path.GetFullPath(Path.Combine(relDir, "Alpha.Codeunit.al")).Replace('\\', '/'),
+            "Absent", null));
     }
 }
