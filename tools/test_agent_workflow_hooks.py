@@ -203,6 +203,204 @@ for name, cmd in CI_WAIT_UNDER_CAP:
 ok, d = blocks(REFUSE, "tools/ci-wait.py 3707 --timeout 600", "--timeout 0")
 check("--timeout 600 is AT the cap and refused", ok, d)
 
+# ---------------------------------------------------------------------------
+# #4402: text inside a HEREDOC BODY or a MULTI-LINE QUOTED ARGUMENT is a
+# document, not a command line. Measured over this project's 10 transcripts --
+# 15,035 unique Bash commands, 234 refused as CI waits -- 145 of those 234
+# (62%) were refusals of prose: 141 heredoc bodies and 4 multi-line `--body`
+# arguments. The mechanism is that SEGMENT_SPLIT splits on `\n`, so a prose
+# line that happens to BEGIN with the tool's name becomes a segment starting
+# with it, and the refusal judges only what a segment starts with.
+#
+# The direction of the fix matters more than its reach (#4402's own warning):
+# today's failure is loud and costs one retry, while a mis-parsed heredoc that
+# hides a real wait is SILENT. So every arm below that asserts ALLOW is paired
+# with an arm asserting a genuine wait in the same command still BLOCKS.
+print("\n#4402 prose in a heredoc body is a document, not a command -- allowed")
+HEREDOC_PROSE_ALLOWED = [
+    ("a quoted-delimiter heredoc naming the CI-wait tool",
+     "cat > body.md <<'MDEOF'\n"
+     "tools/ci-wait.py <PR> --timeout 0 is the read, one pass, one answer.\n"
+     "MDEOF\n"
+     "gh pr comment 4402 --body-file body.md"),
+    ("a heredoc whose prose line starts with the tool name",
+     "cat > note.md <<'EOF'\n"
+     "ci-wait.py 4286 --timeout 1500 would be backgrounded by the harness.\n"
+     "EOF"),
+    ("an UNQUOTED-delimiter heredoc",
+     "cat > note.md <<EOF\n"
+     "tools/ci-wait.py 1 --timeout 2700 is the shape the hook refuses.\n"
+     "EOF"),
+    ("a <<- heredoc with tab stripping",
+     "cat > note.md <<-EOF\n"
+     "\ttools/ci-wait.py 1 --timeout 900 is refused.\n"
+     "\tEOF"),
+    ("a python program heredoc mentioning the tool in a string literal",
+     "python3 - <<'PYEOF'\n"
+     "p = 'tools/ci-wait.py'\n"
+     "print(open(p).read()[:10])\n"
+     "PYEOF"),
+    ("prose naming gh run watch",
+     "cat > body.md <<'MDEOF'\n"
+     "gh run watch blocks until the run finishes, with no deadline of its own.\n"
+     "MDEOF"),
+    ("prose naming gh pr checks --watch",
+     "cat > body.md <<'MDEOF'\n"
+     "gh pr checks 4402 --watch blocks until the checks finish.\n"
+     "MDEOF"),
+    ("a heredoc body that would otherwise read as a sleep-poll loop",
+     "cat > body.md <<'MDEOF'\n"
+     "sleep 30 between reads, then gh run view 123 --json status, is a hand-rolled wait.\n"
+     "MDEOF"),
+    ("two heredocs in one command, prose in both",
+     "cat > a.md <<'A'\n"
+     "tools/ci-wait.py 1 --timeout 900\n"
+     "A\n"
+     "cat > b.md <<'B'\n"
+     "gh run watch 5\n"
+     "B"),
+    ("a heredoc body containing a line that merely RESEMBLES its delimiter",
+     "cat > body.md <<'MDEOF'\n"
+     "  MDEOF appears here indented, which does not end the document.\n"
+     "tools/ci-wait.py 1 --timeout 2700\n"
+     "MDEOF"),
+]
+for name, cmd in HEREDOC_PROSE_ALLOWED:
+    ok, d = allows(REFUSE, cmd)
+    check(name, ok, d)
+
+print("\n#4402 the same widening applied to the git stash arm")
+STASH_PROSE_ALLOWED = [
+    ("a heredoc naming git stash in prose",
+     "cat > body.md <<'MDEOF'\n"
+     "git stash is refused because refs/stash is shared by every worktree.\n"
+     "MDEOF\n"
+     "gh pr comment 4402 --body-file body.md"),
+    ("a python heredoc with git stash in a string literal",
+     "python3 - <<'PYEOF'\n"
+     "CMD = 'git stash list'\n"
+     "print(CMD)\n"
+     "PYEOF"),
+]
+for name, cmd in STASH_PROSE_ALLOWED:
+    ok, d = allows(REFUSE, cmd)
+    check(name, ok, d)
+
+# THE DANGEROUS DIRECTION. Each of these carries a REAL wait outside the
+# document region, so a parser that mis-detects where a heredoc ends -- and
+# swallows the rest of the command -- turns these green. They are the arms that
+# fail if the refusal is weakened, and they are why the heredoc scan must end a
+# document at its terminator rather than at end-of-command.
+print("\n#4402 a real CI wait AFTER a heredoc must still be refused (the dangerous direction)")
+WAIT_AFTER_HEREDOC = [
+    ("a wait on the line after a quoted heredoc closes",
+     "cat > body.md <<'MDEOF'\n"
+     "prose about merge order\n"
+     "MDEOF\n"
+     "tools/ci-wait.py 4402 --timeout 2700"),
+    ("a wait after an UNQUOTED heredoc closes",
+     "cat > body.md <<EOF\n"
+     "prose\n"
+     "EOF\n"
+     "gh run watch 12345"),
+    ("a wait after a <<- heredoc closes",
+     "cat > body.md <<-EOF\n"
+     "\tprose\n"
+     "\tEOF\n"
+     "tools/ci-wait.py 1 --timeout 900"),
+    ("a wait after a python program heredoc closes",
+     "python3 - <<'PYEOF'\n"
+     "print('hello')\n"
+     "PYEOF\n"
+     "tools/ci-wait.py 4402 --timeout 1500"),
+    ("a wait after TWO heredocs close",
+     "cat > a.md <<'A'\nx\nA\ncat > b.md <<'B'\ny\nB\ntools/ci-wait.py 1 --timeout 900"),
+    ("a wait BEFORE a heredoc opens",
+     "tools/ci-wait.py 4402 --timeout 2700\n"
+     "cat > body.md <<'MDEOF'\n"
+     "prose\n"
+     "MDEOF"),
+    ("a wait between two heredocs",
+     "cat > a.md <<'A'\nx\nA\n"
+     "tools/ci-wait.py 1 --timeout 2700\n"
+     "cat > b.md <<'B'\ny\nB"),
+    ("a wait after a heredoc whose body contains its delimiter INDENTED",
+     "cat > body.md <<'MDEOF'\n"
+     "  MDEOF indented does not close it\n"
+     "MDEOF\n"
+     "tools/ci-wait.py 1 --timeout 2700"),
+    ("a real git stash after a heredoc closes",
+     "cat > body.md <<'MDEOF'\n"
+     "prose about the shared stash\n"
+     "MDEOF\n"
+     "git stash"),
+]
+for name, cmd in WAIT_AFTER_HEREDOC:
+    want = "refs/stash" if cmd.rstrip().endswith("git stash") else "--timeout 0"
+    ok, d = blocks(REFUSE, cmd, want)
+    check(name, ok, d)
+
+# An UNTERMINATED heredoc is the one shape where "where does the document end"
+# has no answer. It fails LOUD by construction: the body runs to end-of-command,
+# so anything after it is swallowed and the whole command is refused if any
+# segment before the heredoc opened is a wait. Asserting the refusal here pins
+# that the unterminated case is not silently permissive.
+print("\n#4402 an unterminated heredoc must not become a way to hide a wait")
+ok, d = blocks(REFUSE,
+               "tools/ci-wait.py 4402 --timeout 2700\n"
+               "cat > body.md <<'MDEOF'\n"
+               "prose that never closes\n",
+               "--timeout 0")
+check("a wait before an unterminated heredoc is still refused", ok, d)
+
+print("\n#4402 prose in a MULTI-LINE quoted argument is a document too")
+QUOTED_PROSE_ALLOWED = [
+    ("gh issue comment --body with the tool named in multi-line prose",
+     "gh issue comment 4402 --repo o/r --body \"First line.\n"
+     "tools/ci-wait.py 1 --timeout 2700 is what the hook refuses.\n"
+     "Last line.\""),
+    ("a single-quoted multi-line --body",
+     "gh pr comment 4402 --body 'Line one.\n"
+     "gh run watch 5 blocks forever.\n"
+     "Line three.'"),
+]
+for name, cmd in QUOTED_PROSE_ALLOWED:
+    ok, d = allows(REFUSE, cmd)
+    check(name, ok, d)
+
+print("\n#4402 a real wait outside a multi-line quoted argument is still refused")
+ok, d = blocks(REFUSE,
+               "gh issue comment 4402 --body \"prose\n"
+               "more prose\"\n"
+               "tools/ci-wait.py 4402 --timeout 2700",
+               "--timeout 0")
+check("a wait after a multi-line --body closes", ok, d)
+
+# The ORIGINAL green control, restated against the new code path: a single-line
+# quoted argument is NOT a document region, because bash still parses the rest
+# of that line as a command. `bash -c "..."` is the shape that would break if
+# single-line quotes were stripped, and `gh api "...actions/runs..."` is the one
+# that would stop matching POLLS_CI.
+# The single-line-quoting control. A fix that stripped ALL quoted text, rather
+# than only multi-line quoted text, would clear these two -- the first by
+# erasing a poll URL POLLS_CI must still match, the second by erasing the
+# `--timeout` the duration judgement is read from. Both stay refused, which is
+# what says the widening did not reach past documents into arguments.
+#
+# `bash -c '<a real wait>'` is deliberately NOT asserted here: the shipped hook
+# already allows it, on `main` and after this change alike, because `bash` is
+# not in LEADING_NOISE and the wait is one argument rather than a segment. That
+# is a pre-existing false negative in the dangerous direction, filed separately
+# rather than folded in; it does not occur in the measured population -- 0 of
+# the 41 `bash -c` commands across 15,035 mention a CI wait at all.
+print("\n#4402 single-line quoting is not a document -- these must NOT be cleared")
+ok, d = blocks(REFUSE,
+               "while true; do gh api repos/o/r/actions/runs --jq '.x'; sleep 30; done",
+               "--timeout 0")
+check("a sleep loop whose poll URL is quoted is still refused", ok, d)
+ok, d = blocks(REFUSE, "tools/ci-wait.py 4402 --timeout 2700 --repo 'o/r'", "--timeout 0")
+check("a wait whose later argument is quoted is still refused", ok, d)
+
 # Non-CI background work is untouched by this widening.
 print("\nnon-CI work is unaffected by the cap rule")
 for name, cmd in [

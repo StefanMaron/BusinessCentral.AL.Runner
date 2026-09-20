@@ -26,6 +26,12 @@ the cap -- including a poll loop built from such reads; and any backgrounded
 command that is not a CI wait, such as a detached runner, build or test sweep,
 which stays the agent's own judgement.
 
+Neither refusal reads a DOCUMENT the command writes: a heredoc body, or a
+quoted argument spanning a newline, is prose rather than a command line, and
+refusing an agent for writing ABOUT the tool was 62% of everything this hook's
+CI-wait arm blocked (#4402). `command_text()` blanks those regions before
+anything is split into segments; what remains is judged exactly as before.
+
 Exit 2 is what blocks a PreToolUse call and feeds stderr back to the model;
 exit 0 allows it. There is no third state here: this hook reads the command
 string it was handed, so it cannot fail to measure. A payload it cannot parse
@@ -44,6 +50,17 @@ ALLOW = 0
 # decides anything, so `command grep -rn "git stash" .claude/rules` -- a search
 # of the docs -- is not read as running it.
 SEGMENT_SPLIT = re.compile(r'\|\||&&|[;|\n&()`]|\$\(')
+
+# ...but `\n` is in that split, and a DOCUMENT the command writes is split on
+# newlines too, so a prose line that happens to BEGIN with a refused tool's name
+# becomes a segment starting with it (#4402). The safety property above and that
+# defect are the same character class, so the fix is not to narrow the split but
+# to blank the regions bash never parses as commands before splitting at all.
+#
+# Measured over this project's 10 transcripts -- 15,035 unique Bash commands,
+# 234 refused as CI waits -- 145 (62%) were refusals of prose: 141 heredoc
+# bodies, 4 multi-line `--body` arguments.
+HEREDOC_OPEN = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 # Leading noise a real invocation carries: keywords, env assignments, wrappers.
 # `timeout <dur>` and `setsid`/`stdbuf` carry an argument or none; stripping them is
 # what lets `timeout 2700 tools/ci-wait.py ...` be seen as the ci-wait call it is
@@ -106,9 +123,93 @@ CI_WAIT_MESSAGE = (
 )
 
 
+def _blank_heredoc_bodies(cmd: str) -> str:
+    """Replace every heredoc body, and its terminator line, with blanks.
+
+    Newlines are preserved so the result segments identically to the input
+    everywhere outside a document.
+
+    A body ends at the first line equal to its delimiter, which is what bash
+    does: an INDENTED occurrence of the delimiter does not close a `<<` heredoc,
+    and `.strip()` here would wrongly say it does -- except that `<<-` strips
+    leading TABS from the terminator, so tabs must be ignored and spaces must
+    not. An UNTERMINATED heredoc runs to end-of-command, which is also what bash
+    does, and is the loud direction: everything after it is blanked, so a wait
+    hidden there is not reached -- but neither is it allowed, because the
+    refusal still sees every segment BEFORE the heredoc opened.
+    """
+    lines = cmd.split("\n")
+    kept = list(lines)
+    i = 0
+    while i < len(lines):
+        opens = HEREDOC_OPEN.findall(lines[i])
+        if not opens:
+            i += 1
+            continue
+        # Several heredocs may open on one line; bash consumes their bodies in
+        # order, so each delimiter ends only its own body.
+        j = i + 1
+        for _quote, delim in opens:
+            while j < len(lines):
+                closed = lines[j].lstrip("\t").rstrip() == delim
+                kept[j] = ""
+                j += 1
+                if closed:
+                    break
+        i = j
+    return "\n".join(kept)
+
+
+def _blank_multiline_quotes(cmd: str) -> str:
+    """Blank the inside of any quoted string that SPANS A NEWLINE.
+
+    A multi-line quoted argument is a document -- `gh pr comment --body "..."`
+    -- and its newlines are what let SEGMENT_SPLIT cut prose into segments.
+
+    Single-line quoting is deliberately left intact: bash still parses the rest
+    of that line as a command, and blanking it would erase a poll URL POLLS_CI
+    must match (`gh api "...actions/runs..."`) or the `--timeout` a duration
+    judgement is read from. Both are pinned as controls in
+    tools/test_agent_workflow_hooks.py.
+    """
+    out = list(cmd)
+    k, n, quote, start = 0, len(cmd), None, 0
+    while k < n:
+        ch = cmd[k]
+        if quote is None:
+            if ch in "'\"":
+                quote, start = ch, k
+            elif ch == "\\":
+                k += 1
+        elif ch == quote:
+            if "\n" in cmd[start:k]:
+                for x in range(start, k + 1):
+                    if out[x] != "\n":
+                        out[x] = " "
+            quote = None
+        elif ch == "\\" and quote == '"':
+            k += 1
+        k += 1
+    if quote is not None and "\n" in cmd[start:]:
+        for x in range(start, n):
+            if out[x] != "\n":
+                out[x] = " "
+    return "".join(out)
+
+
+def command_text(cmd: str) -> str:
+    """`cmd` with every region bash does not parse as a command blanked out.
+
+    Heredocs first and completely, then multi-line quotes in what remains: a
+    `python3 - <<'PY'` body carries its own single-line quotes, and scanning
+    quote state across a body that has not been removed yet leaves them behind.
+    """
+    return _blank_multiline_quotes(_blank_heredoc_bodies(cmd))
+
+
 def segments(cmd: str) -> list:
     out = []
-    for raw in SEGMENT_SPLIT.split(cmd):
+    for raw in SEGMENT_SPLIT.split(command_text(cmd)):
         seg = LEADING_NOISE.sub("", raw.strip()).strip()
         if seg:
             out.append(seg)
