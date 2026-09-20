@@ -76,9 +76,17 @@ HEREDOC_OPEN = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 # `env --ignore-environment` take no argument while `env -u VAR` and `-S` do,
 # and treating the VAR as an option would strip a word that is not one. The
 # `\w+=\S*` alternative already covers `env FOO=1 <cmd>`.
+#
+# `stdbuf` and `setsid` were listed with no term for their OPTIONS, so bare
+# `stdbuf` was stripped and `stdbuf -oL git stash` was not (#4421) -- and `-oL`
+# is the ordinary spelling, not an exotic one. Their options are enumerated for
+# the same reason `env`'s are: every form of either ATTACHES its value (`-oL`,
+# `-i0`, `--output=L`) or takes none (`setsid -f -w`), so no option here ever
+# consumes a following WORD, and a generic `-\S*` would be a licence to.
 LEADING_NOISE = re.compile(
     r'^(?:\s*(?:then|else|elif|do|done|fi|if|while|until|for|!|time|exec|nohup|'
-    r'setsid|stdbuf|timeout\s+-?[\d.]+[smhd]?|timeout|'
+    r'(?:setsid|stdbuf)(?:\s+(?:-[a-zA-Z]\S*|--[\w-]+(?:=\S+)?))*|'
+    r'timeout\s+-?[\d.]+[smhd]?|timeout|'
     r'env(?:\s+(?:-[iv0]+|--ignore-environment|--null|'
     r'-[uSC]\s*\S+|--(?:unset|split-string|chdir)(?:=\S+|\s+\S+)))*|'
     r'sudo|command|builtin|\w+=\S*)\s+)+')
@@ -100,8 +108,17 @@ LEADING_NOISE = re.compile(
 # spellings give the same verdict on every command in the transcripts, since the
 # naive one exposes `Debug`, also not refused -- so only the two arms passing a
 # refused tool as the `-c` ARGUMENT pin it (#4418).
+#
+# The flag term also has to cover `-o pipefail`, which puts a separate WORD
+# between the flag and the `-c`: `bash -euo pipefail -c '<command>'` is the
+# ordinary spelling in generated scripts and was allowed (#4421). Only `-o` and
+# `+o` take a following word in a POSIX shell, so the word is admitted only
+# after a bundle ENDING in `o` -- `sh foo -c` stays unmatched, which is what
+# keeps a non-shell called `sh` from having its argument read as a command.
 SHELL_DASH_C = re.compile(
-    r'^(?:\S*/)?(?:ba|z|k|da|a)?sh(?:\s+-[A-Za-z]+)*\s+-[A-Za-z]*c\s+[\'"]?')
+    r'^(?:\S*/)?(?:ba|z|k|da|a)?sh'
+    r'(?:\s+(?:[-+][A-Za-z]*o\s+\w+|-[A-Za-z]+))*'
+    r'\s+-[A-Za-z]*c\s+[\'"]?')
 
 # Two more places a command genuinely STARTS without starting a segment: the
 # argv `xargs` and `find -exec` build. Both are narrow -- only `xargs`' own
@@ -287,7 +304,15 @@ def unwrap(seg: str) -> str:
             # argument list this hook cannot see -- indistinguishable from the
             # real thing. Restricting the strip to a shell wrapper keeps the
             # judged position exactly as narrow as it was.
-            exposed = ARGV_INTRO.sub("", stripped, count=1).strip()
+            #
+            # The noise strip is applied to the REMAINDER before that test,
+            # because `xargs -I{} timeout 30 bash -c '...'` puts noise between
+            # the intro and the wrapper (#4421). It does not widen what is
+            # consumed: the wrapper test still decides, so `xargs timeout 30 git
+            # stash` -- noise, then no wrapper -- is left alone exactly as
+            # `xargs git stash` is.
+            exposed = LEADING_NOISE.sub(
+                "", ARGV_INTRO.sub("", stripped, count=1).strip()).strip()
             if SHELL_DASH_C.match(exposed):
                 stripped = exposed
         stripped = SHELL_DASH_C.sub("", stripped, count=1).strip()
