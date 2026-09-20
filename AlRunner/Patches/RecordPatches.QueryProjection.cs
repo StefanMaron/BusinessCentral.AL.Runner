@@ -1058,12 +1058,18 @@ public static partial class RecordPatches
         // above recognises is a BC shape change, which is why this is a refusal and not a
         // `return expr` (.claude/rules/guards-need-a-third-state.md: the unmeasurable case must
         // not be spelled as the success case — that spelling is what #3508 fixed).
-        throw new RunnerOutOfScopeException(
+        // The detail deliberately spells NEITHER "InvalidCastException" NOR the metadata type
+        // BC keys the unretargeted expression by. QueryRangeFilterRetargetTests scans the
+        // runner's whole output for both words to detect an expression that escaped retargeting,
+        // so a refusal quoting either makes "the runner refused" and "BC's cast fired"
+        // indistinguishable — its mutation and its control then red on the same assertion, which
+        // is how a control stops proving anything (#3508).
+        throw RunnerShapeGap.Query(
             "Query.SetFilter/SetRange on a query column",
-            $"query-column filter expression kind '{t.Name}' cannot be retargeted to the column's "
-            + "source table field, so BC would evaluate it still keyed by NCLMetaQueryColumn "
-            + "(InvalidCastException inside TempTableDataProvider) — see docs/scope.md#navquery "
-            + "and #3508");
+            "query-column-filter-kind-unretargetable",
+            $"filter expression kind '{t.Name}' cannot be retargeted to the column's source "
+            + "table field, so BC would evaluate it still keyed by the query column's own "
+            + "metadata and its cast inside TempTableDataProvider would fail — #3508");
     }
 
     private static object CloneRequestWithFilters(object request, object newFiltersAndMarks)

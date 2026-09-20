@@ -328,8 +328,19 @@ public class QueryRangeFilterRetargetTests
         Assert.DoesNotContain("COMPILE FAIL", output);
         // The #3508 / #2299 signature itself: if this string is present, the retargeting let an
         // expression through still keyed by the NCLMetaQueryColumn.
+        //
+        // These two scan the runner's WHOLE output, so they also match a runner MESSAGE quoting
+        // either word — which is why RetargetFilterExpression's closing refusal is worded to
+        // avoid "InvalidCastException". With the refusal quoting it, blinding a recognizer with
+        // the refusal intact and blinding it with the refusal removed both fail on THIS line,
+        // and the control stops distinguishing "the runner refused" from "BC's cast fired".
         Assert.DoesNotContain("InvalidCastException", output);
         Assert.DoesNotContain("NCLMetaQueryColumn", output);
+        // And the refusal itself must not have fired on a shape the retargeting DOES handle.
+        // Separate from the two above so a red says WHICH happened: this anchor appears only in
+        // RetargetFilterExpression's closing refusal, so it is present exactly when the runner
+        // refused and absent when BC's own cast did the failing.
+        Assert.DoesNotContain("query-column-filter-kind-unretargetable", output);
         // 11P/0F/0E is TestExecutor's own per-bundle summary line. Asserting the COUNT as well as
         // the zeros is what stops a bundle that silently ran fewer tests from reading as green.
         Assert.Contains("11P/0F/0E", output);

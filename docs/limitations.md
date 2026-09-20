@@ -492,14 +492,16 @@ the query's real metadata and produce a genuine dataset — they are not stubbed
 There is no `Query.SaveAsExcel` method in the AL language; this doc previously
 listed one that doesn't exist.
 
-**Sub-shapes of a working join the executor refuses rather than guessing.** Nine
+**Sub-shapes of a working query the executor refuses rather than guessing.** Ten
 guards in `AlRunner/Patches/RecordPatches.QueryProjection.cs` and
 `RecordPatches.QueryJoin.cs` raise `RunnerOutOfScopeException` when the query the
 executor is handed is a shape it cannot take: a synthesized sub-dataitem that is
 not the FlowField-calculation shape, a runtime `SetRange`/`SetFilter` or a static
-`ColumnFilter` keyed by a column outside the projected row, or a BC helper
+`ColumnFilter` keyed by a column outside the projected row, a BC helper
 (`NavValue.GetDefaultNavValue`, `FlowFieldsHelper.NegateValue`) that is not on this
-build. They carry the reason anchor `not-yet-implemented`, so an AL `[TryFunction]`
+build, or a filter-expression kind on a column that
+`RetargetFilterExpression` has no branch for
+([#3508](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3508)). They carry the reason anchor `not-yet-implemented`, so an AL `[TryFunction]`
 cannot trap one into `false`
 ([#2966](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2966)).
 These are gaps, not scope boundaries: real BC answers every one of them, and

@@ -93,6 +93,15 @@ public sealed class RunnerShapeGapClaimTests
             ["query-reversesign-negatevalue-missing"] = (
                 () => Invoke("Query", "Query column ReverseSign", "query-reversesign-negatevalue-missing", "the probe detail"),
                 "Query column ReverseSign", "query-reversesign-negatevalue-missing", QueryDoc),
+            // #3508. A DISTINCT surface from the join sub-shapes above: the query is one the
+            // executor takes, and what it cannot take is the KIND of filter expression
+            // SetFilter/SetRange produced for a column. RetargetFilterExpression rebuilds Unary,
+            // Binary, Wildcard, Range and FullText against the source field's context; a kind
+            // with no branch used to fall through and reach BC's
+            // (NCLMetaField)expressionContext.Metadata cast as a bare InvalidCastException.
+            ["query-column-filter-kind-unretargetable"] = (
+                () => Invoke("Query", "Query.SetFilter/SetRange on a query column", "query-column-filter-kind-unretargetable", "the probe detail"),
+                "Query.SetFilter/SetRange on a query column", "query-column-filter-kind-unretargetable", QueryDoc),
 
             ["user-property-companion-row"] = (
                 () => Invoke("UserPropertyCompanionRow", "User (2000000120) insert", "the probe detail"),
@@ -364,7 +373,11 @@ public sealed class RunnerShapeGapClaimTests
         // (line ~311) and SyncStaticRun (line ~471) are. Only the api string differs, naming which
         // AL verb was called. A Sites entry per call site would assert the same claim three times;
         // what the entry pins is the surface, and this PR added none.
-        Assert.Equal(21, total);
+        // 21 -> 22 (#3508): RecordPatches.QueryProjection.RetargetFilterExpression's closing
+        // refusal, WITH a Sites entry above — a new surface, not a third call of an existing one:
+        // it is about the KIND of filter expression on a column of a query the executor otherwise
+        // takes, where every other query anchor here is about the join's own shape.
+        Assert.Equal(22, total);
     }
 
     // ── The nine sites the issue's own measurement could not see ─────────────────────────
