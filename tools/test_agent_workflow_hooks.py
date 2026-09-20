@@ -1103,6 +1103,96 @@ for name, cmd in LONG_OPTIONAL_VALUE_ALLOWED:
     ok, d = allows(REFUSE, cmd)
     check("allowed: " + name, ok, d)
 
+# 7. `--`, the end-of-options TERMINATOR (#4432). Third grammar in the same
+#    regex, and not an option: none of the three option alternatives matches a
+#    bare `--` (each needs a word character after the dashes), so the repetition
+#    stopped there and the wrapper behind it was unreached.
+#
+#    The fix cannot simply add `--` to the alternation, because `--` also ENDS
+#    the options. Measured on GNU findutils 4.11.0:
+#
+#      printf a | xargs -- echo MARKER     -> MARKER a   (`--` consumed, not passed)
+#      printf a | xargs -- bash -c 'echo R' -> R         (the wrapper DOES run)
+#      printf a | xargs -- -n 1 echo M     -> failed to run command '-n'
+#
+#    So after `--` the next word is the command whatever it looks like, and the
+#    third row must stay ALLOW: the tool genuinely never runs. An alternation
+#    entry would keep consuming `-n` and `1` and block it wrongly.
+print("\n#4432 `--` ends xargs' options: cross it once, then stop")
+END_OF_OPTIONS_BLOCKED = [
+    # The two leaks. Both really executed the tool at f566aeea, proven with a
+    # shim `git` on PATH that logs whether it ran.
+    ("xargs -- bash -c (bare terminator, wrapper directly behind it)",
+     "printf a | xargs -- bash -c 'git stash'"),
+    ("xargs -n 1 -- bash -c (an option, then the terminator)",
+     "printf a | xargs -n 1 -- bash -c 'git stash'"),
+    # The terminator after each of the three option grammars the alternation
+    # already models, so a fix that attaches `--` to only one of them reds here.
+    ("xargs -0 -- bash -c (value-less flag, then the terminator)",
+     "find . -print0 | xargs -0 -- bash -c 'git stash'"),
+    ("xargs -i{} -- bash -c (attached optional value, then the terminator)",
+     "printf a | xargs -i{} -- bash -c 'git stash'"),
+    ("xargs --max-args 1 -- bash -c (long detached value, then the terminator)",
+     "printf a | xargs --max-args 1 -- bash -c 'git stash'"),
+    ("xargs --null -- bash -c (value-less long option, then the terminator)",
+     "find . -print0 | xargs --null -- bash -c 'git stash'"),
+    # The terminator, then NOISE, then the wrapper -- noise is stripped after
+    # the intro, so crossing `--` must leave the remainder in that same shape.
+    ("xargs -- timeout 30 bash -c (terminator, then noise, then a wrapper)",
+     "printf a | xargs -- timeout 30 bash -c 'git stash'"),
+    ("xargs -I{} -- stdbuf -oL sh -c",
+     "printf a | xargs -I{} -- stdbuf -oL sh -c 'git stash'"),
+]
+for name, cmd in END_OF_OPTIONS_BLOCKED:
+    ok, d = blocks(REFUSE, cmd, "no-git-stash-with-worktrees")
+    check("stash via " + name, ok, d)
+
+ok, d = blocks(REFUSE, "printf a | xargs -- bash -c 'gh run watch 1'", "--timeout 0")
+check("a wait via xargs -- bash -c", ok, d)
+
+# Over-blocking, and the FIRST arm is the one that constrains the whole fix:
+# after `--` nothing is an option, so an option-looking word there is the
+# COMMAND and `xargs` execs it. `xargs -- -n 1 bash -c '<refused>'` answers
+# `failed to run command '-n'` and never runs the tool, so ALLOW is correct --
+# a fix that merely added `--` to the alternation would keep consuming and
+# block it. Each arm below puts a refused tool where a wrong parse exposes it,
+# so none of them can pass by being benign.
+END_OF_OPTIONS_ALLOWED = [
+    ("xargs -- -n 1 bash -c (after `--`, `-n` is the COMMAND and is exec'd)",
+     "printf a | xargs -- -n 1 bash -c 'git stash'"),
+    ("xargs -- -I{} bash -c (the same, with a replace-str flag)",
+     "printf a | xargs -- -I{} bash -c 'git stash'"),
+    ("xargs -- --max-args 1 bash -c (the same, with a long option)",
+     "printf a | xargs -- --max-args 1 bash -c 'git stash'"),
+    ("xargs -- -0 bash -c (the same, with a value-less flag)",
+     "find . -print0 | xargs -- -0 bash -c 'git stash'"),
+    # A SECOND `--` is a plain argument to the command named by the first, so it
+    # is not a terminator again and nothing after it may be stripped.
+    ("xargs -- -- bash -c (the second `--` is the command, not a terminator)",
+     "printf a | xargs -- -- bash -c 'git stash'"),
+    # #4420's M5 property, with the terminator: no shell wrapper behind it, so
+    # the intro stays unconsumed and the declared gap stays exactly as narrow.
+    ("xargs -- NOT followed by a wrapper (#4420 M5, with the terminator)",
+     "git ls-files | xargs -- git stash"),
+    ("xargs -n 1 -- NOT followed by a wrapper",
+     "git ls-files | xargs -n 1 -- git stash"),
+    ("xargs --, then noise, then NO wrapper",
+     "git ls-files | xargs -- timeout 30 git stash"),
+    # A non-shell whose `-c` is a config flag, reached across the terminator.
+    ("xargs -- running a bootstrap whose -c argument NAMES a refused tool",
+     "ls | xargs -- tools/engine-test-bootstrap.sh -c 'git stash'"),
+    ("xargs -- running a bootstrap whose -c is a config flag",
+     "ls | xargs -- tools/engine-test-bootstrap.sh -c Debug"),
+    # The benign work that must keep flowing across the terminator.
+    ("xargs -- bash -c greping for the rule text",
+     "ls | xargs -- bash -c 'command grep -rn \"git stash\" .claude/rules'"),
+    ("a --timeout 0 read via xargs -- and noise",
+     "echo 4432 | xargs -- timeout 30 bash -c 'tools/ci-wait.py 4432 --timeout 0'"),
+]
+for name, cmd in END_OF_OPTIONS_ALLOWED:
+    ok, d = allows(REFUSE, cmd)
+    check("allowed: " + name, ok, d)
+
 # Non-CI background work is untouched by this widening.
 print("\nnon-CI work is unaffected by the cap rule")
 for name, cmd in [

@@ -176,7 +176,7 @@ SHELL_DASH_C = re.compile(
 ARGV_INTRO = re.compile(
     r'^(?:xargs(?:\s+(?:-[ILnPsEad]\s*\S+|-[A-Za-z0-9]\S*'
     r'|--(?:max-args|max-procs|max-chars|delimiter|arg-file)(?:=\S+|\s+\S+)'
-    r'|--[\w-]+(?:=\S+)?))*'
+    r'|--[\w-]+(?:=\S+)?))*(?:\s+--(?=\s))?'
     r'|(?:\S+\s+)*?-exec(?:dir)?)\s+')
 
 GIT_OPTS = r'(?:\s+(?:-[A-Za-z]\s+\S+|-[A-Za-z]\S*|--[\w-]+(?:=\S+)?))*'
