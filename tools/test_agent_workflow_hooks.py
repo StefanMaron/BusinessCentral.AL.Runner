@@ -422,6 +422,59 @@ ok, d = blocks(REFUSE,
                "--timeout 0")
 check("a wait after a multi-line --body closes", ok, d)
 
+# THE QUOTE/HEREDOC INTERACTION, pinned in both directions. These are the two
+# arms that decide the implementation must be ONE interleaved scan rather than
+# two passes: no ordering of two passes satisfies both, and each failure is
+# SILENT-PERMISSIVE -- a real wait allowed (PR #4417 review).
+#
+#   A  a `<<WORD` inside quoted PROSE is not a heredoc opener.
+#      Heredocs-first reads it as one, treats the rest of the command as an
+#      unterminated body, and blanks the wait away.
+#   D  an apostrophe inside a HEREDOC BODY is not a quote.
+#      Quotes-first opens a quote that never closes and blanks the heredoc
+#      opener before it is seen, swallowing the wait the same way.
+#
+# The arm above is deliberately kept as well: it is the same shape WITHOUT the
+# opener, so the pair shows the opener is what discriminates.
+print("\n#4402 a heredoc opener inside quoted prose is prose, not an opener")
+ok, d = blocks(REFUSE,
+               "gh pr comment 1 --body \"Notes:\n"
+               "write it with cat <<MDEOF like CLAUDE.md says\n"
+               "Done.\"\n"
+               "tools/ci-wait.py 4417",
+               "--timeout 0")
+check("A: a wait after prose CONTAINING a heredoc opener is still refused", ok, d)
+ok, d = blocks(REFUSE,
+               "gh pr comment 1 --body 'single-quoted prose naming <<EOF inline'\n"
+               "tools/ci-wait.py 4417 --timeout 2700",
+               "--timeout 0")
+check("A: ...and on one line, where the quote never spans a newline", ok, d)
+
+print("\n#4402 an apostrophe inside a heredoc body is prose, not a quote")
+ok, d = blocks(REFUSE,
+               "cat > f.md <<'PY'\n"
+               "it's ordinary English prose\n"
+               "PY\n"
+               "tools/ci-wait.py 1 --timeout 2700",
+               "--timeout 0")
+check("D: a wait after a body containing an apostrophe is still refused", ok, d)
+ok, d = blocks(REFUSE,
+               "python3 - <<'PY'\n"
+               "print(\"a lone \\\" and an it's in one body\")\n"
+               "PY\n"
+               "gh run watch 5",
+               "--timeout 0")
+check("D: ...with both quote characters unbalanced in the body", ok, d)
+
+# And the same interaction must not swing the other way: a document is still a
+# document when it contains the other construct's syntax.
+ok, d = allows(REFUSE,
+               "cat > body.md <<'MDEOF'\n"
+               "Write it with gh pr comment --body \"...\" or a heredoc.\n"
+               "tools/ci-wait.py 1 --timeout 2700 is refused.\n"
+               "MDEOF")
+check("prose inside a body may contain quotes and still be a document", ok, d)
+
 # The ORIGINAL green control, restated against the new code path: a single-line
 # quoted argument is NOT a document region, because bash still parses the rest
 # of that line as a command. `bash -c "..."` is the shape that would break if
