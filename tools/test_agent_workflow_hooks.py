@@ -828,6 +828,112 @@ for name, cmd in INTRO_NOISE_ALLOWED:
     ok, d = allows(REFUSE, cmd)
     check("allowed: " + name, ok, d)
 
+# 4. A VALUE-LESS xargs flag ate the word after it, and that word was the
+#    wrapper (#4425). The issue reports the digit half -- `-[A-Za-z]` does not
+#    match `xargs -0` -- but the character class is only half the defect: the
+#    term `-[A-Za-z]\s*\S*` treats EVERY flag as value-taking, so a flag whose
+#    value is DETACHED consumes the next word whatever its spelling. Hence the
+#    letter arms below, which leak on origin/main with no digit anywhere.
+#
+#    Pin the family rather than the instance in both directions: every digit,
+#    and every value-less letter flag.
+print("\n#4425 a value-less xargs flag must not eat the wrapper behind it")
+DIGIT_INTRO_BLOCKED = [
+    ("xargs -0 bash -c", "find . -print0 | xargs -0 bash -c 'git stash'"),
+    ("xargs -0 -I{} bash -c",
+     "find . -print0 | xargs -0 -I{} bash -c 'git stash'"),
+    ("xargs -0 -I{} timeout 30 bash -c",
+     "find . -print0 | xargs -0 -I{} timeout 30 bash -c 'git stash'"),
+    ("xargs -I{} -0 bash -c (digit flag LAST, after a letter one)",
+     "find . -print0 | xargs -I{} -0 bash -c 'git stash'"),
+    ("xargs -0 -n1 -P4 bash -c (a digit among several letter flags)",
+     "find . -print0 | xargs -0 -n1 -P4 bash -c 'git stash'"),
+    ("xargs -0 stdbuf -oL sh -c (digit flag, then noise, then a wrapper)",
+     "find . -print0 | xargs -0 stdbuf -oL sh -c 'git stash'"),
+    # The letter half of the same defect: -r/-t/-p/-x take no value either, so
+    # the old term ate the wrapper for these with no digit involved at all.
+    ("xargs -r bash -c (a value-LESS letter flag, no digit anywhere)",
+     "git ls-files | xargs -r bash -c 'git stash'"),
+    ("xargs -t sh -c", "git ls-files | xargs -t sh -c 'git stash'"),
+    ("xargs -p bash -c", "git ls-files | xargs -p bash -c 'git stash'"),
+    ("xargs -x bash -c", "git ls-files | xargs -x bash -c 'git stash'"),
+    ("xargs -0rt bash -c (value-less flags BUNDLED)",
+     "find . -print0 | xargs -0rt bash -c 'git stash'"),
+    # A value-taking flag with a DETACHED value still consumes that value, so
+    # the wrapper after it is reached. These fail if the split drops the
+    # `\s*\S+` arm and makes every flag value-less.
+    ("xargs -n 1 bash -c (value-taking flag, value detached)",
+     "git ls-files | xargs -n 1 bash -c 'git stash'"),
+    ("xargs -I {} bash -c (value-taking flag, value detached)",
+     "git ls-files | xargs -I {} bash -c 'git stash'"),
+    ("xargs -a files.txt bash -c (value-taking flag, value detached)",
+     "xargs -a files.txt bash -c 'git stash'"),
+]
+for name, cmd in DIGIT_INTRO_BLOCKED:
+    ok, d = blocks(REFUSE, cmd, "no-git-stash-with-worktrees")
+    check("stash via " + name, ok, d)
+
+ok, d = blocks(REFUSE, "find . -print0 | xargs -0 -I{} timeout 30 bash -c 'gh run watch 1'",
+               "--timeout 0")
+check("a wait via xargs -0 -I{} timeout 30 bash -c", ok, d)
+
+# The term is `-[A-Za-z0-9]`, so any digit opens the flag, not `0` alone. A fix
+# spelled `-[A-Za-z0]` passes every arm above and fails these -- which is the
+# difference between pinning the shape and pinning the instance.
+for _d in "123456789":
+    ok, d = blocks(REFUSE, f"echo 1 | xargs -{_d} bash -c 'git stash'",
+                   "no-git-stash-with-worktrees")
+    check(f"stash via xargs -{_d} bash -c (the whole digit family, not just -0)", ok, d)
+
+# Over-blocking, and these are the arms that decide whether the widening is
+# safe. Each one puts a REFUSED TOOL where a wrong parse would expose it, so a
+# mis-strip changes the VERDICT rather than leaving a benign fixture benign --
+# an ALLOW-only control over harmless text cannot fail here whatever the regex
+# does, which is the trap that has now cost two PRs on this file a round.
+#
+#   * `xargs -0 git stash` -- the #4420 M5 property with a digit flag. No shell
+#     wrapper, so the intro must stay unconsumed and the gap stays exactly as
+#     narrow as it was. Widening the intro to strip unconditionally reds this.
+#   * `xargs -a git stash` -- `-a` TAKES A FILE, so under a correct parse the
+#     flag swallows `git` and `stash` is the command; either way no wrapper
+#     follows and it is left alone. It is here because it is the letter-flag
+#     twin of the arm above: both must answer the same, before and after.
+#   * the `-c`-argument arms -- a digit flag before a NON-shell whose `-c` is a
+#     config flag. If the digit widening let `engine-test-bootstrap.sh -c` read
+#     as a shell wrapper, the refused tool in the argument would surface.
+DIGIT_INTRO_ALLOWED = [
+    ("xargs -0 NOT followed by a wrapper (the #4420 M5 property, with a digit)",
+     "git ls-files -z | xargs -0 git stash"),
+    ("xargs -0, then noise, then NO wrapper",
+     "git ls-files -z | xargs -0 timeout 30 git stash"),
+    ("xargs -a NOT followed by a wrapper (the letter-flag twin)",
+     "xargs -a files.txt git stash"),
+    ("xargs -0 running a bootstrap whose -c is a config flag",
+     "find . -print0 | xargs -0 tools/engine-test-bootstrap.sh -c 'git stash'"),
+    ("xargs -0 -I{} running a bootstrap whose -c is a config flag",
+     "find . -print0 | xargs -0 -I{} tools/engine-test-bootstrap.sh -c Debug"),
+    ("xargs -0 -I{} bash -c greping for the rule text",
+     "find . -print0 | xargs -0 -I{} bash -c 'command grep -rn \"git stash\" .claude/rules'"),
+    ("a --timeout 0 read via xargs -0 and noise",
+     "echo 4425 | xargs -0 -I{} timeout 30 bash -c 'tools/ci-wait.py {} --timeout 0'"),
+    # The other direction of the split, and the arms that would catch a term
+    # making every flag value-LESS: a value-taking flag must still swallow its
+    # word. Here that word NAMES A REFUSED TOOL, so if the split stopped
+    # consuming it the name would land in command position and the verdict
+    # would flip -- these cannot pass by being benign.
+    ("xargs -a whose FILE is named git (the value must still be swallowed)",
+     "xargs -a git stash"),
+    ("xargs -E whose EOF STRING is named git",
+     "git ls-files | xargs -E git stash"),
+    ("xargs -r NOT followed by a wrapper (value-less, still no strip)",
+     "git ls-files | xargs -r git stash"),
+    ("xargs -0rt NOT followed by a wrapper",
+     "git ls-files -z | xargs -0rt git stash"),
+]
+for name, cmd in DIGIT_INTRO_ALLOWED:
+    ok, d = allows(REFUSE, cmd)
+    check("allowed: " + name, ok, d)
+
 # Non-CI background work is untouched by this widening.
 print("\nnon-CI work is unaffected by the cap rule")
 for name, cmd in [

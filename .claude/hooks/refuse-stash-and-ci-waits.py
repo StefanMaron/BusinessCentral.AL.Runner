@@ -126,8 +126,22 @@ SHELL_DASH_C = re.compile(
 # what the strip above can reach; they only let it reach the same wrapper one
 # word later. Measured: 1 real `xargs ... sh -c` and 0 `find -exec sh -c` in
 # this project's transcripts, so the point is coverage of the shape, not volume.
+#
+# `xargs`' flags are split by whether one takes a following WORD, for the reason
+# LEADING_NOISE already spells out for `env`: a term treating every flag as
+# value-taking strips a word that is not one. `-[A-Za-z]\s*\S*` did exactly
+# that, and the word it ate was the WRAPPER -- so `xargs -0 bash -c '<refused>'`
+# was allowed, `-0` being the standard partner of `find -print0` (#4425). The
+# letter-only class hid half of it: `-r`, `-t`, `-p` and `-x` take no value
+# either, so they leaked the same way with no digit anywhere (measured on
+# 96e3bfb5..f704689e, where `xargs -r bash -c 'git stash'` is ALLOW).
+#
+# This cannot widen what is EXPOSED: the caller consumes this intro only when a
+# shell wrapper stands directly behind it, so `xargs -0 git stash` is left alone
+# exactly as `xargs git stash` is -- #4420's M5 property, pinned by its own arm.
 ARGV_INTRO = re.compile(
-    r'^(?:xargs(?:\s+(?:-[A-Za-z]\s*\S*|--[\w-]+(?:=\S+)?))*'
+    r'^(?:xargs(?:\s+(?:-[IiLnPsEead]\s*\S+|-[A-Za-z0-9]+'
+    r'|--[\w-]+(?:=\S+)?))*'
     r'|(?:\S+\s+)*?-exec(?:dir)?)\s+')
 
 GIT_OPTS = r'(?:\s+(?:-[A-Za-z]\s+\S+|-[A-Za-z]\S*|--[\w-]+(?:=\S+)?))*'
