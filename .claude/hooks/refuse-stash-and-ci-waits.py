@@ -139,6 +139,10 @@ SHELL_DASH_C = re.compile(
 # This cannot widen what is EXPOSED: the caller consumes this intro only when a
 # shell wrapper stands directly behind it, so `xargs -0 git stash` is left alone
 # exactly as `xargs git stash` is -- #4420's M5 property, pinned by its own arm.
+# Trap: the `\S+` is intent, not a constraint. Relaxing it to `\S*` changes no
+# remainder in 210 probed combinations, because the value-less arm below already
+# covers the same text once the optional value is empty -- so do not cite it as
+# load-bearing, and do not read a green from mutating it as coverage (#4425).
 ARGV_INTRO = re.compile(
     r'^(?:xargs(?:\s+(?:-[IiLnPsEead]\s*\S+|-[A-Za-z0-9]+'
     r'|--[\w-]+(?:=\S+)?))*'
