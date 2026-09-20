@@ -309,7 +309,19 @@ public sealed class BcInternalsNullForgivingGuardTests
         // marks, no FlowField filters" — permitting a Truncate() real BC refuses. All six are now
         // BcShape.Property, which is why this counter moves by exactly six; the matching drop to
         // zero is in SilentReflectionLookupRatchetTests, whose baseline stays 0 for this file.
-        Assert.Equal(105, converted);
+        //
+        // 105 -> 116 for the eleven reads in RetargetFilterExpression's new Range and FullText
+        // branches (RecordPatches.QueryProjection.cs, #3508): five properties plus two
+        // constructors for RangeFilterExpression, three properties plus one constructor for
+        // FullTextFilterExpression. Every one is REQUIRED — the branches exist to rebuild a
+        // filter expression against the source field's context, and a null from any of these
+        // reads would either construct the expression with a missing component or hand
+        // Activator a null the BC ctor's own ArgumentNullException.ThrowIfNull would reject
+        // several frames later, naming BC's parameter rather than the lookup that failed. The
+        // constructor lookups are included because the same reasoning applies: BC moving an
+        // overload is a shape gap, and `GetConstructor(...)` answering null would NRE at the
+        // Invoke rather than say which signature was missing.
+        Assert.Equal(116, converted);
     }
 
     /// <summary>

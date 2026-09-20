@@ -335,6 +335,10 @@ public static partial class RecordPatches
     private static Type? _tUnaryFilterExpr;
     private static Type? _tBinaryFilterExpr;
     private static Type? _tWildcardFilterExpr;
+    private static Type? _tRangeFilterExpr;
+    private static Type? _tFullTextFilterExpr;
+    private static Type? _tBooleanConstantFilterExpr;
+    private static Type? _tFilterExprContext;
     private static Type? _tFilterExpr;
     private static Type? _tNavFieldMetadata;
     private static bool _filterReflectionReady;
@@ -367,6 +371,15 @@ public static partial class RecordPatches
         _tUnaryFilterExpr = asm.GetType(rt + "UnaryFilterExpression");
         _tBinaryFilterExpr = asm.GetType(rt + "BinaryFilterExpression");
         _tWildcardFilterExpr = asm.GetType(rt + "WildcardFilterExpression");
+        // #3508 — the remaining FilterExpression leaf kinds RetargetFilterExpression decides
+        // about, so an unrecognised one refuses instead of falling through. See its doc comment
+        // for the full enumeration; FieldEqualsField deliberately has no handle here, because
+        // it reaches the refusal by the same route a BC shape change would.
+        _tRangeFilterExpr = asm.GetType(rt + "RangeFilterExpression");
+        _tFullTextFilterExpr = asm.GetType(rt + "FullTextFilterExpression");
+        _tBooleanConstantFilterExpr = asm.GetType(rt + "BooleanConstantFilterExpression");
+        _tFilterExprContext = asm.GetType(rt + "FilterExpressionContext");
+        _tNavValue ??= asm.GetType(rt + "NavValue");
         _tFilterExpr = asm.GetType(rt + "FilterExpression");
         _tNavFieldMetadata = asm.GetType(rt + "INavFieldMetadata");
         _tNCLMetaQueryColumn = asm.GetType(rt + "NCLMetaQueryColumn");
@@ -884,7 +897,25 @@ public static partial class RecordPatches
         return _mFfdBuilderBuild!.Invoke(builder, null)!;
     }
 
-    /// <summary>Rebuild a filter expression tree, retargeting Unary leaves to <paramref name="targetCtx"/>.</summary>
+    /// <summary>
+    /// Rebuild a filter expression tree against <paramref name="targetCtx"/> — the source table
+    /// field's <c>ExpressionContext</c> — so BC evaluates it keyed by an <c>NCLMetaField</c>
+    /// rather than by the <c>NCLMetaQueryColumn</c> a query-column filter arrives keyed by.
+    ///
+    /// <para>Covers every <c>FilterExpression</c> subclass BC declares, and refuses anything
+    /// else. The enumeration is closed: Binary, Unary, Wildcard, Range, FullText,
+    /// BooleanConstant and FieldEqualsField are the seven public subclasses on
+    /// 28.1.49838.53910, and <c>FilterExpressionVisitor.Visit</c> dispatches exactly those
+    /// seven before its own <c>default: throw new NotSupportedException()</c>. Of the three
+    /// reaching <c>RecordBufferEvaluatorVisitor.Evaluate</c>, whose first line is the
+    /// unconditional <c>(NCLMetaField)expressionContext.Metadata</c> cast, Unary and Wildcard
+    /// were the #2299 fix and Range and FullText are #3508's.</para>
+    ///
+    /// <para>The closing refusal is the point of the rewrite: its predecessor was a
+    /// <c>return expr</c> whose comment predicted the very failure it shipped, and an
+    /// unretargeted expression is indistinguishable from a retargeted one until BC casts it
+    /// (`.claude/rules/guards-need-a-third-state.md`).</para>
+    /// </summary>
     private static object RetargetFilterExpression(object expr, object targetCtx)
     {
         var t = expr.GetType();
@@ -947,10 +978,98 @@ public static partial class RecordPatches
                 .First(c => c.GetParameters().Length == 4 && c.GetParameters()[0].ParameterType == typeof(bool));
             return ctor.Invoke(new object?[] { isNegated, pattern, isCaseAndAccentInsensitive, targetCtx });
         }
-        // Other expression kinds (fieldEqualsField/fullText/etc.) are not produced by
-        // single-column SetRange/SetFilter; leave them (will not match a table field and
-        // is a documented follow-up if a test relies on them).
-        return expr;
+        // #3508: `SetFilter(<col>, '15..25')` on a query column produces a
+        // RangeFilterExpression, which FilterExpressionVisitor.VisitRange (the BASE visitor —
+        // RecordBufferEvaluatorVisitor does not override it) DESUGARS into Unary leaves carrying
+        // this expression's OWN ExpressionContext, wrapping the two-sided form in an And. Left
+        // unretargeted those leaves reach Evaluate still keyed by the NCLMetaQueryColumn, so the
+        // #2299 cast fires through `VisitBinary -> VisitBinary -> Evaluate` instead of through
+        // VisitWildcard. Rebuilding the Range against the retargeted context is what fixes all
+        // three of its ExpressionTypes at once, because the desugaring copies it down.
+        if (_tRangeFilterExpr!.IsInstanceOfType(expr))
+        {
+            // public RangeFilterExpression(FilterExpressionType, NavValue lowValue,
+            //                              NavValue highValue, FilterExpressionContext)
+            // then public RangeFilterExpression(RangeFilterExpression, int lowValueToken,
+            //                                   int highValueToken) to carry the tokens, which
+            // the 4-arg ctor sets to -1 and VisitRange forwards into the Unary leaves it builds.
+            var exprType = BcShape.Property(
+                _tFilterExpr!, "ExpressionType", BindingFlags.Public | BindingFlags.Instance,
+                "AL query execution (projection and filter push-down)").GetValue(expr);
+            var lowValue = BcShape.Property(
+                t, "LowValue", BindingFlags.Public | BindingFlags.Instance,
+                "AL query execution (projection and filter push-down)").GetValue(expr);
+            var highValue = BcShape.Property(
+                t, "HighValue", BindingFlags.Public | BindingFlags.Instance,
+                "AL query execution (projection and filter push-down)").GetValue(expr);
+            var lowToken = BcShape.Property(
+                t, "LowValueToken", BindingFlags.Public | BindingFlags.Instance,
+                "AL query execution (projection and filter push-down)").GetValue(expr);
+            var highToken = BcShape.Property(
+                t, "HighValueToken", BindingFlags.Public | BindingFlags.Instance,
+                "AL query execution (projection and filter push-down)").GetValue(expr);
+            var ctor = BcShape.Constructor(
+                _tRangeFilterExpr, BcShape.AnyInstance,
+                new[] { exprType!.GetType(), _tNavValue!, _tNavValue!, _tFilterExprContext! },
+                "AL query execution (projection and filter push-down)");
+            var rebuilt = ctor.Invoke(new[] { exprType, lowValue, highValue, targetCtx });
+            var tokenCtor = BcShape.Constructor(
+                _tRangeFilterExpr, BcShape.AnyInstance,
+                new[] { _tRangeFilterExpr, typeof(int), typeof(int) },
+                "AL query execution (projection and filter push-down)");
+            return tokenCtor.Invoke(new[] { rebuilt, lowToken, highToken });
+        }
+        // #3508: FullText. `VisitFullText` calls the same Evaluate the Unary and Wildcard
+        // branches do, so an unretargeted one throws the identical cast. Rebuilt the same way.
+        if (_tFullTextFilterExpr!.IsInstanceOfType(expr))
+        {
+            // internal FullTextFilterExpression(bool isNegated, bool isQuoted, string pattern,
+            //                                   FilterExpressionContext)
+            // The ctor strips `"` from pattern and derives IsPrefix from it, and the Pattern
+            // property is already stripped, so feeding Pattern back is idempotent.
+            var isNegated = BcShape.Property(
+                t, "IsNegated", BindingFlags.Public | BindingFlags.Instance,
+                "AL query execution (projection and filter push-down)").GetValue(expr);
+            var isQuoted = BcShape.Property(
+                t, "IsQuoted", BindingFlags.Public | BindingFlags.Instance,
+                "AL query execution (projection and filter push-down)").GetValue(expr);
+            var pattern = BcShape.Property(
+                t, "Pattern", BindingFlags.Public | BindingFlags.Instance,
+                "AL query execution (projection and filter push-down)").GetValue(expr);
+            var ctor = BcShape.Constructor(
+                _tFullTextFilterExpr, BcShape.AnyInstance,
+                new[] { typeof(bool), typeof(bool), typeof(string), _tFilterExprContext! },
+                "AL query execution (projection and filter push-down)");
+            return ctor.Invoke(new[] { isNegated, isQuoted, pattern, targetCtx });
+        }
+        // #3508: BooleanConstant carries NO ExpressionContext — BC builds it from the
+        // `trueExpression`/`falseExpression` statics through BooleanConstantFilterExpression.Get,
+        // and VisitBooleanConstant returns `.Value` without reading Metadata. So there is nothing
+        // to retarget and nothing that can reach the cast: returning it unchanged is faithful,
+        // not a fall-through. Verified on 28.1.49838.53910 (the member list carries no
+        // ExpressionContext property, unlike every other leaf kind).
+        if (_tBooleanConstantFilterExpr != null && _tBooleanConstantFilterExpr.IsInstanceOfType(expr))
+            return expr;
+        // #3508: everything else refuses rather than returning an unretargeted expression BC
+        // will cast. FieldEqualsField is the one kind known to land here, and
+        // RecordBufferEvaluatorVisitor.VisitFieldEqualsField throws NotSupportedException for it
+        // on ANY key — so the runner cannot make it work by retargeting, and saying so names the
+        // surface instead of surfacing BC's bare NotSupportedException. A kind NEITHER branch
+        // above recognises is a BC shape change, which is why this is a refusal and not a
+        // `return expr` (.claude/rules/guards-need-a-third-state.md: the unmeasurable case must
+        // not be spelled as the success case — that spelling is what #3508 fixed).
+        // The detail deliberately spells NEITHER "InvalidCastException" NOR the metadata type
+        // BC keys the unretargeted expression by. QueryRangeFilterRetargetTests scans the
+        // runner's whole output for both words to detect an expression that escaped retargeting,
+        // so a refusal quoting either makes "the runner refused" and "BC's cast fired"
+        // indistinguishable — its mutation and its control then red on the same assertion, which
+        // is how a control stops proving anything (#3508).
+        throw RunnerShapeGap.Query(
+            "Query.SetFilter/SetRange on a query column",
+            "query-column-filter-kind-unretargetable",
+            $"filter expression kind '{t.Name}' cannot be retargeted to the column's source "
+            + "table field, so BC would evaluate it still keyed by the query column's own "
+            + "metadata and its cast inside TempTableDataProvider would fail — #3508");
     }
 
     private static object CloneRequestWithFilters(object request, object newFiltersAndMarks)
