@@ -3323,6 +3323,166 @@ check("verdict: a rename reports its destination, which is the path that exists"
 
 # -------------------------------------------------- END artifacts probe (#3878)
 
+# ------------------------------- --reap-carried implies --reap, in main() (#4424)
+# Every arm above drives disposition(), collect_worktrees() or reap() DIRECTLY,
+# so none of them observes the one statement in main() that wires the flag to the
+# reaper:
+#
+#     if args.reap_carried:
+#         args.reap = True
+#
+# Disabling it (`if False and args.reap_carried:`) leaves this suite fully green
+# while `--reap-carried` stops reaping anything -- #4419's own shape one level up,
+# a value computed correctly and never consumed. `carried_ok` still reaches
+# collect_worktrees(), so the CARRIED verdict is still computed; `args.reap` is
+# still false, so the block that acts on it never runs.
+#
+# The observable is deliberately the PRESENCE of the reap section, not its
+# contents: a reaper that ran and declined prints "nothing to reap", while one
+# that never ran emits no `reap` key at all. Asserting only on WOULD REMOVE lines
+# could not tell those apart, and the second is the defect.
+print()
+print("preflight.py -- --reap-carried implies --reap, through main() (#4424)")
+
+_m_tmp = tempfile.mkdtemp(prefix="preflight-main-reap-")
+try:
+    _menv = dict(os.environ,
+                 GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@e",
+                 GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@e",
+                 GIT_CONFIG_GLOBAL=os.path.join(_m_tmp, "nogitconfig"),
+                 GIT_CONFIG_SYSTEM=os.path.join(_m_tmp, "nogitconfig"))
+    _mrepo = os.path.join(_m_tmp, "r")
+    os.makedirs(_mrepo)
+
+    def _mg(*args, cwd=_mrepo):
+        return subprocess.run(["git", *args], cwd=cwd, check=True,
+                              capture_output=True, text=True, env=_menv)
+
+    def _mwrite(rel, text, cwd=_mrepo):
+        path = os.path.join(cwd, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    _mg("init", "-q", "-b", "main")
+    _mwrite("base.txt", "base\n")
+    _mg("add", "base.txt")
+    _mg("commit", "-qm", "base")
+
+    # TWO commits before the squash, for the reason the #4385 fixture above
+    # records: a one-commit branch keeps its patch-id through a squash, so it is
+    # not the shape these worktrees actually have.
+    _mg("checkout", "-qb", "carried")
+    _mwrite("feature.txt", "final content\n")
+    _mg("add", "feature.txt")
+    _mg("commit", "-qm", "feat: part one")
+    _mwrite("helper.txt", "helper\n")
+    _mg("add", "helper.txt")
+    _mg("commit", "-qm", "feat: part two")
+    _m_carried_tip = _mg("rev-parse", "HEAD").stdout.strip()
+
+    _mg("checkout", "-q", "main")
+    _mg("merge", "--squash", "carried")
+    _mg("commit", "-qm", "feat: the work (#1)")
+    _m_merge = _mg("rev-parse", "HEAD").stdout.strip()
+    # main moves on afterwards, so a comparison against main-as-it-is-now is wrong.
+    _mwrite("later.txt", "someone else\n")
+    _mg("add", "later.txt")
+    _mg("commit", "-qm", "chore: later work on main")
+
+    # The KEEP fixture: content that genuinely never reached main.
+    _mg("checkout", "-qb", "lost", _m_merge)
+    _mwrite("rescue-me.txt", "never pushed anywhere\n")
+    _mg("add", "rescue-me.txt")
+    _mg("commit", "-qm", "feat: unlanded")
+    _m_lost_tip = _mg("rev-parse", "HEAD").stdout.strip()
+    _mg("checkout", "-q", "main")
+
+    _m_wt_carried = os.path.join(_m_tmp, "wt-carried")
+    _mg("worktree", "add", "-q", "--detach", _m_wt_carried, _m_carried_tip)
+    subprocess.run(["git", "checkout", "-qb", "agent/x/issue-1", _m_carried_tip],
+                   cwd=_m_wt_carried, env=_menv, check=True, capture_output=True)
+    _m_wt_differs = os.path.join(_m_tmp, "wt-differs")
+    _mg("worktree", "add", "-q", "--detach", _m_wt_differs, _m_lost_tip)
+    subprocess.run(["git", "checkout", "-qb", "agent/x/issue-2", _m_lost_tip],
+                   cwd=_m_wt_differs, env=_menv, check=True, capture_output=True)
+
+    _m_prs = {
+        "agent/x/issue-1": {"number": 1, "state": "MERGED", "headRefOid": "x" * 40,
+                            "mergeCommit": {"oid": _m_merge}},
+        "agent/x/issue-2": {"number": 2, "state": "MERGED", "headRefOid": "y" * 40,
+                            "mergeCommit": {"oid": _m_merge}},
+    }
+
+    def _drive_main(extra_argv: list) -> tuple:
+        """Run main() against the fixture repo and return (rc, parsed --json doc).
+
+        Three stubs, each for a dependency that would otherwise reach the real
+        box: the repository root (main() derives it from preflight.py's OWN
+        location, not the cwd), the pull-request map, and the staleness refusal,
+        which returns 3 on a branch whose copy of preflight.py origin/main has
+        moved -- i.e. on exactly the branch that edits it.
+        """
+        _saved = (pf.git_repo_root, pf.pr_map, pf.freshness_refusal)
+        pf.git_repo_root = lambda start: _mrepo
+        pf.pr_map = lambda slug: (_m_prs, "ok")
+        pf.freshness_refusal = lambda *a, **k: None
+        _buf = io.StringIO()
+        _saved_stdout = sys.stdout
+        sys.stdout = _buf
+        try:
+            _rc = pf.main(extra_argv + ["--dry-run", "--json", "--no-tools",
+                                        "--no-sizes", "--no-freshness-fetch"])
+        finally:
+            sys.stdout = _saved_stdout
+            pf.git_repo_root, pf.pr_map, pf.freshness_refusal = _saved
+        return _rc, json.loads(_buf.getvalue())
+
+    # ---- THE RED ARM: --reap-carried alone reaches the reaper.
+    _rc, _doc = _drive_main(["--reap-carried"])
+    check("main: --reap-carried runs the reaper without --reap being passed too",
+          "reap" in _doc, sorted(_doc))
+    _mlog = _doc.get("reap") or []
+    check("main: ...and the CARRIED worktree is the one it would remove",
+          any(_m_wt_carried in ln and "WOULD REMOVE" in ln for ln in _mlog), f"{_mlog}")
+    check("main: ...naming the content-is-on-main reason, so the log distinguishes "
+          "this removal from an ordinary one",
+          any(_m_wt_carried in ln and "content is on main" in ln for ln in _mlog), f"{_mlog}")
+
+    # ---- KEEP, under the same invocation. Without this the arm above is an
+    # ALLOW-only control: a main() that reaped everything it was handed would
+    # pass it. The DIFFERS worktree holds a file the merge commit never had.
+    check("main: --reap-carried does NOT remove a DIFFERS worktree",
+          not any(_m_wt_differs in ln and "WOULD REMOVE" in ln for ln in _mlog), f"{_mlog}")
+    check("main: ...and it is still on disk after the dry run",
+          os.path.isdir(_m_wt_differs))
+
+    # ---- CONTROL: plain --reap runs the reaper and declines. This is what makes
+    # the RED arm's observable meaningful -- "the reaper ran and removed nothing"
+    # and "the reaper never ran" are different states, and only the second is the
+    # defect. A broken implication turns the first row into the second.
+    _rc_plain, _doc_plain = _drive_main(["--reap"])
+    check("main: plain --reap still runs the reaper", "reap" in _doc_plain, sorted(_doc_plain))
+    _mlog_plain = _doc_plain.get("reap") or []
+    check("main: ...and it removes nothing, because CARRIED is opt-in",
+          not any("WOULD REMOVE" in ln for ln in _mlog_plain), f"{_mlog_plain}")
+    check("main: ...and says so, rather than printing an empty list",
+          _mlog_plain == ["nothing to reap"], f"{_mlog_plain}")
+
+    # ---- CONTROL: no reap flag at all emits no reap section. Without this,
+    # "reap in doc" could be true for every invocation and the RED arm would be
+    # asserting a constant.
+    _rc_none, _doc_none = _drive_main([])
+    check("main: with neither flag the reaper does not run at all",
+          "reap" not in _doc_none, sorted(_doc_none))
+
+    for _wt in (_m_wt_carried, _m_wt_differs):
+        _mg("worktree", "remove", "--force", _wt)
+finally:
+    shutil.rmtree(_m_tmp, ignore_errors=True)
+
+# ------------------------------------------- END --reap-carried in main() (#4424)
+
 
 print()
 if FAILURES:
