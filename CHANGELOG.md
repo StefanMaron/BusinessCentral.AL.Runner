@@ -33,6 +33,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **metadata:** emit BC's four InherentPermission attributes on the method-table element
 - **coverage:** render every file absolute when relativeTo is null, so one map uses one coordinate system
 - **hooks:** cross an xargs `--` end-of-options terminator, so the wrapper behind it is reached
 - **hooks:** xargs -e and -i take an ATTACHED value only, so the wrapper behind them is reached
