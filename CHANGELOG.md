@@ -33,6 +33,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **coverage:** render every file absolute when relativeTo is null, so one map uses one coordinate system
 - **hooks:** cross an xargs `--` end-of-options terminator, so the wrapper behind it is reached
 - **hooks:** xargs -e and -i take an ATTACHED value only, so the wrapper behind them is reached
 - **hooks:** admit a digit in the xargs option term, so `xargs -0` does not hide the wrapper behind it
