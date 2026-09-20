@@ -582,6 +582,17 @@ BASH_C_ALLOWED = [
      "tools/engine-test-bootstrap.sh -c Debug 2>&1 | tail -4"),
     ("dotnet -c Release", "dotnet build AlRunner -c Release"),
     ("a script whose name merely ends in sh", "tools/refresh -c Debug"),
+    # The DISCRIMINATING form of the two above. Asserting only that
+    # `engine-test-bootstrap.sh -c Debug` is allowed cannot fail, because a
+    # wrapper strip that wrongly fires on it exposes `Debug`, which is not a
+    # refused command either -- allowed for the wrong reason. Putting a refused
+    # tool's name in the `-c` ARGUMENT is what makes the mis-strip change the
+    # verdict: widening the shell-name match to `\S*` blocks these two and
+    # nothing else in this file (#4418).
+    ("a .sh script whose -c argument names a refused tool",
+     "tools/engine-test-bootstrap.sh -c 'git stash'"),
+    ("a non-shell -c whose argument names a wait",
+     "tools/mk.sh -c gh run watch 1"),
 ]
 for name, cmd in BASH_C_ALLOWED:
     ok, d = allows(REFUSE, cmd)
