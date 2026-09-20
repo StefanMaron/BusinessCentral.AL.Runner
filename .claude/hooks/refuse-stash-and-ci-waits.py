@@ -70,10 +70,47 @@ HEREDOC_OPEN = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 # `timeout <dur>` and `setsid`/`stdbuf` carry an argument or none; stripping them is
 # what lets `timeout 2700 tools/ci-wait.py ...` be seen as the ci-wait call it is
 # (#4288 -- that spelling occurs in the measured transcript population).
+# `env` sits here with `nohup` and `setsid` for the same reason, and it was
+# leaking on its own before #4418: `env git stash` was allowed. Its options are
+# spelled out rather than swallowed by a generic `-\S*`, because `env -i` and
+# `env --ignore-environment` take no argument while `env -u VAR` and `-S` do,
+# and treating the VAR as an option would strip a word that is not one. The
+# `\w+=\S*` alternative already covers `env FOO=1 <cmd>`.
 LEADING_NOISE = re.compile(
     r'^(?:\s*(?:then|else|elif|do|done|fi|if|while|until|for|!|time|exec|nohup|'
     r'setsid|stdbuf|timeout\s+-?[\d.]+[smhd]?|timeout|'
+    r'env(?:\s+(?:-[iv0]+|--ignore-environment|--null|'
+    r'-[uSC]\s*\S+|--(?:unset|split-string|chdir)(?:=\S+|\s+\S+)))*|'
     r'sudo|command|builtin|\w+=\S*)\s+)+')
+
+# `sh -c '<command>'` puts a real command where nothing ever judged it: the
+# refusal reads only what a SEGMENT STARTS WITH, and the inner command is an
+# argument (#4418). Note how narrow the hole actually was -- SEGMENT_SPLIT
+# already cuts through a quoted argument, so `bash -c 'echo hi; git stash'` was
+# refused all along; only the FIRST inner command sat behind the prefix.
+#
+# So this strips the wrapper and the quote that opens the string, letting that
+# first command start a segment. It deliberately does NOT re-parse the string as
+# a nested command line: the rest of it already segments, and a second parser
+# would be a second thing to get wrong.
+#
+# `\S*sh` matches `bash`, `sh`, `zsh` and `/bin/bash`; the trailing `\b` after
+# the flag bundle is what keeps `engine-test-bootstrap.sh -c Debug` out -- `-c`
+# there is a CONFIG flag of a script, and that shape is 35 of the 41 `sh -c`-like
+# commands in this project's measured transcript population, against 0 real
+# waits. Over-blocking it would break every bootstrapped test run in the repo.
+SHELL_DASH_C = re.compile(
+    r'^(?:\S*/)?(?:ba|z|k|da|a)?sh(?:\s+-[A-Za-z]+)*\s+-[A-Za-z]*c\s+[\'"]?')
+
+# Two more places a command genuinely STARTS without starting a segment: the
+# argv `xargs` and `find -exec` build. Both are narrow -- only `xargs`' own
+# options may sit between, and only up to the shell name -- so neither widens
+# what the strip above can reach; they only let it reach the same wrapper one
+# word later. Measured: 1 real `xargs ... sh -c` and 0 `find -exec sh -c` in
+# this project's transcripts, so the point is coverage of the shape, not volume.
+ARGV_INTRO = re.compile(
+    r'^(?:xargs(?:\s+(?:-[A-Za-z]\s*\S*|--[\w-]+(?:=\S+)?))*'
+    r'|(?:\S+\s+)*?-exec(?:dir)?)\s+')
 
 GIT_OPTS = r'(?:\s+(?:-[A-Za-z]\s+\S+|-[A-Za-z]\S*|--[\w-]+(?:=\S+)?))*'
 GIT_STASH = re.compile(r'^git\b' + GIT_OPTS + r'\s+stash\b')
@@ -233,10 +270,35 @@ def command_text(cmd: str) -> str:
     return "".join(out)
 
 
+def unwrap(seg: str) -> str:
+    """`seg` with leading noise and any `sh -c` wrappers removed.
+
+    Looped rather than applied once because each strip can expose the next:
+    `timeout 30 bash -c 'sh -c "git stash"'` is noise, wrapper, wrapper. It
+    terminates because every branch consumes at least one character.
+    """
+    while True:
+        stripped = LEADING_NOISE.sub("", seg).strip()
+        if SHELL_DASH_C.match(stripped) is None:
+            # Only consumed when it actually exposes a wrapper: `xargs` and
+            # `-exec` run ARBITRARY commands, and stripping them unconditionally
+            # would make `xargs git stash` -- which stashes nothing without an
+            # argument list this hook cannot see -- indistinguishable from the
+            # real thing. Restricting the strip to a shell wrapper keeps the
+            # judged position exactly as narrow as it was.
+            exposed = ARGV_INTRO.sub("", stripped, count=1).strip()
+            if SHELL_DASH_C.match(exposed):
+                stripped = exposed
+        stripped = SHELL_DASH_C.sub("", stripped, count=1).strip()
+        if stripped == seg:
+            return seg
+        seg = stripped
+
+
 def segments(cmd: str) -> list:
     out = []
     for raw in SEGMENT_SPLIT.split(command_text(cmd)):
-        seg = LEADING_NOISE.sub("", raw.strip()).strip()
+        seg = unwrap(raw.strip())
         if seg:
             out.append(seg)
     return out

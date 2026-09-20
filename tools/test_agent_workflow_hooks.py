@@ -595,6 +595,66 @@ check("allowed: prose describing a bash -c invocation", ok, d)
 ok, d = allows(REFUSE, "cat > /tmp/n.md <<'EOF'\nbash -c 'git stash' is refused\nEOF")
 check("allowed: a heredoc body describing a bash -c invocation", ok, d)
 
+print("\n#4418 xargs and find -exec also start a command without starting a segment")
+# Only the SHELL WRAPPER is exposed through them. `xargs git stash` is left
+# alone deliberately: without the argument list, which this hook cannot see, it
+# is not the same command, and stripping `xargs` unconditionally would widen the
+# judged position rather than restore it.
+ok, d = blocks(REFUSE, "echo 1 | xargs -I{} sh -c 'git stash'",
+               "no-git-stash-with-worktrees")
+check("stash through xargs -I{} sh -c", ok, d)
+
+ok, d = blocks(REFUSE, "echo 1 | xargs sh -c 'gh run watch 1'", "--timeout 0")
+check("a wait through xargs sh -c", ok, d)
+
+ok, d = blocks(REFUSE, "find . -name x -exec sh -c 'git stash' \;",
+               "no-git-stash-with-worktrees")
+check("stash through find -exec sh -c", ok, d)
+
+# The one real `xargs ... sh -c` in this project's transcripts (#4418) -- it
+# must keep working, and it is why the exposure is restricted to a wrapper.
+ok, d = allows(REFUSE,
+               "gh run list --limit 12 --jq '.[0].databaseId' | xargs -I{} sh -c "
+               "'echo \"master run {}\"; tools/corpus-pass-count.py {} UserProperty_ | head -2'")
+check("allowed: the measured xargs sh -c corpus-count command", ok, d)
+
+ok, d = allows(REFUSE, "find . -name '*.al' -exec sh -c 'echo {}' \;")
+check("allowed: find -exec sh -c running an echo", ok, d)
+
+ok, d = allows(REFUSE, "echo a | xargs git stash")
+check("allowed: xargs NOT followed by a shell wrapper is left alone", ok, d)
+
+print("\n#4418 `env` is a wrapper too -- and it was leaking without any -c at all")
+# Found by the differential fuzz for #4418, not by the issue: `env` sat beside
+# `nohup` and `setsid` in every way except being listed with them, so
+# `env git stash` was allowed on its own. Same file, same mechanism (a wrapper
+# putting a command where nothing judges it), so it is fixed here.
+ENV_BLOCKED = [
+    ("env with no options", "env git stash"),
+    ("env with an assignment", "env FOO=1 git stash"),
+    ("env -i", "env -i git stash"),
+    ("env --ignore-environment", "env --ignore-environment git stash"),
+    ("env -u VAR", "env -u GIT_DIR git stash"),
+    ("env before a shell wrapper", "env sh -c 'git stash'"),
+]
+for name, cmd in ENV_BLOCKED:
+    ok, d = blocks(REFUSE, cmd, "no-git-stash-with-worktrees")
+    check("stash via " + name, ok, d)
+
+ok, d = blocks(REFUSE, "env sh -c 'gh run watch 1'", "--timeout 0")
+check("a wait via env sh -c", ok, d)
+
+# `env` printing the environment is not running anything, and `env -u VAR <cmd>`
+# must not have the VAR mistaken for the command.
+for name, cmd in [
+    ("env alone", "env"),
+    ("env piped to a grep", "env | command grep PATH"),
+    ("env -u VAR before a build", "env -u GIT_DIR dotnet build AlRunner"),
+    ("env echoing prose about the tool", "env echo 'git stash is refused'"),
+]:
+    ok, d = allows(REFUSE, cmd)
+    check("allowed: " + name, ok, d)
+
 # Non-CI background work is untouched by this widening.
 print("\nnon-CI work is unaffected by the cap rule")
 for name, cmd in [
