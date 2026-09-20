@@ -104,6 +104,11 @@ public sealed class CodeunitMethodSubtreeDerivationTests : IDisposable
     /// mask and each of the three scope ordinals (#4339).</summary>
     private const int InherentPermissionArguments = 61066;
 
+    /// <summary>InherentPermissions methods the runner CANNOT read: one argument list too short
+    /// to carry the three required values, and one unreadable value in each of the three
+    /// positions that can have one (#4339).</summary>
+    private const int InherentPermissionsUnreadable = 61067;
+
     private readonly string _root;
 
     public CodeunitMethodSubtreeDerivationTests()
@@ -232,6 +237,27 @@ public sealed class CodeunitMethodSubtreeDerivationTests : IDisposable
                         { "Value": "Page" }, { "Value": "9005" }, { "Value": "rimd" },
                         { "Value": "Both" } ] } ] }
                   ]
+                },
+                {
+                  "Id": {{InherentPermissionsUnreadable}},
+                  "Name": "Inherent Permissions Unreadable",
+                  "Properties": [],
+                  "Methods": [
+                    { "Id": 1101, "Name": "ArgumentsTooShort",
+                      "Attributes": [ { "Name": "InherentPermissions", "Arguments": [
+                        { "Value": "TableData" }, { "Value": "9008" } ] } ] },
+                    { "Id": 1102, "Name": "ObjectIdIsNotANumber",
+                      "Attributes": [ { "Name": "InherentPermissions", "Arguments": [
+                        { "Value": "TableData" }, { "Value": "No. Series Line" },
+                        { "Value": "r" } ] } ] },
+                    { "Id": 1103, "Name": "MaskLetterIsUnreadable",
+                      "Attributes": [ { "Name": "InherentPermissions", "Arguments": [
+                        { "Value": "TableData" }, { "Value": "9008" }, { "Value": "rq" } ] } ] },
+                    { "Id": 1104, "Name": "ScopeNameIsUnreadable",
+                      "Attributes": [ { "Name": "InherentPermissions", "Arguments": [
+                        { "Value": "TableData" }, { "Value": "9008" }, { "Value": "r" },
+                        { "Value": "Sideways" } ] } ] }
+                  ]
                 }
               ]
             }
@@ -271,7 +297,8 @@ public sealed class CodeunitMethodSubtreeDerivationTests : IDisposable
                 appPath,
                 new[] { PublishersAndSubscriber },
                 new[] { PublishersOnly, PublishersAndSubscriber, NoAttributedMethods,
-                        InherentPermissionsMethod, PublisherFlags, InherentPermissionArguments });
+                        InherentPermissionsMethod, PublisherFlags, InherentPermissionArguments,
+                        InherentPermissionsUnreadable });
         }
 
         return appPath;
@@ -608,6 +635,49 @@ public sealed class CodeunitMethodSubtreeDerivationTests : IDisposable
         Assert.False(bare.HasAttribute("InherentPermissionObjectId"));
         Assert.False(bare.HasAttribute("InherentPermissionPermissionValue"));
         Assert.False(bare.HasAttribute("InherentPermissionScope"));
+    }
+
+    /// <summary>
+    /// A value the runner cannot read refuses the WHOLE set rather than contributing a default:
+    /// the element keeps its <c>Name</c> and states none of the four, so it reads as stating
+    /// nothing rather than as stating three-quarters of an association
+    /// (guards-need-a-third-state.md).
+    ///
+    /// <para>Four separate shapes, because they take four different paths through the reader and
+    /// a single arm would not say which one fired: an argument list too SHORT to carry the three
+    /// required values, a non-numeric object id, a mask letter outside
+    /// <c>PermissionMaskLetters</c>, and a scope name outside BC's three. The fourth is the one
+    /// a lenient reader would silently turn into 0 — which is the value BC writes on every
+    /// element the shipped apps contain, so nothing downstream would look wrong.</para>
+    ///
+    /// <para>Non-vacuity is carried by the second assertion: the same run's readable codeunit
+    /// still renders all four, so these four refusals are each row's property rather than the
+    /// reader having stopped answering.</para>
+    /// </summary>
+    [Fact]
+    public void An_unreadable_InherentPermissions_value_refuses_all_four_rather_than_defaulting()
+    {
+        Register();
+
+        var refused = AttributeElements(Projection(InherentPermissionsUnreadable)).ToList();
+        Assert.Equal(4, refused.Count);
+
+        foreach (var element in refused)
+        {
+            Assert.Equal("InherentPermissionsMethodAttribute", element.LocalName);
+            Assert.Equal("InherentPermissions", element.GetAttribute("Name"));
+            Assert.False(element.HasAttribute("InherentPermissionObjectType"));
+            Assert.False(element.HasAttribute("InherentPermissionObjectId"));
+            Assert.False(element.HasAttribute("InherentPermissionPermissionValue"));
+            Assert.False(element.HasAttribute("InherentPermissionScope"));
+        }
+
+        // The readable codeunit in the SAME run still states all four, so the refusals above
+        // are about these four rows and not about the reader having gone quiet.
+        Assert.Equal(
+            new[] { "32", "96", "16", "480" },
+            AttributeElements(Projection(InherentPermissionArguments))
+                .Select(e => e.GetAttribute("InherentPermissionPermissionValue")));
     }
 
     /// <summary>
