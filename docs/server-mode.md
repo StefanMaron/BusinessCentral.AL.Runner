@@ -389,6 +389,22 @@ document's own `<source>.</source>` element is the base they are read against
 (`AlCoverageReport.WriteCobertura`, #3120). Only the server and DAP paths, which
 have no such base element, are absolute.
 
+**Changing this shape means auditing what JOINS on the path, not only what prints
+it.** The map's path is also a lookup key inside the runner, and a rendering change
+is invisible to a consumer that merely displays it while breaking one that matches
+on it — the second returns null, and "no loops for that scope" reads exactly like
+"that scope has no loops". Two internal consumers key on it today, and both
+canonicalise so that either spelling resolves:
+
+| consumer | keyed through |
+|---|---|
+| `AlMemberSyntaxIndex` — `iterationTracking` loops, `captureValues` write sets | `NormalizePath` (absolute + forward-slashed), applied on the insert side *and* the lookup side |
+| `DapBreakpointResolver` — breakpoint → statement | `Path.GetFullPath` on both the map's paths and the client's request |
+
+`Program.cs`'s `execute` handler is where this bites: it feeds **one** `sourcePaths`
+into `AlCoverageSourceMap.Build` and `AlMemberSyntaxIndex.Build` and joins their
+results, so the two must agree on a coordinate system or every lookup misses.
+
 ### Loop iterations (`iterationTracking`)
 
 `iterationTracking: true` (#2056, `execute` only) opts into per-iteration
