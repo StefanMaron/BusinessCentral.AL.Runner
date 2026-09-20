@@ -3148,13 +3148,163 @@ try:
 
     # --------------------------------------- the verdict never reaps anything
     # The safety property the issue is explicit about: trading a false keep for a
-    # false delete is strictly worse. A CARRIED verdict is a report to a human.
+    # false delete is strictly worse. A CARRIED verdict is a report to a human,
+    # and stays one under plain `--reap` (#4419 opted the removal in behind its
+    # own flag rather than widening `--reap`, which unattended loops already run).
     _d = pf.disposition(pf.Worktree(path="/w/c", head=_carried_tip, branch="carried"),
                         pr={"number": 1, "state": "MERGED", "headRefOid": "x" * 40},
                         dirty=False, unpushed=1)
-    check("verdict: a CARRIED worktree is still NOT reapable",
+    check("verdict: a CARRIED worktree is still NOT reapable under plain --reap",
           not _d.reapable, _d.reason)
+
+    # ------------------------------------------------- #4419: --reap-carried
+    # preflight established that a worktree's content is on main and then declined
+    # to act on its own finding, so 5 worktrees / 0.8 GiB survived a successful
+    # reap. The verdict now REACHES the decision -- but only when asked, and only
+    # when it is the verdict "carried".
+    #
+    # Every keep-case arm below passes `carried_ok=True`. That is deliberate and
+    # load-bearing: an arm asserting "this worktree is KEPT" proves nothing if the
+    # fixture would be kept under every implementation, and the cheapest way to
+    # make it vacuous is to leave the flag off. With the flag ON, the ONLY thing
+    # standing between each of these fixtures and removal is the property the arm
+    # is named for -- so a wrong decision changes the verdict, which is what makes
+    # the mutation table discriminate.
+    _CARRIED = pf.UnpushedVerdict("carried", 2, [], "all 2 file(s) ... the content is on main")
+    _DIFFERS = pf.UnpushedVerdict("differs", 1, ["rescue-me.txt"], "1 of 2 file(s) differ")
+    _UNKNOWN = pf.UnpushedVerdict("unknown", 0, [], "the reference could not be read")
+    _MERGED_PR = {"number": 1, "state": "MERGED", "headRefOid": "x" * 40}
+
+    def _disp(verdict, *, carried_ok=True, dirty=False, unpushed=1, pr=_MERGED_PR):
+        return pf.disposition(pf.Worktree(path="/w/c", head=_carried_tip, branch="carried"),
+                              pr=pr, dirty=dirty, unpushed=unpushed,
+                              verdict=verdict, carried_ok=carried_ok)
+
+    # THE RED ARM: the whole point of the issue.
+    _d = _disp(_CARRIED)
+    check("reap-carried: a CARRIED worktree IS reapable once --reap-carried asks",
+          _d.reapable, _d.reason)
+    check("reap-carried: ...and the reason says the content is on main, so a reader "
+          "of the log can tell this removal from an ordinary one",
+          _d.reapable and "content is on main" in _d.reason, _d.reason)
+
+    # KEEP 1 -- DIFFERS. The dangerous direction: this worktree holds content main
+    # does not have. Flag ON, merged PR, clean tree: the verdict is the only thing
+    # keeping it, so a decision that keyed on "has a verdict at all", or on
+    # `verdict is not None`, or that inverted the comparison, deletes real work.
+    _d = _disp(_DIFFERS)
+    check("reap-carried: a DIFFERS worktree is kept even with --reap-carried",
+          not _d.reapable, _d.reason)
+
+    # KEEP 2 -- UNKNOWN. guards-need-a-third-state.md: a measurement that did not
+    # happen must not be spelled as its success state. Same construction as KEEP 1
+    # -- flag on, merged, clean -- so only the third state holds it.
+    _d = _disp(_UNKNOWN)
+    check("reap-carried: an UNKNOWN verdict is kept; a non-measurement is not a pass",
+          not _d.reapable, _d.reason)
+
+    # KEEP 3 -- no verdict was computed at all. `collect_worktrees(verdicts=False)`
+    # is a real call path, and None must read as "nothing was established", never
+    # as carried. Flag on and everything else clear, so nothing else can hold it.
+    _d = _disp(None)
+    check("reap-carried: a worktree with NO verdict computed is kept",
+          not _d.reapable, _d.reason)
+
+    # KEEP 4 -- uncommitted changes. Nothing could have carried these, so a
+    # carried verdict about the COMMITS says nothing about the working tree. The
+    # fixture deliberately pairs a CARRIED verdict with a dirty tree: an
+    # implementation that checked the verdict before the dirt would delete it.
+    _d = _disp(_CARRIED, dirty=True)
+    check("reap-carried: a CARRIED verdict does not override uncommitted changes",
+          not _d.reapable, _d.reason)
+    check("reap-carried: ...and the reason still names the uncommitted changes, "
+          "not the verdict, so the human is sent to the right place",
+          "uncommitted" in _d.reason, _d.reason)
+
+    # KEEP 5 -- the PR is not merged. An OPEN PR with a carried verdict is a live
+    # branch whose content happens to match something; mergedness is a separate
+    # question and is asked first.
+    _d = _disp(_CARRIED, pr={"number": 2, "state": "OPEN", "headRefOid": "x" * 40})
+    check("reap-carried: an OPEN PR is kept however carried its content looks",
+          not _d.reapable, _d.reason)
+
+    # KEEP 6 -- unpushed is None, i.e. nothing proved the commits were pushed.
+    # Distinct from unpushed=0: None is the third state of that measurement, and
+    # a carried verdict must not launder it into a pass.
+    _d = _disp(_CARRIED, unpushed=None)
+    check("reap-carried: 'nothing proves the commits were pushed' is kept",
+          not _d.reapable, _d.reason)
+
+    # CONTROL -- the flag is what gates it, not the verdict. Same CARRIED fixture
+    # as the RED arm with carried_ok=False: an implementation that ignored the
+    # flag and always acted on a carried verdict passes every arm above and fails
+    # here. This is the arm that pins the opt-in.
+    _d = _disp(_CARRIED, carried_ok=False)
+    check("reap-carried: ...and plain --reap still keeps it, so the flag is the gate",
+          not _d.reapable, _d.reason)
+
+    # CONTROL -- an ordinary clean, fully-pushed, merged worktree stays reapable
+    # under both flags. A guard that started refusing everything would pass all
+    # six KEEP arms; only this says the reaper still does its original job.
+    for _ok in (False, True):
+        _d = _disp(None, unpushed=0, carried_ok=_ok)
+        check(f"reap-carried: an ordinary clean merged worktree is still REAP "
+              f"(carried_ok={_ok})", _d.reapable, _d.reason)
+
+    # ---- end to end: the flag reaches the decision through collect_worktrees.
+    # The arms above call disposition() directly. This one drives the real path --
+    # a git worktree, a real merge commit, a real unpushed commit -- because a
+    # correct disposition() that main() never passes the flag to is the same
+    # defect wearing a passing test (#4419 is exactly "the verdict is computed and
+    # then discarded").
+    _wt_dir = os.path.join(_v_tmp, "wt-carried")
+    _vg("worktree", "add", "-q", "--detach", _wt_dir, _carried_tip)
+    _vgw = lambda *a: subprocess.run(["git", *a], cwd=_wt_dir, env=_venv,
+                                     capture_output=True, text=True, check=True)
+    _vgw("checkout", "-qb", "agent/x/issue-1", _carried_tip)
+    _e2e_pr = {"agent/x/issue-1": {"number": 1, "state": "MERGED",
+                                   "headRefOid": "x" * 40,
+                                   "mergeCommit": {"oid": _carried_merge}}}
+    _rows = pf.collect_worktrees(_vrepo, _e2e_pr, measure=False, carried_ok=True)
+    _row = [r for r in _rows if os.path.realpath(r[0].path) == os.path.realpath(_wt_dir)]
+    check("reap-carried: collect_worktrees finds the fixture worktree",
+          len(_row) == 1, f"{[r[0].path for r in _rows]}")
+    if _row:
+        _, _, _, _, _dd, _ = _row[0]
+        check("reap-carried: end to end, the real path marks it reapable",
+              _dd.reapable, f"{_dd.reason} / verdict={_dd.verdict}")
+        _rows_off = pf.collect_worktrees(_vrepo, _e2e_pr, measure=False, carried_ok=False)
+        _row_off = [r for r in _rows_off
+                    if os.path.realpath(r[0].path) == os.path.realpath(_wt_dir)][0]
+        check("reap-carried: ...and end to end without the flag it is kept",
+              not _row_off[4].reapable, _row_off[4].reason)
+        # And the reaper's own dry run names it, which is what a human reads
+        # before letting it delete anything.
+        _log = pf.reap(_vrepo, _rows, dry_run=True)
+        check("reap-carried: --dry-run names the carried worktree it would remove",
+              any(_wt_dir in ln and "WOULD REMOVE" in ln for ln in _log), f"{_log}")
+
+        # ...and the reaper RE-JUDGES the verdict rather than trusting the census,
+        # for the same reason it re-reads the dirt: the census may be minutes old,
+        # and this is the one removal path where a stale measurement deletes a
+        # COMMIT rather than an empty directory. Simulated by committing a file the
+        # merge commit never had, AFTER the row was built -- which is exactly what
+        # an agent doing a last-minute edit in a reaped worktree looks like.
+        _vgw("checkout", "-q", "-b", "drifted")
+        with open(os.path.join(_wt_dir, "arrived-late.txt"), "w") as _fh:
+            _fh.write("written after the census\n")
+        _vgw("add", "arrived-late.txt")
+        _vgw("commit", "-qm", "feat: work that arrived after the census")
+        _log2 = pf.reap(_vrepo, _rows, dry_run=True)
+        check("reap-carried: the reaper re-judges the verdict and SKIPS one that drifted",
+              any(_wt_dir in ln and ln.startswith("SKIP") for ln in _log2), f"{_log2}")
+        check("reap-carried: ...and says so rather than removing it silently",
+              not any(_wt_dir in ln and "WOULD REMOVE" in ln for ln in _log2), f"{_log2}")
+        _vgw("checkout", "-q", "agent/x/issue-1")
+        _vgw("branch", "-qD", "drifted")
+    _vg("worktree", "remove", "--force", _wt_dir)
 finally:
+    shutil.rmtree(_v_tmp, ignore_errors=True)
     shutil.rmtree(_v_tmp, ignore_errors=True)
 
 # --------------------------------------- uncommitted work has its own verdict

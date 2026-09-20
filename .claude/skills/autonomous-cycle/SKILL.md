@@ -141,7 +141,12 @@ Every check below exists because its absence has silently corrupted a result.
 real exit code — 0 all passed, 1 something failed and this box would produce untrustworthy
 results, 2 warnings under `--strict`, 3 it could not complete. `--json` for a box profile,
 `--reap` to remove worktrees whose PR is merged and whose tree is clean, `--with-corpus` to
-include step 1.
+include step 1. **`--reap-carried` (implies `--reap`) also removes one whose unpushed
+commits touch only files byte-identical to its PR's merge commit** — preflight already
+measures that as the CARRIED verdict and used to report it without acting, which left 5
+worktrees and 0.8 GiB on a box that had just been reaped (#4419). Plain `--reap` still
+never removes anything carrying unpushed commits, so an unattended loop's posture is
+unchanged unless it asks for the wider one.
 
 **`--agent-id` is what lets the `branch-ownership` check answer at all** — with no identity it
 can only WARN (#3746), so every documented invocation carries it. It travels as an argument

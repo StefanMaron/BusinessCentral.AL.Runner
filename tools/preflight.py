@@ -40,6 +40,7 @@ Usage:
     tools/preflight.py --json          # machine-readable, same verdicts
     tools/preflight.py --strict        # warnings are also non-zero
     tools/preflight.py --reap          # remove worktrees of MERGED PRs, if clean
+    tools/preflight.py --reap-carried  # ...and those whose unpushed content is on main
     tools/preflight.py --with-corpus   # also run the corpus baseline (minutes)
     tools/preflight.py --no-tools      # skip the code-navigation checks (~10s)
     tools/preflight.py --no-freshness-fetch   # skip the ls-remote in the staleness check
@@ -760,7 +761,9 @@ def unpushed_against_pr(head: str, pr: Optional[dict]) -> Optional[int]:
 
 
 def disposition(wt: Worktree, *, pr: Optional[dict], dirty: bool,
-                unpushed: Optional[int], is_current: bool = False) -> Disposition:
+                unpushed: Optional[int], is_current: bool = False,
+                verdict: Optional["UnpushedVerdict"] = None,
+                carried_ok: bool = False) -> Disposition:
     """Decide whether a worktree may be removed.
 
     The merged test asks the **pull request**, never `git merge-base
@@ -770,6 +773,19 @@ def disposition(wt: Worktree, *, pr: Optional[dict], dirty: bool,
     ancestry, a reaper reaps nothing and calls every worktree live -- safe by
     luck. The mirror of the same mistake, on a repo that merges with a merge
     commit, deletes unmerged work.
+
+    `carried_ok` (`--reap-carried`) is the only thing that lets an unpushed
+    commit be removed, and only for the verdict "carried" -- computed since #4385
+    and then discarded, which left 5 worktrees / 0.8 GiB on a box that had just
+    been reaped (#4419). It is opt-in rather than folded into `--reap` because
+    unattended loops already run `--reap` on a schedule, and "never removes
+    anything carrying unpushed commits" is a property they were promised.
+
+    Trap: "carried" is about CONTENT AT THE PATHS THE UNPUSHED COMMITS TOUCH, not
+    about intent -- classify_unpushed_work's own docstring bounds it. A tip that
+    is a strict subset of what merged reads as carried and says nothing about
+    files it never had. That is the right answer for "is anything at risk" and it
+    is why "differs" and "unknown" both keep the worktree.
     """
     if wt.is_main:
         return Disposition(False, "the main checkout is never removed")
@@ -791,6 +807,16 @@ def disposition(wt: Worktree, *, pr: Optional[dict], dirty: bool,
         return Disposition(False, f"PR #{pr.get('number')} is merged, but nothing proves the "
                                   f"local commits were pushed - reported, not removed")
     if unpushed > 0:
+        # The verdict is consulted only here, AFTER dirty and after `unpushed is
+        # None`: a carried verdict is about the content of the unpushed COMMITS
+        # and says nothing about an uncommitted working tree or an unread push
+        # state, so it must not be able to overturn either (#4419).
+        if carried_ok and verdict is not None and verdict.verdict == "carried":
+            return Disposition(True,
+                               f"PR #{pr.get('number')} is MERGED and its {unpushed} unpushed "
+                               f"commit(s) touch {verdict.same} file(s) identical to the merge "
+                               f"commit - the content is on main",
+                               verdict=verdict)
         return Disposition(False, f"PR #{pr.get('number')} is merged, but {unpushed} local "
                                   f"commit(s) were never pushed - reported, not removed")
     return Disposition(True, f"PR #{pr.get('number')} is MERGED, tree is clean and fully "
@@ -1206,7 +1232,15 @@ def worktree_dirt(worktree: str) -> tuple:
 
 
 def collect_worktrees(repo: str, prs: dict, measure: bool = True,
-                      verdicts: bool = True) -> list[tuple]:
+                      verdicts: bool = True, carried_ok: bool = False) -> list[tuple]:
+    """The worktree census, one row per registered worktree.
+
+    `carried_ok` (`--reap-carried`, #4419) changes WHEN the #4385 verdict is
+    computed, not what it says: normally it is a post-hoc report on a worktree
+    already kept, but a verdict that is allowed to decide has to exist before
+    disposition() runs. Both orders call verdict_for_worktree, so the two paths
+    cannot disagree about the same worktree.
+    """
     r = run(["git", "-C", repo, "worktree", "list", "--porcelain"])
     if not r.ok:
         return []
@@ -1231,11 +1265,18 @@ def collect_worktrees(repo: str, prs: dict, measure: bool = True,
             if measure:
                 size, complete = dir_size(wt.path)
                 wt.size_bytes = size
-        d = disposition(wt, pr=pr, dirty=dirty, unpushed=unpushed, is_current=is_current)
+        # Under --reap-carried the verdict has to be in hand before the decision;
+        # the ordinary path computes it afterwards, for the census line only.
+        early: Optional[UnpushedVerdict] = None
+        if exists and carried_ok and verdicts and unpushed and not dirty:
+            early = verdict_for_worktree(wt.path, pr)
+        d = disposition(wt, pr=pr, dirty=dirty, unpushed=unpushed, is_current=is_current,
+                        verdict=early, carried_ok=carried_ok)
         # Why it is kept is now followed by what became of the work, for the
-        # worktrees where that is the open question (#4385). A verdict never
-        # changes `reapable`: trading a false keep for a false delete is the one
-        # way to make this worse than leaving it alone.
+        # worktrees where that is the open question (#4385). Outside
+        # --reap-carried a verdict never changes `reapable`: trading a false keep
+        # for a false delete is the one way to make this worse than leaving it
+        # alone.
         if exists and not d.reapable and verdicts:
             if dirty:
                 st = run(["git", "-C", wt.path, "status", "--porcelain"], timeout=60)
@@ -3676,6 +3717,16 @@ def reap(repo: str, rows: list[tuple], dry_run: bool) -> list[str]:
             log.append(f"SKIP  {wt.path} - it became dirty since the census"
                        + (f" ({dirt_note})" if dirt_note else ""))
             continue
+        # A worktree cleared only by its CARRIED verdict is re-judged here for the
+        # same reason the dirt is: the census may be minutes old, and this is the
+        # one removal path where a stale measurement deletes a commit rather than
+        # an empty directory (#4419). Re-reading git is cheap next to that.
+        if d.verdict is not None and d.verdict.verdict == "carried":
+            again = verdict_for_worktree(wt.path, pr)
+            if again.verdict != "carried":
+                log.append(f"SKIP  {wt.path} - its content was on main at census time but "
+                           f"reads {again.verdict.upper()} now: {again.detail}")
+                continue
         if dry_run:
             log.append(f"WOULD REMOVE  {wt.path}  [{wt.branch}]  {d.reason}")
             continue
@@ -3832,6 +3883,11 @@ def main(argv: Optional[list[str]] = None) -> int:
                     help="also run the corpus baseline (minutes, not seconds)")
     ap.add_argument("--reap", action="store_true",
                     help="remove worktrees whose PR is MERGED and whose tree is clean")
+    ap.add_argument("--reap-carried", action="store_true",
+                    help="with --reap, ALSO remove a merged worktree whose unpushed commits "
+                         "touch only files byte-identical to the PR's merge commit (the "
+                         "CARRIED verdict). Implies --reap. Opt-in: plain --reap never "
+                         "removes anything carrying unpushed commits")
     ap.add_argument("--dry-run", action="store_true", help="with --reap, only say what it would do")
     ap.add_argument("--identity", default=None, help="agent identity used for the push probe ref")
     ap.add_argument("--agent-id", default=None,
@@ -3913,7 +3969,12 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     slug = repo_slug(repo)
     prs, pr_status = pr_map(slug)
-    rows = collect_worktrees(repo, prs, measure=not args.no_sizes)
+    # --reap-carried implies --reap: asking for the wider removal and getting a
+    # report is the shape that produced #4419 in the first place.
+    if args.reap_carried:
+        args.reap = True
+    rows = collect_worktrees(repo, prs, measure=not args.no_sizes,
+                             carried_ok=args.reap_carried)
 
     # BEFORE the checks that assume a toolchain: `dotnet build`, `dotnet test` and
     # provisioning all need an SDK, so reporting them first describes consequences
