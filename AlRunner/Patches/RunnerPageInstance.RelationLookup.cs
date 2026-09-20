@@ -91,10 +91,23 @@ internal sealed partial class RunnerPageInstance
         // for it that NO corpus test has measured. Guessing "silence" for both would make the
         // runner's answer independent of a difference BC's client does act on.
         //
-        // Deliberately NOT extended to silence by analogy with shape 1 — that analogy is
-        // exactly the unmeasured inference ask-the-corpus-before-claiming-bc-behavior.md
-        // refuses. Tracked as the follow-up named in this file's PR; until a service tier says
-        // otherwise, refusing by name is the honest answer.
+        // MEASURED, and this refusal's stated premise is now known to be FALSE: real BC opens
+        // a modal page here. Corpus codeunit 60569 (fixture "TRL Pageless" 60570, corpus PR
+        // 391) answered "Unhandled UI: ModalPage" on all eight cloud legs, run 35493508143 —
+        // raised from inside NavTestExecution.ShowLookupForm, which registers the form before
+        // it looks for a handler, so BC had already chosen a page.
+        //
+        // It is NOT yet replaced, and the follow-up measurement sharpened why: BC decides to
+        // open a page and then FAILS TO PRODUCE ONE. A handler-bound probe (corpus 391 head
+        // af4b986b) NREs inside ShowLookupForm, which only happens when GetRegisteredForm
+        // answers null — FindHandler's page-id check sits inside `if (appObject != null)`, so
+        // a null form skips it and .ObjectId then dereferences null. No [ModalPageHandler]
+        // probe can name the page for that reason.
+        //
+        // So silence would be a second unmeasured inference, and one the measurement
+        // contradicts: silence is what BC does for shape 1, not for this shape. What is not
+        // established is which page BC intended; #4403 tracks it.
+        // See docs/testpage-lookup.md#why-the-refusal-has-not-yet-been-replaced.
         if (lookupPageId <= 0)
             throw new RunnerOutOfScopeException(
                 $"TestPage lookup on control {controlId} (page {_pageId})",
