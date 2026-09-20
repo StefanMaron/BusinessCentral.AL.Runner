@@ -33,6 +33,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **hooks:** xargs -e and -i take an ATTACHED value only, so the wrapper behind them is reached
 - **hooks:** admit a digit in the xargs option term, so `xargs -0` does not hide the wrapper behind it
 - **hooks:** refuse a stash or CI wait behind stdbuf flags, an -o bundle, or post-xargs noise
 - **hooks:** refuse a stash or CI wait passed to sh -c
@@ -379,6 +380,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **preflight:** pin that --reap-carried implies --reap, by driving main()
 - **ncl:** pin FindCatchRethrowSites' try-block exclusion, which only prose asserted
 - **tools:** drive the label-race step and read its fixture back in one call
 - **guards:** derive the suite-loop guard's reachability probe from the workflow tree, not a single file
