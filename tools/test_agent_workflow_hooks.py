@@ -695,9 +695,18 @@ for name, cmd in STDBUF_OPT_BLOCKED:
 ok, d = blocks(REFUSE, "stdbuf -oL tools/ci-wait.py 4421 --timeout 2700", "--timeout 0")
 check("a wait behind stdbuf -oL", ok, d)
 
-# The over-blocking direction. `stdbuf -oL <build>` is ordinary work; the third
-# arm is the discriminating one -- it names a refused tool in an ARGUMENT, so a
-# term that swallowed a following WORD would expose `git stash` and block.
+# The over-blocking direction. `stdbuf -oL <build>` is ordinary work.
+#
+# The LAST arm is the discriminating one, and it is the only shape that is:
+# every form of `stdbuf`/`setsid` attaches its value, so a term that wrongly
+# swallowed a following WORD would strip the tool name and expose the words
+# after it. `./mytool git stash` is a tool taking those two as ARGUMENTS -- no
+# stash runs -- so the widened term blocks it and the verdict moves.
+#
+# Note which direction the widening error actually takes, because it is not the
+# one the shape suggests: swallowing a word usually eats `git` and leaves
+# `stash`, which `GIT_STASH` does not match, so the commoner failure is
+# UNDER-blocking and the BLOCKED arms above catch it (#4421).
 STDBUF_OPT_ALLOWED = [
     ("stdbuf -oL running a test sweep", "stdbuf -oL dotnet test AlRunner.Tests"),
     ("setsid -f running a detached runner", "setsid -f al-runner run --bundle app.json"),
@@ -707,6 +716,8 @@ STDBUF_OPT_ALLOWED = [
      "stdbuf -oL echo 'never run git stash'"),
     ("a --timeout 0 read behind stdbuf -oL",
      "stdbuf -oL tools/ci-wait.py 4421 --timeout 0"),
+    ("stdbuf -oL running a tool that TAKES `git stash` as arguments",
+     "stdbuf -oL ./mytool git stash"),
 ]
 for name, cmd in STDBUF_OPT_ALLOWED:
     ok, d = allows(REFUSE, cmd)
@@ -729,18 +740,31 @@ for name, cmd in O_BUNDLE_BLOCKED:
 ok, d = blocks(REFUSE, "bash -euo pipefail -c 'gh run watch 1'", "--timeout 0")
 check("a wait via bash -euo pipefail -c", ok, d)
 
-# Over-blocking: only `-o`/`+o` may be followed by a word. The last two arms are
-# the discriminating ones -- a term admitting ANY word between the shell name
-# and `-c` would read their `-c` argument as a command and block them.
+# Over-blocking: only a bundle ENDING in `o` may be followed by a word, because
+# only `-o`/`+o` take one in a POSIX shell.
+#
+# The last two arms are the discriminating ones and they are deliberately built
+# from a REAL shell name -- `sh`, `bash` -- with a bare word before the `-c`.
+# Anything else cannot discriminate here however plausible it reads: a
+# `--`-prefixed option or a name like `sh_wrapper` fails the shell-name anchor
+# or the flag alternation for reasons that have nothing to do with the word
+# term, so a widening mutation passes them and is absorbed. Measured on #4421,
+# where two such arms were written first and caught only by running the
+# mutation: widening the term to admit any word left ALL 214 checks green.
+#
+# What these two pin is the word term itself: `bash foo -c '<cmd>'` is not a
+# shell running `<cmd>` -- bash treats `foo` as `$0`, so there is no `-c` string
+# to judge -- and a term admitting an arbitrary word would read the argument as
+# a command and block them.
 O_BUNDLE_ALLOWED = [
     ("a build under -euo pipefail",
      "bash -euo pipefail -c 'dotnet build AlRunner'"),
     ("a grep for the rule text under -euo pipefail",
      "bash -euo pipefail -c 'command grep -rn \"git stash\" .claude/rules'"),
-    ("a non-shell whose -c argument names a refused tool, with a word before it",
-     "tools/engine-test-bootstrap.sh --mode fast -c 'git stash'"),
-    ("a non-shell called sh with a positional before -c",
-     "sh_wrapper build -c 'git stash'"),
+    ("a bare word before -c, whose argument names a refused tool",
+     "sh build -c 'git stash'"),
+    ("a bare word before -c, whose argument names a wait",
+     "bash foo -c 'gh run watch 1'"),
 ]
 for name, cmd in O_BUNDLE_ALLOWED:
     ok, d = allows(REFUSE, cmd)
@@ -771,6 +795,22 @@ check("a wait via xargs -I{} timeout 30 bash -c", ok, d)
 # list this hook cannot see it is not the same command. The second is the same
 # property with noise in between -- noise, then NO wrapper, so the intro is
 # still not consumed. The rest are ordinary work through the same shapes.
+#
+# KNOWN GAP, deliberately left, and the first two arms ASSERT it rather than
+# cover it. A differential against real bash (#4421) confirms bash DOES run the
+# stash for both: GNU `xargs` execs `git stash` directly, appending whatever
+# stdin supplies.
+#
+# Measured, because the tempting justification for the gap is false: GNU xargs
+# runs the command ONCE EVEN ON EMPTY STDIN -- `printf "" | xargs git stash`
+# logs `git stash` -- so "it might be a no-op depending on data the hook cannot
+# see" is not why this is allowed. It needs `-r`/`--no-run-if-empty` to skip.
+#
+# The real reason is scope: closing it means stripping `xargs` unconditionally,
+# and the intro then exposes whatever follows for EVERY `xargs` pipeline, which
+# is the widening #4420 declined. Left as the narrower, pre-existing contract
+# rather than widened here. The gap is LOUD rather than silent: it is asserted
+# by these arms, so a later widening reds them instead of passing quietly.
 INTRO_NOISE_ALLOWED = [
     ("xargs NOT followed by a wrapper", "git ls-files | xargs git stash"),
     ("xargs, then noise, then NO wrapper",
