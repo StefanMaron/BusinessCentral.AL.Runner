@@ -25,10 +25,10 @@ Whether the command produces a correct ANSWER. That is the business of
 itself against #4347's own figures. This guard pins only the wiring, which is
 the half that had no owner.
 
-Usage text is what establishes the flags, read from `--help` or, for the scripts
-here that hand-roll their CLI and reject it, from a bare invocation. A script
-neither form can interrogate is unmeasurable and REFUSES (exit 3) rather than
-passing: a command that could not be read is not a command that was verified.
+Usage text is read from `--help`, and only from the `usage:` line it prints. A
+script whose `--help` cannot be read is unmeasurable and REFUSES (exit 3)
+rather than passing: a command that could not be read is not a command that was
+verified. There is no bare-invocation fallback -- see `help_text`.
 
 A bare mention with no subcommand and no flags (`use tools/lsp-query.py`)
 prescribes nothing beyond the file, so its existence is the whole check.
@@ -46,6 +46,7 @@ AGENT_DIR = REPO / ".claude" / "agents"
 failures: list[str] = []
 refusals: list[str] = []
 checked = 0
+interrogated = 0
 
 
 def check(name: str, cond: bool, detail: str = "") -> None:
@@ -99,26 +100,35 @@ def usage_block(text: str) -> str:
 
 
 def help_text(script: Path, sub: str | None) -> str | None:
-    """Usage text for a script or subcommand; None if it could not be read.
+    """`--help` usage text for a script or subcommand; None if it refused.
 
-    `--help` is the argparse path and covers almost everything here. A few
-    scripts hand-roll their CLI and reject `--help` outright (`lsp-query.py`
-    answers `unknown command '--help'`), but print usage on a bare invocation --
-    so a refusal from the first form is not yet a refusal, and treating it as
-    one would red this guard forever on a healthy repository.
+    There is deliberately NO fallback to a bare invocation, and the reasoning is
+    the whole point of `usage_block` above.
+
+    An earlier revision fell back to running the script with no arguments when
+    `--help` failed, citing `lsp-query.py`, which hand-rolls its CLI and answers
+    `unknown command '--help'`. Review (#4414) established that both halves of
+    that were wrong. It never fires -- `lsp-query.py` is a bare MENTION in the
+    prose, no subcommand and no flags, so it is skipped before reaching here,
+    and all 11 interrogated invocations accept `--help`. And if it did fire it
+    would be actively harmful: a bare run prints the TOP-LEVEL usage, which
+    advertises subcommands and flags this particular invocation was never shown
+    to accept -- reintroducing exactly the defect `usage_block` exists to
+    remove, one level down.
+
+    So a script whose `--help` cannot be read is unmeasurable and refuses. If a
+    hand-rolled CLI is ever prescribed WITH a subcommand or flag, this refuses
+    loudly and someone teaches the guard to interrogate that CLI properly --
+    which is the correct outcome, and the one a silent fallback would hide.
     """
-    first = _run([sys.executable, str(script)] + ([sub] if sub else []) + ["--help"])
-    if first is not None and first[0] == 0:
-        return usage_block(first[1]) or first[1]
+    got = _run([sys.executable, str(script)] + ([sub] if sub else []) + ["--help"])
+    if got is not None and got[0] == 0:
+        return usage_block(got[1]) or got[1]
 
-    bare = _run([sys.executable, str(script)])
-    if bare is not None and bare[1].strip():
-        return usage_block(bare[1]) or bare[1]
-
-    detail = first[1].strip().splitlines()[-1:] if first else ["subprocess failed"]
+    detail = got[1].strip().splitlines()[-1:] if got else ["subprocess failed"]
     refusals.append(
-        f"{script.name}{' ' + sub if sub else ''}: neither --help nor a bare "
-        f"invocation produced usage text ({detail or ['(no output)']})")
+        f"{script.name}{' ' + sub if sub else ''}: --help could not be read "
+        f"({detail or ['(no output)']})")
     return None
 
 
@@ -140,8 +150,27 @@ for md in md_files:
         flags = frozenset(LONG_FLAG.findall(tail))
         seen.add((script_name, sub, flags))
 
+# A floor on the POPULATION, not only on the verdict. Breaking the flag regex
+# alone takes the run from 22 checks to 3 and still prints "all 3 ... passed"
+# at exit 0 (measured in review of #4414): the guard stops seeing and therefore
+# stops complaining, which is indistinguishable from a clean repository.
+#
+# `bool(seen)` cannot catch that -- it is satisfied by one surviving match. The
+# floors below are deliberately under the current figures (17 invocations, 11
+# interrogated, 22 checks) so that ordinary prose edits do not red the guard,
+# while the 86% collapse that a broken extractor produces cannot pass. Raise
+# them only alongside a measurement; a floor tightened to today's exact count
+# turns every legitimate edit into a failure.
+MIN_INVOCATIONS = 10
+MIN_INTERROGATED = 6
+
 check("at least one prescribed tools/ invocation was found", bool(seen),
       "the extractor matched nothing -- it has probably drifted from the prose")
+check(f"the extractor still sees a plausible population (>= {MIN_INVOCATIONS})",
+      len(seen) >= MIN_INVOCATIONS,
+      f"only {len(seen)} invocation(s) extracted from {len(md_files)} agent "
+      f"definition(s); a regex that matches less is a guard going blind, not a "
+      f"repository that got smaller")
 
 for script_name, sub, flags in sorted(seen, key=lambda t: (t[0], t[1] or "")):
     script = REPO / "tools" / script_name
@@ -155,6 +184,7 @@ for script_name, sub, flags in sorted(seen, key=lambda t: (t[0], t[1] or "")):
         # verify beyond the file, which exists. Nothing to interrogate.
         continue
 
+    interrogated += 1
     text = help_text(script, sub)
     if text is None:
         continue  # recorded as a refusal; reported below
@@ -170,6 +200,12 @@ for script_name, sub, flags in sorted(seen, key=lambda t: (t[0], t[1] or "")):
     for flag in sorted(flags):
         check(f"{label} {flag} -- accepted", flag in text,
               f"{flag} not in --help for {label}")
+
+check(f"enough invocations carried a surface to interrogate (>= {MIN_INTERROGATED})",
+      interrogated >= MIN_INTERROGATED,
+      f"only {interrogated} invocation(s) named a subcommand or a flag; if the "
+      f"argument-tail regex breaks, every invocation degrades to a bare mention "
+      f"and this suite verifies nothing but that some files exist")
 
 print()
 if refusals:

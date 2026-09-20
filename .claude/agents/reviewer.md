@@ -222,11 +222,22 @@ tools/comment-density.py diff --since <round-1-head>       # what THIS REVIEW ad
 
 **Use the tool, not a hand-rolled diff.** The figure is three-dot against a merge base resolved
 to a SHA, and the base is the whole difficulty: `gh pr diff` and `git diff origin/main..HEAD`
-both attribute every commit `main` has gained since the branch point to the branch. Measured on
-#4347's own subject, PR #4336 — truth `+19 comment / +9 code`, two-dot against a `main` twelve
-days ahead: **`+78 comment / +218 code`**, the branch credited with 24x the code it wrote. The
-error grows with the distance, so it is smallest exactly when someone checks it by hand and
-largest on the long-lived branches where the number matters.
+both attribute every commit `main` has gained since the branch point to the branch.
+
+Measured on #4347's own subject, PR #4336 (merge base `161a4d4a`, 2026-09-18), read on
+2026-09-19 at `origin/main` = `07787531`, **84 commits later**:
+
+| how the same branch is measured | result |
+|---|---|
+| three-dot against the merge base (truth) | `+19 comment / +9 code` |
+| two-dot against that `origin/main` | `+78 comment / +218 code` |
+
+**The ratio is a property of the distance, not of the branch**, so treat the second row as a
+reading taken at one moment and re-derive it rather than quoting it: walking `origin/main` back
+gives roughly 24x at 84 commits, 12x at 64 and 8x at 24. What does not move is the direction —
+the error grows with the distance, so it is smallest exactly when someone spot-checks it by hand
+and largest on the long-lived branches where the number is actually quoted. A day and a half of
+`main` was enough to produce the row above.
 
 The classifier is not what was wrong — the same `awk` one-liner this block used to carry agrees
 with the tool to the line when handed the correct base. Do not read this as "the old recipe
