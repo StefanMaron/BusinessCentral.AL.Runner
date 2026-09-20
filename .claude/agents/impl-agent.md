@@ -92,7 +92,7 @@ cd .claude/worktrees/<AGENT-ID>-issue-<N>
 
 **If that directory already exists and you are not resuming this issue, stop and report.** Somebody else is in it. Do not reset it, do not `cd` into it, and do not run the two checks as though it were yours to reclaim — a foreign claim looks identical whether the agent that made it is live or gone.
 
-Per-issue directories do not accumulate: `tools/preflight.py --reap` removes the worktrees of MERGED pull requests once they are clean, keyed on the pull request's state rather than on the directory's name.
+Per-issue directories do not accumulate: `tools/preflight.py --reap` removes the worktrees of MERGED pull requests once they are clean, keyed on the pull request's state rather than on the directory's name. `--reap-carried` additionally removes one whose unpushed commits touch only files byte-identical to its PR's merge commit; plain `--reap` reports that case and keeps it (#4419).
 
 Before your first commit, check the directory, the branch, and who holds the branch on the remote:
 

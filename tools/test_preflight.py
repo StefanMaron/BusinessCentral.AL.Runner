@@ -3283,6 +3283,25 @@ try:
         _log = pf.reap(_vrepo, _rows, dry_run=True)
         check("reap-carried: --dry-run names the carried worktree it would remove",
               any(_wt_dir in ln and "WOULD REMOVE" in ln for ln in _log), f"{_log}")
+
+        # ...and the reaper RE-JUDGES the verdict rather than trusting the census,
+        # for the same reason it re-reads the dirt: the census may be minutes old,
+        # and this is the one removal path where a stale measurement deletes a
+        # COMMIT rather than an empty directory. Simulated by committing a file the
+        # merge commit never had, AFTER the row was built -- which is exactly what
+        # an agent doing a last-minute edit in a reaped worktree looks like.
+        _vgw("checkout", "-q", "-b", "drifted")
+        with open(os.path.join(_wt_dir, "arrived-late.txt"), "w") as _fh:
+            _fh.write("written after the census\n")
+        _vgw("add", "arrived-late.txt")
+        _vgw("commit", "-qm", "feat: work that arrived after the census")
+        _log2 = pf.reap(_vrepo, _rows, dry_run=True)
+        check("reap-carried: the reaper re-judges the verdict and SKIPS one that drifted",
+              any(_wt_dir in ln and ln.startswith("SKIP") for ln in _log2), f"{_log2}")
+        check("reap-carried: ...and says so rather than removing it silently",
+              not any(_wt_dir in ln and "WOULD REMOVE" in ln for ln in _log2), f"{_log2}")
+        _vgw("checkout", "-q", "agent/x/issue-1")
+        _vgw("branch", "-qD", "drifted")
     _vg("worktree", "remove", "--force", _wt_dir)
 finally:
     shutil.rmtree(_v_tmp, ignore_errors=True)
