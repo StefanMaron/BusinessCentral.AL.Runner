@@ -152,6 +152,17 @@ SHELL_DASH_C = re.compile(
 # into a fresh leak. Both halves are pinned per letter; drop any one and exactly
 # its own arm reds.
 #
+# The LONG options need the same split, and did not have it (#4430):
+# `--[\w-]+(?:=\S+)?` models `=`-attached or value-less, and GNU also takes a
+# DETACHED value for the five whose value is mandatory, so the wrapper stood one
+# word later and was unreached. The long synonyms land on the same side as their
+# short forms -- `--replace`/`--eof`/`--max-lines` are `-i`/`-e`/`-l`, optional,
+# and must NOT swallow a word: `xargs --replace {} bash -c '<refused>'` execs
+# `{}` and never runs the tool, so allowing it is correct rather than a gap.
+# Trap: the mandatory-value alternative must come BEFORE `--[\w-]+`, or that arm
+# matches `--max-args` first and strands its value -- swapping the two reds all
+# eight #4430 arms.
+#
 # This cannot widen what is EXPOSED, in either place. The caller consumes this
 # intro only when a shell wrapper stands directly behind it, so `xargs -0 git
 # stash` is left alone exactly as `xargs git stash` is -- #4420's M5 property,
@@ -164,6 +175,7 @@ SHELL_DASH_C = re.compile(
 # read a green from mutating it as coverage (#4425, re-measured at #4428).
 ARGV_INTRO = re.compile(
     r'^(?:xargs(?:\s+(?:-[ILnPsEad]\s*\S+|-[A-Za-z0-9]\S*'
+    r'|--(?:max-args|max-procs|max-chars|delimiter|arg-file)(?:=\S+|\s+\S+)'
     r'|--[\w-]+(?:=\S+)?))*'
     r'|(?:\S+\s+)*?-exec(?:dir)?)\s+')
 
