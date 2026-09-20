@@ -136,15 +136,34 @@ SHELL_DASH_C = re.compile(
 # either, so they leaked the same way with no digit anywhere (measured on
 # 96e3bfb5..f704689e, where `xargs -r bash -c 'git stash'` is ALLOW).
 #
-# This cannot widen what is EXPOSED: the caller consumes this intro only when a
-# shell wrapper stands directly behind it, so `xargs -0 git stash` is left alone
-# exactly as `xargs git stash` is -- #4420's M5 property, pinned by its own arm.
-# Trap: the `\S+` is intent, not a constraint. Relaxing it to `\S*` changes no
-# remainder in 210 probed combinations, because the value-less arm below already
-# covers the same text once the optional value is empty -- so do not cite it as
-# load-bearing, and do not read a green from mutating it as coverage (#4425).
+# The split is by MANDATORY value, not by "takes a value at all". GNU gives
+# `-e[END]`, `-i[=R]` and `-l[MAX]` an OPTIONAL value, and an optional value is
+# attached only -- a detached word is the COMMAND -- so `-e` and `-i` leaked the
+# wrapper exactly as the value-less flags above did (#4428; `-l` was correct
+# only because it had been omitted). Their uppercase synonyms `-E`, `-I`, `-L`
+# take a mandatory value and stay. Measured by execution on GNU findutils
+# 4.11.0: `xargs -e echo MARKER` prints `MARKER`, `xargs -E bash -c ...` answers
+# `invalid option -- 'c'` because `-E` ate `bash`.
+#
+# The value-LESS arm carries the attached forms, which is why it ends `\S*`
+# rather than `+`: `-eEOF` is all alphanumeric and matched either way, but
+# `-i{}` -- the idiomatic spelling -- is not, so dropping `i` from the class
+# without that widening would have stranded `xargs -i{} bash -c '<refused>'`
+# into a fresh leak. Both halves are pinned per letter; drop any one and exactly
+# its own arm reds.
+#
+# This cannot widen what is EXPOSED, in either place. The caller consumes this
+# intro only when a shell wrapper stands directly behind it, so `xargs -0 git
+# stash` is left alone exactly as `xargs git stash` is -- #4420's M5 property,
+# pinned by its own arm. And the value-less arm consumes one word beginning with
+# `-`, which no wrapper and no detached value does: `bash`, `sh`, `git`, `{}`,
+# `1` and `files.txt` all fail `-[A-Za-z0-9]\S*` as whole words.
+# Trap: the `\S+` in the value-taking arm is intent, not a constraint. Relaxing
+# it to `\S*` reds nothing, because the value-less arm covers the same text once
+# the optional value is empty -- so do not cite it as load-bearing, and do not
+# read a green from mutating it as coverage (#4425, re-measured at #4428).
 ARGV_INTRO = re.compile(
-    r'^(?:xargs(?:\s+(?:-[IiLnPsEead]\s*\S+|-[A-Za-z0-9]+'
+    r'^(?:xargs(?:\s+(?:-[ILnPsEad]\s*\S+|-[A-Za-z0-9]\S*'
     r'|--[\w-]+(?:=\S+)?))*'
     r'|(?:\S+\s+)*?-exec(?:dir)?)\s+')
 

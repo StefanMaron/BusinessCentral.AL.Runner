@@ -934,6 +934,109 @@ for name, cmd in DIGIT_INTRO_ALLOWED:
     ok, d = allows(REFUSE, cmd)
     check("allowed: " + name, ok, d)
 
+# 5. An OPTIONAL-value xargs flag must not eat a detached word (#4428). GNU
+#    gives `-e[END]`, `-i[=R]` and `-l[MAX]` an optional value, and an optional
+#    value is ATTACHED ONLY -- a detached word is the COMMAND. Measured on GNU
+#    findutils 4.11.0 by execution, not by reading the manual:
+#
+#      printf x | xargs -e echo MARKER  ->  MARKER x   (-e did NOT eat `echo`)
+#      printf x | xargs -i echo MARKER  ->  MARKER     (-i did NOT eat `echo`)
+#      printf x | xargs -E bash -c ...  ->  xargs: invalid option -- 'c'
+#                                                    (-E DID eat `bash`)
+#
+#    So the case distinction is real: `-E`/`-I`/`-L` take a MANDATORY value and
+#    stay value-taking, while their lowercase synonyms `-e`/`-i`/`-l` do not.
+#
+#    The attached forms stay blocked through the value-LESS arm, which had to
+#    widen from `-[A-Za-z0-9]+` to `-[A-Za-z0-9]\S*` for that: `-eEOF` is all
+#    alphanumeric and matched already, but `-i{}` -- the idiomatic spelling --
+#    is not, so dropping `i` from the value-taking class without the widening
+#    would have STRANDED `xargs -i{} bash -c '<refused>'` into a fresh leak.
+#    The widening cannot reach a wrapper or a detached value: it consumes one
+#    word beginning with `-`, and `bash`, `sh`, `git`, `{}`, `1` and `files.txt`
+#    all fail `-[A-Za-z0-9]\S*` as whole words.
+print("\n#4428 an OPTIONAL-value xargs flag must not eat the wrapper behind it")
+OPTIONAL_VALUE_BLOCKED = [
+    # The two leaks. Both really executed the tool at ff0e2358, proven with a
+    # shim `git` on PATH that logs whether it ran.
+    ("xargs -e bash -c (optional value, DETACHED -- bash is the command)",
+     "printf a | xargs -e bash -c 'git stash'"),
+    ("xargs -i bash -c (optional value, DETACHED)",
+     "printf a | xargs -i bash -c 'git stash'"),
+    # `-l` was correct only because it was omitted; pin it so it stays correct.
+    ("xargs -l bash -c (the third optional-value flag)",
+     "printf a | xargs -l bash -c 'git stash'"),
+    # The attached forms, which must keep blocking. `-i{}` is the one the naive
+    # fix breaks, so it is the arm that decides whether the widening happened.
+    ("xargs -i{} bash -c (attached value with BRACES, not [A-Za-z0-9])",
+     "printf a | xargs -i{} bash -c 'git stash'"),
+    ("xargs -eEOF bash -c (attached value, alphanumeric)",
+     "printf a | xargs -eEOF bash -c 'git stash'"),
+    ("xargs -l5 bash -c (attached value, digit)",
+     "printf a | xargs -l5 bash -c 'git stash'"),
+    ("xargs -i%% bash -c (attached value, punctuation replace-str)",
+     "printf a | xargs -i%% bash -c 'git stash'"),
+    # Mixed with the flags the other arms cover, in both orders.
+    ("xargs -e -n 1 bash -c (optional-value flag BEFORE a value-taking one)",
+     "printf a | xargs -e -n 1 bash -c 'git stash'"),
+    ("xargs -0 -i bash -c (a digit flag, then an optional-value one)",
+     "find . -print0 | xargs -0 -i bash -c 'git stash'"),
+    ("xargs -i timeout 30 bash -c (optional-value flag, then noise)",
+     "printf a | xargs -i timeout 30 bash -c 'git stash'"),
+]
+for name, cmd in OPTIONAL_VALUE_BLOCKED:
+    ok, d = blocks(REFUSE, cmd, "no-git-stash-with-worktrees")
+    check("stash via " + name, ok, d)
+
+ok, d = blocks(REFUSE, "printf a | xargs -e bash -c 'gh run watch 1'", "--timeout 0")
+check("a wait via xargs -e bash -c", ok, d)
+
+# Every MANDATORY-value letter the class keeps, one arm each. Dropping any one
+# letter from `-[ILnPsEad]` reds exactly its own arm and nothing else: before
+# this block six of the ten letters were unpinned, so the class could lose a
+# member with all 252 assertions green -- which is how -e and -i got in.
+#
+# The value in each arm is a REAL value for that flag, and the wrapper behind it
+# carries a refused tool, so a flag that stops swallowing its word puts `bash`
+# out of command position and the VERDICT flips. An ALLOW-only control over
+# harmless text could not fail here whatever the class says.
+MANDATORY_VALUE_LETTERS = [
+    ("I", "{}"), ("L", "1"), ("n", "1"), ("P", "4"),
+    ("s", "1000"), ("E", "STOP"), ("a", "files.txt"), ("d", ","),
+]
+for letter, value in MANDATORY_VALUE_LETTERS:
+    ok, d = blocks(REFUSE,
+                   f"git ls-files | xargs -{letter} {value} bash -c 'git stash'",
+                   "no-git-stash-with-worktrees")
+    check(f"stash via xargs -{letter} {value} bash -c "
+          f"(-{letter} takes a MANDATORY value, so the wrapper is one word later)",
+          ok, d)
+
+# Over-blocking. The widened value-less arm consumes one word starting with `-`,
+# so it must not reach a wrapper, a value, or a non-shell `-c`. Each arm below
+# puts a refused tool where a wrong parse exposes it.
+OPTIONAL_VALUE_ALLOWED = [
+    ("xargs -i NOT followed by a wrapper (#4420 M5, with an optional-value flag)",
+     "echo 1 | xargs -i git stash"),
+    ("xargs -e NOT followed by a wrapper",
+     "echo 1 | xargs -e git stash"),
+    ("xargs -i{} NOT followed by a wrapper",
+     "echo 1 | xargs -i{} git stash"),
+    ("xargs -i, then noise, then NO wrapper",
+     "echo 1 | xargs -i timeout 30 git stash"),
+    ("xargs -i{} running a bootstrap whose -c is a config flag",
+     "ls | xargs -i{} tools/engine-test-bootstrap.sh -c Debug"),
+    ("xargs -e running a bootstrap whose -c argument NAMES a refused tool",
+     "ls | xargs -e tools/engine-test-bootstrap.sh -c 'git stash'"),
+    ("xargs -i{} bash -c greping for the rule text",
+     "ls | xargs -i{} bash -c 'command grep -rn \"git stash\" .claude/rules'"),
+    ("a --timeout 0 read via xargs -i{} and noise",
+     "echo 4428 | xargs -i{} timeout 30 bash -c 'tools/ci-wait.py {} --timeout 0'"),
+]
+for name, cmd in OPTIONAL_VALUE_ALLOWED:
+    ok, d = allows(REFUSE, cmd)
+    check("allowed: " + name, ok, d)
+
 # Non-CI background work is untouched by this widening.
 print("\nnon-CI work is unaffected by the cap rule")
 for name, cmd in [
