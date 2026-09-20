@@ -698,9 +698,43 @@ internal static partial class BcAppSymbolCache
     /// <param name="IncludeSender">The publisher's <c>IncludeSender</c>, which BC writes on the
     /// <c>EventPublisherAttribute</c> element. False for every non-publisher kind.</param>
     /// <param name="Isolated">The publisher's <c>Isolated</c>, same element.</param>
+    /// <param name="InherentPermission">The four values BC writes on an
+    /// <c>InherentPermissionsMethodAttribute</c> element beyond <c>Name</c>, or null for every
+    /// other kind. See <see cref="InherentPermissionSymbol"/>.</param>
     internal sealed record CodeunitMethodSymbol(
         int Id, string Name, string Kind, string AttributeName,
-        bool IncludeSender = false, bool Isolated = false);
+        bool IncludeSender = false, bool Isolated = false,
+        InherentPermissionSymbol? InherentPermission = null);
+
+    /// <summary>
+    /// The four attributes BC's emitter writes on an <c>InherentPermissionsMethodAttribute</c>
+    /// element beyond <c>Name</c>, read off the AL attribute's POSITIONAL arguments:
+    /// <c>InherentPermissions(ObjectType, ObjectId, Mask[, Scope])</c>.
+    ///
+    /// <para>Measured against BC's own emitter at 28.1.49838.53910
+    /// (<c>Microsoft.Dynamics.Nav.Ncl.dll</c> sha256 <c>49b11d9b…</c>): over Business Foundation
+    /// + System Application, 17 of the 24 elements BC writes have a symbol entry and this
+    /// mapping reproduces all four values on 17 of 17, with zero disagreements. The other 7 are
+    /// on <c>local</c> methods the symbol file does not state at all — codeunits 306, 307, 309
+    /// and 8705 — so they are not rendered here for the same reason no subscriber is.
+    /// docs/codeunit-metadata-from-bc.md#the-inherentpermissions-method-attribute has the
+    /// per-value derivation and the probe that settled the ones the shipped apps do not vary.</para>
+    /// </summary>
+    /// <param name="ObjectType">Argument 0, written VERBATIM — <c>TableData</c>, <c>Codeunit</c>,
+    /// <c>Page</c>. Not an ordinal and not re-spelled.</param>
+    /// <param name="ObjectId">Argument 1, written VERBATIM. The symbol file already states a
+    /// NUMBER here (AL's <c>Database::"No. Series Line"</c> is resolved by the compiler), so
+    /// this is a read rather than a name-to-id resolution.</param>
+    /// <param name="PermissionValue">Argument 2, the AL mask letters decoded through the shared
+    /// <c>TryDecodePermissionMaskLettersCore</c> — the same arithmetic, and the same
+    /// case-significance, as every other inherent mask in this codebase.</param>
+    /// <param name="Scope">Argument 3, the ORDINAL of BC's own
+    /// <c>Microsoft.Dynamics.Nav.Runtime.Permissions.InherentPermissionsScope</c>, whose
+    /// decompiled body is <c>{ Both, Permissions, Entitlements }</c>. An ABSENT argument and an
+    /// explicit <c>Both</c> both answer 0, which is why the 24 measured elements all reading 0
+    /// was not evidence that this is a constant.</param>
+    internal sealed record InherentPermissionSymbol(
+        string ObjectType, string ObjectId, int PermissionValue, int Scope);
 
     // SymbolReference.json container name → the AllObj "Object Type" option name the
     // objects inside it map to. Matched against the live option string by name, so a
@@ -2754,6 +2788,87 @@ internal static partial class BcAppSymbolCache
     }
 
     /// <summary>
+    /// BC's own <c>InherentPermissionsScope</c> ordinals, which the attribute's fourth argument
+    /// names. The enum's decompiled body at 28.1.49838.53910 is
+    /// <c>{ Both, Permissions, Entitlements }</c>, so <c>Both</c> is 0 — the same value an
+    /// ABSENT argument produces, which is deliberate rather than a coincidence this table has
+    /// to work around.
+    /// </summary>
+    private static readonly Dictionary<string, int> InherentPermissionScopeOrdinals =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Both"] = 0,
+            ["Permissions"] = 1,
+            ["Entitlements"] = 2,
+        };
+
+    /// <summary>
+    /// The four <c>InherentPermissions</c> values off the attribute's POSITIONAL arguments —
+    /// <c>(ObjectType, ObjectId, Mask[, Scope])</c>. Returns null when the attribute states
+    /// fewer than the three required arguments, which is the shape the pre-#4339 fixtures carry
+    /// and which BC's own reader tolerates: the element keeps its <c>Name</c> and states no
+    /// value where the runner has none, rather than fabricating one.
+    ///
+    /// <para><b>An unreadable value refuses the whole set rather than contributing a default</b>
+    /// (guards-need-a-third-state.md). A mask letter outside <c>PermissionMaskLetters</c>, a
+    /// non-numeric object id, or a scope name outside BC's three all mean the symbol file states
+    /// something this cannot read — and writing three of four attributes would put a partial
+    /// association in BC's slot, which is the failure mode the whole <c>&lt;Methods&gt;</c>
+    /// derivation is built to avoid. The caller reports it; see the two call sites, which differ
+    /// only in how loud they are allowed to be.</para>
+    /// </summary>
+    private static InherentPermissionSymbol? ReadInherentPermission(
+        JsonElement attribute, out string? unreadable)
+    {
+        unreadable = null;
+        if (!attribute.TryGetProperty("Arguments", out var arguments)
+            || arguments.ValueKind != JsonValueKind.Array)
+            return null;
+
+        var args = new List<string>();
+        foreach (var argument in arguments.EnumerateArray())
+            args.Add(argument.TryGetProperty("Value", out var v) ? v.GetString() ?? "" : "");
+
+        if (args.Count < 3) return null;
+
+        var objectType = args[0];
+        var objectId = args[1];
+        if (string.IsNullOrWhiteSpace(objectType) || string.IsNullOrWhiteSpace(objectId))
+        {
+            unreadable = $"object type '{objectType}' / object id '{objectId}'";
+            return null;
+        }
+
+        // BC writes the id verbatim, but it must still BE a number: a symbol file stating a
+        // name here would be a shape this has never seen, and passing it through would put
+        // an unparseable value in BC's slot rather than saying so.
+        if (!int.TryParse(objectId, System.Globalization.NumberStyles.Integer,
+                          System.Globalization.CultureInfo.InvariantCulture, out _))
+        {
+            unreadable = $"object id '{objectId}', which is not a number";
+            return null;
+        }
+
+        // The SHARED arithmetic, not a copy: RecordPatches owns the letter table and the
+        // case-significance that goes with it (see TryDecodePermissionMaskLettersCore).
+        if (!RecordPatches.TryDecodePermissionMaskLettersCore(args[2], out var mask, out var badLetter))
+        {
+            unreadable = $"mask '{args[2]}', whose character '{badLetter}' is not a permission letter";
+            return null;
+        }
+
+        var scope = 0;
+        if (args.Count > 3 && !string.IsNullOrWhiteSpace(args[3])
+            && !InherentPermissionScopeOrdinals.TryGetValue(args[3], out scope))
+        {
+            unreadable = $"scope '{args[3]}', which is not one of Both/Permissions/Entitlements";
+            return null;
+        }
+
+        return new InherentPermissionSymbol(objectType, objectId, mask, scope);
+    }
+
+    /// <summary>
     /// The codeunit's attributed methods, in the symbol file's own array order — which is BC's
     /// document order, and which is load-bearing because <c>MetadataObjectDiff</c> pairs
     /// <c>Methods</c> positionally (#3963).
@@ -2781,6 +2896,7 @@ internal static partial class BcAppSymbolCache
             string? kind = null;
             string? attributeName = null;
             bool includeSender = false, isolated = false;
+            InherentPermissionSymbol? inherentPermission = null;
             foreach (var attribute in attributes.EnumerateArray())
             {
                 if (!attribute.TryGetProperty("Name", out var attrName)) continue;
@@ -2791,6 +2907,17 @@ internal static partial class BcAppSymbolCache
                     kind = emitted;
                     attributeName = name;
                     ReadPublisherFlags(name, attribute, out includeSender, out isolated);
+                    if (name == "InherentPermissions")
+                    {
+                        inherentPermission = ReadInherentPermission(attribute, out var unreadable);
+                        if (unreadable is not null)
+                            Console.Error.WriteLine(
+                                $"[BcAppSymbolCache] method '{(method.TryGetProperty("Name", out var mn) ? mn.GetString() : "?")}' "
+                                + $"states an InherentPermissions {unreadable} — the four "
+                                + "InherentPermission* attributes are omitted, so the element "
+                                + "reads as stating none rather than as stating a value nobody "
+                                + "could read");
+                    }
                     break;
                 }
             }
@@ -2803,7 +2930,7 @@ internal static partial class BcAppSymbolCache
 
             (result ??= new List<CodeunitMethodSymbol>()).Add(
                 new CodeunitMethodSymbol(methodId, methodName, kind, attributeName,
-                    includeSender, isolated));
+                    includeSender, isolated, inherentPermission));
         }
         return result;
     }

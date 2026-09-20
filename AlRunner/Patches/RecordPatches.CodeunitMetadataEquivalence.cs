@@ -155,10 +155,42 @@ public static partial class RecordPatches
                 kind.SetAttribute("IncludeSender", method.IncludeSender ? "True" : "False");
                 if (method.Isolated) kind.SetAttribute("Isolated", "True");
             }
+            AppendInherentPermissionAttributes(kind, method.InherentPermission);
             attributes.AppendChild(kind);
             element.AppendChild(attributes);
             methods.AppendChild(element);
         }
+    }
+
+    /// <summary>
+    /// The four attributes BC's emitter writes on an <c>InherentPermissionsMethodAttribute</c>
+    /// element beyond <c>Name</c>, as (name, value) pairs in BC's own document order — ONE
+    /// definition of the set, consumed by both method-table renderers so they cannot drift
+    /// (#4339). The page renderer writes through an <c>XmlWriter</c> and this one through an
+    /// <c>XmlDocument</c>, so the shape is shared as data rather than as a write.
+    ///
+    /// <para>Empty for every other attribute kind, and for an <c>InherentPermissions</c> element
+    /// whose arguments could not be read — in which case <c>Name</c> alone is written, which is
+    /// what the runner emitted for every one of these before #4339 and which BC's own reader
+    /// accepts.</para>
+    /// </summary>
+    internal static IEnumerable<(string Name, string Value)> InherentPermissionAttributes(
+        BcAppSymbolCache.InherentPermissionSymbol? inherent)
+    {
+        if (inherent is null) yield break;
+        yield return ("InherentPermissionObjectType", inherent.ObjectType);
+        yield return ("InherentPermissionObjectId", inherent.ObjectId);
+        yield return ("InherentPermissionPermissionValue",
+            inherent.PermissionValue.ToString(CultureInfo.InvariantCulture));
+        yield return ("InherentPermissionScope",
+            inherent.Scope.ToString(CultureInfo.InvariantCulture));
+    }
+
+    private static void AppendInherentPermissionAttributes(
+        XmlElement kind, BcAppSymbolCache.InherentPermissionSymbol? inherent)
+    {
+        foreach (var (name, value) in InherentPermissionAttributes(inherent))
+            kind.SetAttribute(name, value);
     }
 
     /// <summary>
@@ -209,8 +241,14 @@ public static partial class RecordPatches
     /// metadata document and silently demotes the whole TestPage — measured on that builder,
     /// see the "ORDER IS LOAD-BEARING" note in DependencyPageMetadataXml.cs. Sharing the
     /// arithmetic and not the policy is what keeps a loud failure loud on both paths.</para>
+    ///
+    /// <para><c>internal</c> rather than <c>private</c> because <c>BcAppSymbolCache</c> is a
+    /// DIFFERENT class and decodes the same letters for an <c>InherentPermissions</c> method
+    /// attribute (#4339). Widening it is what keeps that a third caller of one implementation
+    /// instead of a second copy of the arithmetic — and the case-significance this owns is
+    /// exactly the property a copy would lose.</para>
     /// </summary>
-    private static bool TryDecodePermissionMaskLettersCore(
+    internal static bool TryDecodePermissionMaskLettersCore(
         string? letters, out int mask, out char unreadableLetter)
     {
         mask = 0;
