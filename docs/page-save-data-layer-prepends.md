@@ -122,3 +122,51 @@ the modify re-stamped. The corpus therefore adjudicates the page-modify **rule**
 does not discriminate the runner's modify-funnel binding; what does is
 `AlRunner.Tests/PageSaveDataLayerPrependBindingTests.ModifyFunnel_CarriesTheSystemModifiedStamp`,
 which reads the rewritten IL and goes red under two independent mutations.
+
+That limit was taken up as #4330 and is **partly resolved**, in corpus PR
+[#392](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/392). The section
+below records what the attempt measured, because the negative results are the reusable part.
+
+## Why `SystemModifiedAt` cannot pin a page modify (#4330)
+
+Measured on `28.1.49838.53910` against corpus `0e3a448c`. The question was whether the arm above
+could be made to discriminate a platform that stamps nothing on the page-modify path. It cannot,
+and the five candidates each fail differently — the table is here so the next attempt does not
+re-run them.
+
+| candidate | measured | verdict |
+|---|---|---|
+| strict `>` on `SystemModifiedAt` | seed-insert → page-save gap is **0–1 ms** warm; one formulation failed **3 of 10** full-codeunit runs | flaky |
+| filler writes to widen that gap | 40 inserts between the two still left **0–1 ms** | does not work — the cost is in the page machinery either side, not between them |
+| two consecutive page saves | collided **9 of 16** times; the second save is the faster one | worse |
+| `SystemRowVersion` | advanced on **16 of 16** page saves, clock-free | **does not discriminate** — also advanced **8 of 8** with the system-field modify stamp no-op'd, because `RowVersionPatches` stamps at `TempTableDataProvider.Insert/Modify`, a layer below |
+| `SystemModifiedBy` | one session user, unchanged across the modify | cannot move |
+
+So the re-stamp is not observable from that codeunit's shape without depending on tier speed, and
+corpus PR #392 drops the claim rather than asserting it vacuously.
+
+### What it found instead: `Assert` compares DateTimes to the MINUTE
+
+`_fixtures/Assert.al`'s `Equal` compares non-numeric variants as
+`Format(Left, 0, 2) = Format(Right, 0, 2)`, which for a `DateTime` renders `09/20/26 01:10 PM`.
+Measured: a page save **171 ms** after its seed insert compared EQUAL through
+`Assert.AreNotEqual`, while the raw AL `<>` on those two values answered true.
+
+That makes the *other* half of the arm weak too — `SystemCreatedAt must NOT change` held even
+when it moved. Against a mutant whose modify path re-runs the insert stamp, shifting
+`SystemCreatedAt` by 5 ms:
+
+| | that mutant |
+|---|---|
+| the arm before #392 | **PASS, 3 of 3** |
+| the arm in #392, comparing `Format(_, 0, 9)` | **FAIL** |
+
+`Format(_, 0, 9)` is the round-trip form (`2026-09-20T11:10:12.851Z`) and carries milliseconds.
+Tracked for the corpus at large as #4439.
+
+**Trap for anyone re-measuring this**: read the row back with `Get` before capturing a system
+field. Capturing off the in-memory record after `Insert()` gives a value ~7 ms ahead of the
+stored one, which reads as the platform moving `SystemModifiedAt` *backwards* on the next write.
+It does not; that was a probe error, deterministic and reproducible across both write routes,
+and it survived review of its own numbers because BC's decompiled `PopulateAuditFields` supplied
+a plausible mechanism for it (#4439).
