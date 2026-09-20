@@ -345,6 +345,52 @@ for name, cmd in WAIT_AFTER_HEREDOC:
 # so anything after it is swallowed and the whole command is refused if any
 # segment before the heredoc opened is a wait. Asserting the refusal here pins
 # that the unterminated case is not silently permissive.
+# The terminator comparison itself, from both sides. A `<<` body is closed only
+# by a line EQUAL to the delimiter: space-indentation does not close it, while
+# `<<-` strips leading TABS and does. Both arms are needed -- `.strip()` passes
+# the second and fails the first, and "strip nothing" does the reverse.
+# Two heredocs opened on ONE line -- the shape #4402 names. bash consumes the
+# bodies in delimiter order, so a scan that handles only the first swallows the
+# wrong region: it would run body A's scan to the end of body B and blank a
+# wait sitting after both, or expose prose in body B. Both directions asserted.
+print("\n#4402 two heredocs opened on one line, bodies consumed in order")
+ok, d = allows(REFUSE,
+               "cat <<'A' <<'B'\n"
+               "tools/ci-wait.py 1 --timeout 2700\n"
+               "A\n"
+               "gh run watch 5\n"
+               "B")
+check("prose in BOTH bodies of a one-line double heredoc is allowed", ok, d)
+ok, d = blocks(REFUSE,
+               "cat <<'A' <<'B'\n"
+               "prose one\n"
+               "A\n"
+               "prose two\n"
+               "B\n"
+               "tools/ci-wait.py 1 --timeout 2700",
+               "--timeout 0")
+check("...and a wait after BOTH bodies close is still refused", ok, d)
+
+print("\n#4402 what closes a heredoc body: tabs for <<-, never spaces")
+ok, d = allows(REFUSE,
+               "cat > body.md <<'MDEOF'\n"
+               "  MDEOF\n"
+               "tools/ci-wait.py 1 --timeout 2700\n"
+               "MDEOF")
+check("a SPACE-indented delimiter does not close a << body", ok, d)
+ok, d = allows(REFUSE,
+               "cat > body.md <<-'MDEOF'\n"
+               "tools/ci-wait.py 1 --timeout 2700\n"
+               "\tMDEOF")
+check("a TAB-indented delimiter does close a <<- body", ok, d)
+ok, d = blocks(REFUSE,
+               "cat > body.md <<-'MDEOF'\n"
+               "prose\n"
+               "\tMDEOF\n"
+               "tools/ci-wait.py 1 --timeout 2700",
+               "--timeout 0")
+check("...and a wait after that tab-indented terminator is exposed", ok, d)
+
 print("\n#4402 an unterminated heredoc must not become a way to hide a wait")
 ok, d = blocks(REFUSE,
                "tools/ci-wait.py 4402 --timeout 2700\n"
@@ -394,12 +440,20 @@ check("a wait after a multi-line --body closes", ok, d)
 # rather than folded in; it does not occur in the measured population -- 0 of
 # the 41 `bash -c` commands across 15,035 mention a CI wait at all.
 print("\n#4402 single-line quoting is not a document -- these must NOT be cleared")
+# Both arms put the DECISIVE text inside a single-line quote, so blanking every
+# quoted region -- rather than only multi-line ones -- changes the verdict.
+# An earlier pair kept that text outside the quotes and a mutation widening the
+# rule was absorbed; these were built by reading command_text()'s output.
 ok, d = blocks(REFUSE,
-               "while true; do gh api repos/o/r/actions/runs --jq '.x'; sleep 30; done",
+               "while true; do gh api \"repos/o/r/actions/runs?head_sha=abc\" --jq .x; "
+               "sleep 30; done",
                "--timeout 0")
-check("a sleep loop whose poll URL is quoted is still refused", ok, d)
-ok, d = blocks(REFUSE, "tools/ci-wait.py 4402 --timeout 2700 --repo 'o/r'", "--timeout 0")
-check("a wait whose later argument is quoted is still refused", ok, d)
+check("a sleep loop whose poll URL is a quoted argument is still refused", ok, d)
+
+# `--watch` lives inside the quoted argument here, and it is the whole reason
+# the command is refused, so blanking every quoted region would clear it.
+ok, d = blocks(REFUSE, "gh pr checks 4402 \"--watch\"", "--timeout 0")
+check("a wait whose quoted argument carries --watch is still refused", ok, d)
 
 # Non-CI background work is untouched by this widening.
 print("\nnon-CI work is unaffected by the cap rule")

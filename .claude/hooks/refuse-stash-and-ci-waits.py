@@ -200,9 +200,12 @@ def _blank_multiline_quotes(cmd: str) -> str:
 def command_text(cmd: str) -> str:
     """`cmd` with every region bash does not parse as a command blanked out.
 
-    Heredocs first and completely, then multi-line quotes in what remains: a
-    `python3 - <<'PY'` body carries its own single-line quotes, and scanning
-    quote state across a body that has not been removed yet leaves them behind.
+    Heredocs first, then multi-line quotes in what remains. The order is not
+    load-bearing and is not asserted: swapping it changes no verdict on any of
+    the 15,035 measured commands, nor on three hand-built shapes built to break
+    it (a heredoc holding a triple-quoted string, an `--body` whose prose
+    contains a heredoc opener, an unbalanced apostrophe inside a body). It
+    reads better in this order because a heredoc body is the coarser region.
     """
     return _blank_multiline_quotes(_blank_heredoc_bodies(cmd))
 
