@@ -94,11 +94,12 @@ LEADING_NOISE = re.compile(
 # a nested command line: the rest of it already segments, and a second parser
 # would be a second thing to get wrong.
 #
-# `\S*sh` matches `bash`, `sh`, `zsh` and `/bin/bash`; the trailing `\b` after
-# the flag bundle is what keeps `engine-test-bootstrap.sh -c Debug` out -- `-c`
-# there is a CONFIG flag of a script, and that shape is 35 of the 41 `sh -c`-like
-# commands in this project's measured transcript population, against 0 real
-# waits. Over-blocking it would break every bootstrapped test run in the repo.
+# Keep the shell name an ENUMERATED alternation: it is the only thing excluding
+# `engine-test-bootstrap.sh -c Debug`, whose `-c` is a config flag. A `\S*sh`
+# spelling matches that and is the edit to refuse. The hazard is LATENT -- both
+# spellings give the same verdict on every command in the transcripts, since the
+# naive one exposes `Debug`, also not refused -- so only the two arms passing a
+# refused tool as the `-c` ARGUMENT pin it (#4418).
 SHELL_DASH_C = re.compile(
     r'^(?:\S*/)?(?:ba|z|k|da|a)?sh(?:\s+-[A-Za-z]+)*\s+-[A-Za-z]*c\s+[\'"]?')
 
