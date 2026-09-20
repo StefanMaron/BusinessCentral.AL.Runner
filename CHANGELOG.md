@@ -372,6 +372,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **ncl:** pin FindCatchRethrowSites' try-block exclusion, which only prose asserted
 - **tools:** drive the label-race step and read its fixture back in one call
 - **guards:** derive the suite-loop guard's reachability probe from the workflow tree, not a single file
 - **guards:** widen the exit-code-collapse drift guard to any `|| ident=` inside a suite loop
