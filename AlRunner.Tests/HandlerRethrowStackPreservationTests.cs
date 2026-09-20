@@ -420,10 +420,6 @@ public class HandlerRethrowStackPreservationTests
     public void Locator_IgnoresAFilterHandlerEvenWhenItsCatchTypeMatches()
     {
         // The handler-KIND dimension, which the catch-type and range arms cannot reach.
-        // A `finally` would not discriminate: its CatchType is null, so the catch-type guard
-        // rejects it anyway and the kind guard could be deleted unnoticed. A FILTER handler
-        // can carry a CatchType, so only `HandlerType != Catch` rejects this body — and its
-        // handler range is entered by the filter's own evaluation, not by BC's rethrow arm.
         var m = BodyWithFilterHandler(typeof(TargetInvocationException));
 
         Assert.Single(GetBaseExceptionCalls(m));
