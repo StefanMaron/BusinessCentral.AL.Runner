@@ -508,6 +508,93 @@ check("a sleep loop whose poll URL is a quoted argument is still refused", ok, d
 ok, d = blocks(REFUSE, "gh pr checks 4402 \"--watch\"", "--timeout 0")
 check("a wait whose quoted argument carries --watch is still refused", ok, d)
 
+print("\n#4418 a refused command passed to `sh -c` is still a command")
+# The hole: the SPLIT already cuts through a quoted argument, so a wait in the
+# SECOND statement of a `-c` string already lands at segment start and was always
+# refused (`bash -c 'echo hi; git stash'`). Only the FIRST one sat behind the
+# `bash -c '` prefix, which is the single position the refusal judges. So the fix
+# strips the wrapper and its opening quote; it does not re-parse the string.
+BASH_C_BLOCKED = [
+    ("bash -c, single-quoted", "bash -c 'git stash'"),
+    ("bash -c, double-quoted", 'bash -c "git stash"'),
+    ("bash -c, unquoted", "bash -c git stash"),
+    ("sh -c", "sh -c 'git stash'"),
+    ("/bin/bash -c, absolute path", "/bin/bash -c 'git stash'"),
+    ("zsh -c", "zsh -c 'git stash'"),
+    ("-lc flag bundle", "bash -lc 'git stash'"),
+    ("-ec flag bundle", "bash -ec 'git stash'"),
+    ("separate -l then -c", "bash -l -c 'git stash'"),
+    ("env assignment before the wrapper", "FOO=1 bash -c 'git stash'"),
+    ("timeout before the wrapper", "timeout 30 bash -c 'git stash'"),
+    ("nested wrappers", "bash -c 'sh -c \"git stash\"'"),
+    ("inside a command substitution", "x=$(bash -c 'git stash')"),
+    ("xargs sh -c", "echo 1 | xargs -I{} sh -c 'git stash'"),
+]
+for name, cmd in BASH_C_BLOCKED:
+    ok, d = blocks(REFUSE, cmd, "no-git-stash-with-worktrees")
+    check("stash via " + name, ok, d)
+
+BASH_C_WAIT_BLOCKED = [
+    ("ci-wait.py above the cap", "bash -c 'tools/ci-wait.py 4402 --timeout 2700'"),
+    ("ci-wait.py, double-quoted", 'bash -c "tools/ci-wait.py 4402 --timeout 2700"'),
+    ("ci-wait.py with no --timeout", "sh -c 'tools/ci-wait.py 4402'"),
+    ("gh run watch", "sh -c 'gh run watch 1'"),
+    ("gh pr checks --watch", "bash -c 'gh pr checks 4402 --watch'"),
+    ("a wait nested two deep", "bash -c 'bash -c \"gh run watch 1\"'"),
+]
+for name, cmd in BASH_C_WAIT_BLOCKED:
+    ok, d = blocks(REFUSE, cmd, "--timeout 0")
+    check("wait via " + name, ok, d)
+
+# The second statement of a `-c` string was ALREADY refused before #4418, by the
+# split alone. Pinned so a later narrowing of SEGMENT_SPLIT cannot quietly undo it.
+ok, d = blocks(REFUSE, "bash -c 'echo hi; git stash'", "no-git-stash-with-worktrees")
+check("a refused command in the SECOND statement of a -c string", ok, d)
+
+print("\n#4418 the over-blocking direction -- `sh -c` is how ordinary work runs")
+# This is the arm that would bite users: `bash -c` is a legitimate wrapper, and
+# #4402's defect one level down is a command whose ARGUMENT PROSE merely names a
+# refused tool. Stripping the wrapper must not make that prose a command.
+BASH_C_ALLOWED = [
+    ("a trivial command", "bash -c 'echo hi'"),
+    ("a build", "bash -c 'dotnet build AlRunner -c Release'"),
+    ("a detached runner run", "bash -c 'al-runner run --bundle app.json'"),
+    ("a busy loop used as CPU load", "bash -c 'while :; do :; done'"),
+    ("a guard run under a doctored PATH",
+     "PATH=\"$d\" bash -c 'rc=0; python3 tools/test_pr_body.py || rc=1; echo $rc'"),
+    ("xargs sh -c running a corpus count",
+     "echo 1 | xargs -I{} sh -c 'tools/corpus-pass-count.py {} UserProperty_ | head -2'"),
+    # The #4402 defect, one level down: prose INSIDE the -c string that merely
+    # names a refused tool must stay a search, not become a run.
+    ("a grep for the rule text inside -c",
+     "bash -c 'command grep -rn \"git stash\" .claude/rules'"),
+    ("a grep for ci-wait inside -c",
+     "sh -c 'command grep -rn \"ci-wait.py --timeout\" .claude/rules'"),
+    ("an echo naming the tool inside -c", "bash -c 'echo \"never run git stash\"'"),
+    ("a comment naming the tool inside -c", "bash -c 'ls  # git stash is refused'"),
+    # A CI READ under the cap stays allowed inside the wrapper, exactly as outside.
+    ("a --timeout 0 read inside -c", "bash -c 'tools/ci-wait.py 4402 --timeout 0'"),
+    ("a --timeout under the cap inside -c", "bash -c 'tools/ci-wait.py 4402 --timeout 120'"),
+    # `-c` as an ordinary option of something that is NOT a shell. This is the
+    # whole measured population: 35 of the 41 `sh -c`-shaped commands in this
+    # project's transcripts are `engine-test-bootstrap.sh -c Debug` (#4418).
+    ("a .sh script taking -c as a config flag",
+     "tools/engine-test-bootstrap.sh -c Debug 2>&1 | tail -4"),
+    ("dotnet -c Release", "dotnet build AlRunner -c Release"),
+    ("a script whose name merely ends in sh", "tools/refresh -c Debug"),
+]
+for name, cmd in BASH_C_ALLOWED:
+    ok, d = allows(REFUSE, cmd)
+    check("allowed: " + name, ok, d)
+
+# A wrapper is stripped only where a command may START. `bash -c` appearing as a
+# quoted ARGUMENT of something else is prose about the wrapper, not a wrapper.
+ok, d = allows(REFUSE, 'echo "run it with bash -c \'git stash\' to see"')
+check("allowed: prose describing a bash -c invocation", ok, d)
+
+ok, d = allows(REFUSE, "cat > /tmp/n.md <<'EOF'\nbash -c 'git stash' is refused\nEOF")
+check("allowed: a heredoc body describing a bash -c invocation", ok, d)
+
 # Non-CI background work is untouched by this widening.
 print("\nnon-CI work is unaffected by the cap rule")
 for name, cmd in [
