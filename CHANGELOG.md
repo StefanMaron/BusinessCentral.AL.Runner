@@ -33,6 +33,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **hooks:** admit a digit in the xargs option term, so `xargs -0` does not hide the wrapper behind it
 - **hooks:** refuse a stash or CI wait behind stdbuf flags, an -o bundle, or post-xargs noise
 - **hooks:** refuse a stash or CI wait passed to sh -c
 - **hooks:** stop the refusal hook reading prose inside a heredoc as a command
