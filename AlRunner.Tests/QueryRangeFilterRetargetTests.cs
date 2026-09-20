@@ -84,6 +84,14 @@ public class QueryRangeFilterRetargetTests
             {
                 field(1; "Code"; Code[20]) { }
                 field(2; "Amt"; Integer) { }
+                // OptimizeForTextSearch is what makes the FullText arm below reachable AT ALL.
+                // BC's FilterExpressionParser.ParseFullTextFilterExpressionImpl downgrades a
+                // `&&term` filter to a Wildcard unless the column's metadata answers
+                // SupportsFullTextSearch, and NCLMetaQueryColumn.SupportsFullTextSearch forwards
+                // to NCLMetaField.OptimizeForTextSearch. Measured: without this property the
+                // filter arrives as a WildcardFilterExpression (so it would test the #2299 branch
+                // again, not the new one); with it, a FullTextFilterExpression.
+                field(3; "Descr"; Text[100]) { OptimizeForTextSearch = true; }
             }
             keys { key(PK; "Code") { Clustered = true; } }
         }
@@ -97,6 +105,7 @@ public class QueryRangeFilterRetargetTests
                 {
                     column(Code; "Code") { }
                     column(Amt; "Amt") { }
+                    column(Descr; "Descr") { }
                 }
             }
         }
@@ -113,9 +122,9 @@ public class QueryRangeFilterRetargetTests
                 R: Record "QRF Local";
             begin
                 if R.IsEmpty() then begin
-                    R.Init(); R."Code" := 'A10'; R."Amt" := 10; R.Insert();
-                    R.Init(); R."Code" := 'B20'; R."Amt" := 20; R.Insert();
-                    R.Init(); R."Code" := 'C30'; R."Amt" := 30; R.Insert();
+                    R.Init(); R."Code" := 'A10'; R."Amt" := 10; R."Descr" := 'alpha beta'; R.Insert();
+                    R.Init(); R."Code" := 'B20'; R."Amt" := 20; R."Descr" := 'gamma delta'; R.Insert();
+                    R.Init(); R."Code" := 'C30'; R."Amt" := 30; R."Descr" := 'epsilon zeta'; R.Insert();
                 end;
             end;
 
@@ -216,6 +225,44 @@ public class QueryRangeFilterRetargetTests
                 if N <> 0 then Error('RangeNoMatch expected 0, got %1', N);
             end;
 
+            // The THIRD route to the cast, which #3508's body does not mention: a FullText
+            // filter (`&&term`) on a column whose source field sets OptimizeForTextSearch.
+            // BC's RecordBufferEvaluatorVisitor.VisitFullText calls the same Evaluate that
+            // VisitUnary and VisitWildcard do, so before this fix it threw the identical
+            // InvalidCastException. Without OptimizeForTextSearch on the field, BC rewrites the
+            // filter to a Wildcard and this arm silently re-tests the #2299 branch instead.
+            [Test]
+            procedure FullTextMatch()
+            var
+                Q: Query "QRF Local Rows";
+                N: Integer;
+            begin
+                Seed();
+                Q.SetFilter(Descr, '&&alpha');
+                Q.Open();
+                while Q.Read() do N += 1;
+                Q.Close();
+                if N <> 1 then Error('FullTextMatch expected 1, got %1', N);
+            end;
+
+            // The discriminating arm for FullTextMatch: a term no row carries must return zero
+            // rows. Without it, an implementation returning every row would still fail
+            // FullTextMatch but for the wrong reason, and one returning the first row always
+            // would pass it.
+            [Test]
+            procedure FullTextNoMatch()
+            var
+                Q: Query "QRF Local Rows";
+                N: Integer;
+            begin
+                Seed();
+                Q.SetFilter(Descr, '&&omicron');
+                Q.Open();
+                while Q.Read() do N += 1;
+                Q.Close();
+                if N <> 0 then Error('FullTextNoMatch expected 0, got %1', N);
+            end;
+
             // CONTROL: the Unary route, which worked before #3508 and must keep working. A
             // regression here would be invisible in the Range arms above.
             [Test]
@@ -269,7 +316,7 @@ public class QueryRangeFilterRetargetTests
     }
 
     [SkippableFact]
-    public void RangeFilterOnQueryColumn_RetargetsToSourceField_AndLeavesUnaryAndWildcardIntact()
+    public void RangeAndFullTextFiltersOnQueryColumn_RetargetToSourceField_LeavingUnaryAndWildcardIntact()
     {
         TestArtifacts.SkipIfMissing();
 
@@ -283,9 +330,9 @@ public class QueryRangeFilterRetargetTests
         // expression through still keyed by the NCLMetaQueryColumn.
         Assert.DoesNotContain("InvalidCastException", output);
         Assert.DoesNotContain("NCLMetaQueryColumn", output);
-        // 9P/0F/0E is TestExecutor's own per-bundle summary line. Asserting the COUNT as well as
+        // 11P/0F/0E is TestExecutor's own per-bundle summary line. Asserting the COUNT as well as
         // the zeros is what stops a bundle that silently ran fewer tests from reading as green.
-        Assert.Contains("9P/0F/0E", output);
+        Assert.Contains("11P/0F/0E", output);
         Assert.Equal(0, exitCode);
     }
 }
