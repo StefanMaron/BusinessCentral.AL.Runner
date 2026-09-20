@@ -32,6 +32,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **hooks:** refuse a stash or CI wait passed to sh -c
 - **hooks:** stop the refusal hook reading prose inside a heredoc as a command
 - **query:** retarget every filter-expression leaf kind on a query column, and refuse an unknown one
 - **ncl:** preserve the original stack trace when a test handler throws
