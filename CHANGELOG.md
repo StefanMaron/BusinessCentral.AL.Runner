@@ -300,6 +300,7 @@ All notable changes to this project are documented here. Format based on
 - **integer-vt:** judge a half-open range against the base window, not the envelope-widened span
 
 ### Documentation
+- **metadata:** triage the 18 unobservable attribute omissions
 - **reviewer:** take the comment-vs-code figure from the tool, and pin that prescribed commands run
 - **tests:** delete a false Cecil claim from the filter-fixture justification
 - **process:** name the past-tense closing shape where an author writing a queue scan will read it
