@@ -167,9 +167,13 @@ public static partial class RecordPatches
             ?? throw CodeunitMetadataShapeGap("data access has no in-memory provider");
 
         var done = _cmvPopulatedByProvider.GetValue(provider, static _ => new ConcurrentDictionary<int, byte>());
+        // Filtered here, never in EnumerateKnownCodeunitMetadata: that list is cached per
+        // process and shared by every app group (#4070).
+        var visibleApps = PinInventoryScope(provider, "CodeUnit Metadata (virtual table 2000000137)");
 
         foreach (var row in EnumerateKnownCodeunitMetadata())
         {
+            if (IsHiddenFromCurrentAppGroup("Codeunit", row.Id, visibleApps)) continue;
             if (!done.TryAdd(row.Id, 0)) continue;
 
             // Keep BOTH resolutions OUT of the per-field builder: a throw from inside

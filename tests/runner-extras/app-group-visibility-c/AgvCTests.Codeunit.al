@@ -93,4 +93,63 @@ codeunit 62622 "AGV C Tests"
         TableMetadata.SetRange(ID, 62610, 62619);
         Assert.IsTrue(TableMetadata.IsEmpty(), 'Table Metadata in app group C lists a table in the id range of unrelated app group B');
     end;
+
+    // #4070: the dependency-closure control on the two surfaces this issue adds. A filter
+    // keyed on the executing app ALONE would hide A's rows here and pass every group-A
+    // assertion, so these are what separate the closure from "own objects only".
+    [Test]
+    procedure FieldTable_OwnTable_IsListed()
+    var
+        FieldRec: Record "Field";
+    begin
+        Assert.IsTrue(FieldRec.Get(62620, 1), 'Field in app group C must list field 1 of its own table 62620');
+        Assert.AreEqual('Code', FieldRec.FieldName, 'Field row for table 62620 field 1');
+    end;
+
+    [Test]
+    procedure FieldTable_DependencyATable_IsListed()
+    var
+        FieldRec: Record "Field";
+    begin
+        Assert.IsTrue(FieldRec.Get(62600, 1), 'Field in app group C must list field 1 of the table of its dependency A, 62600');
+        Assert.AreEqual('Code', FieldRec.FieldName, 'Field row for table 62600 field 1');
+    end;
+
+    [Test]
+    procedure FieldTable_GroupBTable_IsNotListed()
+    var
+        FieldRec: Record "Field";
+    begin
+        Assert.IsFalse(FieldRec.Get(62610, 1), 'Field in app group C lists field 1 of table 62610 of unrelated app group B');
+        FieldRec.SetRange(TableNo, 62610, 62619);
+        Assert.IsTrue(FieldRec.IsEmpty(), 'Field in app group C lists a field of a table in the id range of unrelated app group B');
+    end;
+
+    [Test]
+    procedure CodeunitMetadata_OwnCodeunit_IsListed()
+    var
+        CodeunitMetadata: Record "CodeUnit Metadata";
+    begin
+        Assert.IsTrue(CodeunitMetadata.Get(62622), 'CodeUnit Metadata in app group C must list its own codeunit 62622');
+        Assert.AreEqual('AGV C Tests', CodeunitMetadata.Name, 'CodeUnit Metadata row for codeunit 62622');
+    end;
+
+    [Test]
+    procedure CodeunitMetadata_DependencyACodeunit_IsListed()
+    var
+        CodeunitMetadata: Record "CodeUnit Metadata";
+    begin
+        Assert.IsTrue(CodeunitMetadata.Get(62602), 'CodeUnit Metadata in app group C must list the codeunit of its dependency A, 62602');
+        Assert.AreEqual('AGV A Tests', CodeunitMetadata.Name, 'CodeUnit Metadata row for codeunit 62602');
+    end;
+
+    [Test]
+    procedure CodeunitMetadata_GroupBCodeunit_IsNotListed()
+    var
+        CodeunitMetadata: Record "CodeUnit Metadata";
+    begin
+        Assert.IsFalse(CodeunitMetadata.Get(62612), 'CodeUnit Metadata in app group C lists codeunit 62612 of unrelated app group B');
+        CodeunitMetadata.SetRange(ID, 62610, 62619);
+        Assert.IsTrue(CodeunitMetadata.IsEmpty(), 'CodeUnit Metadata in app group C lists a codeunit in the id range of unrelated app group B');
+    end;
 }
