@@ -99,6 +99,16 @@ REVIEWED: dict[tuple[str, str], dict[str, str | None]] = {
                "and a glob-reachability check this file does not attempt. Both compare "
                "against the YAML on every run, so neither can drift silently.",
     },
+    ("bc-tests.yml", "Run metatable-cache-null as two independent bundles"): {
+        "step_if": "${{ always() && hashFiles('tests/runner-extras/metatable-cache-null-second/**/*.al') != '' }}",
+        "job_if": None, "step_coe": None, "job_coe": TEST_JOB_COE,
+        "why": "#4450. Same profile and same reason as the dep-tableext entry above: "
+               "AlRunner.Tests/MetaTableCacheNullBundleShapeTests pins this exact expression "
+               "from the C# side AND resolves the glob against real files, which is the check "
+               "this file does not attempt -- a hashFiles() matching nothing SKIPS the step, "
+               "and a skipped step reports success. Both compare against the YAML on every "
+               "run, so neither can drift silently.",
+    },
     ("bc-tests.yml", "Run cold-cache binary smoke test"): {
         "step_if": None, "job_if": SINGLE_LEG_DISPATCH, "step_coe": None, "job_coe": None,
         "why": "Job `smoke` builds and probes the packaged binary, which a single-leg "

@@ -1021,6 +1021,58 @@ jobs:
           done
           exit "$missing"
 
+      - name: Run metatable-cache-null as two independent bundles
+        # #4450. _metaTableCache is a ConcurrentDictionary whose GetOrAdd caches the NULL
+        # BuildNCLMetaTable returns for a table not yet in _parsedTables, and GetOrAdd never
+        # replaces an existing entry. In a run with SEVERAL bundles the first bundle can ask about
+        # a later bundle's table before that bundle's source dir is registered, and the later
+        # bundle's OWN table then answers null for the rest of the process -- Field.Get on it
+        # returns false, silently.
+        #
+        # This step exists because NO other invocation can observe it. The combined
+        # tests/runner-extras run builds ONE bundle, where there is no earlier bundle to do the
+        # poisoning; and the dep-tableext pair above is two bundles but a DEPENDENCY pair, so its
+        # dep loads as a package rather than as an unrelated sibling app group, and neither of its
+        # suites reads the Field table at all. Two INDEPENDENT bundles (no dependencies either
+        # way) is the shape, and this is the only place in CI that runs one.
+        #
+        # Order comes from the ARGUMENT LIST, -first first: that is what makes -first's lookup of
+        # -second's table happen before -second is registered. Reversed, all six pass on main too,
+        # which is the positional property the issue measured.
+        if: ${{ always() && hashFiles('tests/runner-extras/metatable-cache-null-second/**/*.al') != '' }}
+        run: |
+          rc=0
+          dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
+              tests/runner-extras/metatable-cache-null-first \
+              tests/runner-extras/metatable-cache-null-second \
+              --package-cache "$HOME/.al-runner/platform-apps" \
+              --package-cache "$HOME/.al-runner/test-apps" \
+              --strict > metatable-cache-null.log 2>&1 || rc=$?
+          command grep -E '^(PASS|FAIL|ERROR) |→ [0-9]+P/' metatable-cache-null.log || true
+          if [ "$rc" -ne 0 ]; then
+            tail -40 metatable-cache-null.log
+            echo "::error::metatable-cache-null failed as two independent bundles (exit $rc)"
+            exit "$rc"
+          fi
+          missing=0
+          # Assert each test PASSED by name. Without this the step is green whenever the run is
+          # green, INCLUDING a run that compiled nothing and executed 0 tests -- the #4080 shape,
+          # and the one that would silently retire this coverage if the suites were ever renamed
+          # or folded into the combined bundle (where they cannot observe the defect at all).
+          for t in \
+              Codeunit66102.AskingAboutTheSecondBundlesTable_DoesNotThrow \
+              Codeunit66102.OwnTable_IsFullyDescribed \
+              Codeunit66112.OwnTable_FieldGet_AnswersRealFieldNames \
+              Codeunit66112.OwnTable_FieldFindSet_EnumeratesEveryDeclaredField \
+              Codeunit66112.OwnTable_TableMetadata_AnswersRealName \
+              Codeunit66112.FirstBundleTable_IsStillNotVisibleHere; do
+            if ! command grep -qE "^PASS +${t//./\\.}( |$)" metatable-cache-null.log; then
+              echo "::error::no 'PASS $t' line: the two bundles ran but this test did not pass in this step, so nothing asserted on it (#4450)."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
       - name: Phase-log report (runner-extras)
         # The step with the most to say: 25 app groups in ONE process (down from 38 —
         # see #1847, which folded 16 standalone-with-no-hazard suites into

@@ -205,3 +205,65 @@ CLI and `--server` runs each app group gets a fresh store, so the refusal has no
 
 Proven by `tests/runner-extras/app-group-visibility-{a,b,c}` (C depends on A, so A's table is
 visible to C and B's is not) and `AlRunner.Tests/AppGroupObjectVisibilityTests`.
+
+<a id="multi-bundle-metatable-cache"></a>
+
+## A bundle's own table answering as if it had no fields (#4450)
+
+The section above is about an object being hidden from a group that should not see it. This one
+is the opposite failure and a different mechanism: a group's **own** table answering as though it
+did not exist, in a run with several bundles.
+
+`EnsureTableInMetadataCache` is `_metaTableCache.GetOrAdd(tableId, BuildNCLMetaTable)`, and
+`BuildNCLMetaTable` returns `null` for a table it cannot find in `_parsedTables`. A
+`ConcurrentDictionary` caches that `null` like any other value, and `GetOrAdd` never replaces an
+existing entry — including `PopulateNclMetadataCache`'s own `GetOrAdd`.
+
+In a **single-bundle** run that is correct: every source dir is registered before anything asks,
+so a `null` means the table genuinely does not exist and caching it is the right answer.
+
+With **several bundles on one command line** the absence is temporary. Bundle A can ask about
+bundle B's table — an `AllObj.Get`, a `Table Metadata.Get`, a `Field.Get`, any inventory lookup —
+before B's source dir has been registered. `BuildNCLMetaTable` correctly returns `null` at that
+instant, `GetOrAdd` caches it, and nothing evicts it when B's sources arrive. From then on B's own
+table answers `null` for the rest of the process.
+
+**It is positional, not identity-based.** Reverse the two paths on the command line and the
+failure moves to whichever bundle now runs second. Each bundle alone passes.
+
+### What it looked like
+
+Silent. `Field.Get(<B's own table>, 1)` returned `false` — no exception, no
+`RunnerOutOfScopeException`, no `VirtualTableShapeGap` — because `PopulateFieldVirtualTable` skips
+any source table whose metatable is `null`. Measured on three sibling bundles: only the **first**
+bundle's table was ever inserted into any of the three Field providers.
+
+The `PinInventoryScope` / `CheckInventoryScope` refusal does not catch it, for a reason unrelated
+to the defect: that guard refuses a store populated under one app group and read under another,
+and here each bundle gets its OWN provider, so the pinned and current app groups always agree and
+it correctly stays silent. Its silence says nothing about this defect either way.
+
+### The fix
+
+`EvictCachedNullsForNewlyParsedTables`, called from `AddSourceDirs` whenever a batch actually
+parsed something, drops every `_metaTableCache` entry whose value is `null` and whose table is now
+in `_parsedTables`. Only `null` entries are dropped, so a live `NCLMetaTable` that R2R-precompiled
+callers hold baked offsets into is never replaced under them
+(`.claude/rules/precompiled-dll-respect.md`).
+
+`EvictCachedMetaTableForBaseTable` (#2463) is the same statement for a tableextension parsed after
+its base table's metatable was built, and #3590 is the same hazard on this method's **exception**
+arm — it kept a refusal out of the cached null and deliberately left the "genuinely absent" arm
+alone, which is a correct reading for one bundle and wrong for several.
+
+### Where it is proven
+
+`tests/runner-extras/metatable-cache-null-{first,second}`, run as two independent bundles by
+`bc-tests.yml`'s *Run metatable-cache-null as two independent bundles* step. The two suites
+declare no dependency on each other, which is what makes them sibling app groups rather than a
+dependency pair.
+
+That step exists because no other CI invocation can observe this: the combined
+`tests/runner-extras` run builds **one** bundle, so there is no earlier bundle to do the
+poisoning, and the `dep-tableext-platform-base` pair is a *dependency* pair whose dep loads as a
+package rather than as an unrelated sibling.

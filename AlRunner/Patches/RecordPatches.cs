@@ -672,7 +672,49 @@ public static partial class RecordPatches
             }
         }
         if (parsedAny)
+        {
+            EvictCachedNullsForNewlyParsedTables();
             PopulateNclMetadataCache();
+        }
+    }
+
+    /// <summary>
+    /// Drop every <c>_metaTableCache</c> entry whose cached value is NULL but whose table is now
+    /// in <see cref="_parsedTables"/>, so the next lookup rebuilds it.
+    ///
+    /// <para><c>EnsureTableInMetadataCache</c> is
+    /// <c>_metaTableCache.GetOrAdd(tableId, BuildNCLMetaTable)</c>, and <c>BuildNCLMetaTable</c>
+    /// returns null for a table it cannot find in <c>_parsedTables</c>. A
+    /// <c>ConcurrentDictionary</c> caches that null like any other value, and <c>GetOrAdd</c>
+    /// never replaces an existing entry — <see cref="PopulateNclMetadataCache"/>'s own
+    /// <c>GetOrAdd</c> included. In a run with several bundles the absence is TEMPORARY: bundle
+    /// A can ask about bundle B's table before B's source dir is registered, and from then on
+    /// B's own table answers null for the rest of the process (#4450).
+    /// See docs/virtual-tables-allobj.md#multi-bundle-metatable-cache.</para>
+    ///
+    /// <para>The <c>kvp.Value != null</c> test is what bounds the blast radius: only entries that
+    /// are already NULL are dropped, so a live NCLMetaTable that R2R-precompiled callers hold
+    /// baked offsets into is never pulled out from under them. Mutating that test to evict
+    /// unconditionally is not covered by this fix's tests and must not be done —
+    /// precompiled-dll-respect.md is the constraint, not a style preference.</para>
+    ///
+    /// <para>The removal is the same plain key-only <c>TryRemove</c> the three sibling eviction
+    /// sites use (<c>EvictCachedMetaTableForBaseTable</c>, the CalcFormula retry, the TDD
+    /// reparse). A value-matched overload was tried and reverted: nothing here runs concurrently
+    /// with the parse, so it is observably identical, and a defensive form no test can
+    /// discriminate is a claim without evidence (measured on #4450 — the value-matched variant
+    /// left all six proving tests green).</para>
+    /// </summary>
+    private static void EvictCachedNullsForNewlyParsedTables()
+    {
+        foreach (var kvp in _metaTableCache)
+        {
+            if (kvp.Value != null) continue;
+            if (!_parsedTables.ContainsKey(kvp.Key)) continue;
+            if (!_metaTableCache.TryRemove(kvp.Key, out _)) continue;
+            EventSubscriberPatches.ForgetInjectedForTable(kvp.Key);
+            _fieldTriggersWiredTables.TryRemove(kvp.Key, out _);
+        }
     }
 
     /// <summary>
