@@ -736,25 +736,9 @@ public static partial class RecordPatches
     /// (<c>.claude/rules/precompiled-dll-respect.md</c>), and an id this batch did not parse is
     /// left alone — its null is still the right answer.</para>
     ///
-    /// <para>Page-side this is load-bearing and measured: <c>GetPageProperties</c> reaches the
-    /// poisoned null through <c>EnsureRealPageMetadata</c> and THROWS
-    /// <c>RunnerOutOfScopeException</c> ("no loadable page metadata for this page") for a page the
-    /// running bundle declares itself. #3011's <c>_pageRealMetadataNegativeEpoch</c> retake does
-    /// not cover this and no eviction of it is needed: for a page of a not-yet-parsed bundle,
-    /// <c>EnsureRealPageMetadata</c> returns at its FIRST line — the page is not in
-    /// <c>AlPageMetadataRegistry</c> — so no negative is ever stamped. Measured: one
-    /// <c>priorNegative=False</c> record and no retake in the whole run. Removing the cached null
-    /// is therefore the entire fix, which a mutation confirms (see #4452).</para>
-    ///
-    /// <para>Report-side the same poisoned entry is written and, as measured, currently absorbed:
-    /// <c>Report Metadata</c> rows come from <c>EnumerateKnownReports()</c> and <c>Report.Run</c>
-    /// reaches the compiled <c>Report{id}</c> type, so neither reads this cache. It is evicted
-    /// anyway because the poisoning is real and its harmlessness is a property of today's
-    /// consumers rather than of the cache — the same reasoning that put the two `return null`s
-    /// above #3590's try block back in scope. <c>_metaQueryCache</c>, <c>_metaXmlPortCache</c> and
-    /// <c>_lazyMetaQueryByGetById</c> are deliberately NOT here: measured over both bundle orders,
-    /// no AL surface reaches them for an unparsed id, so nothing ever caches a null in them. See
-    /// #4452 for the per-cache evidence.</para>
+    /// <para>Page-side this is load-bearing: <c>GetPageProperties</c> reaches the poisoned null
+    /// through <c>EnsureRealPageMetadata</c> and THROWS for a page the running bundle declares
+    /// itself. Report side, the three caches left out, and the #3011 stamp: see #4452.</para>
     /// </summary>
     private static void EvictCachedNullsForNewlyParsedObjects()
     {
