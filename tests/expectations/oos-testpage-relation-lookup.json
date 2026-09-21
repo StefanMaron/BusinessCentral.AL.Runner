@@ -1,0 +1,20 @@
+[
+  {
+    "codeunitId": 60569,
+    "CodeunitName": "TRL Tests",
+    "Method": "Lookup_RelationToTableWithNoLookupPage_RaisesTheUnhandledUiSignal",
+    "Mode": "expect-oos",
+    "Reason": "not-yet-implemented",
+    "Doc": "docs/testpage-lookup.md#why-the-refusal-has-not-yet-been-replaced",
+    "Note": "Real BC decides to show a modal form for a lookup whose TableRelation resolves to a table declaring neither LookupPageId nor DrillDownPageId, and raises 'Unhandled UI: ModalPage' when no handler is bound. Measured, not assumed: corpus StefanMaron/BusinessCentral.AL.Language.Tests#391 at 3989a1cf passes this arm on all EIGHT cloud legs, verified with tools/corpus-pass-count.py (8 legs ran the codeunit, 2 distinct PASS each, 0 failures) rather than read off the green ticks. The runner throws RunnerOutOfScopeException('testpage-lookup') instead. NOTE the refusal message still says 'there is no page to open', and that premise is now KNOWN FALSE -- BC does open one. What is NOT measurable is WHICH page: FindHandler's page-id check sits inside its `appObject != null` guard, so a null registered form skips the check and registeredForm.ObjectId NREs (corpus run 35494023689), meaning no [ModalPageHandler] probe can ever name the page. So the refusal stays as a known-wrong-premise refusal rather than being replaced by a guess, and issue #4403 tracks replacing it. Remove this file when #4403 lands. TWO methods named, not a wildcard: this codeunit's other four arms PASS on the runner, and a Method wildcard would claim those as failures and drift the manifest the other way (#3737)."
+  },
+  {
+    "codeunitId": 60569,
+    "CodeunitName": "TRL Tests",
+    "Method": "Lookup_RelationToTableWithNoLookupPage_LeavesTheFieldUnchanged",
+    "Mode": "expect-oos",
+    "Reason": "not-yet-implemented",
+    "Doc": "docs/testpage-lookup.md#why-the-refusal-has-not-yet-been-replaced",
+    "Note": "The second arm of the same surface: after BC raises 'Unhandled UI: ModalPage' the field is unchanged, so the lookup wrote nothing back on its way to failing. Same cause as the sibling entry above -- the runner refuses the lookup outright with RunnerOutOfScopeException('testpage-lookup') and never reaches the assertion. Green on all eight corpus cloud legs at 3989a1cf. Remove this file when #4403 lands."
+  }
+]
