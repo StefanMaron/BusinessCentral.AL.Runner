@@ -55,13 +55,20 @@ internal sealed record MetadataEquivalenceReport(
     // no runner object addressable by their own id. Reported rather than dropped: an object
     // silently missing from the denominator is the one way a shrinking comparison stays green
     // (#3782 step 7; the derivation gap is #3807).
-    IReadOnlyList<string> EnumExtensionDocuments)
+    IReadOnlyList<string> EnumExtensionDocuments,
+    // Attributes one side's DOCUMENT states and the other's omits, where BC's own reader
+    // produces the same object either way — so the member-for-member comparison above agrees
+    // and the agreement proves nothing (#4357). Reported separately from Differences because
+    // it is a third state, not a disagreement: guards-need-a-third-state.md.
+    IReadOnlyList<MetadataUnobservableOmission> UnobservableOmissions)
 {
     public string Summary =>
         $"{Bundle.Label} (BC {Bundle.BcBuild}): compared {ObjectsCompared} object(s) of kind(s) " +
         $"[{string.Join(", ", KindsCompared)}]; NOT compared: [{string.Join(", ", KindsNotCompared)}]; " +
         $"{EnumExtensionDocuments.Count} enum-extension document(s) skipped; " +
-        $"{Differences.Count} difference(s) across {Differences.Select(d => d.Signature).Distinct().Count()} member(s)";
+        $"{Differences.Count} difference(s) across {Differences.Select(d => d.Signature).Distinct().Count()} member(s); " +
+        $"{UnobservableOmissions.Count} unobservable omission(s) across " +
+        $"{UnobservableOmissions.Select(o => o.Signature).Distinct().Count()} attribute(s)";
 }
 
 internal static class MetadataEquivalencePaths
@@ -75,6 +82,10 @@ internal static class MetadataEquivalencePaths
     public static string AllowlistFile() => Path.Combine(ExpectationsDir(), "allowlist.json");
 
     public static string AppsFile() => Path.Combine(ExpectationsDir(), "apps.json");
+
+    /// <summary>Declared attribute omissions the object comparison cannot observe (#4357).</summary>
+    public static string UnobservableOmissionsFile()
+        => Path.Combine(ExpectationsDir(), "unobservable-omissions.json");
 
     /// <summary>
     /// Where the generator writes bundles. A sibling of the artifacts root, because a bundle
@@ -423,6 +434,7 @@ internal static class MetadataEquivalenceHarness
         IReadOnlyDictionary<int, BcAppSymbolCache.PermissionSetSymbol>? permissionSetsById = null;
 
         var differences = new List<MetadataDifference>();
+        var unobservable = new List<MetadataUnobservableOmission>();
         var unbuildable = new List<string>();
         var enumExtensionDocuments = new List<string>();
         int compared = 0;
@@ -437,6 +449,14 @@ internal static class MetadataEquivalenceHarness
             object? expected;
             object? actual;
             string objectKey;
+
+            // Set by every kind whose runner side is RENDERED AS A DOCUMENT and read back by
+            // BC's own reader. Query, PermissionSet and MetaTable build a runner object
+            // directly with no document of their own, so there is nothing to compare presence
+            // against and they stay null — measured rather than skipped, because
+            // Unobservable_omissions_are_declared asserts which kinds contribute.
+            XmlDocument? runnerDocument = null;
+            Func<XmlDocument, object?>? readDocument = null;
 
             if (obj.Kind == "CodeUnit")
             {
@@ -468,6 +488,8 @@ internal static class MetadataEquivalenceHarness
                     var runnerDoc = new XmlDocument();
                     runnerDoc.LoadXml(runnerXml);
                     actual = codeunitFromXml.Invoke(new object?[] { runnerDoc.DocumentElement });
+                    runnerDocument = runnerDoc;
+                    readDocument = d => Read(() => codeunitFromXml.Invoke(new object?[] { d.DocumentElement }));
                 }
                 catch (Exception ex)
                 {
@@ -556,6 +578,8 @@ internal static class MetadataEquivalenceHarness
                     var runnerDoc = new XmlDocument();
                     runnerDoc.LoadXml(runnerXml);
                     actual = xmlPortFromXml.Invoke(new object?[] { runnerDoc, null, 0, 0, null });
+                    runnerDocument = runnerDoc;
+                    readDocument = d => Read(() => xmlPortFromXml.Invoke(new object?[] { d, null, 0, 0, null }));
                 }
                 catch (Exception ex)
                 {
@@ -600,6 +624,8 @@ internal static class MetadataEquivalenceHarness
                     var runnerDoc = new XmlDocument();
                     runnerDoc.LoadXml(runnerXml);
                     actual = reportFromXml.Invoke(new object?[] { runnerDoc.DocumentElement, null, 0, 0, null });
+                    runnerDocument = runnerDoc;
+                    readDocument = d => Read(() => reportFromXml.Invoke(new object?[] { d.DocumentElement, null, 0, 0, null }));
                 }
                 catch (Exception ex)
                 {
@@ -771,6 +797,8 @@ internal static class MetadataEquivalenceHarness
                     var runnerDoc = new XmlDocument();
                     runnerDoc.LoadXml(runnerXml);
                     actual = enumFromXml.Invoke(new object?[] { runnerDoc.DocumentElement });
+                    runnerDocument = runnerDoc;
+                    readDocument = d => Read(() => enumFromXml.Invoke(new object?[] { d.DocumentElement }));
                 }
                 catch (Exception ex)
                 {
@@ -815,6 +843,8 @@ internal static class MetadataEquivalenceHarness
                     var runnerDoc = new XmlDocument();
                     runnerDoc.LoadXml(runnerXml);
                     actual = pageFromXml.Invoke(new object?[] { runnerDoc.DocumentElement });
+                    runnerDocument = runnerDoc;
+                    readDocument = d => Read(() => pageFromXml.Invoke(new object?[] { d.DocumentElement }));
                 }
                 catch (Exception ex)
                 {
@@ -852,13 +882,18 @@ internal static class MetadataEquivalenceHarness
             }
 
             compared++;
-            differences.AddRange(obj.Kind switch
+            var diffOptions = obj.Kind switch
             {
-                "PageDefinition" => MetadataObjectDiff.Compare(expected, actual, objectKey, PageDiffOptions),
-                "Query" => MetadataObjectDiff.Compare(expected, actual, objectKey, QueryDiffOptions),
-                "Enum" => MetadataObjectDiff.Compare(expected, actual, objectKey, EnumDiffOptions),
-                _ => MetadataObjectDiff.Compare(expected, actual, objectKey),
-            });
+                "PageDefinition" => PageDiffOptions,
+                "Query" => QueryDiffOptions,
+                "Enum" => EnumDiffOptions,
+                _ => null,
+            };
+            differences.AddRange(MetadataObjectDiff.Compare(expected, actual, objectKey, diffOptions));
+
+            if (runnerDocument is not null && readDocument is not null)
+                unobservable.AddRange(MetadataDocumentPresenceDiff.Compare(
+                    document, runnerDocument, readDocument, objectKey, diffOptions));
         }
 
         var kindsPresent = bundle.Census.Keys.ToArray();
@@ -866,7 +901,7 @@ internal static class MetadataEquivalenceHarness
             bundle,
             kindsPresent.Where(k => ComparedKinds.Contains(k, StringComparer.Ordinal)).ToArray(),
             kindsPresent.Where(k => !ComparedKinds.Contains(k, StringComparer.Ordinal)).ToArray(),
-            compared, unbuildable, differences, enumExtensionDocuments);
+            compared, unbuildable, differences, enumExtensionDocuments, unobservable);
     }
 
     /// <summary>
@@ -1044,6 +1079,20 @@ internal static class MetadataEquivalenceHarness
         Add("ActionContainerDefinition", "IMetaActionContainerDefinition", "Actions", "#actionsField");
         Add("ActionGroupDefinition", "IMetaActionGroupDefinition", "Actions", "#actionsField");
         return set;
+    }
+
+    /// <summary>
+    /// A reflected BC reader, as the plain delegate MetadataDocumentPresenceDiff wants.
+    ///
+    /// <para>A throw is folded into <c>null</c> on purpose, and the two are not worth telling
+    /// apart here: both mean BC's own reader would not answer for that document, which is the
+    /// mechanism's third state either way. What must NOT happen is a throw escaping into the
+    /// harness and failing the whole bundle over one stripped attribute — that would turn a
+    /// "could not measure" into a red with no measurement behind it.</para>
+    /// </summary>
+    private static object? Read(Func<object?> invoke)
+    {
+        try { return invoke(); } catch { return null; }
     }
 
     /// <summary>

@@ -53,25 +53,59 @@ public sealed class MetadataEquivalenceHarnessTests
     /// </summary>
     private IReadOnlyList<MetadataEquivalenceReport> RunAll()
     {
+        // Skip.IfNot FIRST, on every call including a memoized one. It is what makes each test
+        // skip on a box with no engine, and a memo consulted ahead of it would hand the cached
+        // reports to a test that should not have run.
         Skip.IfNot(_engine.Ready, _engine.SkipReason);
 
-        var bundles = MetadataEquivalenceBundleGate.RequireBundles();
-
-        var reports = new List<MetadataEquivalenceReport>();
-        foreach (var bundle in bundles)
+        lock (MemoLock)
         {
-            var app = MetadataEquivalenceHarness.FindAppPackage(bundle);
-            Assert.True(app is not null,
-                $"ground truth exists for {bundle.Label} but its .app is not on this box. The " +
-                "runner derives its side from that package's SymbolReference.json, so comparing " +
-                "against a different build would compare two things never meant to agree. " +
-                "Regenerate the bundle from the artifacts now present.");
-            reports.Add(MetadataEquivalenceHarness.Compare(bundle, app!));
-        }
+            // Memoized because 13 of this class's 14 tests call this, and xUnit builds a new
+            // instance per test, so an instance field would memoize nothing. The comparison is a
+            // pure read of one BC build's bundles against one set of registered packages, so the
+            // 13 runs produced 13 identical answers — measured across separate processes, the
+            // unobservable set came back byte-identical.
+            //
+            // The cost is the reason: this class ran 1 m 24 s paying for 13 comparisons, which
+            // put it over scripts/check-collection-weights.py's fail band and reddened the
+            // required context. One comparison is 12 s.
+            //
+            // Only a SUCCESSFUL run is stored. RequireBundles throws SkipException on a dev box
+            // with no bundle and MetadataGroundTruthMissingOnCiException on CI, and neither must
+            // be turned into a cached empty answer — the next call has to raise it again.
+            if (_memo is not null) return _memo;
 
-        WriteReportIfAsked(reports);
-        return reports;
+            var bundles = MetadataEquivalenceBundleGate.RequireBundles();
+
+            var reports = new List<MetadataEquivalenceReport>();
+            foreach (var bundle in bundles)
+            {
+                var app = MetadataEquivalenceHarness.FindAppPackage(bundle);
+                Assert.True(app is not null,
+                    $"ground truth exists for {bundle.Label} but its .app is not on this box. The " +
+                    "runner derives its side from that package's SymbolReference.json, so comparing " +
+                    "against a different build would compare two things never meant to agree. " +
+                    "Regenerate the bundle from the artifacts now present.");
+                reports.Add(MetadataEquivalenceHarness.Compare(bundle, app!));
+            }
+
+            WriteReportIfAsked(reports);
+            return _memo = reports;
+        }
     }
+
+    /// <summary>
+    /// The memoized comparison. Static because xUnit constructs this class once per test.
+    /// </summary>
+    private static IReadOnlyList<MetadataEquivalenceReport>? _memo;
+
+    /// <summary>
+    /// Belt and braces. <see cref="BcEngineCollection"/> already serialises this class, so no
+    /// two of its tests run at once; the lock costs nothing and removes the question rather
+    /// than leaving a static that is safe only by a neighbour's property
+    /// (<c>guards-need-a-third-state.md</c> on exactly that reasoning).
+    /// </summary>
+    private static readonly object MemoLock = new();
 
     [SkippableFact]
     public void Every_declared_app_is_actually_covered()
@@ -691,6 +725,59 @@ public sealed class MetadataEquivalenceHarnessTests
                && id > 0 && id < 2000000000;
     }
 
+    /// <summary>
+    /// Issue #4357. Every attribute one side's DOCUMENT states and the other's omits, where
+    /// BC's own reader produces the same object either way, has to be declared — because the
+    /// member-for-member comparison agrees on it and that agreement proves nothing.
+    ///
+    /// <para>This is what makes a future writer-side fix provable. Measured on BC
+    /// 28.1.49838.53910: BC states PageProperties/@AnalysisModeEnabled on 94 of 235 pages and
+    /// the runner states it on none, and the object comparison reports ONE of them — page 8350,
+    /// the only page where BC says "0". A PageType-based derivation could therefore be wrong on
+    /// the other 93 and go harness-green.</para>
+    /// </summary>
+    [SkippableFact]
+    public void Every_unobservable_omission_is_declared()
+    {
+        var reports = RunAll();
+        var declarations = MetadataUnobservableOmissionDeclarations.Load(
+            MetadataEquivalencePaths.UnobservableOmissionsFile());
+
+        var all = reports.SelectMany(r => r.UnobservableOmissions).ToArray();
+        var verdict = declarations.Classify(all);
+
+        Assert.True(verdict.Undeclared.Count == 0, UndeclaredOmissions(verdict));
+        Assert.True(verdict.UnusedEntries.Count == 0,
+            "these unobservable-omission entries matched nothing. An entry that stops matching " +
+            "is how a landed fix shrinks this file; delete it, or declare it versionContingent " +
+            "with a Doc pointer saying why its population moves with the BC build:" +
+            Environment.NewLine + string.Join(Environment.NewLine, verdict.UnusedEntries));
+
+        // Non-vacuity. Not a floor anybody guessed: AnalysisModeEnabled is the difference this
+        // gate was built for, so if the walk stops reaching it the gate is measuring nothing
+        // and passing. Named rather than counted, because the COUNT moves with the BC build
+        // while the attribute's blindness is a property of its type having no Specified
+        // companion and a non-false absent-parse default.
+        Assert.Contains(all, o => o.Signature == "Properties.AnalysisModeEnabled");
+    }
+
+    private static string UndeclaredOmissions(MetadataUnobservableVerdict verdict)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"{verdict.Undeclared.Count} attribute omission(s) that nothing declares. " +
+                      "For each, one side's document states the attribute, the other's omits it, " +
+                      "and BC's own reader produces the SAME object either way — so the " +
+                      "member-for-member comparison agrees and the agreement is not evidence. " +
+                      "Either make the omitting side state it, or declare it in " +
+                      "tests/expectations/metadata-equivalence/unobservable-omissions.json.");
+        foreach (var g in verdict.Undeclared
+                     .GroupBy(o => MetadataUnobservableOmissionDeclarations.ObjectKindOf(o)
+                                   + "." + o.Signature + " [" + o.StatedBy + "]")
+                     .OrderByDescending(g => g.Count()).Take(40))
+            sb.AppendLine($"  {g.Key,-64} x{g.Count(),-6} e.g. {g.First()}");
+        return sb.ToString();
+    }
+
     private static string Undeclared(MetadataAllowlistVerdict verdict)
     {
         var sb = new StringBuilder();
@@ -714,6 +801,9 @@ public sealed class MetadataEquivalenceHarnessTests
             sb.AppendLine("# " + r.Summary);
             foreach (var d in r.Differences)
                 sb.AppendLine($"{r.Bundle.AppName}\t{d.ObjectKey}\t{d.Path}\t{d.Signature}\t{d.Expected}\t{d.Actual}");
+            foreach (var o in r.UnobservableOmissions)
+                sb.AppendLine($"UNOBSERVABLE\t{r.Bundle.AppName}\t{o.ObjectKey}\t{o.ElementPath}\t" +
+                              $"{o.Signature}\t{o.Value}\t{o.StatedBy}");
         }
         File.WriteAllText(path, sb.ToString());
     }

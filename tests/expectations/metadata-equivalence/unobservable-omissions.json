@@ -1,0 +1,131 @@
+{
+  "comment": "Attributes one side's emitted document states and the other's omits, where BC's own reader produces the SAME object either way (#4357). These are NOT declared differences: on every entry here the two derivations agree, and what is declared is that the agreement carries no information. tests/expectations/metadata-equivalence/allowlist.json is the other file and means the opposite \u2014 a tolerated DISAGREEMENT. Measured on BC 28.1.49838.53910 over the Business Foundation and System Application bundles, 1,286 objects; docs/metadata-equivalence.md#unobservable-omissions has the table and the method. An undeclared omission fails the run, and an entry matching nothing fails it too unless it is versionContingent \u2014 which here means 'fewer than 10 of the 1,286 objects carry it on the measured build', a population one BC version's object churn can remove.",
+  "omissions": [
+    {
+      "member": "Codeunit.CodeUnit.EventSubscriberInstance",
+      "statedBy": "expected",
+      "reason": "BC's emitted document states this attribute and the runner's does not, on 558 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) 'Manual', 'StaticAutomatic'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
+      "issue": 4400
+    },
+    {
+      "member": "Codeunit.CodeUnit.MetadataVersion",
+      "statedBy": "expected",
+      "reason": "BC's emitted document states this attribute and the runner's does not, on 558 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) '130000'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
+      "issue": 4400
+    },
+    {
+      "member": "Codeunit.CodeUnit.TestIsolation",
+      "statedBy": "expected",
+      "reason": "BC's emitted document states this attribute and the runner's does not, on 529 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) 'Disabled'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
+      "issue": 4400
+    },
+    {
+      "member": "Codeunit.EventPublisherAttribute.GlobalVarAccess",
+      "statedBy": "expected",
+      "reason": "BC's emitted document states this attribute and the runner's does not, on 122 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) 'False'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
+      "issue": 4400
+    },
+    {
+      "member": "Page.Properties.AnalysisModeEnabled",
+      "statedBy": "expected",
+      "reason": "BC's emitted document states this attribute and the runner's does not, on 93 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) '1'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
+      "issue": 4400
+    },
+    {
+      "member": "Enum.Enum.Access",
+      "statedBy": "expected",
+      "reason": "BC's emitted document states this attribute and the runner's does not, on 69 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) 'Internal', 'Public'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
+      "issue": 4400
+    },
+    {
+      "member": "Page.Controls.Enabled",
+      "statedBy": "expected",
+      "reason": "BC's emitted document states this attribute and the runner's does not, on 37 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) 'true'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
+      "issue": 4400
+    },
+    {
+      "member": "Page.Controls.Editable",
+      "statedBy": "expected",
+      "reason": "BC's emitted document states this attribute and the runner's does not, on 21 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) 'true'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
+      "issue": 4400
+    },
+    {
+      "member": "Page.Controls.Visible",
+      "statedBy": "expected",
+      "reason": "BC's emitted document states this attribute and the runner's does not, on 21 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) 'true'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
+      "issue": 4400
+    },
+    {
+      "member": "Page.Controls.MultiLine",
+      "statedBy": "expected",
+      "reason": "BC's emitted document states this attribute and the runner's does not, on 6 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) '0'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
+      "issue": 4400,
+      "versionContingent": true,
+      "Doc": "docs/metadata-equivalence.md#unobservable-omissions"
+    },
+    {
+      "member": "Page.EventPublisherAttribute.GlobalVarAccess",
+      "statedBy": "expected",
+      "reason": "BC's emitted document states this attribute and the runner's does not, on 5 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) 'False'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
+      "issue": 4400,
+      "versionContingent": true,
+      "Doc": "docs/metadata-equivalence.md#unobservable-omissions"
+    },
+    {
+      "member": "XmlPort.ID.Name",
+      "statedBy": "expected",
+      "reason": "BC's emitted document states this attribute and the runner's does not, on 4 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) 'Export Permission Sets System', 'Export Permission Sets Tenant', 'Export/Import Security Groups', 'Import Permission Sets'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
+      "issue": 4400,
+      "versionContingent": true,
+      "Doc": "docs/metadata-equivalence.md#unobservable-omissions"
+    },
+    {
+      "member": "XmlPort.XmlPort.ALNamespace",
+      "statedBy": "expected",
+      "reason": "BC's emitted document states this attribute and the runner's does not, on 4 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) 'System.Security.AccessControl'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
+      "issue": 4400,
+      "versionContingent": true,
+      "Doc": "docs/metadata-equivalence.md#unobservable-omissions"
+    },
+    {
+      "member": "Enum.Enum.AssignmentCompatibility",
+      "statedBy": "expected",
+      "reason": "BC's emitted document states this attribute and the runner's does not, on 3 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) '1'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
+      "issue": 4400,
+      "versionContingent": true,
+      "Doc": "docs/metadata-equivalence.md#unobservable-omissions"
+    },
+    {
+      "member": "Codeunit.EventPublisherAttribute.Isolated",
+      "statedBy": "expected",
+      "reason": "BC's emitted document states this attribute and the runner's does not, on 1 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) 'False'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
+      "issue": 4400,
+      "versionContingent": true,
+      "Doc": "docs/metadata-equivalence.md#unobservable-omissions"
+    },
+    {
+      "member": "Page.Controls.DateFormula",
+      "statedBy": "expected",
+      "reason": "BC's emitted document states this attribute and the runner's does not, on 1 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) '0'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
+      "issue": 4400,
+      "versionContingent": true,
+      "Doc": "docs/metadata-equivalence.md#unobservable-omissions"
+    },
+    {
+      "member": "Page.Properties.IsPreview",
+      "statedBy": "expected",
+      "reason": "BC's emitted document states this attribute and the runner's does not, on 1 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) '0'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
+      "issue": 4400,
+      "versionContingent": true,
+      "Doc": "docs/metadata-equivalence.md#unobservable-omissions"
+    },
+    {
+      "member": "Report.Properties.PromotedActionCategoriesML",
+      "statedBy": "expected",
+      "reason": "BC's emitted document states this attribute and the runner's does not, on 1 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) ''. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
+      "issue": 4400,
+      "versionContingent": true,
+      "Doc": "docs/metadata-equivalence.md#unobservable-omissions"
+    }
+  ]
+}
