@@ -64,6 +64,13 @@ public static class NavDotNetPatches
         {
             return RecordPatches.IsUserSuperInAllCompanies(Microsoft.Dynamics.Nav.Runtime.NavCurrentThread.Session);
         }
+        // External data (Xrm/CDS/Dataverse) is out of scope, and the proxy-version registry
+        // BC reads here cannot be populated faithfully — refuse by name rather than let AL
+        // read the empty list (#3515). Lazy by construction: this runs only when AL invokes it.
+        if (XrmExternalDataRefusal.IsExternalDataProxyLookup(method))
+        {
+            return XrmExternalDataRefusal.Throw();
+        }
         return method.Invoke(target, arguments);
     }
 }
