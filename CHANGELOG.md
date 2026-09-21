@@ -33,6 +33,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **metadata:** CodeUnit Metadata derives TestType from Subtype
 - **crm:** register the shipped Xrm proxy versions so CRM/CDS Connection Setup pages open
 - **metadata:** make the equivalence harness see BC-written attributes the runner omits
 - **metadata:** emit BC's four InherentPermission attributes on the method-table element
