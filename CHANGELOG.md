@@ -33,6 +33,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **virtual-tables:** scope Field and CodeUnit Metadata rows to the executing app group
 - **metadata:** state GlobalVarAccess and Isolated on the derived EventPublisherAttribute
 - **metadata:** CodeUnit Metadata derives TestType from Subtype
 - **crm:** register the shipped Xrm proxy versions so CRM/CDS Connection Setup pages open
