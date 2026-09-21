@@ -1558,7 +1558,7 @@ Two things it deliberately does not do:
   those whose parsed objects AGREE are reported. An omission the value comparison already fails
   on is left to `MetadataObjectDiff`.
 
-What reaches the declaration file is what that leaves: **2,086** occurrences across **22**
+What reaches the declaration file is what that leaves: **2,034** occurrences across **18**
 signatures over the 1,286 compared objects, which is the figure the harness itself prints and the
 only one on this page that the shipped code re-derives. The wider populations quoted while the
 design was being chosen — a whole-document presence diff, and the split between observable and
@@ -1583,17 +1583,61 @@ run. Both sides are parsed fresh per question instead. Deliberately **not** fixe
 <a id="unobservable-what-it-found"></a>
 ### What it found, and what that costs
 
-**22** entries, **2,086** occurrences, every one in the same direction — BC states the attribute,
-the runner's document omits it. None is triaged; **#4400** is where that happens, and every entry
-names it. The largest are `Codeunit.CodeUnit.MetadataVersion` (558),
+**18** entries, **2,034** occurrences, every one in the same direction — BC states the attribute,
+the runner's document omits it. The largest are `Codeunit.CodeUnit.MetadataVersion` (558),
 `Codeunit.CodeUnit.EventSubscriberInstance` (558), `Codeunit.CodeUnit.TestIsolation` (529),
 `Codeunit.EventPublisherAttribute.GlobalVarAccess` (122) and
-`Page.Properties.AnalysisModeEnabled` (93); the full table is on #4400.
+`Page.Properties.AnalysisModeEnabled` (93).
+
+**It was 22 entries and 2,086 occurrences when this landed.** The four
+`Codeunit.InherentPermissionsMethodAttribute.*` rows went out before merge because #4438 made
+the runner emit those attributes, so they stopped being omissions — 4 signatures × 13
+occurrences = the 52 difference. Removed rather than flagged `versionContingent`, which exempts
+an entry from the staleness guard and would have left a phantom inventory of a closed gap.
 
 Nine entries carry `versionContingent`, and the threshold is stated rather than felt: **fewer than
 10 of the 1,286 compared objects carry it on the measured build**, a population one BC version's
-object churn can remove. The other thirteen are required to match, so a landed fix must delete
+object churn can remove. The other nine are required to match, so a landed fix must delete
 them.
+
+<a id="unobservable-the-triage"></a>
+### The triage, and what each verdict means (#4400)
+
+All 18 were triaged on **#4400**. Each entry's `reason` now carries a verdict and cites the
+**open** issue that owns the work, rather than the triage issue itself — an entry citing an
+issue that the triage closes would be untracked the moment it merged.
+
+| verdict | entries | what it means |
+|---|---:|---|
+| **the runner should state it** | 12 | BC's value is derivable from what the runner already reads, and omitting it is a gap |
+| **saying less is legitimate today** | 5 | a bounded scope decision with a proof path, not a limit — the page control tree |
+| **needs a measurement this bundle cannot give** | 1 | `Report.Properties.PromotedActionCategoriesML`, whose whole population is one object |
+
+Two follow-ups were filed from it, both for gaps no open issue covered:
+
+* **#4442** — `CodeUnit Metadata` (2000000137) writes no `RequiredTestIsolation` or `TestType`,
+  two columns the platform package declares. The only row of the 18 that is **AL-observable**;
+  the rest of the codeunit cluster is document-equivalence only.
+* **#4443** — the derived `EventPublisherAttribute` states no `GlobalVarAccess` or `Isolated`,
+  though both are positional arguments the symbol file already carries. The trap it records:
+  argument index 1 means `GlobalVarAccess` for `IntegrationEvent` and `Isolated` for
+  `InternalEvent`, so a position-keyed rule is right 128 times and wrong 28.
+
+The rest point at **#3788** (codeunit derivation), **#3797** (xmlport derivation), **#4279**
+(enum/permission-set residue) and **#4282** (page properties `EmitPageXml` does not read).
+
+**One page resists derivation and is named rather than smoothed over.** Page 1998's symbol
+record states neither `PageType` nor `APIVersion`, while BC's document states
+`PageType="Card" APIVersion="beta" AnalysisModeEnabled="1" IsPreview="0"`. It is the single
+residue of the best `AnalysisModeEnabled` rule found (declared value, else `1` when `PageType`
+is `List` or `Worksheet` — 234 of 235), and it is the same page that supplies
+`Page.Properties.IsPreview`'s one occurrence. So BC has an input the symbol file does not
+expose there, and the rule is a strong candidate rather than a proven one.
+
+**Nothing checks that these `issue` values stay open.** `.github/scripts/check_expectation_gap_issues.py`
+covers `known-gaps-*.json` and `allowlist.json`; this manifest is a third issue-citing file and
+is outside its scope. Until that is closed, a closed citation here is caught by a reader, not by
+CI (§ "An entry's `issue` must stay OPEN" has the argument for why that matters).
 
 **The cost, measured on this box after `RunAll()` was memoized.** 13 of this class's 14 tests
 call it, so before the memo the class paid for the whole comparison thirteen times and ran
