@@ -239,8 +239,9 @@ any source table whose metatable is `null`. Measured on three sibling bundles: o
 bundle's table was ever inserted into any of the three Field providers.
 
 The `PinInventoryScope` / `CheckInventoryScope` refusal does not catch it, for a reason unrelated
-to the defect: that guard is called from `TableMetadataVirtualTable`, `AllObjVirtualTable` and
-`AllObjWithCaptionVirtualTable` only. The Field table's populate does not call it.
+to the defect: that guard refuses a store populated under one app group and read under another,
+and here each bundle gets its OWN provider, so the pinned and current app groups always agree and
+it correctly stays silent. Its silence says nothing about this defect either way.
 
 ### The fix
 
