@@ -1,129 +1,129 @@
 {
-  "comment": "Attributes one side's emitted document states and the other's omits, where BC's own reader produces the SAME object either way (#4357). These are NOT declared differences: on every entry here the two derivations agree, and what is declared is that the agreement carries no information. tests/expectations/metadata-equivalence/allowlist.json is the other file and means the opposite \u2014 a tolerated DISAGREEMENT. Measured on BC 28.1.49838.53910 over the Business Foundation and System Application bundles, 1,286 objects; docs/metadata-equivalence.md#unobservable-omissions has the table and the method. An undeclared omission fails the run, and an entry matching nothing fails it too unless it is versionContingent \u2014 which here means 'fewer than 10 of the 1,286 objects carry it on the measured build', a population one BC version's object churn can remove.",
+  "comment": "Attributes one side's emitted document states and the other's omits, where BC's own reader produces the SAME object either way (#4357). These are NOT declared differences: on every entry here the two derivations agree, and what is declared is that the agreement carries no information. tests/expectations/metadata-equivalence/allowlist.json is the other file and means the opposite — a tolerated DISAGREEMENT. Measured on BC 28.1.49838.53910 over the Business Foundation and System Application bundles, 1,286 objects; docs/metadata-equivalence.md#unobservable-omissions has the table and the method. All 18 entries were triaged on #4400 and each now records a verdict — should-state, legitimately-less, or needs-a-named-measurement — and cites the OPEN issue that owns the work rather than the triage issue itself. An undeclared omission fails the run, and an entry matching nothing fails it too unless it is versionContingent — which here means 'fewer than 10 of the 1,286 objects carry it on the measured build', a population one BC version's object churn can remove.",
   "omissions": [
     {
       "member": "Codeunit.CodeUnit.EventSubscriberInstance",
       "statedBy": "expected",
-      "reason": "BC's emitted document states this attribute and the runner's does not, on 558 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) 'Manual', 'StaticAutomatic'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
-      "issue": 4400
+      "reason": "TRIAGED (#4400): the runner SHOULD state it — derivable from data the symbol file already carries, and the omission is a gap. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): BC states it on 558/558 codeunits, 'StaticAutomatic' 555 and 'Manual' 3; SymbolReference.json declares an EventSubscriberInstance property on exactly 3, all 'Manual', so 'declared value, else StaticAutomatic' reproduces BC on 558 of 558 with no residue. Cost: one field on CodeunitMetaRow plus one SetAttribute in TryBuildCodeunitMetadataEquivalenceXml. NOT AL-observable — CodeUnit Metadata (2000000137) declares no such column (its 11 fields are read from the platform package's own CodeUnitMetadata.Table.al), so this is document-equivalence only. Tracked on #3788, the codeunit-derivation issue; that issue's scope is the members BC's emitter states and the runner does not, which this is.",
+      "issue": 3788
     },
     {
       "member": "Codeunit.CodeUnit.MetadataVersion",
       "statedBy": "expected",
-      "reason": "BC's emitted document states this attribute and the runner's does not, on 558 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) '130000'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
-      "issue": 4400
+      "reason": "TRIAGED (#4400): the runner SHOULD state it, and it is the cheapest of the 18 — a constant. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): BC writes MetadataVersion='130000' on 558/558 codeunits, one value, no variation, and the same 130000 appears as a <MetadataVersion> element on every XmlPort and Report document. It is a property of the document FORMAT, not of any declaration, which is why it is uniform. #4279 already states the consequence for a different member: every BC reader copies this attribute into MetaXxx.MetadataToken, so the runner stating nothing leaves BC's default of 0 and MetadataToken differs on every object of several kinds. That makes this one omission the cause of allowlisted DIFFERENCES elsewhere, which is why it is tracked there rather than treated as cosmetic.",
+      "issue": 4279
     },
     {
       "member": "Codeunit.CodeUnit.TestIsolation",
       "statedBy": "expected",
-      "reason": "BC's emitted document states this attribute and the runner's does not, on 529 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) 'Disabled'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
-      "issue": 4400
+      "reason": "TRIAGED (#4400): the runner SHOULD state it, and unlike the rest of the codeunit cluster this one IS AL-observable — CodeUnit Metadata (2000000137) declares RequiredTestIsolation as field 10, and BuildCodeunitMetadataValue has no case arm for it, so AL reads BC's default. Filed as #4442. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): BC states @TestIsolation on 529/558, value 'Disabled' on all 529, and omits it on exactly the 29 codeunits whose Subtype is Install (13) or Upgrade (16) — a total rule with no residue, and Subtype is already on CodeunitMetaRow. CAVEAT recorded on #4442: all 558 measured codeunits are non-test, so 'Disabled' is the only value this population can show and it says nothing about Subtype=Test, which is where the column carries information. That measurement is owed before implementing.",
+      "issue": 4442
     },
     {
       "member": "Codeunit.EventPublisherAttribute.GlobalVarAccess",
       "statedBy": "expected",
-      "reason": "BC's emitted document states this attribute and the runner's does not, on 122 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) 'False'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
-      "issue": 4400
+      "reason": "TRIAGED (#4400): the runner SHOULD state it — a read of an argument already parsed, not a derivation. Filed as #4443. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects) by joining every <EventPublisherAttribute> BC emits to the same method's Attributes entry in SymbolReference.json: GlobalVarAccess equals the attribute's positional argument 1 on 128 of 128 elements where BC states it, 0 wrong. TRAP, and the reason the fix is not a one-liner: argument 1 means GlobalVarAccess for IntegrationEvent but Isolated for InternalEvent, and BC states no GlobalVarAccess attribute at all for InternalEvent (28 elements). A rule keyed on position alone is right 128 times and wrong 28.",
+      "issue": 4443
     },
     {
       "member": "Page.Properties.AnalysisModeEnabled",
       "statedBy": "expected",
-      "reason": "BC's emitted document states this attribute and the runner's does not, on 93 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) '1'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
-      "issue": 4400
+      "reason": "TRIAGED (#4400): the runner SHOULD state it, and the existing allowlist entry already calls it 'a defect and not a scope boundary'. Tracked on #4282, which is open and whose scope is exactly 'page properties SymbolReference.json states that EmitPageXml does not read'. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): BC states it on 94 of 235 pages — '1' on 93, '0' on page 8350, and only the 93 are unobservable because True is what BC's reader produces when the attribute is absent. NOT a plain symbol read, which is the part worth knowing before implementing: only page 8350 declares AnalysisModeEnabled in SymbolReference.json. For the other 93 BC computes it. The best rule found here is 'declared value, else 1 when PageType is List or Worksheet', which reproduces 234 of 235; the single residue is page 1998, whose symbol record states neither PageType nor APIVersion while BC's document states PageType='Card' APIVersion='beta' AnalysisModeEnabled='1'. So BC has an input the symbol file does not expose for that page, and the rule is a strong candidate rather than a proven one.",
+      "issue": 4282
     },
     {
       "member": "Enum.Enum.Access",
       "statedBy": "expected",
-      "reason": "BC's emitted document states this attribute and the runner's does not, on 69 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) 'Internal', 'Public'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
-      "issue": 4400
+      "reason": "TRIAGED (#4400): the runner SHOULD state it — a direct read, the simplest of the 18. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): BC states @Access on 69 of 144 enum documents, Public 54 and Internal 15, and SymbolReference.json declares an Access property on exactly those 69 with exactly those values, 69 of 69 exact. NOT AL-observable: there is no enum metadata virtual table in the platform package at all (Table Metadata has an Access column; enums have no counterpart), so this is document-equivalence only. Tracked on #4279, the open issue for the enum and permission-set derivations' residue.",
+      "issue": 4279
     },
     {
       "member": "Page.Controls.Enabled",
       "statedBy": "expected",
-      "reason": "BC's emitted document states this attribute and the runner's does not, on 37 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) 'true'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
-      "issue": 4400
+      "reason": "TRIAGED (#4400): SAYING LESS IS LEGITIMATE TODAY, as a bounded scope decision rather than a limit — the runner reconstructs only part of the page control tree, so it states nothing on controls it does not build. docs/metadata-equivalence.md#the-control-tree-is-a-cost-decision-not-an-unprovable-one settles the direction: no page entry claims a value is underivable, and the control tree is cost and scope 'with a proof path'. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): on the depth-1 controls BC emits, every @Enabled occurrence in THIS declaration is the value BC's reader produces when the attribute is absent and the symbol file is silent, while every symbol-stated value is a non-default the ordinary value comparison already reports. So the fix here is not a derivation but 'build more of the control tree, then write the default' — which is why it is tracked on #4282 with the rest of the page-property work rather than filed as its own gap.",
+      "issue": 4282
     },
     {
       "member": "Page.Controls.Editable",
       "statedBy": "expected",
-      "reason": "BC's emitted document states this attribute and the runner's does not, on 21 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) 'true'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
-      "issue": 4400
+      "reason": "TRIAGED (#4400): SAYING LESS IS LEGITIMATE TODAY, as a bounded scope decision rather than a limit — the runner reconstructs only part of the page control tree, so it states nothing on controls it does not build. docs/metadata-equivalence.md#the-control-tree-is-a-cost-decision-not-an-unprovable-one settles the direction: no page entry claims a value is underivable, and the control tree is cost and scope 'with a proof path'. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): on the depth-1 controls BC emits, every @Editable occurrence in THIS declaration is the value BC's reader produces when the attribute is absent and the symbol file is silent, while every symbol-stated value is a non-default the ordinary value comparison already reports. So the fix here is not a derivation but 'build more of the control tree, then write the default' — which is why it is tracked on #4282 with the rest of the page-property work rather than filed as its own gap.",
+      "issue": 4282
     },
     {
       "member": "Page.Controls.Visible",
       "statedBy": "expected",
-      "reason": "BC's emitted document states this attribute and the runner's does not, on 21 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) 'true'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
-      "issue": 4400
+      "reason": "TRIAGED (#4400): SAYING LESS IS LEGITIMATE TODAY, as a bounded scope decision rather than a limit — the runner reconstructs only part of the page control tree, so it states nothing on controls it does not build. docs/metadata-equivalence.md#the-control-tree-is-a-cost-decision-not-an-unprovable-one settles the direction: no page entry claims a value is underivable, and the control tree is cost and scope 'with a proof path'. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): on the depth-1 controls BC emits, every @Visible occurrence in THIS declaration is the value BC's reader produces when the attribute is absent and the symbol file is silent, while every symbol-stated value is a non-default the ordinary value comparison already reports. So the fix here is not a derivation but 'build more of the control tree, then write the default' — which is why it is tracked on #4282 with the rest of the page-property work rather than filed as its own gap.",
+      "issue": 4282
     },
     {
       "member": "Page.Controls.MultiLine",
       "statedBy": "expected",
-      "reason": "BC's emitted document states this attribute and the runner's does not, on 6 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) '0'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
-      "issue": 4400,
+      "reason": "TRIAGED (#4400): SAYING LESS IS LEGITIMATE TODAY, as a bounded scope decision rather than a limit — the runner reconstructs only part of the page control tree, so it states nothing on controls it does not build. docs/metadata-equivalence.md#the-control-tree-is-a-cost-decision-not-an-unprovable-one settles the direction: no page entry claims a value is underivable, and the control tree is cost and scope 'with a proof path'. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): on the depth-1 controls BC emits, every @MultiLine occurrence in THIS declaration is the value BC's reader produces when the attribute is absent and the symbol file is silent, while every symbol-stated value is a non-default the ordinary value comparison already reports. So the fix here is not a derivation but 'build more of the control tree, then write the default' — which is why it is tracked on #4282 with the rest of the page-property work rather than filed as its own gap.",
+      "issue": 4282,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#unobservable-omissions"
     },
     {
       "member": "Page.EventPublisherAttribute.GlobalVarAccess",
       "statedBy": "expected",
-      "reason": "BC's emitted document states this attribute and the runner's does not, on 5 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) 'False'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
-      "issue": 4400,
+      "reason": "TRIAGED (#4400): the runner SHOULD state it — the same read as the codeunit row, on page method subtrees. Filed as #4443, which measures both. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): 5 occurrences across 5 pages, all 'False', all IntegrationEvent, all equal to the attribute's positional argument 1 in SymbolReference.json. Kept versionContingent: 5 of 1,286 objects, under the manifest's threshold of 10.",
+      "issue": 4443,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#unobservable-omissions"
     },
     {
       "member": "XmlPort.ID.Name",
       "statedBy": "expected",
-      "reason": "BC's emitted document states this attribute and the runner's does not, on 4 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) 'Export Permission Sets System', 'Export Permission Sets Tenant', 'Export/Import Security Groups', 'Import Permission Sets'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
-      "issue": 4400,
+      "reason": "TRIAGED (#4400): the runner SHOULD state it, and this is the cheapest row in the file after MetadataVersion. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): BC writes <ID Name='...'>9001</ID>, and the @Name it carries equals the <Name> element the same document states immediately below it on 4 of 4 xmlports — a duplicate of a value the runner ALREADY derives and already writes elsewhere in the same document, not a new lookup. Tracked on #3797. Kept versionContingent: 4 of 1,286 objects, and the whole population is System Application's 4 xmlports.",
+      "issue": 3797,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#unobservable-omissions"
     },
     {
       "member": "XmlPort.XmlPort.ALNamespace",
       "statedBy": "expected",
-      "reason": "BC's emitted document states this attribute and the runner's does not, on 4 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) 'System.Security.AccessControl'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
-      "issue": 4400,
+      "reason": "TRIAGED (#4400): the runner SHOULD state it — derivable, and the same missing field as four other object kinds. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): BC states @ALNamespace on 4 of 4 xmlports, all 'System.Security.AccessControl', and the symbol file's Namespaces tree path to each of those objects is that same string, 4 of 4 exact. #4279 records the identical shape for tables, reports, enums, permission sets and codeunits — one missing field on the symbol records, not five separate problems. Tracked on #3797, the open xmlport-derivation issue. Kept versionContingent: 4 of 1,286 objects.",
+      "issue": 3797,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#unobservable-omissions"
     },
     {
       "member": "Enum.Enum.AssignmentCompatibility",
       "statedBy": "expected",
-      "reason": "BC's emitted document states this attribute and the runner's does not, on 3 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) '1'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
-      "issue": 4400,
+      "reason": "TRIAGED (#4400): the runner SHOULD state it — same direct read as Enum.Access, same file, same fix. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): BC states it on 3 of 144 enums, value '1' on all 3, and SymbolReference.json declares AssignmentCompatibility on exactly those 3 with exactly '1', 3 of 3. Tracked on #4279. Kept versionContingent: 3 of 1,286 objects carry it, well under the manifest's stated threshold of 10, so one BC version's object churn can remove the population.",
+      "issue": 4279,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#unobservable-omissions"
     },
     {
       "member": "Codeunit.EventPublisherAttribute.Isolated",
       "statedBy": "expected",
-      "reason": "BC's emitted document states this attribute and the runner's does not, on 1 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) 'False'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
-      "issue": 4400,
+      "reason": "TRIAGED (#4400): the runner SHOULD state it. Filed as #4443. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): BC states @Isolated on 9 elements — 'True' on 8, 'False' on 1 — and it equals the attribute's positional argument 2 for IntegrationEvent (6 of 6) and argument 1 for InternalEvent (3 of 3), 9 of 9 with 0 wrong. WHY THIS ENTRY IS x1 AND NOT x9, which is the thing to not misread: only the single 'False' is an unobservable omission, because False is what BC's reader produces when the attribute is absent. The 8 'True' elements are a REAL value difference and are reported by the ordinary value comparison, not by this third state. Kept versionContingent: 1 occurrence.",
+      "issue": 4443,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#unobservable-omissions"
     },
     {
       "member": "Page.Controls.DateFormula",
       "statedBy": "expected",
-      "reason": "BC's emitted document states this attribute and the runner's does not, on 1 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) '0'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
-      "issue": 4400,
+      "reason": "TRIAGED (#4400): SAYING LESS IS LEGITIMATE TODAY, as a bounded scope decision rather than a limit — the runner reconstructs only part of the page control tree, so it states nothing on controls it does not build. docs/metadata-equivalence.md#the-control-tree-is-a-cost-decision-not-an-unprovable-one settles the direction: no page entry claims a value is underivable, and the control tree is cost and scope 'with a proof path'. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): on the depth-1 controls BC emits, every @DateFormula occurrence in THIS declaration is the value BC's reader produces when the attribute is absent and the symbol file is silent, while every symbol-stated value is a non-default the ordinary value comparison already reports. So the fix here is not a derivation but 'build more of the control tree, then write the default' — which is why it is tracked on #4282 with the rest of the page-property work rather than filed as its own gap.",
+      "issue": 4282,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#unobservable-omissions"
     },
     {
       "member": "Page.Properties.IsPreview",
       "statedBy": "expected",
-      "reason": "BC's emitted document states this attribute and the runner's does not, on 1 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) '0'. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
-      "issue": 4400,
+      "reason": "TRIAGED (#4400): the runner SHOULD state it, and the allowlist's sibling entry for this member has a factually wrong reason that #3802 is open to correct. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): BC states @IsPreview on 2 of 235 pages — page 332 as '1' and page 1998 as '0' — and only page 1998's is unobservable, because 0/False is what BC's reader produces when absent. Page 332 DECLARES IsPreview='1' in SymbolReference.json, so that one is a plain read; page 1998 declares neither IsPreview nor PageType while BC's document states PageType='Card' APIVersion='beta' IsPreview='0', the same page whose AnalysisModeEnabled has no symbol-derivable answer. So this entry's single occurrence is the SAME unexplained page, not a second phenomenon. Tracked on #4282. Kept versionContingent: 1 occurrence.",
+      "issue": 4282,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#unobservable-omissions"
     },
     {
       "member": "Report.Properties.PromotedActionCategoriesML",
       "statedBy": "expected",
-      "reason": "BC's emitted document states this attribute and the runner's does not, on 1 occurrence(s) across the two 28.1.49838.53910 ground-truth bundles, with value(s) ''. BC's own reader produces the same object with the attribute and without it, so the member-for-member comparison agrees and that agreement says nothing about whether the runner's derivation is right. UNTRIAGED: #4400 decides whether the runner should state it or whether saying less is legitimate here.",
-      "issue": 4400,
+      "reason": "TRIAGED (#4400): CANNOT DECIDE WITHOUT A MEASUREMENT THIS BUNDLE CANNOT PROVIDE, and the measurement is named rather than guessed. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): the entire population is one occurrence on one object — Report 9810, the ONLY report in either bundle — where BC writes PromotedActionCategoriesML='' on the request page's <Properties>. Its symbol record states a RequestPage with an EMPTY Properties array, so nothing distinguishes 'BC emits empty-string for every report request page' from 'BC emits it only when something about this report is true'. One object cannot separate those, and the second is what decides whether omitting is wrong. WHAT WOULD SETTLE IT: ground-truth bundles for an app with several reports — Base Application has hundreds — asking whether the attribute appears on all request pages or a subset. Until then this stays declared rather than fixed, because a writer-side change would go harness-green either way, which is the exact blindness #4357 added this third state to expose. Tracked on #4282 as the page-properties issue the request page's <Properties> element belongs to. Kept versionContingent: 1 occurrence, and a bundle with no reports removes the population entirely.",
+      "issue": 4282,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#unobservable-omissions"
     }
