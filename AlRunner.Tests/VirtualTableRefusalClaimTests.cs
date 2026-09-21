@@ -466,7 +466,19 @@ public sealed class VirtualTableRefusalClaimTests
         // before this change, replacing that factory call with `new InvalidOperationException(...)`
         // left this file at `Failed: 0, Passed: 91`.
         // 80 was READ OUT of this test's own failure message ("Expected: 79, Actual: 80").
-        Assert.Equal(80, total);
+        //
+        // 80 -> 84 (#4442): four REAL refusal sites, all added by the TestType derivation in
+        // RecordPatches.CodeunitMetadataVirtualTable.cs, and none of them a deletion:
+        //   EnsureCodeunitTestTypeOrdinals   -> metatable has no "TestType" field
+        //   EnsureCodeunitTestTypeOrdinals   -> "TestType" carries no option metadata
+        //   EnsureCodeunitTestTypeOrdinals   -> "TestType" option string is empty
+        //   ResolveCodeunitTestTypeOrdinal   -> the resolved member is absent from the string
+        // Each guards the ordinal resolution, which reads a DIFFERENT column's option string
+        // from Subtype's; a miss there would silently mis-resolve rather than throw, which is
+        // why they refuse instead of defaulting. Counted by this test's own site counter, and
+        // 84 was READ OUT of its failure message ("Expected: 80, Actual: 84") rather than
+        // chosen -- then re-proved by perturbing it to 83 and requiring a RED.
+        Assert.Equal(84, total);
     }
 
     // A refusal SITE is a *call* to a `*ShapeGap(` factory, not only a `throw` of one (#4058).
