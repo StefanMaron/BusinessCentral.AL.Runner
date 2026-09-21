@@ -378,6 +378,91 @@ derivation exists to avoid (`.claude/rules/guards-need-a-third-state.md`). Four 
 paths: an argument list shorter than three, a non-numeric object id, a mask letter outside
 `RIMDX`, and a scope name outside BC's three.
 
+<a id="the-event-publisher-attribute"></a>
+
+## The event publisher attribute: slot 1 means two different things
+
+BC writes three flags on an `<EventPublisherAttribute>` element beyond `Name`, and all three
+come from the AL attribute's **positional arguments**, which `SymbolReference.json` already
+states. The trap is that the argument lists differ by attribute name, and they differ at the
+same index:
+
+| AL attribute | arg 0 | arg 1 | arg 2 |
+|---|---|---|---|
+| `IntegrationEvent` | `IncludeSender` | **`GlobalVarAccess`** | `Isolated` |
+| `InternalEvent` | `IncludeSender` | **`Isolated`** | — |
+| `BusinessEvent` | `IncludeSender` | **`Isolated`** | — |
+
+So a rule reading "argument 1 is `GlobalVarAccess`" is right for the 128 `IntegrationEvent`
+elements BC states it on and wrong for the 28 `InternalEvent` ones, where it silently writes
+the isolation flag into `GlobalVarAccess`'s slot. That is a fix which looks finished at 82%
+correct (#4443).
+
+The table is read off the AL compiler's own resource keys in
+`Microsoft.Dynamics.Nav.CodeAnalysis.dll`, which name one argument each and are exhaustive for
+these three attributes — `IntegrationEvent_{IncludeSender,GlobalVarAccess,Isolated}`,
+`InternalEvent_{IncludeSender,Isolated}`, `BusinessEvent_{IncludeSender,Isolated}`. There is no
+`InternalEvent_GlobalVarAccess` or `BusinessEvent_GlobalVarAccess` key. The same binary carries
+the split as two separate position constants, `EventPublisherIsolatedPosition` and
+`EventPublisherIsolatedPositionIntegrationEvent`.
+
+**Why `GlobalVarAccess` exists on only one of the three** is BC's own constructor rather than a
+convention: `NavEventAttribute..ctor` computes
+`AllowGlobalVarAccess = allowGlobalVarAccess & (EventType == NavEventType.Integration)`, so the
+value is masked to false for every other kind and the emitter writes no attribute for it.
+
+### What the shipped apps measure
+
+Over Business Foundation + System Application at 28.1.49838.53910, joining all **157** emitted
+`<EventPublisherAttribute>` elements to the same method's `Attributes` entry:
+
+| | `IncludeSender` | `GlobalVarAccess` | `Isolated` |
+|---|---:|---:|---:|
+| BC states it | 157 | 129 | 9 |
+| joined to a symbol entry, and agreeing | **156** | **128** | **9** |
+| disagreeing | 0 | 0 | 0 |
+
+The one element short of 157 states no arguments at all and has no symbol entry to join to.
+`GlobalVarAccess` is stated on every `IntegrationEvent` and on no `InternalEvent`; `Isolated`
+splits 6 at index 2 on `IntegrationEvent` and 3 at index 1 on `InternalEvent`.
+
+**`Isolated` is written if and only if the AL attribute states the argument**, not merely when
+it is true: of the 9, **8 are `True` and 1 is `False`**. An emitter omitting every false would
+be wrong on that one. The same condition governs `GlobalVarAccess`; `IncludeSender` alone is
+unconditional, carrying the AL default `False` where the attribute states no argument.
+
+### What the shipped apps cannot measure, and the probe that settled it
+
+Three shapes do not occur in either app, so the 157 elements above cannot adjudicate them: an
+`InternalEvent` whose slot 0 is `True`, any `BusinessEvent` at all, and an `InternalEvent`
+carrying both flags. A probe app declaring all ten shapes, compiled and emitted through BC's own
+compiler at 28.1.49838.53910 (`[decl] errors=0`, `[emit] success=True objects=1 errors=0`):
+
+| AL declaration | `Name` | `IncludeSender` | `GlobalVarAccess` | `Isolated` |
+|---|---|---|---|---|
+| `[IntegrationEvent(false, false)]` | `IntegrationEvent` | `False` | `False` | *absent* |
+| `[IntegrationEvent(false, true)]` | `IntegrationEvent` | `False` | **`True`** | *absent* |
+| `[IntegrationEvent(true, true, true)]` | `IntegrationEvent` | `True` | `True` | `True` |
+| `[IntegrationEvent(false, false, false)]` | `IntegrationEvent` | `False` | `False` | **`False`** |
+| `[InternalEvent(false)]` | `InternalEvent` | `False` | *absent* | *absent* |
+| `[InternalEvent(true)]` | `InternalEvent` | **`True`** | *absent* | *absent* |
+| `[InternalEvent(false, true)]` | `InternalEvent` | `False` | *absent* | `True` |
+| `[InternalEvent(true, true)]` | `InternalEvent` | `True` | *absent* | `True` |
+| `[BusinessEvent(false)]` | `BusinessEvent` | `False` | *absent* | *absent* |
+| `[BusinessEvent(true, true)]` | `BusinessEvent` | **`True`** | *absent* | **`True`** |
+
+The name-keyed rule reproduces all three flags on **10 of 10**, zero disagreements. Three of
+those rows are load-bearing and were wrong in the runner before #4443:
+
+- **`[InternalEvent(true)]` emits `IncludeSender="True"`.** Slot 0 is the sender argument here
+  too, so an `InternalEvent` does have one. All 28 shipped elements state it as `False`, which
+  is why a rule hardcoding `false` agreed with every one of them.
+- **`BusinessEvent` follows `InternalEvent`'s shape, not `IntegrationEvent`'s.** Its isolation
+  is slot 1, and it gets no `GlobalVarAccess`. Neither shipped app declares one, so nothing
+  measured it.
+- **A stated `Isolated="False"` is written, not omitted**, which distinguishes "the AL
+  attribute states false" from "the AL attribute states nothing".
+
 <a id="what-adjudicated-this"></a>
 
 ## What adjudicated this

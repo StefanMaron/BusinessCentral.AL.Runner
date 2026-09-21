@@ -20,9 +20,12 @@
 //   registered as clear. The two documents are then rendered through the real entry points and
 //   their <Methods> subtrees canonicalised and compared.
 //
-//   The fixture deliberately spans all three shapes BC emits: IntegrationEvent (IncludeSender in
-//   slot 0, Isolated in slot 2), InternalEvent (no sender argument at all, Isolated in slot 1),
-//   and InherentPermissions, which maps to a different MethodAttributes child element entirely.
+//   The fixture deliberately spans all three shapes BC emits: IntegrationEvent (IncludeSender
+//   slot 0, GlobalVarAccess slot 1, Isolated slot 2), InternalEvent and BusinessEvent
+//   (IncludeSender slot 0, Isolated slot 1, and NO GlobalVarAccess attribute at all), and
+//   InherentPermissions, which maps to a different MethodAttributes child element entirely.
+//   The IntegrationEvent row states GlobalVarAccess as True so a renderer that dropped the
+//   attribute, or wrote a constant, shows up here rather than agreeing by coincidence (#4443).
 
 using System.IO.Compression;
 using System.Text;
@@ -60,7 +63,7 @@ public sealed class DependencyPageMethodSubtreeRenderingParityTests : IDisposabl
                 { "Id": 11, "Name": "PlainProcedure", "Attributes": [] },
                 { "Id": 2001, "Name": "OnIntegrationSenderIsolated",
                   "Attributes": [ { "Name": "IntegrationEvent", "Arguments": [
-                    { "Value": "True" }, { "Value": "False" }, { "Value": "True" } ] } ] },
+                    { "Value": "True" }, { "Value": "True" }, { "Value": "True" } ] } ] },
                 { "Id": 2002, "Name": "OnInternalIsolated",
                   "Attributes": [ { "Name": "InternalEvent", "Arguments": [
                     { "Value": "False" }, { "Value": "True" } ] } ] },
@@ -81,7 +84,7 @@ public sealed class DependencyPageMethodSubtreeRenderingParityTests : IDisposabl
                 { "Id": 11, "Name": "PlainProcedure", "Attributes": [] },
                 { "Id": 2001, "Name": "OnIntegrationSenderIsolated",
                   "Attributes": [ { "Name": "IntegrationEvent", "Arguments": [
-                    { "Value": "True" }, { "Value": "False" }, { "Value": "True" } ] } ] },
+                    { "Value": "True" }, { "Value": "True" }, { "Value": "True" } ] } ] },
                 { "Id": 2002, "Name": "OnInternalIsolated",
                   "Attributes": [ { "Name": "InternalEvent", "Arguments": [
                     { "Value": "False" }, { "Value": "True" } ] } ] },
