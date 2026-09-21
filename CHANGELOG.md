@@ -384,6 +384,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **testpage-lookup:** measure what BC does when a lookup's target table declares no page
 - **corpus:** give corpus 60562's page-MODIFY arm a discriminating observable
 - **preflight:** pin that --reap-carried implies --reap, by driving main()
 - **ncl:** pin FindCatchRethrowSites' try-block exclusion, which only prose asserted
