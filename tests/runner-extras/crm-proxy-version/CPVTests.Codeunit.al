@@ -1,17 +1,23 @@
-// Issue #3515 — runner-specific half of the Xrm proxy-version contract.
+// Issue #3515 — the external-data (Xrm / CDS / Dataverse) proxy surface is out of scope, and
+// the runner refuses it by name rather than serving AL an empty registry.
 //
-// BaseApp's CRM/CDS Connection Setup pages call CRMIntegrationManagement.GetLastProxyVersionItem,
-// which fills a `Record TempStack temporary` from the DotNet CrmHelper.GetProxyIdList() and then
-// FindLasts it. GetProxyIdList returns XrmServiceProvider.ProxyIds — the key set of a static
-// Dictionary<int, XrmService> that BC's service tier fills at NavEnvironment construction from
-// DataSources/DataSources.json. The runner's artifact directory is flat and ships no such file,
-// so the registry stayed empty, InitializeProxyVersionList inserted zero rows, and the FindLast
-// threw "The TempStack table is empty" three frames below OnOpenPage.
+// BaseApp's CRM/CDS Connection Setup pages call CRMIntegrationManagement.GetLastProxyVersionItem
+// from OnOpenPage. That fills a `Record TempStack temporary` from the DotNet
+// CrmHelper.GetProxyIdList() and then FindLasts it. GetProxyIdList returns
+// XrmServiceProvider.ProxyIds — the key set of a static registry a service tier fills at
+// NavEnvironment construction from DataSources/DataSources.json, one entry per proxy the
+// deployment declares. A BC artifact directory is flat and ships no such file, so the runner can
+// neither read that configuration nor invent it.
 //
-// What is asserted here is runner-side: that the registry BC reads is populated, and populated
-// from the proxy assemblies Microsoft actually ships rather than from numbers invented here.
-// The BC-behaviour half — that GetLastProxyVersionItem returns the highest registered id, and
-// that TempStack.FindLast on an empty temp table errors — is proven upstream in the corpus.
+// Before this change the registry was simply empty, InitializeProxyVersionList inserted zero
+// rows, and the page failed three frames below OnOpenPage on "The TempStack table is empty" —
+// a BC error blaming a table that is not the problem. That is the silent-default shape
+// .claude/rules/loud-failures.md forbids: the surface is out of scope
+// (docs/scope.md#table-connections), so it must refuse by name.
+//
+// What is asserted here is runner-side: that the refusal fires on the surface AL touches, and
+// that it names the API and the reason. Plain BC behaviour around it — that FindLast on a
+// genuinely empty temp table errors — is BC's own and is kept as a control.
 codeunit 66001 "CPV Tests"
 {
     Subtype = Test;
@@ -20,100 +26,57 @@ codeunit 66001 "CPV Tests"
         Assert: Codeunit "CPV Assert";
 
     [Test]
-    procedure ProxyIdList_IsNotEmpty()
+    procedure InitializeProxyVersionList_RefusesByName()
     var
         CRMIntegrationManagement: Codeunit "CRM Integration Management";
         TempStack: Record TempStack temporary;
-        ProxyCount: Integer;
     begin
-        // The exact fill BaseApp performs before its FindLast. Before #3515 this inserted
-        // zero rows, which is what made the FindLast below throw.
-        CRMIntegrationManagement.InitializeProxyVersionList(TempStack);
+        // The exact fill BaseApp performs before its FindLast. It reaches
+        // CrmHelper.GetProxyIdList() through AL's DotNet interop, which is where the runner
+        // refuses. The record variable is a plain temporary table and is served normally —
+        // the refusal is keyed on the external-data lookup, not on TempStack.
+        asserterror CRMIntegrationManagement.InitializeProxyVersionList(TempStack);
 
-        ProxyCount := TempStack.Count();
-        Assert.IsGreaterOrEqual(ProxyCount, 1,
-            'CrmHelper.GetProxyIdList() must report at least one registered Xrm proxy version; ' +
-            'an empty list is what makes the CRM/CDS Connection Setup pages fail to open.');
+        // Naming the surface: the API slot of the refusal, not merely "something threw".
+        Assert.ExpectedError('out-of-scope: CrmHelper.GetProxyIdList');
+        // Naming the reason: the docs/scope.md anchor the manifest and the reader key on.
+        Assert.ExpectedError('table-connections');
+        // The refusal must explain WHY, so the reader is not sent looking at TempStack.
+        Assert.ExpectedError('DataSources/DataSources.json');
     end;
 
     [Test]
-    procedure GetLastProxyVersionItem_ReturnsAShippedProxyVersion()
+    procedure GetLastProxyVersionItem_RefusesByName()
     var
         CRMIntegrationManagement: Codeunit "CRM Integration Management";
         LastProxyVersion: Integer;
     begin
-        // This is the frame the issue's stack trace names. It FindLasts the TempStack that
-        // InitializeProxyVersionList filled, so it throws whenever the registry is empty.
-        LastProxyVersion := CRMIntegrationManagement.GetLastProxyVersionItem();
+        // The frame the issue's stack trace names, one level above the fill. It must carry the
+        // same refusal rather than BC's "The TempStack table is empty", which is what the
+        // empty registry used to produce here and which blames the wrong thing.
+        asserterror LastProxyVersion := CRMIntegrationManagement.GetLastProxyVersionItem();
 
-        // The id is the major of the CRM SDK the proxy binds to, which BC itself asserts on
-        // re-registration (XrmServiceProvider.RegisterXrmService). Microsoft.Xrm.Sdk.dll ships at
-        // file version 9.2.x here, so the id is 9. A floor rather than an exact value keeps this
-        // true when a later BC build ships a newer SDK, while still failing for the 0 that an
-        // empty registry produces through a default-valued Integer.
-        Assert.IsGreaterOrEqual(LastProxyVersion, 9,
-            'GetLastProxyVersionItem must return a proxy version Microsoft actually ships.');
+        Assert.ExpectedError('out-of-scope: CrmHelper.GetProxyIdList');
+        Assert.ExpectedError('table-connections');
+
+        // The old failure mode, pinned as absent: a reader seeing this message would go and
+        // look at a temp table that was never the problem.
+        Assert.ErrorDoesNotContain('The TempStack table is empty',
+            'the refusal must name the external-data surface, not the temp table BaseApp fills from it');
     end;
 
     [Test]
-    procedure EveryRegisteredProxyVersion_IsAShippedSdkMajor()
-    var
-        CRMIntegrationManagement: Codeunit "CRM Integration Management";
-        TempStack: Record TempStack temporary;
-        SawNine: Boolean;
-    begin
-        // Discrimination control for the floor above, which a registry holding one invented
-        // number would also satisfy. The registration id is the major of the CRM SDK the proxy
-        // binds to — BC's own invariant — so every row must be a plausible SDK major and the
-        // shipped 9.2.x SDK must appear. This fails if the registration ever starts deriving
-        // ids from the proxy file names, which would give 91 and 100 instead.
-        CRMIntegrationManagement.InitializeProxyVersionList(TempStack);
-
-        Assert.IsTrue(TempStack.FindSet(), 'the proxy-version registry must not be empty');
-        repeat
-            Assert.IsGreaterOrEqual(TempStack.StackOrder, 1,
-                'a registered proxy version must be a positive SDK major; BC rejects version <= 0.');
-            if TempStack.StackOrder > 90 then
-                Error('Proxy version %1 looks like a proxy FILE NAME (V91/V100), not an SDK major. ' +
-                      'BC asserts id = SdkVersion.Major on re-registration.', TempStack.StackOrder);
-            if TempStack.StackOrder = 9 then
-                SawNine := true;
-        until TempStack.Next() = 0;
-
-        Assert.IsTrue(SawNine,
-            'Microsoft.Xrm.Sdk.dll ships at file version 9.2.x, so proxy id 9 must be registered.');
-    end;
-
-    [Test]
-    [HandlerFunctions('ConfirmHandler')]
-    procedure CDSConnectionSetupPage_Opens()
+    procedure CDSConnectionSetupPage_RefusesToOpen()
     var
         CDSConnectionSetupPage: TestPage "CDS Connection Setup";
     begin
-        // The failure the issue actually reports: page 7200's OnOpenPage calls
-        // InitializeDefaultProxyVersion -> GetLastProxyVersionItem on a first open (Rec.Get()
-        // is false), so the empty registry made the page throw before any test body ran. The
-        // three tests above pin the registry; this one pins the surface that consumes it,
-        // because a populated registry that the page still cannot use would leave all 90
-        // reported failures in place while those three went green.
-        CDSConnectionSetupPage.OpenEdit();
+        // The failure the issue actually reports. Page 7200's OnOpenPage calls
+        // InitializeDefaultProxyVersion -> GetLastProxyVersionItem on a first open, so the
+        // refusal must reach the page-open surface and not be swallowed on the way out.
+        asserterror CDSConnectionSetupPage.OpenEdit();
 
-        // Reaching this line is already past the throw, but the value is what pins the fix:
-        // the page's control over Rec."Proxy Version" is captioned "SDK Version", which is BC's
-        // own name for the same number this registration derives from Microsoft.Xrm.Sdk.dll's
-        // file version. A page that opened against an empty registry could not show 9.
-        Assert.AreEqual(9, CDSConnectionSetupPage."SDK Version".AsInteger(),
-            'the page must show the proxy version InitializeDefaultProxyVersion resolved');
-
-        // The page's OnQueryClosePage confirms on exit while the connection is disabled; that
-        // is ordinary BC behaviour on this page and unrelated to #3515.
-        CDSConnectionSetupPage.Close();
-    end;
-
-    [ConfirmHandler]
-    procedure ConfirmHandler(Question: Text[1024]; var Reply: Boolean)
-    begin
-        Reply := true;
+        Assert.ExpectedError('out-of-scope: CrmHelper.GetProxyIdList');
+        Assert.ExpectedError('table-connections');
     end;
 
     [Test]
@@ -121,14 +84,34 @@ codeunit 66001 "CPV Tests"
     var
         TempStack: Record TempStack temporary;
     begin
-        // The negative control, and the reason this fix is a population rather than a
-        // suppression: a temp table nobody filled must still fail its FindLast exactly as
-        // BC does. If the fix had worked by weakening FindLast, this test would go green
-        // for the wrong reason and the runner would be hiding real empty-table bugs.
+        // Scoping control, and the reason the refusal is keyed on the external-data lookup
+        // rather than on anything TempStack does: a temp table nobody filled must still fail
+        // its FindLast with BC's own error. If the refusal had been written over the temp
+        // table instead, this would carry the out-of-scope message and the runner would be
+        // hiding real empty-table bugs behind a scope boundary.
         Assert.AreEqual(0, TempStack.Count(), 'an untouched temporary TempStack holds no rows');
 
         asserterror TempStack.FindLast();
         Assert.IsTrue(StrPos(GetLastErrorText(), 'TempStack') > 0,
             'FindLast on a genuinely empty temp table must still raise BC''s own empty-table error.');
+        Assert.ErrorDoesNotContain('out-of-scope',
+            'an ordinary empty temp table is in scope and must not be refused');
+    end;
+
+    [Test]
+    procedure OrdinaryTempTable_IsStillServed()
+    var
+        TempStack: Record TempStack temporary;
+    begin
+        // The other half of the scoping control: the refusal must not have made the TempStack
+        // table itself unusable. Inserting and reading back is ordinary in-scope behaviour and
+        // stays green, so the boundary sits on the DotNet lookup alone.
+        TempStack.Init();
+        TempStack.StackOrder := 7;
+        TempStack.Insert();
+
+        Assert.AreEqual(1, TempStack.Count(), 'a temporary TempStack must still accept a row');
+        Assert.IsTrue(TempStack.FindLast(), 'FindLast must succeed once a row exists');
+        Assert.AreEqual(7, TempStack.StackOrder, 'the row read back must be the row inserted');
     end;
 }

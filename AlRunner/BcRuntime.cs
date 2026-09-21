@@ -990,15 +990,6 @@ public static partial class BcRuntime
         // removed — see MetadataProviderElementRemoval.cs.
         AlRunner.Patches.MetadataProviderElementRemoval.Apply(navNcl);
 
-        // BC's NavEnvironment ctor registers the shipped Xrm proxy assemblies from
-        // DataSources/DataSources.json, which the flat artifact directory does not carry. Without
-        // it CrmHelper.GetProxyIdList() answers empty and BaseApp's CRM/CDS Connection Setup pages
-        // fail to open on a FindLast over the temp table it fills (#3515).
-        if (AlRunner.Patches.XrmProxyRegistration.Apply() == 0)
-            Console.Error.WriteLine(
-                "[BcRuntime] no Xrm proxy version registered: BaseApp CRM/CDS surfaces that read "
-                + "CrmHelper.GetProxyIdList() will see an empty list (see #3515).");
-
         // NavEnvironment.cctor — replace WindowsIdentity-touching init
         Hook(envType.TypeInitializer!, nameof(NavEnvironmentCctorReplacement), "NavEnvironment..cctor");
         HookProperty(envType, "ServiceAccount", true, nameof(GetServiceAccountReplacement));

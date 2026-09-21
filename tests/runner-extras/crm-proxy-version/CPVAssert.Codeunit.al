@@ -1,3 +1,5 @@
+// Standalone Assert codeunit — this suite must stand alone (tests/runner-extras/README.md),
+// it does not import from tests/al-language.
 codeunit 66000 "CPV Assert"
 {
     procedure IsTrue(Condition: Boolean; Msg: Text)
@@ -6,21 +8,23 @@ codeunit 66000 "CPV Assert"
             Error('Assert.IsTrue failed. %1', Msg);
     end;
 
-    procedure IsFalse(Condition: Boolean; Msg: Text)
-    begin
-        if Condition then
-            Error('Assert.IsFalse failed. %1', Msg);
-    end;
-
     procedure AreEqual(Expected: Integer; Actual: Integer; Msg: Text)
     begin
         if Expected <> Actual then
             Error('Assert.AreEqual failed. Expected:<%1>. Actual:<%2>. %3', Expected, Actual, Msg);
     end;
 
-    procedure IsGreaterOrEqual(Actual: Integer; Floor: Integer; Msg: Text)
+    procedure ExpectedError(Fragment: Text)
     begin
-        if Actual < Floor then
-            Error('Assert.IsGreaterOrEqual failed. Actual:<%1> is below floor:<%2>. %3', Actual, Floor, Msg);
+        if StrPos(GetLastErrorText(), Fragment) = 0 then
+            Error('Assert.ExpectedError failed. Expected an error containing ''%1'' but got ''%2''',
+                  Fragment, GetLastErrorText());
+    end;
+
+    procedure ErrorDoesNotContain(Fragment: Text; Msg: Text)
+    begin
+        if StrPos(GetLastErrorText(), Fragment) > 0 then
+            Error('Assert.ErrorDoesNotContain failed. The error must NOT contain ''%1'' but was ''%2''. %3',
+                  Fragment, GetLastErrorText(), Msg);
     end;
 }
