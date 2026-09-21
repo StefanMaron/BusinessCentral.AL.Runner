@@ -137,24 +137,10 @@ public static partial class RecordPatches
             var attributes = doc.CreateElement("MethodAttributes", root.NamespaceURI);
             var kind = doc.CreateElement(method.Kind, root.NamespaceURI);
             kind.SetAttribute("Name", method.AttributeName);
-            if (method.Kind == "EventPublisherAttribute")
-            {
-                // Both come from the attribute's POSITIONAL arguments in the symbol file and
-                // reproduce BC's own values for 149 of 149 publishers — see
-                // BcAppSymbolCache.ReadPublisherFlags, which owns the mapping and its
-                // measurement. Written unconditionally, in BC's own "True"/"False" spelling,
-                // because BC's emitter writes them on every publisher element rather than
-                // omitting the false case.
-                // IncludeSender unconditionally, Isolated ONLY when true. That asymmetry is
-                // BC's, measured on System Application 28.1: its emitter writes IncludeSender on
-                // all 149 publisher elements and Isolated on only 9 (8 True, 1 False). Writing
-                // Isolated="False" on the other 140 would state a value where BC states absence
-                // — the manufactured-agreement failure this projection exists to avoid — and the
-                // deserialized object reads the same either way, because BC's own reader
-                // defaults an absent Isolated to false.
-                kind.SetAttribute("IncludeSender", method.IncludeSender ? "True" : "False");
-                if (method.Isolated) kind.SetAttribute("Isolated", "True");
-            }
+            // The three publisher flags, each written only where BC writes it — the shared
+            // definition, so this renderer and the page one cannot drift.
+            foreach (var (flagName, flagValue) in PublisherAttributes(method))
+                kind.SetAttribute(flagName, flagValue);
             AppendInherentPermissionAttributes(kind, method.InherentPermission);
             attributes.AppendChild(kind);
             element.AppendChild(attributes);
@@ -191,6 +177,34 @@ public static partial class RecordPatches
     {
         foreach (var (name, value) in InherentPermissionAttributes(inherent))
             kind.SetAttribute(name, value);
+    }
+
+    /// <summary>
+    /// The flags BC's emitter writes on an <c>EventPublisherAttribute</c> element beyond
+    /// <c>Name</c>, as (name, value) pairs in BC's own document order — ONE definition of the
+    /// set, consumed by both method-table renderers so they cannot drift, the same way
+    /// <see cref="InherentPermissionAttributes"/> is shared (#4339, #4443).
+    ///
+    /// <para><c>IncludeSender</c> is unconditional; <c>GlobalVarAccess</c> and <c>Isolated</c>
+    /// are written IF AND ONLY IF the AL attribute states the argument, so a null stays ABSENT
+    /// rather than becoming a written default. BC's own reader produces the same object either
+    /// way, which is what makes a written default manufactured agreement rather than a harmless
+    /// extra. Observably equivalent on all 157 elements BC emits at 28.1.49838.53910 and on a
+    /// 10-shape probe app covering what the shipped apps do not:
+    /// docs/codeunit-metadata-from-bc.md#the-event-publisher-attribute.</para>
+    ///
+    /// <para><b>Trap:</b> a stated <c>Isolated="False"</c> is written, not omitted — 1 of the 9
+    /// stated on 28.1 is false, so "write it only when true" is wrong on exactly that one.</para>
+    /// </summary>
+    internal static IEnumerable<(string Name, string Value)> PublisherAttributes(
+        BcAppSymbolCache.CodeunitMethodSymbol method)
+    {
+        if (method.Kind != "EventPublisherAttribute") yield break;
+        yield return ("IncludeSender", method.IncludeSender ? "True" : "False");
+        if (method.GlobalVarAccess is { } globals)
+            yield return ("GlobalVarAccess", globals ? "True" : "False");
+        if (method.Isolated is { } isolated)
+            yield return ("Isolated", isolated ? "True" : "False");
     }
 
     /// <summary>

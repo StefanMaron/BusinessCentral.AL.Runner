@@ -697,14 +697,21 @@ internal static partial class BcAppSymbolCache
     /// against the live constructor, where a bare element threw and `Name` alone sufficed.</param>
     /// <param name="IncludeSender">The publisher's <c>IncludeSender</c>, which BC writes on the
     /// <c>EventPublisherAttribute</c> element. False for every non-publisher kind.</param>
-    /// <param name="Isolated">The publisher's <c>Isolated</c>, same element.</param>
+    /// <param name="Isolated">The publisher's <c>Isolated</c>, same element, or null when the AL
+    /// attribute states no argument in its slot. Null and <c>false</c> are DIFFERENT documents:
+    /// BC writes the attribute if and only if the argument is stated, so the renderers write
+    /// nothing for null and <c>"False"</c> for a stated false (#4443).</param>
+    /// <param name="GlobalVarAccess">The publisher's <c>GlobalVarAccess</c>, same element, or
+    /// null when the attribute has no such slot — which is every kind but
+    /// <c>IntegrationEvent</c>. See <see cref="PublisherAttributeShapes"/>.</param>
     /// <param name="InherentPermission">The four values BC writes on an
     /// <c>InherentPermissionsMethodAttribute</c> element beyond <c>Name</c>, or null for every
     /// other kind. See <see cref="InherentPermissionSymbol"/>.</param>
     internal sealed record CodeunitMethodSymbol(
         int Id, string Name, string Kind, string AttributeName,
-        bool IncludeSender = false, bool Isolated = false,
-        InherentPermissionSymbol? InherentPermission = null);
+        bool IncludeSender = false, bool? Isolated = null,
+        InherentPermissionSymbol? InherentPermission = null,
+        bool? GlobalVarAccess = null);
 
     /// <summary>
     /// The four attributes BC's emitter writes on an <c>InherentPermissionsMethodAttribute</c>
@@ -2747,24 +2754,67 @@ internal static partial class BcAppSymbolCache
         };
 
     /// <summary>
-    /// <c>IncludeSender</c> and <c>Isolated</c> off a publisher attribute's POSITIONAL argument
-    /// list, which is how SymbolReference.json states them — AL's own signatures:
-    /// <c>IntegrationEvent(IncludeSender, GlobalVarAccess[, Isolated])</c> and
-    /// <c>InternalEvent(GlobalVarAccess[, Isolated])</c>, the latter having no sender argument
-    /// at all. <c>BusinessEvent</c> follows <c>IntegrationEvent</c>'s shape.
+    /// Which POSITIONAL argument slot each publisher attribute's <c>Isolated</c> occupies, and
+    /// whether the attribute has a <c>GlobalVarAccess</c> slot at all. Keyed on the AL attribute
+    /// NAME, because the two shapes put different values in slot 1:
+    /// <c>IntegrationEvent(IncludeSender, GlobalVarAccess[, Isolated])</c> against
+    /// <c>InternalEvent(IncludeSender[, Isolated])</c> and
+    /// <c>BusinessEvent(IncludeSender[, Isolated])</c>. Slot 0 is <c>IncludeSender</c> on all
+    /// three.
+    ///
+    /// <para>Read off the AL compiler's own resource keys in
+    /// <c>Microsoft.Dynamics.Nav.CodeAnalysis.dll</c>, which name one argument each and are
+    /// exhaustive for these three attributes: <c>IntegrationEvent_IncludeSender</c>,
+    /// <c>IntegrationEvent_GlobalVarAccess</c>, <c>IntegrationEvent_Isolated</c>,
+    /// <c>InternalEvent_IncludeSender</c>, <c>InternalEvent_Isolated</c>,
+    /// <c>BusinessEvent_IncludeSender</c>, <c>BusinessEvent_Isolated</c> — no
+    /// <c>*Event_GlobalVarAccess</c> key exists for the latter two. The same DLL carries the
+    /// split as two separate position constants, <c>EventPublisherIsolatedPosition</c> and
+    /// <c>EventPublisherIsolatedPositionIntegrationEvent</c>.</para>
+    ///
+    /// <para><b>The trap this table exists to encode:</b> a rule reading "slot 1 is
+    /// GlobalVarAccess" is right for the 128 <c>IntegrationEvent</c> elements BC states it on
+    /// and wrong for the 28 <c>InternalEvent</c> ones, where slot 1 is <c>Isolated</c> and no
+    /// <c>GlobalVarAccess</c> attribute is written at all (#4443).</para>
+    /// </summary>
+    private readonly record struct PublisherAttributeShape(bool HasGlobalVarAccess, int IsolatedSlot);
+
+    private static readonly Dictionary<string, PublisherAttributeShape> PublisherAttributeShapes =
+        new(StringComparer.Ordinal)
+        {
+            ["IntegrationEvent"] = new(HasGlobalVarAccess: true, IsolatedSlot: 2),
+            ["InternalEvent"] = new(HasGlobalVarAccess: false, IsolatedSlot: 1),
+            ["BusinessEvent"] = new(HasGlobalVarAccess: false, IsolatedSlot: 1),
+        };
+
+    /// <summary>
+    /// The three flags BC writes on an <c>EventPublisherAttribute</c> element, off the AL
+    /// attribute's POSITIONAL arguments — the shape <see cref="PublisherAttributeShapes"/> owns.
+    /// Each is null when the symbol file states no argument in that slot, which is how the
+    /// renderers tell "stated False" from "not stated": BC writes the attribute if and only if
+    /// the AL attribute carries the argument, so a default written here would state a value
+    /// where BC states absence.
+    ///
+    /// <para><c>IncludeSender</c> is the exception and is never null for a publisher, because
+    /// BC's emitter writes it on every publisher element — 157 of 157 measured — carrying the
+    /// AL default <c>False</c> when the attribute states no argument.</para>
     ///
     /// <para>Validated against BC's own emitter rather than against AL's documentation: over
-    /// System Application 28.1.49838.53910, this mapping reproduces the <c>IncludeSender</c> and
-    /// <c>Isolated</c> attributes BC writes for <b>149 of 149</b> publishers, with zero
-    /// disagreements. A missing trailing argument means the AL default, which is false for both
-    /// — the same value BC's own reader applies to an absent attribute.</para>
+    /// Business Foundation + System Application 28.1.49838.53910, joining all 157 emitted
+    /// <c>&lt;EventPublisherAttribute&gt;</c> elements to the same method's <c>Attributes</c>
+    /// entry, this mapping reproduces <c>IncludeSender</c> on <b>156 of 156</b>,
+    /// <c>GlobalVarAccess</c> on <b>128 of 128</b> and <c>Isolated</c> on <b>9 of 9</b>, with
+    /// zero disagreements. (The 157th element states no arguments and has no symbol entry to
+    /// join to.) See docs/codeunit-metadata-from-bc.md#the-event-publisher-attribute.</para>
     /// </summary>
     private static void ReadPublisherFlags(
-        string attributeName, JsonElement attribute, out bool includeSender, out bool isolated)
+        string attributeName, JsonElement attribute,
+        out bool includeSender, out bool? globalVarAccess, out bool? isolated)
     {
         includeSender = false;
-        isolated = false;
-        if (attributeName == "InherentPermissions") return;
+        globalVarAccess = null;
+        isolated = null;
+        if (!PublisherAttributeShapes.TryGetValue(attributeName, out var shape)) return;
 
         var args = new List<string>();
         if (attribute.TryGetProperty("Arguments", out var arguments)
@@ -2772,19 +2822,12 @@ internal static partial class BcAppSymbolCache
             foreach (var argument in arguments.EnumerateArray())
                 args.Add(argument.TryGetProperty("Value", out var v) ? v.GetString() ?? "" : "");
 
-        static bool True(List<string> a, int i)
-            => i < a.Count && string.Equals(a[i], "True", StringComparison.OrdinalIgnoreCase);
+        static bool? Stated(List<string> a, int i)
+            => i < a.Count ? string.Equals(a[i], "True", StringComparison.OrdinalIgnoreCase) : null;
 
-        if (attributeName == "InternalEvent")
-        {
-            // No IncludeSender argument exists on this form, so it stays false — which is what
-            // BC writes for every InternalEvent publisher measured.
-            isolated = True(args, 1);
-            return;
-        }
-
-        includeSender = True(args, 0);
-        isolated = True(args, 2);
+        includeSender = Stated(args, 0) ?? false;
+        if (shape.HasGlobalVarAccess) globalVarAccess = Stated(args, 1);
+        isolated = Stated(args, shape.IsolatedSlot);
     }
 
     /// <summary>
@@ -2895,7 +2938,8 @@ internal static partial class BcAppSymbolCache
             // <Method> element in BC's document, not two.
             string? kind = null;
             string? attributeName = null;
-            bool includeSender = false, isolated = false;
+            bool includeSender = false;
+            bool? isolated = null, globalVarAccess = null;
             InherentPermissionSymbol? inherentPermission = null;
             foreach (var attribute in attributes.EnumerateArray())
             {
@@ -2906,7 +2950,8 @@ internal static partial class BcAppSymbolCache
                 {
                     kind = emitted;
                     attributeName = name;
-                    ReadPublisherFlags(name, attribute, out includeSender, out isolated);
+                    ReadPublisherFlags(
+                        name, attribute, out includeSender, out globalVarAccess, out isolated);
                     if (name == "InherentPermissions")
                     {
                         inherentPermission = ReadInherentPermission(attribute, out var unreadable);
@@ -2930,7 +2975,7 @@ internal static partial class BcAppSymbolCache
 
             (result ??= new List<CodeunitMethodSymbol>()).Add(
                 new CodeunitMethodSymbol(methodId, methodName, kind, attributeName,
-                    includeSender, isolated, inherentPermission));
+                    includeSender, isolated, inherentPermission, globalVarAccess));
         }
         return result;
     }

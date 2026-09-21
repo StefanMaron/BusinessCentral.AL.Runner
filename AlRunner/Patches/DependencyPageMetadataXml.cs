@@ -342,9 +342,9 @@ public static partial class RecordPatches
     ///
     /// <para><c>Name</c> on the attribute element is REQUIRED, not decorative: BC's own
     /// <c>MetaCodeunit(XmlNode)</c> throws <c>NullReferenceException</c> on an attribute element
-    /// that has none. <c>IncludeSender</c> is written unconditionally and <c>Isolated</c> only
-    /// when true — BC's own asymmetry, and its reader defaults an absent <c>Isolated</c> to
-    /// false.</para>
+    /// that has none. The publisher flags beyond it come from
+    /// <see cref="RecordPatches.PublisherAttributes"/>, which owns which of the three BC writes
+    /// and when.</para>
     /// </summary>
     private static void WriteMethodsSubtree(
         XmlWriter w, IReadOnlyList<BcAppSymbolCache.CodeunitMethodSymbol> methods)
@@ -360,11 +360,12 @@ public static partial class RecordPatches
             w.WriteStartElement("MethodAttributes");
             w.WriteStartElement(method.Kind);
             w.WriteAttributeString("Name", method.AttributeName);
-            if (method.Kind == "EventPublisherAttribute")
-            {
-                w.WriteAttributeString("IncludeSender", method.IncludeSender ? "True" : "False");
-                if (method.Isolated) w.WriteAttributeString("Isolated", "True");
-            }
+            // The three publisher flags, each written only where BC writes it — the SHARED
+            // definition RecordPatches owns, so this renderer and the codeunit one cannot drift
+            // (#4443). GlobalVarAccess exists only on IntegrationEvent, and Isolated sits in a
+            // different argument slot per attribute name.
+            foreach (var (flagName, flagValue) in RecordPatches.PublisherAttributes(method))
+                w.WriteAttributeString(flagName, flagValue);
             // BC writes these on a PAGE document exactly as on a codeunit one — measured, not
             // assumed: a probe app declaring an InherentPermissions method on both object kinds,
             // emitted through BC's own compiler at 28.1.49838.53910, produced the same five

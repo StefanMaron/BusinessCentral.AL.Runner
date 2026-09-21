@@ -109,6 +109,11 @@ public sealed class CodeunitMethodSubtreeDerivationTests : IDisposable
     /// positions that can have one (#4339).</summary>
     private const int InherentPermissionsUnreadable = 61067;
 
+    /// <summary>Publishers whose arguments discriminate <c>GlobalVarAccess</c> from
+    /// <c>Isolated</c>: the two live in the SAME argument slot under different attribute names,
+    /// so a rule keyed on position alone writes one where BC writes the other (#4443).</summary>
+    private const int PublisherSlotOne = 61068;
+
     private readonly string _root;
 
     public CodeunitMethodSubtreeDerivationTests()
@@ -217,6 +222,28 @@ public sealed class CodeunitMethodSubtreeDerivationTests : IDisposable
                   ]
                 },
                 {
+                  "Id": {{PublisherSlotOne}},
+                  "Name": "Publisher Slot One",
+                  "Properties": [],
+                  "Methods": [
+                    { "Id": 911, "Name": "OnIntegrationGlobals",
+                      "Attributes": [ { "Name": "IntegrationEvent", "Arguments": [
+                        { "Value": "False" }, { "Value": "True" } ] } ] },
+                    { "Id": 912, "Name": "OnIntegrationGlobalsAndIsolated",
+                      "Attributes": [ { "Name": "IntegrationEvent", "Arguments": [
+                        { "Value": "True" }, { "Value": "True" }, { "Value": "True" } ] } ] },
+                    { "Id": 913, "Name": "OnIntegrationIsolatedFalse",
+                      "Attributes": [ { "Name": "IntegrationEvent", "Arguments": [
+                        { "Value": "False" }, { "Value": "False" }, { "Value": "False" } ] } ] },
+                    { "Id": 914, "Name": "OnInternalSlotOneTrue",
+                      "Attributes": [ { "Name": "InternalEvent", "Arguments": [
+                        { "Value": "False" }, { "Value": "True" } ] } ] },
+                    { "Id": 915, "Name": "OnBusinessSlotOneTrue",
+                      "Attributes": [ { "Name": "BusinessEvent", "Arguments": [
+                        { "Value": "False" }, { "Value": "True" } ] } ] }
+                  ]
+                },
+                {
                   "Id": {{InherentPermissionArguments}},
                   "Name": "Inherent Permission Arguments",
                   "Properties": [],
@@ -297,8 +324,8 @@ public sealed class CodeunitMethodSubtreeDerivationTests : IDisposable
                 appPath,
                 new[] { PublishersAndSubscriber },
                 new[] { PublishersOnly, PublishersAndSubscriber, NoAttributedMethods,
-                        InherentPermissionsMethod, PublisherFlags, InherentPermissionArguments,
-                        InherentPermissionsUnreadable });
+                        InherentPermissionsMethod, PublisherFlags, PublisherSlotOne,
+                        InherentPermissionArguments, InherentPermissionsUnreadable });
         }
 
         return appPath;
@@ -476,10 +503,9 @@ public sealed class CodeunitMethodSubtreeDerivationTests : IDisposable
 
     /// <summary>
     /// <c>IncludeSender</c> and <c>Isolated</c> come from the publisher attribute's POSITIONAL
-    /// arguments, and the two AL signatures put them in DIFFERENT slots:
-    /// <c>IntegrationEvent(IncludeSender, GlobalVarAccess[, Isolated])</c> and
-    /// <c>InternalEvent(GlobalVarAccess[, Isolated])</c>, the latter having no sender argument
-    /// at all.
+    /// arguments, and the signatures put <c>Isolated</c> in DIFFERENT slots:
+    /// <c>IntegrationEvent(IncludeSender, GlobalVarAccess[, Isolated])</c> against
+    /// <c>InternalEvent(IncludeSender[, Isolated])</c>. Slot 0 is <c>IncludeSender</c> on both.
     ///
     /// <para>This test exists because the real population does not discriminate the slots:
     /// System Application 28.1 has 3 two-argument <c>InternalEvent</c>s and none carrying
@@ -487,9 +513,9 @@ public sealed class CodeunitMethodSubtreeDerivationTests : IDisposable
     /// <c>IntegrationEvent</c>'s slot 2 left the metadata-equivalence harness GREEN over all 558
     /// codeunits. Found by running that mutation, not by reading the code (tdd.md).</para>
     ///
-    /// <para><c>Isolated</c> is asserted through presence rather than value because BC's own
-    /// emitter omits it when false — 9 of 149 elements carry it on 28.1 — so writing
-    /// <c>"False"</c> on the rest would state a value where BC states absence.</para>
+    /// <para><c>Isolated</c> is asserted through presence where the fixture states no argument
+    /// in its slot, because BC writes the attribute if and only if the AL attribute carries the
+    /// argument — 9 of 157 elements carry it on 28.1.</para>
     /// </summary>
     [Fact]
     public void The_publisher_flags_are_read_from_each_signatures_own_argument_slots()
@@ -509,15 +535,73 @@ public sealed class CodeunitMethodSubtreeDerivationTests : IDisposable
         Assert.Equal("False", flags[2].GetAttribute("IncludeSender"));
         Assert.Equal("True", flags[2].GetAttribute("Isolated"));
 
-        // InternalEvent: NO sender argument, so IncludeSender is always False and Isolated is
-        // slot 1. This is the pair that discriminates the signatures — 904 states
-        // ("False", "True") and must read Isolated from slot 1, while 905 states ("True") alone,
-        // whose single argument is GlobalVarAccess and must NOT be read as either flag.
+        // InternalEvent: slot 0 is IncludeSender here too, and Isolated moves to slot 1. This is
+        // the pair that discriminates the signatures — 904 states ("False", "True") and must
+        // read Isolated from slot 1, while 905 states ("True") alone, which is IncludeSender
+        // and must NOT be read as isolation.
+        //
+        // 905's IncludeSender="True" is BC's own answer, not a reading of AL's documentation: a
+        // probe app declaring [InternalEvent(true)] through BC's compiler at 28.1.49838.53910
+        // emitted IncludeSender="True" with no GlobalVarAccess attribute. The shipped Microsoft
+        // apps cannot adjudicate it — all 28 of their InternalEvent elements state slot 0 as
+        // False — which is why the probe was run (#4443).
         Assert.Equal("False", flags[3].GetAttribute("IncludeSender"));
         Assert.Equal("True", flags[3].GetAttribute("Isolated"));
 
-        Assert.Equal("False", flags[4].GetAttribute("IncludeSender"));
+        Assert.Equal("True", flags[4].GetAttribute("IncludeSender"));
         Assert.False(flags[4].HasAttribute("Isolated"));
+    }
+
+    /// <summary>
+    /// Argument slot 1 means <c>GlobalVarAccess</c> under <c>IntegrationEvent</c> and
+    /// <c>Isolated</c> under <c>InternalEvent</c> and <c>BusinessEvent</c>, so the SAME argument
+    /// list renders as two different documents depending on the attribute name (#4443). BC
+    /// states <c>GlobalVarAccess</c> on every <c>IntegrationEvent</c> element and on no other
+    /// kind, which is its own <c>NavEventAttribute</c> constructor masking the value:
+    /// <c>AllowGlobalVarAccess = allowGlobalVarAccess &amp; (EventType == NavEventType.Integration)</c>.
+    ///
+    /// <para>The three 915/914/912 rows are the discriminator: all three state slot 1 as
+    /// <c>True</c>, and a renderer keyed on position alone gives them the same two attributes.
+    /// Measured on BC 28.1.49838.53910 over both ground-truth bundles, joining all 157 emitted
+    /// elements to their symbol-file arguments: the name-keyed rule reproduces
+    /// <c>GlobalVarAccess</c> on 128 of 128 and <c>Isolated</c> on 9 of 9, zero wrong. See
+    /// docs/codeunit-metadata-from-bc.md#the-event-publisher-attribute.</para>
+    /// </summary>
+    [Fact]
+    public void Argument_slot_one_is_GlobalVarAccess_for_IntegrationEvent_and_Isolated_for_the_others()
+    {
+        Register();
+
+        var flags = AttributeElements(Projection(PublisherSlotOne)).ToList();
+        Assert.Equal(5, flags.Count);
+
+        // 911 IntegrationEvent(False, True): slot 1 is GlobalVarAccess, and no Isolated exists.
+        Assert.Equal("IntegrationEvent", flags[0].GetAttribute("Name"));
+        Assert.Equal("False", flags[0].GetAttribute("IncludeSender"));
+        Assert.Equal("True", flags[0].GetAttribute("GlobalVarAccess"));
+        Assert.False(flags[0].HasAttribute("Isolated"));
+
+        // 912 IntegrationEvent(True, True, True): all three, each from its own slot.
+        Assert.Equal("True", flags[1].GetAttribute("IncludeSender"));
+        Assert.Equal("True", flags[1].GetAttribute("GlobalVarAccess"));
+        Assert.Equal("True", flags[1].GetAttribute("Isolated"));
+
+        // 913 IntegrationEvent(False, False, False): BC states Isolated="False" when the AL
+        // attribute states the argument — measured, 1 of the 9 elements carrying Isolated on
+        // 28.1 carries it as False — so a stated False is written rather than omitted.
+        Assert.Equal("False", flags[2].GetAttribute("GlobalVarAccess"));
+        Assert.Equal("False", flags[2].GetAttribute("Isolated"));
+
+        // 914 InternalEvent(False, True) and 915 BusinessEvent(False, True): the SAME argument
+        // list as 911, and slot 1 is Isolated for both. Neither kind gets GlobalVarAccess at
+        // all, which is what BC's 28 InternalEvent elements state.
+        Assert.Equal("InternalEvent", flags[3].GetAttribute("Name"));
+        Assert.False(flags[3].HasAttribute("GlobalVarAccess"));
+        Assert.Equal("True", flags[3].GetAttribute("Isolated"));
+
+        Assert.Equal("BusinessEvent", flags[4].GetAttribute("Name"));
+        Assert.False(flags[4].HasAttribute("GlobalVarAccess"));
+        Assert.Equal("True", flags[4].GetAttribute("Isolated"));
     }
 
     /// <summary>

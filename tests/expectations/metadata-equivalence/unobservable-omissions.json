@@ -20,12 +20,6 @@
       "issue": 3562
     },
     {
-      "member": "Codeunit.EventPublisherAttribute.GlobalVarAccess",
-      "statedBy": "expected",
-      "reason": "TRIAGED (#4400): the runner SHOULD state it — a read of an argument already parsed, not a derivation. Filed as #4443. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects) by joining every <EventPublisherAttribute> BC emits to the same method's Attributes entry in SymbolReference.json: GlobalVarAccess equals the attribute's positional argument 1 on 128 of 128 elements where BC states it, 0 wrong. TRAP, and the reason the fix is not a one-liner: argument 1 means GlobalVarAccess for IntegrationEvent but Isolated for InternalEvent, and BC states no GlobalVarAccess attribute at all for InternalEvent (28 elements). A rule keyed on position alone is right 128 times and wrong 28.",
-      "issue": 4443
-    },
-    {
       "member": "Page.Properties.AnalysisModeEnabled",
       "statedBy": "expected",
       "reason": "TRIAGED (#4400): the runner SHOULD state it, and the existing allowlist entry already calls it 'a defect and not a scope boundary'. Tracked on #4282, which is open and whose scope is exactly 'page properties SymbolReference.json states that EmitPageXml does not read'. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): BC states it on 94 of 235 pages — '1' on 93, '0' on page 8350, and only the 93 are unobservable because True is what BC's reader produces when the attribute is absent. NOT a plain symbol read, which is the part worth knowing before implementing: only page 8350 declares AnalysisModeEnabled in SymbolReference.json. For the other 93 BC computes it. The best rule found here is 'declared value, else 1 when PageType is List or Worksheet', which reproduces 234 of 235; the single residue is page 1998, whose symbol record states neither PageType nor APIVersion while BC's document states PageType='Card' APIVersion='beta' AnalysisModeEnabled='1'. So BC has an input the symbol file does not expose for that page, and the rule is a strong candidate rather than a proven one.",
@@ -64,14 +58,6 @@
       "Doc": "docs/metadata-equivalence.md#unobservable-omissions"
     },
     {
-      "member": "Page.EventPublisherAttribute.GlobalVarAccess",
-      "statedBy": "expected",
-      "reason": "TRIAGED (#4400): the runner SHOULD state it — the same read as the codeunit row, on page method subtrees. Filed as #4443, which measures both. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): 5 occurrences across 5 pages, all 'False', all IntegrationEvent, all equal to the attribute's positional argument 1 in SymbolReference.json. Kept versionContingent: 5 of 1,286 objects, under the manifest's threshold of 10.",
-      "issue": 4443,
-      "versionContingent": true,
-      "Doc": "docs/metadata-equivalence.md#unobservable-omissions"
-    },
-    {
       "member": "XmlPort.ID.Name",
       "statedBy": "expected",
       "reason": "TRIAGED (#4400): the runner SHOULD state it, and this is the cheapest row in the file after MetadataVersion. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): BC writes <ID Name='...'>9001</ID>, and the @Name it carries equals the <Name> element the same document states immediately below it on 4 of 4 xmlports — a duplicate of a value the runner ALREADY derives and already writes elsewhere in the same document, not a new lookup. Tracked on #3797. Kept versionContingent: 4 of 1,286 objects, and the whole population is System Application's 4 xmlports.",
@@ -92,14 +78,6 @@
       "statedBy": "expected",
       "reason": "TRIAGED (#4400): the runner SHOULD state it — same direct read as Enum.Access, same file, same fix. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): BC states it on 3 of 144 enums, value '1' on all 3, and SymbolReference.json declares AssignmentCompatibility on exactly those 3 with exactly '1', 3 of 3. Tracked on #4279. Kept versionContingent: 3 of 1,286 objects carry it, well under the manifest's stated threshold of 10, so one BC version's object churn can remove the population.",
       "issue": 4279,
-      "versionContingent": true,
-      "Doc": "docs/metadata-equivalence.md#unobservable-omissions"
-    },
-    {
-      "member": "Codeunit.EventPublisherAttribute.Isolated",
-      "statedBy": "expected",
-      "reason": "TRIAGED (#4400): the runner SHOULD state it. Filed as #4443. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): BC states @Isolated on 9 elements — 'True' on 8, 'False' on 1 — and it equals the attribute's positional argument 2 for IntegrationEvent (6 of 6) and argument 1 for InternalEvent (3 of 3), 9 of 9 with 0 wrong. WHY THIS ENTRY IS x1 AND NOT x9, which is the thing to not misread: only the single 'False' is an unobservable omission, because False is what BC's reader produces when the attribute is absent. The 8 'True' elements are a REAL value difference and are reported by the ordinary value comparison, not by this third state. Kept versionContingent: 1 occurrence.",
-      "issue": 4443,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#unobservable-omissions"
     },
