@@ -7,8 +7,9 @@ namespace AlRunner.Tests;
 
 /// <summary>
 /// Issue #2272 — the self-populating virtual tables (AllObj 2000000038, Field 2000000041,
-/// AllObjWithCaption 2000000058, Table Metadata 2000000136, Page Metadata 2000000138 and
-/// the rest of RecordPatches.IsSelfPopulatingVirtualTableId) were captured into the install
+/// AllObjWithCaption 2000000058, Table Metadata 2000000136, CodeUnit Metadata 2000000137,
+/// Page Metadata 2000000138 and the rest of RecordPatches.IsSelfPopulatingVirtualTableId)
+/// were captured into the install
 /// baseline and re-inserted at EVERY codeunit boundary — and, under TestIsolation.Test, at
 /// every test boundary. On a trivial fixture with the Base Application closure that was
 /// 23,651 rows per boundary instead of 278.
@@ -30,7 +31,8 @@ namespace AlRunner.Tests;
 ///      the cost the issue is about.
 ///
 ///   2. They still answer truthfully afterwards. The fixture's AL asserts AllObj,
-///      AllObjWithCaption, Field, Table Metadata and Page Metadata for concrete objects it
+///      AllObjWithCaption, Field, Table Metadata, CodeUnit Metadata and Page Metadata for
+///      concrete objects it
 ///      declares itself, positively (the object is there, with the right name) and
 ///      negatively (a neighbouring id it does not declare is NOT there) — a stale or
 ///      foreign inventory fails the negative half, which a row-count assertion could never
@@ -38,7 +40,7 @@ namespace AlRunner.Tests;
 ///      one boundary of each kind is crossed before an assertion regardless of the order
 ///      the executor picks (codeunit order is NOT id order — measured).
 ///
-/// The fixture materialises all five tables from its OWN Install trigger, which runs
+/// The fixture materialises all six tables from its OWN Install trigger, which runs
 /// immediately before CaptureInstallBaseline(). Without that, whether a virtual table was
 /// in the baseline at all would depend on whether Company-Initialize happened to touch it
 /// on the BC version under test, and the marker assertion would be flaky across the matrix.
@@ -66,6 +68,7 @@ public class InstallBaselineVirtualTableExclusionTests
         2000000041,  // Field
         2000000058,  // AllObjWithCaption
         2000000136,  // Table Metadata
+        2000000137,  // CodeUnit Metadata (#4070)
         2000000138,  // Page Metadata
     };
 
@@ -194,6 +197,7 @@ public class InstallBaselineVirtualTableExclusionTests
                 FieldRec: Record "Field";
                 TableMeta: Record "Table Metadata";
                 PageMeta: Record "Page Metadata";
+                CodeunitMeta: Record "CodeUnit Metadata";
             begin
                 AllObjRec.SetRange("Object Type", AllObjRec."Object Type"::Table);
                 if AllObjRec.FindFirst() then;
@@ -203,6 +207,7 @@ public class InstallBaselineVirtualTableExclusionTests
                 if FieldRec.FindFirst() then;
                 if TableMeta.FindFirst() then;
                 if PageMeta.FindFirst() then;
+                if CodeunitMeta.FindFirst() then;
             end;
         }
 
@@ -241,6 +246,7 @@ public class InstallBaselineVirtualTableExclusionTests
                 FieldRec: Record "Field";
                 TableMeta: Record "Table Metadata";
                 PageMeta: Record "Page Metadata";
+                CodeunitMeta: Record "CodeUnit Metadata";
                 FieldNames: Text;
             begin
                 IsTrue(AllObjRec.Get(AllObjRec."Object Type"::Table, $TABLE$), 'AllObj must list table $TABLE$');
@@ -270,6 +276,10 @@ public class InstallBaselineVirtualTableExclusionTests
 
                 IsTrue(PageMeta.Get($PAGE$), 'Page Metadata must list $PAGE$');
                 IsFalse(PageMeta.Get($ABSENT$), 'Page Metadata must NOT list $ABSENT$');
+
+                IsTrue(CodeunitMeta.Get($ASSERT$), 'CodeUnit Metadata must list codeunit $ASSERT$');
+                AreEqual('IT2272 $TAG$ Assert', CodeunitMeta.Name, 'CodeUnit Metadata name for $ASSERT$');
+                IsFalse(CodeunitMeta.Get($ABSENT$), 'CodeUnit Metadata must NOT list codeunit $ABSENT$');
             end;
         }
 
@@ -449,7 +459,7 @@ public class InstallBaselineVirtualTableExclusionTests
                 Array.Empty<string>(), freshDepCompanyBaseline: false, appA, appB);
 
             // [THEN] Both app groups' four tests passed — each one's own objects resolve, by
-            // name, in all five virtual tables, on the far side of the app-group boundary.
+            // name, in all six virtual tables, on the far side of the app-group boundary.
             Assert.Equal(0, exitCode);
             Assert.True(CountOccurrences(output, "4P/0F/0E") >= 2,
                 $"expected both app groups to report 4P/0F/0E, got:\n{output}");

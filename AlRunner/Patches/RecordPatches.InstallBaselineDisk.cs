@@ -88,14 +88,21 @@ public static partial class RecordPatches
     /// fits the description at all: its only possible writer is a --test-data backup, and
     /// adding it here would drop that backup's real rows on the floor. Keeping this predicate
     /// unconditional is what preserves #2272's refusal for tables that have no second writer
-    /// at all.</para></summary>
+    /// at all.</para>
+    ///
+    /// <para>CodeUnit Metadata (2000000137) was missing until #4070, and its absence defeated
+    /// the app-group filter rather than merely wasting space: the System Application Test
+    /// Library's install trigger reads the table during the dependency+company baseline
+    /// capture, so a first app group's rows entered the baseline and were RESTORED into a
+    /// later group's store — where the populator's filter never sees them, because it only
+    /// decides what it inserts itself.</para></summary>
     internal static bool IsSelfPopulatingVirtualTableId(int tableId) => tableId switch
     {
         AllObjVirtualTableId or AllObjWithCaptionVirtualTableId or FieldVirtualTableId
             or IntegerVirtualTableId or ReportLayoutListVirtualTableId
             or PageMetadataVirtualTableId or ReportMetadataVirtualTableId
             or ReportDataItemsVirtualTableId or PageControlFieldVirtualTableId
-            or TableMetadataVirtualTableId => true,
+            or TableMetadataVirtualTableId or CodeunitMetadataVirtualTableId => true,
         _ => false,
     };
 

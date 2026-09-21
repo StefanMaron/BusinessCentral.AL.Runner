@@ -321,6 +321,14 @@ public static partial class RecordPatches
     /// arm and 0 without it (issue #2792).
     ///
     /// Idempotent per (provider, tableNo) via the same done-set the creation-time pass uses.
+    ///
+    /// <para>App-group scoped like the creation-time pass (#4070), and it has to be filtered
+    /// SEPARATELY: this arm reaches a table the other one never iterates, because it calls
+    /// <c>EnsureTableInMetadataCache</c> on the filtered id rather than walking the cache's
+    /// current keys. A filter on the other pass alone leaves exactly the shape the probe
+    /// uses — <c>Field.SetRange(TableNo, &lt;sibling group's table&gt;)</c> — unfiltered, and
+    /// the leak survives with every creation-time assertion green (measured: 5 of the 10
+    /// failing assertions on #4070 remained).</para>
     /// </summary>
     private static void PopulateFieldRowsForTargetTable(object dataAccess, NCLMetaTable fieldMetaTable, int? targetTableNo)
     {
@@ -333,6 +341,8 @@ public static partial class RecordPatches
 
         EnsureDataAccessProviderReflection(dataAccess);
         var provider = _pDataAccessDataProvider!.GetValue(dataAccess)!;
+        // The owner map is keyed by OBJECT kind, and a Field row is about its source TABLE.
+        if (IsHiddenFromCurrentAppGroup("Table", t, PinInventoryScope(provider, FieldVirtualTableLabel))) return;
         var done = _fvtPopulatedByProvider.GetValue(provider, static _ => new ConcurrentDictionary<int, byte>());
         if (done.TryAdd(t, 0))
             InsertFieldRowsForTable(provider, fieldMetaTable, srcMeta);

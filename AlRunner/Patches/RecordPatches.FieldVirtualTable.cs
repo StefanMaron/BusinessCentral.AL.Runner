@@ -70,6 +70,11 @@ public static partial class RecordPatches
 
     internal const int FieldVirtualTableId = 2000000041;
 
+    /// <summary>How this table names itself in an app-group-scope refusal. Shared by the two
+    /// populate arms (creation-time and find-time) so the message cannot say two things about
+    /// one table.</summary>
+    private const string FieldVirtualTableLabel = "Field (virtual table 2000000041)";
+
     // Reflection handles for the managed Field-row build + insert path.
     private static bool _fvtReflectionReady;
     private static Type? _tFieldDataProvider;
@@ -127,6 +132,12 @@ public static partial class RecordPatches
         ClearVirtualBit(fieldMetaTable);
 
         var done = _fvtPopulatedByProvider.GetValue(provider, static _ => new ConcurrentDictionary<int, byte>());
+        // Filtered here, never in _metaTableCache: that cache is process-wide and shared by
+        // every app group, so a sibling group's table stays in it and only the per-provider
+        // insert may drop it (#4070, the same shape Table Metadata applies at its own insert).
+        // The find-time arm PopulateFieldRowsForTargetTable filters separately — see its
+        // comment for why a filter here alone leaves the leak reachable.
+        var visibleApps = PinInventoryScope(provider, FieldVirtualTableLabel);
 
         // Snapshot the source tables currently materialised. Skip the Field table itself
         // and any other virtual/system table (they have no stored field rows of interest
@@ -135,6 +146,10 @@ public static partial class RecordPatches
 
         foreach (var srcId in sourceTableIds)
         {
+            // The owner map is keyed by OBJECT kind, and a Field row is about its source
+            // TABLE — so "Table" here, not a Field-specific kind. A table with no recorded
+            // owner (Base Application, a platform table) is never hidden.
+            if (IsHiddenFromCurrentAppGroup("Table", srcId, visibleApps)) continue;
             if (!done.TryAdd(srcId, 0))
                 continue; // already populated this provider with srcId's fields
 
