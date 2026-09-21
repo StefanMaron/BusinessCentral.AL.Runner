@@ -672,7 +672,39 @@ public static partial class RecordPatches
             }
         }
         if (parsedAny)
+        {
+            EvictCachedNullsForNewlyParsedTables();
             PopulateNclMetadataCache();
+        }
+    }
+
+    /// <summary>
+    /// Drop every <c>_metaTableCache</c> entry whose cached value is NULL but whose table is now
+    /// in <see cref="_parsedTables"/>, so the next lookup rebuilds it.
+    ///
+    /// <para><c>EnsureTableInMetadataCache</c> is
+    /// <c>_metaTableCache.GetOrAdd(tableId, BuildNCLMetaTable)</c>, and <c>BuildNCLMetaTable</c>
+    /// returns null for a table it cannot find in <c>_parsedTables</c>. A
+    /// <c>ConcurrentDictionary</c> caches that null like any other value, and <c>GetOrAdd</c>
+    /// never replaces an existing entry — <see cref="PopulateNclMetadataCache"/>'s own
+    /// <c>GetOrAdd</c> included. In a run with several bundles the absence is TEMPORARY: bundle
+    /// A can ask about bundle B's table before B's source dir is registered, and from then on
+    /// B's own table answers null for the rest of the process (#4450).
+    /// See docs/virtual-tables-allobj.md#multi-bundle-metatable-cache.</para>
+    ///
+    /// <para>Only NULL entries are dropped, so a live NCLMetaTable that R2R-precompiled callers
+    /// hold offsets into is never replaced under them.</para>
+    /// </summary>
+    private static void EvictCachedNullsForNewlyParsedTables()
+    {
+        foreach (var kvp in _metaTableCache)
+        {
+            if (kvp.Value != null) continue;
+            if (!_parsedTables.ContainsKey(kvp.Key)) continue;
+            if (!_metaTableCache.TryRemove(new KeyValuePair<int, object?>(kvp.Key, null))) continue;
+            EventSubscriberPatches.ForgetInjectedForTable(kvp.Key);
+            _fieldTriggersWiredTables.TryRemove(kvp.Key, out _);
+        }
     }
 
     /// <summary>
