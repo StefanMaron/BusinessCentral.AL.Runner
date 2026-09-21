@@ -97,7 +97,7 @@ two shapes with nothing to open, only **one** turned out to be a runner boundary
 | shape | answer | why |
 |---|---|---|
 | no trigger and **no `TableRelation`** | **does nothing**, faithfully | real BC raises nothing and opens nothing here — measured, see below |
-| relation resolves, target table declares **no `LookupPageId` or `DrillDownPageId`** | **refuses** `testpage-lookup` | the AL genuinely names a related table and BC's client has a page-picking rule for it that no corpus test has measured |
+| relation resolves, target table declares **no `LookupPageId` or `DrillDownPageId`** | **refuses** `testpage-lookup` — **and the refusal's premise is now known to be false** | real BC opens a modal page here, measured on all eight cloud legs (#4403); the refusal says "there is no page to open", which is wrong. It stays only until the page BC picks is identified — see below |
 | the control is bound to a **page global**, not a source-table field | **refuses** `testpage-lookup` | no table field to fall back to and no relation to resolve |
 | BC's metafield shape could not be read | **refuses** `BcShapeGapException` | the read could not be performed, which is not the same as the read saying "no trigger" |
 
@@ -125,6 +125,80 @@ skipped, which is the test `loud-failures.md` sets.
 analogy is exactly the unmeasured inference
 `.claude/rules/ask-the-corpus-before-claiming-bc-behavior.md` refuses; a corpus test would
 settle it, and until one does, refusing by name is the honest answer.
+
+### The measurement that refuted the second row (#4403)
+
+Corpus PR
+[#391](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/391) added that
+test to the same codeunit, with fixture `TRL Pageless` (60570) — `TRL Related` minus
+`LookupPageId`, and declaring no `DrillDownPageId` either.
+
+**All eight cloud legs answered identically** — run `35493508143`, corpus `8bfd056f`, over
+27.0, 27.3, 27.5, 28.0, 28.1, 28.2, 28.3, 28.4:
+
+```
+FAIL  Lookup_RelationToTableWithNoLookupPage_DoesNothing — Unhandled UI: ModalPage
+```
+
+At least two independent binaries agree: the 27.x artifacts provisioned here share one
+`Ncl.dll` (`affa03c9…`) and the 28.x ones are a different file (`6f2cf682…`), so this is not
+one measurement wearing eight labels.
+
+`Unhandled UI: ModalPage` is raised from inside BC's own `NavTestExecution.ShowLookupForm`,
+which reads `GetRegisteredForm(handle)` **before** looking for a handler — so a form was
+already registered and BC had chosen something to open. A shape that opens nothing never
+reaches that method, which is exactly how the first row's test passes on the same legs.
+
+**So this row's stated premise — "there is no page to open" — is false.** The test was written
+without `asserterror` precisely so this could come out: that form distinguishes all three
+possible answers and cannot pass for the wrong reason, while an `asserterror` form would have
+swallowed the opened page's error and could have reported green.
+
+### Why the refusal has not yet been replaced
+
+"A page opens" is not a rule the runner can implement. It needs the page **id**, and
+`NavRecord.GetPageToOpen` answers `0` for such a table, so whatever picks it is downstream of
+that `0` and is client-side — `find_usages` on `NavRecord.LookupFormId` returns nothing in
+`Ncl.dll`, which is why only a service tier can answer.
+
+Corpus PR #391 therefore carries a second fixture, `TRL Pageless List` (60571): a page whose
+`SourceTable` is `TRL Pageless`, which that table does not name, plus a `[ModalPageHandler]`
+bound to it.
+
+**That probe has run, and it cannot answer the question — BC's own code says why.** On corpus
+head `af4b986b` (run `35494023689`, six legs) both arms fail with a `NullReferenceException`
+inside `ShowLookupForm` rather than with `Unhandled UI: ModalPage`. The tempting reading is
+that declaring the handler let BC get further, so the page must match. `FindHandler` refutes it:
+
+```csharp
+if (appObject != null)                      // <- appObject is the registered form
+{
+    ...
+    if (customAttributes2.Length != 1
+        || ((NavObjectIdAttribute)customAttributes2[0]).ObjectId != appObject.ObjectId.ObjectNumber)
+    { continue; }                           // wrong page -> keep looking
+}
+return method;
+```
+
+The page-id check is **inside** the null guard, so a null form skips it and any handler of the
+right type is returned — after which `registeredForm.ObjectId` dereferences null. That is the
+only branch producing an NRE: a non-null form would either match (handler invoked) or not
+(`Unhandled UI`). So `GetRegisteredForm(handle)` answers **null**, and handler binding says
+nothing about which page BC picked.
+
+`ShowLookupForm` is byte-identical on `bc270` and `bc284` (`compare_symbols`:
+`bodyChanged: false`), consistent with every leg agreeing.
+
+**So BC decides to open a modal page for this shape and then fails to produce one.** The
+refusal's premise stays false; its *conclusion* — that the runner cannot serve this shape — is
+better supported than before, since BC cannot either. What no instrument here has yet
+established is which page BC intended, and no `[ModalPageHandler]` probe can, because the
+discriminating check is skipped exactly when the form is missing.
+
+**The refusal therefore stays, as a known-wrong-premise refusal rather than an unmeasured
+one.** Replacing it with silence would be a second unmeasured inference, and one the
+measurement contradicts: silence is what BC does for the no-relation shape, not this one.
 
 ## Where the tests are
 
