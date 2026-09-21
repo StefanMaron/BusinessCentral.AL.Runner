@@ -30,6 +30,8 @@
         "install-trigger-text-constant": { "tests": 2 },
         "integer-virtual-table-window": { "tests": 10 },
         "manifest-preprocessor-symbols": { "tests": 3 },
+        "metatable-cache-null-first": { "tests": 2 },
+        "metatable-cache-null-second": { "tests": 4 },
         "manual-binding-dep": { "tests": 3, "absentOn": ["27.0", "27.3", "27.5"] },
         "microsoft-dependencies": { "tests": 26 },
         "microsoft-test-library": { "tests": 3, "absentOn": ["27.0", "27.3", "27.5"] },

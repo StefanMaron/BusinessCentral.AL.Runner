@@ -692,8 +692,18 @@ public static partial class RecordPatches
     /// B's own table answers null for the rest of the process (#4450).
     /// See docs/virtual-tables-allobj.md#multi-bundle-metatable-cache.</para>
     ///
-    /// <para>Only NULL entries are dropped, so a live NCLMetaTable that R2R-precompiled callers
-    /// hold offsets into is never replaced under them.</para>
+    /// <para>The <c>kvp.Value != null</c> test is what bounds the blast radius: only entries that
+    /// are already NULL are dropped, so a live NCLMetaTable that R2R-precompiled callers hold
+    /// baked offsets into is never pulled out from under them. Mutating that test to evict
+    /// unconditionally is not covered by this fix's tests and must not be done —
+    /// precompiled-dll-respect.md is the constraint, not a style preference.</para>
+    ///
+    /// <para>The removal is the same plain key-only <c>TryRemove</c> the three sibling eviction
+    /// sites use (<c>EvictCachedMetaTableForBaseTable</c>, the CalcFormula retry, the TDD
+    /// reparse). A value-matched overload was tried and reverted: nothing here runs concurrently
+    /// with the parse, so it is observably identical, and a defensive form no test can
+    /// discriminate is a claim without evidence (measured on #4450 — the value-matched variant
+    /// left all six proving tests green).</para>
     /// </summary>
     private static void EvictCachedNullsForNewlyParsedTables()
     {
@@ -701,7 +711,7 @@ public static partial class RecordPatches
         {
             if (kvp.Value != null) continue;
             if (!_parsedTables.ContainsKey(kvp.Key)) continue;
-            if (!_metaTableCache.TryRemove(new KeyValuePair<int, object?>(kvp.Key, null))) continue;
+            if (!_metaTableCache.TryRemove(kvp.Key, out _)) continue;
             EventSubscriberPatches.ForgetInjectedForTable(kvp.Key);
             _fieldTriggersWiredTables.TryRemove(kvp.Key, out _);
         }

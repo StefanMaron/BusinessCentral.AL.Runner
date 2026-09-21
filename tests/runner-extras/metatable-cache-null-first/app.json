@@ -1,0 +1,18 @@
+{
+  "id": "7c4a1e90-2b58-4d13-8a6f-1e9d3c7b5100",
+  "name": "Runner Extras - MetaTable Cache Null First",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #4450 bundle 1 of 2: runs FIRST and asks about bundle 2's table id, which is the lookup that caches a null for it.",
+  "description": "Issue #4450. In a run with several bundles, _metaTableCache is a ConcurrentDictionary whose GetOrAdd caches the NULL that BuildNCLMetaTable returns for a table not yet in _parsedTables. The FIRST bundle can ask about a LATER bundle's table before that bundle's source dir is registered, and GetOrAdd then never replaces the entry -- so the later bundle's OWN table answers null for the rest of the process and every metadata consumer silently reports it as having no fields. Runner-specific: this is a property of the runner's one-process, several-bundles shape, which the corpus (one app set per service tier) cannot express.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 66100,
+      "to": 66109
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}
