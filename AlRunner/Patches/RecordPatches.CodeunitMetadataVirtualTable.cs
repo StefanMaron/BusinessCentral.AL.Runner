@@ -46,16 +46,21 @@
 //   two masks from its Properties bag. Only a codeunit whose symbol file states none keeps BC's
 //   own default, which is the honest answer for "declares none".
 //
-// COLUMNS STILL NOT IMPLEMENTED, AND WHY NONE IS WAITING ON THE CONVERSION ABOVE
-//   App ID, TestType and RequiredTestIsolation get BC's own NavValue.GetDefaultNavValue.
+// TestType IS DERIVED, NOT READ (#4442)
+//   BC emits the attribute 0 times and derives the column instead: MetaCodeunit's ctor runs
+//   `if (SubType == Test && TestType == 0) TestType = UnitTest;` after its attribute loop. The
+//   runner does the same, from the Subtype it already has — ResolveCodeunitTestTypeOrdinal.
+//   Pinned on a real service tier by corpus PR 394.
+//
+// COLUMNS STILL NOT IMPLEMENTED, AND WHY NEITHER IS WAITING ON THE CONVERSION ABOVE
+//   App ID and RequiredTestIsolation get BC's own NavValue.GetDefaultNavValue.
 //   App ID is not an object property at all (BC fills it from the PUBLISHING app, per-run
-//   state a compiler cannot emit — the same data #2326 tracks for AllObj). TestType is
-//   emitted 0 times in Base Application's 1,690 codeunit documents because BC DERIVES it
-//   rather than reading it; deriving it is a separate claim about BC needing its own corpus
-//   test. RequiredTestIsolation IS stated in the document, as TestIsolation — and reading it
+//   state a compiler cannot emit — the same data #2326 tracks for AllObj).
+//   RequiredTestIsolation IS stated in the document, as TestIsolation — and reading it
 //   is WRONG: a real service tier answers None for every codeunit, so BC's default is the
 //   faithful answer and the document value is not. Eight cloud legs measured that (corpus PR
-//   296) and Ncl.dll says why: the property BC's row builder reads is never assigned.
+//   296); BC's parser matches the attribute name "RequiredTestIsolation" (21 chars) while the
+//   compiler emits "TestIsolation" (13), so the field keeps its ctor default.
 //   docs/codeunit-metadata-from-bc.md#requiredtestisolation.
 //
 // PRECOMPILED-DLL RESPECT
