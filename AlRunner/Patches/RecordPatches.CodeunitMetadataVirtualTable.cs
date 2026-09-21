@@ -139,6 +139,12 @@ public static partial class RecordPatches
     // breath as _cmvSubtypeOrdinals and read only after it.
     private static string? _cmvSubtypeOptionString;
 
+    // TestType's own ordinals and option string, the same pair as Subtype's above and
+    // deliberately separate: the two columns name disjoint members, so one map cannot serve
+    // both. See EnsureCodeunitTestTypeOrdinals.
+    private static Dictionary<string, int>? _cmvTestTypeOrdinals;
+    private static string? _cmvTestTypeOptionString;
+
     /// <summary>
     /// Populate the in-memory store behind CodeUnit Metadata (2000000137) with one row per
     /// codeunit the runner knows about. Idempotent per (provider, codeunit id); called on
@@ -150,6 +156,7 @@ public static partial class RecordPatches
         EnsureReportMetadataReflection(metaTable);   // NavBoolean.Create(bool)
         EnsureDataAccessProviderReflection(dataAccess);
         var subtypeOrdinals = EnsureCodeunitSubtypeOrdinals(metaTable);
+        var testTypeOrdinals = EnsureCodeunitTestTypeOrdinals(metaTable);
 
         var provider = _pDataAccessDataProvider!.GetValue(dataAccess)
             ?? throw CodeunitMetadataShapeGap("data access has no in-memory provider");
@@ -168,11 +175,14 @@ public static partial class RecordPatches
             // would otherwise take the whole table down. The `[warn]` tag is
             // load-bearing too — any other tag is dropped at default verbosity by Log.cs.
             int subtypeOrdinal;
+            int testTypeOrdinal;
             BcCodeunitDocumentValues? document;
             try
             {
                 subtypeOrdinal = ResolveCodeunitSubtypeOrdinal(
                     subtypeOrdinals, _cmvSubtypeOptionString, row.Subtype, row.Id);
+                testTypeOrdinal = ResolveCodeunitTestTypeOrdinal(
+                    testTypeOrdinals, _cmvTestTypeOptionString, row.Subtype, row.Id);
                 document = TryReadCodeunitMetadataDocument(row.Id);
             }
             catch (RunnerOutOfScopeException ex)
@@ -188,7 +198,7 @@ public static partial class RecordPatches
 
             InsertVirtualRow(provider, metaTable,
                 new object[] { CodeunitMetadataVirtualTableId, row.Id, 0, 0 },
-                field => BuildCodeunitMetadataValue(field, row, subtypeOrdinal, document));
+                field => BuildCodeunitMetadataValue(field, row, subtypeOrdinal, testTypeOrdinal, document));
         }
     }
 
@@ -201,8 +211,11 @@ public static partial class RecordPatches
     /// null when none is registered for it. The three columns it states fall through to BC's
     /// default when it is null, which is the honest answer for a codeunit whose .app ships no
     /// metadata XML — never a value derived from something else.</param>
+    /// <param name="testTypeOrdinal">Resolved by the caller alongside
+    /// <paramref name="subtypeOrdinal"/>, for the same reason: see
+    /// <see cref="ResolveCodeunitTestTypeOrdinal"/>.</param>
     private static object? BuildCodeunitMetadataValue(
-        NCLMetaField field, CodeunitMetaRow row, int subtypeOrdinal,
+        NCLMetaField field, CodeunitMetaRow row, int subtypeOrdinal, int testTypeOrdinal,
         BcCodeunitDocumentValues? document)
     {
         object? Text(string s) => _aovNavTextCreateTruncated!.Invoke(
@@ -242,6 +255,21 @@ public static partial class RecordPatches
             case "inherententitlements":
                 return document != null ? Text(document.InherentEntitlements)
                     : string.IsNullOrEmpty(row.InherentEntitlements) ? Default() : Text(row.InherentEntitlements);
+            // DERIVED from Subtype, never read from BC's document — the document states it 0
+            // times, because BC derives it too. MetaCodeunit's ctor runs
+            // `if (SubType == Test && TestType == 0) TestType = UnitTest;` after its attribute
+            // loop, so a test codeunit declaring nothing reports UnitTest and every other
+            // codeunit keeps None. Pinned upstream on a real service tier by
+            // Record_CodeunitMetadata_Get_TestCodeunit_ReportsTestTypeUnitTest, which reads a
+            // Subtype = Test codeunit AND a subtype-less one in the same run.
+            // Trap: the ordinal is resolved against THIS column's own option string, not
+            // against the Subtype column's — the two options share no members, so a lookup
+            // aimed at the wrong one answers a wrong ordinal rather than failing.
+            case "testtype":
+                return _aovNavOptionCreate!.Invoke(null, new object?[]
+                {
+                    field.FieldOptionMetadata, testTypeOrdinal
+                });
             default:
                 return Default();
         }
@@ -276,6 +304,7 @@ public static partial class RecordPatches
         EnsureAllObjReflection(metaTable);
         EnsureReportMetadataReflection(metaTable);
         var subtypeOrdinals = EnsureCodeunitSubtypeOrdinals(metaTable);
+        var testTypeOrdinals = EnsureCodeunitTestTypeOrdinals(metaTable);
 
         var field = (GetAllFields(metaTable) ?? Enumerable.Empty<NCLMetaField>())
             .FirstOrDefault(f => NormalizeObjectTypeName(f.FieldName ?? string.Empty)
@@ -284,9 +313,12 @@ public static partial class RecordPatches
 
         var subtypeOrdinal = ResolveCodeunitSubtypeOrdinal(
             subtypeOrdinals, _cmvSubtypeOptionString, row.Subtype, row.Id);
+        var testTypeOrdinal = ResolveCodeunitTestTypeOrdinal(
+            testTypeOrdinals, _cmvTestTypeOptionString, row.Subtype, row.Id);
         var document = TryReadCodeunitMetadataDocument(row.Id);
 
-        return BuildCodeunitMetadataValue(field, row, subtypeOrdinal, document)?.ToString();
+        return BuildCodeunitMetadataValue(
+            field, row, subtypeOrdinal, testTypeOrdinal, document)?.ToString();
     }
 
     /// <summary>
@@ -401,6 +433,97 @@ public static partial class RecordPatches
                   + $"'{AlSubtypeTheCompilerDoesNotEmit}' — is looked up as "
                   + $"'{AlDefaultCodeunitSubtype}' before it reaches here, so a miss is not an "
                   + "AL codeunit subtype at all"));
+    }
+
+    /// <summary>
+    /// The <c>TestType</c> a test codeunit reports, and the one every other codeunit reports.
+    /// <para>BC DERIVES this column; it never reads it. <c>MetaCodeunit</c>'s constructor runs
+    /// <c>if (SubType == CodeunitSubType.Test &amp;&amp; TestType == 0) TestType =
+    /// TestCodeunitTestType.UnitTest;</c> in a tail block after its attribute loop, and the AL
+    /// compiler emits the attribute 0 times — so the derivation is the only thing that ever
+    /// sets it. Measured on BC 28.1.49838.53910 across this box's cached emitted documents:
+    /// 2,093 occurrences of <c>TestIsolation="…"</c> and <b>0</b> of <c>TestType="…"</c> over
+    /// 2,206 codeunit documents.</para>
+    /// <para>Pinned on a real service tier by
+    /// <c>Record_CodeunitMetadata_Get_TestCodeunit_ReportsTestTypeUnitTest</c> in the
+    /// al-language corpus, which reads a <c>Subtype = Test</c> codeunit and a subtype-less one
+    /// in the same run, so a column answering one fixed value fails it.</para>
+    /// <para>Resolved here rather than inside <see cref="BuildCodeunitMetadataValue"/> for the
+    /// #3536 reason the subtype resolution is: a throw from inside <c>InsertVirtualRow</c>
+    /// escapes <c>GetDataAccessForTable</c> and no row of the table is served at all.</para>
+    /// <para>Trap: AL accepts no <c>TestType</c> property, so nothing a codeunit declares can
+    /// reach this — a future BC that starts emitting the attribute would need the document
+    /// read this deliberately does not do, not a wider derivation here.</para>
+    /// </summary>
+    /// <param name="ordinals">Member name (normalized) to ordinal, from this column's OWN
+    /// option string — not the Subtype column's. The two share no member name, so a map built
+    /// from the wrong column answers a wrong ordinal rather than missing.</param>
+    /// <param name="optionString">The column's own option string, for the refusal message.</param>
+    /// <param name="declaredSubtype">What the codeunit declares, or null/blank when it declares
+    /// nothing. The subtype is the whole input: this column has no declaration of its own.</param>
+    /// <param name="codeunitId">The codeunit, for the refusal message.</param>
+    internal static int ResolveCodeunitTestTypeOrdinal(
+        IReadOnlyDictionary<string, int> ordinals, string? optionString, string? declaredSubtype, int codeunitId)
+    {
+        var member = string.Equals(NormalizeObjectTypeName(declaredSubtype ?? string.Empty),
+                                   NormalizeObjectTypeName(AlSubtypeThatDerivesUnitTest), StringComparison.Ordinal)
+            ? AlDerivedTestTypeForTestCodeunit
+            : AlDefaultCodeunitTestType;
+
+        if (ordinals.TryGetValue(NormalizeObjectTypeName(member), out var ordinal))
+            return ordinal;
+
+        // Refuse rather than default. Answering 0 for a member this column does not name would
+        // be indistinguishable from the correct answer for every non-test codeunit, so the one
+        // case the refusal exists for would be the one case it stayed silent on (#3080).
+        throw CodeunitMetadataShapeGap(
+            $"codeunit {codeunitId} resolves TestType to '{member}'"
+            + (string.Equals(member, AlDerivedTestTypeForTestCodeunit, StringComparison.Ordinal)
+                ? $", because it declares Subtype = '{declaredSubtype}' and BC derives "
+                  + $"'{AlDerivedTestTypeForTestCodeunit}' for a '{AlSubtypeThatDerivesUnitTest}' codeunit, and that"
+                : ", which")
+            + $" is not a member of that column's own option set ('{optionString}')");
+    }
+
+    /// <summary>The <c>TestType</c> BC leaves every codeunit at unless the derivation below
+    /// fires — the constructor default this column's own option string names first.</summary>
+    private const string AlDefaultCodeunitTestType = "None";
+
+    /// <summary>The one subtype whose codeunits BC derives a non-default <c>TestType</c> for,
+    /// and the member it derives. Spelled as MEMBER NAMES resolved against the live column
+    /// rather than as ordinals, so a BC that reorders the option set stays correct.</summary>
+    private const string AlSubtypeThatDerivesUnitTest = "Test";
+
+    /// <inheritdoc cref="AlSubtypeThatDerivesUnitTest"/>
+    private const string AlDerivedTestTypeForTestCodeunit = "UnitTest";
+
+    /// <summary>
+    /// This column's own ordinals, resolved once per process from the parsed CodeUnit Metadata
+    /// metatable's <c>TestType</c> field — the same technique
+    /// <see cref="EnsureCodeunitSubtypeOrdinals"/> uses for <c>Subtype</c>, and deliberately a
+    /// separate map: the two columns name disjoint members.
+    /// </summary>
+    private static Dictionary<string, int> EnsureCodeunitTestTypeOrdinals(NCLMetaTable metaTable)
+    {
+        if (_cmvTestTypeOrdinals != null) return _cmvTestTypeOrdinals;
+
+        var field = (GetAllFields(metaTable) ?? Enumerable.Empty<NCLMetaField>())
+            .FirstOrDefault(f => NormalizeObjectTypeName(f.FieldName ?? string.Empty) == "testtype")
+            ?? throw CodeunitMetadataShapeGap("metatable has no \"TestType\" field");
+
+        var optionMetadata = field.FieldOptionMetadata
+            ?? throw CodeunitMetadataShapeGap("\"TestType\" carries no option metadata");
+
+        // No runtime-enum overlay, for the same reason Subtype has none: the value reaching
+        // this column is what BC's own derivation produced, which never names a member the
+        // column does not carry.
+        var map = BuildMetadataOptionOrdinals(optionMetadata.OptionString, bcRuntimeEnum: null);
+        if (map.Count == 0)
+            throw CodeunitMetadataShapeGap("\"TestType\" option string is empty");
+
+        _cmvTestTypeOptionString = optionMetadata.OptionString;
+        _cmvTestTypeOrdinals = map;
+        return map;
     }
 
     /// <summary>
