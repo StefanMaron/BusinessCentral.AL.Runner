@@ -674,6 +674,7 @@ public static partial class RecordPatches
         if (parsedAny)
         {
             EvictCachedNullsForNewlyParsedTables();
+            EvictCachedNullsForNewlyParsedObjects();
             PopulateNclMetadataCache();
         }
     }
@@ -714,6 +715,61 @@ public static partial class RecordPatches
             if (!_metaTableCache.TryRemove(kvp.Key, out _)) continue;
             EventSubscriberPatches.ForgetInjectedForTable(kvp.Key);
             _fieldTriggersWiredTables.TryRemove(kvp.Key, out _);
+        }
+    }
+
+    /// <summary>
+    /// Drop the cached NULL an earlier bundle's lookup left in <c>_metaFormCache</c> /
+    /// <c>_metaReportCache</c> for an object THIS batch has just parsed, so the next lookup
+    /// rebuilds it (#4452; the table-side statement of the same thing is #4450).
+    ///
+    /// <para>Both caches are <c>ConcurrentDictionary</c>s populated through
+    /// <c>GetOrAdd(id, Build…)</c>, and the builders answer <c>null</c> for an object not in the
+    /// parsed registry. With several bundles in one process that absence is TEMPORARY: bundle 1
+    /// can reach <c>NCLMetadata.GetMetaApplicationObject</c> for bundle 2's page or report —
+    /// <c>Page.Run(id)</c> and <c>Report.Run(id)</c> are the AL surfaces that do it — before
+    /// bundle 2's source dir is registered. <c>GetOrAdd</c> never replaces an entry, so that
+    /// correct-at-the-time null becomes bundle 2's permanent answer about its OWN object.</para>
+    ///
+    /// <para>Only <c>null</c> entries are removed, so a live <c>NCLMetaForm</c>/<c>NCLMetaReport</c>
+    /// that precompiled R2R callers hold baked offsets into is never swapped under them
+    /// (<c>.claude/rules/precompiled-dll-respect.md</c>), and an id this batch did not parse is
+    /// left alone — its null is still the right answer.</para>
+    ///
+    /// <para>Page-side this is load-bearing and measured: <c>GetPageProperties</c> reaches the
+    /// poisoned null through <c>EnsureRealPageMetadata</c> and THROWS
+    /// <c>RunnerOutOfScopeException</c> ("no loadable page metadata for this page") for a page the
+    /// running bundle declares itself. #3011's <c>_pageRealMetadataNegativeEpoch</c> retake does
+    /// not cover this and no eviction of it is needed: for a page of a not-yet-parsed bundle,
+    /// <c>EnsureRealPageMetadata</c> returns at its FIRST line — the page is not in
+    /// <c>AlPageMetadataRegistry</c> — so no negative is ever stamped. Measured: one
+    /// <c>priorNegative=False</c> record and no retake in the whole run. Removing the cached null
+    /// is therefore the entire fix, which a mutation confirms (see #4452).</para>
+    ///
+    /// <para>Report-side the same poisoned entry is written and, as measured, currently absorbed:
+    /// <c>Report Metadata</c> rows come from <c>EnumerateKnownReports()</c> and <c>Report.Run</c>
+    /// reaches the compiled <c>Report{id}</c> type, so neither reads this cache. It is evicted
+    /// anyway because the poisoning is real and its harmlessness is a property of today's
+    /// consumers rather than of the cache — the same reasoning that put the two `return null`s
+    /// above #3590's try block back in scope. <c>_metaQueryCache</c>, <c>_metaXmlPortCache</c> and
+    /// <c>_lazyMetaQueryByGetById</c> are deliberately NOT here: measured over both bundle orders,
+    /// no AL surface reaches them for an unparsed id, so nothing ever caches a null in them. See
+    /// #4452 for the per-cache evidence.</para>
+    /// </summary>
+    private static void EvictCachedNullsForNewlyParsedObjects()
+    {
+        foreach (var kvp in _metaFormCache)
+        {
+            if (kvp.Value != null) continue;
+            if (!_parsedPages.ContainsKey(kvp.Key) && !_parsedPageExtensions.ContainsKey(kvp.Key)) continue;
+            _metaFormCache.TryRemove(kvp.Key, out _);
+        }
+
+        foreach (var kvp in _metaReportCache)
+        {
+            if (kvp.Value != null) continue;
+            if (!_parsedReports.ContainsKey(kvp.Key)) continue;
+            _metaReportCache.TryRemove(kvp.Key, out _);
         }
     }
 

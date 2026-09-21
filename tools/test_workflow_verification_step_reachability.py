@@ -86,6 +86,16 @@ REVIEWED: dict[tuple[str, str], dict[str, str | None]] = {
                "earlier red step. Anything else here silently drops ALL of "
                "tests/runner-extras -- the mutation #4255 measured.",
     },
+    ("bc-tests.yml", "Run rnce as two independent bundles"): {
+        "step_if": "${{ always() && hashFiles('tests/runner-extras/rnce-second/**/*.al') != '' }}",
+        "job_if": None, "step_coe": None, "job_coe": TEST_JOB_COE,
+        "why": "#4452's page/report cached-null pair. Skips only when that suite tree is "
+               "absent, and the glob is asserted to resolve against real files by "
+               "MetaObjectCacheNullBundleShapeTests -- a glob matching nothing would SKIP "
+               "the step, and a skipped step reports success. This is the only invocation "
+               "that runs two INDEPENDENT bundles reaching the page metadata cache, so "
+               "narrowing it retires the coverage silently.",
+    },
     ("bc-tests.yml", "Run tableextension-eviction suites as ordered bundles"): {
         "step_if": "${{ always() && hashFiles('tests/runner-extras-tableext-eviction/**/*.al') != '' }}",
         "job_if": None, "step_coe": None, "job_coe": TEST_JOB_COE,

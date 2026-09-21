@@ -1,0 +1,18 @@
+{
+  "id": "b1d94e70-3c6a-4f28-9b55-2e7a4d9c6220",
+  "name": "Runner Extras - Meta Null Cache Second",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #4452 bundle 2 of 2: runs SECOND and asserts its OWN page/report/query/xmlport are described.",
+  "description": "Issue #4452 measurement fixture: are the page/report/query/xmlport metadata caches poisoned by a cached null the way _metaTableCache was (#4450)? Two sibling bundles with NO dependency between them, so they are unrelated app groups rather than a dependency pair.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 66220,
+      "to": 66239
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}
