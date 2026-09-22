@@ -160,6 +160,20 @@ public static partial class RecordPatches
         return scope.VisibleApps;
     }
 
+    /// <summary>
+    /// The executing app group's visible-app closure, with NO provider to pin it against —
+    /// for a caller that rebuilds its answer from scratch on every call.
+    ///
+    /// <para><see cref="PinInventoryScope"/> exists to refuse a store populated under one app
+    /// group and read under another, because the per-provider "already inserted" sets are
+    /// add-only. A caller that allocates a fresh result each time has no such store, so there
+    /// is nothing to pin and nothing to refuse: the current group is simply read now. Using
+    /// PinInventoryScope there would pin the FIRST group's closure onto a process-wide object
+    /// and then throw for every later group (#4447).</para>
+    /// </summary>
+    private static HashSet<Guid>? CurrentVisibleAppClosure()
+        => CurrentAppGroupAppId() is { } id ? VisibleAppClosure(id, _sourceAppDependencies) : null;
+
     private static Guid? CurrentAppGroupAppId()
     {
         var asm = AlRunner.BcRuntime.CurrentTestAssembly;

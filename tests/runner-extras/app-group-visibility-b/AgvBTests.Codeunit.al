@@ -274,4 +274,37 @@ codeunit 62612 "AGV B Tests"
     begin
         Assert.IsTrue(TableMetadata.Get(2000000041), 'Table Metadata in app group B must list platform table 2000000041, which no app group owns');
     end;
+
+    // #4447: Query Metadata (2000000142). Unlike the three tables above it is served by BC's
+    // OWN QueryDataProvider, which walks the object snapshot -- so the filter sits in the
+    // snapshot builder rather than in a runner populate arm. This is the positive control that
+    // stops the hiding assertions below being vacuous: the query must exist and be described.
+    [Test]
+    procedure QueryMetadata_OwnQuery_IsListed()
+    var
+        QueryMetadata: Record "Query Metadata";
+    begin
+        Assert.IsTrue(QueryMetadata.Get(62615), 'Query Metadata in app group B must list its own query 62615');
+        Assert.AreEqual('AGV B Query', QueryMetadata.Name, 'Query Metadata row for query 62615');
+    end;
+
+    [Test]
+    procedure QueryMetadata_GroupAQuery_IsNotListed()
+    var
+        QueryMetadata: Record "Query Metadata";
+    begin
+        Assert.IsFalse(QueryMetadata.Get(62605), 'Query Metadata in app group B lists query 62605 of unrelated app group A');
+        QueryMetadata.SetRange(ID, 62600, 62609);
+        Assert.IsTrue(QueryMetadata.IsEmpty(), 'Query Metadata in app group B lists a query in the id range of unrelated app group A');
+    end;
+
+    [Test]
+    procedure QueryMetadata_GroupCQuery_IsNotListed()
+    var
+        QueryMetadata: Record "Query Metadata";
+    begin
+        Assert.IsFalse(QueryMetadata.Get(62625), 'Query Metadata in app group B lists query 62625 of unrelated app group C');
+        QueryMetadata.SetRange(ID, 62620, 62629);
+        Assert.IsTrue(QueryMetadata.IsEmpty(), 'Query Metadata in app group B lists a query in the id range of unrelated app group C');
+    end;
 }
