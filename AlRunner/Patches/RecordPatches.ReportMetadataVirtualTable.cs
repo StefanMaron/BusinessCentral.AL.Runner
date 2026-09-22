@@ -87,6 +87,12 @@ public static partial class RecordPatches
     internal const int ReportMetadataVirtualTableId = 2000000139;
     internal const int ReportDataItemsVirtualTableId = 2000000203;
 
+    /// <summary>How each table names itself in an app-group-scope refusal (#4447). Two distinct
+    /// labels because the two tables have separate per-provider stores: a refusal naming the
+    /// wrong one would send the reader to the wrong populate arm.</summary>
+    private const string ReportMetadataVirtualTableLabel = "Report Metadata (virtual table 2000000139)";
+    private const string ReportDataItemsVirtualTableLabel = "Report Data Items (virtual table 2000000203)";
+
     private static readonly ConditionalWeakTable<object, ConcurrentDictionary<int, byte>> _rmvPopulatedByProvider = new();
     private static readonly ConditionalWeakTable<object, ConcurrentDictionary<(int, int), byte>> _rdiPopulatedByProvider = new();
 
@@ -147,9 +153,16 @@ public static partial class RecordPatches
             ?? throw ReportMetadataShapeGap("data access has no in-memory provider");
 
         var done = _rmvPopulatedByProvider.GetValue(provider, static _ => new ConcurrentDictionary<int, byte>());
+        // Filtered here, never in EnumerateKnownReports: that list is memoized per process and
+        // shared by every app group, so a sibling group's report stays in it and only the
+        // per-provider insert may drop it (#4447). Report Data Items filters separately, over
+        // the same inventory — the two tables are populated by two arms and a filter on one
+        // leaves the other's rows visible.
+        var visibleApps = PinInventoryScope(provider, ReportMetadataVirtualTableLabel);
 
         foreach (var report in EnumerateKnownReports())
         {
+            if (IsHiddenFromCurrentAppGroup("Report", report.Id, visibleApps)) continue;
             if (!done.TryAdd(report.Id, 0)) continue;
             InsertVirtualRow(provider, metaTable,
                 new object[] { ReportMetadataVirtualTableId, report.Id, 0, 0 },
@@ -172,8 +185,14 @@ public static partial class RecordPatches
             ?? throw ReportDataItemsShapeGap("data access has no in-memory provider");
 
         var done = _rdiPopulatedByProvider.GetValue(provider, static _ => new ConcurrentDictionary<(int, int), byte>());
+        // Keyed on the REPORT that owns the data item, not on the data item's related table: a
+        // data item is not an AL object and has no owner of its own, and the row exists because
+        // the report does (#4447).
+        var visibleApps = PinInventoryScope(provider, ReportDataItemsVirtualTableLabel);
 
         foreach (var report in EnumerateKnownReports())
+        {
+            if (IsHiddenFromCurrentAppGroup("Report", report.Id, visibleApps)) continue;
             foreach (var item in report.DataItems)
             {
                 if (!done.TryAdd((report.Id, item.Id), 0)) continue;
@@ -181,6 +200,7 @@ public static partial class RecordPatches
                     new object[] { ReportDataItemsVirtualTableId, report.Id, item.Id, 0 },
                     field => BuildReportDataItemValue(field, report, item));
             }
+        }
     }
 
     /// <summary>

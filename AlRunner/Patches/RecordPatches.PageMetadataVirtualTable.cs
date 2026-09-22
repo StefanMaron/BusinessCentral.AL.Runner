@@ -143,9 +143,14 @@ public static partial class RecordPatches
             ?? throw PageMetadataShapeGap("data access has no in-memory provider");
 
         var done = _pmvPopulatedByProvider.GetValue(provider, static _ => new ConcurrentDictionary<int, byte>());
+        // Filtered here, never in EnumerateKnownPageMetadata: that list is memoized per process
+        // and shared by every app group, so a sibling group's page stays in it and only the
+        // per-provider insert may drop it (#4447, the shape #2279 and #4070 already apply).
+        var visibleApps = PinInventoryScope(provider, "Page Metadata (virtual table 2000000138)");
 
         foreach (var row in EnumerateKnownPageMetadata())
         {
+            if (IsHiddenFromCurrentAppGroup("Page", row.Id, visibleApps)) continue;
             if (!done.TryAdd(row.Id, 0)) continue;
 
             // One lazy slot per ROW, shared by that row's nine <SourceObject> columns (#3063).

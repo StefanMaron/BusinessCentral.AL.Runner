@@ -152,4 +152,95 @@ codeunit 62622 "AGV C Tests"
         CodeunitMetadata.SetRange(ID, 62610, 62619);
         Assert.IsTrue(CodeunitMetadata.IsEmpty(), 'CodeUnit Metadata in app group C lists a codeunit in the id range of unrelated app group B');
     end;
+    // #4447: the three metadata tables this issue adds. The dependency-closure controls are
+    // the ones that matter here -- a filter keyed on the EXECUTING APP ALONE hides A's page
+    // and report from C, passes every group-A and group-B assertion, and is still wrong.
+    [Test]
+    procedure PageMetadata_OwnPage_IsListed()
+    var
+        PageMetadata: Record "Page Metadata";
+    begin
+        Assert.IsTrue(PageMetadata.Get(62623), 'Page Metadata in app group C must list its own page 62623');
+        Assert.AreEqual('AGV C Page', PageMetadata.Name, 'Page Metadata row for page 62623');
+    end;
+
+    [Test]
+    procedure PageMetadata_DependencyAPage_IsListed()
+    var
+        PageMetadata: Record "Page Metadata";
+    begin
+        Assert.IsTrue(PageMetadata.Get(62603), 'Page Metadata in app group C must list the page of its dependency A, 62603');
+        Assert.AreEqual('AGV A Page', PageMetadata.Name, 'Page Metadata row for page 62603');
+    end;
+
+    [Test]
+    procedure PageMetadata_GroupBPage_IsNotListed()
+    var
+        PageMetadata: Record "Page Metadata";
+    begin
+        Assert.IsFalse(PageMetadata.Get(62613), 'Page Metadata in app group C lists page 62613 of unrelated app group B');
+        PageMetadata.SetRange(ID, 62610, 62619);
+        Assert.IsTrue(PageMetadata.IsEmpty(), 'Page Metadata in app group C lists a page in the id range of unrelated app group B');
+    end;
+
+    [Test]
+    procedure ReportMetadata_OwnReport_IsListed()
+    var
+        ReportMetadata: Record "Report Metadata";
+    begin
+        Assert.IsTrue(ReportMetadata.Get(62624), 'Report Metadata in app group C must list its own report 62624');
+        Assert.AreEqual('AGV C Report', ReportMetadata.Name, 'Report Metadata row for report 62624');
+    end;
+
+    [Test]
+    procedure ReportMetadata_DependencyAReport_IsListed()
+    var
+        ReportMetadata: Record "Report Metadata";
+    begin
+        Assert.IsTrue(ReportMetadata.Get(62604), 'Report Metadata in app group C must list the report of its dependency A, 62604');
+        Assert.AreEqual('AGV A Report', ReportMetadata.Name, 'Report Metadata row for report 62604');
+    end;
+
+    [Test]
+    procedure ReportMetadata_GroupBReport_IsNotListed()
+    var
+        ReportMetadata: Record "Report Metadata";
+    begin
+        Assert.IsFalse(ReportMetadata.Get(62614), 'Report Metadata in app group C lists report 62614 of unrelated app group B');
+        ReportMetadata.SetRange(ID, 62610, 62619);
+        Assert.IsTrue(ReportMetadata.IsEmpty(), 'Report Metadata in app group C lists a report in the id range of unrelated app group B');
+    end;
+
+    [Test]
+    procedure ReportDataItems_OwnReport_IsListed()
+    var
+        ReportDataItems: Record "Report Data Items";
+    begin
+        ReportDataItems.SetRange("Report ID", 62624);
+        Assert.IsTrue(ReportDataItems.FindFirst(), 'Report Data Items in app group C must list the data item of its own report 62624');
+        Assert.AreEqual('AgvCRows', ReportDataItems.Name, 'Report Data Items row for report 62624');
+        Assert.AreEqual(62620, ReportDataItems."Related Table ID", 'Report Data Items related table for report 62624');
+    end;
+
+    [Test]
+    procedure ReportDataItems_DependencyAReport_IsListed()
+    var
+        ReportDataItems: Record "Report Data Items";
+    begin
+        ReportDataItems.SetRange("Report ID", 62604);
+        Assert.IsTrue(ReportDataItems.FindFirst(), 'Report Data Items in app group C must list the data item of the report of its dependency A, 62604');
+        Assert.AreEqual('AgvARows', ReportDataItems.Name, 'Report Data Items row for report 62604');
+        Assert.AreEqual(62600, ReportDataItems."Related Table ID", 'Report Data Items related table for report 62604');
+    end;
+
+    [Test]
+    procedure ReportDataItems_GroupBReport_IsNotListed()
+    var
+        ReportDataItems: Record "Report Data Items";
+    begin
+        ReportDataItems.SetRange("Report ID", 62614);
+        Assert.IsTrue(ReportDataItems.IsEmpty(), 'Report Data Items in app group C lists the data item of report 62614 of unrelated app group B');
+        ReportDataItems.SetRange("Report ID", 62610, 62619);
+        Assert.IsTrue(ReportDataItems.IsEmpty(), 'Report Data Items in app group C lists a data item of a report in the id range of unrelated app group B');
+    end;
 }
