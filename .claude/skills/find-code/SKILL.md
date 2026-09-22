@@ -41,8 +41,18 @@ a grep for the name in one file would have missed.
 | exit | meaning | what to do |
 |---|---|---|
 | **0** | answered, results printed | use them |
-| **1** | answered, genuinely nothing found | a real negative — you may rely on it |
+| **1** | answered, nothing in its index | a real negative for a type or an ordinary member — **but not for a LOCAL FUNCTION** (see below) |
 | **2** | the server failed, timed out, or is not installed | **NOT a negative.** Say so and fall back to grep |
+
+**Exit 1 is not a negative for a local function.** `csharp-ls` builds its
+workspace-symbol index from types and their members; a function declared *inside* another
+method is not in it, so `symbol` and `callers` both answer exit 1 — with wording that reads
+like a settled absence. `AlRunner/Program.cs` declares several inside `Main`
+(`RunAllBundlesForServer`, `RunBundleForServer`, `RunDependencyPrePasses`,
+`PaintWatchRunning`, …), and all of them report this. Confirm a surprising zero with
+`rg -n "<Name>" AlRunner/` before concluding the symbol does not exist — measured while
+reviewing #2684, where the confident negative nearly produced a FIX-FIRST against a
+correct citation.
 
 Never treat exit 2 as "nothing calls this". That mistake reverses the meaning of
 your result and any conclusion built on it. If it says `csharp-ls is not installed`,

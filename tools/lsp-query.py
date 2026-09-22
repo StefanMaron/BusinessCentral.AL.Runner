@@ -30,7 +30,10 @@ reads a failed lookup as "nothing calls this" draws exactly the wrong
 conclusion and acts on it. Exit codes:
 
     0  the question was answered (results printed)
-    1  the server answered and found nothing (a real negative)
+    1  the server answered and its index has no such symbol. A real negative for
+       a type or an ordinary member; NOT for a LOCAL FUNCTION (declared inside
+       another method), which csharp-ls does not index -- confirm those with
+       ripgrep before concluding the symbol does not exist.
     2  the server could not be started or did not answer (NOT a negative)
 
 Usage:
@@ -177,8 +180,12 @@ def main(argv):
             name = argv[2]
             hits = wait_for_symbol(srv, name, 10)
             if not hits:
-                print(f"no symbol named {name!r} in the solution "
-                      f"(server answered; this is a real negative)")
+                print(f"no symbol named {name!r} in the workspace-symbol index "
+                      f"(server answered). A real negative for a type or an ordinary "
+                      f"member -- but csharp-ls does NOT index LOCAL FUNCTIONS, so a "
+                      f"function declared inside another method reports exactly this. "
+                      f"Confirm with `rg -n \"{name}\" AlRunner/` before concluding "
+                      f"it does not exist.")
                 return 1
             if cmd == "symbol":
                 for h in hits:
