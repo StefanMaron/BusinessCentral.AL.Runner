@@ -476,16 +476,22 @@ a merge can turn `main` red, which outranks everything you were about to do.
    **Why this replaced "take the highest-value one".** That instruction was already here and was
    not enough: value was a judgement made per issue, in the moment, recorded nowhere, so nothing
    could tell afterwards whether it had been applied. Measured 2026-09-22 over the previous seven
-   days: **process/tooling work was 16-43% of merged PRs depending on how you classify it,
-   against a backlog that is 19% process** — so the loop over-selected it by roughly 1.6x to 2.3x.
+   days: **process/tooling work was 21-36% of merged PRs against a backlog that is 19% process**
+   — so the loop over-selected it by roughly **1.1x to 1.9x**.
 
    **The range is the honest form, and the reason is worth knowing.** "Process" has no label in
-   this repository, so every figure comes from a classifier someone wrote, and four classifiers
-   over the same week gave 16%, 33%, 36% and 43%. The **denominator** is the solid half: 19%
-   reproduces exactly (27 of 145 open issues), because it is checkable against the
-   `area: project-process` and `runner-gap` labels. Quote the range, or re-derive with a stated
-   classifier — a single number here is a choice of regex wearing the clothes of a measurement
-   (found in review of #4477, where the author's own 44% did not reproduce).
+   this repository, so every figure comes from a classifier someone wrote. Ten classifiers over
+   the same week spanned 16-43%; the 21-36% above is the subset that actually targets process
+   work, and the wider figures come from classifiers too loose or too narrow to mean it. The
+   **denominator** is the solid half: 19% reproduces exactly (27 of 145 open issues), because it
+   is checkable against the `area: project-process` and `runner-gap` labels.
+
+   Quote the range with the multiplier it implies, or re-derive with a stated classifier — a
+   single number here is a choice of regex wearing the clothes of a measurement (found in review
+   of #4477, where the author's own 44% did not reproduce). **And check the multiplier against
+   the BOTTOM of whatever range you quote**: an earlier revision of this paragraph widened the
+   range to 16-43% while keeping a "1.6x to 2.3x" derived from the old numerator, and 16% against
+   a 19% denominator is **0.84x — under-selection**, the opposite of the claim it decorated.
 
    Process issues are cheap to evaluate and cheap to close, so they win a selection contest that
    has no other criterion. A priority set by the triager and read at pick time is a criterion that
