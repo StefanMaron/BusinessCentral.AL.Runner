@@ -22,6 +22,13 @@ Three properties, each of which a revert to the single-account premise breaks:
      who reaches the ratings without knowing which case they are in applies the
      wrong one -- which is the near-miss in #3275.
 
+Property 2 reads the VERDICT CELL, located by its column header, not the row. A
+row-wide search passes an inverted verdict whenever another column carries the
+opposite vocabulary, and the action column legitimately does -- "nothing below
+waives it" is correct prose that satisfied a check about the word "nothing".
+Both directions are pinned, because a verdict carrying BOTH vocabularies has
+taken no side and reading only the expected one lets that through.
+
 Plus the cross-reference that makes the rule stop contradicting its sister:
 `branch-and-pr.md` owns the assignee boundary and this rule must defer to it
 rather than argue against it.
@@ -46,14 +53,43 @@ RULE = ".claude/rules/check-open-prs-before-claiming.md"
 text = open(RULE, encoding="utf-8").read()
 
 
-def table_rows(body: str) -> list[list[str]]:
-    """Every markdown table row in `body`, as stripped cell lists.
+class Row:
+    """One data row, WITH the header it sits under.
 
-    Header and separator rows are dropped: a separator is all dashes/colons, and
-    the header is whatever precedes it in that table.
+    The header is kept rather than discarded because a verdict check has to read
+    the verdict CELL: a row-wide search is satisfied by the right word in the
+    wrong column, and the action column legitimately contains both vocabularies
+    ("nothing below waives it" is the correct thing for it to say). Found by a
+    third mutation that inverted the same-account verdict in place and left the
+    guard GREEN on the very check that names it (#3275, review round 1).
     """
-    rows: list[list[str]] = []
+
+    def __init__(self, header: list[str], cells: list[str]) -> None:
+        self.header = header
+        self.cells = cells
+
+    def cell_under(self, pat: re.Pattern) -> str | None:
+        """The cell whose HEADER matches `pat` -- located by name, not by index,
+        so inserting a column cannot silently move the check onto another one.
+        None when this row has no such column, which a caller must not read as
+        an empty cell: a missing column is unmeasured, not a failed match."""
+        for i, h in enumerate(self.header):
+            if pat.search(h):
+                return self.cells[i] if i < len(self.cells) else None
+        return None
+
+    def any_cell(self, pat: re.Pattern) -> bool:
+        return any(pat.search(c) for c in self.cells)
+
+    def __repr__(self) -> str:
+        return repr(self.cells)
+
+
+def table_rows(body: str) -> list[Row]:
+    """Every markdown table data row in `body`, each carrying its own header."""
+    rows: list[Row] = []
     pending: list[str] | None = None        # a row held back until we know if a separator follows
+    header: list[str] = []
 
     def flush() -> None:
         """Emit the held row. A row is held only to see whether a SEPARATOR comes
@@ -64,17 +100,19 @@ def table_rows(body: str) -> list[list[str]]:
         first revision, #3275)."""
         nonlocal pending
         if pending is not None:
-            rows.append(pending)
+            rows.append(Row(header, pending))
             pending = None
 
     for line in body.splitlines():
         s = line.strip()
         if not (s.startswith("|") and s.endswith("|")):
             flush()
+            header = []
             continue
         cells = [c.strip() for c in s.strip("|").split("|")]
         if all(re.fullmatch(r":?-{2,}:?", c) for c in cells if c):
-            pending = None          # separator: the row before it was the header, so drop it
+            header = pending or []  # separator: the row before it WAS the header
+            pending = None
             continue
         flush()
         pending = cells
@@ -83,6 +121,11 @@ def table_rows(body: str) -> list[list[str]]:
 
 
 ROWS = table_rows(text)
+
+# The column each verdict check must read. Both tables in this rule spell it as a
+# question about what a signal TELLS you, which is what distinguishes it from the
+# action column beside it.
+VERDICT_COL = re.compile(r"what the assignee tells you|what it tells you", re.I)
 check("the rule still contains markdown tables to read", len(ROWS) > 0,
       f"parsed {len(ROWS)} data rows")
 
@@ -103,8 +146,11 @@ DIFF = re.compile(r"\b(different|another|other|second|cross[- ])\b"
                   r"{0,40}\baccount\b|\bcross-account\b", re.I)
 
 
-def rows_matching(pat: re.Pattern) -> list[list[str]]:
-    return [r for r in ROWS if any(pat.search(c) for c in r)]
+def rows_matching(pat: re.Pattern) -> list[Row]:
+    """Rows IDENTIFIED by a match anywhere in them. Row-wide is right here --
+    which case a row is about may be written in any column -- and wrong for the
+    verdict checks below, which read one named cell."""
+    return [r for r in ROWS if r.any_cell(pat)]
 
 
 same_rows = rows_matching(SAME)
@@ -126,20 +172,59 @@ NOTHING = re.compile(r"\bnothing\b|\bcannot\b|\bcan't\b|\bno(t| )\s*answer|\buse
 EVERYTHING = re.compile(r"\beverything\b|\bauthoritative\b|\bdecides?\b|\bsettles?\b"
                         r"|\bexactly who\b|\bthe answer\b|\breal boundary\b", re.I)
 
-same_says_nothing = [r for r in same_rows if any(NOTHING.search(c) for c in r)]
-diff_says_answer = [r for r in diff_rows if any(EVERYTHING.search(c) for c in r)]
+def verdict_says(rows: list[Row], pat: re.Pattern) -> tuple[list[Row], list[Row]]:
+    """Split `rows` into those whose VERDICT cell matches, and those with no
+    verdict column at all. The second list is the third state: a row missing the
+    column was never measured, and reporting it as a failed match would send a
+    reader to reword a cell that is not there (`guards-need-a-third-state.md`)."""
+    hit, unmeasured = [], []
+    for r in rows:
+        cell = r.cell_under(VERDICT_COL)
+        if cell is None:
+            unmeasured.append(r)
+        elif pat.search(cell):
+            hit.append(r)
+    return hit, unmeasured
+
+
+# Read the VERDICT CELL, not the row. A row-wide search passes an inverted
+# verdict whenever any other column happens to carry the opposite vocabulary --
+# and the action column legitimately does: "nothing below waives it" is correct
+# prose that satisfied a check about the word "nothing" (#3275, review round 1).
+same_says_nothing, same_unmeasured = verdict_says(same_rows, NOTHING)
+diff_says_answer, diff_unmeasured = verdict_says(diff_rows, EVERYTHING)
+
+check("every account-case row has a verdict column to read",
+      not (same_unmeasured or diff_unmeasured),
+      f"rows with no verdict column: {same_unmeasured + diff_unmeasured}")
 
 check("the same-account row says the assignee answers nothing",
       len(same_says_nothing) > 0,
-      f"same-account rows found: {same_rows}")
+      f"same-account verdict cells: "
+      f"{[r.cell_under(VERDICT_COL) for r in same_rows]}")
 check("the cross-account row says the assignee IS the answer",
       len(diff_says_answer) > 0,
-      f"cross-account rows found: {diff_rows}")
+      f"cross-account verdict cells: "
+      f"{[r.cell_under(VERDICT_COL) for r in diff_rows]}")
+
+# Both directions, not just one (`tdd.md`: pin both sides of a boundary). A row
+# whose verdict carries BOTH vocabularies has not taken a side, and reading only
+# the side each row is supposed to assert would let that through.
+same_also_everything, _ = verdict_says(same_rows, EVERYTHING)
+diff_also_nothing, _ = verdict_says(diff_rows, NOTHING)
+check("the same-account verdict does NOT also claim the assignee is decisive",
+      not same_also_everything,
+      f"same-account verdict cells: "
+      f"{[r.cell_under(VERDICT_COL) for r in same_also_everything]}")
+check("the cross-account verdict does NOT also claim the assignee answers nothing",
+      not diff_also_nothing,
+      f"cross-account verdict cells: "
+      f"{[r.cell_under(VERDICT_COL) for r in diff_also_nothing]}")
 
 # The rows must be DISTINCT rows: one row carrying both verdicts would satisfy
 # the two checks above while discriminating nothing.
 check("the two verdicts sit on different rows",
-      any(a != b for a in same_says_nothing for b in diff_says_answer),
+      any(a is not b for a in same_says_nothing for b in diff_says_answer),
       "one row matched both cases; that rates a single case in two words")
 
 # --- property 3: the discriminator comes FIRST ------------------------------
@@ -150,7 +235,7 @@ check("the two verdicts sit on different rows",
 ASK = re.compile(r"(read|check|ask|establish|determine)[^.\n]{0,80}\b(account|login)\b", re.I)
 ask_at = min((m.start() for m in ASK.finditer(text)), default=None)
 
-SIGNAL_TABLE = [r for r in ROWS if any(re.search(r"\bassignee\b", c, re.I) for c in r)]
+SIGNAL_TABLE = [r for r in ROWS if r.any_cell(re.compile(r"\bassignee\b", re.I))]
 check("a per-signal table still rates the assignee", len(SIGNAL_TABLE) > 0)
 
 first_rating = text.lower().find("| assignee")
