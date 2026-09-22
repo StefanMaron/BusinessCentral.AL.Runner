@@ -25,10 +25,20 @@
 // own bounds/binary-search/sort-order/obsolete-filter traversal keeps running unchanged.
 //
 // DELIBERATELY QUERY-ONLY — and the reason is NOT the one it first appears to be. That snapshot
-// has TEN callers (measured with find_callers on Ncl.dll `6f2cf682…`; #4196's "17" is the count
-// for GetObjectNumberAndInfoWithinRange, a different method one level up). Three of them —
-// AllObjDataProvider, AllObjWithCaptionDataProvider, SystemObjectDataProvider — are
-// type-AGNOSTIC and WOULD see a Query entry if they ran.
+// has TEN direct callers; #4196's "17" is the count for GetObjectNumberAndInfoWithinRange, a
+// different method one level up, and the two sets are nearly disjoint. Re-derived on bc284
+// (#4447): NINE of the ten are on NCLMetadata/MetadataDataProvider themselves —
+// CountObjectsWithinRange, GetObjectName, GetObjectId, GetMetaTableByName, GetObjByFullName,
+// IsTableNameAmbigous, InitializeAppGroupObjects and the two iterator MoveNexts
+// (<GetObjectNumberAndInfoWithinRange>d__10, <GetObjectTypesWithinRange>d__9) — plus
+// Debugger.HeuristicProfilerActivityContext.GetRunObjectDescription. All ten are
+// type-agnostic in the sense that matters: they index the outer SortedList by ObjectType and
+// would see a Query entry.
+//
+// An earlier revision of this comment named AllObjDataProvider, AllObjWithCaptionDataProvider
+// and SystemObjectDataProvider here. Those three are real, and they call the method one level
+// up — they are NOT among this snapshot's ten. Corrected rather than deleted because the
+// conclusion below is unchanged and was never resting on the three names.
 //
 // What actually protects AllObj (2000000038), AllObjWithCaption (2000000058), Field
 // (2000000041), Table Metadata (2000000136), Page Metadata (2000000138) and Page Control Field
@@ -101,8 +111,18 @@ public static partial class RecordPatches
         if (ids.Count == 0) return outer;
 
         var inner = (IDictionary)Activator.CreateInstance(_qmSnapshotInner!)!;
+        // Filtered here, never in KnownQueryIdSet: that set is memoized on a generation tuple
+        // with no app-group term, so a sibling group's query stays in it and a filter applied
+        // there would cache the FIRST group's answer for the process. This loop rebuilds the
+        // snapshot on every call, which is what makes a per-call scope read correct (#4447).
+        var visibleApps = CurrentVisibleAppClosure();
+
         foreach (var id in ids)
         {
+            // #4447. The three tables #4454 scoped filter inside a runner populate arm; this
+            // table has none -- BC's own QueryDataProvider builds all 13 columns and reaches
+            // the ids only through this snapshot, so the snapshot IS the filter point.
+            if (IsHiddenFromCurrentAppGroup("Query", id, visibleApps)) continue;
             // Admitted by BC's own rule, not ours: an id must resolve through the metadata
             // cache to appear. An id the runner knows exists but cannot build metadata for is
             // skipped here rather than surfacing as a row whose every column would be empty —

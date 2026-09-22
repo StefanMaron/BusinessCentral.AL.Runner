@@ -243,4 +243,37 @@ codeunit 62622 "AGV C Tests"
         ReportDataItems.SetRange("Report ID", 62610, 62619);
         Assert.IsTrue(ReportDataItems.IsEmpty(), 'Report Data Items in app group C lists a data item of a report in the id range of unrelated app group B');
     end;
+
+    // #4447: Query Metadata (2000000142). Served by BC's OWN QueryDataProvider walking the
+    // object snapshot, so the filter sits in the snapshot builder, not a runner populate arm.
+    // The dependency-closure arm below is the one that matters: a filter keyed on the
+    // EXECUTING APP ALONE hides A's query here and still passes every group-A and group-B
+    // assertion.
+    [Test]
+    procedure QueryMetadata_OwnQuery_IsListed()
+    var
+        QueryMetadata: Record "Query Metadata";
+    begin
+        Assert.IsTrue(QueryMetadata.Get(62625), 'Query Metadata in app group C must list its own query 62625');
+        Assert.AreEqual('AGV C Query', QueryMetadata.Name, 'Query Metadata row for query 62625');
+    end;
+
+    [Test]
+    procedure QueryMetadata_DependencyAQuery_IsListed()
+    var
+        QueryMetadata: Record "Query Metadata";
+    begin
+        Assert.IsTrue(QueryMetadata.Get(62605), 'Query Metadata in app group C must list the query of its dependency A, 62605');
+        Assert.AreEqual('AGV A Query', QueryMetadata.Name, 'Query Metadata row for query 62605');
+    end;
+
+    [Test]
+    procedure QueryMetadata_GroupBQuery_IsNotListed()
+    var
+        QueryMetadata: Record "Query Metadata";
+    begin
+        Assert.IsFalse(QueryMetadata.Get(62615), 'Query Metadata in app group C lists query 62615 of unrelated app group B');
+        QueryMetadata.SetRange(ID, 62610, 62619);
+        Assert.IsTrue(QueryMetadata.IsEmpty(), 'Query Metadata in app group C lists a query in the id range of unrelated app group B');
+    end;
 }
