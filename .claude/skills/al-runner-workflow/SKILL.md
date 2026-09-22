@@ -77,12 +77,12 @@ Any agent definition granting `Bash` for GitHub work must also grant the
 deferred) in its `tools:` frontmatter — otherwise the fallback is unavailable
 precisely where it is needed.
 
-## Concurrency with human maintainers
+## Concurrency with anyone who is not you
 
-The **GitHub assignee field** is the boundary between agent-owned and human-owned work:
+The **GitHub assignee field** is the boundary between your account's work and everyone else's — a human maintainer *or* another account's agent pool (`check-open-prs-before-claiming.md`):
 
 - When an impl agent claims an issue, it assigns `@me` alongside the labels. PRs the bot opens are also assigned to `@me`.
-- Every agent (triager, orchestrator, impl) skips any issue or PR whose assignee is a user other than `@me` — a human maintainer is on it.
+- Every agent (triager, orchestrator, impl) skips any issue or PR whose assignee is a user other than `@me`. Which side of the boundary matters, not who is on it: the login decides, never whether the claimant looks like a person.
 - A human can take over an in-flight agent task by re-assigning the issue / PR; agents back off on their next pass.
 
 ## Hard rules (all agents)

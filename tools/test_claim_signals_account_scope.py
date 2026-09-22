@@ -1,0 +1,264 @@
+#!/usr/bin/env python3
+"""check-open-prs-before-claiming.md must discriminate by ACCOUNT before it rates a signal (#3275).
+
+The rule used to open on one premise -- "every loop pushes under one GitHub
+account" -- and rated the assignee worthless on it. That is true of two loops on
+one account and false across accounts, where the assignee is the whole answer and
+`branch-and-pr.md` already says stop. Measured 2026-09-22: five remote
+`agent/fbk-*/...` branches and three `agent: fbk-*` labels, from a second
+agent-running account.
+
+What is pinned is the POPULATION of the rule's claim table, not any sentence's
+wording: a substring test passes for a rename and for the name in a comment, so
+this guard reads the markdown table and asserts over its parsed rows.
+
+Three properties, each of which a revert to the single-account premise breaks:
+
+  1. BOTH cases are rated -- one row for two loops on the SAME account, one for a
+     loop on a DIFFERENT account. A single-account rule has only the first.
+  2. The two rows DISAGREE about the assignee. A table naming both cases and
+     giving them one verdict has not discriminated; it has just added a word.
+  3. The discriminator is stated BEFORE the per-signal ratings, because a reader
+     who reaches the ratings without knowing which case they are in applies the
+     wrong one -- which is the near-miss in #3275.
+
+Property 2 reads the VERDICT CELL, located by its column header, not the row. A
+row-wide search passes an inverted verdict whenever another column carries the
+opposite vocabulary, and the action column legitimately does -- "nothing below
+waives it" is correct prose that satisfied a check about the word "nothing".
+Both directions are pinned, because a verdict carrying BOTH vocabularies has
+taken no side and reading only the expected one lets that through.
+
+Plus the cross-reference that makes the rule stop contradicting its sister:
+`branch-and-pr.md` owns the assignee boundary and this rule must defer to it
+rather than argue against it.
+"""
+import re
+import sys
+
+failures: list[str] = []
+ran: list[str] = []
+
+
+def check(name: str, ok: bool, detail: str = "") -> None:
+    ran.append(name)
+    print(f"  {'ok  ' if ok else 'FAIL'} {name}")
+    if not ok:
+        if detail:
+            print(f"      {detail}")
+        failures.append(name)
+
+
+RULE = ".claude/rules/check-open-prs-before-claiming.md"
+text = open(RULE, encoding="utf-8").read()
+
+
+class Row:
+    """One data row, WITH the header it sits under.
+
+    The header is kept rather than discarded because a verdict check has to read
+    the verdict CELL: a row-wide search is satisfied by the right word in the
+    wrong column, and the action column legitimately contains both vocabularies
+    ("nothing below waives it" is the correct thing for it to say). Found by a
+    third mutation that inverted the same-account verdict in place and left the
+    guard GREEN on the very check that names it (#3275, review round 1).
+    """
+
+    def __init__(self, header: list[str], cells: list[str]) -> None:
+        self.header = header
+        self.cells = cells
+
+    def cell_under(self, pat: re.Pattern) -> str | None:
+        """The cell whose HEADER matches `pat` -- located by name, not by index,
+        so inserting a column cannot silently move the check onto another one.
+        None when this row has no such column, which a caller must not read as
+        an empty cell: a missing column is unmeasured, not a failed match."""
+        for i, h in enumerate(self.header):
+            if pat.search(h):
+                return self.cells[i] if i < len(self.cells) else None
+        return None
+
+    def any_cell(self, pat: re.Pattern) -> bool:
+        return any(pat.search(c) for c in self.cells)
+
+    def __repr__(self) -> str:
+        return repr(self.cells)
+
+
+def table_rows(body: str) -> list[Row]:
+    """Every markdown table data row in `body`, each carrying its own header."""
+    rows: list[Row] = []
+    pending: list[str] | None = None        # a row held back until we know if a separator follows
+    header: list[str] = []
+
+    def flush() -> None:
+        """Emit the held row. A row is held only to see whether a SEPARATOR comes
+        next, which would make it a header; anything else -- another row, a blank
+        line, the end of the file -- means it was data. Dropping it on a non-table
+        line instead of flushing loses the LAST row of every table, which is
+        exactly the row a new case gets appended as (found by this guard's own
+        first revision, #3275)."""
+        nonlocal pending
+        if pending is not None:
+            rows.append(Row(header, pending))
+            pending = None
+
+    for line in body.splitlines():
+        s = line.strip()
+        if not (s.startswith("|") and s.endswith("|")):
+            flush()
+            header = []
+            continue
+        cells = [c.strip() for c in s.strip("|").split("|")]
+        if all(re.fullmatch(r":?-{2,}:?", c) for c in cells if c):
+            header = pending or []  # separator: the row before it WAS the header
+            pending = None
+            continue
+        flush()
+        pending = cells
+    flush()
+    return rows
+
+
+ROWS = table_rows(text)
+
+# The column each verdict check must read. Both tables in this rule spell it as a
+# question about what a signal TELLS you, which is what distinguishes it from the
+# action column beside it.
+VERDICT_COL = re.compile(r"what the assignee tells you|what it tells you", re.I)
+check("the rule still contains markdown tables to read", len(ROWS) > 0,
+      f"parsed {len(ROWS)} data rows")
+
+# --- property 1: both account cases are RATED -------------------------------
+#
+# Keyed on the distinction rather than on one spelling: a row is about the
+# same-account case if it says the accounts are the same, and about the
+# cross-account case if it says they differ. Either spelling of "account" counts,
+# so a rewrite is free to rephrase as long as it still rates both.
+SAME = re.compile(r"\bsame\b[^|]{0,40}\baccount\b|\bone\b[^|]{0,20}\baccount\b"
+                  r"|\bown\b[^|]{0,20}\baccount\b", re.I)
+# The adjective must modify the ACCOUNT, not a loop that happens to precede one:
+# "another loop on the **same** account" is the SAME-account row and must not match
+# here. So nothing between the adjective and `account` may itself be `same`/`one`/
+# `account` -- caught by this guard against its own rule text, first revision (#3275).
+DIFF = re.compile(r"\b(different|another|other|second|cross[- ])\b"
+                  r"(?:(?!\b(?:same|one|own|account)\b)[^|])"
+                  r"{0,40}\baccount\b|\bcross-account\b", re.I)
+
+
+def rows_matching(pat: re.Pattern) -> list[Row]:
+    """Rows IDENTIFIED by a match anywhere in them. Row-wide is right here --
+    which case a row is about may be written in any column -- and wrong for the
+    verdict checks below, which read one named cell."""
+    return [r for r in ROWS if r.any_cell(pat)]
+
+
+same_rows = rows_matching(SAME)
+diff_rows = rows_matching(DIFF)
+
+check("a table row rates the case where the other claimant is on the SAME account",
+      len(same_rows) > 0,
+      "no row distinguishes a same-account claimant; the rule rates one case only")
+check("a table row rates the case where the other claimant is on a DIFFERENT account",
+      len(diff_rows) > 0,
+      "no row distinguishes a cross-account claimant -- this is the single-account premise")
+
+# --- property 2: the two rows DISAGREE about the assignee -------------------
+#
+# Naming both cases and giving them one verdict is not discrimination. The
+# same-account row must say the assignee settles NOTHING; the cross-account row
+# must say it settles the question.
+NOTHING = re.compile(r"\bnothing\b|\bcannot\b|\bcan't\b|\bno(t| )\s*answer|\buseless\b", re.I)
+EVERYTHING = re.compile(r"\beverything\b|\bauthoritative\b|\bdecides?\b|\bsettles?\b"
+                        r"|\bexactly who\b|\bthe answer\b|\breal boundary\b", re.I)
+
+def verdict_says(rows: list[Row], pat: re.Pattern) -> tuple[list[Row], list[Row]]:
+    """Split `rows` into those whose VERDICT cell matches, and those with no
+    verdict column at all. The second list is the third state: a row missing the
+    column was never measured, and reporting it as a failed match would send a
+    reader to reword a cell that is not there (`guards-need-a-third-state.md`)."""
+    hit, unmeasured = [], []
+    for r in rows:
+        cell = r.cell_under(VERDICT_COL)
+        if cell is None:
+            unmeasured.append(r)
+        elif pat.search(cell):
+            hit.append(r)
+    return hit, unmeasured
+
+
+# Read the VERDICT CELL, not the row. A row-wide search passes an inverted
+# verdict whenever any other column happens to carry the opposite vocabulary --
+# and the action column legitimately does: "nothing below waives it" is correct
+# prose that satisfied a check about the word "nothing" (#3275, review round 1).
+same_says_nothing, same_unmeasured = verdict_says(same_rows, NOTHING)
+diff_says_answer, diff_unmeasured = verdict_says(diff_rows, EVERYTHING)
+
+check("every account-case row has a verdict column to read",
+      not (same_unmeasured or diff_unmeasured),
+      f"rows with no verdict column: {same_unmeasured + diff_unmeasured}")
+
+check("the same-account row says the assignee answers nothing",
+      len(same_says_nothing) > 0,
+      f"same-account verdict cells: "
+      f"{[r.cell_under(VERDICT_COL) for r in same_rows]}")
+check("the cross-account row says the assignee IS the answer",
+      len(diff_says_answer) > 0,
+      f"cross-account verdict cells: "
+      f"{[r.cell_under(VERDICT_COL) for r in diff_rows]}")
+
+# Both directions, not just one (`tdd.md`: pin both sides of a boundary). A row
+# whose verdict carries BOTH vocabularies has not taken a side, and reading only
+# the side each row is supposed to assert would let that through.
+same_also_everything, _ = verdict_says(same_rows, EVERYTHING)
+diff_also_nothing, _ = verdict_says(diff_rows, NOTHING)
+check("the same-account verdict does NOT also claim the assignee is decisive",
+      not same_also_everything,
+      f"same-account verdict cells: "
+      f"{[r.cell_under(VERDICT_COL) for r in same_also_everything]}")
+check("the cross-account verdict does NOT also claim the assignee answers nothing",
+      not diff_also_nothing,
+      f"cross-account verdict cells: "
+      f"{[r.cell_under(VERDICT_COL) for r in diff_also_nothing]}")
+
+# The rows must be DISTINCT rows: one row carrying both verdicts would satisfy
+# the two checks above while discriminating nothing.
+check("the two verdicts sit on different rows",
+      any(a is not b for a in same_says_nothing for b in diff_says_answer),
+      "one row matched both cases; that rates a single case in two words")
+
+# --- property 3: the discriminator comes FIRST ------------------------------
+#
+# The near-miss in #3275 was an agent that read the ratings without knowing which
+# case it was in. So "which account is the other claimant on" must be asked
+# before the first per-signal rating is offered.
+ASK = re.compile(r"(read|check|ask|establish|determine)[^.\n]{0,80}\b(account|login)\b", re.I)
+ask_at = min((m.start() for m in ASK.finditer(text)), default=None)
+
+SIGNAL_TABLE = [r for r in ROWS if r.any_cell(re.compile(r"\bassignee\b", re.I))]
+check("a per-signal table still rates the assignee", len(SIGNAL_TABLE) > 0)
+
+first_rating = text.lower().find("| assignee")
+if first_rating == -1:
+    first_rating = text.lower().find("assignee |")
+check("the rule tells the reader to establish WHICH ACCOUNT before rating signals",
+      ask_at is not None and first_rating != -1 and ask_at < first_rating,
+      f"instruction at {ask_at}, first signal rating at {first_rating}")
+
+# --- the sister rule it must stop contradicting -----------------------------
+check("the rule defers to branch-and-pr.md on the assignee boundary",
+      "branch-and-pr.md" in text and
+      bool(re.search(r"branch-and-pr\.md[^\n]{0,200}", text)),
+      "no reference to the rule that owns the assignee boundary")
+
+# The branch prefix is the same mechanism orchestrating-a-session already uses,
+# and it is stronger than the label because another loop cannot rewrite it.
+check("the rule names the BRANCH PREFIX as a claim signal",
+      re.search(r"branch\s+prefix", text, re.I) is not None,
+      "the prefix is the cross-account discriminator that cannot be relabelled")
+
+print()
+if failures:
+    print(f"FAILED: {len(failures)} check(s): {failures}")
+    sys.exit(1)
+print(f"PASSED: {len(ran)} check(s)")
