@@ -459,9 +459,28 @@ a merge can turn `main` red, which outranks everything you were about to do.
    PR citing it with a `Corpus-PR:` line was already measured against that branch head, and
    after the merge the same line resolves `master`. Merge the runner PR next
    (`al-language-submodule.md`).
-5. **An issue is ready to work.** Take the highest-value one — prefer a measured failure count
-   over a guess — and implement it. One issue at a time. Where value does not separate two
-   candidates, take the older (`orchestrating-a-session` § The ready queue).
+5. **An issue is ready to work.** Take the highest `priority:` one and implement it. One issue at
+   a time; within a priority, take the older (`orchestrating-a-session` § The ready queue).
+
+   `urgent` > `high` > `medium` > `low` > unranked. The triager assigns these on blast radius and
+   evidence, not on category — a docs issue can be `urgent` (a rule actively misleading an agent)
+   or `low` (a stale pointer), and both are right.
+
+   **Going lower than the top needs one line on the issue you took, and nothing else** — no
+   approval, no waiting. Folding siblings into a PR you are already writing is exempt and needs no
+   note (`batch-sibling-issues-by-file.md`). For any *new* pick below the highest available, say
+   why: blocked on artifacts, needs a corpus verdict, the higher one is stalled behind an open PR.
+   The comment is the audit trail, and the reasons that accumulate are how the real exception list
+   gets written from evidence rather than guessed up front.
+
+   **Why this replaced "take the highest-value one".** That instruction was already here and was
+   not enough: value was a judgement made per issue, in the moment, recorded nowhere, so nothing
+   could tell afterwards whether it had been applied. Measured 2026-09-22 over the previous seven
+   days — **70 of 158 merged PRs (44%) were process/tooling work against a backlog that is 19%
+   process**, a 2.3x over-selection, with one day net negative on runner work (18 process, 11
+   runner). Process issues are cheap to evaluate and cheap to close, so they win a selection
+   contest that has no other criterion. A priority set by the triager and read at pick time is a
+   criterion that survives the moment.
 
    Use the `status: ready` label where it exists, but **do not depend on it.** The loop must work
    on a repository whose labels are absent, stale, or organised differently. Fall back to: open,
