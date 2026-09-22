@@ -33,6 +33,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **tools:** lsp-query's real negative is false for a local function
 - **watch:** run the bundle-reload reset once per cycle, not per bundle
 - **virtual-tables:** scope Query Metadata to the executing app group
 - **metadata:** derive the codeunit and page method <Parameters> subtree, measured exactly on four BC builds
