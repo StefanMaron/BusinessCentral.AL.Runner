@@ -953,15 +953,26 @@ uppercased child element name ending in `throw new ArgumentException(name)`, so 
 silently ignore a document — and the runner-side projection depends on that refusal to catch a
 mis-spelled element name. A test pins it.
 
-### The runner derives no xmlport structure at all
+### The xmlport PROJECTION still states two values — the derivation no longer does
 
-The runner's whole knowledge of a precompiled xmlport is `BcAppSymbolCache.ObjectSymbol` —
-`(Kind, Id, Name, Caption)`. `RecordPatches.AlXmlPortParser` fills `_parsedXmlPorts` from the
-**corpus app's AL source text**, and `AlXmlPortMetadataRegistry` holds BC's **emit-captured**
-schema for locally-compiled xmlports; a System Application xmlport is in neither. So
-`TryBuildXmlPortMetadataEquivalenceXml` states two values, and that is the finding rather than
-an omission. Using the registry instead would have been the same circularity queries had to
-refuse.
+**Read this heading carefully; it changed with #3797 and the distinction is the whole point.**
+It used to read *"the runner derives no xmlport structure at all"*, and that is now false of
+the runner and true only of this harness's projection.
+
+`TryBuildXmlPortMetadataEquivalenceXml` writes exactly `ID` and `Name`. It renders the runner's
+own state rather than reading `AlXmlPortMetadataRegistry`, where BC's captured answer is
+sitting — using the registry would be the same circularity queries had to refuse.
+
+What changed is what "the runner's own state" now contains.
+`RecordPatches.TryBuildDependencyXmlPortMetadata` (#3797) reconstructs a precompiled xmlport's
+full document: the object properties from SymbolReference.json, and the **node tree from the
+`.app`'s embedded AL source**, parsed with BC's own AL parser. Measured: **44 of 44** precompiled
+xmlports across Base Application and System Application reconstruct, 0 refuse.
+
+That derivation is reached from `RunnerXmlMetadataLoader.GetMetaObjectXmlMetadata` — the
+AL-observable path — and **this harness calls neither**. So every difference below is still
+measured and still real; what it now measures is the projection, not the derivation. Wiring the
+two together is **#4467**, and the entries below cite it.
 
 ### What the xmlport comparison found
 
@@ -978,14 +989,18 @@ green with them (`Schema`, `SchemaSet`, `SchemaTypeName`, `#typeNames`, `#xsdBui
 merely differ but **throw `NullReferenceException`** when read on the runner's side. That is
 #3510's shape seen from the derivation end.
 
-This is **not** a claim that the tree is underivable. Nobody has measured whether it can be
-reconstructed, and "the symbol file does not store it" is evidence about storage, never about
-derivability — the mistake step 1 made about `DataColumnName` and `ControlGUID`.
+This was **not** a claim that the tree is underivable, and that caution was right: #3797
+measured it and the tree **is** derivable, from the `.app`'s embedded AL source rather than from
+the symbol file. "The symbol file does not store it" was evidence about storage, never about
+derivability — the mistake step 1 made about `DataColumnName` and `ControlGUID`, avoided here.
+The 91 absences below are the projection's, not the derivation's.
 
-**15 of them are properties the symbol file states verbatim and the runner throws away.**
-`VisitSymbolContainer` keeps `TableNo`/`SingleInstance`/`Subtype` for `Codeunit` only; every
-other kind gets `new ObjectSymbol(kind, id, name, caption, TargetObjectName:)`, so an xmlport's
-whole `Properties` array is parsed and discarded:
+**15 of them are properties the symbol file states verbatim and the runner USED TO throw away.**
+`VisitSymbolContainer` kept `TableNo`/`SingleInstance`/`Subtype` for `Codeunit` only; every
+other kind got `new ObjectSymbol(kind, id, name, caption, TargetObjectName:)`, so an xmlport's
+whole `Properties` array was parsed and discarded. #3797 added
+`BcAppSymbolCache.XmlPortSymbol`, which carries that bag, so the values below now reach the
+derivation — and still not this projection:
 
 ```
 XmlPort 9001  Direction sym=<none> bc=Both      Encoding sym=<none> bc=UTF-16  PreserveWhiteSpace sym=<none> bc=0
@@ -995,10 +1010,11 @@ XmlPort 9864  Direction sym=Import bc=Import    Encoding sym=UTF8   bc=UTF-8   P
 ```
 
 Every xmlport that declares one has it stated, and the three that state none are the three where
-BC answers its own default. A read-don't-guess fix, the same shape as `Extensible` in #3784.
-`Permissions` needs a normalization (`tabledata "Security Group" = r` against BC's
-`TableData Security Group=r`) and `UseRequestForm` needs AL's default rather than the CLR's.
-All of it is tracked on **#3797**.
+BC answers its own default. A read-don't-guess fix, the same shape as `Extensible` in #3784 —
+**landed by #3797** for the derivation, including `UseRequestForm` taking AL's default (true)
+rather than the CLR's and the `UTF8`/`UTF-8` spelling difference. `Permissions` still needs the
+normalization (`tabledata "Security Group" = r` against BC's `TableData Security Group=r`).
+Carrying those values into THIS projection is tracked on **#4467**.
 
 <a id="one-build-measured-three-evaluated-query-xmlport"></a>
 ### These two populations were measured across four builds, and the flag is still not blanket
