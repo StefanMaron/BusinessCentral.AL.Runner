@@ -674,6 +674,7 @@ public static partial class RecordPatches
         if (parsedAny)
         {
             EvictCachedNullsForNewlyParsedTables();
+            EvictCachedNullsForNewlyParsedObjects();
             PopulateNclMetadataCache();
         }
     }
@@ -714,6 +715,45 @@ public static partial class RecordPatches
             if (!_metaTableCache.TryRemove(kvp.Key, out _)) continue;
             EventSubscriberPatches.ForgetInjectedForTable(kvp.Key);
             _fieldTriggersWiredTables.TryRemove(kvp.Key, out _);
+        }
+    }
+
+    /// <summary>
+    /// Drop the cached NULL an earlier bundle's lookup left in <c>_metaFormCache</c> /
+    /// <c>_metaReportCache</c> for an object THIS batch has just parsed, so the next lookup
+    /// rebuilds it (#4452; the table-side statement of the same thing is #4450).
+    ///
+    /// <para>Both caches are <c>ConcurrentDictionary</c>s populated through
+    /// <c>GetOrAdd(id, Build…)</c>, and the builders answer <c>null</c> for an object not in the
+    /// parsed registry. With several bundles in one process that absence is TEMPORARY: bundle 1
+    /// can reach <c>NCLMetadata.GetMetaApplicationObject</c> for bundle 2's page or report —
+    /// <c>Page.Run(id)</c> and <c>Report.Run(id)</c> are the AL surfaces that do it — before
+    /// bundle 2's source dir is registered. <c>GetOrAdd</c> never replaces an entry, so that
+    /// correct-at-the-time null becomes bundle 2's permanent answer about its OWN object.</para>
+    ///
+    /// <para>Only <c>null</c> entries are removed, so a live <c>NCLMetaForm</c>/<c>NCLMetaReport</c>
+    /// that precompiled R2R callers hold baked offsets into is never swapped under them
+    /// (<c>.claude/rules/precompiled-dll-respect.md</c>), and an id this batch did not parse is
+    /// left alone — its null is still the right answer.</para>
+    ///
+    /// <para>Page-side this is load-bearing: <c>GetPageProperties</c> reaches the poisoned null
+    /// through <c>EnsureRealPageMetadata</c> and THROWS for a page the running bundle declares
+    /// itself. Report side, the three caches left out, and the #3011 stamp: see #4452.</para>
+    /// </summary>
+    private static void EvictCachedNullsForNewlyParsedObjects()
+    {
+        foreach (var kvp in _metaFormCache)
+        {
+            if (kvp.Value != null) continue;
+            if (!_parsedPages.ContainsKey(kvp.Key) && !_parsedPageExtensions.ContainsKey(kvp.Key)) continue;
+            _metaFormCache.TryRemove(kvp.Key, out _);
+        }
+
+        foreach (var kvp in _metaReportCache)
+        {
+            if (kvp.Value != null) continue;
+            if (!_parsedReports.ContainsKey(kvp.Key)) continue;
+            _metaReportCache.TryRemove(kvp.Key, out _);
         }
     }
 

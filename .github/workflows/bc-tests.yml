@@ -1073,6 +1073,60 @@ jobs:
           done
           exit "$missing"
 
+      - name: Run rnce as two independent bundles
+        # #4452. The page and report metadata caches (_metaFormCache, _metaReportCache) have the
+        # same GetOrAdd-caches-null shape #4450 measured for _metaTableCache: the builder answers
+        # null for an object not yet in the parsed registry, and GetOrAdd never replaces an entry.
+        # With several bundles in one process that absence is TEMPORARY -- bundle 1 can reach
+        # NCLMetadata.GetMetaApplicationObject for bundle 2's page via Page.Run(id) before bundle
+        # 2's source dir is registered -- so bundle 2's OWN page answers null for the rest of the
+        # run and Page Metadata's "Properties" column REFUSES for a page the bundle declares.
+        #
+        # This step exists because no other invocation can observe it. The combined
+        # tests/runner-extras run builds ONE bundle, so there is no earlier bundle to poison the
+        # cache; the dep-tableext pair above is two bundles but a DEPENDENCY pair, whose dep loads
+        # as a package rather than an unrelated sibling app group.
+        #
+        # Order comes from the ARGUMENT LIST, -first first: that is what makes -first's Page.Run
+        # of -second's page happen before -second is registered. Reversed, all nine pass on main
+        # too, which is the positional property #4452 measured.
+        if: ${{ always() && hashFiles('tests/runner-extras/rnce-second/**/*.al') != '' }}
+        run: |
+          rc=0
+          dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
+              tests/runner-extras/rnce-first \
+              tests/runner-extras/rnce-second \
+              --package-cache "$HOME/.al-runner/platform-apps" \
+              --package-cache "$HOME/.al-runner/test-apps" \
+              --strict > rnce.log 2>&1 || rc=$?
+          command grep -E '^(PASS|FAIL|ERROR) |→ [0-9]+P/' rnce.log || true
+          if [ "$rc" -ne 0 ]; then
+            tail -40 rnce.log
+            echo "::error::rnce failed as two independent bundles (exit $rc)"
+            exit "$rc"
+          fi
+          missing=0
+          # Assert each test PASSED by name. Without this the step is green whenever the run is
+          # green, INCLUDING a run that compiled nothing and executed 0 tests -- the #4080 shape,
+          # and the one that would silently retire this coverage if the suites were renamed or
+          # folded into the combined bundle (where they cannot observe the defect at all).
+          for t in \
+              Codeunit66202.AskingAboutTheSecondBundlesObjects_DoesNotThrow \
+              Codeunit66202.OwnObjects_AreDescribedHere \
+              Codeunit66222.OwnPage_PageMetadata_AnswersRealName \
+              Codeunit66222.OwnReport_ReportMetadata_AnswersRealName \
+              Codeunit66222.OwnQuery_AllObj_ListsIt \
+              Codeunit66222.OwnXmlPort_AllObj_ListsIt \
+              Codeunit66222.OwnReport_CanBeRun \
+              Codeunit66222.OwnQuery_CanBeOpened \
+              Codeunit66222.AskingAboutTheFirstBundlesPage_DoesNotRefuse; do
+            if ! command grep -qE "^PASS +${t//./\\.}( |$)" rnce.log; then
+              echo "::error::no 'PASS $t' line: the two bundles ran but this test did not pass in this step, so nothing asserted on it (#4452)."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
       - name: Phase-log report (runner-extras)
         # The step with the most to say: 25 app groups in ONE process (down from 38 —
         # see #1847, which folded 16 standalone-with-no-hazard suites into
