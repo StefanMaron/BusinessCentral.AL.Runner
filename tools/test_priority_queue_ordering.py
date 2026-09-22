@@ -93,7 +93,15 @@ check("the triager distinguishes urgent (blocking) from merely severe",
 ORDERS = re.compile(
     r"highest\s+`?priority[`:]*\s*(one|first|issue)"          # "highest priority first/one"
     r"|urgent`?\s*>\s*`?high`?\s*>\s*`?medium"               # the level chain
-    r"|`?status: ?ready`?[^.\n]{0,80}\bpriority",             # "ready queue ... in priority order"
+    # NOT a co-occurrence test. An earlier version matched `status: ready` and the word
+    # "priority" within 80 chars on one line, which cannot separate "order by priority"
+    # from "IGNORE priority" -- both passed 23/23, reverting the whole point of the
+    # change (found in review of #4477). Match the ordering RELATION instead. Deleting
+    # this alternative is not the fix either: it is load-bearing for the true sentence
+    # "Workers self-select from the `status: ready` queue in `priority:` order".
+    r"|(order|sort|rank)\w*\s+(by|on)\s+`?priority"
+    r"|`?priority:?`?\s*order"
+    r"|by\s+`?priority",
     re.I)
 REASON = re.compile(
     r"(below|lower|under)\b[^.\n]{0,60}(the\s+)?(top|highest)[^.\n]{0,120}"
