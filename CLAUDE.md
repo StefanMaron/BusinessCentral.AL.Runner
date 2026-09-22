@@ -108,9 +108,12 @@ tools/lsp-query.py callers <SymbolName>   # what calls it (no line/col needed)
 tools/lsp-query.py symbol  <SymbolName>   # where it is defined
 ```
 
-~8.5s per query, one process, no daemon. Exit 0 = answered, 1 = a genuine
-not-found you may rely on, **2 = the server failed and the result means nothing** —
-never read a 2 as "nothing calls this". Full guidance: skill `find-code`.
+~8.5s per query, one process, no daemon. Exit 0 = answered, 1 = not in its index,
+**2 = the server failed and the result means nothing** — never read a 2 as "nothing
+calls this". Exit 1 is a real negative for a type or an ordinary member, but **not for
+a LOCAL FUNCTION** (one declared inside another method): `csharp-ls` does not index
+those at all, so several in `Program.cs` report it — confirm a surprising zero with
+`rg -n "<Name>" AlRunner/`. Full guidance: skill `find-code`.
 
 **2b. The built-in `LSP` tool — main session only.**
 
