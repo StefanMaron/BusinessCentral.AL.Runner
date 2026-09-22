@@ -2498,6 +2498,24 @@ while (true)
 // A watch rerun is a new execution even though it reuses the process. NumberSequence
 // values deliberately survive bundle and test boundaries within this cycle.
 AlRunner.Patches.NumberSequencePatches.ResetForNewExecution();
+
+// #2684: drop the previous CYCLE's bundle-derived caches (record/codeunit types, parsed
+// schemas, in-memory rows, the object-metadata registries) so an edited bundle of the same
+// identity re-resolves against its freshly-emitted assembly. Once per CYCLE, not per bundle —
+// the same placement --server's RunAllBundlesForServer uses, and for the same measured reason:
+// a per-bundle reset wipes the EARLIER bundle's registrations before a later bundle that
+// DEPENDS on it runs, so the dependent sees an inventory its dependency has been erased from.
+// The one-shot CLI path never reset between bundles, which is exactly why watch cycle 1 and a
+// plain run disagreed on identical source (54/54 plain vs 46/8 under --watch).
+//
+// Per-BUNDLE isolation is not lost by moving this: BeginBundleEpoch() in the loop below is what
+// provides it, by STAMPING each bundle's assemblies rather than clearing anything, so a later
+// bundle can be told from an earlier one without destroying what the earlier one registered.
+// The expensive dependency symbol loader is keyed on the dep set, not the bundle source, so it
+// stays warm across cycles — that is what makes a watch re-run fast.
+if (watchMode)
+    BcRuntime.ResetForNewBundleReload();
+
 results.Clear();
 watchFullRebuildReasons.Clear();
 
@@ -2557,26 +2575,23 @@ foreach (var bundle in bundles)
     var rel = AlRunner.Infrastructure.WorkingDirectory.DisplayPath(bundleAbs, AlRunner.Infrastructure.WorkingDirectory.TryGet());
     AlRunner.Infrastructure.PhaseLog.BeginBundle(rel, i2);
 
-    // Watch mode re-runs the SAME process across edits, so drop the previous
-    // iteration's bundle-derived caches (record/codeunit types, parsed schemas,
-    // in-memory rows, enum registry) before re-resolving + re-emitting. The
-    // expensive dependency symbol loader is keyed on the dep set (not the bundle
-    // source), so it stays warm — that is what makes a watch re-run fast. No-op
-    // on the first iteration (caches already empty). Normal one-shot mode never
-    // calls this, so its behaviour is unchanged.
-    if (watchMode)
-        BcRuntime.ResetForNewBundleReload();
-
     // Forget the previous bundle's install-trigger registrations so a bundle
     // without deps doesn't inherit a sibling bundle's Install codeunits.
     AlRunner.InstallTriggerRunner.ResetForNewBundle();
 
+    // #2684: the per-BUNDLE remainder of the reset that moved to the top of this cycle.
+    // Those two memos cache a NEGATIVE answer derived from FindQueryType, a per-bundle
+    // answer — so an id an EARLIER bundle asked about while only a LATER bundle declares it
+    // stays null for that later bundle's own run. Unconditional, matching the one-shot path:
+    // a multi-bundle CLI run reaches the same accumulated id set and the same hazard.
+    AlRunner.Patches.RecordPatches.ResetNegativeQueryMemosForNewBundle();
+
     // #4222: mark the start of this bundle's iteration, so an inventory read can tell this
-    // bundle's assemblies from a previous one's. Unconditional, next to the reset above and
-    // for the same reason — a one-shot multi-bundle run must not inherit a sibling bundle's
-    // registrations. It stamps and clears nothing, which is what separates it from
-    // ResetForNewBundleReload two lines up: that one is gated on watch mode precisely because
-    // it drops parsed table schemas a later bundle still needs.
+    // bundle's assemblies from a previous one's. Unconditional, and the ONLY per-bundle
+    // isolation in this loop — a one-shot multi-bundle run must not inherit a sibling bundle's
+    // registrations. It stamps and clears nothing, which is what lets it run per bundle at all:
+    // ResetForNewBundleReload (#2684) runs once per CYCLE at the top of the loop body instead,
+    // because clearing per bundle drops registrations a later DEPENDENT bundle still needs.
     BcRuntime.BeginBundleEpoch();
 
     // Everything about this bundle that says "your package cache cannot serve this run":

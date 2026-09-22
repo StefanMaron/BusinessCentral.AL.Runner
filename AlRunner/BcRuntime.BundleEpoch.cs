@@ -62,9 +62,10 @@ public static partial class BcRuntime
     /// Start a new bundle iteration: every assembly noted from here on belongs to it, and
     /// <see cref="IsCurrentBundleAssembly"/> stops answering true for the previous bundle's.
     ///
-    /// <para>Called once per bundle by the one-shot bundle loop, unconditionally — unlike
-    /// <see cref="ResetForNewBundleReload"/>, which is gated on watch mode because it CLEARS
-    /// parsed schemas the next bundle needs. This clears nothing.</para>
+    /// <para>Called once per bundle by the bundle loop, unconditionally — unlike
+    /// <see cref="ResetForNewBundleReload"/>, which runs once per watch CYCLE rather than per
+    /// bundle because it CLEARS registrations a later DEPENDENT bundle still needs (#2684).
+    /// This clears nothing, which is what lets it run per bundle.</para>
     /// </summary>
     internal static void BeginBundleEpoch()
     {

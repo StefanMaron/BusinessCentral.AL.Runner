@@ -91,10 +91,13 @@ public static partial class EventSubscriberPatches
     /// the same bundle identity re-seed from the fresh assembly instead of skipping every
     /// subscriber as "already seeded".</para>
     ///
-    /// <para><b>A one-shot multi-bundle run accumulates across bundles</b>, because it reaches
-    /// neither reset: Program.cs gates <c>BcRuntime.ResetForNewBundleReload</c> on watch mode.
-    /// Each bundle still counts its OWN subscriptions exactly once — the MethodInfo key sees to
-    /// that — but the inventory also listed the previous bundle's. <b>Fixed in #4222</b> by
+    /// <para><b>A multi-bundle run accumulates across bundles in BOTH modes</b>, because neither
+    /// reaches a reset between bundles: Program.cs runs
+    /// <c>BcRuntime.ResetForNewBundleReload</c> once per watch CYCLE and never in one-shot mode
+    /// (#2684 — a per-bundle reset erased an earlier bundle's registrations before a dependent
+    /// bundle read them). Each bundle still counts its OWN subscriptions exactly once — the
+    /// MethodInfo key sees to that — but the inventory also listed the previous bundle's.
+    /// <b>Fixed in #4222</b> by
     /// scoping both the append and the retained rows to
     /// <see cref="BcRuntime.IsCurrentBundleAssembly"/>; see
     /// <see cref="DropRowsFromPreviousBundles"/> for why an append-side filter alone is not

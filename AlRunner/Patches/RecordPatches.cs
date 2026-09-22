@@ -507,6 +507,33 @@ public static partial class RecordPatches
         ResetObjectMetadataRowProvenance();
     }
 
+    /// <summary>
+    /// The strictly per-BUNDLE subset of <see cref="ResetForReload"/>: the id-keyed memos that
+    /// cache a NEGATIVE answer derived from <see cref="BcRuntime.FindQueryType"/>, which is a
+    /// per-bundle answer.
+    ///
+    /// <para>#2684. <see cref="BcRuntime.ResetForNewBundleReload"/> runs once per --watch CYCLE,
+    /// because clearing the object-metadata registries per bundle erased an earlier bundle's
+    /// objects before a later DEPENDENT bundle read them. These two memos are the part that must
+    /// still be dropped BETWEEN bundles, and for the opposite reason: bundle 1's run asks about
+    /// every id in the accumulated known-query set, including ids only bundle 2 declares, and
+    /// <see cref="EnsureQueryInMetadataCache"/> memoizes the null. Bundle 2 is then served
+    /// "no such query" for its OWN query — measured as Query Metadata dropping the executing
+    /// app's own row on cycle 2 onward, while cycle 1 passed because nothing had been asked yet.
+    /// The #3210 comment inside <see cref="ResetForReload"/> describes this exact negative-memo
+    /// hazard; this method is what keeps that coverage once the enclosing reset stops running
+    /// per bundle.</para>
+    ///
+    /// <para>Clearing only these two is deliberate. Everything else <see cref="ResetForReload"/>
+    /// drops is state a later bundle in the same cycle may legitimately need, which is the whole
+    /// reason #2684 moved the caller.</para>
+    /// </summary>
+    internal static void ResetNegativeQueryMemosForNewBundle()
+    {
+        _realMetaQueryCache.Clear();
+        _lazyMetaQueryByGetById.Clear();
+    }
+
     public static void AddSourceDir(string dir) => AddSourceDirs(new[] { dir });
 
     /// <summary>
