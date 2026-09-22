@@ -378,9 +378,38 @@ public static partial class RecordPatches
             w.WriteEndElement(); // the attribute kind
             w.WriteEndElement(); // MethodAttributes
 
+            WriteParametersSubtree(w, method.Parameters);
+
             w.WriteEndElement(); // Method
         }
         w.WriteEndElement(); // Methods
+    }
+
+    /// <summary>
+    /// The <c>&lt;Parameters&gt;</c> element BC writes on every <c>&lt;Method&gt;</c> it emits —
+    /// the <c>XmlWriter</c> half of the pair whose <c>XmlDocument</c> half is
+    /// <c>RecordPatches.AppendParametersSubtree</c>, and pinned against it by
+    /// <c>DependencyPageMethodSubtreeRenderingParityTests</c> (#4084).
+    ///
+    /// <para><b>A null list withdraws the element entirely</b>, which is the honest one-directional
+    /// absence the runner had before #4084: <c>DeriveMethodParameters</c> answers null when any one
+    /// parameter is a shape the derivation has not measured against BC's emitter, and a partial
+    /// list would mis-pair positionally. An EMPTY list writes <c>&lt;Parameters /&gt;</c>, which is
+    /// what BC writes for a method declaring none.</para>
+    /// </summary>
+    private static void WriteParametersSubtree(
+        XmlWriter w, IReadOnlyList<BcAppSymbolCache.MethodParameterSymbol>? parameters)
+    {
+        if (parameters is null) return;
+        w.WriteStartElement("Parameters");
+        foreach (var p in parameters)
+        {
+            w.WriteStartElement("Parameter");
+            foreach (var (name, value) in RecordPatches.ParameterAttributes(p))
+                w.WriteAttributeString(name, value);
+            w.WriteEndElement(); // Parameter
+        }
+        w.WriteEndElement(); // Parameters
     }
 
     /// <summary>

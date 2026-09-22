@@ -144,7 +144,59 @@ public static partial class RecordPatches
             AppendInherentPermissionAttributes(kind, method.InherentPermission);
             attributes.AppendChild(kind);
             element.AppendChild(attributes);
+            AppendParametersSubtree(doc, element, method.Parameters);
             methods.AppendChild(element);
+        }
+    }
+
+    /// <summary>
+    /// The attributes BC's emitter writes on a <c>&lt;Parameter&gt;</c> element, as (name, value)
+    /// pairs in BC's own document order — ONE definition of the shape, consumed by both
+    /// method-table renderers so they cannot drift, exactly as
+    /// <see cref="PublisherAttributes"/> and <see cref="InherentPermissionAttributes"/> are
+    /// (#4084).
+    ///
+    /// <para><b>Order is part of the shape, and <c>Length</c> is conditional.</b> BC writes
+    /// <c>IsVar IsArray Name RuntimeAttributes RuntimeType</c> and then <c>Length</c> only where
+    /// the AL type declares one — 19 of the 574 elements at 28.1.49838.53910. A written
+    /// <c>Length="0"</c> would be a difference on the other 555, so a null stays ABSENT rather
+    /// than becoming a default. <c>IsArray</c> is always <c>"False"</c> because an array parameter
+    /// is refused upstream rather than rendered (<c>DeriveMethodParameter</c>).</para>
+    /// </summary>
+    internal static IEnumerable<(string Name, string Value)> ParameterAttributes(
+        BcAppSymbolCache.MethodParameterSymbol parameter)
+    {
+        yield return ("IsVar", parameter.IsVar ? "True" : "False");
+        yield return ("IsArray", "False");
+        yield return ("Name", parameter.Name);
+        yield return ("RuntimeAttributes", parameter.RuntimeAttributes);
+        yield return ("RuntimeType", parameter.RuntimeType);
+        if (parameter.Length is { } length)
+            yield return ("Length", length.ToString(CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>
+    /// The <c>&lt;Parameters&gt;</c> element BC writes on every <c>&lt;Method&gt;</c> it emits —
+    /// the <c>XmlDocument</c> half of the pair whose <c>XmlWriter</c> half is
+    /// <c>DependencyPageMetadataXml.WriteParametersSubtree</c>.
+    ///
+    /// <para>A null list withdraws the element, which keeps the honest one-directional absence
+    /// for a method carrying a parameter shape the derivation has not measured; an empty list
+    /// writes the empty element BC writes for a method declaring none.</para>
+    /// </summary>
+    private static void AppendParametersSubtree(
+        XmlDocument doc, XmlElement method,
+        IReadOnlyList<BcAppSymbolCache.MethodParameterSymbol>? parameters)
+    {
+        if (parameters is null) return;
+        var element = doc.CreateElement("Parameters", method.NamespaceURI);
+        method.AppendChild(element);
+        foreach (var p in parameters)
+        {
+            var child = doc.CreateElement("Parameter", method.NamespaceURI);
+            foreach (var (name, value) in ParameterAttributes(p))
+                child.SetAttribute(name, value);
+            element.AppendChild(child);
         }
     }
 
