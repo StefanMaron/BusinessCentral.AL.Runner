@@ -1863,10 +1863,14 @@ if (!provisionSubcommand)
     //
     // NOT under --verbose or --output-json, and those are correctness conditions rather than
     // preferences: the attempt's output is REPLAYED on top of what this process has already
-    // printed, so it is safe only where the parent printed nothing the child also prints.
-    // Removing either reintroduces the duplication that broke CrossMajorNoteTests and
-    // OutputPathPreparationTests — both modes, and why the replay is not instead made
-    // preamble-aware, are in docs/limitations.md#platform-apps-deferral.
+    // printed. The parent always prints SOMETHING — FlushDeferredStartupLines runs above, and
+    // the bundle banner is an unconditional Console.WriteLine — so a replay always duplicates
+    // at least that line, on every path including a quiet one. That residue is #2232's, tracked
+    // as #4481. What these two conditions buy is keeping the duplication down to that one line
+    // and out of the modes where it is a hard failure rather than noise: removing either
+    // reintroduces the loud form that broke CrossMajorNoteTests and OutputPathPreparationTests.
+    // Both modes, and why the replay is not instead made preamble-aware, are in
+    // docs/limitations.md#platform-apps-deferral.
     if (!serverMode && !watchMode && !tddMode && strictExitCode
         && !AlRunner.Log.Verbose
         && !outputJson

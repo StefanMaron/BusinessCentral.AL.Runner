@@ -376,6 +376,28 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // end of an observed range sits on the 60s freshness threshold, which satisfies
             // the gate while leaving dispatch order at the fallback and the tail in place.
             ["ServerAffectedSelectionTests"] = 71,
+            // #2223: added by PR #4478, which introduces this collection. 4 tests, each
+            // spawning a real runner subprocess against a bundle declaring an `application`
+            // floor, and one of them spawning a second: the warm-skip path runs the bundle
+            // again in a captured child to decide whether the Microsoft closure is needed, so
+            // the needs-closure control pays a discarded attempt AND the real run. Three of
+            // the four also load the Base Application closure by construction -- that is the
+            // thing they exist to prove is still served.
+            //
+            // Its first CI run measured 135.0s on the BC 27.5 leg (889.6s dispatched), where
+            // it was absent from this table and the freshness gate failed the leg for exactly
+            // that. ONE leg, so this is the ceiling of that claim rather than a settled range;
+            // AlRunner.Tests runs only on the newest minor of each major (#2674/#3141), so the
+            // population is 27.5 and 28.4 rather than all eight.
+            //
+            // Recorded at 135, the observed MAXIMUM and not rounded down, per the header's
+            // rule and what check-collection-weights.py's median(observed / recorded) depends
+            // on. That puts it 8th of the entries recorded here -- heavy enough that a value
+            // anywhere near UnmeasuredWeightSeconds (30) would schedule it as the late
+            // single-threaded tail #1887 exists to prevent, which is the one thing the figure
+            // must be right about. (It was the only collection on that run's stale list, which
+            // is a different claim from being the most expensive one in the table.)
+            ["DeferredPlatformAppsWithholdTests"] = 135,
             ["ProvisionExplicitModesTests"] = 80,
             // #1940/#1941/#1943: 4 tests, each spawning a real runner subprocess (two
             // single-bundle, two layered two-bundle dep compiles) — needed because

@@ -399,6 +399,11 @@ public sealed class DeferredPlatformAppsWithholdTests
     /// needs a cross-major mismatch this fixture does not have). CrossMajorNoteTests and
     /// OutputPathPreparationTests assert the user-visible consequences; this one asserts the
     /// mechanism, so a reader of this file can see why the --verbose condition exists.
+    ///
+    /// Scope, so this test is not read as more than it is: it pins the LOUD duplication, the
+    /// kind that breaks an assertion. A quiet run still duplicates the bundle banner, because
+    /// FlushDeferredStartupLines runs before either decision site and the banner is not gated on
+    /// --verbose — that residue is #2232's and is tracked as #4481, not fixed here.
     /// </summary>
     [SkippableFact]
     public void Verbose_DoesNotReplayAChildsOutput_SoThePreambleIsNotDuplicated()

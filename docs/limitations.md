@@ -1740,17 +1740,26 @@ which is why the skip requires an implicit `Microsoft/Application` root.
 ### Two conditions the deferral declines under, and why
 
 The attempt's output is **replayed** on top of the output this process has already produced, so
-it is only safe where the parent has printed nothing the child also prints:
+it is only safe where the parent has printed nothing the child also prints.
 
-- **`--verbose`** — the parent has already emitted its startup preamble (shadow re-exec, BC
-  selection, the #2210 cross-major note, the bundle banner) and the child re-emits all of it.
-  Replaying duplicates every line; measured, the cross-major note went from one occurrence to
-  two.
+**The parent always prints something.** `Program.cs` queues its startup lines and flushes them
+(`FlushDeferredStartupLines`) *before* either deferral decision, and the bundle banner —
+`al-runner — running N bundle(s)` — is an unconditional `Console.WriteLine`, not gated on
+`--verbose`. So a replay duplicates at least that line on **every** path, quiet runs included.
+That is a pre-existing property of #2232's cold deferral, tracked as **#4481**; this issue's warm
+skip widens the exposure rather than creating it.
+
+What the two conditions below do is bound the damage to where it is *only* that one line, and
+keep it out of the two modes where a duplicate is a hard failure rather than cosmetic noise:
+
+- **`--verbose`** — the preamble grows to the whole startup narrative (shadow re-exec, BC
+  selection, the #2210 cross-major note) and the child re-emits all of it. Measured: the
+  cross-major note went from one occurrence to two, against a test asserting exactly once.
 - **`--output-json`** — stdout is contracted to hold the JSON document and nothing else, so
   interleaving any replayed text breaks the parse outright.
 
 Both are diagnostic or machine-readable modes whose runs still work; they simply do not take the
-saving. Removing either condition reintroduces the duplication, which is why
+saving. Removing either condition reintroduces the loud duplication, which is why
 `CrossMajorNoteTests`, `OutputPathPreparationTests` and
 `DeferredPlatformAppsWithholdTests.Verbose_DoesNotReplayAChildsOutput_SoThePreambleIsNotDuplicated`
 all pin it.
@@ -1758,7 +1767,8 @@ all pin it.
 **A note on why the replay is not simply made preamble-aware.** Every invocation already re-execs
 into a shadow-runtime child whose streams are *inherited* rather than captured, so a line count
 taken in the outer process does not describe what the user sees. #2375 tracks removing that
-re-exec; until then the honest fix is to decline rather than to guess at the overlap.
+re-exec; until then the honest fix is to decline rather than to guess at the overlap, and #4481
+owns the residual one-line duplication on the paths that do take it.
 
 
 ## Known gaps — in scope but not yet implemented
