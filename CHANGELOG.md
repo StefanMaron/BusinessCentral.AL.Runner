@@ -33,6 +33,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **metadata:** evict a cached null NCLMetaForm/NCLMetaReport when the object's source is parsed later
 - **metadata:** evict a cached null NCLMetaTable when the table's source is parsed later
 - **virtual-tables:** scope Field and CodeUnit Metadata rows to the executing app group
 - **metadata:** state GlobalVarAccess and Isolated on the derived EventPublisherAttribute
