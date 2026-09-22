@@ -1127,6 +1127,75 @@ jobs:
           done
           exit "$missing"
 
+      - name: Run app-group-visibility c+b as ordered bundles
+        # #4457. app-group-visibility-c declares a dependency on app-group-visibility-a, and A is
+        # NOT passed as a bundle here -- so A is an unrelated SIBLING SOURCE app, which is what
+        # routes C's dependency through ProgramSupport.BuildSiblingSourceDeps. That function
+        # registers A's source dir with its app group BEFORE parsing it (#4455), and an object
+        # parsed from a dir with no registered app group is recorded with NO OWNER, which
+        # RecordPatches.IsHiddenFromAppGroup never hides from anybody.
+        #
+        # This step exists because no other invocation can observe that. The combined
+        # tests/runner-extras run builds ONE bundle, where A, B and C are all suites of the same
+        # bundle and their dirs are registered by the suite walk (Program.cs), never by
+        # BuildSiblingSourceDeps. The dep-tableext pair above passes its dep AS A BUNDLE, which
+        # excludes that dir from the sibling-source candidate set entirely (`bundleRoots.Contains`),
+        # so it never matches either -- measured: that invocation reaches BuildSiblingSourceDeps
+        # with 82 candidate sibling apps and matches none.
+        #
+        # B is the observer, and it is what makes the step discriminate: B declares no dependency
+        # on A, so once A has an owner B must not see A's objects. With the registration mutated
+        # out, A's objects are unowned and B's eight `GroupA...IsNotListed` assertions fail
+        # (42P/8F) while C's 24 stay green -- C depends on A, so A is inside C's visible closure
+        # either way. Mutating the OTHER registration (the [layered] impl site) leaves this step
+        # 50P/0F, so it pins the sibling-source site specifically.
+        #
+        # Order comes from the ARGUMENT LIST, c first. Reversed it also reds 8, but swaps one
+        # assertion for an unrelated `PageMetadata_OwnPage_IsListed`; c-first gives the eight
+        # `GroupA...IsNotListed` failures that name the mechanism.
+        #
+        # Deliberately NO --count-baseline, as with the ordered-bundle steps above: these two
+        # groups are already counted by the combined runner-extras step, and this invocation adds
+        # no tests. The per-test PASS assertions below are what makes this a gate.
+        if: ${{ always() && hashFiles('tests/runner-extras/app-group-visibility-c/**/*.al') != '' }}
+        run: |
+          rc=0
+          dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
+              tests/runner-extras/app-group-visibility-c \
+              tests/runner-extras/app-group-visibility-b \
+              --package-cache "$HOME/.al-runner/platform-apps" \
+              --package-cache "$HOME/.al-runner/test-apps" \
+              --strict > app-group-visibility-cb.log 2>&1 || rc=$?
+          command grep -E '^(PASS|FAIL|ERROR) |→ [0-9]+P/' app-group-visibility-cb.log || true
+          if [ "$rc" -ne 0 ]; then
+            tail -40 app-group-visibility-cb.log
+            echo "::error::app-group-visibility c+b failed as ordered bundles (exit $rc)"
+            exit "$rc"
+          fi
+          missing=0
+          # Assert each test PASSED by name. Without this the step is green whenever the run is
+          # green, INCLUDING a run that compiled nothing and executed 0 tests -- the #4080 shape,
+          # and the one that would silently retire this coverage if either group were renamed or
+          # this invocation collapsed into the combined bundle (where it cannot observe the
+          # defect at all). The eight Codeunit62612 names are exactly the set the #4457 mutation
+          # reds; C's AllObj_DependencyATable_IsListed is the control that stays green under it.
+          for t in \
+              Codeunit62612.AllObj_GroupATable_IsNotListed \
+              Codeunit62612.AllObjWithCaption_GroupATable_IsNotListed \
+              Codeunit62612.TableMetadata_GroupATable_IsNotListed \
+              Codeunit62612.FieldTable_GroupATable_IsNotListed \
+              Codeunit62612.CodeunitMetadata_GroupACodeunit_IsNotListed \
+              Codeunit62612.PageMetadata_GroupAPage_IsNotListed \
+              Codeunit62612.ReportMetadata_GroupAReport_IsNotListed \
+              Codeunit62612.ReportDataItems_GroupAReport_IsNotListed \
+              Codeunit62622.AllObj_DependencyATable_IsListed; do
+            if ! command grep -qE "^PASS +${t//./\\.}( |$)" app-group-visibility-cb.log; then
+              echo "::error::no 'PASS $t' line: the two bundles ran but this test did not pass in this step, so nothing asserted on the sibling-source app-group registration (#4457)."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
       - name: Phase-log report (runner-extras)
         # The step with the most to say: 25 app groups in ONE process (down from 38 —
         # see #1847, which folded 16 standalone-with-no-hazard suites into

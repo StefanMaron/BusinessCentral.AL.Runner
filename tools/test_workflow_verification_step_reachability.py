@@ -119,6 +119,19 @@ REVIEWED: dict[tuple[str, str], dict[str, str | None]] = {
                "and a skipped step reports success. Both compare against the YAML on every "
                "run, so neither can drift silently.",
     },
+    ("bc-tests.yml", "Run app-group-visibility c+b as ordered bundles"): {
+        "step_if": "${{ always() && hashFiles('tests/runner-extras/app-group-visibility-c/**/*.al') != '' }}",
+        "job_if": None, "step_coe": None, "job_coe": TEST_JOB_COE,
+        "why": "#4457. Same profile and same reason as the two entries above: "
+               "AlRunner.Tests/AppGroupVisibilitySiblingSourceDepStepTests pins this exact "
+               "expression from the C# side, resolves the glob against real files, and "
+               "EXECUTES the step's verification block against log fixtures -- so a guard "
+               "disarmed by `exit 0`, `missing=0` or a dropped `( |$)` reds there rather "
+               "than passing forever. This is the only invocation in CI whose bundle "
+               "declares a dependency on a sibling dir that is NOT itself passed as a "
+               "bundle, which is what routes through BuildSiblingSourceDeps at all; "
+               "narrowing it makes that registration unexercised again.",
+    },
     ("bc-tests.yml", "Run cold-cache binary smoke test"): {
         "step_if": None, "job_if": SINGLE_LEG_DISPATCH, "step_coe": None, "job_coe": None,
         "why": "Job `smoke` builds and probes the packaged binary, which a single-leg "
