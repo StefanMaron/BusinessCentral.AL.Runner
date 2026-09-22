@@ -159,6 +159,36 @@ public class AppGroupObjectVisibilityTests
         Assert.Single(events2);
         Assert.True(events2[0].GetProperty("status").GetString() == "pass", string.Join(" | ", lines2));
     }
+    /// <summary>
+    /// #4455: a dir whose app group was never registered attributes its objects to NOBODY, and
+    /// <see cref="RecordPatches.IsHiddenFromAppGroup"/> then never hides them — which is how a
+    /// dependency app's objects leaked into every sibling group's inventory. The CLI half is
+    /// proven in tests/runner-extras/app-group-visibility-{a,b,c} run in reverse bundle order;
+    /// this pins the decision the leak rests on, in both directions.
+    /// </summary>
+    [Fact]
+    public void AppGroupOwningFile_DirRegisteredWithoutItsAppGroup_AttributesToNobody()
+    {
+        var root = Path.GetFullPath(TestScratch.Dir("al-runner-app-group-visibility-order"));
+        var dep = Path.Combine(root, "dep-app");
+        var owner = Path.Combine(root, "owned-app");
+
+        // The map a run holds when a dependency's source dir was handed to the parser but its
+        // app group was never declared: the owned dir resolves, the dependency dir does not.
+        var owners = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase) { [owner] = AppA };
+
+        Assert.Equal(AppA, RecordPatches.AppGroupOwningFile(Path.Combine(owner, "Owned.al"), owners));
+        Assert.Equal(Guid.Empty, RecordPatches.AppGroupOwningFile(Path.Combine(dep, "Dep.al"), owners));
+
+        // An object from the unregistered dir has no owner, so nothing hides it from a group
+        // that does not declare it — the leak. The registered one is hidden from that group.
+        var objectOwners = new Dictionary<(string Kind, int Id), Guid> { [("table", 62600)] = AppA };
+        var visibleToB = new HashSet<Guid> { AppB };
+
+        Assert.True(RecordPatches.IsHiddenFromAppGroup("Table", 62600, visibleToB, objectOwners));
+        Assert.False(RecordPatches.IsHiddenFromAppGroup("Table", 62601, visibleToB, objectOwners));
+    }
+
     [Fact]
     public void AppGroupOwningFile_TakesTheLongestRegisteredDir_NotTheNearestAppJson()
     {

@@ -499,6 +499,16 @@ internal static partial class ProgramSupport
             // app.json resourceFolders files when the impl loads as a dependency via the
             // synthesized workspace .app (which carries no /resources/ part).
             AlRunner.Patches.NavAppResourcePatches.RegisterSourceDirForApp(implId.AppId, implPath);
+            // #4455: this impl becomes a dependency .app for the bundles that declare it, and
+            // its AL source is what the inventory tables end up reading (the package carries
+            // no SymbolReference.json, so the symbol walk yields none of its objects). Declare
+            // the app group that owns those files, or every object it contributes is recorded
+            // with no owner — and an unowned object is never hidden from any group.
+            AlRunner.Patches.RecordPatches.RegisterAppGroupSourceDirs(implPath, new[] { implPath });
+            // ...and parse them, so the objects are in the inventory registries BEFORE any
+            // dependent group's populate reads them. AddSourceDirs de-dups on the directory,
+            // so the impl's own bundle iteration re-registering this dir later is a no-op.
+            AlRunner.Patches.RecordPatches.AddSourceDirs(new[] { implPath });
 
             // The impl bundle's own .alpackages (same dirs the main per-bundle compile scans),
             // reused for both this impl's symbol-emit and the dependent-visible caches below.
@@ -863,6 +873,11 @@ internal static partial class ProgramSupport
                     (string.Equals(dep.Name, sid.Name, StringComparison.OrdinalIgnoreCase) &&
                      string.Equals(dep.Publisher, sid.Publisher, StringComparison.OrdinalIgnoreCase));
                 if (!match) continue;
+                // #4455: BEFORE AddSourceDir, which is what parses the files — the app-group
+                // owner of a file is resolved at parse time from the registered-dir map, so a
+                // dir registered for parsing without its app group first has its objects
+                // recorded with no owner, and an unowned object is never hidden.
+                AlRunner.Patches.RecordPatches.RegisterAppGroupSourceDirs(dir, new[] { dir });
                 AlRunner.Patches.RecordPatches.AddSourceDir(dir);
                 // Remember the sibling source dir by AppId so NavApp.GetResource can serve
                 // its resourceFolders files even when the dep loads via the synthetic
