@@ -60,13 +60,30 @@
 
 using System.Text.Json;
 using System.Xml;
+using AlRunner.Infrastructure;
 using AlRunner.Patches;
 using Xunit;
 
 namespace AlRunner.Tests;
 
+// BcEngineCollection for the same reason CodeunitMethodTableDerivabilityTests joins it: the
+// bundle gate's siblings live there and it serialises them.
+//
+// WHY THIS CLASS OVERRIDES CacheRoots, WHICH ITS SIBLING DOES NOT NEED TO
+//   CodeunitMethodTableDerivabilityTests reads SymbolReference.json out of the .app itself, so no
+//   cache sits between it and its observable. This class reads what the RUNNER derives, through
+//   BcAppSymbolCache.Get — a content-addressed on-disk cache whose key is
+//   path|hash|v<CacheVersion>|shape:<PayloadShape>. A change to the DERIVATION moves none of
+//   those, so a warm box replays the previous parse and this test passes against a broken rule.
+//
+//   That is not hypothetical: it was MEASURED while writing this file. The word-aware-casing
+//   mutation ran GREEN (Failed: 0, Passed: 2) against a warm ~/.cache/al-runner/bc-symbols entry
+//   holding the correct 'aFSOperationResponse', and went RED (Failed: 2) the moment that one
+//   entry was deleted. local-test-scope.md's three defects are the same shape — correct cold,
+//   wrong warm, and invisible to CI, which provisions fresh every leg. So the cache root is
+//   private to the run and the parse is always cold.
 [Collection(BcEngineCollection.Name)]
-public sealed class CodeunitMethodParameterDerivationTests
+public sealed class CodeunitMethodParameterDerivationTests : IDisposable
 {
     private const string MetaNs = "urn:schemas-microsoft-com:dynamics:NAV:MetaObjects";
 
@@ -84,8 +101,25 @@ public sealed class CodeunitMethodParameterDerivationTests
         int Id, string Name, IReadOnlyList<EmittedParameter>? Parameters);
 
     private readonly BcEngineFixture _engine;
+    private readonly string _cacheRoot;
 
-    public CodeunitMethodParameterDerivationTests(BcEngineFixture engine) => _engine = engine;
+    public CodeunitMethodParameterDerivationTests(BcEngineFixture engine)
+    {
+        _engine = engine;
+        // A cache root nothing else writes, so every Get() in this class re-parses. See the
+        // header: without it the measured mutation passes.
+        _cacheRoot = TestScratch.Dir("al-runner-method-parameter-derivation");
+        Directory.CreateDirectory(_cacheRoot);
+        CacheRoots.SetOverride(_cacheRoot);
+        BcAppSymbolCache.ResetProcessCacheForTests();
+    }
+
+    public void Dispose()
+    {
+        CacheRoots.SetOverride(null);
+        BcAppSymbolCache.ResetProcessCacheForTests();
+        try { Directory.Delete(_cacheRoot, recursive: true); } catch { /* best effort */ }
+    }
 
     private IReadOnlyList<(GroundTruthBundle Bundle, string App)> Bundles()
     {

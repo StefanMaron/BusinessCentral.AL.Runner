@@ -378,6 +378,151 @@ derivation exists to avoid (`.claude/rules/guards-need-a-third-state.md`). Four 
 paths: an argument list shorter than three, a non-numeric object id, a mask letter outside
 `RIMDX`, and a scope name outside BC's three.
 
+<a id="the-parameter-list"></a>
+
+## The parameter list: BC writes the runtime's spelling, the symbol file states AL's
+
+Every `<Method>` BC emits carries a `<Parameters>` element — all 326 at 28.1.49838.53910, of
+which 291 have children and 35 are written `<Parameters />` because the method declares none.
+Across both apps that is **574 `<Parameter>` elements**, each with five attributes plus a sixth,
+`Length`, on the 19 whose AL type declares one.
+
+#3788 landed the method table without them, because the two sides disagree in **both** fields a
+`<Parameter>` is made of. Codeunit 304 `GetNoSeriesLine`, Business Foundation:
+
+| | BC's emitted `<Parameter>` | `SymbolReference.json` |
+|---|---|---|
+| name | `hideErrorsAndWarnings` | `"Name": "HideErrorsAndWarnings"` |
+| a boolean | `RuntimeType="bool"` | `"TypeDefinition": { "Name": "Boolean" }` |
+| a `Code[20]` | `RuntimeType="NavCode" Length="20"` | `"TypeDefinition": { "Name": "Code[20]" }` |
+| a `var` record | `RuntimeType="INavRecordHandle"`, `RuntimeAttributes="[NavObjectId(ObjectId=309)],[NavByReferenceAttribute]"` | `"IsVar": true`, `Subtype.Id = 309` |
+
+#4084 filed both as derivations with a proof path rather than architectural limits, and refused
+to guess either: *"a casing rule guessed wrong produces a `<Parameter>` element that looks right
+and names something else."*
+
+### How it was measured
+
+The ground-truth bundles `tools/gen-metadata-ground-truth.sh` produces are BC's own emitter
+output. Joining them to each app's shipped `SymbolReference.json` on **(codeunit id, method id)**
+gives both spellings of the same parameter, and the join is checked on all six values at once.
+
+The join is restricted to id matches. Matching by **name** instead adds one pair and it is wrong:
+codeunit 8705 `UpdateFeatureUptakeStatus` exists as both a `local` method BC emits and a public
+method the symbol file states, so a name match pairs BC's 1-parameter overload with the symbol
+file's 5-parameter one. That single pair is the fabricated-slot hazard in miniature.
+
+Four builds, whose `Microsoft.Dynamics.Nav.Ncl.dll` are four **distinct** binaries — so these
+are four independent measurements rather than one wearing four labels:
+
+| build | `Ncl.dll` sha256 | joined methods | `<Parameter>` elements | exact | disagreements | unmapped AL types |
+|---|---|---:|---:|---:|---:|---:|
+| 27.5.46862.53931 | `affa03c9` | 164 | 322 | 322 | 0 | 0 |
+| 28.1.49838.53910 | `49b11d9b` | 168 | 328 | 328 | 0 | 0 |
+| 28.1.49838.54308 | `6f2cf682` | 168 | 328 | 328 | 0 | 0 |
+| 28.4.53241.54407 | `108b8c6b` | 169 | 330 | 330 | 0 | 0 |
+
+**1,308 observations, 1,308 exact, zero disagreements.** That is what licenses the derivation;
+anything less would have licensed only the subset it reproduced.
+
+Of 28.1's 328, the **302** on the 66 codeunits the runner actually emits are the allowlisted
+`MetaMethod.Parameters.<presence>` ×302 the issue recorded, plus 5 on the page side.
+
+### The casing rule is a pure first-character lowercase
+
+Not "camelCase" — the first character is lowercased and **nothing else is touched**. The two
+rules agree on 325 of 328 parameters, so the population that decides it is the three whose AL
+identifier has two or more leading capitals:
+
+| codeunit | AL identifier | BC writes | a word-aware rule writes |
+|---:|---|---|---|
+| 8951 | `AFSOperationResponse` | `aFSOperationResponse` | `afsOperationResponse` ❌ |
+| 9017 | `AADObjectID` | `aADObjectID` | `aadObjectID` ❌ |
+| 600 | `IDataArchiveProvider` | `iDataArchiveProvider` | `iDataArchiveProvider` (agrees) |
+
+Two of the three refute the word-aware rule. #4084's own comment had noticed the same shape in
+the assembly string heap (`aBSClientImpl`, `aADObjectID`) and deliberately declined to close on
+it, because 14,439 identifiers of every kind are not a parameter population — these three are.
+
+`AlRunner.Tests/CodeunitMethodParameterDerivationTests` pins both halves, and its casing test
+fails loudly if the discriminating shape ever stops occurring, since both rules would then pass.
+
+### AL type → `RuntimeType`, and the three shapes that are not what a reader guesses
+
+Every AL base type name the shipped apps exercise on an emitted method, with its count over the
+four builds. **There is deliberately no superset**: these 28 are exactly what the mapping covers,
+so no entry rests on a guess about a shape BC never showed us.
+
+| AL | `RuntimeType` | n | AL | `RuntimeType` | n |
+|---|---|---:|---|---|---:|
+| `Boolean` | `bool` | 376 | `JsonArray` | `NavJsonArray` | 12 |
+| `Text` | `NavText` | 188 | `RecordId` | `NavRecordId` | 12 |
+| `Record` | `INavRecordHandle` | 176 | `Interface` | `NavInterfaceHandle` | 12 |
+| `Guid` | `System.Guid` | 140 | `Code` | `NavCode` | 11 |
+| `Integer` | `int` | 132 | `RecordRef` | `NavRecordRef` | 9 |
+| `Enum` | `NavOption` | 84 | `Decimal` | `Decimal18` | 8 |
+| `Codeunit` | `NavCodeunitHandle` | 32 | `Time` | `NavTime` | 8 |
+| `Date` | `NavDate` | 20 | `Variant` | `NavVariant` | 8 |
+| `List` | `NavList<…>` | 16 | `JsonObject` | `NavJsonObject` | 8 |
+| `Dictionary` | `NavDictionary<…>` | 8 | `JsonToken` | `NavJsonToken` | 8 |
+| `DotNet` | `NavDotNet` | 8 | `ObjectType` | `NavObjectType` | 8 |
+| `Action` | `FormResult` | 4 | `ClientType` | `NavClientType` | 4 |
+| `DateTime` | `NavDateTime` | 4 | `InStream` | `NavInStream` | 4 |
+| `ModuleInfo` | `NavModuleInfo` | 4 | `HttpRequestMessage` | `NavHttpRequestMessage` | 4 |
+
+Three decisions the table alone does not carry, each measured rather than reasoned:
+
+1. **An object handle is not wrapped in `ByRef<>` when `var`.** A `var` record stays
+   `INavRecordHandle` and gains `,[NavByReferenceAttribute]` in `RuntimeAttributes`; a `var`
+   scalar does the opposite, becoming `ByRef<bool>` with an empty `RuntimeAttributes`.
+2. **`Interface` takes neither attribute.** It is a handle whose `Subtype` has no `Id`, and BC
+   writes `RuntimeAttributes=""` on all three instances **even though all three are `var`**. A
+   rule keying `NavByReferenceAttribute` on `IsVar` alone disagrees with BC on exactly those
+   three — codeunits 600, 2611 and 3917.
+3. **A generic argument loses its length.** `List of [Code[250]]` is
+   `ByRef<NavList<NavCode>>`, not `NavList<NavCode[250]>`.
+
+And two that carry no information: `Temporary` on a record changes nothing BC writes (measured on
+the four `"Temporary": true` parameters), and `IsArray` is `"False"` on all 574.
+
+### Why the derivation is all-or-nothing per method
+
+`MetadataObjectDiff` pairs a `<Parameters>` element's children **positionally** — the same
+property that made a short `<Methods>` subtree worse than none. A list that silently omitted the
+one parameter it could not spell would put every later parameter in a different slot, which is
+the runner asserting an association it has no evidence for
+(`.claude/rules/loud-failures.md`). So one unrenderable parameter withdraws the whole element and
+the method keeps the honest one-directional absence it had before.
+
+Two shapes refuse, and neither is reachable from the shipped apps — which is why
+`AlRunner.Tests/CodeunitMethodParameterRenderingTests` drives them from a fixture instead:
+
+- **An AL type the mapping does not cover.** Zero occur on an emitted method in either app.
+- **An array parameter.** BC writes `IsArray="True"` and a runtime type nothing here has
+  observed. The one array-typed parameter in either app — codeunit 9556
+  `GetRecordsFromTableId`, `"Text"` with `"ArrayDimensions": [10]` — sits on a method carrying no
+  attribute, so BC emits nothing for it. Note its base type `Text` **is** mapped, so a rule
+  checking only the type name would render it, wrongly.
+
+An **empty** list is a real answer rather than a refusal: BC writes `<Parameters />` for a method
+declaring none, and the symbol file states no `Parameters` key at all for every one of the 15
+such methods in the emitted population.
+
+### The cache sits between this derivation and its observable
+
+`BcAppSymbolCache`'s key is `path|hash|v<CacheVersion>|shape:<PayloadShape>`. Adding `Parameters`
+to `CodeunitMethodSymbol` moved `PayloadShape` from `b0e764a4c854cda6` to `459a9a54bd6fa396`
+(measured off both builds through the `PayloadShapeForTests` seam), so the on-disk cache re-keys
+itself and **no `CacheVersion` bump is needed** — the same measurement #3788 made for
+`AttributedMethods`.
+
+A change to the **derivation** moves none of those terms, though, so a warm box replays the
+previous parse. Measured while writing this: the word-aware-casing mutation ran **green** against
+a warm `~/.cache/al-runner/bc-symbols` entry holding the correct `aFSOperationResponse`, and went
+red the moment that one entry was deleted. `CodeunitMethodParameterDerivationTests` therefore
+overrides `CacheRoots` to a root private to the run. `.claude/rules/local-test-scope.md` has the
+general form; CI never sees it, because every leg provisions fresh.
+
 <a id="the-event-publisher-attribute"></a>
 
 ## The event publisher attribute: slot 1 means two different things
