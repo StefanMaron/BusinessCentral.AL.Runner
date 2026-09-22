@@ -33,6 +33,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **app-group-visibility:** parse a source-compiled dependency before its dependents populate
 - **virtual-tables:** scope Page Metadata, Report Metadata and Report Data Items to the executing app group
 - **metadata:** evict a cached null NCLMetaForm/NCLMetaReport when the object's source is parsed later
 - **metadata:** evict a cached null NCLMetaTable when the table's source is parsed later
