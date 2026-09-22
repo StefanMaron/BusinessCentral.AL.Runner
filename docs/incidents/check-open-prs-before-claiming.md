@@ -2,6 +2,57 @@
 
 Narrative moved verbatim out of the rule (#3728). The rule keeps the instruction, its citation and its trap; this file keeps the incidents that produced them.
 
+## The cross-account near-miss that split the rule in two (#3275)
+
+The three collisions below were all same-account, and the rule generalised from them to a
+premise it stated in its own opening: *"every loop pushes under one GitHub account."* By
+2026-09 that was false. A second account, `FBakkensen`, ran an `fbk-*` pool against this
+repository.
+
+The near-miss: a coordinator built its candidate list from a queue snapshot, then dispatched an
+agent onto #3263. Between the snapshot and the dispatch, `FBakkensen`'s agent filed #3263,
+assigned it, and labelled it `agent: fbk-2`. The dispatched agent stopped rather than claiming
+— and was right to, but it stopped by reading `branch-and-pr.md`'s "skip any issue whose
+assignee is a user other than `@me`", **not** by following this rule, which had actively argued
+the assignee could not answer the question. The open-PR check the rule offers as the reliable
+substitute did not cover it either: `fbk-2` had claimed the issue but had no PR yet. Nothing
+but the assignee distinguished it.
+
+So the two rules pointed in opposite directions depending on who the other claimant was, and
+the rule that is *about* claiming collisions gave the wrong steer. The fix was not a rewrite —
+the same-account reasoning is sound and all three collisions below really were same-account —
+but a discriminator at the top, so a reader knows which case they are in before they rate a
+signal.
+
+Re-measured 2026-09-22 while fixing it: five remote `agent/fbk-*/…` branches
+(`issue-2444`, two on `issue-2345`, `issue-2201`, `issue-3178`), three `agent: fbk-*` labels,
+and 99 of the last 100 pull requests authored by `StefanMaron` with the newest `FBakkensen` PR
+dated 2026-09-12. Real, and quiet — which is the awkward state to write a rule for, because
+the case is invisible on any given day and costs an issue when it is not.
+
+A second cost the issue recorded: #3178 and #3263 were the same three lines of
+`BuildMetaCalcFormula` with different absent-field sets. Under `batch-sibling-issues-by-file.md`
+they would fold into one PR; across accounts that fold needs coordination nobody has, and
+landing them separately conflicts by construction.
+
+### What pins it
+
+`tools/test_claim_signals_account_scope.py` parses the rule's claim table and asserts over the
+ROWS, not over any sentence: both account cases must be rated, on *different* rows, with
+*opposite* verdicts about the assignee, and the discriminator must appear before the first
+per-signal rating. A substring test would pass for a rename and for the name in a comment.
+
+Two defects that guard caught in its own first revision, both worth recording because each
+looked like the rule being wrong rather than the instrument:
+
+- the `DIFF` regex matched *"another loop on the **same** account"*, because the adjective
+  `another` modified `loop` while `account` sat later in the cell — so the same-account row read
+  as cross-account and the two-distinct-rows check failed;
+- the markdown table parser dropped the **last data row of every table**, holding each row back
+  to see whether a separator followed and discarding it on a non-table line instead of flushing
+  it. The cross-account row is the last row of its table, so the property under test was the one
+  systematically invisible.
+
 ## The three collisions this rule is made of
 
 All within about four hours on 2026-09-05, all under one account.

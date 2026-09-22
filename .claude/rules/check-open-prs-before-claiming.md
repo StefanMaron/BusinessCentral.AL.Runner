@@ -4,13 +4,39 @@
 an agent onto it only to repair that PR by name (`.claude/agents/impl-agent.md`, Step 1),
 whatever the assignee and the labels say.**
 
-The claiming protocol says the assignee locks and the `agent:` label discriminates. On this
-repository that pair cannot decide ownership, because **every loop pushes under one GitHub
-account**. Three signals, and only one of them answers the question:
+## Read the assignee's ACCOUNT first — it decides which half of this rule applies
+
+More than one GitHub account runs agent loops here, so **establish whether the other claimant
+is on your own account before you rate any signal**. `gh api user --jq .login` is your side;
+the assignee's login is theirs. The answer changes what the assignee is worth:
+
+| the other claimant is | what the assignee tells you | what to do |
+|---|---|---|
+| another loop on the **same** account | **nothing** — same login, so it cannot say *which* loop | read on — the open-PR check below is what resolves it |
+| a loop on a **different** account | **everything** — a real boundary, and it is authoritative | **stop**, per `branch-and-pr.md`'s assignee boundary; nothing below waives it |
+
+Measured 2026-09-22: five remote `agent/fbk-*/…` branches and three `agent: fbk-*` labels from
+a second agent-running account, whose newest pull request here is 2026-09-12 — so the
+cross-account case is real and currently quiet, not hypothetical and not busy.
+
+**The branch prefix is the same discriminator, and it is the stronger one**: `agent/fbk-2/…`
+versus `agent/stma-auto-1/…` cannot be rewritten by another loop, where a label can.
+`orchestrating-a-session` already arms on it ("Check the **branch prefix**, never the author
+field") for this exact reason — one mechanism, two rules.
+
+**Trap: it is the ACCOUNT that discriminates, never whether the claimant looks like a bot.** A
+`fbk-*` label is an agent pool, a human maintainer is a person, and both are "not you"; the
+boundary is the login, and an agent may not waive it in either case.
+
+## The rest of this rule is the SAME-account case
+
+Here the assignee locks and the `agent:` label discriminates — except that neither can decide
+ownership, because every loop on one account pushes as that one login. Three signals, and only
+one of them answers the question:
 
 | signal | what it tells you | what it cannot |
 |---|---|---|
-| assignee | that *somebody* claimed it | **who** — every loop is the same login |
+| assignee | that *somebody on your account* claimed it | **which loop** — they share the login |
 | `agent: <tag>` label | which loop *last wrote a label* | whether that loop is live, finished, or dead |
 | open **draft** PR with `Closes #N` | that a loop claimed it, minutes after it claimed | whether the fix is written yet |
 | open **ready** PR with `Closes #N` | that work exists **and is real** | — |
@@ -96,6 +122,10 @@ transport is not.
   something else, or surface it. Leave the label alone. The same applies to a worktree carrying
   another identity's branch: the `agent:` label marks *the pool*, not a session.
 
+Both get **stronger** across accounts, never weaker: a label from another account belongs to a
+pool whose liveness you cannot observe at all, and the assignee there is a boundary rather than
+a lock.
+
 ## The same question about REVIEW, where the three signals say nothing
 
 The signals above decide who is **implementing** an issue. None of them answers who is
@@ -146,7 +176,8 @@ every collision behind this rule was a read that was too narrow, not a write tha
 
 ## Sister rules
 
-- `branch-and-pr.md` — branch naming, `Closes #N` in the body, the assignee boundary
+- `branch-and-pr.md` — branch naming, `Closes #N` in the body, and the assignee boundary this
+  rule now defers to rather than argues against
 - `github-access.md` — `gh` vs `mcp__github__*`; never assume `gh` exists
 - `no-git-stash-with-worktrees.md` — the other place where "shared by default" bites, and
   why one agent's cleanup lands in another's work

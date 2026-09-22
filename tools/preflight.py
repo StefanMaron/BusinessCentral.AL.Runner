@@ -1377,8 +1377,10 @@ def judge_branch_ownership(*, cwd: str, branch: Optional[str], pr: Optional[dict
     """Whether the branch you are standing on already heads another loop's PR (#3707).
 
     The `agent:` label on the OPEN pull request is the only signal here that names
-    a loop: the assignee cannot, because every loop pushes under one account
-    (`check-open-prs-before-claiming.md`). Two loops can hold one identity, so the
+    a loop: the assignee names an ACCOUNT, and several loops share one
+    (`check-open-prs-before-claiming.md`). Across accounts it does discriminate --
+    and the branch prefix this check reads is the stronger form of that same
+    signal, because another loop cannot rewrite it. Two loops can hold one identity, so the
     branch is what keeps their commits apart, and a second loop committing on it
     lands its work on the first one's PR (#3014).
 

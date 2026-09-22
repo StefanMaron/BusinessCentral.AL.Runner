@@ -244,7 +244,9 @@ Two things about the verdicts it produces, because both change what "stop" means
    **open PR carrying `Closes #N`** is the signal that decides it (#2891). Do not try to judge
    whether someone else's open work is "still being worked" either: you cannot tell a dead box
    from a contributor who is asleep, and the design refuses that judgement elsewhere for the
-   same reason.
+   same reason. **Across accounts the assignee flips from worthless to decisive** — a login
+   that is not yours is a boundary, not a lock — so read the account before rating the field
+   (`check-open-prs-before-claiming.md`).
 
    Note the slot is bookkeeping, not safety. The incident it is often credited with preventing —
    `impl-69`, 82 worktrees, 10 GB — was caused by nothing ever *deleting* a worktree. Preflight's
