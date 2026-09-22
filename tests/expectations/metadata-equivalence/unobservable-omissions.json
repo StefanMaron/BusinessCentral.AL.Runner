@@ -104,6 +104,90 @@
       "issue": 4282,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#unobservable-omissions"
+    },
+    {
+      "member": "XmlPort.Controls.ControlGUID",
+      "statedBy": "expected",
+      "reason": "TRIAGED (#4467, which added the xmlport RequestPage subtree to what this harness measures by pointing the metadata-equivalence projection at the runner's real derivation). THE UNOBSERVABILITY IS MEASURED, NOT ARGUED, and that is the part to check before trusting any of the 12 xmlport RequestPage entries: MetadataDocumentPresenceDiff strips the attribute from BC's OWN document, re-parses the stripped document with BC's OWN reader, and records the omission only when MetadataObjectDiff finds the two parsed objects identical. So BC's reader is what adjudicates each of these, not a claim about which attributes a master-page template supplies. THE WALK DISCRIMINATES: BC states 37 distinct Element.Attribute pairs in that subtree across System Application's 4 xmlports on 28.1.49838.53910, and it reported 12 -- Containers.ContainerType, Controls.ID, Controls.FilterTableID, Properties.PageType, Properties.Editable, the four Sorting.* attributes and 16 others were seen and NOT reported, because stripping them changes the parsed object. A run where all 37 came back would mean the probe had stopped discriminating. WHY THE RUNNER OMITS THEM (the cause, which the measurement above does not establish and does not need to): WriteXmlPortRequestPageXml derives only the FRAME, because MetadataProvider merges it into BC's own master-page template at load, so the built-in controls come from that template; what the runner does derive is the per-tableelement filter control and its expression, keyed to this xmlport's node sequence, which the template cannot know. DependencyReportMetadata's request page has the same policy. Note the reported instances sit on Controls[0], the template's own control, not on a derived one. VERDICT: the runner is legitimately less here. What would invalidate this entry is the runner emitting the built-in controls itself -- a decision to stop relying on the template, not a defect. The entry is falsifiable on the measured build either way: it is not versionContingent, so it reds the run if it ever stops matching.",
+      "issue": 3562,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "XmlPort.Properties.HelpLink",
+      "statedBy": "expected",
+      "reason": "See XmlPort.Controls.ControlGUID's entry for the full statement: BC's own reader adjudicated this by re-parsing its own document with the attribute stripped, 12 of 37 RequestPage attributes reported. Legitimately-less: the runner derives only the request-page frame and takes the built-in controls from BC's master-page template. Reported on this member by that probe on BC 28.1.49838.53910.",
+      "issue": 3562,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "XmlPort.Controls.Name",
+      "statedBy": "expected",
+      "reason": "See XmlPort.Controls.ControlGUID's entry for the full statement: BC's own reader adjudicated this by re-parsing its own document with the attribute stripped, 12 of 37 RequestPage attributes reported. Legitimately-less: the runner derives only the request-page frame and takes the built-in controls from BC's master-page template. Reported on this member by that probe on BC 28.1.49838.53910.",
+      "issue": 3562,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "XmlPort.Controls.Caption",
+      "statedBy": "expected",
+      "reason": "See XmlPort.Controls.ControlGUID's entry for the full statement: BC's own reader adjudicated this by re-parsing its own document with the attribute stripped, 12 of 37 RequestPage attributes reported. Legitimately-less: the runner derives only the request-page frame and takes the built-in controls from BC's master-page template. Reported on this member by that probe on BC 28.1.49838.53910.",
+      "issue": 3562,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "XmlPort.Controls.DataColumnName",
+      "statedBy": "expected",
+      "reason": "See XmlPort.Controls.ControlGUID's entry for the full statement: BC's own reader adjudicated this by re-parsing its own document with the attribute stripped, 12 of 37 RequestPage attributes reported. Legitimately-less: the runner derives only the request-page frame and takes the built-in controls from BC's master-page template. Reported on this member by that probe on BC 28.1.49838.53910.",
+      "issue": 3562,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "XmlPort.Controls.ApplicationArea",
+      "statedBy": "expected",
+      "reason": "See XmlPort.Controls.ControlGUID's entry for the full statement: BC's own reader adjudicated this by re-parsing its own document with the attribute stripped, 12 of 37 RequestPage attributes reported. Legitimately-less: the runner derives only the request-page frame and takes the built-in controls from BC's master-page template. Reported on this member by that probe on BC 28.1.49838.53910.",
+      "issue": 3562,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "XmlPort.Controls.Sorting",
+      "statedBy": "expected",
+      "reason": "See XmlPort.Controls.ControlGUID's entry for the full statement: BC's own reader adjudicated this by re-parsing its own document with the attribute stripped, 12 of 37 RequestPage attributes reported. Legitimately-less: the runner derives only the request-page frame and takes the built-in controls from BC's master-page template. Reported on this member by that probe on BC 28.1.49838.53910.",
+      "issue": 3562,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "XmlPort.PageDefinition.CaptionTranslationKey",
+      "statedBy": "expected",
+      "reason": "Measured the same way as XmlPort.Controls.ControlGUID's entry, which carries the full statement of the probe and its 12-of-37 discrimination. OUT OF SCOPE as well as unobservable, under the repository owner's standing translations decision of 2026-09-10 relayed on #3568 -- the same call the seven TranslationKey entries in allowlist.json record, reaching the xmlport request page because #4467 made that subtree measurable. WriteXmlPortRequestPageXml's own doc comment already names these attributes as deliberately not written and says it is a scope decision, NOT a claim they are underivable: the key is COMPUTED from names rather than stored and 2,153 of 2,153 reproduce (TranslationKeysAreDerivable_NotAPermanentLimit). What invalidates this entry is the owner putting translations back in scope.",
+      "issue": 3568,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "XmlPort.Controls.CaptionTranslationKey",
+      "statedBy": "expected",
+      "reason": "Measured the same way as XmlPort.Controls.ControlGUID's entry, which carries the full statement of the probe and its 12-of-37 discrimination. OUT OF SCOPE as well as unobservable, under the repository owner's standing translations decision of 2026-09-10 relayed on #3568 -- the same call the seven TranslationKey entries in allowlist.json record, reaching the xmlport request page because #4467 made that subtree measurable. WriteXmlPortRequestPageXml's own doc comment already names these attributes as deliberately not written and says it is a scope decision, NOT a claim they are underivable: the key is COMPUTED from names rather than stored and 2,153 of 2,153 reproduce (TranslationKeysAreDerivable_NotAPermanentLimit). What invalidates this entry is the owner putting translations back in scope.",
+      "issue": 3568,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "XmlPort.Properties.AboutTextTranslationKey",
+      "statedBy": "expected",
+      "reason": "Measured the same way as XmlPort.Controls.ControlGUID's entry, which carries the full statement of the probe and its 12-of-37 discrimination. OUT OF SCOPE as well as unobservable, under the repository owner's standing translations decision of 2026-09-10 relayed on #3568 -- the same call the seven TranslationKey entries in allowlist.json record, reaching the xmlport request page because #4467 made that subtree measurable. WriteXmlPortRequestPageXml's own doc comment already names these attributes as deliberately not written and says it is a scope decision, NOT a claim they are underivable: the key is COMPUTED from names rather than stored and 2,153 of 2,153 reproduce (TranslationKeysAreDerivable_NotAPermanentLimit). What invalidates this entry is the owner putting translations back in scope.",
+      "issue": 3568,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "XmlPort.Properties.AboutTitleTranslationKey",
+      "statedBy": "expected",
+      "reason": "Measured the same way as XmlPort.Controls.ControlGUID's entry, which carries the full statement of the probe and its 12-of-37 discrimination. OUT OF SCOPE as well as unobservable, under the repository owner's standing translations decision of 2026-09-10 relayed on #3568 -- the same call the seven TranslationKey entries in allowlist.json record, reaching the xmlport request page because #4467 made that subtree measurable. WriteXmlPortRequestPageXml's own doc comment already names these attributes as deliberately not written and says it is a scope decision, NOT a claim they are underivable: the key is COMPUTED from names rather than stored and 2,153 of 2,153 reproduce (TranslationKeysAreDerivable_NotAPermanentLimit). What invalidates this entry is the owner putting translations back in scope.",
+      "issue": 3568,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "XmlPort.Properties.InstructionalTextTranslationKey",
+      "statedBy": "expected",
+      "reason": "Measured the same way as XmlPort.Controls.ControlGUID's entry, which carries the full statement of the probe and its 12-of-37 discrimination. OUT OF SCOPE as well as unobservable, under the repository owner's standing translations decision of 2026-09-10 relayed on #3568 -- the same call the seven TranslationKey entries in allowlist.json record, reaching the xmlport request page because #4467 made that subtree measurable. WriteXmlPortRequestPageXml's own doc comment already names these attributes as deliberately not written and says it is a scope decision, NOT a claim they are underivable: the key is COMPUTED from names rather than stored and 2,153 of 2,153 reproduce (TranslationKeysAreDerivable_NotAPermanentLimit). What invalidates this entry is the owner putting translations back in scope.",
+      "issue": 3568,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
     }
   ]
 }

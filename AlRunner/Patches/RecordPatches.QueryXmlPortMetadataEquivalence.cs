@@ -10,8 +10,12 @@
 //
 //     Query   — BuildMetaQueryDesign already produces a real Types.Metadata.MetaQuery from
 //               SymbolReference.json. It is handed over AS THE OBJECT, no rendering involved.
-//     XmlPort — the runner derives no xmlport structure at all, so the accessor renders the
-//               four values it does derive and states nothing else. See below.
+//     XmlPort — TryBuildDependencyXmlPortMetadata reconstructs the whole document from the
+//               .app itself (SymbolReference.json plus the embedded AL source, parsed by BC's
+//               own AL parser), and the accessor forwards to it. It rendered only (ID, Name)
+//               until #4467, because when this file was written nothing in the runner derived
+//               xmlport structure; #3797 changed that and this projection was not moved with
+//               it. See below.
 //
 // THE CIRCULARITY BOTH ACCESSORS AVOID
 //   AlObjectMetadataRegistry (queries) and AlXmlPortMetadataRegistry (xmlports) hold BC's OWN
@@ -20,9 +24,6 @@
 //   explicitly rather than by luck — see QueryMetadataEquivalenceDesign's guard.
 //
 // See docs/metadata-equivalence.md#queries and #xmlports.
-
-using System.Globalization;
-using System.Xml;
 
 namespace AlRunner.Patches;
 
@@ -60,59 +61,32 @@ public static partial class RecordPatches
 
     /// <summary>
     /// The runner's derivation for one xmlport, as the <c>&lt;XmlPort&gt;</c> document BC's
-    /// <c>Types.Metadata.MetaXmlPort(XmlDocument, …)</c> parses — or null when the runner knows
-    /// no xmlport with that id.
+    /// <c>Types.Metadata.MetaXmlPort(XmlDocument, …)</c> parses — or null when no registered
+    /// dependency declares that xmlport, or its node tree cannot be recovered.
     ///
-    /// <para><b>Two values, and that is the finding rather than an omission.</b> Measured
-    /// against System Application's SymbolReference.json on BC 28.1.49838.53910: the runner
-    /// retains <c>(Kind, Id, Name, Caption)</c> for every non-codeunit object
-    /// (<see cref="BcAppSymbolCache.ObjectSymbol"/>), and nothing anywhere in the runner
-    /// derives xmlport STRUCTURE. The symbol file states an xmlport's <c>Properties</c> and
-    /// <c>Variables</c> but no node tree at all, while BC's emitted document for those same
-    /// four xmlports carries 91 <c>&lt;Node&gt;</c> elements between them. Caption is not
-    /// written because BC states it as <c>&lt;CaptionML&gt;</c> with a language id, a shape the
-    /// symbol file's flat string does not carry.</para>
+    /// <para>A thin forwarder to <see cref="TryBuildDependencyXmlPortMetadata"/> for the reason
+    /// <see cref="TryBuildReportMetadataEquivalenceXml"/> is one: the harness must measure the
+    /// document runner consumers actually read — the one
+    /// <c>RunnerXmlMetadataLoader.GetMetaObjectXmlMetadata</c> hands BC — not a test-only
+    /// rendering that can agree or differ for reasons no AL caller ever sees (#4467).</para>
     ///
-    /// <para>A value the runner does not derive is <b>left off</b> rather than defaulted, so
-    /// BC's own constructor applies its own default and the reported difference is a true
-    /// statement about what the runner does not know. Writing BC's value into any of them would
-    /// manufacture agreement — which is the whole reason this renders the runner's own state
-    /// instead of reading AlXmlPortMetadataRegistry, where BC's captured answer is sitting.</para>
+    /// <para><b>This is a derivation, not a capture, and that distinction is the whole point
+    /// of the projection.</b> <see cref="TryBuildDependencyXmlPortMetadata"/> reconstructs the
+    /// document from two sources shipped inside the .app — object properties from
+    /// <c>SymbolReference.json</c>, and the node tree parsed out of the <c>.app</c>'s own
+    /// embedded AL source with BC's AL parser. It never reads
+    /// <c>AlXmlPortMetadataRegistry</c>, which holds BC's emit-captured schema: feeding the
+    /// harness that would compare BC against BC and report agreement having measured nothing.
+    /// A value the derivation cannot recover stays off the document rather than being filled
+    /// in from the captured answer, so a reported difference remains a true statement about
+    /// what the runner does not know.</para>
+    ///
+    /// <para>Until #4467 this wrote only <c>ID</c> and <c>Name</c>, because at the time nothing
+    /// in the runner derived xmlport structure. #3797 landed the derivation on the AL-observable
+    /// path and this projection was not moved with it, so the harness kept reporting 322
+    /// differences over System Application's four xmlports — 182 of them
+    /// <c>Nodes.&lt;presence&gt;</c> — against a runner that had the answers.</para>
     /// </summary>
     internal static string? TryBuildXmlPortMetadataEquivalenceXml(int xmlPortId)
-    {
-        var name = TryGetXmlPortSymbolName(xmlPortId);
-        if (name is null) return null;
-
-        var doc = new XmlDocument();
-        var root = doc.CreateElement("XmlPort");
-        doc.AppendChild(root);
-
-        // BC's reader is a switch over the UPPERCASED child element name and throws
-        // ArgumentException on anything it does not know, so only names it accepts appear here.
-        void El(string elementName, string value)
-        {
-            var e = doc.CreateElement(elementName);
-            e.InnerText = value;
-            root.AppendChild(e);
-        }
-
-        El("ID", xmlPortId.ToString(CultureInfo.InvariantCulture));
-        El("Name", name);
-        return doc.OuterXml;
-    }
-
-    /// <summary>
-    /// The name the runner knows for an xmlport declared by a registered dependency .app, or
-    /// null. Reads the same <see cref="BcAppSymbolCache.ObjectSymbol"/> set AllObj (2000000038)
-    /// reports from, which is the runner's whole xmlport knowledge for a precompiled app.
-    /// </summary>
-    private static string? TryGetXmlPortSymbolName(int xmlPortId)
-    {
-        foreach (var (_, symbols) in EnumerateRegisteredBcAppSymbols("objects (metadata equivalence, XmlPort)"))
-            foreach (var o in symbols.Objects)
-                if (o.Id == xmlPortId && NormalizeObjectTypeName(o.Kind) == "xmlport")
-                    return o.Name;
-        return null;
-    }
+        => TryBuildDependencyXmlPortMetadata(xmlPortId);
 }

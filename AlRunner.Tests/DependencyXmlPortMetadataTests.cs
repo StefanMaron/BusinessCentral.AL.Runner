@@ -510,4 +510,174 @@ public class DependencyXmlPortMetadataTests
             ExportPortAl.Replace("61602", "61699"));
         Assert.Null(xml);
     }
+    // ── #4467: the three node-level defects the metadata-equivalence harness exposed ───────
+    //
+    // None of these could be seen before #4467, because the harness rendered the runner's
+    // xmlport side through a projection that wrote only (ID, Name) — so no node was compared.
+    // Wiring that projection to this derivation is what made them measurable.
+
+    /// <summary>
+    /// A tree whose two plausible numbering orders DISAGREE — which the suite's own
+    /// ExportPortAl fixture cannot express, because at one tableelement deep they coincide.
+    ///
+    /// <para>Two sibling tableelements under one root, the first having children. Depth-first
+    /// declaration order numbers Second as 6; BC numbers it 3, because it numbers a node's
+    /// direct children as a contiguous run BEFORE descending into any of them.</para>
+    /// </summary>
+    private const string TwoSiblingTablesAl = """
+        xmlport 61610 "XPDDep Sibling Port"
+        {
+            Format = Xml;
+            Direction = Export;
+
+            schema
+            {
+                textelement(Root)
+                {
+                    tableelement(First; "XPDDep Header")
+                    {
+                        XmlName = 'First';
+                        fieldelement(FirstNo; First."No.") { }
+                        fieldelement(FirstDesc; First.Description) { }
+                    }
+                    tableelement(Second; "XPDDep Header")
+                    {
+                        XmlName = 'Second';
+                        fieldelement(SecondNo; Second."No.") { }
+                    }
+                }
+            }
+        }
+        """;
+
+    /// <summary>
+    /// BC numbers schema nodes BREADTH-FIRST BY PARENT while emitting them depth-first, so a
+    /// tableelement declared after a sibling's subtree takes the LOWER sequence number.
+    ///
+    /// <para>Measured against BC's own emitted documents for all four of System Application's
+    /// xmlports on 28.1.49838.53910 — 9001, 9862, 9863 and 9864, 91 nodes — where this rule
+    /// reproduces every node id exactly and plain declaration order reproduces 69 of them
+    /// wrongly. The clearest instance is XmlPort 9862, where <c>Permission</c> is the twelfth
+    /// node written and carries sequence 9, while <c>PermissionSetRel</c>'s three children,
+    /// written before it, carry 10, 11 and 12.</para>
+    ///
+    /// <para>Not cosmetic: BC resolves a node's parent by matching ParentID against another
+    /// node's ID, so getting the sequence wrong reparents nodes. The ParentID assertions below
+    /// are what pin that, and they are the reason this is asserted on a tree with two levels
+    /// rather than on the sequence numbers alone.</para>
+    /// </summary>
+    [Fact]
+    public void NodeSequence_IsBreadthFirstByParent_NotDeclarationOrder()
+    {
+        var nodes = Nodes(EmitExportPort(al: TwoSiblingTablesAl, id: 61610));
+
+        // Document order is unchanged — depth-first, as declared.
+        Assert.Equal(
+            new[] { "Root", "First", "FirstNo", "FirstDesc", "Second", "SecondNo" },
+            nodes.Cast<XmlNode>().Select(n => Child(n, "NodeName")).ToArray());
+
+        // Numbering is NOT. Root=1; its two children First=2 and Second=3 take the contiguous
+        // run; only then do First's children get 4 and 5, and Second's 6.
+        string Seq(int i) => Child(nodes[i]!, "ID")!.Substring(10, 4);
+        Assert.Equal("0001", Seq(0));   // Root
+        Assert.Equal("0002", Seq(1));   // First
+        Assert.Equal("0004", Seq(2));   // First/FirstNo
+        Assert.Equal("0005", Seq(3));   // First/FirstDesc
+        Assert.Equal("0003", Seq(4));   // Second — declared last, numbered third
+        Assert.Equal("0006", Seq(5));   // Second/SecondNo
+
+        // Declaration order would have given Second "0005"; that it does not is the claim.
+        Assert.NotEqual("0005", Seq(4));
+
+        // And the linkage still resolves: each bound child's ParentID is its own
+        // tableelement's ID, which is the property the sequence exists to serve.
+        Assert.Equal(Child(nodes[1]!, "ID"), Child(nodes[2]!, "ParentID"));
+        Assert.Equal(Child(nodes[1]!, "ID"), Child(nodes[3]!, "ParentID"));
+        Assert.Equal(Child(nodes[4]!, "ID"), Child(nodes[5]!, "ParentID"));
+    }
+
+    /// <summary>
+    /// AL spells the property <c>UseTemporary</c>; BC's document element is <c>Temporary</c>.
+    /// Reading the ELEMENT's name off the AL properties answered the default on every node.
+    ///
+    /// <para>Measured on XmlPort 9864, where all 6 table nodes state <c>UseTemporary = true</c>
+    /// and BC's document states <c>Temporary=1</c> for all 6, against which the old read
+    /// answered 0 six times (12 harness differences with the backing field).</para>
+    ///
+    /// <para>Both directions, because a one-sided test cannot tell a fix from a changed
+    /// default: stated-true must give 1, and stated nowhere must still give 0.</para>
+    /// </summary>
+    [Fact]
+    public void Temporary_ReadsALsUseTemporarySpelling()
+    {
+        var stated = Nodes(EmitExportPort(
+            al: ExportPortAl.Replace("XmlName = 'Header';", "XmlName = 'Header'; UseTemporary = true;")));
+        Assert.Equal("1", Child(stated[1]!, "Temporary"));
+
+        // The fixture as written states neither spelling, so BC's own default stands.
+        Assert.Equal("0", Child(Nodes(EmitExportPort())[1]!, "Temporary"));
+    }
+
+    /// <summary>
+    /// <c>LinkTable</c> names the ancestor tableelement a linked one binds to. It was never
+    /// written, and BC writes the AL node name UNQUOTED — measured on XmlPort 9001, whose
+    /// document states <c>LinkTable=Security Group</c> for the AL's
+    /// <c>LinkTable = "Security Group"</c>.
+    ///
+    /// <para>Absent when not stated rather than empty, because BC omits the element entirely on
+    /// an unlinked tableelement — 4 of 6 table nodes state it on 9864 — and an empty one would
+    /// claim a link to the node named "".</para>
+    /// </summary>
+    [Fact]
+    public void LinkTable_IsWrittenUnquoted_AndOmittedWhenNotStated()
+    {
+        var quoted = Nodes(EmitExportPort(
+            al: ExportPortAl.Replace("XmlName = 'Header';", "XmlName = 'Header'; LinkTable = \"Security Group\";")));
+        Assert.Equal("Security Group", Child(quoted[1]!, "LinkTable"));
+
+        var bare = Nodes(EmitExportPort(
+            al: ExportPortAl.Replace("XmlName = 'Header';", "XmlName = 'Header'; LinkTable = Root;")));
+        Assert.Equal("Root", Child(bare[1]!, "LinkTable"));
+
+        Assert.Null(Child(Nodes(EmitExportPort())[1]!, "LinkTable"));
+    }
+
+    /// <summary>
+    /// The four variable-text separators BC's emitter states unconditionally and AL states
+    /// nowhere — measured identical on all four of System Application's xmlports.
+    ///
+    /// <para><c>RecordSeparator</c>/<c>TableSeparator</c> carry BC's own <c>&lt;NewLine&gt;</c>
+    /// token rather than a literal newline, because BC's reader decodes the token; writing a
+    /// real newline would make the reader see a newline where it expects the escape.</para>
+    /// </summary>
+    [Fact]
+    public void FormatSeparators_AreWrittenAtBCsOwnDefaults()
+    {
+        var doc = EmitExportPort();
+        Assert.Equal("\"", doc.SelectSingleNode("/XmlPort/FieldDelimiter")?.InnerText);
+        Assert.Equal(",", doc.SelectSingleNode("/XmlPort/FieldSeparator")?.InnerText);
+        Assert.Equal("<NewLine>", doc.SelectSingleNode("/XmlPort/RecordSeparator")?.InnerText);
+        Assert.Equal("<NewLine><NewLine>", doc.SelectSingleNode("/XmlPort/TableSeparator")?.InnerText);
+
+        // A declared value still wins over the default.
+        var stated = EmitExportPort(properties: new Dictionary<string, string> { ["FieldSeparator"] = ";" });
+        Assert.Equal(";", stated.SelectSingleNode("/XmlPort/FieldSeparator")?.InnerText);
+    }
+
+    /// <summary>
+    /// <c>Permissions</c> is written only when the object declares it, because BC omits the
+    /// element entirely otherwise — 1 of System Application's 4 xmlports states it. The VALUE
+    /// is still BC's canonical form away from the symbol file's AL text, which is #4471.
+    /// </summary>
+    [Fact]
+    public void Permissions_IsWrittenWhenDeclared_AndOmittedOtherwise()
+    {
+        var stated = EmitExportPort(
+            properties: new Dictionary<string, string> { ["Permissions"] = "tabledata \"Security Group\" = r" });
+        Assert.Equal("tabledata \"Security Group\" = r",
+            stated.SelectSingleNode("/XmlPort/Permissions")?.InnerText);
+
+        Assert.Null(EmitExportPort().SelectSingleNode("/XmlPort/Permissions"));
+    }
+
 }
