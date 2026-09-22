@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
@@ -707,11 +708,38 @@ internal static partial class BcAppSymbolCache
     /// <param name="InherentPermission">The four values BC writes on an
     /// <c>InherentPermissionsMethodAttribute</c> element beyond <c>Name</c>, or null for every
     /// other kind. See <see cref="InherentPermissionSymbol"/>.</param>
+    /// <param name="Parameters">The method's parameter list as BC's emitter writes it — the
+    /// <c>&lt;Parameters&gt;</c> subtree — or null when the symbol file states no
+    /// <c>Parameters</c> array at all. An EMPTY list is different from null: BC writes
+    /// <c>&lt;Parameters /&gt;</c> for a method that declares none, and 15 of the 152 methods
+    /// the runner emits at 28.1.49838.53910 are in that state (#4084).</param>
     internal sealed record CodeunitMethodSymbol(
         int Id, string Name, string Kind, string AttributeName,
         bool IncludeSender = false, bool? Isolated = null,
         InherentPermissionSymbol? InherentPermission = null,
-        bool? GlobalVarAccess = null);
+        bool? GlobalVarAccess = null,
+        List<MethodParameterSymbol>? Parameters = null);
+
+    /// <summary>
+    /// One <c>&lt;Parameter&gt;</c> element BC's <c>ObjectMetadataEmitter</c> writes, in the five
+    /// attributes it writes: <c>IsVar</c>, <c>IsArray</c>, <c>Name</c>, <c>RuntimeAttributes</c>,
+    /// <c>RuntimeType</c>, plus <c>Length</c> where the AL type states one.
+    ///
+    /// <para>Derived from the symbol file's own parameter list, which states the same list in
+    /// AL's spelling rather than the runtime's. Both re-spellings are MEASURED against BC's own
+    /// emitter output rather than inferred — see
+    /// <see cref="DeriveMethodParameter"/> for the rule and the population it reproduces.</para>
+    /// </summary>
+    /// <param name="Name">BC's emitted casing of the AL identifier.</param>
+    /// <param name="RuntimeType">BC's runtime type spelling.</param>
+    /// <param name="RuntimeAttributes">BC's <c>RuntimeAttributes</c> string, <c>""</c> where BC
+    /// writes an empty one — which is every parameter but an object handle.</param>
+    /// <param name="IsVar">The AL <c>var</c> modifier, which the symbol file states directly.</param>
+    /// <param name="Length">The AL type's declared length (<c>Code[20]</c>, <c>Text[250]</c>), or
+    /// null where the type states none — in which case BC writes no <c>Length</c> attribute at
+    /// all rather than a zero.</param>
+    internal sealed record MethodParameterSymbol(
+        string Name, string RuntimeType, string RuntimeAttributes, bool IsVar, int? Length);
 
     /// <summary>
     /// The four attributes BC's emitter writes on an <c>InherentPermissionsMethodAttribute</c>
@@ -2911,6 +2939,271 @@ internal static partial class BcAppSymbolCache
         return new InherentPermissionSymbol(objectType, objectId, mask, scope);
     }
 
+
+    /// <summary>
+    /// AL scalar type name -> the <c>RuntimeType</c> BC's emitter writes for it. The AL name is
+    /// the symbol file's <c>TypeDefinition.Name</c> with any <c>[length]</c> stripped.
+    ///
+    /// <para><b>Every entry is measured; there is deliberately no superset.</b> The 28 AL base
+    /// type names these three tables plus the <c>Enum</c> arm cover are exactly the 28 the
+    /// shipped apps exercise on an emitted method, across all four builds — so no entry here
+    /// rests on a guess about a shape BC never showed us. An AL type name absent from them makes
+    /// the whole method's parameter list unrenderable rather than producing a guessed element,
+    /// which is <see cref="DeriveMethodParameters"/>'s job.
+    /// docs/codeunit-metadata-from-bc.md#the-parameter-list has the per-name counts.</para>
+    /// </summary>
+    private static readonly Dictionary<string, string> MethodParameterRuntimeTypes =
+        new(StringComparer.Ordinal)
+        {
+            ["Boolean"] = "bool",
+            ["Integer"] = "int",
+            ["Text"] = "NavText",
+            ["Code"] = "NavCode",
+            ["Date"] = "NavDate",
+            ["Time"] = "NavTime",
+            ["DateTime"] = "NavDateTime",
+            ["Decimal"] = "Decimal18",
+            ["Guid"] = "System.Guid",
+            ["RecordId"] = "NavRecordId",
+            ["RecordRef"] = "NavRecordRef",
+            ["Variant"] = "NavVariant",
+            ["JsonObject"] = "NavJsonObject",
+            ["JsonArray"] = "NavJsonArray",
+            ["JsonToken"] = "NavJsonToken",
+            ["ModuleInfo"] = "NavModuleInfo",
+            ["ObjectType"] = "NavObjectType",
+            ["ClientType"] = "NavClientType",
+            ["Action"] = "FormResult",
+            ["InStream"] = "NavInStream",
+            ["DotNet"] = "NavDotNet",
+            ["HttpRequestMessage"] = "NavHttpRequestMessage",
+        };
+
+    /// <summary>
+    /// AL object-kind type name -> the handle <c>RuntimeType</c> BC writes. These differ from the
+    /// scalars in two ways BC's emitter treats together, both measured: a handle is never wrapped
+    /// in <c>ByRef&lt;&gt;</c>, and it carries the <c>RuntimeAttributes</c> string instead.
+    /// </summary>
+    private static readonly Dictionary<string, string> MethodParameterHandleRuntimeTypes =
+        new(StringComparer.Ordinal)
+        {
+            ["Record"] = "INavRecordHandle",
+            ["Codeunit"] = "NavCodeunitHandle",
+            ["Interface"] = "NavInterfaceHandle",
+        };
+
+    /// <summary>
+    /// AL generic container type name -> BC's generic <c>RuntimeType</c> head. The arguments are
+    /// re-spelled recursively through the same tables, so <c>List of [Code[250]]</c> becomes
+    /// <c>NavList&lt;NavCode&gt;</c> — note the ARGUMENT loses its length, which the measured
+    /// population settles rather than this comment asserting it.
+    /// </summary>
+    private static readonly Dictionary<string, string> MethodParameterGenericRuntimeTypes =
+        new(StringComparer.Ordinal)
+        {
+            ["List"] = "NavList",
+            ["Dictionary"] = "NavDictionary",
+        };
+
+    private static readonly System.Text.RegularExpressions.Regex AlTypeLengthSuffix =
+        new(@"^(?<name>[A-Za-z][A-Za-z0-9]*)\[(?<len>\d+)\]$",
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// BC's emitted casing of an AL parameter identifier: <b>the first character lowercased, and
+    /// nothing else touched.</b>
+    ///
+    /// <para><b>Claim.</b> An in-scope consumer reads <c>&lt;Parameter Name&gt;</c>, and this
+    /// answers the same string BC's own emitter writes for every parameter the runner renders.
+    /// </para>
+    ///
+    /// <para><b>Citation.</b> Measured against BC's own emitter output — the
+    /// <c>tools/gen-metadata-ground-truth.sh</c> bundles — joined by (codeunit id, method id) to
+    /// each app's shipped SymbolReference.json, over four builds and four DISTINCT
+    /// <c>Ncl.dll</c> binaries: 27.5.46862.53931 (<c>affa03c9</c>), 28.1.49838.53910
+    /// (<c>49b11d9b</c>), 28.1.49838.54308 (<c>6f2cf682</c>) and 28.4.53241.54407
+    /// (<c>108b8c6b</c>). 1,308 parameter observations, 1,308 exact, zero disagreements.</para>
+    ///
+    /// <para><b>Trap.</b> The word-aware alternative — lowercasing the whole leading run of
+    /// capitals, which is what "camelCase" usually means — is WRONG, and the shipped apps
+    /// discriminate it on exactly three parameters: <c>AFSOperationResponse</c> →
+    /// <c>aFSOperationResponse</c> (codeunit 8951), <c>AADObjectID</c> → <c>aADObjectID</c>
+    /// (codeunit 9017) and <c>IDataArchiveProvider</c> → <c>iDataArchiveProvider</c> (codeunit
+    /// 600). A word-aware rule answers <c>afsOperationResponse</c> and <c>aadObjectID</c> for the
+    /// first two — a well-formed element naming something else, which is the failure #4084 was
+    /// filed to prevent. Re-measure those three before changing this line.</para>
+    /// </summary>
+    private static string BcEmittedParameterName(string alName)
+        => alName.Length == 0
+            ? alName
+            : char.ToLowerInvariant(alName[0]) + alName.Substring(1);
+
+    /// <summary>
+    /// The <c>RuntimeType</c> BC writes for a type used as a GENERIC ARGUMENT — no length and no
+    /// <c>ByRef&lt;&gt;</c>, both of which BC applies only to the parameter itself. Returns null
+    /// for an AL type name no measured entry covers, which refuses the whole list.
+    /// </summary>
+    private static string? MethodParameterArgumentRuntimeType(JsonElement typeDefinition)
+    {
+        var (alName, _) = SplitAlTypeLength(
+            typeDefinition.TryGetProperty("Name", out var n) ? n.GetString() ?? string.Empty
+                                                             : string.Empty);
+        if (MethodParameterGenericRuntimeTypes.TryGetValue(alName, out var head))
+        {
+            if (!typeDefinition.TryGetProperty("TypeArguments", out var args)
+                || args.ValueKind != JsonValueKind.Array)
+                return null;
+            var parts = new List<string>();
+            foreach (var arg in args.EnumerateArray())
+            {
+                var part = MethodParameterArgumentRuntimeType(arg);
+                if (part is null) return null;
+                parts.Add(part);
+            }
+            return $"{head}<{string.Join(",", parts)}>";
+        }
+        if (alName == "Enum") return "NavOption";
+        if (MethodParameterRuntimeTypes.TryGetValue(alName, out var scalar)) return scalar;
+        if (MethodParameterHandleRuntimeTypes.TryGetValue(alName, out var handle)) return handle;
+        return null;
+    }
+
+    private static (string Name, int? Length) SplitAlTypeLength(string alTypeName)
+    {
+        var m = AlTypeLengthSuffix.Match(alTypeName);
+        return m.Success
+            ? (m.Groups["name"].Value, int.Parse(m.Groups["len"].Value, CultureInfo.InvariantCulture))
+            : (alTypeName, null);
+    }
+
+    /// <summary>
+    /// One <c>&lt;Parameter&gt;</c> element as BC's emitter writes it, from the symbol file's own
+    /// AL-spelled declaration. Returns null when the AL type is not one this derivation has
+    /// measured, which makes the caller refuse the whole method's list.
+    ///
+    /// <para><b>Claim.</b> For every parameter the runner renders, all six values BC writes —
+    /// <c>Name</c>, <c>RuntimeType</c>, <c>RuntimeAttributes</c>, <c>IsVar</c>, <c>IsArray</c>
+    /// and <c>Length</c>'s presence and value — equal what BC's own <c>ObjectMetadataEmitter</c>
+    /// writes.</para>
+    ///
+    /// <para><b>Citation.</b> The join described on <see cref="BcEmittedParameterName"/>:
+    /// 1,308 parameter observations over four distinct <c>Ncl.dll</c> binaries, 1,308 exact on
+    /// all six values, zero disagreements and zero unmapped AL types. On 28.1.49838.53910 the
+    /// population is 328 parameters over 168 methods, of which the 302 on the 66 codeunits the
+    /// runner actually emits are the allowlisted <c>MetaMethod.Parameters.&lt;presence&gt;</c>
+    /// ×302. docs/codeunit-metadata-from-bc.md#the-parameter-list has the per-shape table.</para>
+    ///
+    /// <para><b>Three traps, each one a measured shape rather than a precaution.</b></para>
+    /// <list type="number">
+    /// <item>An OBJECT HANDLE is not wrapped in <c>ByRef&lt;&gt;</c> when <c>var</c> — it stays
+    /// <c>INavRecordHandle</c> / <c>NavCodeunitHandle</c> and gains
+    /// <c>,[NavByReferenceAttribute]</c> in <c>RuntimeAttributes</c> instead. A scalar does the
+    /// opposite: <c>ByRef&lt;bool&gt;</c> with an empty <c>RuntimeAttributes</c>.</item>
+    /// <item><c>Interface</c> is a handle whose subtype has NO <c>Id</c>, and it takes NEITHER
+    /// attribute — not <c>NavObjectId</c> and not <c>NavByReferenceAttribute</c>, even though all
+    /// three measured instances are <c>var</c>. Keying <c>NavByReferenceAttribute</c> on
+    /// <c>IsVar</c> alone disagrees with BC on exactly those three (codeunits 600, 2611, 3917).</item>
+    /// <item>A <c>Temporary</c> record changes nothing BC writes here — measured on the four
+    /// <c>"Temporary": true</c> parameters in the population, whose elements are identical to a
+    /// non-temporary record of the same id.</item>
+    /// </list>
+    /// </summary>
+    private static MethodParameterSymbol? DeriveMethodParameter(JsonElement parameter)
+    {
+        var alName = parameter.TryGetProperty("Name", out var nameProp) ? nameProp.GetString() : null;
+        if (string.IsNullOrEmpty(alName)) return null;
+        if (!parameter.TryGetProperty("TypeDefinition", out var typeDefinition)
+            || typeDefinition.ValueKind != JsonValueKind.Object)
+            return null;
+
+        // An ARRAY parameter is refused rather than rendered: BC writes IsArray="True" and a
+        // RuntimeType this derivation has never observed, because no parameter in either shipped
+        // app declares one — 574 of 574 elements are IsArray="False" at 28.1.49838.53910. An
+        // unobserved shape is unmeasured, not absent (guards-need-a-third-state.md).
+        if (typeDefinition.TryGetProperty("ArrayDimensions", out var dims)
+            && dims.ValueKind == JsonValueKind.Array && dims.GetArrayLength() > 0)
+            return null;
+
+        var isVar = parameter.TryGetProperty("IsVar", out var varProp)
+                    && varProp.ValueKind == JsonValueKind.True;
+        var (alTypeName, length) = SplitAlTypeLength(
+            typeDefinition.TryGetProperty("Name", out var tn) ? tn.GetString() ?? string.Empty
+                                                              : string.Empty);
+        var subtype = typeDefinition.TryGetProperty("Subtype", out var st)
+                      && st.ValueKind == JsonValueKind.Object ? st : default;
+        var name = BcEmittedParameterName(alName);
+
+        if (MethodParameterHandleRuntimeTypes.TryGetValue(alTypeName, out var handleType))
+        {
+            var objectId = subtype.ValueKind == JsonValueKind.Object
+                           && subtype.TryGetProperty("Id", out var idProp)
+                           && idProp.TryGetInt32(out var oid) ? oid : (int?)null;
+            // Trap 2: no object id means Interface, which takes neither attribute.
+            var runtimeAttributes = objectId is null
+                ? string.Empty
+                : isVar
+                    ? $"[NavObjectId(ObjectId={objectId.Value.ToString(CultureInfo.InvariantCulture)})],[NavByReferenceAttribute]"
+                    : $"[NavObjectId(ObjectId={objectId.Value.ToString(CultureInfo.InvariantCulture)})]";
+            // Trap 1: a handle is NOT wrapped in ByRef<> when var.
+            return new MethodParameterSymbol(name, handleType, runtimeAttributes, isVar, null);
+        }
+
+        string? runtimeType;
+        if (MethodParameterGenericRuntimeTypes.ContainsKey(alTypeName))
+            runtimeType = MethodParameterArgumentRuntimeType(typeDefinition);
+        else if (alTypeName == "Enum")
+            // Measured: 19 Enum parameters, all NavOption, whatever the enum id. AL `Option`
+            // is NOT folded in here -- it appears on no emitted method in either shipped app,
+            // so its RuntimeType is unmeasured and it refuses (the ArrayDimensions case below
+            // is the same judgement).
+            runtimeType = "NavOption";
+        else if (MethodParameterRuntimeTypes.TryGetValue(alTypeName, out var scalar))
+            runtimeType = scalar;
+        else
+            runtimeType = null;
+        if (runtimeType is null) return null;
+
+        if (isVar) runtimeType = $"ByRef<{runtimeType}>";
+        return new MethodParameterSymbol(name, runtimeType, string.Empty, isVar, length);
+    }
+
+    /// <summary>
+    /// The method's whole parameter list, or null when ANY of its parameters is a shape this
+    /// derivation has not measured.
+    ///
+    /// <para><b>All-or-nothing per method, deliberately.</b> BC writes one
+    /// <c>&lt;Parameters&gt;</c> element holding the declaration's full list in order, and
+    /// <c>MetadataObjectDiff</c> pairs its children POSITIONALLY — the same property that made a
+    /// short <c>&lt;Methods&gt;</c> subtree worse than none (#3788). A list that silently omitted
+    /// the one parameter it could not spell would put every later parameter in a different slot,
+    /// which is the runner asserting an association it has no evidence for
+    /// (loud-failures.md). So one unrenderable parameter withdraws the element, and the method
+    /// keeps the honest one-directional absence it has today.</para>
+    ///
+    /// <para>An EMPTY list is a real answer and not a refusal: BC writes
+    /// <c>&lt;Parameters /&gt;</c> for a method that declares none, on 15 of the 152 methods the
+    /// runner emits at 28.1.49838.53910.</para>
+    /// </summary>
+    private static List<MethodParameterSymbol>? DeriveMethodParameters(JsonElement method)
+    {
+        if (!method.TryGetProperty("Parameters", out var parameters)
+            || parameters.ValueKind != JsonValueKind.Array)
+            // The symbol file states no Parameters array at all. BC still writes an empty
+            // element for a method that declares none, and a method whose array is absent
+            // declares none — measured: every one of the 15 zero-parameter methods in the
+            // emitted population has no "Parameters" key rather than an empty one.
+            return new List<MethodParameterSymbol>();
+
+        var result = new List<MethodParameterSymbol>();
+        foreach (var parameter in parameters.EnumerateArray())
+        {
+            var derived = DeriveMethodParameter(parameter);
+            if (derived is null) return null;
+            result.Add(derived);
+        }
+        return result;
+    }
+
     /// <summary>
     /// The codeunit's attributed methods, in the symbol file's own array order — which is BC's
     /// document order, and which is load-bearing because <c>MetadataObjectDiff</c> pairs
@@ -2975,7 +3268,8 @@ internal static partial class BcAppSymbolCache
 
             (result ??= new List<CodeunitMethodSymbol>()).Add(
                 new CodeunitMethodSymbol(methodId, methodName, kind, attributeName,
-                    includeSender, isolated, inherentPermission, globalVarAccess));
+                    includeSender, isolated, inherentPermission, globalVarAccess,
+                    DeriveMethodParameters(method)));
         }
         return result;
     }
