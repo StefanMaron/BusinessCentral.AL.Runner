@@ -1707,6 +1707,60 @@ load**, not an attributable single-test failure. Nothing runs, and the message n
 That is the intended trade: the alternative is every field trigger in the bundle going quiet
 while the suite still reports green.
 
+<a id="platform-apps-deferral"></a>
+
+## Platform-apps deferral: what an app.json floor does and does not say
+
+Every AL `app.json` carries `platform` and, usually, `application`. `ReadDependencies`
+synthesises the implicit `Microsoft/System` and `Microsoft/Application` roots from them, so a
+manifest declaring `application` pulls the Base Application closure whether or not a single line
+of its AL references a Microsoft type.
+
+**A manifest cannot tell those two apart.** `application: "27.0.0.0"` is what an AL project
+declares because it targets BC 27, not because it uses `Customer`. Nothing readable before the
+compile distinguishes a floor the AL uses from one it merely declares, which is why the runner
+does not predict it: it **attempts** the run without the closure in a captured child process and
+trusts only an exit-0 result. A non-green attempt is discarded and the run proceeds with the
+closure exactly as before, so a wrong guess costs time and never correctness (#2232, #2223).
+
+### What the closure costs, and which floor pays it
+
+Measured on one box, warm cache, a bundle whose entire AL is `a := 2 + 2`:
+
+| the manifest declares | packages resolved | assemblies | peak RSS | wall |
+|---|---|---|---|---|
+| `platform` only | 1 (`Microsoft/System`, ~620 KB) | 0 | 0.16 GiB | ~2.0 s |
+| `application` too | 5, incl. ~98 MB Base Application | 7 | 3.06 GiB | ~10.7 s |
+| `application`, closure skipped | 0 | 0 | 0.27 GiB | ~2.07 s |
+
+So the saving belongs to `application`-floor bundles alone. A platform-only bundle has almost
+nothing to skip, and attempting it spends a whole subprocess to save ~620 KB already loaded —
+which is why the skip requires an implicit `Microsoft/Application` root.
+
+### Two conditions the deferral declines under, and why
+
+The attempt's output is **replayed** on top of the output this process has already produced, so
+it is only safe where the parent has printed nothing the child also prints:
+
+- **`--verbose`** — the parent has already emitted its startup preamble (shadow re-exec, BC
+  selection, the #2210 cross-major note, the bundle banner) and the child re-emits all of it.
+  Replaying duplicates every line; measured, the cross-major note went from one occurrence to
+  two.
+- **`--output-json`** — stdout is contracted to hold the JSON document and nothing else, so
+  interleaving any replayed text breaks the parse outright.
+
+Both are diagnostic or machine-readable modes whose runs still work; they simply do not take the
+saving. Removing either condition reintroduces the duplication, which is why
+`CrossMajorNoteTests`, `OutputPathPreparationTests` and
+`DeferredPlatformAppsWithholdTests.Verbose_DoesNotReplayAChildsOutput_SoThePreambleIsNotDuplicated`
+all pin it.
+
+**A note on why the replay is not simply made preamble-aware.** Every invocation already re-execs
+into a shadow-runtime child whose streams are *inherited* rather than captured, so a line count
+taken in the outer process does not describe what the user sees. #2375 tracks removing that
+re-exec; until then the honest fix is to decline rather than to guess at the overlap.
+
+
 ## Known gaps — in scope but not yet implemented
 
 These are not architectural limits. They can be fixed; report them at

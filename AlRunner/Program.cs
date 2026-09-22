@@ -1795,15 +1795,14 @@ List<string> PlatformCheckDirs() =>
 // work WITHOUT the Microsoft closure?" — #2232's deferred attempt. That env var used to
 // suppress only the DOWNLOAD decision, so whenever platform-apps happened to be on disk the
 // attempt resolved and loaded the very closure it was measuring the absence of, and its green
-// verdict said nothing. Measured on this box, one bundle whose AL is `2 + 2`, warm cache:
-// 5 platform deps / 7 assemblies / 3.06 GB peak RSS / 10.7 s with the directory present,
-// against 0 / 0 / 295 MB / 2.1 s without it.
+// verdict said nothing.
 //
 // Scoped to the attempt, NOT to every run: an ordinary invocation keeps the closure whether
 // or not the AL turns out to use it, because nothing here can tell a floor the AL uses from
 // one it does not (docs/limitations.md#platform-apps-deferral), and a run that silently
 // skipped it would trade this cost for an unresolved-type failure.
-// DeferredPlatformAppsWithholdTests pins both halves.
+// DeferredPlatformAppsWithholdTests pins both halves; the measurement behind the saving is
+// stated once at the decision site below.
 var withholdPlatformApps = AlRunner.Infrastructure.ProvisioningCheck.WithholdingPlatformApps();
 foreach (var d in extraProvisionSearchDirs)
 {
@@ -1844,12 +1843,12 @@ if (!provisionSubcommand)
     // still be missing the whole test toolkit, which fails compiling any test bundle.
     var toolkitPresent = decision.TestComplete;
 
-    // #2223: the same question one disk state later. #2232's deferral above fires only when the
+    // #2223: the same question one disk state later. #2232's deferral below fires only when the
     // apps are MISSING (its own precondition is a pending download), so once
     // `al-runner provision` has run, every invocation resolves and loads the whole closure for a
-    // bundle whose need comes from nothing but an app.json floor. Measured on this box, warm
-    // cache, one bundle whose AL is `2 + 2`: 5 platform deps / 7 assemblies / 3.06 GB peak RSS /
-    // 10.7 s present, against 0 / 0 / 295 MB / 2.1 s absent.
+    // bundle whose need comes from nothing but an app.json `application` floor. What that costs,
+    // and why only an `application` floor is worth an attempt, is the table in
+    // docs/limitations.md#platform-apps-deferral.
     //
     // Same evidence standard as #2232, deliberately: the attempt runs in a captured child and
     // only exit 0 is the verdict, so a bundle that turns out to use Base Application falls
@@ -1862,20 +1861,12 @@ if (!provisionSubcommand)
     // kept the closure AND spawned its own child would recurse until the box ran out of
     // processes, which is not a failure the withhold's own tests can see.
     //
-    // NOT under --verbose, and that is a correctness condition rather than a preference. The
-    // attempt's output is REPLAYED on top of what this process has already printed, and under
-    // --verbose the parent has emitted a startup preamble the child re-emits in full — so every
-    // line of it appears twice. Measured on the CrossMajorNote fixture: `main` prints the #2210
-    // note once, replaying printed it twice, against a test asserting exactly once. Quiet runs
-    // print none of that, so the replay is clean there; `--output-json` and `--server` are
-    // excluded for the same reason one level up (their stdout is a contracted document, and
-    // interleaving anything into it breaks the parse).
-    //
-    // The cost of the exclusion is bounded and known: --verbose is a diagnostic flag, and the run
-    // it describes still works, just without this saving. Making the replay itself preamble-aware
-    // was tried and abandoned -- every invocation ALREADY re-execs into a shadow-runtime child
-    // whose streams are inherited rather than captured, so a parent-side line count does not
-    // describe what the user sees. #2375 is the issue that would remove that re-exec.
+    // NOT under --verbose or --output-json, and those are correctness conditions rather than
+    // preferences: the attempt's output is REPLAYED on top of what this process has already
+    // printed, so it is safe only where the parent printed nothing the child also prints.
+    // Removing either reintroduces the duplication that broke CrossMajorNoteTests and
+    // OutputPathPreparationTests — both modes, and why the replay is not instead made
+    // preamble-aware, are in docs/limitations.md#platform-apps-deferral.
     if (!serverMode && !watchMode && !tddMode && strictExitCode
         && !AlRunner.Log.Verbose
         && !outputJson
