@@ -237,6 +237,58 @@ public static partial class RecordPatches
     /// </summary>
     private const string XmlPortNodeIdSuffix = "-0000-0F00-0000836BD2D2";
 
+    /// <summary>
+    /// The 1-based sequence number BC gives each schema node, keyed by the node's position in
+    /// <paramref name="schema"/> (which is declaration order — the order the document is
+    /// written in).
+    ///
+    /// <para><b>The two orders are different, and that is the whole reason this exists.</b>
+    /// BC writes the nodes depth-first in declaration order, but NUMBERS them breadth-first by
+    /// parent: every node's direct children take a contiguous run, and only then does
+    /// numbering descend into those children. So a second tableelement declared after a first
+    /// one's subtree gets the LOWER number, because it is its parent's next child.</para>
+    ///
+    /// <para>Measured against BC's own emitted documents for all four of System Application's
+    /// xmlports on 28.1.49838.53910 — 9001, 9862, 9863 and 9864, 91 nodes between them — where
+    /// this rule reproduces every node's ID exactly and plain declaration order reproduces 69
+    /// of them wrongly (#4467). The clearest instance is XmlPort 9862: <c>Permission</c> is the
+    /// twelfth node written and carries sequence 9, while <c>PermissionSetRel</c>'s three
+    /// children, written before it, carry 10, 11 and 12.</para>
+    ///
+    /// <para>ParentID follows for free: it is looked up from the emitted id of the enclosing
+    /// node, which this map has already numbered.</para>
+    /// </summary>
+    private static int[] XmlPortNodeSequences(List<XmlPortSchemaNode> schema)
+    {
+        var sequence = new int[schema.Count];
+        var next = 1;
+
+        // The direct children of the node at `parent` (-1 for the roots), in declaration
+        // order. A node's children are the nodes after it at exactly one more indentation,
+        // up to the first node at its own indentation or shallower.
+        List<int> ChildrenOf(int parent)
+        {
+            var depth = parent < 0 ? 0 : schema[parent].Indentation + 1;
+            var children = new List<int>();
+            for (int i = parent + 1; i < schema.Count; i++)
+            {
+                if (schema[i].Indentation < depth) break;
+                if (schema[i].Indentation == depth) children.Add(i);
+            }
+            return children;
+        }
+
+        // Number one generation, then recurse — the breadth-first-by-parent walk above.
+        void Number(List<int> generation)
+        {
+            foreach (var i in generation) sequence[i] = next++;
+            foreach (var i in generation) Number(ChildrenOf(i));
+        }
+
+        Number(ChildrenOf(-1));
+        return sequence;
+    }
+
     private static string XmlPortNodeId(int xmlPortId, int sequence)
         => $"{{{xmlPortId:X8}-{sequence:X4}{XmlPortNodeIdSuffix}}}";
 
@@ -301,6 +353,24 @@ public static partial class RecordPatches
             w.WriteElementString("DefaultFieldsValidation", XmlPortBool(port, "DefaultFieldsValidation", true));
             w.WriteElementString("FileName", XmlPortProperty(port, "FileName") ?? "");
             w.WriteElementString("FormatEvaluate", "C/SIDE Format/Evaluate");
+            // The four VARIABLE-TEXT format separators. BC's emitter states all four
+            // unconditionally and AL states none of them — measured on System Application's
+            // four xmlports (9001, 9862, 9863, 9864) on 28.1.49838.53910, where every one
+            // carries the same four values and no .al source in the .app mentions any of them.
+            // So these are BC's format defaults rather than anything the object declares, and
+            // writing them is derivation: a constant reproduces them, and the symbol file's
+            // silence is what makes it a constant rather than a lookup.
+            //
+            // <NewLine> is the DOCUMENT's own escape, not a literal to decode here: BC's reader
+            // turns it into "\n" itself, which is what the parsed MetaXmlPort answers. Writing
+            // a real newline would make the reader see a newline where it expects the token.
+            // Still read from the symbol file first, so an xmlport that does declare one wins.
+            w.WriteElementString("FieldDelimiter", XmlPortProperty(port, "FieldDelimiter") ?? "\"");
+            w.WriteElementString("FieldSeparator", XmlPortProperty(port, "FieldSeparator") ?? ",");
+            w.WriteElementString(
+                "RecordSeparator", XmlPortProperty(port, "RecordSeparator") ?? "<NewLine>");
+            w.WriteElementString(
+                "TableSeparator", XmlPortProperty(port, "TableSeparator") ?? "<NewLine><NewLine>");
             w.WriteElementString("InlineSchema", XmlPortBool(port, "InlineSchema", false));
             w.WriteElementString("PreserveWhiteSpace", XmlPortBool(port, "PreserveWhiteSpace", false));
             w.WriteElementString("TransactionType", XmlPortProperty(port, "TransactionType") ?? "UpdateNoLocks");
@@ -310,6 +380,13 @@ public static partial class RecordPatches
             // which is what BC's emitter wrote for probe port 61602, stating none (#3797).
             w.WriteElementString("UseRequestForm", XmlPortBool(port, "UseRequestPage", true));
             w.WriteElementString("XmlVersionNo", "1.0");
+            // Permissions is written ONLY when the object declares it, because BC omits the
+            // element entirely otherwise — 1 of System Application's 4 xmlports states it
+            // (9001, "TableData Security Group=r") and the other three have no element at all,
+            // so an unconditional empty one would claim an empty permission set where BC
+            // claims nothing.
+            if (XmlPortProperty(port, "Permissions") is { Length: > 0 } permissions)
+                w.WriteElementString("Permissions", permissions);
 
             if (XmlPortProperty(port, "Caption") is { Length: > 0 } caption)
             {
@@ -340,10 +417,11 @@ public static partial class RecordPatches
             // tableelement (what a bound child's field name resolves against). Carried
             // together because a bound node needs both and they come from the same ancestor.
             var enclosing = new List<(string NodeId, int TableId)>();
+            var sequence = XmlPortNodeSequences(schema);
             for (int i = 0; i < schema.Count; i++)
             {
                 var n = schema[i];
-                var nodeId = XmlPortNodeId(port.Id, i + 1);
+                var nodeId = XmlPortNodeId(port.Id, sequence[i]);
 
                 var parent = n.Indentation > 0 && n.Indentation <= enclosing.Count
                     ? enclosing[n.Indentation - 1]
@@ -353,7 +431,7 @@ public static partial class RecordPatches
                     : 0;
                 WriteXmlPortNode(w, n, nodeId, parent.Item1, tableId, parent.Item2);
 
-                if (tableId > 0) tableElements.Add((i + 1, tableId));
+                if (tableId > 0) tableElements.Add((sequence[i], tableId));
 
                 if (n.Indentation < enclosing.Count)
                     enclosing.RemoveRange(n.Indentation, enclosing.Count - n.Indentation);
@@ -542,6 +620,17 @@ public static partial class RecordPatches
             w.WriteElementString("AutoUpdate", XmlPortNodeBool(n, "AutoUpdate", false));
             w.WriteElementString("CalcFields", n.Properties.TryGetValue("CalcFields", out var cf) ? cf : "");
             w.WriteElementString("LinkFields", n.Properties.TryGetValue("LinkFields", out var lf) ? lf : "");
+            // LinkTable names the ANCESTOR TABLEELEMENT this one links to, by its AL node name,
+            // which BC writes through UNQUOTED — measured on XmlPort 9001, whose document
+            // states LinkTable=Security Group for the AL's `LinkTable = "Security Group"`.
+            // LastNameSegment is the same unquoting SourceTable already goes through above, so
+            // a name needing quotes in AL lands the same way on both.
+            //
+            // Written only when stated, because BC omits the element entirely on an unlinked
+            // tableelement (4 of 6 table nodes state it on 9864) and an empty one would claim
+            // a link to the node named "".
+            if (n.Properties.TryGetValue("LinkTable", out var lt) && !string.IsNullOrWhiteSpace(lt))
+                w.WriteElementString("LinkTable", LastNameSegment(lt));
             w.WriteElementString("LinkTableForceInsert", XmlPortNodeBool(n, "LinkTableForceInsert", true));
         }
 
@@ -566,7 +655,18 @@ public static partial class RecordPatches
         {
             w.WriteElementString("ReqFilterFields", n.Properties.TryGetValue("ReqFilterFields", out var rff) ? rff : "");
             w.WriteElementString("SourceTableView", n.Properties.TryGetValue("SourceTableView", out var stv) ? stv : "");
-            w.WriteElementString("Temporary", XmlPortNodeBool(n, "Temporary", false));
+            // AL spells this property UseTemporary and BC's document element is Temporary —
+            // different names for one value, which is why reading "Temporary" off the AL
+            // properties answered the default on every node. Measured on XmlPort 9864, where
+            // all 6 table nodes state `UseTemporary = true` in AL and BC's document states
+            // Temporary=1 for all 6, against which the old read answered 0 six times.
+            // "Temporary" is still accepted first so an AL dialect spelling it that way keeps
+            // working.
+            w.WriteElementString(
+                "Temporary",
+                n.Properties.ContainsKey("Temporary")
+                    ? XmlPortNodeBool(n, "Temporary", false)
+                    : XmlPortNodeBool(n, "UseTemporary", false));
         }
         else if (!isBound)
         {

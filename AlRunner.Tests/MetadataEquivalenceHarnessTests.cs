@@ -19,6 +19,7 @@
 // dump is the working specification for the reader fix.
 
 using AlRunner.Metadata;
+using AlRunner.Patches;
 using System.Text;
 using System.Text.Json;
 using Xunit;
@@ -181,6 +182,68 @@ public sealed class MetadataEquivalenceHarnessTests
             "A direction-scoped entry also lands here when every difference has flipped to the " +
             "direction it does NOT cover, which is a finding rather than a tidy-up:" +
             Environment.NewLine + string.Join(Environment.NewLine, verdict.UnusedEntries));
+    }
+
+    /// <summary>
+    /// The projection the harness renders the runner's xmlport side through must be the
+    /// runner's real derivation, not a stub that states only the two values every path knows.
+    ///
+    /// <para>#3797 landed <c>TryBuildDependencyXmlPortMetadata</c>, which reconstructs a
+    /// precompiled xmlport's whole document. #4467 is that the harness reached neither it nor
+    /// anything downstream of it, so the harness kept reporting the runner as knowing nothing
+    /// about xmlport structure while the runner knew it. This asserts the wiring by its
+    /// OBSERVABLE — node elements and object properties in the rendered document — rather
+    /// than by the name of the function that produced it, so it cannot be satisfied by a
+    /// forwarder that is renamed back to a stub.</para>
+    ///
+    /// <para>Deliberately NOT an assertion that the document equals BC's: that is
+    /// <see cref="Every_difference_is_declared_with_a_reason"/>'s job against the ground
+    /// truth, and an equality here would be the manufactured agreement this projection exists
+    /// to avoid. What is asserted is that the runner STATES something it derived.</para>
+    /// </summary>
+    [SkippableFact]
+    public void The_xmlport_projection_renders_the_runners_derivation_not_a_two_element_stub()
+    {
+        // RunAll() rather than a bare fixture check: it is what registers the .app packages
+        // the derivation reads, and without that registration the projection answers null for
+        // a reason that has nothing to do with this assertion.
+        var reports = RunAll();
+
+        var xmlPorts = reports
+            .SelectMany(r => r.Bundle.Objects.Where(o => o.Kind == "XmlPort").Select(o => (r.Bundle.Label, o)))
+            .ToArray();
+
+        Skip.If(xmlPorts.Length == 0, "no bundle on this box carries an XmlPort; nothing to measure.");
+
+        foreach (var (label, obj) in xmlPorts)
+        {
+            var xml = RecordPatches.TryBuildXmlPortMetadataEquivalenceXml(obj.Id);
+            Assert.True(xml is not null,
+                $"{label} XmlPort {obj.Id} '{obj.Name}': the projection produced no document at " +
+                "all, so the harness has nothing to compare and every xmlport difference it " +
+                "reports is about an absent runner side rather than about the derivation.");
+
+            var doc = new System.Xml.XmlDocument();
+            doc.LoadXml(xml!);
+
+            var nodes = doc.SelectNodes("/XmlPort/Node")!.Count;
+            Assert.True(nodes > 0,
+                $"{label} XmlPort {obj.Id} '{obj.Name}': the projection states zero <Node> " +
+                "elements. #3797 reconstructs the node tree from the .app's embedded AL source " +
+                "for all 44 precompiled xmlports, so zero here means the harness is rendering a " +
+                "stub rather than that derivation (#4467).");
+
+            // The three object properties #3797 measured the old stub answering wrongly, by
+            // BC's own default rather than by derivation: Direction (Both for Export),
+            // Encoding (UTF16 for UTF8) and PreserveWhiteSpace. A document stating them is a
+            // document the derivation produced; the stub stated none of the three.
+            foreach (var element in new[] { "Direction", "Encoding", "PreserveWhiteSpace" })
+                Assert.True(doc.SelectSingleNode($"/XmlPort/{element}") is not null,
+                    $"{label} XmlPort {obj.Id} '{obj.Name}': the projection states no " +
+                    $"<{element}>. Leaving it off makes BC's own constructor apply its default, " +
+                    "which is what the two-element stub did and what #4467 is (see the " +
+                    "allowlist entries for MetaXmlPort.Direction and its siblings).");
+        }
     }
 
     [SkippableFact]
