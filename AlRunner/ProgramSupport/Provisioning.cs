@@ -212,9 +212,20 @@ internal static partial class ProgramSupport
         // auto-provision reuse scan (FindWarmProvisionedVersion) found and reporting
         // "missing" on every subsequent --no-auto-provision run even right after `provision`
         // had just completed successfully.
+        // #2223: inside #2232's attempt-without-the-platform-apps child, the runner-owned
+        // platform-apps directories are withheld — the test-apps siblings are NOT (the test
+        // toolkit is a separate artifact set, and a bundle needing it never reaches the attempt).
+        // This is the SECOND of two routes by which CollectRunnerOwnedProvisionDirs reaches
+        // packageCacheDirs; Program.cs's extraProvisionSearchDirs fold is the other, and the two
+        // must agree or the attempt runs with the closure it is measuring the absence of.
+        var withhold = AlRunner.Infrastructure.ProvisioningCheck.WithholdingPlatformApps();
         foreach (var dir in AlRunner.Infrastructure.ProvisioningCheck.CollectRunnerOwnedProvisionDirs(
             AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, mmPrefix))
+        {
+            if (withhold && AlRunner.Infrastructure.ProvisioningCheck.IsRunnerOwnedPlatformAppsDir(dir))
+                continue;
             yield return dir;
+        }
     }
 
     // Highest version-named child of <root> matching <versionPrefix> (System.Version sort),

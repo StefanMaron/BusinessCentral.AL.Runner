@@ -224,6 +224,16 @@ public sealed class BaseAppFloorFixtureGuardTests
             + "synthesized package's App/@Application, so DependencyResolver can follow it. The "
             + "cost this rule guards is zero here: the manifest is packaged and read back "
             + "in-process, and no runner subprocess is ever spawned against it",
+        ["DeferredPlatformAppsWithholdTests.cs"] =
+            "legitimate (#2223) — the floor is the SUBJECT: these tests assert that a bundle whose "
+            + "platform-app need comes ONLY from an \"application\" floor loads none of the "
+            + "Microsoft closure on a warm run, and that one naming a Microsoft dependency still "
+            + "does. Measured on main, same box: a platform-only bundle resolves ONE package "
+            + "(Microsoft/System, ~620 KB) while an application-floor bundle resolves FIVE "
+            + "including the ~98 MB Base Application — so without the floor these tests have no "
+            + "closure to skip and assert nothing. The cost this rule guards is what they MEASURE: "
+            + "the passing runs load zero dependencies, and only the two deliberate control cases "
+            + "pay the closure they exist to prove is still served",
     };
 
     [Fact]
@@ -246,7 +256,7 @@ public sealed class BaseAppFloorFixtureGuardTests
     }
 
     [Fact]
-    public void NoTestSource_WritesTheBaseApplicationFloor_ExceptTheAllowlistedThree()
+    public void NoTestSource_WritesTheBaseApplicationFloor_ExceptTheAllowlistedFour()
     {
         var offenders = new List<string>();
         foreach (var path in TestSourcePaths())
