@@ -18,11 +18,133 @@
 // than a pre-built node list on purpose: a test handed a node list would pass with the schema
 // parser completely broken, which is the defect the whole issue is about.
 using System.Collections.Generic;
+using System.IO;
+using System.IO.Compression;
+using System.Text;
 using System.Xml;
 using AlRunner.Patches;
 using Xunit;
 
 namespace AlRunner.Tests;
+
+/// <summary>
+/// The source-file reader half (#3797, round 2). SymbolReference.json states an object's
+/// source path SINGLE-encoded while the zip may name the same folder DOUBLE-encoded, and the
+/// reader matched on suffix only — so those objects read as "this .app ships no source".
+///
+/// <para>Measured on 28.1.49838.53910: System Application states
+/// <c>Permission%20Sets/src/xmlports/…</c> for entries the zip names
+/// <c>src/Permission%2520Sets/src/xmlports/…</c> (<c>%25</c> is a literal <c>%</c>, so
+/// <c>%2520</c> decodes once to <c>%20</c>). 4 of System Application's 4 xmlports were
+/// affected and 0 of Base Application's 40, which is why the whole-population count was 40 of
+/// 44 before this and 44 of 44 after.</para>
+///
+/// <para>Synthetic .apps rather than platform artifacts, so these run anywhere and state the
+/// property rather than a build's contents (no Base Application floor —
+/// .claude/rules/no-base-app-in-csharp-tests.md).</para>
+/// </summary>
+public class BcAppSourceFileEncodingTests : IDisposable
+{
+    private readonly string _root = TestScratch.Dir("al-runner-3797-src-encoding");
+
+    public BcAppSourceFileEncodingTests() => Directory.CreateDirectory(_root);
+
+    public void Dispose()
+    {
+        try { Directory.Delete(_root, recursive: true); } catch { /* best-effort */ }
+    }
+
+    /// <param name="zipEntryPath">How the ZIP names the file — the packaging's spelling.</param>
+    private string WriteApp(string name, string zipEntryPath, string content)
+    {
+        var path = Path.Combine(_root, name);
+        using (var fs = new FileStream(path, FileMode.Create))
+        using (var za = new ZipArchive(fs, ZipArchiveMode.Create))
+        {
+            var entry = za.CreateEntry(zipEntryPath);
+            using var w = new StreamWriter(entry.Open(), Encoding.UTF8);
+            w.Write(content);
+        }
+        return path;
+    }
+
+    /// <summary>
+    /// The defect: stated single-encoded, packaged double-encoded. Before the fix this answered
+    /// null, which every caller reads as "no source shipped".
+    /// </summary>
+    [Fact]
+    public void DoubleEncodedZipEntry_IsFoundFromTheSingleEncodedStatedPath()
+    {
+        var app = WriteApp(
+            "double-encoded.app",
+            zipEntryPath: "src/Permission%2520Sets/src/xmlports/Probe.XmlPort.al",
+            content: "xmlport 9862 \"Probe\" { }");
+
+        var read = BcAppSymbolCache.TryReadSourceFile(
+            app, "Permission%20Sets/src/xmlports/Probe.XmlPort.al");
+
+        Assert.NotNull(read);
+        Assert.Contains("xmlport 9862", read!);
+    }
+
+    /// <summary>
+    /// The control, and the half that makes the fix a discrimination rather than a widening:
+    /// an ordinary path must still resolve by the plain suffix match. A re-encoding probe that
+    /// ran unconditionally, or replaced the first match, would break every app that packages
+    /// its paths the normal way — which is 40 of the 44 xmlports measured.
+    /// </summary>
+    [Fact]
+    public void PlainZipEntry_StillResolves_WithNoPercentInThePath()
+    {
+        var app = WriteApp(
+            "plain.app",
+            zipEntryPath: "src/Bank/Probe.XmlPort.al",
+            content: "xmlport 1230 \"Probe\" { }");
+
+        var read = BcAppSymbolCache.TryReadSourceFile(app, "Bank/Probe.XmlPort.al");
+
+        Assert.NotNull(read);
+        Assert.Contains("xmlport 1230", read!);
+    }
+
+    /// <summary>
+    /// A path carrying a percent that the zip spells the SAME way must resolve on the first
+    /// match, not the re-encoded one — so the fallback cannot mask a correctly-packaged app
+    /// whose folder name legitimately contains an encoded character.
+    /// </summary>
+    [Fact]
+    public void SingleEncodedZipEntry_ResolvesWithoutTheFallback()
+    {
+        var app = WriteApp(
+            "single-encoded.app",
+            zipEntryPath: "src/Permission%20Sets/Probe.XmlPort.al",
+            content: "xmlport 9999 \"Probe\" { }");
+
+        var read = BcAppSymbolCache.TryReadSourceFile(
+            app, "Permission%20Sets/Probe.XmlPort.al");
+
+        Assert.NotNull(read);
+        Assert.Contains("xmlport 9999", read!);
+    }
+
+    /// <summary>
+    /// And a genuinely absent file still answers null. A symbols-only .app is a legitimate
+    /// package shape, so the reader must not start finding things that are not there — the
+    /// fallback widens WHICH spellings match, never whether a miss becomes a hit.
+    /// </summary>
+    [Fact]
+    public void AbsentSourceFile_StillAnswersNull_EvenWithAPercentInThePath()
+    {
+        var app = WriteApp(
+            "absent.app",
+            zipEntryPath: "src/Other/Unrelated.XmlPort.al",
+            content: "xmlport 1 \"Other\" { }");
+
+        Assert.Null(BcAppSymbolCache.TryReadSourceFile(
+            app, "Permission%20Sets/src/xmlports/Probe.XmlPort.al"));
+        Assert.Null(BcAppSymbolCache.TryReadSourceFile(app, "Bank/NotShipped.XmlPort.al"));
+    }
+}
 
 public class DependencyXmlPortMetadataTests
 {

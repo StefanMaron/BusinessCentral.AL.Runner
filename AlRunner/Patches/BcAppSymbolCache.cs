@@ -3504,6 +3504,22 @@ internal static partial class BcAppSymbolCache
         using var zip = OpenZipFromNavx(bytes);
         var entry = zip.Entries.FirstOrDefault(e =>
             e.FullName.Replace('\\', '/').EndsWith(wanted, StringComparison.OrdinalIgnoreCase));
+        // The zip entry may spell a path segment DOUBLE-encoded where SymbolReference.json
+        // states it single-encoded: System Application 28.1.49838.53910 states
+        // `Permission%20Sets/src/...` for a folder the zip names `src/Permission%2520Sets/src/...`
+        // (`%25` is a literal `%`, so `%2520` decodes once to `%20`). A suffix match on the
+        // stated path therefore finds nothing for those, and the caller reads that as "this
+        // .app ships no source" — which for an xmlport means refusing to derive a node tree
+        // that is sitting right there (#3797). Measured: 4 of System Application's 4 xmlports
+        // and 0 of Base Application's 40, so this is a per-app packaging quirk rather than a
+        // format change, and the re-encoded probe runs only when the plain one has already
+        // failed. Applies to every caller of this reader, reports included.
+        if (entry == null && wanted.Contains('%'))
+        {
+            var reEncoded = wanted.Replace("%", "%25");
+            entry = zip.Entries.FirstOrDefault(e =>
+                e.FullName.Replace('\\', '/').EndsWith(reEncoded, StringComparison.OrdinalIgnoreCase));
+        }
         if (entry != null)
         {
             using var s = entry.Open();
