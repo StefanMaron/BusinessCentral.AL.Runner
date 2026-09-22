@@ -252,4 +252,26 @@ codeunit 62612 "AGV B Tests"
         ReportDataItems.SetRange("Report ID", 62620, 62629);
         Assert.IsTrue(ReportDataItems.IsEmpty(), 'Report Data Items in app group B lists a data item of a report in the id range of unrelated app group C');
     end;
+
+    // #4455: the control on the app-group filter's "an object with no recorded owner is never
+    // hidden" contract. A platform table belongs to no app group, so every group must see it —
+    // and a fix that attributes package objects to the package's own app id breaks exactly
+    // this, because the synthetic SystemApp's id is in no group's dependency closure.
+    // Measured: that shape hid 2000000038 from this group while all 72 order tests still passed.
+    [Test]
+    procedure AllObj_PlatformTables_StayVisible()
+    var
+        AllObj: Record AllObj;
+    begin
+        Assert.IsTrue(AllObj.Get(AllObj."Object Type"::Table, 2000000038), 'AllObj in app group B must list platform table 2000000038 (AllObj itself), which no app group owns');
+        Assert.IsTrue(AllObj.Get(AllObj."Object Type"::Table, 2000000041), 'AllObj in app group B must list platform table 2000000041 (Field), which no app group owns');
+    end;
+
+    [Test]
+    procedure TableMetadata_PlatformTable_StaysVisible()
+    var
+        TableMetadata: Record "Table Metadata";
+    begin
+        Assert.IsTrue(TableMetadata.Get(2000000041), 'Table Metadata in app group B must list platform table 2000000041, which no app group owns');
+    end;
 }
