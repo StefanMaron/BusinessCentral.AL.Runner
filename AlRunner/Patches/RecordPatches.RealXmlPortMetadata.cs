@@ -106,7 +106,18 @@ public static partial class RecordPatches
     /// </summary>
     internal static object? EnsureRealXmlPortMetadata(int xmlPortId)
     {
-        if (!AlXmlPortMetadataRegistry.TryGet(xmlPortId, out _)) return null;
+        // Two sources of a real document, and BOTH have to open this gate. The emit registry
+        // is the source-compiled half; TryBuildDependencyXmlPortMetadata is the precompiled
+        // half (#3797), and it answers null both for an xmlport no dependency declares and
+        // for one whose node tree could not be recovered — which is exactly the set that must
+        // keep the schema-less skeleton, so the same null serves both.
+        //
+        // Trap: gating on the registry alone was correct only while the loader refused every
+        // precompiled xmlport. Now that the loader can answer one, a registry-only gate would
+        // leave the metadata document reachable through GetMetaObjectXmlMetadata while
+        // LoadMetadata never ran — a port with a document nobody parsed.
+        if (!AlXmlPortMetadataRegistry.TryGet(xmlPortId, out _)
+            && TryBuildDependencyXmlPortMetadata(xmlPortId) == null) return null;
 
         var meta = _metaXmlPortCache.GetOrAdd(xmlPortId, BuildNCLMetaXmlPort);
         if (meta == null) return null;

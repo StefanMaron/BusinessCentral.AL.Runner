@@ -86,7 +86,15 @@ internal static partial class BcAppSymbolCache
         // payload written before this member deserialises as null. The SHAPE change re-keys
         // the cache through PayloadShape, so no stale payload is ever read back
         // (docs/bc-symbol-cache-versions.md, the #3809 precedent).
-        List<EnumExtensionSymbol>? EnumExtensions = null);
+        List<EnumExtensionSymbol>? EnumExtensions = null,
+        // #3797 — xmlports this .app declares, with their object-level Properties bag. The
+        // flat Objects sweep already carries (kind, id, name); this is the TYPED form the
+        // dependency xmlport metadata synthesizer needs, and it is what makes the four
+        // properties the symbol file states (Direction, Encoding, PreserveWhiteSpace,
+        // UseRequestPage) reachable instead of parsed-and-dropped at the ObjectSymbol ctor.
+        // Trailing + optional for the same reason as PageExtensions; the SHAPE change re-keys
+        // the cache through PayloadShape, so no stale payload is ever read back.
+        List<XmlPortSymbol>? XmlPorts = null);
 
     /// <summary>
     /// One profile as SymbolReference.json states it. <c>ProfileId</c> is the profile object's
@@ -635,6 +643,32 @@ internal static partial class BcAppSymbolCache
     internal sealed record ReportColumnSymbol(int Id, string Name, string? TypeName);
 
     /// <summary>
+    /// One xmlport as SymbolReference.json states it — which is its <c>Id</c>, <c>Name</c>,
+    /// its object-level <c>Properties</c> bag and the source file it was compiled from, AND
+    /// NO NODE TREE. The absent tree is the measured shape, not an omission here: on BC
+    /// 28.1.49838.53910 the Base Application symbol file has a top-level
+    /// <c>"XmlPorts": []</c> with all 40 of its xmlports nested under <c>Namespaces</c>, each
+    /// carrying exactly <c>Id</c>, <c>Name</c>, <c>Properties</c>, <c>Variables</c>,
+    /// <c>Methods</c> and <c>ReferenceSourceFileName</c> (#3797).
+    ///
+    /// <para><c>Properties</c> is carried as the raw name -> stated-text map rather than as
+    /// typed members, because an xmlport's object properties are a long open-ended list
+    /// (Direction, Format, Encoding, TextEncoding, UseRequestPage, PreserveWhiteSpace,
+    /// InlineSchema, UseLax, TransactionType, Caption, ...) whose consumer
+    /// (<c>RecordPatches.TryBuildDependencyXmlPortMetadata</c>) applies AL's own default per
+    /// property. Typing them here would have to bake those defaults in, losing the
+    /// "stated" / "not stated" distinction the emitter needs.</para>
+    ///
+    /// <para><c>ReferenceSourceFileName</c> is what makes the node tree recoverable at all:
+    /// the tree comes from the xmlport's own AL source inside the .app, and this names the one
+    /// file to read. Measured on the same build: all 40 Base Application xmlports state one
+    /// and all 40 of those files are present in the .app.</para>
+    /// </summary>
+    internal sealed record XmlPortSymbol(
+        int Id, string Name, Dictionary<string, string>? Properties,
+        string? ReferenceSourceFileName, string? ALNamespace = null);
+
+    /// <summary>
     /// Flat (AL object kind, id, name, caption) tuple for one application object declared
     /// by a dependency .app. Read straight off the SymbolReference.json object arrays,
     /// which carry <c>Id</c> + <c>Name</c> for every kind — including the Codeunits /
@@ -887,7 +921,8 @@ internal static partial class BcAppSymbolCache
         List<ProfileSymbol>? Profiles = null, string? AppId = null, string? AppName = null,
         List<PermissionSetSymbol>? PermissionSets = null,
         List<PageExtensionSymbol>? PageExtensions = null,
-        List<EnumExtensionSymbol>? EnumExtensions = null);
+        List<EnumExtensionSymbol>? EnumExtensions = null,
+        List<XmlPortSymbol>? XmlPorts = null);
 
     /// <summary>
     /// Parse a loose <c>SymbolReference.json</c> file (the raw module JSON, NOT a .app
@@ -908,14 +943,15 @@ internal static partial class BcAppSymbolCache
         var pageExtensions = new Dictionary<int, PageExtensionSymbol>();
         var profiles = new Dictionary<string, ProfileSymbol>(StringComparer.OrdinalIgnoreCase);
         var permissionSets = new Dictionary<int, PermissionSetSymbol>();
+        var xmlPorts = new Dictionary<int, XmlPortSymbol>();
         using var doc = JsonDocument.Parse(File.ReadAllText(jsonPath));
-        VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects, reports, pages, profiles, pageExtensions, enumExtensions);
+        VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects, reports, pages, profiles, pageExtensions, enumExtensions, xmlPorts);
         CollectPermissionSets(doc.RootElement, permissionSets);
         var (appId, appName) = ReadAppIdentity(doc.RootElement);
         return new AppSymbols(tables.Values.ToList(), enums.Values.ToList(), queries.Values.ToList(),
             objects.Values.ToList(), reports.Values.ToList(), pages.Values.ToList(),
             profiles.Values.ToList(), appId, appName, permissionSets.Values.ToList(),
-            pageExtensions.Values.ToList(), enumExtensions.Values.ToList());
+            pageExtensions.Values.ToList(), enumExtensions.Values.ToList(), xmlPorts.Values.ToList());
     }
 
     /// <summary>
@@ -1049,7 +1085,8 @@ internal static partial class BcAppSymbolCache
                 payload.Profiles ?? new List<ProfileSymbol>(), payload.AppId, payload.AppName,
                 payload.PermissionSets ?? new List<PermissionSetSymbol>(),
                 payload.PageExtensions ?? new List<PageExtensionSymbol>(),
-                payload.EnumExtensions ?? new List<EnumExtensionSymbol>());
+                payload.EnumExtensions ?? new List<EnumExtensionSymbol>(),
+                payload.XmlPorts ?? new List<XmlPortSymbol>());
         }
         catch (Exception ex)
         {
@@ -1066,7 +1103,7 @@ internal static partial class BcAppSymbolCache
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
-            var payload = new CachePayload(contentHash, symbols.Tables, symbols.Enums, symbols.Queries, symbols.Objects, symbols.Reports, symbols.Pages, symbols.Profiles, symbols.AppId, symbols.AppName, symbols.PermissionSets, symbols.PageExtensions, symbols.EnumExtensions);
+            var payload = new CachePayload(contentHash, symbols.Tables, symbols.Enums, symbols.Queries, symbols.Objects, symbols.Reports, symbols.Pages, symbols.Profiles, symbols.AppId, symbols.AppName, symbols.PermissionSets, symbols.PageExtensions, symbols.EnumExtensions, symbols.XmlPorts);
             // #1809 follow-up: cachePath is content-keyed (hash of the .app file),
             // so two subprocesses parsing the same app concurrently used to race a
             // plain File.WriteAllText into the same path. TryRead already treats any
@@ -1100,11 +1137,12 @@ internal static partial class BcAppSymbolCache
         var pageExtensions = new Dictionary<int, PageExtensionSymbol>();
         var profiles = new Dictionary<string, ProfileSymbol>(StringComparer.OrdinalIgnoreCase);
         var permissionSets = new Dictionary<int, PermissionSetSymbol>();
+        var xmlPorts = new Dictionary<int, XmlPortSymbol>();
         string? appId = null, appName = null;
         foreach (var json in ReadSymbolReferences(appPath))
         {
             using var doc = JsonDocument.Parse(json);
-            VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects, reports, pages, profiles, pageExtensions, enumExtensions);
+            VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects, reports, pages, profiles, pageExtensions, enumExtensions, xmlPorts);
             CollectPermissionSets(doc.RootElement, permissionSets);
             // The .app's own identity, stated once at the root of its SymbolReference.json.
             // First one wins: ReadSymbolReferences can yield more than one module for a
@@ -1115,7 +1153,7 @@ internal static partial class BcAppSymbolCache
         return new AppSymbols(tables.Values.ToList(), enums.Values.ToList(), queries.Values.ToList(),
             objects.Values.ToList(), reports.Values.ToList(), pages.Values.ToList(),
             profiles.Values.ToList(), appId, appName, permissionSets.Values.ToList(),
-            pageExtensions.Values.ToList(), enumExtensions.Values.ToList());
+            pageExtensions.Values.ToList(), enumExtensions.Values.ToList(), xmlPorts.Values.ToList());
     }
 
     /// <summary>
@@ -1232,7 +1270,7 @@ internal static partial class BcAppSymbolCache
     /// reached through, or null at the root. It is the ONLY source for a codeunit's ALNamespace:
     /// the symbol file states no such property, and Microsoft's own packages put every object in
     /// the tree — System Application 28.1's top-level <c>Codeunits</c> array has length 0 (#3788).</param>
-    private static void VisitSymbolContainer(JsonElement container, Dictionary<int, ParsedTable> tables, Dictionary<int, EnumSymbol> enums, Dictionary<int, QuerySymbol> queries, Dictionary<(string, int), ObjectSymbol> objects, Dictionary<int, ReportSymbol> reports, Dictionary<int, PageSymbol> pages, Dictionary<string, ProfileSymbol> profiles, Dictionary<int, PageExtensionSymbol> pageExtensions, Dictionary<int, EnumExtensionSymbol> enumExtensions, string? alNamespace = null)
+    private static void VisitSymbolContainer(JsonElement container, Dictionary<int, ParsedTable> tables, Dictionary<int, EnumSymbol> enums, Dictionary<int, QuerySymbol> queries, Dictionary<(string, int), ObjectSymbol> objects, Dictionary<int, ReportSymbol> reports, Dictionary<int, PageSymbol> pages, Dictionary<string, ProfileSymbol> profiles, Dictionary<int, PageExtensionSymbol> pageExtensions, Dictionary<int, EnumExtensionSymbol> enumExtensions, Dictionary<int, XmlPortSymbol> xmlPorts, string? alNamespace = null)
     {
         // Flat (kind, id, name) sweep for AllObj. Independent of the typed parsing below
         // so a kind we do not model in depth still shows up as an existing object.
@@ -1353,6 +1391,21 @@ internal static partial class BcAppSymbolCache
             }
         }
 
+        // #3797 — the typed xmlport form. The flat Objects sweep above already added this
+        // xmlport as an (kind, id, name) tuple for AllObj and then DROPPED its Properties
+        // bag at the ObjectSymbol constructor; this keeps the bag, which is the only place
+        // Direction / Encoding / PreserveWhiteSpace / UseRequestPage are stated for an
+        // xmlport the runner never source-compiles.
+        if (container.TryGetProperty("XmlPorts", out var xmlPortArray) && xmlPortArray.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var x in xmlPortArray.EnumerateArray())
+            {
+                var parsed = TryParseXmlPortSymbol(x, alNamespace);
+                if (parsed != null && !xmlPorts.ContainsKey(parsed.Id))
+                    xmlPorts[parsed.Id] = parsed;
+            }
+        }
+
         if (container.TryGetProperty("PageExtensions", out var pageExtArray) && pageExtArray.ValueKind == JsonValueKind.Array)
         {
             foreach (var pe in pageExtArray.EnumerateArray())
@@ -1386,7 +1439,7 @@ internal static partial class BcAppSymbolCache
                 var childNamespace = string.IsNullOrWhiteSpace(segment)
                     ? alNamespace
                     : string.IsNullOrEmpty(alNamespace) ? segment!.Trim() : alNamespace + "." + segment!.Trim();
-                VisitSymbolContainer(ns, tables, enums, queries, objects, reports, pages, profiles, pageExtensions, enumExtensions, childNamespace);
+                VisitSymbolContainer(ns, tables, enums, queries, objects, reports, pages, profiles, pageExtensions, enumExtensions, xmlPorts, childNamespace);
             }
         }
     }
@@ -2130,8 +2183,43 @@ internal static partial class BcAppSymbolCache
         return result;
     }
 
+    /// <summary>
+    /// Parse one entry of a SymbolReference.json <c>XmlPorts</c> array (#3797). Everything the
+    /// file states is carried verbatim and nothing is defaulted here: an absent property must
+    /// stay distinguishable from one stated at AL's default, because the emitter applies the
+    /// default per property and a bag pre-filled with defaults would make the two identical.
+    ///
+    /// <para>Returns null for an entry with no usable <c>Id</c> or <c>Name</c>, which is the
+    /// same "cannot identify the object" shape the sibling parsers refuse on.</para>
+    /// </summary>
+    private static XmlPortSymbol? TryParseXmlPortSymbol(JsonElement element, string? alNamespace)
+    {
+        if (!element.TryGetProperty("Id", out var idProp) || !idProp.TryGetInt32(out var id) || id <= 0)
+            return null;
+        var name = element.TryGetProperty("Name", out var nameProp) ? nameProp.GetString() : null;
+        if (string.IsNullOrEmpty(name)) return null;
+
+        var referenceSourceFileName = element.TryGetProperty("ReferenceSourceFileName", out var rsfn)
+            ? rsfn.GetString()
+            : null;
+        return new XmlPortSymbol(id, name!, SymbolProperties(element), referenceSourceFileName, alNamespace);
+    }
+
     private static bool SymbolBool(Dictionary<string, string> props, string name)
-        => props.TryGetValue(name, out var v) && (v == "1" || string.Equals(v, "true", StringComparison.OrdinalIgnoreCase));
+        => props.TryGetValue(name, out var v) && SymbolBoolValue(v);
+
+    /// <summary>
+    /// The value half of <see cref="SymbolBool"/>, for a caller that already holds the stated
+    /// text and has its own rule for what an ABSENT property means.
+    ///
+    /// <para>Both spellings are accepted for the reason SymbolBool exists: Microsoft's packages
+    /// write <c>"1"</c> and never the word, so a consumer matching only "true" answers false for
+    /// every object that declares the property — measured as 38 of System Application 28.1's 533
+    /// codeunits for <c>SingleInstance</c> (#3790).</para>
+    /// </summary>
+    internal static bool SymbolBoolValue(string? stated)
+        => stated is { } v
+            && (v.Trim() == "1" || string.Equals(v.Trim(), "true", StringComparison.OrdinalIgnoreCase));
 
     private static bool SymbolBoolFalse(Dictionary<string, string> props, string name)
         => props.TryGetValue(name, out var v) && (v == "0" || string.Equals(v, "false", StringComparison.OrdinalIgnoreCase));

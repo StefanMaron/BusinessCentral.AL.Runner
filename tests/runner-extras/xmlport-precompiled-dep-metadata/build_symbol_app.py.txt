@@ -23,6 +23,14 @@ navx_manifest = f'''<?xml version="1.0" encoding="utf-8"?>
 # ['Variables', 'Methods', 'ReferenceSourceFileName', 'Properties', 'Id', 'Name'].
 # Both placements are read by the runner's symbol walk; top level is used here because this
 # fixture declares no namespace.
+#
+# #3797 -- the package ALSO carries the embedded src/ tree, because a real Microsoft .app does
+# and the node schema comes from there rather than from the symbol file. Measured on BC
+# 28.1.49838.53910: all 40 Base Application xmlports state a ReferenceSourceFileName and all
+# 40 of those .al files are present inside the .app (3,904 schema nodes between them).
+# WITHOUT src/ this package is a symbols-only .app, which is a legitimate shape the runner
+# must keep REFUSING -- so the src-less variant is its own fixture
+# (.alpackages-nosrc/), not a second state of this one.
 symbol_reference = {
     "Tables": [
         {
@@ -47,16 +55,61 @@ symbol_reference = {
     "AppId": APP_ID, "Name": NAME, "Publisher": PUBLISHER, "Version": VERSION,
 }
 
+# The xmlport's AL source, exactly as the dep bundle declares it. This is the node schema:
+# the symbol file above states none, so this text is what TryReadXmlPortSchema parses with
+# BC's own AL parser. It must stay in step with the dep source in REGENERATE-FIXTURES.txt.
+XMLPORT_AL = """xmlport 61602 "XPDDep Export Port"
+{
+    Format = Xml;
+    Direction = Export;
+
+    schema
+    {
+        textelement(Root)
+        {
+            tableelement(Header; "XPDDep Header")
+            {
+                XmlName = 'Header';
+                fieldelement(No; Header."No.") { }
+                fieldelement(Description; Header.Description) { }
+            }
+        }
+    }
+}
+"""
+
+TABLE_AL = """table 61600 "XPDDep Header"
+{
+    fields
+    {
+        field(1; "No."; Code[20]) { }
+        field(2; Description; Text[100]) { }
+    }
+    keys { key(PK; "No.") { Clustered = true; } }
+}
+"""
+
+
 def write_navx(zip_bytes, out_path):
     header = (b"NAVX" + struct.pack("<I", 40) + struct.pack("<I", 2)
               + uuid.UUID(APP_ID).bytes_le + struct.pack("<Q", len(zip_bytes)) + b"NAVX")
     with open(out_path, "wb") as f:
         f.write(header); f.write(zip_bytes)
 
+# `--no-src` writes the symbols-only variant, which must keep REFUSING (#3797). Two packages
+# from one script so the two shapes cannot drift apart.
+NO_SRC = "--no-src" in sys.argv[2:]
+
 buf = io.BytesIO()
 with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
     zf.writestr("NavxManifest.xml", navx_manifest)
     zf.writestr("SymbolReference.json", json.dumps(symbol_reference))
+    # Nested under src/ exactly as a real .app nests it: SymbolReference states the path
+    # app-root-relative and the zip carries its own src/ prefix, which is why
+    # BcAppSymbolCache.TryReadSourceFile matches on SUFFIX rather than on equality.
+    if not NO_SRC:
+        zf.writestr("src/XpdExport.XmlPort.al", XMLPORT_AL)
+        zf.writestr("src/XpdHeader.Table.al", TABLE_AL)
     zf.writestr("[Content_Types].xml",
         '<?xml version="1.0" encoding="utf-8"?>'
         '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'

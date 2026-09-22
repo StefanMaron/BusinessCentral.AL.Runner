@@ -222,6 +222,13 @@ public static partial class RecordPatches
         // duplicating them at each call site.
         _depPageMetadataXml.Clear();
         _depReportMetadataXml.Clear();
+        // #3797, the xmlport twin of the two above and cleared for the identical reason in
+        // both directions: it memoizes a document synthesized from ONE registered .app set,
+        // including the null for "no registered .app declares this xmlport". Its null has a
+        // second meaning the other two do not have — "declared, but its node tree could not be
+        // recovered" — and that answer is equally a function of which .app is registered, so
+        // the same clear covers it.
+        _depXmlPortMetadataXml.Clear();
         // #2888, instance 1: the negative table cache. It records "no registered .app declares
         // table N" — derived from precisely this registration set, and until now dropped by
         // nothing at all: not by this method, not by ResetForReload. So a miss taken by bundle
