@@ -953,68 +953,113 @@ uppercased child element name ending in `throw new ArgumentException(name)`, so 
 silently ignore a document — and the runner-side projection depends on that refusal to catch a
 mis-spelled element name. A test pins it.
 
-### The xmlport PROJECTION still states two values — the derivation no longer does
+### The projection renders the runner's derivation (#4467)
 
-**Read this heading carefully; it changed with #3797 and the distinction is the whole point.**
-It used to read *"the runner derives no xmlport structure at all"*, and that is now false of
-the runner and true only of this harness's projection.
+**This heading has now changed twice, and the history is the point.** It first read *"the runner
+derives no xmlport structure at all"*, which #3797 made false of the runner; it then read *"the
+projection still states two values"*, which #4467 made false of the projection. Both were true
+when written.
 
-`TryBuildXmlPortMetadataEquivalenceXml` writes exactly `ID` and `Name`. It renders the runner's
-own state rather than reading `AlXmlPortMetadataRegistry`, where BC's captured answer is
-sitting — using the registry would be the same circularity queries had to refuse.
+`TryBuildXmlPortMetadataEquivalenceXml` is now a **thin forwarder** to
+`RecordPatches.TryBuildDependencyXmlPortMetadata`, the same shape
+`TryBuildReportMetadataEquivalenceXml` already had — so the harness measures the document runner
+consumers actually read, the one `RunnerXmlMetadataLoader.GetMetaObjectXmlMetadata` hands BC,
+rather than a test-only rendering that can agree or differ for reasons no AL caller ever sees.
 
-What changed is what "the runner's own state" now contains.
-`RecordPatches.TryBuildDependencyXmlPortMetadata` (#3797) reconstructs a precompiled xmlport's
-full document: the object properties from SymbolReference.json, and the **node tree from the
-`.app`'s embedded AL source**, parsed with BC's own AL parser. Measured: **44 of 44** precompiled
-xmlports across Base Application and System Application reconstruct, 0 refuse.
+**The circularity constraint survives the change, and that is what had to be established rather
+than assumed.** The forwarding target is a *derivation*, not a capture: it reconstructs the
+document from the object properties in `SymbolReference.json` plus the node tree parsed out of
+the `.app`'s own embedded AL source with BC's AL parser. It never reads
+`AlXmlPortMetadataRegistry`, which holds BC's emit-captured schema — feeding the harness that
+would compare BC against BC and report agreement having measured nothing. A value the derivation
+cannot recover stays off the document rather than being filled in from the captured answer, so a
+reported difference is still a true statement about what the runner does not know.
 
-That derivation is reached from `RunnerXmlMetadataLoader.GetMetaObjectXmlMetadata` — the
-AL-observable path — and **this harness calls neither**. So every difference below is still
-measured and still real; what it now measures is the projection, not the derivation. Wiring the
-two together is **#4467**, and the entries below cite it.
+### What the xmlport comparison found, before and after
 
-### What the xmlport comparison found
+Measured on BC 28.1.49838.53910, System Application's 4 xmlports (9001, 9862, 9863, 9864):
 
-4 xmlports, **322 differences across 43 members**, of which 296 are declared by entries this
-step added — the rest were already covered by the `TranslationKey.*` and `MetaRuntimeInfo`
-entries, which match on signature across every object kind. Two separable parts:
+| | differences | signatures |
+|---|---:|---:|
+| before #4467 (the two-element projection) | 322 | 43 |
+| after #4467 | **66** | **14** |
 
-**182 of the 322 are one finding under two signatures.** `MetaXmlPort.Nodes.<presence>` and
-`#nodes.<presence>`, 91 each: every `<Node>` element BC emits across the four xmlports is absent.
-SymbolReference.json states an xmlport's `Id`, `Name`, `Properties` and `Variables` and **no node
-tree at all** — measured, not inferred. Nine further members are computed *from* the nodes and go
-green with them (`Schema`, `SchemaSet`, `SchemaTypeName`, `#typeNames`, `#xsdBuilder`,
-`#mainPrefix`, `DefaultNamespace`), and two of those — `Schema` and `SchemaTypeName` — do not
-merely differ but **throw `NullReferenceException`** when read on the runner's side. That is
-#3510's shape seen from the derivation end.
+**33 signatures went to zero and their allowlist entries were removed**, which is
+`No_allowlist_entry_has_gone_stale` reporting them — the evidence that the removals are measured
+rather than inferred. The largest single item is `MetaXmlPort.Nodes.<presence>` /
+`#nodes.<presence>` at 91 each: all 182 are gone, together with the nine members computed *from*
+the nodes (`Schema`, `SchemaSet`, `SchemaTypeName`, `#typeNames`, `#xsdBuilder`, `#mainPrefix`,
+`DefaultNamespace`), two of which used to **throw `NullReferenceException`** when read on the
+runner's side.
 
-This was **not** a claim that the tree is underivable, and that caution was right: #3797
-measured it and the tree **is** derivable, from the `.app`'s embedded AL source rather than from
-the symbol file. "The symbol file does not store it" was evidence about storage, never about
-derivability — the mistake step 1 made about `DataColumnName` and `ControlGUID`, avoided here.
-The 91 absences below are the projection's, not the derivation's.
+Wiring the projection up also made the node tree measurable for the first time, which exposed
+**three derivation defects that no earlier run could see** — each fixed in #4467 with its own
+before/after count:
 
-**15 of them are properties the symbol file states verbatim and the runner USED TO throw away.**
-`VisitSymbolContainer` kept `TableNo`/`SingleInstance`/`Subtype` for `Codeunit` only; every
-other kind got `new ObjectSymbol(kind, id, name, caption, TargetObjectName:)`, so an xmlport's
-whole `Properties` array was parsed and discarded. #3797 added
-`BcAppSymbolCache.XmlPortSymbol`, which carries that bag, so the values below now reach the
-derivation — and still not this projection:
+| defect | cause | differences removed |
+|---|---|---:|
+| node `Id` / `ParentId` | BC numbers nodes **breadth-first by parent** while emitting them depth-first, so a sibling declared after a subtree gets the *lower* number. Declaration order reproduced 69 of 91 ids wrongly. | 69 |
+| `Temporary` | AL spells the property `UseTemporary`; BC's document element is `Temporary`. The derivation read the element's name off the AL properties, so it always answered the default. | 12 |
+| `LinkTable` | never written at all, and BC writes the linked node's AL name **unquoted**. | 18 |
 
-```
-XmlPort 9001  Direction sym=<none> bc=Both      Encoding sym=<none> bc=UTF-16  PreserveWhiteSpace sym=<none> bc=0
-XmlPort 9862  Direction sym=Export bc=Export    Encoding sym=UTF8   bc=UTF-8   PreserveWhiteSpace sym=1      bc=1
-XmlPort 9863  Direction sym=Export bc=Export    Encoding sym=UTF8   bc=UTF-8   PreserveWhiteSpace sym=1      bc=1
-XmlPort 9864  Direction sym=Import bc=Import    Encoding sym=UTF8   bc=UTF-8   PreserveWhiteSpace sym=1      bc=1
-```
+The numbering rule was validated against BC's own emitted documents for all four xmlports — 91
+nodes — where it reproduces every id exactly. The clearest instance is XmlPort 9862, where
+`Permission` is the twelfth node written and carries sequence 9, while `PermissionSetRel`'s three
+children, written before it, carry 10, 11 and 12.
 
-Every xmlport that declares one has it stated, and the three that state none are the three where
-BC answers its own default. A read-don't-guess fix, the same shape as `Extensible` in #3784 —
-**landed by #3797** for the derivation, including `UseRequestForm` taking AL's default (true)
-rather than the CLR's and the `UTF8`/`UTF-8` spelling difference. `Permissions` still needs the
-normalization (`tabledata "Security Group" = r` against BC's `TableData Security Group=r`).
-Carrying those values into THIS projection is tracked on **#4467**.
+Four object-level members BC states unconditionally and AL states nowhere — `FieldDelimiter`,
+`FieldSeparator`, `RecordSeparator`, `TableSeparator` — are now written as the constants BC
+emits. `RecordSeparator`/`TableSeparator` carry BC's own `<NewLine>` escape rather than a literal
+newline, because BC's reader decodes the token.
+
+**What remains, and where it went.** 66 differences over 14 signatures, none of them undeclared:
+
+- **38 on `SourceTableView` and `LinkFields`** — the derivation passes the AL source text through
+  verbatim where BC writes its own canonical form with field **names** replaced by `Field<n>`
+  ordinals. Tracked on **#4471**, deliberately not folded: `LinkFields` resolves its two halves
+  against *different* tables, and `SourceTableView` additionally needs BC's `ORDER(...)` encoding
+  measured rather than assumed.
+- **2 on `Permissions`** — the same canonicalisation one level up
+  (`tabledata "Security Group" = r` against BC's `TableData Security Group=r`). #4467 made the
+  runner state the value; the notation is #4471's. Also the one place the two surviving
+  `versionContingent` flags came off, because the member is now stated on every build.
+- **24 on `TranslationKey.*` and `MetaRuntimeInfo.Methods`**, matched by entries that span every
+  object kind rather than by anything xmlport-specific.
+
+<a id="xmlport-request-page-unobservable"></a>
+### The request-page subtree, and why 12 omissions are *unobservable* rather than tolerated
+
+Rendering the derivation also brought the `RequestPage` subtree into the comparison, where BC
+states 12 attributes the runner does not. They are declared in
+`tests/expectations/metadata-equivalence/unobservable-omissions.json`, which means something
+stronger and narrower than the allowlist: **the two parsed objects agree, and the agreement
+carries no information.**
+
+**That is measured by BC's own reader, not argued from the runner's policy.**
+`MetadataDocumentPresenceDiff` strips each attribute from BC's *own* document, re-parses the
+stripped document with BC's *own* reader, and records the omission only when `MetadataObjectDiff`
+finds the two parsed objects identical.
+
+**The probe discriminates**, which is the check worth re-running before trusting any of the 12:
+BC states **37** distinct `Element.Attribute` pairs in that subtree across the four xmlports, and
+**12** were reported. `Containers.ContainerType`, `Controls.ID`, `Controls.FilterTableID`,
+`Properties.PageType`, `Properties.Editable` and the four `Sorting.*` attributes were seen and
+**not** reported, because stripping them changes the parsed object. A run in which all 37 came
+back would mean the probe had stopped discriminating.
+
+The 12 split into two causes, tracked separately:
+
+- **7 (#3562)** — the runner is legitimately less. `WriteXmlPortRequestPageXml` derives only the
+  **frame**, because `MetadataProvider` merges it into BC's own master-page template at load, so
+  the built-in controls come from that template. What the runner *does* derive is the
+  per-tableelement filter control and its expression, keyed to this xmlport's node sequence,
+  which the template cannot know. The reported instances sit on `Controls[0]`, the template's own
+  control.
+- **5 (#3568)** — `*TranslationKey`, under the owner's standing translations scope decision. Not
+  a claim they are underivable: the key is computed from names rather than stored, and 2,153 of
+  2,153 reproduce.
+
+None is `versionContingent`, so each reds the run if it ever stops matching.
 
 <a id="one-build-measured-three-evaluated-query-xmlport"></a>
 ### These two populations were measured across four builds, and the flag is still not blanket
@@ -1029,10 +1074,29 @@ flag applied everywhere, and failed `No_allowlist_entry_has_gone_stale` the mome
 off those two entries. The flag cannot hide a difference that exists; it does hide one that
 stopped existing for the wrong reason.
 
-So 21 of the 49 entries carry it — the members whose population depends on a per-object
-*declaration*, where one object changing empties the entry. The other 28 are values BC writes
-unconditionally for every object of the kind, so their population cannot shrink without the
-derivation having changed, which is exactly what the stale check should report.
+That mutation is also the standing check on any change to this projection, and #4467 had to clear
+it: the projection must render what the runner **derived**, never BC's captured document. It does
+so by forwarding to `TryBuildDependencyXmlPortMetadata`, which reconstructs from
+`SymbolReference.json` and the `.app`'s embedded AL source and never touches
+`AlXmlPortMetadataRegistry`.
+
+It carries the members whose population depends on a per-object *declaration*, where one object
+changing empties the entry; a value BC writes unconditionally for every object of the kind does
+not get it, because its population cannot shrink without the derivation having changed, which is
+exactly what the stale check should report. Re-derive the split rather than quoting a count from
+here — it moves with every landed fix. As of #4467 the `MetaQuery`/`MetaXmlPort` entries are **10,
+of which 3** carry the flag, down from 49 and 21 when this section was written, because #4467
+removed 33 xmlport entries.
+
+**#4467 is also the worked example of the flag's blind spot, and the reason to re-read this
+section before trusting a green harness.** 10 of the 33 entries it removed were
+`versionContingent` — `Direction`, `Encoding`, `PreserveWhiteSpace`, `UseRequestForm` and their
+backing fields, plus `MultiLanguage.LanguageIds`/`Texts` — so `No_allowlist_entry_has_gone_stale`
+could not report them and the harness was green with all 10 sitting there matching nothing. They
+were found by #3802's technique: flip the flag off on the suspects and re-run. Two of the twelve
+flipped, `Permissions` and `#permissions`, correctly stayed — which is what makes the audit a
+measurement rather than a licence to delete, and those two are now flag-free because the member is
+stated on every build.
 
 The population stability that would have justified the blanket application is real and was not
 sufficient. Measured across the four bundles on the authoring box — 27.5.46862.53931,
