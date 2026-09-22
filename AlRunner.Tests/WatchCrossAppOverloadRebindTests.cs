@@ -3,16 +3,19 @@
 //
 // #2815 is an unmeasured QUESTION, filed by impl-1 while fixing #2614 rather than answered by
 // assumption, and this file is the experiment it names. The two paths stay resident across
-// cycles, which is the property that made `--server` vulnerable, but they do not share a reload
-// discipline:
+// cycles, which is the property that made `--server` vulnerable. The two now share a reload
+// discipline, which they did NOT when this file was written:
 //
 //   --server   BcRuntime.ResetForNewBundleReload() once per REQUEST, before the bundle loop
-//   --watch    BcRuntime.ResetForNewBundleReload() once per BUNDLE, inside the loop
+//   --watch    BcRuntime.ResetForNewBundleReload() once per CYCLE, before the bundle loop
+//              (#2684; it was once per BUNDLE, inside the loop, until that erased an earlier
+//              bundle's registrations before a DEPENDENT bundle read them)
 //
-// A per-bundle reset plausibly closes the stale-assembly window or plausibly does not — the
-// reset clears bundle-derived caches (record/codeunit types, parsed schemas, in-memory rows,
-// enum registry), which is not obviously the same thing as the resident ASSEMBLY a cross-app
-// call dispatches into. Reading it settles nothing, so this measures it.
+// That convergence does not make this file's question moot, and the measurement below stands
+// unchanged: the reset clears bundle-derived caches (record/codeunit types, parsed schemas,
+// in-memory rows, enum registry), which is not obviously the same thing as the resident
+// ASSEMBLY a cross-app call dispatches into — under either placement. Reading it settles
+// nothing, so this measures it.
 //
 // The fixture is ServerCrossAppOverloadRebindTests', unchanged in substance: a dependency app
 // declaring Which(Decimal), a consumer passing an INTEGER, and an edit that adds Which(Integer)
