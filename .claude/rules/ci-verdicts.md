@@ -565,15 +565,22 @@ someone handed you:
 <!-- Recipe-pinned-by: tools/test_corpus_run_event_discriminator.py -->
 ```bash
 head=$(gh pr view <N> --repo StefanMaron/BusinessCentral.AL.Language.Tests \
-  --json headRefOid --jq .headRefOid)                 # full 40 chars; see below
+  --json headRefOid --jq .headRefOid | command grep -E '^[0-9a-f]{40}$') || {
+    echo "refusing: no 40-char head SHA" >&2; exit 3; }
 gh api "repos/StefanMaron/BusinessCentral.AL.Language.Tests/actions/runs?head_sha=$head&per_page=100" \
   --jq '.workflow_runs[] | select(.event == "pull_request") | "\(.id) \(.conclusion)"'
 ```
 
 Eight `BC <ver> / test` legs on that run is a gating verdict; fewer than eight means you are
 holding a dispatch, which is a second opinion under this section and never the verdict.
-`head_sha` needs the **full** 40-character SHA — an abbreviated one returns an empty list that
-reads as "no runs".
+
+**Validate `$head` before interpolating it — the two ways it can be wrong fail in opposite
+directions.** An **abbreviated** SHA returns an empty list that reads as "no runs"; an **empty**
+one drops the filter entirely and returns the repository's whole run history, well-formed and
+attached to no commit you asked about (measured 2026-09-23: `head_sha=` answers
+`total_count: 1158`, `head_sha=84a63b26` answers `0`). The second is the dangerous one, and a
+check for an empty *result* cannot catch it — which is why the `grep -E` above refuses rather
+than letting an unset variable through (#3389's sixth mechanism).
 
 **`gh pr checks` can answer this, but its default output does not** — the four columns it
 prints are name, state, duration and link, so the discriminator is absent unless you ask for

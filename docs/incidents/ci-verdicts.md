@@ -363,5 +363,47 @@ gone:
 
 The third is the sharp one: the guard passed a recipe prescribing **exactly the wrong run**,
 which is worse than prescribing none. The fix reads the selector's argument rather than its
-neighbourhood. Final matrix: six mutations each caught by one check, two meaning-preserving
-rewords green, clean tree green.
+neighbourhood.
+
+**A fourth draft was defeated in review (#4483), and it is the subtlest**, because it survives
+the first three. Both prose checks required a NEGATION somewhere in the sentence, **unbound to
+the proposition it negates**. So `is never right` and `is not wrong` are the same to the regex,
+as are `never the newest` and `never the oldest` -- and prose asserting the opposite passed,
+with the guard reporting `ok rules out recency` on text telling the reader to take the newest
+run and ignore `event`. That is item 3 above one level up: the recipe check had already learned
+to read the selector's ARGUMENT rather than its presence, and the lesson had not reached the
+prose checks, where the "argument" is which proposition the negation attaches to.
+
+Why the author's own controls could not find it: C1 and C2 reword while **preserving** meaning,
+which is the correct control for over-fitting and is exactly why they stayed green. The missing
+control is the inverse -- a reword that keeps the regex vocabulary and **inverts** the claim,
+which must RED.
+
+The repair asserts the POSITIVE direction as a relation, so an inversion has to break it: read
+which run the text tells you to TAKE (an imperative, with a negation before the object flipping
+it to a rejection), and assert the configuration fact `fail-fast: false` on both matrices, which
+is what makes the collapse reading impossible. Repairing it over-fitted once in passing -- both
+meaning-preserving controls went red, one because the check demanded the word `gating` where the
+control wrote `gates`, the other because it only looked for the rejection AFTER the topic word
+-- so the final form reads a window either side and accepts the verb forms.
+
+Final matrix: eight mutations each caught (two of them the review's inversions, one a third
+inversion written independently to check the fix generalised rather than fitting the two
+supplied), two meaning-preserving rewords green, clean tree green.
+
+### The scope error, and why the gate could not see it
+
+The PR originally declared `Closes #3389`. #3389 is a **nine-mechanism living reference record**,
+four of them added by the repo owner after filing, and its triage comment asks for "a separate,
+closeable docs issue that links here" rather than for #3389 to be closed. The PR's own quotation
+from the issue body was accurate but predated both the added mechanisms and the triage call.
+
+`reject-deferred-scope` passed, because it keys on a deferral's **destination** and the PR routed
+its deferred work at `#3389` itself -- the declared closing target. That is the one shape the gate
+cannot see, which is why a green tick is not a second opinion on scope.
+
+Settled by `Part of #3389` plus a new docs issue (#4484) scoped to what the PR documents. One of
+#3389's own mechanisms -- an **empty** `head_sha` returning the repository's whole run history
+rather than an empty list -- was live in the shipped recipe, which interpolated `$head`
+unvalidated while warning only about the abbreviated case; measured 2026-09-23, `head_sha=`
+answers `total_count: 1158` against `0` for `head_sha=84a63b26`.

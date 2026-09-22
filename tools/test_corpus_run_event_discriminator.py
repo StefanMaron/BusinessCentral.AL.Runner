@@ -28,6 +28,21 @@ WHAT IS ACTUALLY PINNED, AND WHY IT IS NOT A KEYWORD SWEEP
   So every check below is scoped to the one section by heading, and asserts a
   RELATION between two things on one line -- never the presence of a word.
 
+  A FOURTH way, found in review of this file (#4483) and the subtlest, because it
+  survives the first three: requiring a NEGATION somewhere in the sentence, unbound
+  to the proposition it negates. `is never right` and `is not wrong` are then the
+  same to the regex, as are `never the newest` and `never the oldest` -- so prose
+  asserting the OPPOSITE passed, and the guard reported `ok rules out recency` on
+  text telling the reader to take the newest run and ignore `event`. That is item 3
+  one level up: the recipe check had already learned to read the selector's ARGUMENT
+  rather than its presence, and the lesson had not reached the prose checks.
+
+  The repair is to assert the POSITIVE direction as a relation, so an inversion must
+  break it -- read which run the text tells you to TAKE, and assert the configuration
+  fact (`fail-fast: false` on both matrices) that makes the wrong reading impossible.
+  Mutations M-A and M-B pin both; meaning-preserving rewords C1/C2 must stay green,
+  since a check that reds on any reword has pinned its author's phrasing instead.
+
   The discriminator predicate itself is EXECUTED, against synthetic run payloads
   shaped like the API's, so "filter to the pull_request event" is tested rather
   than quoted. No network: the fixtures reproduce the measured #254 shape.
@@ -213,44 +228,133 @@ def part2_section(body: str) -> None:
     #     is too loose (failure mode 2). So: the denial and its subject must be
     #     ADJACENT sentences, and the denial must carry an explicit negation --
     #     naming fail-fast without denying it is how the reading survives.
-    def denies(s: str) -> bool:
-        return bool(
-            re.search(r"fail-?fast|collaps|never ran|did not run", s, re.I)
-            and re.search(r"\bnever right\b|\bis not\b|\bnot\b .*\b(right|true|the verdict)|"
-                          r"\bwrong\b|\bcannot\b", s, re.I))
+    #     Same repair as (d), for the same reason: the first draft required a
+    #     negation token somewhere in the sentence, so `is never right` and
+    #     `is not wrong` were indistinguishable and an inverted denial shipped
+    #     green (measured, M-B below). The load-bearing content is not the
+    #     negation -- it is the CONFIGURATION FACT that makes the collapse reading
+    #     impossible. `fail-fast: false` on both matrices is what forecloses it, so
+    #     assert that positively and an inversion has to break it.
+    affirms_no_failfast = [
+        s for s in lines
+        if re.search(r"fail-?fast:?\s*`?false", s, re.I)
+        and re.search(r"\bboth\b|\beach\b|\bmatri", s, re.I)
+        and not re.search(r"\bneither\b|\bnot\b\s+`?fail-?fast|\bno\b\s+matri", s, re.I)
+    ]
+    check("asserts BOTH corpus matrices are `fail-fast: false`",
+          bool(affirms_no_failfast),
+          "the configuration fact is gone or inverted ('neither matrix sets "
+          "fail-fast: false') -- it is what makes the collapse reading impossible, "
+          "so without it the denial rests on nothing")
 
     def names_short_set(s: str) -> bool:
         return bool(re.search(
             r"dispatch|one[- ]leg|single[- ]leg|short leg set|fewer than eight|seven", s, re.I))
 
+    # The wrong reading must be rejected, not merely mentioned. `never right` is a
+    # rejection; `not wrong` is an endorsement wearing a negation, so the two are
+    # separated by what the negation attaches to rather than by its presence.
+    def rejects_collapse_reading(s: str) -> bool:
+        """True when the sentence REJECTS reading a short leg set as a collapse.
+
+        Word order is free: "is never right to read as collapsed" puts the
+        rejection after the topic, "never evidence that the legs collapsed" puts
+        it before. A control rewording one into the other must stay green
+        (measured, C2), so look in a window either side rather than only after.
+
+        What must NOT count is a negation attached to the REJECTION instead of to
+        the reading -- `is not wrong` endorses the collapse reading while carrying
+        a negation, which is how the first draft passed an inversion (M-B).
+        """
+        m = re.search(r"fail-?fasted|collaps", s, re.I)
+        if not m:
+            return False
+        window = s[max(0, m.start() - 70):m.end() + 70]
+        if re.search(r"\bnot wrong\b|\bnot incorrect\b|\bis right\b|\bis correct\b",
+                     window, re.I):
+            return False                      # the rejection is itself negated
+        return bool(re.search(
+            r"\bnever right\b|\bis wrong\b|\bnever evidence\b|\bnever\b|"
+            r"\bis not\b|\bdoes not\b|\bcannot\b", window, re.I))
+
     denial = [
         i for i, s in enumerate(lines)
-        if denies(s) and any(names_short_set(lines[j])
-                             for j in (i - 1, i) if 0 <= j < len(lines))
+        if rejects_collapse_reading(s) and any(names_short_set(lines[j])
+                                               for j in (i - 1, i) if 0 <= j < len(lines))
     ]
     check("states that a dispatch's short leg set is NOT a collapsed matrix",
           bool(denial),
-          "no sentence denies the fail-fast/collapse reading next to the one that "
-          "names the short leg set; without the denial the wrong inference survives")
+          "no sentence REJECTS the fail-fast/collapse reading next to the one that "
+          "names the short leg set -- note 'is not wrong' endorses that reading "
+          "while carrying a negation, so it does not count")
 
-    # (d) Recency is explicitly RULED OUT -- and ruling it out is a negation, not a
-    #     mention. Measured: a replacement reading "a head can carry several runs from
-    #     the newest dispatch back to the original" keeps the vocabulary and drops the
-    #     claim, so a check keyed on "a sentence mentioning newest/oldest near a run
-    #     word" passed it while the warning against taking the newest run was gone.
-    #     That is failure mode 2 -- a sibling sentence satisfying the check. So the
-    #     sentence must both name the ordering AND deny it decides which run gates.
-    def denies_recency(s: str) -> bool:
-        return bool(
-            re.search(r"\boldest\b|\bnewest\b|\bmost recent\b|\brecency\b", s, re.I)
-            and re.search(r"\bnever\b|\bnot\b|\bdoes not\b|\bdo not\b|\brather than\b|"
-                          r"\binstead of\b|\bcannot\b", s, re.I))
+    # (d) Recency is explicitly RULED OUT. Two earlier drafts of this check both
+    #     passed prose asserting the OPPOSITE, for the same reason each time: they
+    #     required a negation token somewhere in the SENTENCE, unbound to the
+    #     proposition it negates. `is never right` and `is not wrong` are then
+    #     indistinguishable, as are `never the newest` and `never the oldest`, so a
+    #     reword keeping the vocabulary and inverting the claim shipped green --
+    #     with the guard reporting `ok` on text telling the reader to take the
+    #     newest run and ignore `event` (measured, M-A below).
+    #
+    #     That is this module's failure mode 3 one level up: mutation 5 taught the
+    #     RECIPE check to read the selector's ARGUMENT rather than its presence, and
+    #     the lesson stopped at the recipe. The prose analogue of "which event does
+    #     it select" is "WHICH RUN does it tell you to take", so read that instead
+    #     of hunting for negations.
+    TAKE = r"\btake\b|\bselect\b|\bfilter\b|\bpick\b|\buse\b|\bread\b"
+    RECENT = r"\bnewest\b|\bmost recent\b|\blatest\b"
 
-    recency = [s for s in lines if denies_recency(s)]
-    check("rules out recency: says which run gates is not the newest/oldest question",
-          bool(recency),
-          "no sentence DENIES that run order decides it -- merely mentioning 'newest' "
-          "leaves 'take the most recent run' standing, which is the error itself")
+    def prescribes_gating_run(s: str) -> bool:
+        """Tells the reader to take the pull_request run, by its event."""
+        return bool(re.search(TAKE, s, re.I)
+                    and re.search(r"pull_request|\bits event\b|\bthe event\b", s, re.I))
+
+    def prescribes_recent_run(s: str) -> bool:
+        """Tells the reader to take the newest run -- the error itself.
+
+        Scoped to an IMPERATIVE: `take the newest run` prescribes it, while
+        `never the newest run` and `not whichever run is most recent` reject it.
+        A negation anywhere before the verb's object flips the prescription, so
+        the two are told apart by what sits between them, not by presence.
+        """
+        for m in re.finditer(TAKE, s, re.I):
+            tail = s[m.end():m.end() + 80]
+            if not re.search(RECENT, tail, re.I):
+                continue
+            between = tail[:re.search(RECENT, tail, re.I).start()]
+            if re.search(r"\bnever\b|\bnot\b|\brather than\b|\binstead of\b|\bno\b",
+                         between, re.I):
+                continue          # "...never the newest run" -- a rejection
+            return True
+        return False
+
+    prescribed = [s for s in lines if prescribes_gating_run(s)]
+    check("tells the reader to take the pull_request run, by its event",
+          bool(prescribed),
+          "no sentence prescribes taking the gating run; without it the section "
+          "describes a distinction without saying what to do with it")
+
+    misprescribed = [s for s in lines if prescribes_recent_run(s)]
+    check("no sentence prescribes taking the NEWEST run instead",
+          not misprescribed,
+          f"prescribes recency: {misprescribed!r} -- dispatches follow the gating "
+          f"run, so 'take the newest' selects the one-leg dispatch every time")
+
+    # And the ordering fact itself must survive, since it is WHY recency inverts.
+    # `gates` is as good as `gating` and `the one that gates` as good as naming
+    # pull_request: a control rewording it that way must stay green, or this check
+    # has pinned a vocabulary rather than the fact (measured, C1).
+    ordering = [
+        s for s in lines
+        if re.search(r"\boldest\b", s, re.I)
+        and re.search(r"\bgat(e|es|ing)\b|\bpull_request\b", s, re.I)
+        and not re.search(r"\b(never|not)\b[^.]{0,30}\bthe \*{0,2}oldest\b", s, re.I)
+    ]
+    check("states that the gating run can be the OLDEST of several",
+          bool(ordering),
+          "the ordering fact is gone, or inverted to 'never the oldest' -- it is "
+          "what makes recency point at the wrong run rather than merely fail")
 
     # (e) The default `gh pr checks` output omits `event`, which is WHY the error is
     #     easy: the field exists but is not shown unless asked for by name.
@@ -273,6 +377,31 @@ def part2_section(body: str) -> None:
     check("keeps the full-SHA requirement beside the runs query",
           bool(fullsha),
           "an abbreviated head_sha returns an empty list that reads as 'no runs'")
+
+    # (g) The recipe must VALIDATE the SHA before interpolating it, not merely
+    #     describe the requirement. An EMPTY head_sha drops the filter and returns
+    #     the repository's whole run history -- well-formed, plausible, and about no
+    #     commit you asked about (#3389's sixth mechanism; measured 2026-09-23,
+    #     head_sha= answers total_count 1158 against 0 for an abbreviated one).
+    #     Prose alone does not stop it, because the failure is an unset variable
+    #     rather than a typo a reader would see.
+    validates = re.search(r"\[0-9a-f\]\{40\}", body)
+    check("the recipe VALIDATES the head SHA before interpolating it",
+          bool(validates),
+          "no 40-hex-char validation in the recipe -- an unset $head returns the "
+          "whole repository's runs, which a check for an empty result cannot catch")
+
+    empty_case = [
+        s for s in lines
+        if re.search(r"\bempty\b", s, re.I)
+        and re.search(r"whole run history|entire|unfiltered|every run|"
+                      r"repository'?s whole|1158|drops the filter", s, re.I)
+    ]
+    check("distinguishes the EMPTY-SHA case from the abbreviated one",
+          bool(empty_case),
+          "the two fail in opposite directions -- abbreviated gives a false zero, "
+          "empty gives a populated list for the wrong commit; naming only the "
+          "first leaves the more dangerous one undocumented")
 
 
 # ---------------------------------------------------------------------------
