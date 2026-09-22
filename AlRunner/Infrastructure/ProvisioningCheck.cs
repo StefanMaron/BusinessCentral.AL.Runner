@@ -1892,10 +1892,30 @@ public static class ProvisioningCheck
         ManifestProvisionDecision decision,
         PlatformAppsReport legacySymbolOnlyReport)
     {
+        // Materialised once: this member reads the roots twice (the Application-floor test below
+        // and the shared core), and a caller may hand in a lazy sequence.
+        var roots = manifestRoots as IReadOnlyCollection<AlRunner.DependencyRef> ?? manifestRoots.ToList();
         // Present, not missing: the complement of CanDeferPlatformApps' precondition. A run
         // wanting a download is that member's case and must not also be this one.
         if (decision.ShouldDownloadPlatform || decision.MissingPlatformApps.Count > 0) return false;
         if (!decision.NeedsPlatformApps || !decision.PlatformComplete) return false;
+        // The `application` floor is what makes this worth an attempt at all, and leaving it out
+        // is how the first revision of this fix regressed six subprocess tests. MEASURED on
+        // `main`, warm, same box: a bundle declaring only `platform` resolves ONE package
+        // (Microsoft/System, ~620 KB) while one declaring `application` resolves FIVE, including
+        // the ~98 MB Base Application this issue is about. So a platform-only bundle — every
+        // AlRunner.Tests fixture, by .claude/rules/no-base-app-in-csharp-tests.md — was paying a
+        // whole extra process to save 620 KB it had already loaded, and any output-shape cost of
+        // that attempt bought nothing.
+        //
+        // Trap: this is NOT the #2229 placeholder-vs-real distinction, which asks whether a
+        // version was deliberately CHOSEN. `platform: "27.0.0.0"` is as real a floor as they come
+        // and still resolves one package; what decides the cost is WHICH implicit root the
+        // manifest synthesises, because only `application` pulls the Base Application closure.
+        if (!roots.Any(r =>
+                string.Equals(r.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(r.Name, "Application", StringComparison.OrdinalIgnoreCase)))
+            return false;
         // Judged on the ROOTS (inside NeedComesOnlyFromImplicitRoots), never on
         // RequiredPlatformApps. Measured warm on this box for a bundle declaring only
         // `platform`/`application`: roots=[Microsoft/Application, Microsoft/System] while
@@ -1905,7 +1925,7 @@ public static class ProvisioningCheck
         // precisely when the closure is present. A RequiredPlatformApps test therefore reads
         // "this bundle needs Base Application" for a bundle that names nothing, and would make
         // this member unreachable in exactly the warm case #2223 is about.
-        return NeedComesOnlyFromImplicitRoots(manifestRoots, decision, legacySymbolOnlyReport);
+        return NeedComesOnlyFromImplicitRoots(roots, decision, legacySymbolOnlyReport);
     }
 
     /// <summary>

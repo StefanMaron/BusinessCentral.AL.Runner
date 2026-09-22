@@ -1861,7 +1861,24 @@ if (!provisionSubcommand)
     // above. The two happen to agree today, and must be able to fail apart: a child that both
     // kept the closure AND spawned its own child would recurse until the box ran out of
     // processes, which is not a failure the withhold's own tests can see.
+    //
+    // NOT under --verbose, and that is a correctness condition rather than a preference. The
+    // attempt's output is REPLAYED on top of what this process has already printed, and under
+    // --verbose the parent has emitted a startup preamble the child re-emits in full — so every
+    // line of it appears twice. Measured on the CrossMajorNote fixture: `main` prints the #2210
+    // note once, replaying printed it twice, against a test asserting exactly once. Quiet runs
+    // print none of that, so the replay is clean there; `--output-json` and `--server` are
+    // excluded for the same reason one level up (their stdout is a contracted document, and
+    // interleaving anything into it breaks the parse).
+    //
+    // The cost of the exclusion is bounded and known: --verbose is a diagnostic flag, and the run
+    // it describes still works, just without this saving. Making the replay itself preamble-aware
+    // was tried and abandoned -- every invocation ALREADY re-execs into a shadow-runtime child
+    // whose streams are inherited rather than captured, so a parent-side line count does not
+    // describe what the user sees. #2375 is the issue that would remove that re-exec.
     if (!serverMode && !watchMode && !tddMode && strictExitCode
+        && !AlRunner.Log.Verbose
+        && !outputJson
         && Environment.GetEnvironmentVariable(
             AlRunner.Infrastructure.ProvisioningCheck.DeferredPlatformAppsEnvVar) != "1"
         && AlRunner.Infrastructure.ProvisioningCheck.CanSkipPresentPlatformApps(
