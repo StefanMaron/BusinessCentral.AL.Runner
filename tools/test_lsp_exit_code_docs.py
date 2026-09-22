@@ -40,11 +40,17 @@ DOCS = [
 
 # "this document talks about exit 1" -- kept broad on purpose, so a reworded table
 # or prose sentence still counts as documenting it.
+# Deliberately broad. A document that documents exit 1 in a shape this misses is
+# reported as `skip` -- visible, but no longer guarded -- so each alternative below
+# was added against a spelling that occurs or could occur after a routine reformat.
+# Reviewer of #4466 found the indented-block form resting on ONE alternative: a
+# `1  x` -> `1: x` edit silently dropped lsp-query.py out of the checked set.
 MENTIONS_EXIT_1 = re.compile(
-    r"(?:exit\s*1\b"                  # "exit 1" in prose
+    r"(?:exit(?:\s+code)?\s*1\b"       # "exit 1" / "exit code 1" in prose
+    r"|\bexits\s+1\b"                  # "the tool exits 1"
     r"|^\s*\|\s*\*?\*?1\*?\*?\s*\|"   # a markdown table row whose first cell is 1
-    r"|\b1\s*=\s"                     # "1 = ..." in a prose list
-    r"|^\s{2,}1\s{2,}\S)",            # an indented "    1  meaning" block (lsp-query.py)
+    r"|\b1\s*=\s"                      # "1 = ..." in a prose list
+    r"|^\s{2,}1\s*[:.)]?\s{1,}\S)",    # an indented "1  x" / "1: x" / "1) x" block
     re.I | re.M,
 )
 # the caveat itself, by CONCEPT rather than phrasing
