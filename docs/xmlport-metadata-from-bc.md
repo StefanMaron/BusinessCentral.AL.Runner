@@ -48,11 +48,21 @@ print('keys:', sorted(xps[0].keys()))
 EOF
 ```
 
-**Trap: System Application's four are double-encoded.** Their `ReferenceSourceFileName` reads
-`Security%20Groups/src/…` while the zip entry is `src/Security%2520Groups/src/…`, so a suffix
-match on the stated path finds nothing. `BcAppSymbolCache.TryReadSourceFile` matches on suffix and
-therefore misses those four today — the same way it does for reports, which is a pre-existing
-shared limitation rather than anything this derivation introduced. The other 40 match exactly.
+**Trap: System Application's four are double-encoded, and that WAS a live defect.** Their
+`ReferenceSourceFileName` reads `Permission%20Sets/…` while the zip entry is
+`src/Permission%2520Sets/…` (`%25` is a literal `%`, so `%2520` decodes once to `%20`).
+`BcAppSymbolCache.TryReadSourceFile` matches on suffix, so the stated path found nothing and
+those four read as "this .app ships no source" — the symbol resolved, the source read answered
+null, and the derivation correctly refused.
+
+It is fixed: the reader re-probes with `%` → `%25` **after** the plain suffix match has already
+failed, so a correctly packaged path still resolves on the first match. Measured: **40 of 44
+reconstructing before, 44 of 44 after**, with the four being System Application's 9001, 9862,
+9863 and 9864 and none of Base Application's 40 affected. Pinned in both directions by
+`AlRunner.Tests/DependencyXmlPortMetadataTests.cs`'s `BcAppSourceFileEncodingTests`, whose two
+opposite mutations red disjoint sets.
+
+The fix is in the shared reader, so it applies to **every** caller, reports included.
 
 <a id="the-fixture"></a>
 
