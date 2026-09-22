@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **metadata:** derive a precompiled dependency xmlport's node schema from the .app
 - **preflight:** act on the CARRIED verdict --reap already reaches
 - **testpage:** serve a TableRelation-only lookup through BC's own lookup-mode RunModal
 - **ci:** flag a PR that closes an issue while deferring that issue's own work
