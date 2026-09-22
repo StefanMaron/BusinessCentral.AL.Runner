@@ -33,6 +33,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **virtual-tables:** scope Query Metadata to the executing app group
 - **metadata:** derive the codeunit and page method <Parameters> subtree, measured exactly on four BC builds
 - **app-group-visibility:** parse a source-compiled dependency before its dependents populate
 - **virtual-tables:** scope Page Metadata, Report Metadata and Report Data Items to the executing app group
