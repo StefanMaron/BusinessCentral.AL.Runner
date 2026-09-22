@@ -299,3 +299,69 @@ makes the log readable is what makes the trap visible.
 
 The filter (`grep -v $'\x1b\[36;1m'`) was executed against both logs above before being written
 into the rule, per #3955.
+
+## Reading a corpus PR's leg set: `event` before leg count (#3389)
+
+Two independent review agents, working different PR sets in the same hour, each reached a
+**wrong verdict about which BC legs ran** on a corpus PR. Opposite conclusions, one root cause:
+the corpus repository routinely carries several workflow runs per head SHA, and every obvious
+way to read a verdict picks one silently.
+
+### Mechanism 1 -- a `workflow_dispatch` run builds a ONE-LEG matrix
+
+Corpus `ci.yml`'s `prepare` job branches on `github.event.inputs.bc_version`: with an override
+it emits a single-entry matrix, otherwise the full eight-version one. So the legitimate
+single-leg dispatch recipe in `ci-verdicts.md` section 5 produces a run where seven of the
+eight required cloud legs **do not exist** -- which reads exactly like a matrix that
+fail-fasted. Both matrices are declared `fail-fast: false`, so that reading is never right.
+
+Re-measured against the live API while writing the fix, corpus PR #254, head
+`84a63b262820eb645b39262f7d5ca10d71420bc8`:
+
+| run | event | cloud legs |
+|---|---|---|
+| 34118581202 | `workflow_dispatch` | 1 |
+| 34117863109 | `pull_request` | 8 |
+
+A reviewer read the dispatch run, concluded "the matrix fail-fasted, seven legs never ran",
+and escalated it to a repo-wide blocker degrading every corpus PR's evidence from eight
+versions to one. No such blocker existed.
+
+### Mechanism 2 -- the gating run can be the OLDEST of several
+
+Corpus PR #257, head `e3d632ce`, carried three runs; re-measured:
+
+```
+34132233466 workflow_dispatch 14:18:26Z
+34121459612 workflow_dispatch 12:21:49Z
+34118430645 pull_request      11:47:29Z   <- the gating run
+```
+
+Dispatches follow the `pull_request` run, so recency systematically points at the wrong one.
+A second reviewer reported `gh pr checks` surfacing the oldest run on #258, #257 and #254; on
+#257 that was the difference between reading 8 failing legs and reading 3.
+
+### What the fix rests on that the issue did not have
+
+`gh pr checks --json` **does** expose `event` -- measured on #254, all eight legs report
+`event=pull_request`. What it does not do is show it by default: the four columns printed are
+name, state, duration and link. So the discriminator was available all along and nothing told
+a reader the question existed, which makes the remedy one flag rather than a separate API call.
+
+### Why the guard is shaped the way it is
+
+`tools/test_corpus_run_event_discriminator.py` was written first and failed correctly (exit 3,
+UNMEASURABLE -- the section did not exist yet). Three drafts of it were then defeated by its
+own mutations, each reproducing a documented way a rule-text guard passes while the claim is
+gone:
+
+| the check as first written | what defeated it |
+|---|---|
+| the relation asserted per LINE | the shipped claim hard-wraps across two lines, so it pinned the author's line breaks |
+| "a sentence mentioning newest/oldest near a run word" | a reword keeping the vocabulary and dropping the denial -- a sibling sentence satisfying the check |
+| "a line with `pull_request` that also contains `select`" | a recipe inverted to `select(.event == "workflow_dispatch")` -- the verdict column pinned, the action column never read |
+
+The third is the sharp one: the guard passed a recipe prescribing **exactly the wrong run**,
+which is worse than prescribing none. The fix reads the selector's argument rather than its
+neighbourhood. Final matrix: six mutations each caught by one check, two meaning-preserving
+rewords green, clean tree green.
