@@ -714,6 +714,44 @@ public static class ProvisioningCheck
         => string.IsNullOrWhiteSpace(country) ? BcArtifacts.SelectedCountry : country.Trim().ToLowerInvariant();
 
     /// <summary>
+    /// Issue #2223: whether THIS process must leave the runner-owned platform-apps directories
+    /// out of its search set — true exactly inside #2232's attempt-without-them child, which
+    /// <see cref="DeferredPlatformAppsEnvVar"/> marks.
+    ///
+    /// One definition because two independent routes fold those directories in
+    /// (<c>ProgramSupport.DefaultPackageCacheDirs</c> and Program.cs's
+    /// <c>extraProvisionSearchDirs</c> block), and an attempt that withholds them on one route
+    /// only still resolves the whole closure — which is the defect #2223 reports, and the shape
+    /// that made #2232's own attempt meaningless on a provisioned machine.
+    /// </summary>
+    public static bool WithholdingPlatformApps()
+        => Environment.GetEnvironmentVariable(DeferredPlatformAppsEnvVar) == "1";
+
+    /// <summary>
+    /// Issue #2223: whether <paramref name="dir"/> is a runner-owned platform-apps directory —
+    /// the leaf-name half of <see cref="PlatformAppsDirFor"/>, which is the only thing in the
+    /// codebase that builds these names. Matches the w1 spelling and every
+    /// <c>platform-apps-&lt;country&gt;</c> sibling, because a deferred attempt must withhold the
+    /// closure whatever country supplied it.
+    ///
+    /// Deliberately name-only, and deliberately NOT country-filtered: it decides what a single
+    /// consumer (the fold in Program.cs) leaves out of its own search set, never what is present
+    /// or complete. Reading contents here would make a cheap set operation do I/O for an answer
+    /// it does not need — <see cref="FindMissingPlatformApps"/> is the member that opens packages.
+    ///
+    /// Trap: test-apps are NOT platform-apps and must keep folding in. The test toolkit is a
+    /// separate artifact set (<see cref="TestAppsDirFor"/>), a bundle that needs it is excluded
+    /// from deferral by <see cref="CanDeferPlatformApps"/> anyway, and withholding it here would
+    /// make a deferred attempt fail to compile for a reason that has nothing to do with #2223.
+    /// </summary>
+    public static bool IsRunnerOwnedPlatformAppsDir(string dir)
+    {
+        var leaf = Path.GetFileName(dir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        return string.Equals(leaf, "platform-apps", StringComparison.OrdinalIgnoreCase)
+            || leaf.StartsWith("platform-apps-", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
     /// Runner-owned directory to download the Microsoft test toolkit (Business Foundation
     /// Test Libraries, Application Test Library, Library Assert, Test Runner, …) into.
     /// </summary>
@@ -1797,17 +1835,77 @@ public static class ProvisioningCheck
         ManifestProvisionDecision decision,
         PlatformAppsReport legacySymbolOnlyReport)
     {
-        static bool IsImplicitRootName(string name) =>
-            string.Equals(name, "Application", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(name, "System", StringComparison.OrdinalIgnoreCase);
+        if (!decision.ShouldDownloadPlatform) return false;
+        if (decision.MissingPlatformApps.Count == 0 || !decision.MissingPlatformApps.All(IsImplicitRootName)) return false;
+        return NeedComesOnlyFromImplicitRoots(manifestRoots, decision, legacySymbolOnlyReport);
+    }
 
-        if (!legacySymbolOnlyReport.Ok || !decision.ShouldDownloadPlatform) return false;
+    private static bool IsImplicitRootName(string name) =>
+        string.Equals(name, "Application", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(name, "System", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The half <see cref="CanDeferPlatformApps"/> and <see cref="CanSkipPresentPlatformApps"/>
+    /// share: the platform-app need comes from nothing but the implicit <c>Application</c>/
+    /// <c>System</c> roots an app.json floor synthesises, and nothing else about this run makes
+    /// the closure's absence unmeasurable. An explicit Microsoft root, a test-toolkit need, a
+    /// symbol-only platform app, or an unreadable package whose edges are unknown all disqualify.
+    ///
+    /// Stated once because the two callers' verdicts must not drift apart: they ask the same
+    /// question about the bundle and differ ONLY in whether the apps are already on disk.
+    /// </summary>
+    private static bool NeedComesOnlyFromImplicitRoots(
+        IEnumerable<AlRunner.DependencyRef> manifestRoots,
+        ManifestProvisionDecision decision,
+        PlatformAppsReport legacySymbolOnlyReport)
+    {
+        if (!legacySymbolOnlyReport.Ok) return false;
         if (decision.NeedsTestApps || decision.ShouldDownloadTest) return false;
         if (decision.UnreadablePackages.Count > 0) return false;
-        if (decision.MissingPlatformApps.Count == 0 || !decision.MissingPlatformApps.All(IsImplicitRootName)) return false;
         return manifestRoots
             .Where(r => string.Equals(r.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase))
             .All(r => IsImplicitRootName(r.Name));
+    }
+
+    /// <summary>
+    /// Issue #2223: whether platform apps that ARE on disk may be left out of this run's search
+    /// set, subject to the same attempt-without-them verdict #2232 already uses.
+    ///
+    /// <see cref="CanDeferPlatformApps"/> answers the cold-cache question — the apps are missing,
+    /// so should we download them? — and is unreachable once they are present, because nothing is
+    /// then missing and no download is asked for. That left the far commoner warm case paying for
+    /// the whole closure on every invocation: any machine that has run <c>al-runner provision</c>
+    /// resolves and loads Base Application even for a bundle whose AL is arithmetic.
+    ///
+    /// Same bundle shape, same evidence standard, opposite disk state. The caller still trusts
+    /// only a green attempt (<see cref="DeferredPlatformAppsEnvVar"/>); a non-green one is
+    /// discarded and the run proceeds with the closure exactly as before, so a bundle that
+    /// genuinely uses Base Application is never silently served without it.
+    ///
+    /// Trap: this may NOT key on <c>PlatformComplete</c> alone. A run with no platform need at
+    /// all — no floor, no Microsoft root — has nothing to skip and must not spawn an attempt to
+    /// discover that; <c>NeedsPlatformApps</c> is what separates the two, and a bundle that names
+    /// an explicit Microsoft root is excluded by the shared core above.
+    /// </summary>
+    public static bool CanSkipPresentPlatformApps(
+        IEnumerable<AlRunner.DependencyRef> manifestRoots,
+        ManifestProvisionDecision decision,
+        PlatformAppsReport legacySymbolOnlyReport)
+    {
+        // Present, not missing: the complement of CanDeferPlatformApps' precondition. A run
+        // wanting a download is that member's case and must not also be this one.
+        if (decision.ShouldDownloadPlatform || decision.MissingPlatformApps.Count > 0) return false;
+        if (!decision.NeedsPlatformApps || !decision.PlatformComplete) return false;
+        // Judged on the ROOTS (inside NeedComesOnlyFromImplicitRoots), never on
+        // RequiredPlatformApps. Measured warm on this box for a bundle declaring only
+        // `platform`/`application`: roots=[Microsoft/Application, Microsoft/System] while
+        // required=[Application, System, System Application, Base Application, Business
+        // Foundation] -- because DetermineManifestNeeds walks the <Dependencies> edges of the
+        // packages that are ON DISK, so the implicit roots expand into the whole closure
+        // precisely when the closure is present. A RequiredPlatformApps test therefore reads
+        // "this bundle needs Base Application" for a bundle that names nothing, and would make
+        // this member unreachable in exactly the warm case #2223 is about.
+        return NeedComesOnlyFromImplicitRoots(manifestRoots, decision, legacySymbolOnlyReport);
     }
 
     /// <summary>

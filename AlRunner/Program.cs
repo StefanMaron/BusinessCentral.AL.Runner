@@ -1791,9 +1791,27 @@ List<string> PlatformCheckDirs() =>
 // e.g. this exact invocation's own CLI flags). Without this, a prior run's warm
 // test-apps/platform-apps stay invisible to compilation even though the provisioning
 // DECISION already sees them.
+// #2223: withheld in the one process whose entire purpose is to answer "does this bundle
+// work WITHOUT the Microsoft closure?" — #2232's deferred attempt. That env var used to
+// suppress only the DOWNLOAD decision, so whenever platform-apps happened to be on disk the
+// attempt resolved and loaded the very closure it was measuring the absence of, and its green
+// verdict said nothing. Measured on this box, one bundle whose AL is `2 + 2`, warm cache:
+// 5 platform deps / 7 assemblies / 3.06 GB peak RSS / 10.7 s with the directory present,
+// against 0 / 0 / 295 MB / 2.1 s without it.
+//
+// Scoped to the attempt, NOT to every run: an ordinary invocation keeps the closure whether
+// or not the AL turns out to use it, because nothing here can tell a floor the AL uses from
+// one it does not (docs/limitations.md#platform-apps-deferral), and a run that silently
+// skipped it would trade this cost for an unresolved-type failure.
+// DeferredPlatformAppsWithholdTests pins both halves.
+var withholdPlatformApps = AlRunner.Infrastructure.ProvisioningCheck.WithholdingPlatformApps();
 foreach (var d in extraProvisionSearchDirs)
+{
+    if (withholdPlatformApps && AlRunner.Infrastructure.ProvisioningCheck.IsRunnerOwnedPlatformAppsDir(d))
+        continue;
     if (!packageCacheDirs.Contains(d))
         packageCacheDirs.Add(d);
+}
 
 // Platform-app R2R check: scan the package cache for known Microsoft platform runtime apps
 // (System Application, Base Application, Business Foundation). If any are present as
@@ -1825,6 +1843,45 @@ if (!provisionSubcommand)
     // `platform` artifact, not `w1`) — a cache can have complete R2R platform apps and
     // still be missing the whole test toolkit, which fails compiling any test bundle.
     var toolkitPresent = decision.TestComplete;
+
+    // #2223: the same question one disk state later. #2232's deferral above fires only when the
+    // apps are MISSING (its own precondition is a pending download), so once
+    // `al-runner provision` has run, every invocation resolves and loads the whole closure for a
+    // bundle whose need comes from nothing but an app.json floor. Measured on this box, warm
+    // cache, one bundle whose AL is `2 + 2`: 5 platform deps / 7 assemblies / 3.06 GB peak RSS /
+    // 10.7 s present, against 0 / 0 / 295 MB / 2.1 s absent.
+    //
+    // Same evidence standard as #2232, deliberately: the attempt runs in a captured child and
+    // only exit 0 is the verdict, so a bundle that turns out to use Base Application falls
+    // through and is served the closure exactly as before. Nothing here predicts need from the
+    // manifest — that is the prediction #2232 established cannot be made
+    // (docs/limitations.md#platform-apps-deferral).
+    //
+    // The recursion guard reads the env var DIRECTLY rather than reusing withholdPlatformApps
+    // above. The two happen to agree today, and must be able to fail apart: a child that both
+    // kept the closure AND spawned its own child would recurse until the box ran out of
+    // processes, which is not a failure the withhold's own tests can see.
+    if (!serverMode && !watchMode && !tddMode && strictExitCode
+        && Environment.GetEnvironmentVariable(
+            AlRunner.Infrastructure.ProvisioningCheck.DeferredPlatformAppsEnvVar) != "1"
+        && AlRunner.Infrastructure.ProvisioningCheck.CanSkipPresentPlatformApps(
+            manifestDependencyRoots, decision, platformReport))
+    {
+        var attempt = AlRunner.Infrastructure.DeferredPlatformAppsAttempt.Run(args);
+        if (attempt.ExitCode == 0)
+        {
+            attempt.Replay();
+            return 0;
+        }
+        // Discarded, and deliberately quiet on the success path above: unlike #2232's cold case
+        // this costs the user nothing when it fails (the closure was already on disk and the run
+        // proceeds with it), so a note on every such bundle would be noise on a healthy run. The
+        // cold-cache message stays, because there the fallback is a download or a refusal.
+        if (AlRunner.Log.Verbose)
+            Console.Error.WriteLine(
+                $"[provision] an attempt without the on-disk platform apps did not come out green "
+                + $"(exit {attempt.ExitCode}); its output is discarded and the run proceeds with them (#2223).");
+    }
 
     // #2232: a need that comes only from the app.json floor is tried without the platform apps
     // first, in a captured child; only an exit-0 attempt is the verdict. Anything else falls
