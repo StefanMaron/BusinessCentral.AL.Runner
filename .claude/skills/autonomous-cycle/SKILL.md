@@ -459,9 +459,43 @@ a merge can turn `main` red, which outranks everything you were about to do.
    PR citing it with a `Corpus-PR:` line was already measured against that branch head, and
    after the merge the same line resolves `master`. Merge the runner PR next
    (`al-language-submodule.md`).
-5. **An issue is ready to work.** Take the highest-value one — prefer a measured failure count
-   over a guess — and implement it. One issue at a time. Where value does not separate two
-   candidates, take the older (`orchestrating-a-session` § The ready queue).
+5. **An issue is ready to work.** Take the highest `priority:` one and implement it. One issue at
+   a time; within a priority, take the older (`orchestrating-a-session` § The ready queue).
+
+   `urgent` > `high` > `medium` > `low` > unranked. The triager assigns these on blast radius and
+   evidence, not on category — a docs issue can be `urgent` (a rule actively misleading an agent)
+   or `low` (a stale pointer), and both are right.
+
+   **Going lower than the top needs one line on the issue you took, and nothing else** — no
+   approval, no waiting. Folding siblings into a PR you are already writing is exempt and needs no
+   note (`batch-sibling-issues-by-file.md`). For any *new* pick below the highest available, say
+   why: blocked on artifacts, needs a corpus verdict, the higher one is stalled behind an open PR.
+   The comment is the audit trail, and the reasons that accumulate are how the real exception list
+   gets written from evidence rather than guessed up front.
+
+   **Why this replaced "take the highest-value one".** That instruction was already here and was
+   not enough: value was a judgement made per issue, in the moment, recorded nowhere, so nothing
+   could tell afterwards whether it had been applied. Measured 2026-09-22 over the previous seven
+   days: **process/tooling work was 21-36% of merged PRs against a backlog that is 19% process**
+   — so the loop over-selected it by roughly **1.1x to 1.9x**.
+
+   **The range is the honest form, and the reason is worth knowing.** "Process" has no label in
+   this repository, so every figure comes from a classifier someone wrote. Ten classifiers over
+   the same week spanned 16-43%; the 21-36% above is the subset that actually targets process
+   work, and the wider figures come from classifiers too loose or too narrow to mean it. The
+   **denominator** is the solid half: 19% reproduces exactly (27 of 145 open issues), because it
+   is checkable against the `area: project-process` and `runner-gap` labels.
+
+   Quote the range with the multiplier it implies, or re-derive with a stated classifier — a
+   single number here is a choice of regex wearing the clothes of a measurement (found in review
+   of #4477, where the author's own 44% did not reproduce). **And check the multiplier against
+   the BOTTOM of whatever range you quote**: an earlier revision of this paragraph widened the
+   range to 16-43% while keeping a "1.6x to 2.3x" derived from the old numerator, and 16% against
+   a 19% denominator is **0.84x — under-selection**, the opposite of the claim it decorated.
+
+   Process issues are cheap to evaluate and cheap to close, so they win a selection contest that
+   has no other criterion. A priority set by the triager and read at pick time is a criterion that
+   survives the moment.
 
    Use the `status: ready` label where it exists, but **do not depend on it.** The loop must work
    on a repository whose labels are absent, stale, or organised differently. Fall back to: open,

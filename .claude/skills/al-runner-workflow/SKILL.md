@@ -16,7 +16,31 @@ Your agent identity (`impl-1`, `impl-2`, `orchestrator`) is given in the task pr
 If you are `impl-1` or `impl-2`:
 
 1. Check for issues labeled `agent: <your-id>` AND `status: in-progress` — that is your active issue if one exists.
-2. If no active issue, find the next unclaimed issue: `status: ready` with no `agent:` label and no human assignee. Claim it: add `agent: <your-id>`, `status: in-progress`, assignee `@me`. Remove `status: ready`.
+2. If no active issue, find the next unclaimed issue: `status: ready` with no `agent:` label and no human assignee — **taking the highest `priority:` first** (`urgent` > `high` > `medium` > `low`), oldest first within a priority. Claim it: add `agent: <your-id>`, `status: in-progress`, assignee `@me`. Remove `status: ready`.
+
+   ```bash
+   gh issue list --repo StefanMaron/BusinessCentral.AL.Runner --state open --limit 200 \
+     --label "status: ready" --json number,title,labels,assignees,createdAt \
+     --jq '[.[] | select((.assignees|length)==0)
+            | select([.labels[].name] | map(startswith("agent:")) | any | not)
+            | {n:.number, t:.title,
+               p:([.labels[].name | select(startswith("priority:"))] | first // "priority: (none)"),
+               c:.createdAt}]
+           | sort_by(({"priority: urgent":0,"priority: high":1,"priority: medium":2,
+                       "priority: low":3}[.p] // 9), .c)
+           | .[] | "\(.p)\t#\(.n)\t\(.t[:70])"'
+   ```
+
+   **Going lower than the top needs one line on the issue, and nothing else** — no approval, no
+   waiting. Folding siblings into a PR you are already writing is exempt: those may be any
+   priority (`batch-sibling-issues-by-file.md`). For any *new* pick below the highest available,
+   comment on the issue you took saying why — blocked on artifacts, needs a corpus verdict, the
+   higher one is stalled behind a PR. The comment is the audit trail, and the set of reasons that
+   accumulates is how the real exception list gets written from evidence instead of guessed.
+
+   An unprioritised `status: ready` issue sorts last, not first: it has not been ranked, so it has
+   not been judged worth displacing ranked work. Say so and take it only when the ranked queue is
+   empty, or ask the triager to rank it.
 3. **Verify you understand the AL pattern.** If the issue body lacks a runnable AL reproducer or a specific failing assertion, do not guess. Add `status: needs-input`, ask the reporter, stop (`.claude/rules/no-assumption-fixes.md`).
 4. Branch `agent/<your-id>/issue-<N>`, pushed, with a draft PR carrying `Closes #N`, the label `agent: <your-id>`, assigned to `@me` (`.claude/agents/impl-agent.md`, Step 2).
 5. Implement red → green (`.claude/rules/tdd.md`). The right test depends on what kind of issue this is — see "Issue kinds" below.
@@ -49,7 +73,7 @@ If you are `orchestrator`:
 2. **Unblock.** Review `status: blocked` issues; resolve if possible.
 3. Triage of new untriaged issues is owned by the `triager` sub-agent (Opus), which runs at the start of a cycle and sets `status: ready` vs. `status: needs-input`. The orchestrator does not triage.
 
-Workers self-select from the `status: ready` queue. The orchestrator does not assign issues to specific workers.
+Workers self-select from the `status: ready` queue **in `priority:` order**. The orchestrator does not assign issues to specific workers — priority is what orders the queue, not a dispatcher.
 
 ## GitHub access: operation → tool map
 
@@ -108,6 +132,10 @@ The **GitHub assignee field** is the boundary between your account's work and ev
 | `status: review-ready` | PR is marked ready; the orchestrator reads CI and reviews |
 | `status: blocked` | Needs human or cross-issue input |
 | `status: needs-input` | Issue body too thin to identify root cause; reporter must elaborate (set by triager — see `no-assumption-fixes`) |
+| `priority: urgent` | Blocks other work right now: red `main`, a broken gate, a rule actively giving wrong guidance |
+| `priority: high` | Large measured blast radius, or blocks a cluster of other issues |
+| `priority: medium` | A real defect with bounded scope; nobody is blocked |
+| `priority: low` | Cosmetic, a stale pointer, or a nice-to-have |
 | `agent: impl-1` / `agent: impl-2` | Identity claim on an issue or PR |
 
 ## Sister docs

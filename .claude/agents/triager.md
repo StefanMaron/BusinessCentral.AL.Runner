@@ -45,6 +45,8 @@ If the issue is good but its description could be tighter, post **one short comm
 gh issue edit <N> --add-label "status: ready" --repo StefanMaron/BusinessCentral.AL.Runner
 ```
 
+**Then give it a priority — every `status: ready` issue gets exactly one.** See "Step 2b" below.
+
 ### B. Too thin → `status: needs-input`
 Any of:
 - No runnable AL snippet, no specific failing assertion, no compiler diagnostic — **and** a codebase lookup didn't resolve the ambiguity.
@@ -86,6 +88,63 @@ gh issue close <N> --comment "Duplicate of #<M> — closing." --repo StefanMaron
 ```
 
 A thin report (single AL line, no surrounding context) is **not** a reason to close — it might be perfectly reproducible once the pattern is understood. Treat it like any other thin issue: `status: needs-input`, the standard comment, left open. **Out-of-scope issues** (C above): leave the comment and optionally add `wontfix`, but **do not close** — a human maintainer makes that call.
+
+## Step 2b — Priority: rank what you just marked ready
+
+**Every issue you label `status: ready` also gets exactly one `priority:` label.** This is what
+orders the work queue: implementation agents pick the highest priority first, so an unranked
+issue is one nobody will reach, and a wrongly-ranked one displaces real work.
+
+Judge on **blast radius and evidence** — how much breaks, and how well measured that is. Not on
+category: a documentation issue can be `urgent` (a rule that actively misleads an agent) or `low`
+(a stale pointer nobody follows), and both judgements are correct.
+
+| label | means | the test |
+|---|---|---|
+| `priority: urgent` | blocks other work **right now** | `main` is red, a gate is broken, or a rule/doc actively gives WRONG guidance an agent will follow |
+| `priority: high` | large measured blast radius, or blocks a cluster | a quoted count of failing tests or affected surfaces (hundreds), or several open issues wait on it |
+| `priority: medium` | a real defect, bounded scope, nobody blocked | the default for a well-formed runner gap |
+| `priority: low` | cosmetic or nice-to-have | a stale pointer, a wording fix, a convenience with no failure behind it |
+
+```
+gh issue edit <N> --add-label "priority: high" --repo StefanMaron/BusinessCentral.AL.Runner
+```
+
+**Never pass `--add-label` and `--remove-label` in one `gh issue edit`** — they race and `gh`
+exits 0 whichever wins (`branch-and-pr.md`). Two calls, additions first.
+
+### What earns `high`, and what quietly does not
+
+**A measured number in the body is the single best evidence of blast radius**, and it is what
+separates `high` from `medium`. "356 Microsoft-surface failures are one null NCLMetaQuery" is
+`high`; "SETFILTER sometimes does not narrow" describes the same defect with no measurement and
+is `medium` until someone measures it.
+
+**Do not infer a number the issue does not state.** An unmeasured issue that *feels* large is
+`medium` — the absence of a count is itself information, and inflating it is how everything
+becomes `high` and the scale stops discriminating.
+
+**A reproducer is not blast radius.** A perfectly reproducible one-line cosmetic bug is still
+`low`. Evidence sharpens a priority; it does not raise it.
+
+### Two traps
+
+**`urgent` is about *blocking*, not about severity.** A catastrophic runner bug that nothing
+currently depends on is `high`, not `urgent`. A one-line wrong sentence in a rule an agent reads
+every cycle IS `urgent`, because agents act on it before anyone notices. Ask "does leaving this
+until tomorrow make other work wrong?" — not "how bad is it?"
+
+**Re-check an `urgent` before applying it.** Urgent items are by definition about current state,
+and current state moves: a red `main` may be green by the time you triage. Verify the blocking
+condition still holds rather than reading it from the issue body, which records a moment
+(`verify-execution-not-the-tick.md`, "a number that travels").
+
+### Priorities are cheap to change
+
+Apply one, do not agonise. A priority is a label, not a verdict: an implementation agent that
+discovers an issue is much bigger than its label says will re-rank it and say so on the issue.
+The cost of a wrong priority is one displaced pick; the cost of no priority is that the queue
+has no order at all, which is the state this step replaced.
 
 ## Step 3 — Exit
 

@@ -18,7 +18,7 @@ Spawn the `triager` sub-agent **once**, foreground, and wait for it to finish.
 Agent({
   subagent_type: "triager",
   description: "First-pass triage of untriaged issues",
-  prompt: "Run one full triage pass per your agent definition. Cover every open issue without a `status:` or `agent:` label. Mark `status: ready` or `status: needs-input`, close only confirmed duplicates per your closing rule, comment on out-of-scope cases and leave them open, leave genuinely ambiguous ones for human review. Stop after one pass — do not loop."
+  prompt: "Run one full triage pass per your agent definition. Cover every open issue without a `status:` or `agent:` label. Mark `status: ready` or `status: needs-input`, give every `status: ready` issue exactly one `priority:` label per your Step 2b, close only confirmed duplicates per your closing rule, comment on out-of-scope cases and leave them open, leave genuinely ambiguous ones for human review. Stop after one pass — do not loop."
 })
 ```
 
@@ -53,7 +53,7 @@ For each free identity slot (`impl-1`, `impl-2`) where the queue still has uncla
 Agent({
   subagent_type: "impl-agent",
   description: "impl-<id> claim and implement next ready issue",
-  prompt: "You are <AGENT-ID>. Follow your agent definition exactly: claim the next `status: ready` issue with no `agent:` label (the claim ends with a draft PR carrying `Closes #N`), implement with strict TDD, mark the PR ready and label it `status: review-ready`, then return. Hard stop after one issue — do not loop to a second.",
+  prompt: "You are <AGENT-ID>. Follow your agent definition exactly: claim the next `status: ready` issue with no `agent:` label, taking the highest `priority:` first (urgent > high > medium > low > unranked, oldest first within a band; a pick below the top carries one line on the issue saying why) (the claim ends with a draft PR carrying `Closes #N`), implement with strict TDD, mark the PR ready and label it `status: review-ready`, then return. Hard stop after one issue — do not loop to a second.",
   isolation: "worktree",
   run_in_background: true
 })

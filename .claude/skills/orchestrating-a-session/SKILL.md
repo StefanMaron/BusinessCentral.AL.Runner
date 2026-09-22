@@ -624,14 +624,22 @@ Read its age once per cycle:
 gh issue list --repo StefanMaron/BusinessCentral.AL.Runner --label "status: ready" --state open --limit 500 --search "sort:created-asc" --json number,createdAt
 ```
 
-Every cycle summary carries three numbers from it: how many issues are ready, how many were
-created more than seven days ago, and the number of the oldest; 500 rows returned means the
-first two are lower bounds, and the summary says so. Done when those three appear in
-the summary.
+Every cycle summary carries four numbers from it: how many issues are ready, how many were
+created more than seven days ago, the number of the oldest, and **how many carry no `priority:`
+label** — an unranked issue sorts last, so a growing count there means the queue is quietly losing
+its order. 500 rows returned means the first two are lower bounds, and the summary says so. Done
+when those four appear in the summary.
 
-The queue is shared, and age is the tie-break. When nothing else orders it — no measured failure
-count, no red `main` behind an issue — claim the oldest ready issue first, and a pool with no
-ready filings of its own claims from this same queue, oldest first.
+**Take the highest `priority:` issue first; age is the tie-break within a priority** — `urgent` >
+`high` > `medium` > `low` > unranked, oldest first inside each band. The triager sets these on blast radius
+and evidence (`.claude/agents/triager.md` § Step 2b), so ordering is a recorded judgement rather
+than one each agent re-makes in the moment. A pool with no ready filings of its own claims from
+this same queue, in the same order.
+
+**Every cycle summary also names the priority of what was picked**, and every pick below the
+highest available carries one line on the issue saying why — no approval, no waiting. Folding
+siblings into a PR already being written is exempt (`batch-sibling-issues-by-file.md`). Those
+recorded reasons are how the exception list gets written from evidence instead of guessed.
 
 ## Reporting to the owner
 
