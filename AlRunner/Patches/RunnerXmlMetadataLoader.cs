@@ -109,6 +109,18 @@ public sealed class RunnerXmlMetadataLoader : INCLObjectXmlMetadataLoader
             && AlXmlPortMetadataRegistry.TryGet(objectId.ObjectNumber, out var xmlPortXml))
             return Wrap(xmlPortXml, $"runner-xmlport-{objectId.ObjectNumber}");
 
+        // XmlPorts living in a PRECOMPILED dependency .app: never source-compiled, so the
+        // emit registry above never holds them, and all 44 that a real Base Application
+        // declares refused here (#3797). Their node schema is not in SymbolReference.json —
+        // measured — but it IS in the AL source the .app embeds, so it is reconstructed from
+        // the symbol file plus that source; see DependencyXmlPortMetadata.cs for exactly what
+        // is read and what still refuses. An xmlport whose node tree cannot be recovered
+        // returns null here and falls through to the throw below, rather than being answered
+        // with a schema-less document that would let the port silently export nothing.
+        if (objectId.ObjectType == ObjectType.XmlPort
+            && RecordPatches.TryBuildDependencyXmlPortMetadata(objectId.ObjectNumber) is { } depXmlPortXml)
+            return Wrap(depXmlPortXml, $"runner-dep-xmlport-{objectId.ObjectNumber}");
+
         // Tables: BC's own emitted metadata document, kept per (kind, id) by #3548. This is
         // the entry point for NCLMetaTable.LoadMetadata() — MetaObjectCache.GetMetaTable
         // hands what we return here to MetaTable.CreateMetaTableFromXml, so BC constructs
