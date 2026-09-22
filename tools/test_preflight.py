@@ -2205,8 +2205,9 @@ finally:
 # Two loops can hold one identity, and a worktree path built from the identity
 # alone renders the same directory for both, so one loop's commits land on the
 # other's PR branch. The `agent:` label on the OPEN pull request heading this
-# branch is the one signal that names a loop; the assignee cannot, because every
-# loop pushes under the same account (check-open-prs-before-claiming.md).
+# branch is the one signal that names a loop; the assignee names an ACCOUNT, and
+# several loops share one (check-open-prs-before-claiming.md). Across accounts it
+# does discriminate, which is why this check reads the branch prefix.
 
 def _pr(number, labels, state="OPEN"):
     return {"number": number, "state": state,
