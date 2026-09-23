@@ -94,13 +94,17 @@ public sealed class ExtensionRuntimeDeltasTests
               "ActionChanges": [
                 { "Anchor": "Processing", "ChangeKind": 2,
                   "Actions": [ { "Kind": 2, "Id": 640938001, "Name": "Permissions",
-                                 "Properties": [ { "Name": "Caption", "Value": "Permissions" },
-                                                 { "Name": "Image", "Value": "Permission" } ] } ] }
+                                 "Properties": [ { "Name": "ApplicationArea", "Value": "#Basic,#Suite" },
+                                                 { "Name": "Caption", "Value": "Permissions" },
+                                                 { "Name": "Image", "Value": "Permission" },
+                                                 { "Name": "ToolTip", "Value": "View or edit which feature objects that users need to access." } ] } ] }
               ],
               "ControlChanges": [
                 { "Anchor": "Has SUPER permission set", "ChangeKind": 3,
                   "Controls": [ { "Kind": 8, "Id": 640938002, "Name": "User Plans",
-                                  "Properties": [ { "Name": "SourceExpression", "Value": "Rec.Plans" } ] } ] }
+                                  "Properties": [ { "Name": "SourceExpression", "Value": "Rec.Plans" },
+                                                  { "Name": "ApplicationArea", "Value": "#Basic,#Suite" },
+                                                  { "Name": "ToolTip", "Value": "Specifies the licenses assigned to the user." } ] } ] }
               ]
             }
           ]
@@ -395,6 +399,248 @@ public sealed class ExtensionRuntimeDeltasTests
             Assert.Equal("ActionItems", wrapper.Attribute("ParentContainer")!.Value);
             Assert.Equal("ContentAfter", wrapper.Attribute("Operation")!.Value);
             Assert.Equal("Refresh", wrapper.Attribute("AnchorName")!.Value);
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    /// <summary>
+    /// The members BC states and <c>SymbolReference.json</c> supplies, read off the same
+    /// <c>ActionChanges[].Actions</c> entry the render already walks (#3926).
+    ///
+    /// <para>Values are the REAL pairs measured on 28.1.49838.53910. System Application
+    /// pageextension 9862 "User Subform Permissions" states
+    /// <c>ApplicationArea "#Basic,#Suite"</c>, <c>Caption "Permissions"</c>,
+    /// <c>Image "Permission"</c> and a <c>ToolTip</c>, and BC's emitted document writes
+    /// <c>ApplicationArea="#Basic,#Suite"</c>, <c>CaptionML="ENU=Permissions"</c>,
+    /// <c>Image="Permission"</c>, <c>ToolTipML="ENU=..."</c>. The fixture carries the same
+    /// four so each assertion pins a DISTINCT value — <c>Image</c> and <c>ApplicationArea</c>
+    /// are verbatim while <c>Caption</c>/<c>ToolTip</c> gain the <c>ENU=</c> prefix, so a
+    /// render reading the wrong one of the two is visible rather than absorbed.</para>
+    /// </summary>
+    [Fact]
+    public void An_actions_stated_ApplicationArea_Image_Caption_and_ToolTip_are_rendered()
+        => WithApp(appPath =>
+        {
+            var action = Render(appPath, "Page", SharedExtId)!
+                .Root!.Elements($"{Ns}ActionAdd").Elements($"{Ns}Actions").Single();
+
+            // Verbatim: BC writes the symbol file's value unchanged.
+            Assert.Equal("#Basic,#Suite", action.Attribute("ApplicationArea")!.Value);
+            Assert.Equal("Permission", action.Attribute("Image")!.Value);
+
+            // ENU=-prefixed: BC's emitter turns the AL Caption/ToolTip into a one-language
+            // ML string. Measured on all four pageextensions carrying either property in the
+            // 28.1 bundles — every one is "ENU=" + the symbol file's value, unchanged.
+            Assert.Equal("ENU=Permissions", action.Attribute("CaptionML")!.Value);
+            Assert.Equal(
+                "ENU=View or edit which feature objects that users need to access.",
+                action.Attribute("ToolTipML")!.Value);
+        });
+
+    /// <summary>
+    /// The control-side half: a control states <c>ApplicationArea</c> and <c>ToolTip</c> and
+    /// BC writes both. Real object: pageextension 774's four ControlAdds, every one carrying
+    /// <c>ApplicationArea="#Basic,#Suite"</c> and an <c>ToolTipML="ENU=Specifies ..."</c>.
+    /// </summary>
+    [Fact]
+    public void A_controls_stated_ApplicationArea_and_ToolTip_are_rendered()
+        => WithApp(appPath =>
+        {
+            var control = Render(appPath, "Page", SharedExtId)!
+                .Root!.Elements($"{Ns}ControlAdd").Elements($"{Ns}Controls").Single();
+
+            Assert.Equal("#Basic,#Suite", control.Attribute("ApplicationArea")!.Value);
+            Assert.Equal("ENU=Specifies the licenses assigned to the user.",
+                control.Attribute("ToolTipML")!.Value);
+
+            // A control declares no Image and no Caption in the fixture, and BC writes neither
+            // for pageextension 774's controls either — so the render must not invent them.
+            Assert.Null(control.Attribute("Image"));
+            Assert.Null(control.Attribute("CaptionML"));
+        });
+
+    /// <summary>
+    /// <c>Visible</c> / <c>Enabled</c> are rendered ONLY when the symbol file states a boolean
+    /// LITERAL, because BC writes a different thing for the two cases and only one of them is
+    /// derivable from this side.
+    ///
+    /// <para>Measured on 28.1.49838.53910. A literal passes through: pageextension 774's three
+    /// hidden controls state <c>Visible "false"</c> and BC writes <c>Visible="false"</c>. An
+    /// EXPRESSION does not: ext 2515 states <c>Enabled "IsSaas"</c> and BC writes
+    /// <c>Enabled="px2515px2515IsSaas"</c>, ext 324 states <c>CopilotActionsVisible</c> against
+    /// BC's <c>px324px324CopilotActionsVisible</c> — a mangled reference to the extension's own
+    /// global, built from the extension id, which SymbolReference does not state. Emitting the
+    /// bare AL name there would be a WRONG value derived from a right input, which is worse
+    /// than the omission it replaces.</para>
+    /// </summary>
+    [Fact]
+    public void A_stated_boolean_literal_Visible_is_rendered_and_an_expression_is_left_off()
+    {
+        var dir = TestScratch.Dir("al-runner-extension-runtime-deltas-visible");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var appPath = WriteAppWith(dir, """
+                {
+                  "RuntimeVersion": "17.0",
+                  "PageExtensions": [
+                    {
+                      "Id": 88380907,
+                      "Name": "Visible Ext",
+                      "TargetObject": "ERD Target Page",
+                      "ControlChanges": [
+                        { "Anchor": "Content", "ChangeKind": 2,
+                          "Controls": [
+                            { "Kind": 8, "Id": 640938007, "Name": "Hidden Literal",
+                              "Properties": [ { "Name": "Visible", "Value": "false" },
+                                              { "Name": "Enabled", "Value": "true" } ] },
+                            { "Kind": 8, "Id": 640938008, "Name": "Expression Driven",
+                              "Properties": [ { "Name": "Visible", "Value": "IsSaaS" },
+                                              { "Name": "Enabled", "Value": "not IsOnPrem" } ] }
+                          ] }
+                      ]
+                    }
+                  ]
+                }
+                """);
+
+            var controls = Render(appPath, "Page", 88380907)!
+                .Root!.Elements($"{Ns}ControlAdd").Elements($"{Ns}Controls").ToArray();
+            Assert.Equal(2, controls.Length);
+
+            // The literal, rendered — and the two properties carry DIFFERENT values, so a
+            // render reading the wrong one of them is visible.
+            Assert.Equal("false", controls[0].Attribute("Visible")!.Value);
+            Assert.Equal("true", controls[0].Attribute("Enabled")!.Value);
+
+            // The expression, left off: BC's value is a mangled global reference this side
+            // cannot derive, so the render states nothing rather than the bare AL name.
+            Assert.Null(controls[1].Attribute("Visible"));
+            Assert.Null(controls[1].Attribute("Enabled"));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    /// <summary>
+    /// A member the symbol file states NO properties for gains no attributes — the negative
+    /// direction of the four reads above, so "rendered when stated" is not satisfied by a
+    /// render that writes an empty string for everyone.
+    /// </summary>
+    [Fact]
+    public void A_member_stating_no_properties_gains_none_of_the_read_attributes()
+    {
+        var dir = TestScratch.Dir("al-runner-extension-runtime-deltas-bare");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var appPath = WriteAppWith(dir, """
+                {
+                  "RuntimeVersion": "17.0",
+                  "PageExtensions": [
+                    {
+                      "Id": 88380908,
+                      "Name": "Bare Ext",
+                      "TargetObject": "ERD Target Page",
+                      "ActionChanges": [
+                        { "Anchor": "Processing", "ChangeKind": 2,
+                          "Actions": [ { "Kind": 2, "Id": 640938009, "Name": "Bare" } ] }
+                      ]
+                    }
+                  ]
+                }
+                """);
+
+            var action = Render(appPath, "Page", 88380908)!
+                .Root!.Elements($"{Ns}ActionAdd").Elements($"{Ns}Actions").Single();
+
+            Assert.Equal("Bare", action.Attribute("Name")!.Value);
+            foreach (var absent in new[]
+                     { "ApplicationArea", "Image", "CaptionML", "ToolTipML", "Visible", "Enabled" })
+                Assert.Null(action.Attribute(absent));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    /// <summary>
+    /// The 27.5 shape: an extension whose FIRST change adds a plain action carrying the stated
+    /// properties and whose SECOND adds an <c>actionref</c> that states none. Both members render,
+    /// and the properties land on the FIRST — which is the member that declares them.
+    ///
+    /// <para><b>This is the test that would have caught the 27.5 leg of #4502.</b> The fixture the
+    /// other tests use has one action and one control, each declaring properties, so a render that
+    /// attached a member's properties to the wrong element could not be distinguished. Real object:
+    /// System Application pageextension 2516 <c>AppSourceMarketPlaceExtension</c>, whose two
+    /// members are exactly this pair — action 343729963 stating ApplicationArea / Caption / Image /
+    /// ToolTip, and actionref 913465592 stating no <c>Properties</c> at all. It has a deltas
+    /// document on 27.5 and none on 28.1 (#3923), so the 28.1 population this change was measured
+    /// against did not contain the shape.</para>
+    ///
+    /// <para>What it does NOT assert is the positional pairing against BC's own document, which
+    /// this render cannot fix: 2516's emitted document opens with a <c>PagePropertiesChange</c>
+    /// the render does not produce, so the harness compares each element one slot early. That is
+    /// declared in the allowlist as <c>versionContingent</c> and belongs to group 3 of #3926.</para>
+    /// </summary>
+    [Fact]
+    public void A_member_stating_properties_beside_one_stating_none_keeps_them_on_its_own_element()
+    {
+        var dir = TestScratch.Dir("al-runner-extension-runtime-deltas-pair");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            // Shape copied from 27.5's pageextension 2516: two ActionChanges, the first adding a
+            // property-bearing action, the second adding a bare actionref (Kind 4 + TargetId).
+            var appPath = WriteAppWith(dir, """
+                {
+                  "RuntimeVersion": "17.0",
+                  "PageExtensions": [
+                    {
+                      "Id": 88380909,
+                      "Name": "Pair Ext",
+                      "TargetObject": "ERD Target Page",
+                      "ActionChanges": [
+                        { "Anchor": "Navigation", "ChangeKind": 2,
+                          "Actions": [ { "Kind": 2, "Id": 640938010, "Name": "Gallery",
+                                         "Properties": [ { "Name": "ApplicationArea", "Value": "#All" },
+                                                         { "Name": "Caption", "Value": "AppSource Gallery" },
+                                                         { "Name": "Image", "Value": "NewItem" },
+                                                         { "Name": "ToolTip", "Value": "Browse the gallery." } ] } ] },
+                        { "Anchor": "Promoted", "ChangeKind": 1,
+                          "Actions": [ { "Kind": 4, "TargetId": 640938010,
+                                         "TargetName": "Gallery",
+                                         "Id": 640938011, "Name": "Gallery_Promoted" } ] }
+                      ]
+                    }
+                  ]
+                }
+                """);
+
+            var wrappers = Render(appPath, "Page", 88380909)!.Root!.Elements($"{Ns}ActionAdd").ToArray();
+            Assert.Equal(2, wrappers.Length);
+
+            // Declaration order, so the property-bearing action is element 0 and the actionref 1.
+            // Asserted because the whole point is WHICH element carries the values.
+            var stated = wrappers[0].Elements($"{Ns}Actions").Single();
+            var bare = wrappers[1].Elements($"{Ns}Actions").Single();
+            Assert.Equal("640938010", stated.Attribute("ID")!.Value);
+            Assert.Equal("640938011", bare.Attribute("ID")!.Value);
+
+            // The stated member keeps its own four values...
+            Assert.Equal("#All", stated.Attribute("ApplicationArea")!.Value);
+            Assert.Equal("ENU=AppSource Gallery", stated.Attribute("CaptionML")!.Value);
+            Assert.Equal("NewItem", stated.Attribute("Image")!.Value);
+            Assert.Equal("ENU=Browse the gallery.", stated.Attribute("ToolTipML")!.Value);
+
+            // ...and the member that states nothing gains nothing. This is the half that fails if
+            // a member's properties ever leak onto a neighbouring element.
+            foreach (var absent in new[]
+                     { "ApplicationArea", "CaptionML", "Image", "ToolTipML", "Visible", "Enabled" })
+                Assert.Null(bare.Attribute(absent));
+
+            // The AL area anchor "Navigation" is the container RelatedInformation, which is what
+            // BC writes for 2516's first ActionAdd — so this fixture also pins that the pair is
+            // placed the way the real object is.
+            Assert.Equal("RelatedInformation", wrappers[0].Attribute("ParentContainer")!.Value);
+            Assert.Equal("Promoted", wrappers[1].Attribute("ParentContainer")!.Value);
         }
         finally { Directory.Delete(dir, recursive: true); }
     }

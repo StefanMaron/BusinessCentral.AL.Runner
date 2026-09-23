@@ -148,11 +148,97 @@ public static partial class RecordPatches
                 origin.IsAction ? "ActionDefinition" : "ControlDefinition");
             member.SetAttribute("ID", memberId.ToString(CultureInfo.InvariantCulture));
             member.SetAttribute("Name", memberName);
+            SetStatedMemberAttributes(member, origin.DeclaredProperties);
             wrapper.AppendChild(member);
             root.AppendChild(wrapper);
         }
 
         return doc.OuterXml;
+    }
+
+    /// <summary>
+    /// The delta-member attributes SymbolReference.json STATES, read off the member's own
+    /// <c>Properties</c> bag — the group-1 members of #3926. A property the bag does not state
+    /// leaves its attribute off, exactly as before.
+    ///
+    /// <para><b>Observably equivalent</b> for each attribute written here, because BC's emitter
+    /// writes the same value from the same source. MEASURED against BC's own emitted documents
+    /// for all five pageextensions carrying deltas in the 28.1.49838.53910 Business Foundation +
+    /// System Application bundles — every pair below is an exact match, with no exceptions in
+    /// the measured population (docs/metadata-equivalence.md#deltas-stated-member-attributes).</para>
+    ///
+    /// <list type="bullet">
+    /// <item><c>ApplicationArea</c> and <c>Image</c> pass through VERBATIM — 7 and 3 pairs.</item>
+    /// <item><c>CaptionML</c>/<c>ToolTipML</c> are AL's <c>Caption</c>/<c>ToolTip</c> under an
+    /// <c>ENU=</c> prefix — 4 and 6 pairs. BC's emitter writes a one-language ML string, so the
+    /// prefix is the whole transform; the text is unchanged.</item>
+    /// <item><c>Visible</c>/<c>Enabled</c> ONLY for a boolean LITERAL — see the trap.</item>
+    /// </list>
+    ///
+    /// <para><b>The trap, and why the literal split is not an optimisation.</b> For an
+    /// EXPRESSION, BC does not write the AL name: ext 2515 states <c>Enabled "IsSaas"</c> and BC
+    /// writes <c>px2515px2515IsSaas</c>; ext 324 states <c>CopilotActionsVisible</c> against BC's
+    /// <c>px324px324CopilotActionsVisible</c>. That is a mangled reference to the extension's own
+    /// global, built from the extension id, and SymbolReference states neither the mangling nor
+    /// which globals it applies to. Writing the bare AL name would be a WRONG value derived from
+    /// a right input — the one thing this harness had none of before (#3926) — so an expression
+    /// is left off and stays an allowlisted difference. A literal has no such gap: all three of
+    /// pageextension 774's hidden controls state <c>Visible "false"</c> and BC writes
+    /// <c>false</c>. Those 3 literals and 7 expressions are the WHOLE stated population across
+    /// both bundles, so the split is exhaustive there rather than a sample.</para>
+    ///
+    /// <para>What is deliberately NOT read here, though #3926's group-1 list names it:
+    /// <c>RunObjectType</c>, <c>TargetID</c>, <c>RunObjectSrcTable</c> and <c>PushAction</c>.
+    /// The symbol file states a bare object NAME (<c>RunObject: "AppSource Product List"</c>) and
+    /// BC states the RESOLVED type and id (<c>Page</c>, <c>2515</c>) — a different fact, needing
+    /// the page inventory this layer does not have, for the reason
+    /// <see cref="BcAppSymbolCache.ActionRunObjectSymbol"/>'s own summary gives. <c>RunPageMode</c>
+    /// is out for a second reason: BC writes <c>Edit</c> on two members whose symbol entry states
+    /// nothing, so its default rule is unmeasured here.</para>
+    /// </summary>
+    private static void SetStatedMemberAttributes(
+        XmlElement member, Dictionary<string, string>? declared)
+    {
+        if (declared is null) return;
+
+        Pass("ApplicationArea", "ApplicationArea");
+        Pass("Image", "Image");
+        Ml("Caption", "CaptionML");
+        Ml("ToolTip", "ToolTipML");
+        BooleanLiteral("Visible", "Visible");
+        BooleanLiteral("Enabled", "Enabled");
+
+        void Pass(string stated, string attribute)
+        {
+            if (Stated(stated) is { } v) member.SetAttribute(attribute, v);
+        }
+
+        // BC's emitter renders an AL Caption/ToolTip as a one-language ML string. The ENU tag is
+        // what a .app's own SymbolReference carries its single language under; the Translations/
+        // entries are a separate surface this render does not reach.
+        void Ml(string stated, string attribute)
+        {
+            if (Stated(stated) is { } v) member.SetAttribute(attribute, "ENU=" + v);
+        }
+
+        void BooleanLiteral(string stated, string attribute)
+        {
+            // The accepted set is exactly `true`/`false`, which is how the compiler writes these
+            // two for a pageextension member, and it is written through UNCHANGED rather than
+            // normalised. Deliberately NOT extended to the `1`/`0` spelling this file accepts for
+            // other boolean properties: the measured population states no `1`, `0` or `true` at
+            // all (only `false`, 3 times), so an accepted `1` would rest on an extrapolation, and
+            // BC's one `Visible="1"` is on an actionref whose symbol entry states no Properties —
+            // BC-computed, so it is not evidence about a stated value either. Anything else is an
+            // expression the runner cannot resolve to BC's mangled global name — left off, per
+            // the trap above.
+            if (Stated(stated) is not { } v) return;
+            var t = v.Trim();
+            if (t is "true" or "false") member.SetAttribute(attribute, t);
+        }
+
+        string? Stated(string name)
+            => declared.TryGetValue(name, out var v) && !string.IsNullOrWhiteSpace(v) ? v : null;
     }
 
     private static string? TryRenderTableExtensionDeltas(string appPath, int extensionId)
