@@ -227,6 +227,61 @@ check("the two verdicts sit on different rows",
       any(a is not b for a in same_says_nothing for b in diff_says_answer),
       "one row matched both cases; that rates a single case in two words")
 
+# --- property 2b: the ACTION column, which is what an agent acts on ---------
+#
+# The verdict checks above pin the DIAGNOSIS ("what the assignee tells you").
+# An agent does not act on a diagnosis -- it acts on the instruction beside it,
+# and the two are separate observables of one row. Inverting the action cell of
+# the cross-account row to "carry on and claim it anyway" while leaving the
+# verdict cell honest passed all 13 checks (#4474): the rule then told an agent
+# to claim another account's issue and nothing went red.
+#
+# `one-red-proves-coverage-not-which-observable`: covering a row is not covering
+# every cell that a reader acts on.
+ACTION_COL = re.compile(r"what to do|what you do|action", re.I)
+
+# STOP vocabulary must not be satisfied by the same-account row's legitimate
+# "read on", so match the instruction rather than any cautious-sounding word.
+STOP = re.compile(r"\bstop\b|\bdo not\b|\bdon't\b|\bnever\b|\bleave it\b"
+                  r"|\bskip\b|\bhands? off\b", re.I)
+# What the same-account row says instead: the open-PR lookup resolves it.
+PROCEED = re.compile(r"\bread on\b|\bopen[- ]PR\b|\bresolves? it\b|\bbelow\b", re.I)
+
+
+def action_says(rows: list[Row], pat: re.Pattern) -> tuple[list[Row], list[Row]]:
+    """Same shape as `verdict_says`, on the action column. A row with no action
+    column is unmeasured, not failed -- a reader sent to reword a cell that does
+    not exist cannot comply (`guards-need-a-third-state.md`)."""
+    hit, unmeasured = [], []
+    for r in rows:
+        cell = r.cell_under(ACTION_COL)
+        if cell is None:
+            unmeasured.append(r)
+        elif pat.search(cell):
+            hit.append(r)
+    return hit, unmeasured
+
+
+diff_says_stop, diff_action_unmeasured = action_says(diff_rows, STOP)
+same_says_proceed, same_action_unmeasured = action_says(same_rows, PROCEED)
+
+check("every account-case row has an action column to read",
+      not (same_action_unmeasured or diff_action_unmeasured),
+      f"rows with no action column: "
+      f"{same_action_unmeasured + diff_action_unmeasured}")
+check("the cross-account row INSTRUCTS the reader to stop",
+      len(diff_says_stop) > 0,
+      f"cross-account action cells: "
+      f"{[r.cell_under(ACTION_COL) for r in diff_rows]}")
+check("the same-account row does NOT instruct the reader to stop",
+      not action_says(same_rows, STOP)[0],
+      f"same-account action cells: "
+      f"{[r.cell_under(ACTION_COL) for r in same_rows]}")
+check("the same-account row sends the reader on to the open-PR check",
+      len(same_says_proceed) > 0,
+      f"same-account action cells: "
+      f"{[r.cell_under(ACTION_COL) for r in same_rows]}")
+
 # --- property 3: the discriminator comes FIRST ------------------------------
 #
 # The near-miss in #3275 was an agent that read the ratings without knowing which
@@ -246,10 +301,44 @@ check("the rule tells the reader to establish WHICH ACCOUNT before rating signal
       f"instruction at {ask_at}, first signal rating at {first_rating}")
 
 # --- the sister rule it must stop contradicting -----------------------------
-check("the rule defers to branch-and-pr.md on the assignee boundary",
-      "branch-and-pr.md" in text and
-      bool(re.search(r"branch-and-pr\.md[^\n]{0,200}", text)),
+# A bare mention is not a deferral. `"branch-and-pr.md" in text` passes for a
+# sentence ARGUING AGAINST it -- "its assignee boundary is overstated and this
+# rule deliberately overrides it" satisfied the old check (#4474). So read the
+# sentence the name sits in and require deference vocabulary, and separately
+# refuse override vocabulary anywhere near it.
+DEFER = re.compile(r"\bdefer|\bper\b|\bstands?\b|\bholds?\b|\bowns?\b"
+                   r"|\bnothing (?:below|here) waives\b|\bnever waives?\b"
+                   r"|\bboundary\b[^.\n]{0,40}\b(stands?|holds?|applies)\b", re.I)
+OVERRIDE = re.compile(r"\boverrid|\bwaive[sd]?\b|\boverstat|\bsupersede"
+                      r"|\btakes? precedence over\b|\bignore\b", re.I)
+
+# LINES, not sentences. Splitting on "." orphans the name -- `.md` ends a
+# "sentence", so a naive sentence split yields ZERO fragments containing
+# `branch-and-pr.md` and both checks below fail on an honest rule. A markdown
+# table row is one line anyway, which is the unit that carries a deferral here;
+# a bullet that wraps gets its continuation line joined.
+lines = text.splitlines()
+joined = []
+for ln in lines:
+    if joined and (ln.startswith("  ") or ln.startswith("\t")) and ln.strip():
+        joined[-1] += " " + ln.strip()
+    else:
+        joined.append(ln)
+sister = [s for s in joined if "branch-and-pr.md" in s]
+defers = [s for s in sister if DEFER.search(s)]
+# "nothing below waives it" is DEFERENCE, so an override word only condemns the
+# sentence when no negation precedes it in the same clause.
+overrides = [s for s in sister
+             if OVERRIDE.search(s)
+             and not re.search(r"\b(nothing|never|not|no)\b[^.\n]{0,60}"
+                               r"(overrid|waive|supersede)", s, re.I)]
+
+check("the rule mentions branch-and-pr.md at all", bool(sister),
       "no reference to the rule that owns the assignee boundary")
+check("...in a sentence that DEFERS to it rather than merely naming it",
+      bool(defers), f"sentences naming it: {sister}")
+check("...and no sentence claims to override or waive that boundary",
+      not overrides, f"override-flavoured sentences: {overrides}")
 
 # The branch prefix is the same mechanism orchestrating-a-session already uses,
 # and it is stronger than the label because another loop cannot rewrite it.
