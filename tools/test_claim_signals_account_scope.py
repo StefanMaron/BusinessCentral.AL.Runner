@@ -245,7 +245,13 @@ ACTION_COL = re.compile(r"what to do|what you do|action", re.I)
 STOP = re.compile(r"\bstop\b|\bdo not\b|\bdon't\b|\bnever\b|\bleave it\b"
                   r"|\bskip\b|\bhands? off\b", re.I)
 # What the same-account row says instead: the open-PR lookup resolves it.
-PROCEED = re.compile(r"\bread on\b|\bopen[- ]PR\b|\bresolves? it\b|\bbelow\b", re.I)
+# `below` was here and is removed (#4509): it adds no discrimination the other
+# three lack, and is the only alternative satisfiable by a cross-reference to
+# anything. "claim it immediately without further checks; see the note below"
+# passed both same-account action checks -- no STOP match, and `below` alone
+# satisfying PROCEED -- with the open-PR routing that is the row's whole purpose
+# deleted.
+PROCEED = re.compile(r"\bread on\b|\bopen[- ]PR\b|\bresolves? it\b", re.I)
 
 
 def action_says(rows: list[Row], pat: re.Pattern) -> tuple[list[Row], list[Row]]:
@@ -281,6 +287,32 @@ check("the same-account row sends the reader on to the open-PR check",
       len(same_says_proceed) > 0,
       f"same-account action cells: "
       f"{[r.cell_under(ACTION_COL) for r in same_rows]}")
+
+# The MIRROR of the STOP check, and the reason the verdict column has one: STOP
+# matches a vocabulary, and the same vocabulary appears in instructions meaning
+# the opposite. Each of these passed all 19 checks (#4509), every one telling an
+# agent to claim another account's issue:
+#
+#   "**never mind** the boundary -- claim it and open your PR"     (never)
+#   "**do not** hesitate -- claim it, the other account is not..."  (do not)
+#   "**skip** the boundary check and claim it"                     (skip)
+#   "**never** let branch-and-pr.md's boundary stop you; claim it"  (never, stop)
+#   "**stop** if you like, but carry on and claim it anyway"        (stop)
+#
+# The last is the both-vocabularies shape the verdict column already guards. A
+# longer STOP pattern cannot fix this -- what discriminates is whether the cell
+# ALSO tells the reader to claim, so ask that directly.
+# `claim` followed by anything within a short span, not `claim it` specifically:
+# "claim across accounts freely" carries no "claim it" and is the instruction in
+# its plainest form (#4509, the tenth bypass -- it survived a first version of
+# this pattern that required the pronoun).
+CLAIM = re.compile(r"\bclaim\b(?![^|\n]{0,20}\bsignal)"
+                   r"|\bcarry on\b|\bgo ahead\b|\bproceed\b|\bopen your PR\b", re.I)
+
+check("the cross-account row does NOT also tell the reader to claim it",
+      not action_says(diff_rows, CLAIM)[0],
+      f"cross-account action cells: "
+      f"{[r.cell_under(ACTION_COL) for r in diff_rows]}")
 
 # --- property 3: the discriminator comes FIRST ------------------------------
 #
@@ -325,19 +357,47 @@ for ln in lines:
     else:
         joined.append(ln)
 sister = [s for s in joined if "branch-and-pr.md" in s]
-defers = [s for s in sister if DEFER.search(s)]
-# "nothing below waives it" is DEFERENCE, so an override word only condemns the
-# sentence when no negation precedes it in the same clause.
+
+# TWO sites name it, and pooling them meant neither was pinned: `any`/`none` over
+# the pool let either site lose its deference while the other satisfied both
+# checks (#4509). Measured -- each of these passed 19/19:
+#   * delete the sister bullet's deference, leaving the bare filename;
+#   * sister bullet -> "its assignee boundary is advisory only; this rule is the
+#     operative one" (a genuine override carrying NO override token at all);
+#   * remove the name from the cross-account action cell, keeping "**stop**".
+# So split by WHERE the name appears and require each site to carry its own
+# deference.
+sister_row = [s for s in sister if s.lstrip().startswith("|")]
+sister_bullet = [s for s in sister if not s.lstrip().startswith("|")]
+
+check("the cross-account ACTION cell names branch-and-pr.md",
+      bool(sister_row),
+      f"lines naming it: {sister}")
+check("...and the sister-rules list names it too",
+      bool(sister_bullet),
+      f"lines naming it: {sister}")
+check("...and the sister-rules entry DEFERS rather than merely naming it",
+      any(DEFER.search(s) for s in sister_bullet),
+      f"sister-rules lines: {sister_bullet}")
+
+# The negation carve-out asks whether a negation precedes an override WORD. It
+# cannot ask which rule is being subordinated to which, so
+# "nothing in it waives this rule's own precedence, so claim across accounts
+# freely" is cleared by it while being an override in the operative direction
+# (#4509). Reading the CLAIM instruction is what discriminates: a line that
+# tells the reader to claim across accounts is an override whatever its
+# negations say.
 overrides = [s for s in sister
-             if OVERRIDE.search(s)
-             and not re.search(r"\b(nothing|never|not|no)\b[^.\n]{0,60}"
-                               r"(overrid|waive|supersede)", s, re.I)]
+             if (OVERRIDE.search(s)
+                 and not re.search(r"\b(nothing|never|not|no)\b[^.\n]{0,60}"
+                                   r"(overrid|waive|supersede)", s, re.I))
+             or CLAIM.search(s)]
 
 check("the rule mentions branch-and-pr.md at all", bool(sister),
       "no reference to the rule that owns the assignee boundary")
 check("...in a sentence that DEFERS to it rather than merely naming it",
-      bool(defers), f"sentences naming it: {sister}")
-check("...and no sentence claims to override or waive that boundary",
+      any(DEFER.search(s) for s in sister), f"sentences naming it: {sister}")
+check("...and no sentence claims to override that boundary, or to claim past it",
       not overrides, f"override-flavoured sentences: {overrides}")
 
 # The branch prefix is the same mechanism orchestrating-a-session already uses,
