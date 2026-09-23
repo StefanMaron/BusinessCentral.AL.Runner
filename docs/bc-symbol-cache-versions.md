@@ -140,9 +140,11 @@ v1 and v2 predate this record.
   **every generic argument** of the BCL containers in its named set, so a record reachable only
   as a `Dictionary<,>` value — or key — is descended into like any other.
 
-  The rule is *runner-owned generics always* (through `IsOwnType`), *BCL generics only if
-  named*. Measured as NOT walked: `Tuple<,>`, `ValueTuple`, `ConcurrentDictionary<,>`,
-  `SortedDictionary<,>`. None is reachable from `CachePayload` today — the only generic type
+  The rule is: a type argument is reached either because a BCL container is **named** in
+  `Contained`, or because some type's own **member** has it. A runner-owned generic needs no
+  entry when its members carry its arguments — but an *opaque* one, exposing no member of its
+  argument type, reaches nothing (measured). Measured as NOT named, and so not walked:
+  `Tuple<,>`, `ValueTuple`, `ConcurrentDictionary<,>`, `SortedDictionary<,>`. None is reachable from `CachePayload` today — the only generic type
   definitions there are `Dictionary\`2`, `IReadOnlyList\`1`, `List\`1` and `Nullable\`1`, all
   named — so the premise holds for the payload as it stands. **Add a container to that set
   before putting it in a payload**, or this entry's defect returns under a different type.

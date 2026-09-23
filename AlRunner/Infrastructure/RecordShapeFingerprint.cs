@@ -138,11 +138,17 @@ internal static class RecordShapeFingerprint
     /// <para>The BCL containers are a NAMED SET, and every one of their generic arguments is
     /// walked. Named rather than "any generic type" because walking an arbitrary BCL generic
     /// would tie the cache key to the SDK version, which <see cref="IsOwnType"/> argues against.
-    /// A runner-owned generic is walked regardless, through <c>IsOwnType</c>. So the rule is:
-    /// runner-owned generics always; BCL generics only if named here -- and
-    /// <c>Tuple&lt;,&gt;</c>, <c>ValueTuple</c>, <c>ConcurrentDictionary&lt;,&gt;</c> and
-    /// <c>SortedDictionary&lt;,&gt;</c> are two-argument containers that are NOT walked
-    /// (measured). Add one here before putting it in a payload.</para>
+    /// A runner-owned generic is not listed here and does not need to be: the walk reaches its
+    /// type arguments through its own MEMBERS, so <c>OpenPair&lt;int, Leaf&gt;</c> with public
+    /// members of those types is walked. An OPAQUE one is not -- a runner-owned generic
+    /// exposing no member of its argument type reaches nothing, measured, because this walk
+    /// reads members and a type argument is not one.
+    ///
+    /// <para>So the rule is: a type argument is reached either because a BCL container is NAMED
+    /// here, or because some type's own member has it. <c>Tuple&lt;,&gt;</c>,
+    /// <c>ValueTuple</c>, <c>ConcurrentDictionary&lt;,&gt;</c> and <c>SortedDictionary&lt;,&gt;</c>
+    /// are two-argument containers that are NOT walked (measured). Add one here before putting
+    /// it in a payload.</para>
     ///
     /// <para>The trap the old form set is that <c>TypeName</c> still spelled the value type's
     /// name into the description, so the obvious probe -- two dictionaries whose value types
