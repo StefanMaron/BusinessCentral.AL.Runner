@@ -547,6 +547,51 @@ which), so a dispatched leg reports a check run with the gating name. Never disp
 a corpus leg expecting it to turn a PR green, and check `gh pr checks --required` rather than
 assuming either way (corpus PR #144).
 
+#### Read a corpus run's `event` before its leg set — a dispatch has ONE leg
+
+The dispatch above leaves a second run on the head, and the two are told apart by their
+`event`, never by how many legs they carry. Corpus `ci.yml`'s `prepare` job emits a
+**one-entry** matrix when `github.event.inputs.bc_version` is set and the full eight
+otherwise, so a `workflow_dispatch` run is one in which **seven of the eight required cloud
+legs do not exist**. Both corpus matrices are `fail-fast: false`, so reading that short leg
+set as a matrix that fail-fasted or collapsed is never right — and nothing about the run
+says which kind it is until you ask.
+
+**Recency does not discriminate either, and it is the tempting substitute**: a head can carry
+several runs, and the gating one is often the **oldest** of them, because the dispatches come
+after it. So take the `pull_request` run by its event, never the newest run and never a run id
+someone handed you:
+
+<!-- Recipe-pinned-by: tools/test_corpus_run_event_discriminator.py -->
+```bash
+head=$(gh pr view <N> --repo StefanMaron/BusinessCentral.AL.Language.Tests \
+  --json headRefOid --jq .headRefOid | command grep -E '^[0-9a-f]{40}$') || {
+    echo "refusing: no 40-char head SHA" >&2; exit 3; }
+gh api "repos/StefanMaron/BusinessCentral.AL.Language.Tests/actions/runs?head_sha=$head&per_page=100" \
+  --jq '.workflow_runs[] | select(.event == "pull_request") | "\(.id) \(.conclusion)"'
+```
+
+Eight `BC <ver> / test` legs on that run is a gating verdict; fewer than eight means you are
+holding a dispatch, which is a second opinion under this section and never the verdict.
+
+**Validate `$head` before interpolating it — the two ways it can be wrong fail in opposite
+directions.** An **abbreviated** SHA returns an empty list that reads as "no runs"; an **empty**
+one drops the filter entirely and returns the repository's whole run history, well-formed and
+attached to no commit you asked about (measured 2026-09-23: `head_sha=` answers
+`total_count: 1158`, `head_sha=84a63b26` answers `0`). The second is the dangerous one, and a
+check for an empty *result* cannot catch it — which is why the `grep -E` above refuses rather
+than letting an unset variable through (#3389's sixth mechanism).
+
+**`gh pr checks` can answer this, but its default output does not** — the four columns it
+prints are name, state, duration and link, so the discriminator is absent unless you ask for
+it by name with `--json name,event,link`. The field is there; nothing tells a reader the
+question exists, which is why the error is cheap to make and invisible afterwards.
+
+Measured on corpus PR #254, head `84a63b26…`: run `34118581202` (`workflow_dispatch`) carries
+1 cloud leg, run `34117863109` (`pull_request`) carries 8. Two review agents reached opposite
+wrong verdicts off one head in one hour (#3389); the derivation is in
+`docs/incidents/ci-verdicts.md`.
+
 **Fallback, when a workflow has no per-leg dispatch** — push an empty commit:
 
 ```bash
