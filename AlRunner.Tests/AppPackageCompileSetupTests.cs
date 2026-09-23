@@ -419,7 +419,7 @@ public sealed class AppPackageCompileSetupTests
         // The population has to actually EXERCISE the reader, not merely be non-empty: a corpus
         // of packages that declare no features and no help URL would pass the loop above while
         // proving nothing about either field. These floors are well under what this box holds
-        // (measured 28.1: 45 of 46 declare features, 43 declare a help URL), so they pin
+        // (measured 28.1: 76 of 113 declare a help URL), so they pin
         // "the corpus reaches these fields" without pinning a count that drifts per artifact set.
         Assert.True(withFeatures >= 2,
             $"only {withFeatures} of {corpus.Count} package(s) declared any <Features>; "
@@ -447,7 +447,7 @@ public sealed class AppPackageCompileSetupTests
         // BOTH directions have to be non-empty on a real corpus. A reader hardwired to true, and
         // one hardwired to false, each satisfy one of these and fail the other — which a
         // single-direction assertion could not tell apart. Base Application 28.1 declares it;
-        // the great majority of test apps do not (measured: 11 of 46 on this box).
+        // the great majority of test apps do not (measured: 14 of 113 on this box).
         Assert.True(declaring.Count > 0,
             "no shipped package declared NOIMPLICITWITH; the reader is not reading features.");
         Assert.True(notDeclaring.Count > 0,
