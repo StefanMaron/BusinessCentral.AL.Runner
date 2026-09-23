@@ -117,15 +117,44 @@ def instruction_sentences(txt: str) -> list[str]:
 # jq form. The shipped clause is
 #     | select([.labels[].name] | map(. == "type: tracker") | any | not)
 # so the negation is the trailing `not`. `map(...) | any` WITHOUT it selects only
-# trackers, and that must not match -- which is why the `not` is inside the pattern
+# trackers, and that must not match -- which is why the negation is inside the pattern
 # rather than checked separately.
+#
+# The accept side: a clause naming the label must NEGATE. Two forms, and the split is
+# what keeps this from being a spelling list.
+#
+#   1. a trailing negation applied to whatever came before -- `| not`, `== false`. This
+#      is idiom-independent: it does not care how the membership test was written, only
+#      that its result is inverted, so an unanticipated test spelling still passes.
+#   2. a test that is ITSELF negative -- `all(. != x)`, `. != x`, `index(x) == null`.
+#      These have no trailing `not` to find, so they are named.
+#
+# Form 1 is why this is not the whitelist it looks like. `map(...) | any | not`,
+# `index(x) | not`, `contains([x]) | not`, `IN(x) | not` and any future membership idiom
+# ending in `| not` or `== false` all satisfy it without being listed.
+#
+# THE ASYMMETRY IS DELIBERATE AND THE TWO SIDES FAIL DIFFERENTLY. An over-strict accept
+# side reds on the author's own run, in front of the person who just made the change, and
+# is fixed by adding the idiom here. An over-loose reject side ships a queue recipe that
+# selects exactly the issues that must never be picked, silently, forever. So when in
+# doubt this file is strict: a reword to an idiom it does not know is a LOUD failure and
+# a one-line fix, which is the cheaper of the two errors by a wide margin.
+_LBL = r"[\"']type:\s*tracker[\"']"
 JQ_EXCLUDES = re.compile(
-    r"map\(\s*\.\s*==\s*[\"']type:\s*tracker[\"']\s*\)\s*\|\s*any\s*\|\s*not"
-    # `all(. != "type: tracker")` and `| not` after a contains-test are equally valid
-    # spellings of the same negation; a reword to either must stay green.
-    r"|all\(\s*\.\s*!=\s*[\"']type:\s*tracker[\"']\s*\)"
-    r"|index\(\s*[\"']type:\s*tracker[\"']\s*\)\s*\|\s*not"
-    r"|contains\(\s*\[\s*[\"']type:\s*tracker[\"']\s*\]\s*\)\s*\|\s*not",
+    # Form 1 -- a trailing negation, whatever the test before it was.
+    rf"{_LBL}[\s\S]{{0,80}}?\|\s*not\b"
+    rf"|{_LBL}[\s\S]{{0,80}}?==\s*false\b"
+    # Form 2 -- the test is itself negative, so there is no trailing `not`.
+    # `!=` against the label, but only under `all(...)` -- the quantifier is what makes it
+    # an exclusion. `all(.labels[]; .name != x)` means no label is the tracker label;
+    # `any(.labels[]; .name != x)` means SOME label is not, which is true of almost every
+    # issue INCLUDING a tracker, so it excludes nothing. A pattern keyed on `!=` alone
+    # accepts both (measured: widening this to a bare `!=` admitted the `any` form).
+    rf"|all\((?:[^()]|\([^()]*\))*!=\s*{_LBL}"
+    rf"|index\(\s*{_LBL}\s*\)\s*==\s*null\b"
+    # ...including one expressed arithmetically: `map(select(...)) | length == 0` is a
+    # negation, `length > 0` is the inversion, and only the comparison tells them apart.
+    rf"|{_LBL}[\s\S]{{0,60}}?length\s*==\s*0\b",
     re.I)
 
 # ANY jq clause that names the tracker label, whatever idiom it uses -- the population
@@ -187,11 +216,28 @@ READY_RECIPE = re.compile(
     r"gh issue list[\s\S]{0,400}?status: ?ready[\s\S]{0,600}?(?:--jq|\|\s*jq)[\s\S]{0,700}",
     re.I)
 
-JQ_INVERTED = re.compile(
-    r"map\(\s*\.\s*==\s*[\"']type:\s*tracker[\"']\s*\)\s*\|\s*any\s*\)"
-    r"|map\(\s*\.\s*==\s*[\"']type:\s*tracker[\"']\s*\)\s*\|\s*any\s*$"
-    r"|any\(\s*\.\s*==\s*[\"']type:\s*tracker[\"']\s*\)\s*\)",
-    re.I | re.M)
+def label_clauses(txt: str) -> list[str]:
+    """Every `select(...)` in the text that names the tracker label."""
+    return [m.group(0) for m in JQ_CLAUSE.finditer(txt)
+            if re.search(r"type:\s*tracker", m.group(0), re.I)]
+
+
+def inverted_clauses(txt: str) -> list[str]:
+    """Clauses naming the label that do NOT negate -- i.e. that select only trackers.
+
+    Derived from `JQ_EXCLUDES` failing rather than from a list of known-bad spellings,
+    which is what makes the reject side structural: an idiom nobody anticipated is
+    inverted-by-default and must prove otherwise, instead of escaping an enumeration.
+
+    This replaced an enumerated `JQ_INVERTED`, which was wrong in BOTH directions. It
+    missed `index("type: tracker")` (the review's M9) because that spelling was not
+    listed -- and it FALSE-POSITIVED on two correct negations, `(...) == false` and
+    `(...) | not`, by keying on the closing paren of the parenthesised group as though it
+    were the end of the `select(...)`, so the negation immediately after it was never
+    seen. A guard calling a correct clause harmful is the mirror of one calling a harmful
+    clause correct, and the enumeration produced both from one pattern.
+    """
+    return [c for c in label_clauses(txt) if not JQ_EXCLUDES.search(c)]
 
 
 for f in CONSUMERS:
@@ -229,11 +275,11 @@ for f in CONSUMERS:
     # ask "is the property present", where a wide scope lets a sibling satisfy them
     # (failure modes 1 and 2). This one asks "is something harmful present", where a wide
     # scope can only find more.
-    inverted = JQ_INVERTED.search(txt)
+    inverted = inverted_clauses(txt)
     check(f"{rel} does not INVERT the tracker filter anywhere",
-          inverted is None,
+          not inverted,
           f"a recipe keeps only `{LABEL}` issues rather than removing them: "
-          f"{inverted.group(0)[:95]!r}" if inverted else "")
+          f"{inverted[0][:95]!r}" if inverted else "")
 
     # A RUNNABLE recipe must carry the clause itself -- prose beside it does not filter a
     # queue. Measured while writing this guard: deleting the jq clause from the
@@ -274,13 +320,16 @@ for f in CONSUMERS:
     # every `type: tracker` issue". A coordinator pasting that clause builds a queue of
     # nothing but the issues that must never be picked.
     #
-    # This is narrower than the two checks above and catches what neither could: the
-    # ready-queue check keys on `gh issue list`, so a bare fenced jq block is invisible to
-    # it, and JQ_INVERTED enumerates known-bad idioms, so an unanticipated one escapes.
-    # Keying on the label inside any `select(...)` needs no list of idioms to stay ahead of.
-    clauses = [m.group(0) for m in JQ_CLAUSE.finditer(txt)
-               if re.search(r"type:\s*tracker", m.group(0), re.I)]
-    bad = [c for c in clauses if not JQ_EXCLUDES.search(c)]
+    # This catches what the ready-queue check above cannot: that one keys on
+    # `gh issue list`, so a bare fenced jq block is invisible to it.
+    #
+    # It shares its computation with the inversion check above -- both are "a clause that
+    # names the label and does not negate" -- and that is deliberate rather than
+    # duplication to collapse. The two report different things to a reader: one says a
+    # recipe was inverted, the other that prose was covering for it, and an author who
+    # sees the wrong message looks in the wrong place.
+    clauses = label_clauses(txt)
+    bad = inverted_clauses(txt)
     check(f"{rel} negates in EVERY jq clause naming the label, without prose vouching",
           not bad,
           f"{len(bad)} of {len(clauses)} jq clause(s) name `{LABEL}` without negating it, "
