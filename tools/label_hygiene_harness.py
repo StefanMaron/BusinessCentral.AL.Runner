@@ -47,6 +47,13 @@ fi
 # an edit that produced no label and still reported success, and a step that
 # cannot fail on its own edit cannot be told from one that had nothing to do.
 if [ "${1:-}" = "issue" ] && [ "${2:-}" = "edit" ]; then
+  # UNASSIGN_RC is separate from EDIT_RC because the release step issues TWO
+  # edits and the label one runs first: with a single variable an EDIT_RC=1
+  # exits the step before the assignee edit is ever reached, so its own failure
+  # branch is unreachable and a silent swallow there reads as green (#4497).
+  case "$*" in
+    *--remove-assignee*) exit "${UNASSIGN_RC:-0}" ;;
+  esac
   exit "${EDIT_RC:-0}"
 fi
 exit 0

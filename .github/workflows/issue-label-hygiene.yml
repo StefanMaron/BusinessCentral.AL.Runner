@@ -225,8 +225,8 @@ jobs:
           #
           # Left assigned, the issue returns to `status: ready` and is filtered
           # out of every selection recipe: available to a human reading labels,
-          # unreachable to every agent. 29 open issues were in that state when
-          # this was measured.
+          # unreachable to every agent. #4497 records the population with its
+          # date and method.
           claimed=$(printf '%s' "$meta" | jq -r --arg actor "${PR_ACTOR:-}" '
             (.assignees // [])[].login | select(. == $actor)')
           if [ -n "$claimed" ]; then

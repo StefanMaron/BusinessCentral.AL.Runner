@@ -90,13 +90,17 @@ BRANCH = "agent/fbk-2/issue-42"
 
 def release(body: str, issue: dict | None, head: str = BRANCH,
             pr_labels: list[str] | None = None, edit_rc: int = 0,
-            actor: str = "the-claiming-bot"):
+            unassign_rc: int = 0, actor: str = "the-claiming-bot"):
     return invoke(RELEASE, {
         "PR_NUMBER": "999",
         "PR_BODY": body,
         "PR_HEAD_REF": head,
         "PR_LABELS": json.dumps(pr_labels if pr_labels is not None else ["agent: fbk-2"]),
         "EDIT_RC": str(edit_rc),
+        # Separate from EDIT_RC: the release issues TWO edits and the label one
+        # runs first, so an EDIT_RC=1 exits the step before the assignee edit is
+        # reached and its failure branch is unreachable (#4497).
+        "UNASSIGN_RC": str(unassign_rc),
         # Who the merged PR was pushed as. The release may drop THAT assignee
         # and no other: on a shared account the assignee cannot say which loop
         # holds an issue, but it can always say whether the holder is the
@@ -279,6 +283,21 @@ check("...in an invocation separate from the label edit",
 check("...while the label edit still runs",
       any("--add-label status: ready" in c for c in edits), f"{edits}")
 
+# The filter must be an EQUALITY, not a containment. Both logins above are
+# disjoint strings, so `select(test($actor))` agrees with `select(. == $actor)`
+# on every input they supply and passes the whole suite -- the boundary arm
+# proves the filter is not ABSENT, not that it is an equality. A prefix pair is
+# what discriminates, and the collision is realistic here: this loop pushes as
+# `StefanMaron`, so a `StefanMaronBot` assignee is one relaxed operator away
+# from being stripped.
+prefix = {"state": "OPEN",
+          "assignees": [{"login": "the-claiming-bot-2"}],
+          "labels": [{"name": "status: in-progress"}, {"name": "agent: fbk-2"}]}
+
+rc, out, calls = release("Part of #42", prefix, actor="the-claiming-bot")
+check("an assignee the actor is merely a PREFIX of is not removed",
+      rc == 0 and not [c for c in calls if "--remove-assignee" in c], f"{calls}")
+
 # The negative arm, and the reason this is not an unconditional unassign: a
 # human's assignment is the boundary `branch-and-pr.md` puts between agent-owned
 # and human-owned work, and only the repo owner waives it. #1883 is the live
@@ -300,6 +319,17 @@ check("...and the labels are still released",
 rc, out, calls = release("Part of #42", open_issue)
 check("an unassigned issue issues no assignee edit at all",
       rc == 0 and not [c for c in calls if "--remove-assignee" in c], f"{calls}")
+
+# A failed unassign is deliberately NOT fatal -- the labels are already
+# released, so the issue reaches the ready queue either way. But it must be
+# REPORTED: swallowed, it leaves exactly the stale-assignee state this fixes
+# and nothing downstream would say so.
+rc, out, calls = release("Part of #42", assigned, actor="the-claiming-bot",
+                         unassign_rc=1)
+check("a failed unassign does NOT fail the step -- the labels are already released",
+      rc == 0, f"rc={rc} {out}")
+check("...but it is reported, naming the assignee left behind",
+      "--remove-assignee failed" in out and "the-claiming-bot" in out, out)
 
 rc, out, calls = release("Part of #42", open_issue, edit_rc=1)
 check("a failed gh issue edit fails the step rather than reporting success",
