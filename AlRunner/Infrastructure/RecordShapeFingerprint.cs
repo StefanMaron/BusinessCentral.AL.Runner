@@ -135,20 +135,19 @@ internal static class RecordShapeFingerprint
     /// served a stale payload at the identical key -- silent, and warm-only, because CI
     /// provisions a fresh cache on every leg (#4505).
     ///
-    /// <para>The BCL containers are a NAMED SET, and every one of their generic arguments is
-    /// walked. Named rather than "any generic type" because walking an arbitrary BCL generic
-    /// would tie the cache key to the SDK version, which <see cref="IsOwnType"/> argues against.
-    /// A runner-owned generic is not listed here and does not need to be: the walk reaches its
-    /// type arguments through its own MEMBERS, so <c>OpenPair&lt;int, Leaf&gt;</c> with public
-    /// members of those types is walked. An OPAQUE one is not -- a runner-owned generic
-    /// exposing no member of its argument type reaches nothing, measured, because this walk
-    /// reads members and a type argument is not one.
+    /// <para><see cref="Walk"/> records members only for a runner-owned type, and reaches
+    /// THROUGH a type only when this method names it. Both together give the rule, which is
+    /// recursive rather than a two-way test: <b>a type is reached only if every container on
+    /// the path from the payload to it is named here.</b>
     ///
-    /// <para>So the rule is: a type argument is reached either because a BCL container is NAMED
-    /// here, or because some type's own member has it. <c>Tuple&lt;,&gt;</c>,
-    /// <c>ValueTuple</c>, <c>ConcurrentDictionary&lt;,&gt;</c> and <c>SortedDictionary&lt;,&gt;</c>
-    /// are two-argument containers that are NOT walked (measured). Add one here before putting
-    /// it in a payload.</para>
+    /// <para>Named rather than "any generic type" because walking an arbitrary BCL generic
+    /// would tie the cache key to the SDK version, which <see cref="IsOwnType"/> argues
+    /// against. So an unnamed container hides whatever it holds, at any depth and whatever its
+    /// arity: <c>HashSet&lt;Leaf&gt;</c> misses, and so does <c>List&lt;HashSet&lt;Leaf&gt;&gt;</c>
+    /// despite the named outer one (measured). <c>HashSet</c>, <c>Queue</c>, <c>ISet</c>,
+    /// <c>IReadOnlyCollection</c>, <c>Tuple</c>, <c>ValueTuple</c>, <c>ConcurrentDictionary</c>
+    /// and <c>SortedDictionary</c> are all unnamed today. <b>Add a container here before putting
+    /// it in a payload.</b></para>
     ///
     /// <para>The trap the old form set is that <c>TypeName</c> still spelled the value type's
     /// name into the description, so the obvious probe -- two dictionaries whose value types

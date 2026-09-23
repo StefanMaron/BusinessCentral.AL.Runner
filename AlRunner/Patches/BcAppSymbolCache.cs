@@ -15,11 +15,12 @@ internal static partial class BcAppSymbolCache
     // A SHAPE change to anything reachable from CachePayload re-keys the cache by itself through
     // PayloadShape (#2335). That now holds without exception: RecordShapeFingerprint.Contained
     // walks EVERY generic argument of the BCL containers it NAMES, so a record reachable only as
-    // a Dictionary<,> value or key is descended into like any other. A type argument is reached
-    // either because a BCL container is NAMED there, or because some type's own member has it;
-    // an opaque runner-owned generic exposing no such member reaches nothing (measured).
-    // Tuple<,>, ValueTuple, ConcurrentDictionary<,> and SortedDictionary<,> are NOT named --
-    // add one to that set before putting it in a payload.
+    // a Dictionary<,> value or key is descended into like any other. The rule is recursive: a
+    // type is reached only if EVERY container on the path to it is named in Contained, so an
+    // unnamed one hides what it holds at any depth -- HashSet<Leaf> misses, and so does
+    // List<HashSet<Leaf>> despite the named outer one. HashSet, Queue, ISet, IReadOnlyCollection,
+    // Tuple, ValueTuple, ConcurrentDictionary and SortedDictionary are unnamed today; add a
+    // container there before putting it in a payload.
     //
     // It did not hold until #4505. A dictionary value was never walked, so adding a member left
     // the fingerprint unchanged while TypeName still spelled the value type's NAME — invisible
