@@ -227,8 +227,20 @@ jobs:
           # out of every selection recipe: available to a human reading labels,
           # unreachable to every agent. #4497 records the population with its
           # date and method.
+          # `// []` is load-bearing: an issue with NO assignees key at all is the
+          # ordinary case, and without the default jq exits 5 ("Cannot iterate
+          # over null"). `set -e` is absent here by design, so that failure would
+          # be swallowed into an empty `claimed` -- indistinguishable from
+          # "nothing to release", which is the #4497 defect wearing a success
+          # face. Read jq's status and refuse rather than guess (#4510).
           claimed=$(printf '%s' "$meta" | jq -r --arg actor "${PR_ACTOR:-}" '
             (.assignees // [])[].login | select(. == $actor)')
+          jq_rc=$?
+          if [ "$jq_rc" -ne 0 ]; then
+            echo "could not read assignees for #$branch_issue (jq exit $jq_rc) -- NOT releasing an assignee; the labels above are already released."
+            decide assignees-unreadable
+            exit 0
+          fi
           if [ -n "$claimed" ]; then
             gh issue edit "$branch_issue" --remove-assignee "$claimed"
             unassign_rc=$?

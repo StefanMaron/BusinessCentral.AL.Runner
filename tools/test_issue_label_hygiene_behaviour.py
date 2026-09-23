@@ -283,6 +283,44 @@ check("...in an invocation separate from the label edit",
 check("...while the label edit still runs",
       any("--add-label status: ready" in c for c in edits), f"{edits}")
 
+# --- #4510: the FETCH half, which the filter checks cannot see -------------
+#
+# Every assignee check below reads `meta`, and `meta` is whatever the stub was
+# told to return -- the stub answers `issue view` from ISSUE_JSON and IGNORES
+# the `--json` field list it was asked for. So dropping `assignees` from that
+# list leaves all of them green while `claimed` is empty for every real issue
+# and the release never unassigns anything: the whole of #4497 reinstated, 56/0.
+#
+# The `calls` log records the real invocation, so it is the one channel that
+# can see the field list. Assert on it.
+#
+# `// []` is load-bearing for the same reason from the other direction: jq exits
+# 5 on a missing key, `set -e` is absent, and the error is swallowed into a
+# silent no-unassign -- indistinguishable from "nothing to release".
+rc, out, calls = release("Part of #42", assigned, actor="the-claiming-bot")
+views = [c for c in calls if c.startswith("issue view")]
+check("the release fetches the issue at all", len(views) == 1, f"{calls}")
+check("...asking for assignees, the field every check below reads",
+      bool(views) and "assignees" in views[0],
+      f"issue view call: {views}")
+check("...and still for the state and labels it also acts on",
+      bool(views) and "state" in views[0] and "labels" in views[0],
+      f"issue view call: {views}")
+
+# An issue with NO assignees key is the ordinary case, and it must still reach
+# the label release and say nothing about assignees. This is what `// []` buys:
+# without it jq exits 5 and, with `set -e` absent, the failure is swallowed into
+# an empty `claimed` -- a silent no-unassign that reads exactly like "nothing to
+# release" (#4510). The step now reads jq's status and refuses instead, so this
+# fixture pins the SUCCESS side and the refusal arm below pins the other.
+rc, out, calls = release("Part of #42", open_issue)
+check("an issue with no assignees key still releases its labels",
+      rc == 0 and any("--add-label status: ready" in c for c in calls), f"{calls}")
+check("...and reports no unreadable-assignees refusal",
+      "could not read assignees" not in out, out)
+check("...and issues no assignee edit", 
+      not [c for c in calls if "--remove-assignee" in c], f"{calls}")
+
 # The filter must be an EQUALITY, not a containment. Both logins above are
 # disjoint strings, so `select(test($actor))` agrees with `select(. == $actor)`
 # on every input they supply and passes the whole suite -- the boundary arm
