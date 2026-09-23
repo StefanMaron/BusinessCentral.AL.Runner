@@ -302,30 +302,70 @@ check("the same-account row sends the reader on to the open-PR check",
 # The last is the both-vocabularies shape the verdict column already guards. A
 # longer STOP pattern cannot fix this -- what discriminates is whether the cell
 # ALSO tells the reader to claim, so ask that directly.
-# The INSTRUCTION to claim, matched positively by what such an instruction says
-# next -- not the word `claim`, which is a noun throughout an honest rule.
+# TWO checks, because one vocabulary matcher cannot close a class of paraphrase.
 #
-# Two earlier forms and why they failed, because the failure directions are
-# opposite and both matter (#4509):
+# STRUCTURE first: the cross-account cell must OPEN with a stop instruction.
+# That is what catches an instruction phrased without the word `claim` at all --
+# "take it over", "pick it up", "assign it to yourself", "the issue is free" --
+# ten of which passed every check in an earlier revision (#4509). A vocabulary
+# list cannot enumerate paraphrase; requiring the cell to begin by saying stop
+# does not have to.
 #
-#   `\bclaim\b` with a "claim signal" lookahead -- fires on the NOUN: "another
-#   account's claim", "which loop holds the claim", "the claim belongs to...".
-#   A guard that reds an honest reword gets routed around rather than satisfied.
+# VOCABULARY second, for the cells that open with a stop word and then reverse
+# it: "**stop** if you like, but carry on and claim it anyway", "**do not** stop
+# at branch-and-pr.md; take it". The structural check passes those, so CLAIM is
+# what settles them.
 #
-#   The same plus article/possessive LOOKBEHINDS (a/the/'s/its/that) -- still
-#   fires on "this claim", "their claim", "each claim", "no claim", "whose
-#   claim", and on `claim` opening a cell. Determiners are an open set, so
-#   enumerating them cannot close this.
+# CLAIM had to be got wrong three times to arrive here, each in the same
+# direction, and the history is the useful part:
+#   * `\bclaim\b` fires on the NOUN -- "another account's claim".
+#   * plus determiner lookbehinds -- still fires on "this/their/each/no claim".
+#     Determiners are an open set.
+#   * the verb phrase enumerated by OBJECT (`claim it|them|the issue|...`) --
+#     drops eight harmful forms the previous one caught: "you may claim the
+#     ticket", "feel free to claim", "claim away", "claim whichever you like".
+#     Object noun phrases are an open set too, which is the same lesson one slot
+#     along.
+# What works is excluding the noun READINGS (a short, closed set of following
+# words) rather than enumerating the verb's objects.
 #
-# Matching the verb phrase closes it: measured over 23 cells (14 honest, 9
-# harmful), 0 misclassified. `whose` is excluded because "whose claim it is"
-# contains `claim it` while being the noun; `proceed` is absent because it is
-# ordinary prose in a rule about what to do next, and `carry on` covers the
-# instruction.
+# The residual is real and worth stating: these two checks pin that the cell
+# opens with a stop and carries no take-it instruction from a named list. A
+# paraphrase using neither -- and not opening with a stop word -- is caught by
+# the structural half; one that opens with a stop word AND paraphrases past it
+# in words nobody has listed is not. This is a vocabulary guard over prose, and
+# it bounds rather than eliminates that.
+OPENS_STOP = re.compile(
+    r"^\s*(?:\*\*)?\s*(?:stop|do not|don't|never|leave it|skip|hands off)\b", re.I)
+
 CLAIM = re.compile(
-    r"(?<!whose )\bclaim\s+(?:it|them|the\s+issue|anyway|across\b|past\b"
-    r"|regardless\b|freely\b)"
-    r"|\bcarry on\b|\bgo ahead\b|\bopen your PR\b", re.I)
+    # The NOUN readings, excluded by what precedes or follows. A determiner
+    # before `claim` makes it the noun and never the verb, so the lookbehind set
+    # is safe here even though enumerating determiners failed as a positive test.
+    r"(?<!whose )(?<!'s )(?<!\bthe )(?<!\ba )(?<!\bthis )(?<!\btheir )"
+    r"(?<!\bno )(?<!\beach )(?<!\bthat )"
+    r"\bclaim\b(?!\s+(?:signal|signals)\b)"
+    r"(?!\s*(?:is|was|belongs|of\s+yours|holds|cannot|ownership)\b)"
+    # The paraphrases, which use no form of `claim` at all.
+    r"|\bcarry on\b|\bgo ahead\b|\bopen your PR\b|\btake it\b|\btake them\b"
+    r"|\bpick it up\b|\bwork on it\b|\bassign it to yourself\b|\breassign\b"
+    r"|\bstart implementing\b|\bis free\b|\bfree to take\b", re.I)
+
+diff_opens_stop = [r for r in diff_rows
+                   if (r.cell_under(ACTION_COL) or "") and OPENS_STOP.match(r.cell_under(ACTION_COL))]
+check("the cross-account action cell OPENS with a stop instruction",
+      len(diff_opens_stop) == len([r for r in diff_rows if r.cell_under(ACTION_COL) is not None]),
+      f"cross-account action cells: {[r.cell_under(ACTION_COL) for r in diff_rows]}")
+
+# The same-account row needs the mirror too: "claim it now -- the open-PR check
+# is optional" and "go ahead and claim it; the lookup resolves it later" both
+# satisfy PROCEED through `open-PR` while deleting the routing (#4509, review).
+# Bounded harm -- same account, no boundary crossed -- but the row's whole
+# purpose is to send the reader to that check, not past it.
+check("the same-account row does NOT tell the reader to claim it outright",
+      not action_says(same_rows, CLAIM)[0],
+      f"same-account action cells: "
+      f"{[r.cell_under(ACTION_COL) for r in same_rows]}")
 
 check("the cross-account row does NOT also tell the reader to claim it",
       not action_says(diff_rows, CLAIM)[0],
