@@ -21,6 +21,7 @@
 // NavText "01/02/0001 14:30:00". Deleting the round-trip branch from TryResolve makes every
 // positive assertion below fail, in milliseconds, without the BC engine loaded.
 using System;
+using System.Globalization;
 using AlRunner;
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
@@ -51,6 +52,17 @@ public sealed class TestPageTemporalValueTests
     }
 
     // A DateTime keeps its time of day, where the Date arm above discards it.
+    //
+    // Read back through GetClientLocalValue, not .Value, and that is the whole subject of
+    // #3567. The three temporal types do NOT store alike: NavDate and NavTime keep a
+    // DateTimeKind.Local value verbatim, while NavDateTime converts to UTC on construction and
+    // .Value is that UTC storage (Ncl 28.4 NavDateTime.GetClientLocalValue ->
+    // ConvertToLocalTime(session, value, DateTimeReferenceFrame.Client)). So .Value.TimeOfDay is
+    // a wall-clock time only where the offset is zero, which is why the old assertion was green
+    // on CI (UTC) and red on every developer box — measured 14:30 -> 13:30 in Europe/Berlin and
+    // 14:30 -> 19:30 in America/New_York, each exactly that zone's offset AT THE ASSERTED
+    // INSTANT. TestDataDateValueHydrationTests.RealDateTime_IsStoredVerbatimAsUtc documents the
+    // same storage contract from the other side.
     [Fact]
     public void TryResolve_RoundTripSpelling_ForADateTimeControl_KeepsTheTimeOfDay()
     {
@@ -58,8 +70,60 @@ public sealed class TestPageTemporalValueTests
             NavType.DateTime, "01/15/2026 14:30:00", out var v));
 
         var dateTime = Assert.IsType<NavDateTime>(v);
-        Assert.Equal(new DateTime(2026, 1, 15), dateTime.Value.Date);
-        Assert.Equal(new TimeSpan(14, 30, 0), dateTime.Value.TimeOfDay);
+        var local = dateTime.GetClientLocalValue((NavSession)BcRuntime.SkeletonSession!);
+
+        Assert.Equal(new DateTime(2026, 1, 15), local.Date);
+        Assert.Equal(new TimeSpan(14, 30, 0), local.TimeOfDay);
+    }
+
+    // The storage side of the same value, pinned so the assertion above cannot be satisfied by
+    // GetClientLocalValue and .Value silently becoming the same thing — which is exactly what a
+    // UTC box looks like, and is the state in which #3567 was invisible for the whole of its
+    // life. Together the two assert that the conversion happens AND that it round-trips.
+    [Fact]
+    public void TryResolve_ForADateTimeControl_StoresUtc_NotTheLocalWallClock()
+    {
+        Assert.True(TestPageTemporalValue.TryResolve(
+            NavType.DateTime, "01/15/2026 14:30:00", out var v));
+
+        var dateTime = Assert.IsType<NavDateTime>(v);
+        var expectedOffset = TimeZoneInfo.Local.GetUtcOffset(
+            DateTime.SpecifyKind(new DateTime(2026, 1, 15, 14, 30, 0), DateTimeKind.Local));
+
+        Assert.Equal(DateTimeKind.Utc, dateTime.Value.Kind);
+        Assert.Equal(
+            new DateTime(2026, 1, 15, 14, 30, 0, DateTimeKind.Utc) - expectedOffset,
+            dateTime.Value);
+    }
+
+    // The offset used is the one in force AT THE CONVERTED INSTANT, not the ambient one. #3567's
+    // thread carried the opposite hypothesis — that the ambient offset was used, which would be
+    // a real DST defect — and adjusting the expectation without settling it would have ratified
+    // that defect silently. Refuted by measurement: the asserted instant 2026-01-15 is winter,
+    // so Europe/Berlin is CET (+01:00) while the box measuring it sat on CEST (+02:00), and the
+    // observed shift was one hour, not two.
+    //
+    // Expressed against the box's own zone rather than a named one, so it makes the same claim
+    // on every box: whatever the local zone is, each spelling must be converted with THAT
+    // spelling's offset. On a zone with no DST both arms assert the same thing and still hold;
+    // on one with DST — the case that discriminates — the two offsets differ and only the
+    // per-instant reading satisfies both.
+    [Theory]
+    [InlineData("01/15/2026 14:30:00")]   // winter
+    [InlineData("07/15/2026 14:30:00")]   // summer
+    public void TryResolve_ForADateTimeControl_ConvertsWithTheOffsetAtThatInstant(string spelling)
+    {
+        Assert.True(TestPageTemporalValue.TryResolve(NavType.DateTime, spelling, out var v));
+        var dateTime = Assert.IsType<NavDateTime>(v);
+
+        var wallClock = DateTime.ParseExact(
+            spelling, "MM/dd/yyyy HH:mm:ss", CultureInfo.InvariantCulture);
+        var offsetAtThatInstant = TimeZoneInfo.Local.GetUtcOffset(
+            DateTime.SpecifyKind(wallClock, DateTimeKind.Local));
+
+        Assert.Equal(
+            DateTime.SpecifyKind(wallClock - offsetAtThatInstant, DateTimeKind.Utc),
+            dateTime.Value);
     }
 
     // A Time argument arrives carrying NavTime's own base date (01/02/0001), which is the
