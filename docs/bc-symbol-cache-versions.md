@@ -136,12 +136,19 @@ v1 and v2 predate this record.
   name, so nothing looked different unless the type was also renamed — which is why #3809's
   measurement (on `PageExtensionSymbol`, reached through a `List`) did not predict this one.
 
-  **#4505 closed that gap**, so the premise holds again without exception: `Contained` replaced
-  `Unwrap` and walks every type a container holds, keyed on generic **arity** rather than on a
-  list of known container types, so a two-argument container nobody has used yet cannot
-  reintroduce it. A dictionary key is walked as well as a value. This bump stays because it was
-  needed when it was made and the version integers are a history, not a current state — but it
-  is the last one that will be needed for this reason.
+  **#4505 closed that gap for the containers it names**: `Contained` replaced `Unwrap` and walks
+  **every generic argument** of the BCL containers in its named set, so a record reachable only
+  as a `Dictionary<,>` value — or key — is descended into like any other.
+
+  The rule is *runner-owned generics always* (through `IsOwnType`), *BCL generics only if
+  named*. Measured as NOT walked: `Tuple<,>`, `ValueTuple`, `ConcurrentDictionary<,>`,
+  `SortedDictionary<,>`. None is reachable from `CachePayload` today — the only generic type
+  definitions there are `Dictionary\`2`, `IReadOnlyList\`1`, `List\`1` and `Nullable\`1`, all
+  named — so the premise holds for the payload as it stands. **Add a container to that set
+  before putting it in a payload**, or this entry's defect returns under a different type.
+
+  This bump stays because it was needed when it was made and the version integers are a history,
+  not a current state.
 
   Measured rather than inferred: with `CacheVersion` at 43 the shared
   `~/.cache/al-runner/bc-symbols` served an entry at the **identical key** whose

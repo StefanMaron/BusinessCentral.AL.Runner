@@ -14,8 +14,11 @@ internal static partial class BcAppSymbolCache
     // The cache key is path|hash:<content>|v<CacheVersion>|shape:<PayloadShape> (BuildKey).
     // A SHAPE change to anything reachable from CachePayload re-keys the cache by itself through
     // PayloadShape (#2335). That now holds without exception: RecordShapeFingerprint.Contained
-    // walks EVERY type a container holds, keyed on generic arity, so a record reachable only as
-    // a Dictionary<,> value or key is descended into like any other.
+    // walks EVERY generic argument of the BCL containers it NAMES, so a record reachable only as
+    // a Dictionary<,> value or key is descended into like any other. A runner-owned generic is
+    // walked regardless, through IsOwnType; a BCL generic only if named there. Tuple<,>,
+    // ValueTuple, ConcurrentDictionary<,> and SortedDictionary<,> are NOT (measured) -- add one
+    // to that set before putting it in a payload.
     //
     // It did not hold until #4505. A dictionary value was never walked, so adding a member left
     // the fingerprint unchanged while TypeName still spelled the value type's NAME — invisible
