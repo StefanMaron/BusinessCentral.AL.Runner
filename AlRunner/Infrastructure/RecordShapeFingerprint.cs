@@ -66,7 +66,16 @@ internal static class RecordShapeFingerprint
 
     private static void Walk(Type type, StringBuilder sb, HashSet<Type> seen)
     {
-        type = Unwrap(type);
+        // A container may hold MORE THAN ONE type -- Dictionary<K,V> is the case that bit
+        // (#4505) -- so unwrapping to a single type cannot express it. Walk every contained
+        // type, and return: the container itself has no shape of ours to record, and its NAME
+        // is already written by TypeName at the member that holds it.
+        var contained = Contained(type);
+        if (contained is not null)
+        {
+            foreach (var inner in contained) Walk(inner, sb, seen);
+            return;
+        }
         // Only the runner's own types are walked into. A BCL type's internals are not ours and
         // do not change with a branch; recursing into them would make the fingerprint depend on
         // the .NET version, which would invalidate every cache entry on an SDK bump for no
@@ -115,16 +124,34 @@ internal static class RecordShapeFingerprint
         return $"{name}<{args}>";
     }
 
-    /// <summary>Element type of a collection or nullable, so the walk reaches what it holds.</summary>
-    private static Type Unwrap(Type t)
+    /// <summary>
+    /// The types a container holds, or <c>null</c> when <paramref name="t"/> is not a container
+    /// and so carries its own shape.
+    /// </summary>
+    /// <remarks>
+    /// Returns a LIST rather than one type because a container may hold several:
+    /// <c>Dictionary&lt;K,V&gt;</c> holds two, and a record reachable only as its VALUE was
+    /// never walked into. Gaining a member then left the fingerprint unchanged, so the cache
+    /// served a stale payload at the identical key -- silent, and warm-only, because CI
+    /// provisions a fresh cache on every leg (#4505).
+    ///
+    /// <para>Keyed on generic ARITY rather than on a list of known container types, so a
+    /// two-argument container nobody has used yet cannot reintroduce the defect. The trap the
+    /// old form set is that <c>TypeName</c> still spelled the value type's name into the
+    /// description, so the obvious probe -- two dictionaries whose value types have DIFFERENT
+    /// names -- passes against the defect and reads as coverage.</para>
+    /// </remarks>
+    private static IReadOnlyList<Type>? Contained(Type t)
     {
-        if (t.IsArray) return Unwrap(t.GetElementType()!);
-        if (!t.IsGenericType) return t;
+        if (t.IsArray) return new[] { t.GetElementType()! };
+        if (!t.IsGenericType) return null;
         var def = t.GetGenericTypeDefinition();
         if (def == typeof(Nullable<>) || def == typeof(List<>) || def == typeof(IReadOnlyList<>)
-            || def == typeof(IList<>) || def == typeof(IEnumerable<>) || def == typeof(ICollection<>))
-            return Unwrap(t.GetGenericArguments()[0]);
-        return t;
+            || def == typeof(IList<>) || def == typeof(IEnumerable<>) || def == typeof(ICollection<>)
+            || def == typeof(Dictionary<,>) || def == typeof(IDictionary<,>)
+            || def == typeof(IReadOnlyDictionary<,>) || def == typeof(KeyValuePair<,>))
+            return t.GetGenericArguments();
+        return null;
     }
 
     /// <summary>

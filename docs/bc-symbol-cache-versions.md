@@ -128,12 +128,20 @@ v1 and v2 predate this record.
 
   **This is the first entry whose bump is needed for a SHAPE change, and that is the point.**
   Every "deliberately did not bump" note below rests on `PayloadShape` re-keying any shape change
-  by itself. It does not, in one case: `RecordShapeFingerprint.Unwrap` descends through
+  by itself. **At the time of this bump it did not, in one case** — the reason this entry exists.
+  `RecordShapeFingerprint.Unwrap` descended through
   `List`/`IReadOnlyList`/`IList`/`IEnumerable`/`ICollection`/`Nullable` and **not** through
-  `Dictionary<,>`, so a record reachable only as a dictionary VALUE is never walked into and
-  adding a member to it leaves the fingerprint unchanged. `TypeName` still spells that type's
-  name, so nothing looks different unless the type is also renamed — which is why #3809's
+  `Dictionary<,>`, so a record reachable only as a dictionary VALUE was never walked into and
+  adding a member to it left the fingerprint unchanged. `TypeName` still spelled that type's
+  name, so nothing looked different unless the type was also renamed — which is why #3809's
   measurement (on `PageExtensionSymbol`, reached through a `List`) did not predict this one.
+
+  **#4505 closed that gap**, so the premise holds again without exception: `Contained` replaced
+  `Unwrap` and walks every type a container holds, keyed on generic **arity** rather than on a
+  list of known container types, so a two-argument container nobody has used yet cannot
+  reintroduce it. A dictionary key is walked as well as a value. This bump stays because it was
+  needed when it was made and the version integers are a history, not a current state — but it
+  is the last one that will be needed for this reason.
 
   Measured rather than inferred: with `CacheVersion` at 43 the shared
   `~/.cache/al-runner/bc-symbols` served an entry at the **identical key** whose
