@@ -363,8 +363,19 @@ CLAIM = re.compile(
     r"(?<!\bno )(?<!\beach )(?<!\bthat )"
     r"\bclaim\b(?!\s+(?:signal|signals)\b)"
     r"(?!\s*(?:is|was|belongs|of\s+yours|holds|cannot|ownership)\b)"
+    # A PERMISSION is as operative as an instruction, and the noun carries it:
+    # "each claim across accounts is permitted", "no claim across accounts is
+    # barred", "the claim is yours". The lookbehinds above correctly suppress the
+    # noun, so these need matching in their own right (#4509, rev24).
+    r"|\b(?:claim|issue|it)\s+(?:is|are)\s+(?:permitted|allowed|yours|free|open to you)\b"
+    r"|\b(?:permits|permitted|allows|allowed)\b"
+    r"|\b(?:does not bar|is not barred|are not barred|is barred by|does not bind)\b"
+    r"|\bleaves the issue open\b"
+    # `not yours to take` is the HONEST form, so the negation has to be excluded.
+    r"|(?<!not )\byours to (?:take|make)\b"
     # The paraphrases, which use no form of `claim` at all.
-    r"|\bcarry on\b|\bgo ahead\b|\bopen your PR\b|\btake it\b|\btake them\b"
+    r"|\btake (?:it|them|the issue|over)\b|\bopen to you\b"
+    r"|\bcarry on\b|\bgo ahead\b|\bopen your PR\b"
     r"|\bpick it up\b|\bwork on it\b|\bassign it to yourself\b|\breassign\b"
     r"|\bstart implementing\b|\bis free\b|\bfree to take\b", re.I)
 
