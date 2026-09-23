@@ -282,6 +282,28 @@ fine.
 sandbox artifact) at the selected build's artifact path, and the backup reader binary the runner
 looks for at `~/.cache/al-runner/bcbak/bcbak`.
 
+**Check the reader's version before measuring anything on BC 28.2 or newer.** `ms-bucket.yml`
+pins **v0.1.2**; a box carrying **v0.1.1** refuses those backups with `block N of MSDA region is
+neither mapped by the derived extent list nor padding filler`. The trap is what that looks like
+from the outside: the bucket EXEC-FAILs and the run reports **`Tests: 0 total`** with `pass: 0`
+and `fail: 0` — not a hang, not a pass, and a `--test` filter then reports that it selected no
+test, which reads like a wrong filter rather than an unread backup (measured on 28.4 while
+re-measuring #3495's Tests-SCM entry point, #4486).
+
+```bash
+~/.cache/al-runner/bcbak/bcbak --version     # want >= 0.1.2 for 28.2+
+```
+
+Install it the way the workflow does — `gh release download v0.1.2 --repo
+StefanMaron/BusinessCentral.DbReader --pattern bcdb-linux-x64 --pattern SHA256SUMS`, verify the
+checksum, then `install -D -m 0755 bcdb-linux-x64 "$HOME/.cache/al-runner/bcbak/bcbak"`. The
+path is shared across every agent on the box, so back up what is there before overwriting it.
+
+**And rebuild the engine for the BC version you select, rather than passing `--bc-version`
+alone.** `--bc-version 28.4` against an engine built for 28.1 prints a KNOWN-DEGRADED warning and
+costs dozens of extra failures from minor skew (#2008); `dotnet build AlRunner -c Release
+-p:_BCVersion=<full-version>` is the fix.
+
 ## The configuration that must be exact
 
 Get these wrong and the numbers mean nothing:
