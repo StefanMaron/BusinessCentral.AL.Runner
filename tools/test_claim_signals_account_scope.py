@@ -302,21 +302,30 @@ check("the same-account row sends the reader on to the open-PR check",
 # The last is the both-vocabularies shape the verdict column already guards. A
 # longer STOP pattern cannot fix this -- what discriminates is whether the cell
 # ALSO tells the reader to claim, so ask that directly.
-# `claim` as a VERB. Not `claim it` specifically -- "claim across accounts
-# freely" carries no pronoun and is the instruction in its plainest form (#4509,
-# the tenth bypass, which walked through a first version requiring one).
+# The INSTRUCTION to claim, matched positively by what such an instruction says
+# next -- not the word `claim`, which is a noun throughout an honest rule.
 #
-# The article/possessive lookbehinds are what keep it off the NOUN, and they are
-# load-bearing rather than defensive: without them, three honest action cells
-# fire -- "it is another account's claim", "which loop holds the claim", "the
-# claim belongs to another account". A guard that blocks a legitimate reword is
-# worse than the gap it closes, because it gets routed around.
+# Two earlier forms and why they failed, because the failure directions are
+# opposite and both matter (#4509):
 #
-# `proceed` is deliberately absent for the same reason: it is ordinary prose in
-# a rule about what to do next, and `carry on` covers the instruction.
-CLAIM = re.compile(r"(?<!\ba )(?<!\bthe )(?<!'s )(?<!\bits )(?<!\bthat )"
-                   r"\bclaim\b(?!\s+(?:signal|signals))"
-                   r"|\bcarry on\b|\bgo ahead\b|\bopen your PR\b", re.I)
+#   `\bclaim\b` with a "claim signal" lookahead -- fires on the NOUN: "another
+#   account's claim", "which loop holds the claim", "the claim belongs to...".
+#   A guard that reds an honest reword gets routed around rather than satisfied.
+#
+#   The same plus article/possessive LOOKBEHINDS (a/the/'s/its/that) -- still
+#   fires on "this claim", "their claim", "each claim", "no claim", "whose
+#   claim", and on `claim` opening a cell. Determiners are an open set, so
+#   enumerating them cannot close this.
+#
+# Matching the verb phrase closes it: measured over 23 cells (14 honest, 9
+# harmful), 0 misclassified. `whose` is excluded because "whose claim it is"
+# contains `claim it` while being the noun; `proceed` is absent because it is
+# ordinary prose in a rule about what to do next, and `carry on` covers the
+# instruction.
+CLAIM = re.compile(
+    r"(?<!whose )\bclaim\s+(?:it|them|the\s+issue|anyway|across\b|past\b"
+    r"|regardless\b|freely\b)"
+    r"|\bcarry on\b|\bgo ahead\b|\bopen your PR\b", re.I)
 
 check("the cross-account row does NOT also tell the reader to claim it",
       not action_says(diff_rows, CLAIM)[0],
