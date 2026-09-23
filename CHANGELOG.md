@@ -314,6 +314,7 @@ All notable changes to this project are documented here. Format based on
 - **integer-vt:** judge a half-open range against the base window, not the envelope-widened span
 
 ### Documentation
+- **rules:** read a corpus run's event before its leg set
 - **rules:** check-open-prs-before-claiming must discriminate same-account from cross-account claims
 - **expectations:** point the two code-coverage entries at the issue that tracks building it
 - **metadata:** triage the 18 unobservable attribute omissions
