@@ -100,6 +100,48 @@ public class RecordShapeFingerprintTests
         Assert.DoesNotContain("Length:System.Int32", description);
     }
 
+    // #4505: a record reachable ONLY as a Dictionary VALUE was never walked into, so gaining a
+    // member left the fingerprint unchanged and the cache served a stale payload at the identical
+    // key. Silent and warm-only: CI provisions a fresh cache per leg, so the legs stay green
+    // forever while a developer's box reads back the old shape.
+    //
+    // These fixtures hold the type NAME constant and vary only the member list, which is the
+    // shape that actually occurs -- two branches where one adds a field. The obvious probe
+    // (Dictionary<int, Leaf> against Dictionary<int, LeafPlus>) PASSES against the defect,
+    // because the differing type names reach the description even when the walk does not.
+    private sealed record DictLeaf(int Id);
+    private sealed record DictRoot(Dictionary<int, DictLeaf> Items);
+
+    [Fact]
+    public void AddingAMemberToADictionaryVALUE_ChangesTheFingerprint()
+    {
+        // The value type is reachable only through the dictionary, so this is the whole claim:
+        // the walk must descend through BOTH generic arguments, not just single-argument
+        // containers like List<>.
+        var before = RecordShapeFingerprint.Describe(typeof(DictRoot));
+
+        Assert.Contains("DictLeaf", before);
+        // Asserted positively, not merely "the fingerprints differ": the defect is that the
+        // leaf's MEMBERS never reach the description, and a name-only mention is what made it
+        // look correct.
+        Assert.Contains("Id:System.Int32", before);
+    }
+
+    [Fact]
+    public void ADictionaryKEY_IsAlsoWalked()
+    {
+        // The key side needs its own arm: unwrapping only GetGenericArguments()[0] would pass
+        // the value-side test above while leaving the key unwalked, and a key record changing
+        // shape is the same silent-stale-entry defect.
+        var description = RecordShapeFingerprint.Describe(typeof(KeyedRoot));
+
+        Assert.Contains("KeyLeaf", description);
+        Assert.Contains("Code:System.String", description);
+    }
+
+    private sealed record KeyLeaf(string Code);
+    private sealed record KeyedRoot(Dictionary<KeyLeaf, int> Items);
+
     [Fact]
     public void ASelfReferencingRecord_Terminates()
     {

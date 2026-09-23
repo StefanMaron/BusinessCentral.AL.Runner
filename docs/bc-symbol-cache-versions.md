@@ -128,12 +128,31 @@ v1 and v2 predate this record.
 
   **This is the first entry whose bump is needed for a SHAPE change, and that is the point.**
   Every "deliberately did not bump" note below rests on `PayloadShape` re-keying any shape change
-  by itself. It does not, in one case: `RecordShapeFingerprint.Unwrap` descends through
+  by itself. **At the time of this bump it did not, in one case** — the reason this entry exists.
+  `RecordShapeFingerprint.Unwrap` descended through
   `List`/`IReadOnlyList`/`IList`/`IEnumerable`/`ICollection`/`Nullable` and **not** through
-  `Dictionary<,>`, so a record reachable only as a dictionary VALUE is never walked into and
-  adding a member to it leaves the fingerprint unchanged. `TypeName` still spells that type's
-  name, so nothing looks different unless the type is also renamed — which is why #3809's
+  `Dictionary<,>`, so a record reachable only as a dictionary VALUE was never walked into and
+  adding a member to it left the fingerprint unchanged. `TypeName` still spelled that type's
+  name, so nothing looked different unless the type was also renamed — which is why #3809's
   measurement (on `PageExtensionSymbol`, reached through a `List`) did not predict this one.
+
+  **#4505 closed that gap for the containers it names**: `Contained` replaced `Unwrap` and walks
+  **every generic argument** of the BCL containers in its named set, so a record reachable only
+  as a `Dictionary<,>` value — or key — is descended into like any other.
+
+  The rule is **recursive**, not a two-way test: `Walk` records members only for a runner-owned
+  type and reaches *through* a type only when `Contained` names it, so **a type is reached only
+  if every container on the path from the payload to it is named**. An unnamed container hides
+  what it holds at any depth and whatever its arity — `HashSet<Leaf>` misses, and so does
+  `List<HashSet<Leaf>>` despite the named outer one (measured). Unnamed today: `HashSet`,
+  `Queue`, `ISet`, `IReadOnlyCollection`, `Tuple`, `ValueTuple`, `ConcurrentDictionary`,
+  `SortedDictionary`. None is reachable from `CachePayload` today — the only generic type
+  definitions there are `Dictionary\`2`, `IReadOnlyList\`1`, `List\`1` and `Nullable\`1`, all
+  named — so the premise holds for the payload as it stands. **Add a container to that set
+  before putting it in a payload**, or this entry's defect returns under a different type.
+
+  This bump stays because it was needed when it was made and the version integers are a history,
+  not a current state.
 
   Measured rather than inferred: with `CacheVersion` at 43 the shared
   `~/.cache/al-runner/bc-symbols` served an entry at the **identical key** whose

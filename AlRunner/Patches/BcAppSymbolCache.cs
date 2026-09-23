@@ -13,15 +13,21 @@ internal static partial class BcAppSymbolCache
 {
     // The cache key is path|hash:<content>|v<CacheVersion>|shape:<PayloadShape> (BuildKey).
     // A SHAPE change to anything reachable from CachePayload re-keys the cache by itself through
-    // PayloadShape (#2335) — WITH ONE MEASURED EXCEPTION: a record reachable only as a
-    // Dictionary<,> VALUE is not walked into, so adding a member to it leaves the fingerprint
-    // unchanged and a warm box serves the old payload. RecordShapeFingerprint.Unwrap handles
-    // List/IReadOnlyList/IList/IEnumerable/ICollection/Nullable and not Dictionary, and
-    // TypeName still spells the value type's NAME, so the collision is invisible unless the
-    // type is also renamed. Measured on PageExtensionMemberOrigin at #3926: identical key,
-    // DeclaredProperties absent from the served entry, every real pageextension rendering as
-    // before while the fixture tests passed. Tracked as its own defect; bump this integer when
-    // a payload record reachable through a dictionary value gains a member. A PARSE change
+    // PayloadShape (#2335). That now holds without exception: RecordShapeFingerprint.Contained
+    // walks EVERY generic argument of the BCL containers it NAMES, so a record reachable only as
+    // a Dictionary<,> value or key is descended into like any other. The rule is recursive: a
+    // type is reached only if EVERY container on the path to it is named in Contained, so an
+    // unnamed one hides what it holds at any depth -- HashSet<Leaf> misses, and so does
+    // List<HashSet<Leaf>> despite the named outer one. HashSet, Queue, ISet, IReadOnlyCollection,
+    // Tuple, ValueTuple, ConcurrentDictionary and SortedDictionary are unnamed today; add a
+    // container there before putting it in a payload.
+    //
+    // It did not hold until #4505. A dictionary value was never walked, so adding a member left
+    // the fingerprint unchanged while TypeName still spelled the value type's NAME — invisible
+    // unless the type was also renamed. Measured on PageExtensionMemberOrigin at #3926:
+    // identical key, DeclaredProperties absent from the served entry, every real pageextension
+    // rendering as before while the fixture tests passed. #3926 bumped this integer to 44 as
+    // the documented lever; #4505 removed the need for it. A PARSE change
     // that leaves the shape alone — the same fields, new
     // values out of unchanged bytes — is invisible to it, and this integer is then the only
     // thing keeping a warm box from replaying the old parse: bump it, or the stale payload
@@ -426,10 +432,10 @@ internal static partial class BcAppSymbolCache
         // fingerprint moved because the member is on PageExtensionSymbol, which the walk reaches
         // through List<PageExtensionSymbol>.
         //
-        // That does NOT generalise to the record this dictionary HOLDS. Adding a member to
-        // PageExtensionMemberOrigin leaves the fingerprint unchanged, because the walk does not
-        // descend through a Dictionary value — see the exception recorded at CacheVersion, which
-        // is why #3926 bumped it to 44.
+        // Since #4505 it generalises to the record this dictionary HOLDS: the walk descends
+        // through a Dictionary value, so adding a member to PageExtensionMemberOrigin re-keys
+        // the cache by itself. Before that it did not, which is why #3926 had to bump
+        // CacheVersion to 44 by hand.
         Dictionary<int, PageExtensionMemberOrigin>? MemberIdToOrigin = null);
 
     /// <summary>
@@ -468,12 +474,12 @@ internal static partial class BcAppSymbolCache
     internal sealed record PageExtensionMemberOrigin(
         bool IsAction, string? Anchor, int ChangeKind, int Sequence = 0,
         // Trailing + optional so an older payload still deserialises positionally. This one DID
-        // need a CacheVersion bump (43 -> 44), and the reason is the exception recorded at
-        // CacheVersion: this record is reachable only as a Dictionary VALUE, which
-        // RecordShapeFingerprint does not walk into, so PayloadShape did NOT re-key. Measured —
-        // the shared cache served an entry at the identical key whose origins carried no
-        // DeclaredProperties, so every real pageextension rendered as before while the fixture
-        // tests passed.
+        // need a CacheVersion bump (43 -> 44) when it landed: this record is reachable only as a
+        // Dictionary VALUE, which RecordShapeFingerprint did not walk into then, so PayloadShape
+        // did NOT re-key. Measured — the shared cache served an entry at the identical key whose
+        // origins carried no DeclaredProperties, so every real pageextension rendered as before
+        // while the fixture tests passed. #4505 fixed the walk, so a FURTHER member added here
+        // re-keys on its own; the PARSE-change reason for bumping is unaffected.
         Dictionary<string, string>? DeclaredProperties = null);
 
     /// <summary>
