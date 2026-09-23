@@ -36,6 +36,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **cache:** walk every type a container holds, so a dictionary value re-keys
 - **metadata:** read the stated ApplicationArea/Image/Caption/ToolTip onto extension runtime deltas
 - **hygiene:** release the claiming assignee when a Part of landing frees an issue
 - **metadata:** render the runner's xmlport derivation in the metadata-equivalence projection
