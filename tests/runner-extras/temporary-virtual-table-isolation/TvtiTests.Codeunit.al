@@ -12,6 +12,11 @@
 //   * temporary  → the store holds exactly the one row AL inserted, that row reads back the
 //                  values AL wrote, and a column AL never wrote reads back its default (so a
 //                  fix that fabricates values is caught, not just one that stops injecting).
+// #3512 added the DELETE half for the Field table: the same invariant asserted over
+// DeleteAll() and Delete(), because a write path can break while every read path passes.
+// See the three tests' own comments; #3512 no longer reproduced when they were written, so
+// they are a regression pin rather than a fix's proving test.
+//
 //   * NON-temporary → the populate still fires and answers truthfully. Two of the three are
 //                  SENSITIVITY controls, verified to fail against a mutant that makes all
 //                  three guards unconditional: Date (a range outside the default 1900-2099
@@ -71,6 +76,111 @@ codeunit 64582 "TVTI Tests"
         Assert.AreEqual('', TempField.FieldName, 'temporary Record "Field": FieldName was never written by AL');
         Assert.AreEqual(0, TempField.Next(), 'temporary Record "Field": a second row exists that AL never inserted');
         Assert.AreEqual(1, TempField.Count(), 'temporary Record "Field" row count after FindSet');
+    end;
+
+    // #3512 — the DELETE half of the same invariant. Codeunit 408 GlobalDimObjectNoList
+    // holds a `Record "Field" temporary`, fills it, filters it by TableNo and calls
+    // DeleteAll(); the runner routed that delete at the virtual Field provider and it
+    // raised NavCSideRecordNotFoundException("The Field does not exist ... TableNo='83',
+    // No.='52'"). Enumeration and lookup disagreed about a row of AL's OWN private store.
+    //
+    // Insert TWO rows under one TableNo and a third under another, so the assertions
+    // discriminate between "DeleteAll deleted the filtered rows" and "DeleteAll deleted
+    // everything" — a fix that simply drops the store would pass a single-row test.
+    [Test]
+    procedure TemporaryFieldRecordDeleteAllRemovesOnlyTheFilteredRowsAlInserted()
+    var
+        TempField: Record "Field" temporary;
+    begin
+        InsertTempFieldRow(TempField, SampleTable(), 52);
+        InsertTempFieldRow(TempField, SampleTable(), 53);
+        InsertTempFieldRow(TempField, OtherTable(), 52);
+
+        TempField.Reset();
+        Assert.AreEqual(3, TempField.Count(), 'temporary Record "Field": row count before DeleteAll');
+
+        // The reported call. On the virtual Field table the walk yielded (SampleTable, 52)
+        // and the delete that followed could not address it by primary key.
+        TempField.SetRange(TableNo, SampleTable());
+        Assert.AreEqual(2, TempField.Count(), 'temporary Record "Field": filtered row count before DeleteAll');
+        TempField.DeleteAll();
+        Assert.AreEqual(0, TempField.Count(), 'temporary Record "Field": filtered rows survived DeleteAll');
+
+        // The unfiltered row must still be there: DeleteAll honours the filter, and the
+        // store was never replaced wholesale.
+        TempField.Reset();
+        Assert.AreEqual(1, TempField.Count(), 'temporary Record "Field": row count after DeleteAll');
+        Assert.IsTrue(TempField.FindFirst(), 'temporary Record "Field": the unfiltered row was deleted too');
+        Assert.AreEqual(OtherTable(), TempField.TableNo, 'temporary Record "Field": TableNo of the surviving row');
+        Assert.AreEqual(52, TempField."No.", 'temporary Record "Field": "No." of the surviving row');
+    end;
+
+    // The single-row Delete() sibling. DeleteAll() walks and deletes per row, so the two share
+    // RecordImplementation.DeleteRecordAsync; this pins the path a test asserting only over
+    // DeleteAll could leave uncovered.
+    [Test]
+    procedure TemporaryFieldRecordDeleteRemovesTheRowAlInserted()
+    var
+        TempField: Record "Field" temporary;
+    begin
+        InsertTempFieldRow(TempField, SampleTable(), 52);
+        InsertTempFieldRow(TempField, SampleTable(), 53);
+
+        // Get() by the full primary key, then Delete() — the row the walk yields must be
+        // addressable by the key it yields it under.
+        Assert.IsTrue(TempField.Get(SampleTable(), 52), 'temporary Record "Field": Get() could not address the row AL inserted');
+        TempField.Delete();
+
+        TempField.Reset();
+        Assert.AreEqual(1, TempField.Count(), 'temporary Record "Field": row count after Delete');
+        Assert.IsFalse(TempField.Get(SampleTable(), 52), 'temporary Record "Field": the deleted row is still addressable');
+        Assert.IsTrue(TempField.Get(SampleTable(), 53), 'temporary Record "Field": Delete removed a row it was not asked to');
+    end;
+
+    // The shape codeunit 408 GlobalDimObjectNoList actually has, and the one the hand-built
+    // rows above do NOT reach: the temporary buffer is filled by COPYING whole rows out of the
+    // real (non-temporary) Field table — `TempField := Field; TempField.Insert()` — and only
+    // then filtered and DeleteAll()'d. A copied row carries every column the virtual provider
+    // built, including ones a hand-built Init() leaves at their defaults.
+    [Test]
+    procedure TemporaryFieldRecordFilledFromTheRealTableDeletesAll()
+    var
+        FieldRec: Record "Field";
+        TempField: Record "Field" temporary;
+        Copied: Integer;
+    begin
+        FieldRec.Reset();
+        FieldRec.SetRange(TableNo, SampleTable());
+        Assert.IsTrue(FieldRec.FindSet(), 'non-temporary Record "Field": nothing to copy from');
+        repeat
+            TempField := FieldRec;
+            TempField.Insert();
+            Copied += 1;
+        until FieldRec.Next() = 0;
+
+        TempField.Reset();
+        Assert.AreEqual(Copied, TempField.Count(), 'temporary Record "Field": copied row count');
+        Assert.IsTrue(Copied >= 3, 'temporary Record "Field": fewer copied rows than the 3 declared fields');
+
+        // Codeunit 408's call, on a buffer filled exactly the way it fills one.
+        TempField.SetRange(TableNo, SampleTable());
+        TempField.DeleteAll();
+        Assert.AreEqual(0, TempField.Count(), 'temporary Record "Field": copied rows survived DeleteAll');
+        TempField.Reset();
+        Assert.AreEqual(0, TempField.Count(), 'temporary Record "Field": row count after DeleteAll over the whole store');
+    end;
+
+    local procedure OtherTable(): Integer
+    begin
+        exit(64583);
+    end;
+
+    local procedure InsertTempFieldRow(var TempField: Record "Field"; NewTableNo: Integer; NewFieldNo: Integer)
+    begin
+        TempField.Init();
+        TempField.TableNo := NewTableNo;
+        TempField."No." := NewFieldNo;
+        TempField.Insert();
     end;
 
     // NOT a sensitivity control, and deliberately not named as one. Unlike the Date and
