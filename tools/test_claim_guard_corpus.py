@@ -74,6 +74,13 @@ HARMFUL = [
     "**stop**; no claim across accounts is barred by `branch-and-pr.md`",
     "**stop** — the claim is yours",
     "**stop**; a claim across accounts is allowed here",
+
+    "**stop**; no claim across accounts is barred",
+    "**skip** the `branch-and-pr.md` question; no claim across accounts is barred",
+    "**stop**; no claim there is binding, per `branch-and-pr.md`",
+    "**stop**, per `branch-and-pr.md`; it leaves each claim to your judgement",
+    "**stop** — a claim on another account's issue is fine, per `branch-and-pr.md`",
+    "**stop**; `branch-and-pr.md` permits a claim here",
 ]
 
 HONEST = [
@@ -93,6 +100,7 @@ HONEST = [
     "**hands off**, per `branch-and-pr.md`; it is not yours",
     "**leave it**, per `branch-and-pr.md`; whose claim it is cannot be read from the assignee",
     "**stop**, per `branch-and-pr.md`; every claim belongs to a single loop",
+    "**stop**, per `branch-and-pr.md`; only the other account's loop is permitted to act here",
 ]
 
 passes, failures = 0, []
