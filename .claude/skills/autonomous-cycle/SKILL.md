@@ -459,8 +459,21 @@ a merge can turn `main` red, which outranks everything you were about to do.
    PR citing it with a `Corpus-PR:` line was already measured against that branch head, and
    after the merge the same line resolves `master`. Merge the runner PR next
    (`al-language-submodule.md`).
-5. **An issue is ready to work.** Take the highest `priority:` one and implement it. One issue at
-   a time; within a priority, take the older (`orchestrating-a-session` § The ready queue).
+5. **An issue is ready to work.** Take the highest `priority:` one and implement it, **excluding
+   any `type: tracker` issue**. One issue at a time; within a priority, take the older
+   (`orchestrating-a-session` § The ready queue).
+
+   ```
+   | select([.labels[].name] | map(. == "type: tracker") | any | not)
+   ```
+
+   **A tracker is a set of related items, not one unit of work**, so `status: ready` on one means
+   *the items are available*, not *this issue closes* — and it otherwise sorts to the top of its
+   band and has to be recognised and skipped by hand, which failed once and cost a re-scope
+   (#4489). File a narrow issue per item and take that. A PR touching a tracker declares
+   `Part of #N`, never `Closes #N`, the marker starting the line (`branch-and-pr.md`). CI cannot
+   save you here: `reject-deferred-scope` keys on a deferral's **destination**, not on whether a
+   PR finished what it closed, so closing a tracker merges green.
 
    `urgent` > `high` > `medium` > `low` > unranked. The triager assigns these on blast radius and
    evidence, not on category — a docs issue can be `urgent` (a rule actively misleading an agent)

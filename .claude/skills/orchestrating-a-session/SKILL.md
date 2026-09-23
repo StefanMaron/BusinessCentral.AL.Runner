@@ -630,11 +630,24 @@ label** — an unranked issue sorts last, so a growing count there means the que
 its order. 500 rows returned means the first two are lower bounds, and the summary says so. Done
 when those four appear in the summary.
 
-**Take the highest `priority:` issue first; age is the tie-break within a priority** — `urgent` >
+**Take the highest `priority:` issue first, excluding every `type: tracker` issue; age is the
+tie-break within a priority** — `urgent` >
 `high` > `medium` > `low` > unranked, oldest first inside each band. The triager sets these on blast radius
 and evidence (`.claude/agents/triager.md` § Step 2b), so ordering is a recorded judgement rather
 than one each agent re-makes in the moment. A pool with no ready filings of its own claims from
 this same queue, in the same order.
+
+```
+| select([.labels[].name] | map(. == "type: tracker") | any | not)
+```
+
+**A `type: tracker` issue is a set of related items rather than one unit of work**, so it is never
+a candidate: `status: ready` on it says the items are available, not that the issue closes. Without
+the clause a tracker sorts to the top of its band and each reader has to recognise it, which failed
+once and cost a re-scope (#4489). File a narrow issue per item and dispatch that. A PR touching a
+tracker declares `Part of #N`, never `Closes #N`, with the marker starting the line
+(`branch-and-pr.md`) — and no gate catches the alternative, because `reject-deferred-scope` reads
+where a deferral points rather than whether a PR finished what it closed.
 
 **Every cycle summary also names the priority of what was picked**, and every pick below the
 highest available carries one line on the issue saying why — no approval, no waiting. Folding

@@ -34,12 +34,15 @@ Settings:
 
 ### Loop body — repeat until terminal
 
-**Step A — Read state.** Resolve the authenticated user once, then filter to that user or empty (skip human-owned work):
+**Step A — Read state.** Resolve the authenticated user once, then filter to that user or empty (skip human-owned work) and drop trackers.
+
+**A `type: tracker` issue is a set of related items, not one unit of work**, so it is never dispatched: `status: ready` on one means the items are available, not that the issue closes. Dispatch a narrow issue filed per item instead. A PR touching a tracker declares `Part of #N`, never `Closes #N`, the marker starting the line (`branch-and-pr.md`); `reject-deferred-scope` cannot catch the alternative, because it keys on a deferral's destination rather than on whether the PR finished what it closed.
 ```bash
 ME=$(gh api user --jq .login)
 
-gh issue list --label "status: ready" --state open --json number,title,assignees --repo StefanMaron/BusinessCentral.AL.Runner \
-  | jq --arg me "$ME" '[.[] | select(.assignees | length == 0 or any(.login == $me))]'
+gh issue list --label "status: ready" --state open --json number,title,assignees,labels --repo StefanMaron/BusinessCentral.AL.Runner \
+  | jq --arg me "$ME" '[.[] | select(.assignees | length == 0 or any(.login == $me))
+                            | select([.labels[].name] | map(. == "type: tracker") | any | not)]'
 
 gh pr list --label "status: review-ready" --state open --json number,title,assignees --repo StefanMaron/BusinessCentral.AL.Runner \
   | jq --arg me "$ME" '[.[] | select(.assignees | length == 0 or any(.login == $me))]'
@@ -53,7 +56,7 @@ For each free identity slot (`impl-1`, `impl-2`) where the queue still has uncla
 Agent({
   subagent_type: "impl-agent",
   description: "impl-<id> claim and implement next ready issue",
-  prompt: "You are <AGENT-ID>. Follow your agent definition exactly: claim the next `status: ready` issue with no `agent:` label, taking the highest `priority:` first (urgent > high > medium > low > unranked, oldest first within a band; a pick below the top carries one line on the issue saying why) (the claim ends with a draft PR carrying `Closes #N`), implement with strict TDD, mark the PR ready and label it `status: review-ready`, then return. Hard stop after one issue — do not loop to a second.",
+  prompt: "You are <AGENT-ID>. Follow your agent definition exactly: claim the next `status: ready` issue with no `agent:` label, excluding any `type: tracker` issue, taking the highest `priority:` first (urgent > high > medium > low > unranked, oldest first within a band; a pick below the top carries one line on the issue saying why) (the claim ends with a draft PR carrying `Closes #N`), implement with strict TDD, mark the PR ready and label it `status: review-ready`, then return. Hard stop after one issue — do not loop to a second.",
   isolation: "worktree",
   run_in_background: true
 })
