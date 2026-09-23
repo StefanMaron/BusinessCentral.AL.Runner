@@ -242,8 +242,13 @@ ACTION_COL = re.compile(r"what to do|what you do|action", re.I)
 
 # STOP vocabulary must not be satisfied by the same-account row's legitimate
 # "read on", so match the instruction rather than any cautious-sounding word.
-STOP = re.compile(r"\bstop\b|\bdo not\b|\bdon't\b|\bnever\b|\bleave it\b"
-                  r"|\bskip\b|\bhands? off\b", re.I)
+# `halt` and `leave them` and `not yours` are here so this and OPENS_STOP accept
+# the same vocabulary: a cell reading "**halt** -- branch-and-pr.md owns this
+# boundary" satisfied the front-window check and failed this one, which is an
+# inconsistency between two checks rather than a property of the cell (#4509).
+STOP = re.compile(r"\bstop\b|\bhalt\b|\bdo not\b|\bdon't\b|\bnever\b"
+                  r"|\bleave it\b|\bleave them\b|\bskip\b|\bhands? off\b"
+                  r"|\bnot yours\b", re.I)
 # What the same-account row says instead: the open-PR lookup resolves it.
 # `below` was here and is removed (#4509): it adds no discrimination the other
 # three lack, and is the only alternative satisfiable by a cross-reference to
@@ -335,8 +340,20 @@ check("the same-account row sends the reader on to the open-PR check",
 # the structural half; one that opens with a stop word AND paraphrases past it
 # in words nobody has listed is not. This is a vocabulary guard over prose, and
 # it bounds rather than eliminates that.
+# A stop instruction near the FRONT of the cell, not at character zero. Anchoring
+# at zero false-reds four honest openings, measured: a leading "Per
+# `branch-and-pr.md`, **stop**", a parenthetical, the sister-rule name first
+# ("`branch-and-pr.md` says stop"), and `halt` as a synonym. A guard that blocks
+# an honest reword gets routed around, which is the failure this suite's control
+# arm exists to prevent.
+#
+# A window rather than "the first clause" because the cell CONTAINS `.` -- the
+# sister rule is a `.md` filename -- so a `[^.;]` class stops at the wrong place.
+# Reversal after the stop ("**stop** if you like, but carry on") is CLAIM's job,
+# not this check's.
 OPENS_STOP = re.compile(
-    r"^\s*(?:\*\*)?\s*(?:stop|do not|don't|never|leave it|skip|hands off)\b", re.I)
+    r"^.{0,80}?\b(?:stop|halt|do not|don't|never|leave it|leave them"
+    r"|skip|hands off|not yours)\b", re.I | re.S)
 
 CLAIM = re.compile(
     # The NOUN readings, excluded by what precedes or follows. A determiner
@@ -352,8 +369,8 @@ CLAIM = re.compile(
     r"|\bstart implementing\b|\bis free\b|\bfree to take\b", re.I)
 
 diff_opens_stop = [r for r in diff_rows
-                   if (r.cell_under(ACTION_COL) or "") and OPENS_STOP.match(r.cell_under(ACTION_COL))]
-check("the cross-account action cell OPENS with a stop instruction",
+                   if (r.cell_under(ACTION_COL) or "") and OPENS_STOP.search(r.cell_under(ACTION_COL))]
+check("the cross-account action cell leads with a stop instruction",
       len(diff_opens_stop) == len([r for r in diff_rows if r.cell_under(ACTION_COL) is not None]),
       f"cross-account action cells: {[r.cell_under(ACTION_COL) for r in diff_rows]}")
 
