@@ -302,12 +302,21 @@ check("the same-account row sends the reader on to the open-PR check",
 # The last is the both-vocabularies shape the verdict column already guards. A
 # longer STOP pattern cannot fix this -- what discriminates is whether the cell
 # ALSO tells the reader to claim, so ask that directly.
-# `claim` followed by anything within a short span, not `claim it` specifically:
-# "claim across accounts freely" carries no "claim it" and is the instruction in
-# its plainest form (#4509, the tenth bypass -- it survived a first version of
-# this pattern that required the pronoun).
-CLAIM = re.compile(r"\bclaim\b(?![^|\n]{0,20}\bsignal)"
-                   r"|\bcarry on\b|\bgo ahead\b|\bproceed\b|\bopen your PR\b", re.I)
+# `claim` as a VERB. Not `claim it` specifically -- "claim across accounts
+# freely" carries no pronoun and is the instruction in its plainest form (#4509,
+# the tenth bypass, which walked through a first version requiring one).
+#
+# The article/possessive lookbehinds are what keep it off the NOUN, and they are
+# load-bearing rather than defensive: without them, three honest action cells
+# fire -- "it is another account's claim", "which loop holds the claim", "the
+# claim belongs to another account". A guard that blocks a legitimate reword is
+# worse than the gap it closes, because it gets routed around.
+#
+# `proceed` is deliberately absent for the same reason: it is ordinary prose in
+# a rule about what to do next, and `carry on` covers the instruction.
+CLAIM = re.compile(r"(?<!\ba )(?<!\bthe )(?<!'s )(?<!\bits )(?<!\bthat )"
+                   r"\bclaim\b(?!\s+(?:signal|signals))"
+                   r"|\bcarry on\b|\bgo ahead\b|\bopen your PR\b", re.I)
 
 check("the cross-account row does NOT also tell the reader to claim it",
       not action_says(diff_rows, CLAIM)[0],
