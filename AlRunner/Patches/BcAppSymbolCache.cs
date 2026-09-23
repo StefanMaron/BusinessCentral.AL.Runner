@@ -13,7 +13,16 @@ internal static partial class BcAppSymbolCache
 {
     // The cache key is path|hash:<content>|v<CacheVersion>|shape:<PayloadShape> (BuildKey).
     // A SHAPE change to anything reachable from CachePayload re-keys the cache by itself through
-    // PayloadShape (#2335). A PARSE change that leaves the shape alone — the same fields, new
+    // PayloadShape (#2335) — WITH ONE MEASURED EXCEPTION: a record reachable only as a
+    // Dictionary<,> VALUE is not walked into, so adding a member to it leaves the fingerprint
+    // unchanged and a warm box serves the old payload. RecordShapeFingerprint.Unwrap handles
+    // List/IReadOnlyList/IList/IEnumerable/ICollection/Nullable and not Dictionary, and
+    // TypeName still spells the value type's NAME, so the collision is invisible unless the
+    // type is also renamed. Measured on PageExtensionMemberOrigin at #3926: identical key,
+    // DeclaredProperties absent from the served entry, every real pageextension rendering as
+    // before while the fixture tests passed. Tracked as its own defect; bump this integer when
+    // a payload record reachable through a dictionary value gains a member. A PARSE change
+    // that leaves the shape alone — the same fields, new
     // values out of unchanged bytes — is invisible to it, and this integer is then the only
     // thing keeping a warm box from replaying the old parse: bump it, or the stale payload
     // deserializes cleanly and answers wrong rather than missing. CI cannot catch that, because
@@ -25,7 +34,7 @@ internal static partial class BcAppSymbolCache
     //
     // Every bump adds its row to docs/bc-symbol-cache-versions.md#version-history (why that
     // integer was taken); BcAppSymbolCacheVersionHistoryTests holds the page to this constant.
-    private const int CacheVersion = 43;
+    private const int CacheVersion = 44;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820's path -> content-hash memo now lives in
     // RunnerFingerprint._fileContentHashes (#2955), because AppLoader's persisted r2r-chunks
@@ -412,10 +421,15 @@ internal static partial class BcAppSymbolCache
         // declared it (#3809). Null means "this payload predates the field"; an id absent from
         // a non-null map was declared by neither container.
         //
-        // No CacheVersion bump is needed for this, and that is MEASURED rather than assumed:
-        // adding a member to a payload record changes PayloadShape, which is part of the cache
-        // key, so the on-disk cache re-keys itself. ccb081fbed1589bf -> 37a9f2f5cf79ffd1, with
-        // CacheVersion unchanged at 42.
+        // No CacheVersion bump was needed to ADD this member, and that was measured:
+        // ccb081fbed1589bf -> 37a9f2f5cf79ffd1, with CacheVersion unchanged at 42. The
+        // fingerprint moved because the member is on PageExtensionSymbol, which the walk reaches
+        // through List<PageExtensionSymbol>.
+        //
+        // That does NOT generalise to the record this dictionary HOLDS. Adding a member to
+        // PageExtensionMemberOrigin leaves the fingerprint unchanged, because the walk does not
+        // descend through a Dictionary value — see the exception recorded at CacheVersion, which
+        // is why #3926 bumped it to 44.
         Dictionary<int, PageExtensionMemberOrigin>? MemberIdToOrigin = null);
 
     /// <summary>
@@ -440,7 +454,27 @@ internal static partial class BcAppSymbolCache
     /// instead reported pageextension 774's four controls as four wrong ids and names, and
     /// swapped two of ext 2515's change contexts (#3809). Stated explicitly because
     /// <c>Dictionary</c> does not guarantee insertion order.</param>
-    internal sealed record PageExtensionMemberOrigin(bool IsAction, string? Anchor, int ChangeKind, int Sequence = 0);
+    /// <param name="DeclaredProperties">The member node's own <c>Properties</c> bag, verbatim and
+    /// unfiltered — the source BC's emitter reads the delta's <c>ApplicationArea</c>,
+    /// <c>Image</c>, <c>CaptionML</c>, <c>ToolTipML</c>, <c>Visible</c> and <c>Enabled</c> out of
+    /// (#3926). Null means the node states no <c>Properties</c> array at all.
+    ///
+    /// <para>Carried RAW rather than projected into named fields: which of these BC writes, and
+    /// under what transform, is the RENDER's question and is answered there
+    /// (RecordPatches.TryRenderPageExtensionDeltas), so a second projection here would fork one
+    /// rule. The same bag also states properties no delta attribute reads —
+    /// <c>SourceExpression</c>, <c>ObsoleteState</c>, <c>RunObject</c> — which other consumers
+    /// already take through their own readers.</para></param>
+    internal sealed record PageExtensionMemberOrigin(
+        bool IsAction, string? Anchor, int ChangeKind, int Sequence = 0,
+        // Trailing + optional so an older payload still deserialises positionally. This one DID
+        // need a CacheVersion bump (43 -> 44), and the reason is the exception recorded at
+        // CacheVersion: this record is reachable only as a Dictionary VALUE, which
+        // RecordShapeFingerprint does not walk into, so PayloadShape did NOT re-key. Measured —
+        // the shared cache served an entry at the identical key whose origins carried no
+        // DeclaredProperties, so every real pageextension rendered as before while the fixture
+        // tests passed.
+        Dictionary<string, string>? DeclaredProperties = null);
 
     /// <summary>
     /// One subpage PART control of a precompiled dependency page, as SymbolReference.json
@@ -1630,13 +1664,30 @@ internal static partial class BcAppSymbolCache
         // recurses, so a change can contribute several members at several depths.
         var origins = new Dictionary<int, PageExtensionMemberOrigin>();
         var sequence = 0;
+        // Every member node this change contributed, by id, so an origin can carry the node's
+        // own Properties bag (#3926). Collected on the SAME recursion that names the members —
+        // an added group nests its actions, and a nested member's properties are its own.
+        var declaredByMember = new Dictionary<int, Dictionary<string, string>>();
+        void CollectDeclaredProperties(JsonElement node, string childKey)
+        {
+            if (node.TryGetProperty("Id", out var idProp) && idProp.TryGetInt32(out var id) && id != 0)
+            {
+                var props = SymbolProperties(node);
+                if (props.Count > 0) declaredByMember[id] = props;
+            }
+            if (node.TryGetProperty(childKey, out var children) && children.ValueKind == JsonValueKind.Array)
+                foreach (var child in children.EnumerateArray())
+                    CollectDeclaredProperties(child, childKey);
+        }
         void RecordOrigin(HashSet<int> before, bool isAction, JsonElement change)
         {
             var anchor = change.TryGetProperty("Anchor", out var an) ? an.GetString() : null;
             var changeKind = change.TryGetProperty("ChangeKind", out var ck) && ck.TryGetInt32(out var k) ? k : 0;
             foreach (var id in memberNames.Keys)
                 if (!before.Contains(id))
-                    origins[id] = new PageExtensionMemberOrigin(isAction, anchor, changeKind, sequence++);
+                    origins[id] = new PageExtensionMemberOrigin(
+                        isAction, anchor, changeKind, sequence++,
+                        declaredByMember.TryGetValue(id, out var declared) ? declared : null);
         }
 
         if (ext.TryGetProperty("ActionChanges", out var actionChanges) && actionChanges.ValueKind == JsonValueKind.Array)
@@ -1646,6 +1697,7 @@ internal static partial class BcAppSymbolCache
                     {
                         var before = new HashSet<int>(memberNames.Keys);
                         CollectMemberNames(a, "Actions", memberNames, actionRefTargets, runObjects);
+                        CollectDeclaredProperties(a, "Actions");
                         RecordOrigin(before, isAction: true, change);
                     }
         if (ext.TryGetProperty("ControlChanges", out var controlChanges) && controlChanges.ValueKind == JsonValueKind.Array)
@@ -1655,6 +1707,7 @@ internal static partial class BcAppSymbolCache
                     {
                         var before = new HashSet<int>(memberNames.Keys);
                         CollectMemberNames(c, "Controls", memberNames, actionRefTargets);
+                        CollectDeclaredProperties(c, "Controls");
                         RecordOrigin(before, isAction: false, change);
                     }
 

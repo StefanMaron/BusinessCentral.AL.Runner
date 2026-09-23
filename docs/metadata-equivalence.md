@@ -1552,6 +1552,60 @@ cached builds' bundles: 32 carry an `AnchorName`, and not one of those 32 is an 
 *sibling's* own — pageextension 774's three view-anchored actions are `ViewActions`, not the
 fallback — and SymbolReference does not state it from the extension's side (#3926).
 
+<a id="deltas-stated-member-attributes"></a>
+### The member attributes SymbolReference states, and the two that only half-transfer (#3926)
+
+Group 1 of #3926: the delta-member attributes BC writes that the symbol file already states, in
+the same `ActionChanges[].Actions` / `ControlChanges[].Controls` entries the render walks.
+Measured by pairing BC's own emitted documents against the symbol entry for every member of all
+five pageextensions carrying deltas in the 28.1.49838.53910 Business Foundation + System
+Application bundles — 11 members, which is the whole population rather than a sample.
+
+| BC attribute | symbol property | transform | pairs measured | exact |
+|---|---|---|---:|---|
+| `ApplicationArea` | `ApplicationArea` | verbatim | 7 | 7/7 |
+| `Image` | `Image` | verbatim | 3 | 3/3 |
+| `CaptionML` | `Caption` | `ENU=` prefix | 4 | 4/4 |
+| `ToolTipML` | `ToolTip` | `ENU=` prefix | 6 | 6/6 |
+| `Visible` / `Enabled` | same | see below | 10 | 3/10 |
+
+**`Visible` / `Enabled` transfer only for a boolean LITERAL, and that is the whole of the
+split.** The stated population is exactly 3 literals and 7 expressions:
+
+- **literal** — pageextension 774's three hidden controls state `Visible "false"`, and BC writes
+  `Visible="false"`. Passes through unchanged.
+- **expression** — ext 2515 states `Enabled "IsSaas"` against BC's `px2515px2515IsSaas`; ext 324
+  states `CopilotActionsVisible` against `px324px324CopilotActionsVisible`; ext 4318 and ext 774
+  the same shape. BC writes a mangled reference to the extension's own global, built from the
+  extension id, and SymbolReference states neither the mangling nor which globals it applies to.
+
+So an expression is left off and stays an allowlisted difference. Writing the bare AL name would
+be a *wrong value derived from a right input* — the one failure shape this comparison had none of
+before — which is strictly worse than the omission it would replace.
+
+**Not read, though #3926's group-1 list names them.** `RunObjectType`, `TargetID`,
+`RunObjectSrcTable` and `PushAction`: the symbol file states a bare object NAME
+(`RunObject: "AppSource Product List"`) and BC states the resolved type and id (`Page`, `2515`) —
+a different fact, needing the page inventory this layer does not have, for the reason
+`BcAppSymbolCache.ActionRunObjectSymbol` gives. `RunPageMode` is out for a second reason: BC
+writes `Edit` on two members whose symbol entry states nothing, so its default rule is unmeasured.
+
+**What landing this made visible, and why the difference count is not a progress metric.** The
+comparison went from 869 differences over 77 members to 806 over 62, and the members that cleared
+are `ActionDefinition.{ApplicationArea, Image, CaptionML.<presence>, CaptionMLString,
+ToolTipML.<presence>, ToolTipMLString}` and `ControlDefinition.{ApplicationArea,
+#applicationAreaField, ToolTipML.<presence>, #toolTipMLField.<presence>}`, with
+`ControlDefinition.Visible` falling from 6 to 2 as the three literals landed.
+
+But `ControlDefinition.ToolTipMLString` stayed at 6 and three `MultiLanguage.Texts` differences
+appeared that nothing had declared. Neither is a wrong value: both are the **positional
+one-slot shift** described under [declaration order](#deltas-declaration-order). Pageextension
+774's BC document opens with a `PagePropertiesChange` the runner does not emit, so its four
+`ControlAdd`s sit at BC indices 1-4 against the runner's 0-3 and each control's tooltip is
+compared against the *next* control's. Before this change the runner wrote no value there for the
+shift to misalign, so the shift was invisible on those members; landing the read made an existing
+group-3 artifact observable. Emitting `PagePropertiesChange` removes it for every member at once.
+
 <a id="deltas-declaration-order"></a>
 ### Declaration order is load-bearing, because the differ pairs positionally
 
@@ -1579,10 +1633,15 @@ entries carry `versionContingent`, because the object's existence moves with the
 <a id="deltas-what-remains"></a>
 ### What the comparison measures now
 
-869 differences across 77 members, of which 64 were newly declared in the allowlist and 13 were
-already covered by the translation-key entries. Every one is *BC states a value, the runner leaves
-it off* — no member is rendered with a wrong value derived from a right input. The three groups,
-and which is a defect, are on **#3926**.
+**806 differences across 62 members**, after #3926 landed group 1's stated-property read; it was
+869 across 77 before, of which 64 were newly declared in the allowlist and 13 were already covered
+by the translation-key entries. Which members cleared, and why the count is not a clean progress
+metric, is [above](#deltas-stated-member-attributes) — two of the surviving members are the
+positional shift becoming observable rather than a disagreement.
+
+Every remaining difference is still *BC states a value, the runner leaves it off*, with the one
+qualification that shift introduces: no member is rendered with a wrong value derived from a right
+input. Groups 2 and 3 stay open on **#3926**.
 
 <a id="unobservable-omissions"></a>
 ## The third state: omissions the comparison cannot observe (#4357)

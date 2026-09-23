@@ -1160,24 +1160,6 @@
       "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
     },
     {
-      "member": "ActionDefinition.ApplicationArea",
-      "reason": "The extension-runtime-delta render emits the member's ID and Name and the wrapper's placement attributes, and states nothing else -- so BC emits this value and the runner leaves it OFF rather than answering it wrongly (#3926). This value IS stated in the same ActionChanges[].Actions / ControlChanges[].Controls entry the render already walks, so it is a read-don't-guess fix rather than a limit: what the runner shows here is the type's own default (null / 0 / False / the zero enum), never a derivation anyone checked. LEFT OFF DELIBERATELY: writing BC's value without reading it from the symbol file would manufacture agreement, which is the failure this harness exists to catch. What invalidates this entry is #3926 landing the read.",
-      "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
-    },
-    {
-      "member": "ActionDefinition.CaptionML.<presence>",
-      "reason": "The extension-runtime-delta render emits the member's ID and Name and the wrapper's placement attributes, and states nothing else -- so BC emits this value and the runner leaves it OFF rather than answering it wrongly (#3926). This value IS stated in the same ActionChanges[].Actions / ControlChanges[].Controls entry the render already walks, so it is a read-don't-guess fix rather than a limit: what the runner shows here is the type's own default (null / 0 / False / the zero enum), never a derivation anyone checked. LEFT OFF DELIBERATELY: writing BC's value without reading it from the symbol file would manufacture agreement, which is the failure this harness exists to catch. What invalidates this entry is #3926 landing the read.",
-      "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
-    },
-    {
-      "member": "ActionDefinition.CaptionMLString",
-      "reason": "The extension-runtime-delta render emits the member's ID and Name and the wrapper's placement attributes, and states nothing else -- so BC emits this value and the runner leaves it OFF rather than answering it wrongly (#3926). This value IS stated in the same ActionChanges[].Actions / ControlChanges[].Controls entry the render already walks, so it is a read-don't-guess fix rather than a limit: what the runner shows here is the type's own default (null / 0 / False / the zero enum), never a derivation anyone checked. LEFT OFF DELIBERATELY: writing BC's value without reading it from the symbol file would manufacture agreement, which is the failure this harness exists to catch. What invalidates this entry is #3926 landing the read.",
-      "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
-    },
-    {
       "member": "ActionDefinition.CaptionTranslationKey",
       "reason": "A translation-file lookup id on an extension-runtime-delta member. Same SCOPE DECISION BY THE REPOSITORY OWNER as the TranslationKey entries above (2026-09-10, relayed on #3568): translations are out of scope for the runner, so this surface is not one the runner needs to reproduce. The render leaves it off; what BC states is a key computed from names. Listed separately from the TranslationKey.* entries because this is the DEFINITION member that carries the key string, not the parsed key's components.",
       "outOfScope": true,
@@ -1191,19 +1173,13 @@
     },
     {
       "member": "ActionDefinition.Enabled",
-      "reason": "The extension-runtime-delta render emits the member's ID and Name and the wrapper's placement attributes, and states nothing else -- so BC emits this value and the runner leaves it OFF rather than answering it wrongly (#3926). This value IS stated in the same ActionChanges[].Actions / ControlChanges[].Controls entry the render already walks, so it is a read-don't-guess fix rather than a limit: what the runner shows here is the type's own default (null / 0 / False / the zero enum), never a derivation anyone checked. LEFT OFF DELIBERATELY: writing BC's value without reading it from the symbol file would manufacture agreement, which is the failure this harness exists to catch. What invalidates this entry is #3926 landing the read.",
+      "reason": "Two distinct causes, both measured on 28.1.49838.53910. (1) An EXPRESSION-valued Visible/Enabled is left off: the symbol file states the bare AL name (`IsSaaS`, `CopilotActionsVisible`) and BC writes a mangled reference to the extension's own global built from the extension id (`px774p774IsSaaS`, `px324px324CopilotActionsVisible`), which SymbolReference does not state -- writing the AL name would be a WRONG value derived from a right input. #3926 landed the LITERAL half, so the three `Visible=\"false\"` controls of pageextension 774 now agree and only the expression-valued members remain here. (2) The residue on ControlDefinition.Visible is the positional one-slot shift from the unemitted PagePropertiesChange -- see MultiLanguage.Texts. What invalidates this entry is deriving BC's global-name mangling, or emitting PagePropertiesChange.",
       "issue": 3926,
       "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
     },
     {
       "member": "ActionDefinition.HelpLink",
       "reason": "BC COMPUTES this and SymbolReference.json states it nowhere, so the render leaves it off (#3926). ControlGUID is a real GUID from BC's own emitter against the runner's zeroed one; SourceExtensionType, HelpLink, ExtensionId and ControlRuntimeId are publish-time facts about an installed extension, which the runner has no published-app pipeline to produce. Unlike the read-don't-guess group this needs a derivation or a scope call before it can move, and neither has been made -- so this entry records an unmeasured surface, not a correct answer.",
-      "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
-    },
-    {
-      "member": "ActionDefinition.Image",
-      "reason": "The extension-runtime-delta render emits the member's ID and Name and the wrapper's placement attributes, and states nothing else -- so BC emits this value and the runner leaves it OFF rather than answering it wrongly (#3926). This value IS stated in the same ActionChanges[].Actions / ControlChanges[].Controls entry the render already walks, so it is a read-don't-guess fix rather than a limit: what the runner shows here is the type's own default (null / 0 / False / the zero enum), never a derivation anyone checked. LEFT OFF DELIBERATELY: writing BC's value without reading it from the symbol file would manufacture agreement, which is the failure this harness exists to catch. What invalidates this entry is #3926 landing the read.",
       "issue": 3926,
       "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
     },
@@ -1310,18 +1286,6 @@
       "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
     },
     {
-      "member": "ActionDefinition.ToolTipML.<presence>",
-      "reason": "The extension-runtime-delta render emits the member's ID and Name and the wrapper's placement attributes, and states nothing else -- so BC emits this value and the runner leaves it OFF rather than answering it wrongly (#3926). This value IS stated in the same ActionChanges[].Actions / ControlChanges[].Controls entry the render already walks, so it is a read-don't-guess fix rather than a limit: what the runner shows here is the type's own default (null / 0 / False / the zero enum), never a derivation anyone checked. LEFT OFF DELIBERATELY: writing BC's value without reading it from the symbol file would manufacture agreement, which is the failure this harness exists to catch. What invalidates this entry is #3926 landing the read.",
-      "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
-    },
-    {
-      "member": "ActionDefinition.ToolTipMLString",
-      "reason": "The extension-runtime-delta render emits the member's ID and Name and the wrapper's placement attributes, and states nothing else -- so BC emits this value and the runner leaves it OFF rather than answering it wrongly (#3926). This value IS stated in the same ActionChanges[].Actions / ControlChanges[].Controls entry the render already walks, so it is a read-don't-guess fix rather than a limit: what the runner shows here is the type's own default (null / 0 / False / the zero enum), never a derivation anyone checked. LEFT OFF DELIBERATELY: writing BC's value without reading it from the symbol file would manufacture agreement, which is the failure this harness exists to catch. What invalidates this entry is #3926 landing the read.",
-      "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
-    },
-    {
       "member": "ActionDefinition.ToolTipTranslationKey",
       "reason": "A translation-file lookup id on an extension-runtime-delta member. Same SCOPE DECISION BY THE REPOSITORY OWNER as the TranslationKey entries above (2026-09-10, relayed on #3568): translations are out of scope for the runner, so this surface is not one the runner needs to reproduce. The render leaves it off; what BC states is a key computed from names. Listed separately from the TranslationKey.* entries because this is the DEFINITION member that carries the key string, not the parsed key's components.",
       "outOfScope": true,
@@ -1335,7 +1299,7 @@
     },
     {
       "member": "ActionDefinition.Visible",
-      "reason": "The extension-runtime-delta render emits the member's ID and Name and the wrapper's placement attributes, and states nothing else -- so BC emits this value and the runner leaves it OFF rather than answering it wrongly (#3926). This value IS stated in the same ActionChanges[].Actions / ControlChanges[].Controls entry the render already walks, so it is a read-don't-guess fix rather than a limit: what the runner shows here is the type's own default (null / 0 / False / the zero enum), never a derivation anyone checked. LEFT OFF DELIBERATELY: writing BC's value without reading it from the symbol file would manufacture agreement, which is the failure this harness exists to catch. What invalidates this entry is #3926 landing the read.",
+      "reason": "Two distinct causes, both measured on 28.1.49838.53910. (1) An EXPRESSION-valued Visible/Enabled is left off: the symbol file states the bare AL name (`IsSaaS`, `CopilotActionsVisible`) and BC writes a mangled reference to the extension's own global built from the extension id (`px774p774IsSaaS`, `px324px324CopilotActionsVisible`), which SymbolReference does not state -- writing the AL name would be a WRONG value derived from a right input. #3926 landed the LITERAL half, so the three `Visible=\"false\"` controls of pageextension 774 now agree and only the expression-valued members remain here. (2) The residue on ControlDefinition.Visible is the positional one-slot shift from the unemitted PagePropertiesChange -- see MultiLanguage.Texts. What invalidates this entry is deriving BC's global-name mangling, or emitting PagePropertiesChange.",
       "issue": 3926,
       "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
     },
@@ -1346,20 +1310,8 @@
       "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
     },
     {
-      "member": "ControlDefinition.#applicationAreaField",
-      "reason": "The extension-runtime-delta render emits the member's ID and Name and the wrapper's placement attributes, and states nothing else -- so BC emits this value and the runner leaves it OFF rather than answering it wrongly (#3926). This value IS stated in the same ActionChanges[].Actions / ControlChanges[].Controls entry the render already walks, so it is a read-don't-guess fix rather than a limit: what the runner shows here is the type's own default (null / 0 / False / the zero enum), never a derivation anyone checked. LEFT OFF DELIBERATELY: writing BC's value without reading it from the symbol file would manufacture agreement, which is the failure this harness exists to catch. What invalidates this entry is #3926 landing the read.",
-      "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
-    },
-    {
       "member": "ControlDefinition.#extensionIdField",
       "reason": "BC COMPUTES this and SymbolReference.json states it nowhere, so the render leaves it off (#3926). ControlGUID is a real GUID from BC's own emitter against the runner's zeroed one; SourceExtensionType, HelpLink, ExtensionId and ControlRuntimeId are publish-time facts about an installed extension, which the runner has no published-app pipeline to produce. Unlike the read-don't-guess group this needs a derivation or a scope call before it can move, and neither has been made -- so this entry records an unmeasured surface, not a correct answer.",
-      "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
-    },
-    {
-      "member": "ControlDefinition.#toolTipMLField.<presence>",
-      "reason": "The extension-runtime-delta render emits the member's ID and Name and the wrapper's placement attributes, and states nothing else -- so BC emits this value and the runner leaves it OFF rather than answering it wrongly (#3926). This value IS stated in the same ActionChanges[].Actions / ControlChanges[].Controls entry the render already walks, so it is a read-don't-guess fix rather than a limit: what the runner shows here is the type's own default (null / 0 / False / the zero enum), never a derivation anyone checked. LEFT OFF DELIBERATELY: writing BC's value without reading it from the symbol file would manufacture agreement, which is the failure this harness exists to catch. What invalidates this entry is #3926 landing the read.",
       "issue": 3926,
       "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
     },
@@ -1374,12 +1326,6 @@
       "reason": "A translation-file lookup id on an extension-runtime-delta member. Same SCOPE DECISION BY THE REPOSITORY OWNER as the TranslationKey entries above (2026-09-10, relayed on #3568): translations are out of scope for the runner, so this surface is not one the runner needs to reproduce. The render leaves it off; what BC states is a key computed from names. Listed separately from the TranslationKey.* entries because this is the DEFINITION member that carries the key string, not the parsed key's components.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
-    },
-    {
-      "member": "ControlDefinition.ApplicationArea",
-      "reason": "The extension-runtime-delta render emits the member's ID and Name and the wrapper's placement attributes, and states nothing else -- so BC emits this value and the runner leaves it OFF rather than answering it wrongly (#3926). This value IS stated in the same ActionChanges[].Actions / ControlChanges[].Controls entry the render already walks, so it is a read-don't-guess fix rather than a limit: what the runner shows here is the type's own default (null / 0 / False / the zero enum), never a derivation anyone checked. LEFT OFF DELIBERATELY: writing BC's value without reading it from the symbol file would manufacture agreement, which is the failure this harness exists to catch. What invalidates this entry is #3926 landing the read.",
-      "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
     },
     {
       "member": "ControlDefinition.CaptionTranslationKey",
@@ -1454,12 +1400,6 @@
       "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
     },
     {
-      "member": "ControlDefinition.ToolTipML.<presence>",
-      "reason": "The extension-runtime-delta render emits the member's ID and Name and the wrapper's placement attributes, and states nothing else -- so BC emits this value and the runner leaves it OFF rather than answering it wrongly (#3926). This value IS stated in the same ActionChanges[].Actions / ControlChanges[].Controls entry the render already walks, so it is a read-don't-guess fix rather than a limit: what the runner shows here is the type's own default (null / 0 / False / the zero enum), never a derivation anyone checked. LEFT OFF DELIBERATELY: writing BC's value without reading it from the symbol file would manufacture agreement, which is the failure this harness exists to catch. What invalidates this entry is #3926 landing the read.",
-      "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
-    },
-    {
       "member": "ControlDefinition.ToolTipMLString",
       "reason": "The extension-runtime-delta render emits the member's ID and Name and the wrapper's placement attributes, and states nothing else -- so BC emits this value and the runner leaves it OFF rather than answering it wrongly (#3926). This value IS stated in the same ActionChanges[].Actions / ControlChanges[].Controls entry the render already walks, so it is a read-don't-guess fix rather than a limit: what the runner shows here is the type's own default (null / 0 / False / the zero enum), never a derivation anyone checked. LEFT OFF DELIBERATELY: writing BC's value without reading it from the symbol file would manufacture agreement, which is the failure this harness exists to catch. What invalidates this entry is #3926 landing the read.",
       "issue": 3926,
@@ -1473,7 +1413,7 @@
     },
     {
       "member": "ControlDefinition.Visible",
-      "reason": "The extension-runtime-delta render emits the member's ID and Name and the wrapper's placement attributes, and states nothing else -- so BC emits this value and the runner leaves it OFF rather than answering it wrongly (#3926). This value IS stated in the same ActionChanges[].Actions / ControlChanges[].Controls entry the render already walks, so it is a read-don't-guess fix rather than a limit: what the runner shows here is the type's own default (null / 0 / False / the zero enum), never a derivation anyone checked. LEFT OFF DELIBERATELY: writing BC's value without reading it from the symbol file would manufacture agreement, which is the failure this harness exists to catch. What invalidates this entry is #3926 landing the read.",
+      "reason": "Two distinct causes, both measured on 28.1.49838.53910. (1) An EXPRESSION-valued Visible/Enabled is left off: the symbol file states the bare AL name (`IsSaaS`, `CopilotActionsVisible`) and BC writes a mangled reference to the extension's own global built from the extension id (`px774p774IsSaaS`, `px324px324CopilotActionsVisible`), which SymbolReference does not state -- writing the AL name would be a WRONG value derived from a right input. #3926 landed the LITERAL half, so the three `Visible=\"false\"` controls of pageextension 774 now agree and only the expression-valued members remain here. (2) The residue on ControlDefinition.Visible is the positional one-slot shift from the unemitted PagePropertiesChange -- see MultiLanguage.Texts. What invalidates this entry is deriving BC's global-name mangling, or emitting PagePropertiesChange.",
       "issue": 3926,
       "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
     },
@@ -1546,6 +1486,12 @@
       "reason": "The field backing LinkFields. Measured on BC 28.1.49838.53910 over System Application's 4 xmlports, after #4467 wired the metadata-equivalence projection to the runner's real derivation (RecordPatches.TryBuildXmlPortMetadataEquivalenceXml now forwards to TryBuildDependencyXmlPortMetadata). THE RUNNER NOW STATES THIS MEMBER; what differs is its NOTATION. The derivation passes the AL property's source text through verbatim, and BC's emitter writes its own canonical form instead. That is one root cause across three members -- SourceTableView, LinkFields and Permissions -- tracked by #4471. NOT the pre-#4467 situation, and the distinction matters for anyone reading these entries later: until #4467 the projection wrote only ID and Name, so every xmlport member differed because the runner said NOTHING. That is no longer true of any of them. #4467 took the xmlport difference count on these four objects from 322 to 66 and removed 33 entries from this file; these are part of the residue it deliberately did not fold, because canonicalising a field reference needs the field NUMBER resolved against the target table, which is materially different reasoning from the property-name, missing-element and node-numbering fixes #4467 did land.",
       "issue": 4471,
       "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "MultiLanguage.Texts",
+      "reason": "The runner renders this member's value CORRECTLY and the differ pairs AllDeltas POSITIONALLY, so the value shown is the NEXT element's. Pageextension 774's BC document opens with a PagePropertiesChange the runner does not emit (group 3 of #3926), so its four ControlAdds sit at BC indices 1-4 against the runner's 0-3 -- a one-slot shift, measured by listing both documents' root children. This difference was INVISIBLE before #3926 landed the stated-property read, because the runner wrote no value here for the shift to misalign; it is the shift becoming observable, not a new disagreement. What invalidates this entry is the runner emitting PagePropertiesChange, which removes the shift for every member at once.",
+      "issue": 3926,
+      "Doc": "docs/metadata-equivalence.md#deltas-declaration-order"
     }
   ]
 }

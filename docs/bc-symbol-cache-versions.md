@@ -121,6 +121,30 @@ v1 and v2 predate this record.
 
 - **v43**: a FlowFilter's or FlowField's TableRelation is read rather than dropped (#2789). The same trap as v35 through v42: ParsedField.RelationArms is a list either way, so PayloadShape cannot see that 196 FlowFilter and 8 FlowField fields of Base Application 28.1 (counted from its SymbolReference.json) went from no relation to one. Without the bump a warm box replays the gated parse and `FieldRef.Relation()` answers 0 on those fields, the exact pre-fix answer, from cache.
 
+- **v44**: a pageextension member's own declared `Properties` bag is carried onto
+  `PageExtensionMemberOrigin.DeclaredProperties`, so the extension-runtime-delta render can state
+  the `ApplicationArea` / `Image` / `CaptionML` / `ToolTipML` / literal `Visible` / `Enabled` BC
+  emits (#3926).
+
+  **This is the first entry whose bump is needed for a SHAPE change, and that is the point.**
+  Every "deliberately did not bump" note below rests on `PayloadShape` re-keying any shape change
+  by itself. It does not, in one case: `RecordShapeFingerprint.Unwrap` descends through
+  `List`/`IReadOnlyList`/`IList`/`IEnumerable`/`ICollection`/`Nullable` and **not** through
+  `Dictionary<,>`, so a record reachable only as a dictionary VALUE is never walked into and
+  adding a member to it leaves the fingerprint unchanged. `TypeName` still spells that type's
+  name, so nothing looks different unless the type is also renamed — which is why #3809's
+  measurement (on `PageExtensionSymbol`, reached through a `List`) did not predict this one.
+
+  Measured rather than inferred: with `CacheVersion` at 43 the shared
+  `~/.cache/al-runner/bc-symbols` served an entry at the **identical key** whose
+  `MemberIdToOrigin` values carried no `DeclaredProperties`, so all 9 members across the five
+  real 28.1 pageextensions rendered exactly as before while the fixture tests passed — a private
+  cold `--cache` root on the same binary populated all 9. The fingerprint gap is filed as its own
+  defect; this bump is what makes the fix reach a warm box meanwhile.
+
+  44 was confirmed free immediately before pushing: `origin/main` read 43, and a sweep of every
+  remote branch carrying this file found none above 43.
+
   43 was confirmed free immediately before pushing: origin/main read 42, and a sweep of every remote branch carrying this file found none above 42.
 
 ## Changes that deliberately did not bump
