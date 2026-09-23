@@ -138,7 +138,7 @@ internal static class RecordShapeFingerprint
     /// <para><see cref="Walk"/> records members only for a runner-owned type, and reaches
     /// THROUGH a type only when this method names it. Both together give the rule, which is
     /// recursive rather than a two-way test: <b>a type is reached only if every container on
-    /// the path from the payload to it is named here.</b>
+    /// the path from the payload to it is named here.</b></para>
     ///
     /// <para>Named rather than "any generic type" because walking an arbitrary BCL generic
     /// would tie the cache key to the SDK version, which <see cref="IsOwnType"/> argues
