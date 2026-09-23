@@ -561,6 +561,90 @@ public sealed class ExtensionRuntimeDeltasTests
         finally { Directory.Delete(dir, recursive: true); }
     }
 
+    /// <summary>
+    /// The 27.5 shape: an extension whose FIRST change adds a plain action carrying the stated
+    /// properties and whose SECOND adds an <c>actionref</c> that states none. Both members render,
+    /// and the properties land on the FIRST — which is the member that declares them.
+    ///
+    /// <para><b>This is the test that would have caught the 27.5 leg of #4502.</b> The fixture the
+    /// other tests use has one action and one control, each declaring properties, so a render that
+    /// attached a member's properties to the wrong element could not be distinguished. Real object:
+    /// System Application pageextension 2516 <c>AppSourceMarketPlaceExtension</c>, whose two
+    /// members are exactly this pair — action 343729963 stating ApplicationArea / Caption / Image /
+    /// ToolTip, and actionref 913465592 stating no <c>Properties</c> at all. It has a deltas
+    /// document on 27.5 and none on 28.1 (#3923), so the 28.1 population this change was measured
+    /// against did not contain the shape.</para>
+    ///
+    /// <para>What it does NOT assert is the positional pairing against BC's own document, which
+    /// this render cannot fix: 2516's emitted document opens with a <c>PagePropertiesChange</c>
+    /// the render does not produce, so the harness compares each element one slot early. That is
+    /// declared in the allowlist as <c>versionContingent</c> and belongs to group 3 of #3926.</para>
+    /// </summary>
+    [Fact]
+    public void A_member_stating_properties_beside_one_stating_none_keeps_them_on_its_own_element()
+    {
+        var dir = TestScratch.Dir("al-runner-extension-runtime-deltas-pair");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            // Shape copied from 27.5's pageextension 2516: two ActionChanges, the first adding a
+            // property-bearing action, the second adding a bare actionref (Kind 4 + TargetId).
+            var appPath = WriteAppWith(dir, """
+                {
+                  "RuntimeVersion": "17.0",
+                  "PageExtensions": [
+                    {
+                      "Id": 88380909,
+                      "Name": "Pair Ext",
+                      "TargetObject": "ERD Target Page",
+                      "ActionChanges": [
+                        { "Anchor": "Navigation", "ChangeKind": 2,
+                          "Actions": [ { "Kind": 2, "Id": 640938010, "Name": "Gallery",
+                                         "Properties": [ { "Name": "ApplicationArea", "Value": "#All" },
+                                                         { "Name": "Caption", "Value": "AppSource Gallery" },
+                                                         { "Name": "Image", "Value": "NewItem" },
+                                                         { "Name": "ToolTip", "Value": "Browse the gallery." } ] } ] },
+                        { "Anchor": "Promoted", "ChangeKind": 1,
+                          "Actions": [ { "Kind": 4, "TargetId": 640938010,
+                                         "TargetName": "Gallery",
+                                         "Id": 640938011, "Name": "Gallery_Promoted" } ] }
+                      ]
+                    }
+                  ]
+                }
+                """);
+
+            var wrappers = Render(appPath, "Page", 88380909)!.Root!.Elements($"{Ns}ActionAdd").ToArray();
+            Assert.Equal(2, wrappers.Length);
+
+            // Declaration order, so the property-bearing action is element 0 and the actionref 1.
+            // Asserted because the whole point is WHICH element carries the values.
+            var stated = wrappers[0].Elements($"{Ns}Actions").Single();
+            var bare = wrappers[1].Elements($"{Ns}Actions").Single();
+            Assert.Equal("640938010", stated.Attribute("ID")!.Value);
+            Assert.Equal("640938011", bare.Attribute("ID")!.Value);
+
+            // The stated member keeps its own four values...
+            Assert.Equal("#All", stated.Attribute("ApplicationArea")!.Value);
+            Assert.Equal("ENU=AppSource Gallery", stated.Attribute("CaptionML")!.Value);
+            Assert.Equal("NewItem", stated.Attribute("Image")!.Value);
+            Assert.Equal("ENU=Browse the gallery.", stated.Attribute("ToolTipML")!.Value);
+
+            // ...and the member that states nothing gains nothing. This is the half that fails if
+            // a member's properties ever leak onto a neighbouring element.
+            foreach (var absent in new[]
+                     { "ApplicationArea", "CaptionML", "Image", "ToolTipML", "Visible", "Enabled" })
+                Assert.Null(bare.Attribute(absent));
+
+            // The AL area anchor "Navigation" is the container RelatedInformation, which is what
+            // BC writes for 2516's first ActionAdd — so this fixture also pins that the pair is
+            // placed the way the real object is.
+            Assert.Equal("RelatedInformation", wrappers[0].Attribute("ParentContainer")!.Value);
+            Assert.Equal("Promoted", wrappers[1].Attribute("ParentContainer")!.Value);
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
     [Fact]
     public void Values_the_runner_cannot_derive_are_left_off_rather_than_defaulted()
         => WithApp(appPath =>

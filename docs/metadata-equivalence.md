@@ -1590,8 +1590,32 @@ a different fact, needing the page inventory this layer does not have, for the r
 `BcAppSymbolCache.ActionRunObjectSymbol` gives. `RunPageMode` is out for a second reason: BC
 writes `Edit` on two members whose symbol entry states nothing, so its default rule is unmeasured.
 
+**The 28.1 population did not contain every shape, and 27.5 caught it.** Pageextension 2516
+`AppSourceMarketPlaceExtension` has a deltas document on 27.5 and none on 28.1 (#3923), so the
+measurement above never saw it. Landing the read made **six** further members observable there —
+`ActionDefinition.{ApplicationArea, Image, CaptionML.<presence>, CaptionMLString,
+ToolTipML.<presence>, ToolTipMLString}` — each reading `expected <a stated value>, got
+<null/empty>`.
+
+Those six are the **same positional shift**, not a failed read, and the check that separates the
+two is a member this change never touched: `ContentAddContext\`1.ContainerType` on the same object
+reads `expected 'RelatedInformation', got 'Promoted'`, which are the containers of BC's *first*
+and the runner's *second* `ActionAdd`. 2516's document is `[PagePropertiesChange, ActionAdd,
+ActionAdd]`, so BC's `AllDeltas[1]` is the property-bearing action 343729963 while the runner's
+`[1]` is the bare `ActionRefDefinition` 913465592, whose symbol entry declares no `Properties` at
+all. Verified directly on 27.5.46862.53931: the symbol entry for 2516 is an ordinary flat
+`ActionChanges[].Actions` entry stating all four properties, and a probe of the runner's own render
+emits `ApplicationArea="#All" Image="NewItem"` on 343729963 — so neither the parse nor the read is
+at fault. They join the four `ActionDefinition.ID`/`.Name`/`ContainerType`/`OperationType` entries
+already declared `versionContingent` for this object, same cause and same remedy.
+
+**The lesson is about the population, not the render**: a member list measured on one BC version is
+a measurement of that version. The harness runs on two, and the second is what a `versionContingent`
+object is in the matrix to catch.
+
 **What landing this made visible, and why the difference count is not a progress metric.** The
-comparison went from 869 differences over 77 members to 806 over 62, and the members that cleared
+comparison went from 869 differences over 77 members to 806 over 62 **on 28.1**, and the members
+that cleared
 are `ActionDefinition.{ApplicationArea, Image, CaptionML.<presence>, CaptionMLString,
 ToolTipML.<presence>, ToolTipMLString}` and `ControlDefinition.{ApplicationArea,
 #applicationAreaField, ToolTipML.<presence>, #toolTipMLField.<presence>}`, with
