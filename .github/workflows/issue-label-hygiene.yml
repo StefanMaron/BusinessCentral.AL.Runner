@@ -96,6 +96,10 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
           PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          # The account the merged PR was pushed as -- the only assignee the
+          # release below may remove (#4497). `user.login`, not the merger:
+          # a PR merged by someone else was still claimed by its author.
+          PR_ACTOR: ${{ github.event.pull_request.user.login }}
         run: |
           set -uo pipefail
 
@@ -139,7 +143,7 @@ jobs:
             exit 0
           fi
 
-          meta=$(gh issue view "$branch_issue" --json state,labels 2>/dev/null) || {
+          meta=$(gh issue view "$branch_issue" --json state,labels,assignees 2>/dev/null) || {
             state=unreadable
             echo "#$branch_issue is not a readable issue in this repository -- nothing to do."
             decide issue-unreadable
@@ -200,5 +204,41 @@ jobs:
             echo "gh issue edit failed for #$branch_issue (exit $edit_rc) -- #$branch_issue was NOT relabelled."
             decide edit-failed
             exit 1
+          fi
+
+          # #4497: release the assignee the claim added, in a SEPARATE
+          # invocation from the label edit above.
+          #
+          # Separate because naming an assignee and a label in one `gh issue
+          # edit` is the concurrent-mutation shape `branch-and-pr.md` documents
+          # (cli/cli dispatches the field updates without ordering), and
+          # test_no_racing_label_edit.py exempts this workflow on the strength
+          # of the label edit being a single call. Assignees resolve to one
+          # computed AssigneeIDs list, so the two calls cannot race each other.
+          #
+          # Only PR_ACTOR: on a shared account the assignee cannot say WHICH
+          # loop holds an issue, but it can say whether the holder is the
+          # account this merged PR came from. Any other login is a human's
+          # assignment or another account's -- the boundary `branch-and-pr.md`
+          # puts between agent-owned and human-owned work, which only the repo
+          # owner waives (#1883 is the live instance).
+          #
+          # Left assigned, the issue returns to `status: ready` and is filtered
+          # out of every selection recipe: available to a human reading labels,
+          # unreachable to every agent. 29 open issues were in that state when
+          # this was measured.
+          claimed=$(printf '%s' "$meta" | jq -r --arg actor "${PR_ACTOR:-}" '
+            (.assignees // [])[].login | select(. == $actor)')
+          if [ -n "$claimed" ]; then
+            gh issue edit "$branch_issue" --remove-assignee "$claimed"
+            unassign_rc=$?
+            if [ "$unassign_rc" -ne 0 ]; then
+              # Not fatal: the labels are already released, so the issue is on
+              # the ready queue either way. Reported rather than swallowed --
+              # it leaves exactly the stale-assignee state this fixes.
+              echo "gh issue edit --remove-assignee failed for #$branch_issue (exit $unassign_rc) -- it stays assigned to $claimed."
+            else
+              echo "Released assignee $claimed from #$branch_issue."
+            fi
           fi
           decide released

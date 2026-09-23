@@ -89,13 +89,19 @@ BRANCH = "agent/fbk-2/issue-42"
 
 
 def release(body: str, issue: dict | None, head: str = BRANCH,
-            pr_labels: list[str] | None = None, edit_rc: int = 0):
+            pr_labels: list[str] | None = None, edit_rc: int = 0,
+            actor: str = "the-claiming-bot"):
     return invoke(RELEASE, {
         "PR_NUMBER": "999",
         "PR_BODY": body,
         "PR_HEAD_REF": head,
         "PR_LABELS": json.dumps(pr_labels if pr_labels is not None else ["agent: fbk-2"]),
         "EDIT_RC": str(edit_rc),
+        # Who the merged PR was pushed as. The release may drop THAT assignee
+        # and no other: on a shared account the assignee cannot say which loop
+        # holds an issue, but it can always say whether the holder is the
+        # account this PR came from.
+        "PR_ACTOR": actor,
     }, issue_json=issue)
 
 
@@ -241,6 +247,59 @@ check("...recording that the state could not be read", "state=unreadable" in out
 # edit` on the last line was the step's own exit status by accident. That held
 # only while the edit WAS the last line; anything appended after it -- the
 # verification below, for one -- would have silently swallowed the failure.
+
+# --- #4497: the release must drop the CLAIMING assignee, and only that one ----
+#
+# A `Part of` landing restored `status: ready` and cleared the `agent:` label
+# and left the assignee, so the issue returned to the ready queue assigned.
+# Every selection recipe filters out assigned issues, so it became unreachable
+# to agents while looking available to a human reading labels -- worse than
+# staying in-progress. Measured 2026-09-23: 29 open `status: ready` issues in
+# that state, with no `agent:` label and no open PR.
+#
+# The assignee edit is a SEPARATE `gh issue edit` invocation on purpose: naming
+# an assignee and a label in one call is the same concurrent-mutation race
+# `branch-and-pr.md` documents for labels, and test_no_racing_label_edit.py
+# exempts this workflow on the strength of its single-call shape.
+
+assigned = {"state": "OPEN",
+            "assignees": [{"login": "the-claiming-bot"}],
+            "labels": [{"name": "status: in-progress"}, {"name": "agent: fbk-2"}]}
+
+rc, out, calls = release("Part of #42", assigned, actor="the-claiming-bot")
+edits = [c for c in calls if c.startswith("issue edit")]
+unassigns = [c for c in edits if "--remove-assignee" in c]
+check("the release drops the assignee the claim added",
+      rc == 0 and len(unassigns) == 1, f"rc={rc} {calls} {out}")
+check("...naming that account",
+      bool(unassigns) and "the-claiming-bot" in unassigns[0], f"{unassigns}")
+check("...in an invocation separate from the label edit",
+      bool(unassigns) and "--add-label" not in unassigns[0]
+      and "--remove-label" not in unassigns[0], f"{unassigns}")
+check("...while the label edit still runs",
+      any("--add-label status: ready" in c for c in edits), f"{edits}")
+
+# The negative arm, and the reason this is not an unconditional unassign: a
+# human's assignment is the boundary `branch-and-pr.md` puts between agent-owned
+# and human-owned work, and only the repo owner waives it. #1883 is the live
+# instance -- assigned to a different account entirely.
+human = {"state": "OPEN",
+         "assignees": [{"login": "a-human-maintainer"}],
+         "labels": [{"name": "status: in-progress"}, {"name": "agent: fbk-2"}]}
+
+rc, out, calls = release("Part of #42", human, actor="the-claiming-bot")
+edits = [c for c in calls if c.startswith("issue edit")]
+check("a foreign assignee is NOT removed -- that is a boundary, not a stale lock",
+      rc == 0 and not [c for c in edits if "--remove-assignee" in c], f"{edits} {out}")
+check("...and the labels are still released",
+      any("--add-label status: ready" in c for c in edits), f"{edits}")
+
+# An issue carrying no assignee at all must not issue an empty unassign: a
+# `--remove-assignee` with nothing to name is a call that cannot mean anything,
+# and `gh` exits 0 on it, so nothing downstream would report it.
+rc, out, calls = release("Part of #42", open_issue)
+check("an unassigned issue issues no assignee edit at all",
+      rc == 0 and not [c for c in calls if "--remove-assignee" in c], f"{calls}")
 
 rc, out, calls = release("Part of #42", open_issue, edit_rc=1)
 check("a failed gh issue edit fails the step rather than reporting success",
