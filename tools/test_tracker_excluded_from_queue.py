@@ -38,6 +38,16 @@ CONSUMERS = [
     ROOT / ".claude/commands/work-cycle.md",
 ]
 
+# Consumers that express the exclusion as a runnable jq clause, and so must keep
+# presenting one for the per-clause negation check to have a subject. See the
+# reachability check at the bottom of the per-file loop for why this list exists.
+EXPECT_JQ = {
+    ".claude/skills/al-runner-workflow/SKILL.md",
+    ".claude/skills/autonomous-cycle/SKILL.md",
+    ".claude/skills/orchestrating-a-session/SKILL.md",
+    ".claude/commands/work-cycle.md",
+}
+
 failures: list[str] = []
 ran: list[str] = []
 
@@ -117,6 +127,24 @@ JQ_EXCLUDES = re.compile(
     r"|index\(\s*[\"']type:\s*tracker[\"']\s*\)\s*\|\s*not"
     r"|contains\(\s*\[\s*[\"']type:\s*tracker[\"']\s*\]\s*\)\s*\|\s*not",
     re.I)
+
+# ANY jq clause that names the tracker label, whatever idiom it uses -- the population
+# the check below holds to `JQ_EXCLUDES`. Deliberately matched on `select(` plus the
+# label rather than on a list of known-good spellings: a clause written in an idiom
+# nobody anticipated must land in this population and then FAIL the exclusion test,
+# rather than falling outside it and being silently exempt.
+#
+# That is the difference between "is the property present" (narrow scope, or a sibling
+# vouches) and "is something harmful present" (wide scope, or a gap exempts it). An
+# unrecognised idiom is the second kind, so it must be caught by construction.
+# Balanced to two nesting levels, because the shipped clause is
+# `select( [...] | map( . == "..." ) | any | not )` -- `select` around `map` around the
+# comparison. A one-level pattern matches NOTHING here, and a lazy `...?\)` matches but
+# stops at the inner `map(...)` close, truncating before `| not` so every correct clause
+# reads as non-negating. Both were measured while writing this: the first made the check
+# vacuous at 0 clauses and still GREEN, the second would have redded the shipped tree.
+_JQ_SELECT = r"select\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\)"
+JQ_CLAUSE = re.compile(_JQ_SELECT, re.I)
 
 # Prose form: the label named, with an exclusion verb bound to it on the same sentence.
 # Matched in either order, because "skip a `type: tracker` issue" and "a `type: tracker`
@@ -235,6 +263,45 @@ for f in CONSUMERS:
           not unfiltered,
           f"{len(unfiltered)} of {len(recipes)} runnable ready-queue recipe(s) have no "
           f"tracker clause in the recipe itself" if unfiltered else "")
+
+    # EVERY jq clause naming the label must negate on its own -- PROSE MAY NOT VOUCH FOR A
+    # RECIPE. `excludes_trackers()` is an `or` over the jq and prose forms, which is right
+    # for a paragraph that carries only one of them; where a paragraph carries BOTH, that
+    # `or` lets correct prose satisfy the check while the runnable clause beside it is
+    # inverted. Measured on the `orchestrating-a-session` pick paragraph: replacing its
+    # clause with `index("type: tracker")` -- no `| not`, so it selects ONLY trackers --
+    # left the guard at 34/34, because the bolded sentence above it still said "excluding
+    # every `type: tracker` issue". A coordinator pasting that clause builds a queue of
+    # nothing but the issues that must never be picked.
+    #
+    # This is narrower than the two checks above and catches what neither could: the
+    # ready-queue check keys on `gh issue list`, so a bare fenced jq block is invisible to
+    # it, and JQ_INVERTED enumerates known-bad idioms, so an unanticipated one escapes.
+    # Keying on the label inside any `select(...)` needs no list of idioms to stay ahead of.
+    clauses = [m.group(0) for m in JQ_CLAUSE.finditer(txt)
+               if re.search(r"type:\s*tracker", m.group(0), re.I)]
+    bad = [c for c in clauses if not JQ_EXCLUDES.search(c)]
+    check(f"{rel} negates in EVERY jq clause naming the label, without prose vouching",
+          not bad,
+          f"{len(bad)} of {len(clauses)} jq clause(s) name `{LABEL}` without negating it, "
+          f"so the recipe selects trackers rather than removing them: {bad[0][:110]!r}"
+          if bad else "")
+
+    # REACHABILITY. The check above is an assertion over a population the regex finds, so
+    # it passes trivially when the regex finds nothing -- and that is exactly how the
+    # first version of it shipped GREEN at 38/38 while matching zero clauses in all four
+    # files. A negative assertion needs a positive one beside it saying the scan still
+    # sees its subject (`guards-need-a-third-state.md`: a check that cannot measure must
+    # not report its success state).
+    #
+    # Every consumer here does carry at least one such clause today. If one legitimately
+    # stops carrying a jq recipe -- going prose-only -- this fires, and the honest fix is
+    # to drop that file from EXPECT_JQ rather than to delete the assertion.
+    if rel.as_posix() in EXPECT_JQ:
+        check(f"{rel} still presents a jq clause for the check above to judge",
+              len(clauses) > 0,
+              "the jq-clause scan matched nothing, so the negation check above asserted "
+              "over an empty set and passed without measuring anything")
 
     # File-wide, and deliberately so: the definition is reference material a reader
     # consults once, not something the pick step must repeat. Scoping it to the
