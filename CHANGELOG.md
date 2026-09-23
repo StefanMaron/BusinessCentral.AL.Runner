@@ -407,6 +407,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **testpage:** read a NavDateTime round trip through GetClientLocalValue, not .Value
 - **virtual-tables:** pin the DELETE half of temporary Field-table isolation (#3512 no longer reproduces)
 - **startup:** do not load the platform-apps closure for bundles that reference no Microsoft type
 - **app-group:** pin the sibling-source-dep app-group registration with an ordered two-bundle invocation
