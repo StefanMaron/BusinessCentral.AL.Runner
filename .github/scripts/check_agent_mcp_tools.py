@@ -61,6 +61,7 @@ either of those would be a verdict nobody took -- a typo'd agent name would
 otherwise read as a clean pass forever.
 """
 
+import json
 import pathlib
 import re
 import sys
@@ -83,6 +84,33 @@ REQUIRES = re.compile(
 # malformed declaration is reported rather than silently skipped: a marker the
 # strict pattern misses would otherwise be indistinguishable from no marker.
 REQUIRES_LOOSE = re.compile(r"^[ \t]*(?:[-*>]\s*)*Requires-Tool:(.*)$", re.MULTILINE)
+
+
+# Sentinel distinguishing "no .mcp.json exists" from "it exists and lists these
+# servers". Collapsing the two is the defect this guard was extended for: an
+# absent file is a legitimate state, an empty map is a measurement.
+MCP_ABSENT = object()
+
+
+def configured_servers(path):
+    """Which MCP servers a `.mcp.json` declares.
+
+    Returns MCP_ABSENT when there is no such file, a `set` of server names when
+    it parses, and None when it exists but cannot be read. Those are three
+    outcomes rather than two on purpose (guards-need-a-third-state.md): an
+    absent file is the ordinary state and must stay a pass, while an unreadable
+    one is a broken measurement and must not borrow the absent file's verdict.
+    """
+    if path is None or not path.exists():
+        return MCP_ABSENT
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    servers = doc.get("mcpServers") if isinstance(doc, dict) else None
+    if not isinstance(servers, dict):
+        return None
+    return set(servers)
 
 
 def split_front_matter(text):
@@ -167,14 +195,28 @@ def collect_requirements(dirs):
     return found, malformed
 
 
-def check_requirements(requirements, agent_tools):
-    """Hold each declared requirement against the named agent's allowlist.
+def check_requirements(requirements, agent_tools, servers=MCP_ABSENT,
+                       mcp_path=None):
+    """Hold each declared requirement against the named agent's allowlist, and
+    against the servers a `.mcp.json` actually configures.
 
     Returns (problems, unmeasurable). The split is the point: a requirement on
     an agent that does not exist, or on one that declares no allowlist at all,
     has not been MEASURED -- reporting either as a pass would assert something
     nobody checked, and reporting them as failures would blame an agent for a
     typo in a rule.
+
+    `servers` adds the second half (#4449). An allowlist entry is necessary and
+    not sufficient: the entry can name a server that nothing provides, and then
+    the call resolves to nothing while every "is it listed?" check passes. That
+    is not a FAILURE of the agent definition -- the definition is correct and
+    the environment is short a server -- so it is reported as unmeasurable, the
+    same verdict a typo'd agent name gets, and for the same reason.
+
+    MCP_ABSENT means no `.mcp.json` exists, which is the ordinary state: the
+    file is gitignored and per-machine, so it is absent on every CI run and in
+    every worktree. That stays a PASS. Only a file that exists and does not
+    provide the server, or one that cannot be read, reaches the third state.
     """
     problems, unmeasurable = [], []
     for agent, tool, source in requirements:
@@ -198,6 +240,26 @@ def check_requirements(requirements, agent_tools):
                 f"allowlist is exhaustive, so that call returns 'No such tool "
                 f"available' and the agent cannot do what this file tells it to do"
             )
+            continue
+        if servers is MCP_ABSENT:
+            continue
+        if servers is None:
+            unmeasurable.append(
+                f"{source}: requires {agent} to call {tool}, but {mcp_path} "
+                f"exists and could not be read, so which MCP servers are "
+                f"configured could not be established"
+            )
+            continue
+        m = CONCRETE.fullmatch(tool)
+        if m and m.group(1) not in servers:
+            unmeasurable.append(
+                f"{source}: requires {agent} to call {tool}, and {agent}'s "
+                f"allowlist grants it, but no configured MCP server provides "
+                f"'{m.group(1)}' -- {mcp_path} declares "
+                f"{sorted(servers) or 'no servers at all'}. The allowlist entry "
+                f"resolves to nothing, so the requirement could not be measured: "
+                f"configure the server, or name an instrument this environment has"
+            )
     return problems, unmeasurable
 
 
@@ -205,6 +267,7 @@ def main(argv):
     args = argv[1:]
     req_dirs = []
     positional = []
+    mcp_config = None
     i = 0
     while i < len(args):
         if args[i] == "--requirements-dir":
@@ -215,6 +278,12 @@ def main(argv):
                 return 3
             req_dirs.append(pathlib.Path(args[i + 1]))
             i += 2
+        elif args[i] == "--mcp-config":
+            if i + 1 >= len(args):
+                print("::error::--mcp-config needs a path", file=sys.stderr)
+                return 3
+            mcp_config = pathlib.Path(args[i + 1])
+            i += 2
         else:
             positional.append(args[i])
             i += 1
@@ -223,6 +292,8 @@ def main(argv):
     root = pathlib.Path(positional[0]) if positional else (repo / ".claude" / "agents")
     if not req_dirs:
         req_dirs = [repo / ".claude" / "rules", repo / ".claude" / "skills"]
+    if mcp_config is None:
+        mcp_config = repo / ".mcp.json"
 
     files = sorted(root.glob("*.md"))
     if not files:
@@ -237,7 +308,9 @@ def main(argv):
         agent_tools[f.stem] = declared_tools(front)
 
     requirements, malformed = collect_requirements(req_dirs)
-    req_problems, unmeasurable = check_requirements(requirements, agent_tools)
+    servers = configured_servers(mcp_config)
+    req_problems, unmeasurable = check_requirements(
+        requirements, agent_tools, servers, mcp_config)
     problems += req_problems
     unmeasurable += malformed
 
@@ -263,9 +336,16 @@ def main(argv):
         )
         return 3
 
+    if servers is MCP_ABSENT:
+        scope = (f"; no {mcp_config.name} here, so whether a server PROVIDES each "
+                 f"required tool was not checked (it is gitignored and "
+                 f"per-machine, absent on CI by construction)")
+    else:
+        scope = f", against the {len(servers)} server(s) {mcp_config} configures"
     print(
         f"OK: every MCP tool mentioned in {len(files)} agent definition(s) is "
-        f"allowlisted, and all {len(requirements)} Requires-Tool requirement(s) hold"
+        f"allowlisted, and all {len(requirements)} Requires-Tool requirement(s) "
+        f"hold{scope}"
     )
     return 0
 
