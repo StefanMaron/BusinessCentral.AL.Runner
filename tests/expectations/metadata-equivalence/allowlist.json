@@ -855,13 +855,6 @@
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
     },
     {
-      "member": "PageProperties.#isPreviewField",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
-      "outOfScope": true,
-      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found",
-      "versionContingent": true
-    },
-    {
       "member": "PageProperties.#onAfterGetCurrentRecordEnabledField",
       "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file.",
       "outOfScope": true,
@@ -945,13 +938,6 @@
       "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
     },
     {
-      "member": "PageProperties.IsPreview",
-      "reason": "Marks a page shipped as preview. Not in SymbolReference.json in any form; BC's emitter derives it from a compiler-level attribute the symbol file does not carry. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
-      "outOfScope": true,
-      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found",
-      "versionContingent": true
-    },
-    {
       "member": "PageProperties.OnAfterGetCurrentRecordEnabled",
       "reason": "Set by BC's emitter when the page's AL declares an OnAfterGetCurrentRecord trigger. Derived from the TRIGGER SET, which is part of the trigger surface the runner does not reconstruct -- PageDefinition.Triggers is declared out of scope beside it.",
       "outOfScope": true,
@@ -964,42 +950,14 @@
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
     },
     {
-      "member": "SourceObjectDefinition.#delayedInsertField",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies SourceObjectDefinition.DelayedInsert, declared in this file with the measurement. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 2 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
-      "issue": 4282,
-      "versionContingent": true,
-      "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
-    },
-    {
       "member": "SourceObjectDefinition.#indirectPermissionsField",
       "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies SourceObjectDefinition.IndirectPermissions, declared in this file with the measurement.",
       "issue": 4282
     },
     {
-      "member": "SourceObjectDefinition.#modifyAllowedField",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies SourceObjectDefinition.ModifyAllowed, declared in this file with the measurement. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 2 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
-      "issue": 4282,
-      "versionContingent": true,
-      "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
-    },
-    {
-      "member": "SourceObjectDefinition.DelayedInsert",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 13 pages declare DelayedInsert, with the same SourceTable-branch condition. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 2 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
-      "issue": 4282,
-      "versionContingent": true,
-      "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
-    },
-    {
       "member": "SourceObjectDefinition.IndirectPermissions",
       "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 86 pages declare a Permissions property, which BC resolves into the SourceObject's IndirectPermissions vector; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
       "issue": 4282
-    },
-    {
-      "member": "SourceObjectDefinition.ModifyAllowed",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 89 pages declare ModifyAllowed, with the same SourceTable-branch condition as InsertAllowed. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 2 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
-      "issue": 4282,
-      "versionContingent": true,
-      "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
     },
     {
       "member": "MetaRuntimeInfo.Methods.<presence>",
