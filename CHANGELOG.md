@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **metadata:** emit PagePropertiesChange, so a pageextension's deltas pair against BC from index 0
 - **compile:** one package-manifest compile path with a part-naming diagnostic
 - **queue:** order the ready queue by an explicit priority label
 - **metadata:** derive a precompiled dependency xmlport's node schema from the .app
