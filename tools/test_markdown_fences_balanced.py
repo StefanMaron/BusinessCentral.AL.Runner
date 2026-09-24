@@ -83,7 +83,53 @@ def problems(path):
     return found
 
 
+# The detector's own fixtures. Without these the detector is exercised ONLY by
+# data that ceases to exist the moment the bug is fixed: disabling welded-close
+# detection and re-welding the real defect back into impl-agent.md leaves this
+# suite at `PASSED: 94 check(s)`, exit 0 (measured, #4509 rev29).
+#
+# Each case is (name, markdown, should_report). The shapes come from a reviewer
+# differential against GitHub's own renderer -- 12 targeted cases agreed, and
+# the four-backtick one is the false positive that cost a commit.
+DETECTOR_CASES = [
+    ("balanced",                  "```bash\nx\n```\n",               False),
+    ("welded close",              "```bash\nx\n``` and prose\n",     True),
+    ("unterminated",              "```bash\nx\n",                     True),
+    # A ``` inside a ```` block is CONTENT: too short to close it. This is how
+    # documentation shows a fence, and calling it malformed reds an honest file.
+    ("fence inside a longer one",  "````\n```bash\nx\n```\n````\n", False),
+    ("nested, outer unterminated", "````\n```bash\nx\n```\n",        True),
+    # A welded close FOLLOWED by a valid one. Without this case, suppressing the
+    # welded-close report is free: the block stays open either way, so the
+    # `unterminated` case above reds and the suite looks fine (measured, rev29's
+    # third mutation). Here the file ends balanced, so ONLY the welded-close
+    # report can fail it.
+    ("welded close, then a real one", "```bash\nx\n``` prose\ny\n```\n", True),
+    ("tilde fence untouched",      "~~~bash\nx\n~~~\n",              False),
+    ("indented in a list item",    "- item\n\n  ```bash\n  x\n  ```\n", False),
+]
+
+
+def check_detector():
+    """Run the fixtures above through `problems`, via a real temp file."""
+    import tempfile
+    for name, body, want in DETECTOR_CASES:
+        fh = tempfile.NamedTemporaryFile("w", suffix=".md", delete=False,
+                                         encoding="utf-8", newline="\n")
+        try:
+            fh.write(body)
+            fh.close()
+            got = bool(problems(fh.name))
+            check(f"detector: {name}", got == want,
+                  f"reported {got}, expected {want} -- the detector itself is "
+                  f"wrong, so every verdict below it is worthless")
+        finally:
+            os.unlink(fh.name)
+
+
 def main():
+    check_detector()
+
     files = sorted(glob.glob(os.path.join(ROOT, ".claude", "**", "*.md"),
                              recursive=True))
     files += sorted(glob.glob(os.path.join(ROOT, "docs", "*.md")))
