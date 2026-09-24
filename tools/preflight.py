@@ -1610,7 +1610,8 @@ def check_worktrees(rows: list[tuple], repo: str, pr_status: str) -> CheckResult
                              "differs": {r[0].path: r[4].verdict.differing for r in differs}})
 
 
-def check_stale_scratch(tmp_dir: str, rows: list[tuple], stale_hours: float) -> CheckResult:
+def check_stale_scratch(tmp_dir: str, rows: list[tuple], stale_hours: float,
+                        budget: int = 200_000) -> CheckResult:
     now = dt.datetime.now().timestamp()
     _getuid = getattr(os, "getuid", None)
     _uid = _getuid() if _getuid is not None else None
@@ -1632,7 +1633,7 @@ def check_stale_scratch(tmp_dir: str, rows: list[tuple], stale_hours: float) -> 
                 # skipped rather than faked.
                 if _uid is not None and st.st_uid != _uid:
                     continue
-                size, complete = dir_size(entry.path, budget=200_000)
+                size, complete = dir_size(entry.path, budget=budget)
                 entries.append((size, complete, (now - st.st_mtime) / 3600.0, entry.path))
     except OSError as exc:
         return CheckResult(name="stale-scratch", status="WARN",
@@ -1643,8 +1644,22 @@ def check_stale_scratch(tmp_dir: str, rows: list[tuple], stale_hours: float) -> 
     stale = [e for e in entries if e[2] >= stale_hours and e[0] > 256 * 1024 * 1024]
     orphan = [r for r in rows if not r[5]]
     total = sum(e[0] for e in entries)
+    # A row whose walk ran out of budget contributes a FLOOR, not a size, so the
+    # sum is a floor too and must not be rendered as a measurement (#4519).
+    # dir_size() already returns this per row and the detail lines already print
+    # it as a trailing `+`; dropping it here reported 11.7 GiB where du said
+    # 63.3 GiB -- a 5.4x undercount from one truncated row, and in the quiet
+    # direction, so the check looked calmer than the box was. The remedy below
+    # ranks directories by size, so it is derived from this number as well.
+    total_complete = all(e[1] for e in entries)
+    at_least = "" if total_complete else "at least "
     detail = [f"{len(entries)} directory(ies) owned by this user under {tmp_dir}, "
-              f"{human(total)} in total"]
+              f"{at_least}{human(total)} in total"]
+    if not total_complete:
+        n_trunc = sum(1 for e in entries if not e[1])
+        detail.append(f"{n_trunc} director(ies) hit the {budget}-entry scan budget, so the "
+                      f"total above is a FLOOR -- the rows marked `+` were not walked to "
+                      f"the end, and the true figure is larger by an unmeasured amount")
     for size, complete, age_h, path in entries[:8]:
         detail.append(f"{human(size):>9}{'+' if not complete else ' '}  {age_h:6.1f}h old  {path}")
     if orphan:
@@ -1663,11 +1678,15 @@ def check_stale_scratch(tmp_dir: str, rows: list[tuple], stale_hours: float) -> 
             bits.append("Run `git worktree prune` to clear dead registrations.")
         remedy = "\n".join(bits)
     return CheckResult(name="stale-scratch", status=status,
-                       summary=f"{human(total)} of scratch under {tmp_dir}; "
+                       summary=f"{at_least}{human(total)} of scratch under {tmp_dir}; "
                                f"{len(stale)} stale, {len(orphan)} dead worktree registration(s)",
                        command=f"stat + recursive size of {tmp_dir}/*", detail=detail,
                        remedy=remedy,
                        data={"scratch_root": tmp_dir, "total_bytes": total,
+                             # False means total_bytes is a floor: anything
+                             # consuming this JSON inherits the same wrong
+                             # reading otherwise, with no `+` to notice.
+                             "total_complete": total_complete,
                              "stale": [e[3] for e in stale],
                              "orphan_registrations": [r[0].path for r in orphan]})
 
