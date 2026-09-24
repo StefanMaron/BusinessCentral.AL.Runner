@@ -351,13 +351,21 @@ check("the same-account row sends the reader on to the open-PR check",
 # sister rule is a `.md` filename -- so a `[^.;]` class stops at the wrong place.
 # Reversal after the stop ("**stop** if you like, but carry on") is CLAIM's job,
 # not this check's.
-# 100, and the number is pinned in both directions by two corpus cells rather
-# than chosen (#4509, rev25 flagged it as a free parameter nothing measured):
-# an honest cell whose stop sits at char 91 after a leading subordinate clause
-# must stay green, and a harmful cell burying its stop at char 120 with NO claim
-# vocabulary at all must red -- that second one is the only thing this check
-# catches which CLAIM does not, and until it existed the window was blocking
-# honest cells and nothing else.
+# 100, pinned in both directions by two corpus cells rather than chosen (#4509,
+# rev25 flagged it as a free parameter nothing measured): an honest cell whose
+# stop sits at char 91 after a leading subordinate clause must stay green, and a
+# harmful cell burying its stop at char 122 must red.
+#
+# What this check tests is a POSITION, and harmfulness is a property of content
+# (#4509, rev26). A cell whose stop sits INSIDE the window and then negates it --
+# "so do not treat the assignee as binding" at char 80 -- satisfies this check
+# and is as harmful as the buried one. Moving the number cannot fix that: one
+# such bypass puts its stop at char 88, before the honest control's 91, so any
+# window catching it false-reds the cell this window exists to protect.
+#
+# NEGATED_DEFERENCE below is what reads the content. This check still earns its
+# place for the present-but-buried shape, which that key does not see -- but it
+# is one of two, not the only thing CLAIM misses.
 OPENS_STOP = re.compile(
     r"^.{0,100}?\b(?:stop|halt|do not|don't|never|leave it|leave them"
     r"|skip|hands off|not yours)\b", re.I | re.S)
@@ -368,6 +376,16 @@ CLAIM = re.compile(
     # is safe here even though enumerating determiners failed as a positive test.
     r"(?<!whose )(?<!'s )(?<!\bthe )(?<!\ba )(?<!\bthis )(?<!\btheir )"
     r"(?<!\bno )(?<!\beach )(?<!\bthat )"
+    # A NEGATED claim verb is the honest instruction: "never claim across
+    # accounts" forbids exactly what "claim across accounts freely" commands,
+    # and the two differ only by the negation (#4509, rev26). Bounded span so
+    # "never mind the boundary -- claim it" is NOT exonerated: that negation
+    # attaches to `mind`, not to `claim`, and sits further away.
+    # Fixed-width lookbehinds, one per spelling, because the cell carries
+    # markdown emphasis: `**never** claim` puts `** ` between the negation and
+    # the verb, so a bare `(?<!never )` sees `** ` and misses (#4509, rev26).
+    r"(?<!\bnever )(?<!\bnever\*\* )(?<!\bdo not )(?<!\bdo not\*\* )"
+    r"(?<!\bdon't )(?<!\bdon't\*\* )(?<!\bnot )"
     r"\bclaim\b(?!\s+(?:signal|signals)\b)"
     r"(?!\s*(?:is|was|belongs|of\s+yours|holds|cannot|ownership)\b)"
     # A PERMISSION is as operative as an instruction, and the noun carries it:
@@ -395,6 +413,24 @@ CLAIM = re.compile(
     r"|\bcarry on\b|\bgo ahead\b|\bopen your PR\b"
     r"|\bpick it up\b|\bwork on it\b|\bassign it to yourself\b|\breassign\b"
     r"|\bstart implementing\b|\bis free\b|\bfree to take\b", re.I)
+
+# A stop token NEGATING a deference verb is the instruction to disregard the
+# boundary, wherever in the cell it sits: "do not treat the assignee as binding",
+# "do not let the assignee detain you", "do not feel bound". Honest cells negate
+# an ACTION instead ("do not touch it", "never claim across accounts"), so the
+# verb is what discriminates rather than the negation (#4509, rev26).
+#
+# Still a vocabulary list with the open-set problem every matcher here has. Its
+# failures land in the residual declared above rather than in a second, invisible
+# one about character offsets.
+NEGATED_DEFERENCE = re.compile(
+    r"\b(?:do not|don't|never)\s+"
+    r"(?:feel bound|treat|let|hold back|defer|wait|stop)\b", re.I)
+
+check("the cross-account action cell does not negate the deference it states",
+      not action_says(diff_rows, NEGATED_DEFERENCE)[0],
+      f"cross-account action cells: "
+      f"{[r.cell_under(ACTION_COL) for r in diff_rows]}")
 
 diff_opens_stop = [r for r in diff_rows
                    if (r.cell_under(ACTION_COL) or "") and OPENS_STOP.search(r.cell_under(ACTION_COL))]

@@ -82,6 +82,9 @@ HARMFUL = [
     "**stop** — a claim on another account's issue is fine, per `branch-and-pr.md`",
     "**stop**; `branch-and-pr.md` permits a claim here",
     "Whether the other account's loop minds is a question for them and not for you, and `branch-and-pr.md` is silent on it, so do not feel bound",
+    "The two loops are peers and `branch-and-pr.md` speaks only to branches here, so do not treat the assignee as binding",
+    "Between the accounts at issue here `branch-and-pr.md` owns neither backlog, do not let the assignee detain you",
+    "`branch-and-pr.md` is silent across accounts, so do not defer to the other loop",
 ]
 
 HONEST = [
@@ -103,6 +106,8 @@ HONEST = [
     "**stop**, per `branch-and-pr.md`; every claim belongs to a single loop",
     "**stop**, per `branch-and-pr.md`; only the other account's loop is permitted to act here",
     "Per the assignee boundary that `branch-and-pr.md` owns and this rule defers to, you must **stop** here",
+    "**do not** proceed; `branch-and-pr.md` gives the other loop this one",
+    "**never** claim across accounts; `branch-and-pr.md` owns this boundary",
 ]
 
 passes, failures = 0, []
