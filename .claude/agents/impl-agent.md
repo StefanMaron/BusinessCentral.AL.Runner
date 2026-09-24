@@ -268,7 +268,7 @@ The unfiltered suite is for CI; it spends most of its time in tests that spawn t
    dotnet test AlRunner.Tests --filter "FullyQualifiedName~GuardTests"               # 290 tests
    ```
 
-   The loop above runs **52** guards (`tools/test_*.py`); `.github/scripts/test_*` holds a further
+   The loop above runs **53** guards (`tools/test_*.py`); `.github/scripts/test_*` holds a further
    **21**, run by `pr-gate.yml` rather than by this loop. Those 21 are MIXED: **8 `.py` and 13 `.sh`** — so `for s in .github/scripts/test_*; do bash "$s"; done` reports 8 failures that are
    not there. It has now cost two reviewers a round each (#4509). Dispatch on the extension:
 
