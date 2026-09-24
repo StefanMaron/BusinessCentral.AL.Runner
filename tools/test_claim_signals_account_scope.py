@@ -351,8 +351,15 @@ check("the same-account row sends the reader on to the open-PR check",
 # sister rule is a `.md` filename -- so a `[^.;]` class stops at the wrong place.
 # Reversal after the stop ("**stop** if you like, but carry on") is CLAIM's job,
 # not this check's.
+# 100, and the number is pinned in both directions by two corpus cells rather
+# than chosen (#4509, rev25 flagged it as a free parameter nothing measured):
+# an honest cell whose stop sits at char 91 after a leading subordinate clause
+# must stay green, and a harmful cell burying its stop at char 120 with NO claim
+# vocabulary at all must red -- that second one is the only thing this check
+# catches which CLAIM does not, and until it existed the window was blocking
+# honest cells and nothing else.
 OPENS_STOP = re.compile(
-    r"^.{0,80}?\b(?:stop|halt|do not|don't|never|leave it|leave them"
+    r"^.{0,100}?\b(?:stop|halt|do not|don't|never|leave it|leave them"
     r"|skip|hands off|not yours)\b", re.I | re.S)
 
 CLAIM = re.compile(
