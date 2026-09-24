@@ -436,7 +436,14 @@ internal static partial class BcAppSymbolCache
         // through a Dictionary value, so adding a member to PageExtensionMemberOrigin re-keys
         // the cache by itself. Before that it did not, which is why #3926 had to bump
         // CacheVersion to 44 by hand.
-        Dictionary<int, PageExtensionMemberOrigin>? MemberIdToOrigin = null);
+        Dictionary<int, PageExtensionMemberOrigin>? MemberIdToOrigin = null,
+        // The pageextension's OWN Properties bag -- the object-level one, not a member's.
+        // BC opens the emitted deltas document with <PagePropertiesChange> when and only when
+        // this is non-empty, so the render needs it to place every later element (#3926 group 3).
+        // Null means "this payload predates the field"; empty means the extension states none,
+        // which is a DIFFERENT answer -- four of the seven pageextensions carrying deltas state
+        // none and correctly get no element.
+        Dictionary<string, string>? ObjectProperties = null);
 
     /// <summary>
     /// Where one member an AL <c>pageextension</c> adds came from, as SymbolReference.json
@@ -1718,7 +1725,10 @@ internal static partial class BcAppSymbolCache
                     }
 
         return new PageExtensionSymbol(extId, name!, StripModuleQualifierPrefix(target!),
-            memberNames, actionRefTargets, runObjects, origins);
+            memberNames, actionRefTargets, runObjects, origins,
+            // The extension node's own bag, read with the same helper the members use. Always
+            // non-null here so an empty bag and a pre-field payload stay distinguishable.
+            SymbolProperties(ext));
     }
 
     /// <summary>

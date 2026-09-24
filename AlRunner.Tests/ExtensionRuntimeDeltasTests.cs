@@ -404,6 +404,123 @@ public sealed class ExtensionRuntimeDeltasTests
     }
 
     /// <summary>
+    /// BC opens a pageextension's deltas document with <c>PagePropertiesChange</c> when — and
+    /// only when — the extension states pageextension-LEVEL properties, and the render must do
+    /// the same or every later element pairs one slot early (#3926 group 3).
+    ///
+    /// <para>MEASURED, not inferred, over the 45 captured ground-truth documents on four BC
+    /// builds (27.5.46862.53931, 28.1.49838.53910, 28.1.49838.54308, 28.4.53241.54407). Nine
+    /// <c>PagePropertiesChange</c> elements, always at index 0, in exactly two shapes:</para>
+    ///
+    /// <code>
+    /// ext  774 Plan User Details            Properties [Editable=0]                 &lt;PagePropertiesChange Editable="0"/&gt;
+    /// ext 2516 AppSourceMarketPlaceExtension Properties [Obsolete{State,Reason,Tag}] &lt;PagePropertiesChange/&gt;
+    /// ext 4318 Agent User Subform           Properties [Obsolete{State,Reason,Tag}] &lt;PagePropertiesChange/&gt;
+    /// ext 2515, 9862, 324, 6635            Properties []                           (absent)
+    /// </code>
+    ///
+    /// <para>The absent row carries as much weight as the other two: emitting the element
+    /// unconditionally would add a spurious first element to four of the seven pageextensions
+    /// carrying deltas and shift THOSE the other way. <c>Editable</c> is written verbatim —
+    /// the symbol states the string "0" and BC writes <c>Editable="0"</c> — while the
+    /// <c>Obsolete*</c> trio produces the element and contributes no attribute.</para>
+    /// </summary>
+    [Fact]
+    public void A_pageextension_stating_Editable_opens_its_document_with_PagePropertiesChange()
+    {
+        var dir = TestScratch.Dir("al-runner-extension-runtime-deltas-ppc-editable");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var appPath = WriteAppWith(dir, """
+                {
+                  "RuntimeVersion": "17.0",
+                  "PageExtensions": [
+                    {
+                      "Id": 774,
+                      "Name": "Plan User Details",
+                      "TargetObject": "ERD Target Page",
+                      "Properties": [ { "Name": "Editable", "Value": "0" } ],
+                      "ActionChanges": [
+                        { "Anchor": "Refresh", "ChangeKind": 4,
+                          "Actions": [ { "Kind": 2, "Id": 640938006, "Name": "Gallery" } ] }
+                      ]
+                    }
+                  ]
+                }
+                """);
+
+            var root = Render(appPath, "Page", 774)!.Root!;
+            var first = root.Elements().First();
+            Assert.Equal($"{Ns}PagePropertiesChange", first.Name.ToString());
+            Assert.Equal("0", first.Attribute("Editable")!.Value);
+            // The element BC writes is childless; a render nesting the action inside it would
+            // still satisfy an index-0 assertion.
+            Assert.Empty(first.Elements());
+            // ...and the action still follows it, so the fix moves the shift rather than
+            // replacing one wrong document with another.
+            Assert.Equal($"{Ns}ActionAdd", root.Elements().ElementAt(1).Name.ToString());
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    /// <summary>
+    /// The <c>Obsolete*</c> half of the rule above: the element appears because the extension
+    /// states properties, and carries no attribute because none of them is <c>Editable</c>.
+    /// Measured on pageextensions 2516 and 4318, on all four builds.
+    /// </summary>
+    [Fact]
+    public void A_pageextension_stating_only_Obsolete_properties_opens_with_an_EMPTY_PagePropertiesChange()
+    {
+        var dir = TestScratch.Dir("al-runner-extension-runtime-deltas-ppc-obsolete");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var appPath = WriteAppWith(dir, """
+                {
+                  "RuntimeVersion": "17.0",
+                  "PageExtensions": [
+                    {
+                      "Id": 2516,
+                      "Name": "AppSourceMarketPlaceExtension",
+                      "TargetObject": "ERD Target Page",
+                      "Properties": [
+                        { "Name": "ObsoleteState", "Value": "Pending" },
+                        { "Name": "ObsoleteReason", "Value": "This page will be obsoleted." },
+                        { "Name": "ObsoleteTag", "Value": "25.0" }
+                      ],
+                      "ActionChanges": [
+                        { "Anchor": "Refresh", "ChangeKind": 4,
+                          "Actions": [ { "Kind": 2, "Id": 640938006, "Name": "Gallery" } ] }
+                      ]
+                    }
+                  ]
+                }
+                """);
+
+            var first = Render(appPath, "Page", 2516)!.Root!.Elements().First();
+            Assert.Equal($"{Ns}PagePropertiesChange", first.Name.ToString());
+            Assert.Empty(first.Attributes());
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    /// <summary>
+    /// The third row, and the one that stops the fix trading one positional shift for another:
+    /// a pageextension stating NO object-level properties gets no element at all. Measured on
+    /// 2515, 9862, 324 and 6635 — four of the seven pageextensions carrying deltas.
+    /// </summary>
+    [Fact]
+    public void A_pageextension_stating_no_object_level_properties_emits_no_PagePropertiesChange()
+        => WithApp(appPath =>
+        {
+            // The shared fixture states no extension-level Properties bag.
+            var root = Render(appPath, "Page", SharedExtId)!.Root!;
+            Assert.Empty(root.Elements($"{Ns}PagePropertiesChange"));
+            Assert.Equal($"{Ns}ActionAdd", root.Elements().First().Name.ToString());
+        });
+
+    /// <summary>
     /// The members BC states and <c>SymbolReference.json</c> supplies, read off the same
     /// <c>ActionChanges[].Actions</c> entry the render already walks (#3926).
     ///

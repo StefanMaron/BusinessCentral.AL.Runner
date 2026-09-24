@@ -84,6 +84,40 @@ public static partial class RecordPatches
 
         var doc = NewDeltasDocument(ext.Id, ext.Name, out var root);
 
+        // FIRST, and only when the extension states object-level properties: BC opens the
+        // document with <PagePropertiesChange>, and the equivalence differ pairs AllDeltas
+        // POSITIONALLY, so a document missing it compares every later element against its
+        // neighbour (#3926 group 3).
+        //
+        // MEASURED over the 45 captured ground-truth documents on four BC builds
+        // (27.5.46862.53931, 28.1.49838.53910, 28.1.49838.54308, 28.4.53241.54407): nine such
+        // elements, always at index 0, in exactly two shapes.
+        //
+        //   ext  774  Properties [Editable=0]                  <PagePropertiesChange Editable="0"/>
+        //   ext 2516  Properties [Obsolete{State,Reason,Tag}]   <PagePropertiesChange/>
+        //   ext 4318  Properties [Obsolete{State,Reason,Tag}]   <PagePropertiesChange/>
+        //   ext 2515, 9862, 324, 6635  Properties []            ABSENT
+        //
+        // The absent row is load-bearing: emitting this unconditionally would add a spurious
+        // first element to four of the seven pageextensions carrying deltas and shift THOSE the
+        // other way. Editable is written verbatim -- the symbol states the string "0" and BC
+        // writes Editable="0". The Obsolete* trio produces the element and contributes no
+        // attribute, so the test for it asserts on Attributes() being empty rather than on a
+        // value. A null bag is a payload predating the field and is treated as "states none",
+        // which is the pre-#3926 behaviour rather than a guess.
+        //
+        // TRAP: only attributes BC is MEASURED to write belong here. Passing the whole bag
+        // through would write ObsoleteState/ObsoleteReason/ObsoleteTag attributes BC does not
+        // emit, manufacturing a difference the harness would then report against BC.
+        if (ext.ObjectProperties is { Count: > 0 } objectProperties)
+        {
+            var change = doc.CreateElement("PagePropertiesChange", MetaObjectsNamespace);
+            if (objectProperties.TryGetValue("Editable", out var editable)
+                && editable is { Length: > 0 })
+                change.SetAttribute("Editable", editable);
+            root.AppendChild(change);
+        }
+
         // MemberIdToName merges the two change containers; MemberIdToOrigin is what survives that
         // merge, because BC puts an added action in <ActionAdd> and an added control in
         // <ControlAdd> and neither the id nor the name says which. A null map (a cached payload
