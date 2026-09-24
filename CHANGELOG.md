@@ -411,6 +411,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **hygiene:** drive the assignees-unreadable refusal arm, which 62 checks never reached
 - **guards:** close ten claim-signal bypasses, and keep a corpus so a narrowing cannot lose one
 - **hygiene:** pin the assignees FETCH, and refuse rather than swallow a jq failure
 - **guards:** pin the claim table's ACTION column and the deferral it declares
