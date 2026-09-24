@@ -64,6 +64,20 @@ CLAIMS = [
         r"`\.github/scripts/test_\*` holds a further\s*\n?\s*\*\*(\d+)\*\*",
         lambda: count_files(os.path.join(".github", "scripts"), r"^test_"),
     ),
+    # The SPLIT, not just the total: that set is mixed, and running it all
+    # through `bash` reports every .py as a failure. Two reviewers lost a round
+    # to it before the doc said so (#4509), so the numbers that warn about it
+    # have to stay true or the warning becomes its own trap.
+    (
+        ".github/scripts/test_*.py guards",
+        r"\*\*(\d+) `\.py` and \d+ `\.sh`\*\*",
+        lambda: count_files(os.path.join(".github", "scripts"), r"^test_.*\.py$"),
+    ),
+    (
+        ".github/scripts/test_*.sh guards",
+        r"\*\*\d+ `\.py` and (\d+) `\.sh`\*\*",
+        lambda: count_files(os.path.join(".github", "scripts"), r"^test_.*\.sh$"),
+    ),
 ]
 
 
