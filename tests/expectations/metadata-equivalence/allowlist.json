@@ -1364,12 +1364,6 @@
       "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
     },
     {
-      "member": "ControlDefinition.ID",
-      "reason": "A delta KIND the render does not produce at all: PagePropertiesChange, ExpressionAddDelta, ViewDefinitionAddDelta and ContentChangeDelta (#3926). AND THE SECOND-ORDER EFFECT IS WHY ControlDefinition.ID AND .Name APPEAR HERE RATHER THAN AS WRONG VALUES: the differ pairs AllDeltas POSITIONALLY, pageextension 774's document opens with a PagePropertiesChange the runner does not emit, and every later element therefore pairs one slot early. Those 12 differences are on controls the runner rendered CORRECTLY -- measured, by the same misalignment appearing at larger scale when the render was sorted by member id instead of AL declaration order, and shrinking to exactly this residue once declaration order was restored. So do not read an ID or Name difference here as a wrong id; producing the missing kinds removes them.",
-      "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
-    },
-    {
       "member": "ControlDefinition.ImportanceSpecified",
       "reason": "The extension-runtime-delta render emits the member's ID and Name and the wrapper's placement attributes, and states nothing else -- so BC emits this value and the runner leaves it OFF rather than answering it wrongly (#3926). This value IS stated in the same ActionChanges[].Actions / ControlChanges[].Controls entry the render already walks, so it is a read-don't-guess fix rather than a limit: what the runner shows here is the type's own default (null / 0 / False / the zero enum), never a derivation anyone checked. LEFT OFF DELIBERATELY: writing BC's value without reading it from the symbol file would manufacture agreement, which is the failure this harness exists to catch. What invalidates this entry is #3926 landing the read.",
       "issue": 3926,
@@ -1382,12 +1376,6 @@
       "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
     },
     {
-      "member": "ControlDefinition.Name",
-      "reason": "A delta KIND the render does not produce at all: PagePropertiesChange, ExpressionAddDelta, ViewDefinitionAddDelta and ContentChangeDelta (#3926). AND THE SECOND-ORDER EFFECT IS WHY ControlDefinition.ID AND .Name APPEAR HERE RATHER THAN AS WRONG VALUES: the differ pairs AllDeltas POSITIONALLY, pageextension 774's document opens with a PagePropertiesChange the runner does not emit, and every later element therefore pairs one slot early. Those 12 differences are on controls the runner rendered CORRECTLY -- measured, by the same misalignment appearing at larger scale when the render was sorted by member id instead of AL declaration order, and shrinking to exactly this residue once declaration order was restored. So do not read an ID or Name difference here as a wrong id; producing the missing kinds removes them.",
-      "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
-    },
-    {
       "member": "ControlDefinition.SourceExtensionType",
       "reason": "BC COMPUTES this and SymbolReference.json states it nowhere, so the render leaves it off (#3926). ControlGUID is a real GUID from BC's own emitter against the runner's zeroed one; SourceExtensionType, HelpLink, ExtensionId and ControlRuntimeId are publish-time facts about an installed extension, which the runner has no published-app pipeline to produce. Unlike the read-don't-guess group this needs a derivation or a scope call before it can move, and neither has been made -- so this entry records an unmeasured surface, not a correct answer.",
       "issue": 3926,
@@ -1396,12 +1384,6 @@
     {
       "member": "ControlDefinition.SourceExtensionTypeSpecified",
       "reason": "BC COMPUTES this and SymbolReference.json states it nowhere, so the render leaves it off (#3926). ControlGUID is a real GUID from BC's own emitter against the runner's zeroed one; SourceExtensionType, HelpLink, ExtensionId and ControlRuntimeId are publish-time facts about an installed extension, which the runner has no published-app pipeline to produce. Unlike the read-don't-guess group this needs a derivation or a scope call before it can move, and neither has been made -- so this entry records an unmeasured surface, not a correct answer.",
-      "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
-    },
-    {
-      "member": "ControlDefinition.ToolTipMLString",
-      "reason": "The extension-runtime-delta render emits the member's ID and Name and the wrapper's placement attributes, and states nothing else -- so BC emits this value and the runner leaves it OFF rather than answering it wrongly (#3926). This value IS stated in the same ActionChanges[].Actions / ControlChanges[].Controls entry the render already walks, so it is a read-don't-guess fix rather than a limit: what the runner shows here is the type's own default (null / 0 / False / the zero enum), never a derivation anyone checked. LEFT OFF DELIBERATELY: writing BC's value without reading it from the symbol file would manufacture agreement, which is the failure this harness exists to catch. What invalidates this entry is #3926 landing the read.",
       "issue": 3926,
       "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
     },
@@ -1419,12 +1401,6 @@
     },
     {
       "member": "NavAppObjectMetadataRuntimeDeltas.AllDeltas.<presence>",
-      "reason": "A delta KIND the render does not produce at all: PagePropertiesChange, ExpressionAddDelta, ViewDefinitionAddDelta and ContentChangeDelta (#3926). AND THE SECOND-ORDER EFFECT IS WHY ControlDefinition.ID AND .Name APPEAR HERE RATHER THAN AS WRONG VALUES: the differ pairs AllDeltas POSITIONALLY, pageextension 774's document opens with a PagePropertiesChange the runner does not emit, and every later element therefore pairs one slot early. Those 12 differences are on controls the runner rendered CORRECTLY -- measured, by the same misalignment appearing at larger scale when the render was sorted by member id instead of AL declaration order, and shrinking to exactly this residue once declaration order was restored. So do not read an ID or Name difference here as a wrong id; producing the missing kinds removes them.",
-      "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
-    },
-    {
-      "member": "ObjectChangeDelta.<type>",
       "reason": "A delta KIND the render does not produce at all: PagePropertiesChange, ExpressionAddDelta, ViewDefinitionAddDelta and ContentChangeDelta (#3926). AND THE SECOND-ORDER EFFECT IS WHY ControlDefinition.ID AND .Name APPEAR HERE RATHER THAN AS WRONG VALUES: the differ pairs AllDeltas POSITIONALLY, pageextension 774's document opens with a PagePropertiesChange the runner does not emit, and every later element therefore pairs one slot early. Those 12 differences are on controls the runner rendered CORRECTLY -- measured, by the same misalignment appearing at larger scale when the render was sorted by member id instead of AL declaration order, and shrinking to exactly this residue once declaration order was restored. So do not read an ID or Name difference here as a wrong id; producing the missing kinds removes them.",
       "issue": 3926,
       "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
@@ -1488,12 +1464,6 @@
       "Doc": "docs/metadata-equivalence.md#xmlports"
     },
     {
-      "member": "MultiLanguage.Texts",
-      "reason": "The runner renders this member's value CORRECTLY and the differ pairs AllDeltas POSITIONALLY, so the value shown is the NEXT element's. Pageextension 774's BC document opens with a PagePropertiesChange the runner does not emit (group 3 of #3926), so its four ControlAdds sit at BC indices 1-4 against the runner's 0-3 -- a one-slot shift, measured by listing both documents' root children. This difference was INVISIBLE before #3926 landed the stated-property read, because the runner wrote no value here for the shift to misalign; it is the shift becoming observable, not a new disagreement. What invalidates this entry is the runner emitting PagePropertiesChange, which removes the shift for every member at once.",
-      "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#deltas-declaration-order"
-    },
-    {
       "member": "ActionDefinition.ApplicationArea",
       "reason": "A POSITIONAL SHIFT, not a value the render failed to read: the runner states the stated ApplicationArea '#All' correctly and the differ pairs AllDeltas positionally, so BC's element and the runner's are different members. Cause and full derivation -- the measurement on 27.5.46862.53931, the ContentAddContext`1.ContainerType cross-check that separates a shift from a wrong value, and why 28.1 does not see it -- are behind the Doc pointer. TRAP: this entry is keyed on the MEMBER NAME ALONE; the manifest has no object field, so it suppresses this member's difference on every object, not only on pageextension 2516. Invalidated by the render emitting PagePropertiesChange, which removes the shift for every member of pageextension 2516 at once (#3926 group 3).",
       "issue": 3926,
@@ -1534,6 +1504,13 @@
       "issue": 3926,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#deltas-stated-member-attributes"
+    },
+    {
+      "member": "ContentChangeDelta.<type>",
+      "reason": "BC emits a ControlChange -- a MODIFICATION of an existing control, not an addition -- and the render produces only ActionAdd/ControlAdd, one per ADDED member, so the element at that slot is an ActionAddDelta. Exposed by #3926 group 3's PagePropertiesChange emit rather than caused by it: before that the whole document paired one slot early and this member compared against a different element entirely. MEASURED on pageextension 4318 'Agent User Subform', whose BC document is [PagePropertiesChange, ControlChange, ActionAdd, Expression, Expression, Triggers]; the ControlChange carries TargetID 1519230190, TargetType ControlDefinition and a Visible expression over two extension globals. What invalidates this entry is the render learning to emit ControlChange, which needs the symbol side to state a modified control's target and its Visible/Enabled expression -- neither of which SymbolReference states from this side today. Tracked as the next item of #3926 group 3.",
+      "outOfScope": false,
+      "Doc": "docs/metadata-equivalence.md#deltas-declaration-order",
+      "issue": 3926
     }
   ]
 }
