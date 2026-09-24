@@ -269,7 +269,13 @@ The unfiltered suite is for CI; it spends most of its time in tests that spawn t
    ```
 
    The loop above runs **51** guards (`tools/test_*.py`); `.github/scripts/test_*` holds a further
-   **21**, run by `pr-gate.yml` rather than by this loop. Treat both as a scale, not a contract,
+   **21**, run by `pr-gate.yml` rather than by this loop. Those 21 are MIXED: **8 `.py` and 13 `.sh`** — so `for s in .github/scripts/test_*; do bash "$s"; done` reports 8 failures that are
+   not there. It has now cost two reviewers a round each (#4509). Dispatch on the extension:
+
+   ```bash
+   for s in .github/scripts/test_*.sh; do bash "$s" || echo "FAIL $s"; done
+   for s in .github/scripts/test_*.py; do python3 "$s" || echo "FAIL $s"; done
+   ``` Treat both as a scale, not a contract,
    and trust `ls tools/test_*.py` over this sentence: the line this replaced said "21 of each",
    and at the commit that wrote it the sets were already **21 and 18** — never equal, so the
    claim was wrong the day it landed rather than having drifted (#4235, #3924). Four fired on a new
