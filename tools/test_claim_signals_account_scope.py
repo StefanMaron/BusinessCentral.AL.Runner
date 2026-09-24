@@ -343,10 +343,13 @@ check("the same-account row sends the reader on to the open-PR check",
 #   CLAIM              a vocabulary: does the cell also say take it
 #   NEGATED_DEFERENCE  a vocabulary: does it negate a deference verb
 #
-# A cross-account cell evades all three if it opens with no stop word, carries
-# no take-it instruction from CLAIM's list, and negates no verb from
-# NEGATED_DEFERENCE's -- and synonym sets have no last member, so such cells
-# exist by construction. Seven rounds of review found five distinct families of
+# A cross-account cell evades all three if it carries no take-it instruction from
+# CLAIM's list and negates no verb from NEGATED_DEFERENCE's -- and synonym sets
+# have no last member, so such cells exist by construction. The OPENING is
+# independent: every KNOWN_UNCAUGHT cell below opens with a perfectly good stop
+# word, which is why OPENS_STOP passes them. An earlier version of this sentence
+# said "opens with no stop word" and was refuted by the three cells twenty lines
+# beneath it (#4509, rev28). Seven rounds of review found five distinct families of
 # them; each fix caught its family and none closed the class.
 #
 # What this guard is FOR, then: a rule edit that reverses the cross-account
