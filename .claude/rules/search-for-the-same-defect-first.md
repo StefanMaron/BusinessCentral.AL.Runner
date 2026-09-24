@@ -36,6 +36,26 @@ if a named agent's `tools:` allowlist cannot discharge the duty this rule impose
 across both types reported the gap in one day and each correctly declined to claim a search it
 had not run (#4304); nothing compared the duty against the allowlist, so nothing went red.
 
+**Being allowlisted is necessary and not sufficient, so use whichever instrument your session
+actually has.** An allowlist entry names a tool; it does not conjure the server that provides
+one, and when none does, the call resolves to nothing while every "is it listed?" check still
+passes (#4449). Measured on the box running the unattended loop: `.mcp.json` declares only
+`bc-decompiler`, so **`mcp__github__*` does not exist there at all** and `ToolSearch` for it
+answers `No matching deferred tools found`. `gh issue list --search` searches bodies and is the
+instrument in a CLI session; the MCP tool is the one for a web or remote session, which has no
+`gh`. Neither is a universal answer, and **an agent that cannot run either has not discharged
+this rule and says so** rather than reporting a search it did not run.
+
+That second layer is now measured rather than assumed: the same script reads `.mcp.json` and
+reports **exit 3 — could not be measured** when a `Requires-Tool:` target's server is configured
+nowhere. **It cannot fire on CI**, because `.mcp.json` is gitignored and therefore absent on
+every run there, and an absent file is a legitimate pass rather than a finding
+(`guards-need-a-third-state.md`). So it is a check for the box an agent is really running on:
+
+```bash
+python3 .github/scripts/check_agent_mcp_tools.py --mcp-config /path/to/.mcp.json
+```
+
 When you find one, decide and **record the decision on the issue**: fold it in (with its own
 RED→GREEN, per `batch-sibling-issues-by-file.md`), or state why it is genuinely distinct. Both
 outcomes are useful; a silent overlap is not.

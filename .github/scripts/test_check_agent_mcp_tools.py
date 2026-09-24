@@ -17,6 +17,7 @@ Usage: python3 test_check_agent_mcp_tools.py
 Exits 0 when every case passes, 1 on the first failure.
 """
 
+import json
 import pathlib
 import subprocess
 import sys
@@ -24,13 +25,17 @@ import tempfile
 
 SCRIPT = pathlib.Path(__file__).resolve().parent / "check_agent_mcp_tools.py"
 
+# Sentinel: this case does not pass --mcp-config at all, which is the
+# ordinary invocation and must stay a pass (the genuinely-absent row).
+NO_MCP_FLAG = object()
+
 CASES = []
 
 
 def case(name, expected_exit, files, expect_in_stderr=None, rules=None,
-         expect_not_in_stderr=None):
+         expect_not_in_stderr=None, mcp=NO_MCP_FLAG):
     CASES.append((name, expected_exit, files, expect_in_stderr, rules,
-                  expect_not_in_stderr))
+                  expect_not_in_stderr, mcp))
 
 
 def agent(tools, body):
@@ -234,9 +239,79 @@ case(
 )
 
 
+# --- #4449: a required tool whose SERVER no .mcp.json provides ----------------
+#
+# The allowlist half of this was #4304 and is checked above. This half is the
+# next layer: the entry is present and grants nothing, because no configured
+# server supplies that namespace. An allowlist entry for a tool nothing
+# provides passes every "is it listed?" check and resolves to nothing.
+#
+# The rows are the three from guards-need-a-third-state.md. Row 1 is the
+# constraint that stops the fix trading one defect for another: a genuinely
+# absent .mcp.json must stay a PASS, because the file is gitignored and
+# per-machine, so it is absent on every CI run and in every worktree. A guard
+# that failed there would red the whole repository for a correct state.
+
+case(
+    "#4449 required tool, server configured -> pass",
+    0,
+    {"fixture.md": agent("Bash, mcp__srv__find_things", "A fixture.")},
+    rules={"r.md": REQ},
+    mcp={"mcpServers": {"srv": {"type": "stdio", "command": "x", "args": []}}},
+)
+
+case(
+    "#4449 required tool, server ABSENT from .mcp.json -> unmeasurable (3)",
+    3,
+    {"fixture.md": agent("Bash, mcp__srv__find_things", "A fixture.")},
+    rules={"r.md": REQ},
+    mcp={"mcpServers": {"other": {"type": "stdio", "command": "x", "args": []}}},
+    expect_in_stderr="no configured MCP server provides",
+)
+
+case(
+    "#4449 no .mcp.json at all -> pass (absent is legitimate, not unmeasurable)",
+    0,
+    {"fixture.md": agent("Bash, mcp__srv__find_things", "A fixture.")},
+    rules={"r.md": REQ},
+    mcp=None,
+)
+
+case(
+    "#4449 unreadable .mcp.json -> unmeasurable (3), NOT folded into absent",
+    3,
+    {"fixture.md": agent("Bash, mcp__srv__find_things", "A fixture.")},
+    rules={"r.md": REQ},
+    mcp="{ this is not json",
+    expect_in_stderr="could not be read",
+)
+
+case(
+    "#4449 empty mcpServers -> unmeasurable (3), an empty map is not an absent file",
+    3,
+    {"fixture.md": agent("Bash, mcp__srv__find_things", "A fixture.")},
+    rules={"r.md": REQ},
+    mcp={"mcpServers": {}},
+    expect_in_stderr="no configured MCP server provides",
+)
+
+# The server question is asked ONLY of a Requires-Tool target. A tool the body
+# merely MENTIONS is direction 1 (#2395), whose subject is the allowlist; an
+# agent may document a tool for an environment other than the one the check
+# runs in, and failing that would make the guard refuse every local session
+# whose .mcp.json is legitimately narrower than the docs.
+case(
+    "#4449 body-mentioned tool with no server entry -> still pass",
+    0,
+    {"fixture.md": agent("Bash, mcp__srv__do_thing", "Call mcp__srv__do_thing.")},
+    rules={"r.md": "A rule with no marker at all.\n"},
+    mcp={"mcpServers": {"other": {"type": "stdio", "command": "x", "args": []}}},
+)
+
 def run():
     failures = 0
-    for name, expected_exit, files, expect_in_stderr, rules, expect_not in CASES:
+    for (name, expected_exit, files, expect_in_stderr, rules, expect_not,
+         mcp) in CASES:
         with tempfile.TemporaryDirectory() as tmp:
             d = pathlib.Path(tmp) / "agents"
             d.mkdir()
@@ -250,6 +325,11 @@ def run():
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(content, encoding="utf-8")
             cmd += ["--requirements-dir", str(rules_dir)]
+            if mcp is not NO_MCP_FLAG:
+                mcp_path = pathlib.Path(tmp) / ".mcp.json"
+                if mcp is not None:
+                    mcp_path.write_text(json.dumps(mcp), encoding="utf-8")
+                cmd += ["--mcp-config", str(mcp_path)]
             r = subprocess.run(cmd, capture_output=True, text=True)
             ok = r.returncode == expected_exit
             if ok and expect_in_stderr:
