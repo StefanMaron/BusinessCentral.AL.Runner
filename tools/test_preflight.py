@@ -825,6 +825,53 @@ finally:
 check("os.getuid is restored for the rest of the run",
       _real_getuid is None or hasattr(os, "getuid"))
 
+# ------------------------------- a truncated scratch walk (#4519)
+print()
+print("preflight.py -- an incomplete scratch measurement must not read as a total")
+
+# dir_size() returns (bytes, complete) and its docstring is explicit that
+# `complete` exists "so the report can say 'at least' instead of printing a
+# number that quietly undercounts". check_stale_scratch summed the bytes and
+# dropped the flag, so a walk that ran out of budget was reported as a measured
+# total. Measured on the loop box at filing: the summary said 11.7 GiB where du
+# said 63.3 GiB -- a 5.4x undercount from ONE truncated row, with no `+`
+# anywhere in the summary and none in data["total_bytes"].
+#
+# The per-row detail already carried the marker, which is why this survived: a
+# reader scanning details sees `8.8 GiB+` while the headline above it lies.
+_trunc = tempfile.mkdtemp(prefix="preflight-trunc-")
+try:
+    _big = os.path.join(_trunc, "big")
+    os.makedirs(_big)
+    for _i in range(60):
+        with open(os.path.join(_big, f"f{_i}"), "w") as _fh:
+            _fh.write("x" * 100)
+
+    # A budget far below the entry count forces the truncation deterministically;
+    # the real check uses 200_000, which this box exceeds with 82k directories.
+    r_t = pf.check_stale_scratch(_trunc, [], 24.0, budget=10)
+    _all_t = " ".join([r_t.summary] + list(r_t.detail))
+    check("a truncated walk says so in the SUMMARY, not only in the per-row detail",
+          "+" in r_t.summary or "at least" in r_t.summary.lower(), r_t.summary)
+    check("...and the machine-readable total is flagged incomplete too",
+          r_t.data.get("total_complete") is False, repr(r_t.data))
+
+    # The control. Without it every assertion above is satisfied by a check that
+    # marks EVERY total incomplete, which is the same defect pointing the other
+    # way and would make the marker meaningless.
+    r_c = pf.check_stale_scratch(_trunc, [], 24.0, budget=10_000)
+    check("a COMPLETE walk does not claim to be truncated",
+          "+" not in r_c.summary and "at least" not in r_c.summary.lower(), r_c.summary)
+    check("...and reports its total as complete",
+          r_c.data.get("total_complete") is True, repr(r_c.data))
+    # The two must also disagree on the number itself, or the fixture is not
+    # actually exercising truncation and both assertions above are vacuous.
+    check("...and the truncated total really is smaller, so the fixture truncates",
+          r_t.data["total_bytes"] < r_c.data["total_bytes"],
+          f"truncated={r_t.data['total_bytes']} complete={r_c.data['total_bytes']}")
+finally:
+    shutil.rmtree(_trunc, ignore_errors=True)
+
 # On a POSIX box the ownership filter must still work: a directory owned by
 # somebody else is not this user's scratch and is not counted.
 if hasattr(os, "getuid"):
