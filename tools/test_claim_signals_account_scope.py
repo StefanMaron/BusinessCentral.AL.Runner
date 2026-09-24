@@ -334,12 +334,26 @@ check("the same-account row sends the reader on to the open-PR check",
 # What works is excluding the noun READINGS (a short, closed set of following
 # words) rather than enumerating the verb's objects.
 #
-# The residual is real and worth stating: these two checks pin that the cell
-# opens with a stop and carries no take-it instruction from a named list. A
-# paraphrase using neither -- and not opening with a stop word -- is caught by
-# the structural half; one that opens with a stop word AND paraphrases past it
-# in words nobody has listed is not. This is a vocabulary guard over prose, and
-# it bounds rather than eliminates that.
+# THE RESIDUAL, stated once for all three checks rather than per check, because
+# stating it per check is how it kept being understated (#4509, rounds 5-7).
+#
+# Three checks, each with its OWN open set, and none of them closable:
+#
+#   OPENS_STOP         a position: is a stop instruction near the front
+#   CLAIM              a vocabulary: does the cell also say take it
+#   NEGATED_DEFERENCE  a vocabulary: does it negate a deference verb
+#
+# A cross-account cell evades all three if it opens with no stop word, carries
+# no take-it instruction from CLAIM's list, and negates no verb from
+# NEGATED_DEFERENCE's -- and synonym sets have no last member, so such cells
+# exist by construction. Seven rounds of review found five distinct families of
+# them; each fix caught its family and none closed the class.
+#
+# What this guard is FOR, then: a rule edit that reverses the cross-account
+# instruction in any of the ways anyone has yet written down reds here, and
+# tools/test_claim_guard_corpus.py holds every such wording so a later narrowing
+# cannot silently drop one. It is a ratchet over known bypasses, not a proof.
+# Treat a green run as "no known bypass", never as "the row is safe".
 # A stop instruction near the FRONT of the cell, not at character zero. Anchoring
 # at zero false-reds four honest openings, measured: a leading "Per
 # `branch-and-pr.md`, **stop**", a parenthetical, the sister-rule name first
@@ -420,9 +434,24 @@ CLAIM = re.compile(
 # an ACTION instead ("do not touch it", "never claim across accounts"), so the
 # verb is what discriminates rather than the negation (#4509, rev26).
 #
-# Still a vocabulary list with the open-set problem every matcher here has. Its
-# failures land in the residual declared above rather than in a second, invisible
-# one about character offsets.
+# This carries its OWN open set, over deference verbs, independent of CLAIM's.
+# An earlier version of this comment said its failures "land in the residual
+# declared above" -- false, and the third round running where an over-claim moved
+# to whatever had just been added (#4509: rev25 on a spelling, rev26 on an
+# offset, rev27 on this). CLAIM's residual is about a cell that opens with a stop
+# and paraphrases past it; these bypasses open with NO stop word and carry NO
+# claim vocabulary, so only this list sees them, and a verb outside it walks:
+#
+#   do not TREAT the assignee as binding     red   (committed cell)
+#   do not REGARD the assignee as binding    green
+#   do not CONSIDER / COUNT / READ ...       green
+#   do not DEFER to the other loop           red   (committed cell)
+#   do not YIELD / BOW / CONCEDE ...         green
+#
+# Deliberately NOT fixed by lengthening the list, which is what produced the
+# three previous rounds. A synonym set is not closable, and a guard whose comment
+# says otherwise is worse than one that states the gap: the comment is what a
+# later editor believes.
 NEGATED_DEFERENCE = re.compile(
     r"\b(?:do not|don't|never)\s+"
     r"(?:feel bound|treat|let|hold back|defer|wait|stop)\b", re.I)
