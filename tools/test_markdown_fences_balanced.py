@@ -48,19 +48,36 @@ def check(name, ok, detail=""):
 
 
 def problems(path):
-    """(line, why) for each fence defect, or [] when the file is balanced."""
-    found, open_at = [], 0
+    """(line, why) for each fence defect, or [] when the file is balanced.
+
+    Fence LENGTH is tracked, per CommonMark: a closing fence must be at least as
+    long as the one that opened the block, so a ``` inside a ```` block is
+    content rather than a close. Without that, documenting a fence -- wrapping
+    an example in four backticks -- reds this guard, and a guard that reds on a
+    legitimate shape is one people disable. No such block exists in the scanned
+    set today, which is exactly when it is cheap to get right.
+    """
+    found, open_at, open_len = [], 0, 0
     with open(path, encoding="utf-8", errors="replace") as fh:
         for n, line in enumerate(fh, 1):
             stripped = line.strip()
             if not stripped.startswith("```"):
                 continue
-            # An OPENING fence may carry an info string (```bash). A CLOSING one
-            # may not -- that is the whole defect this catches.
+            run = len(stripped) - len(stripped.lstrip("`"))
             trailing = stripped.lstrip("`").strip()
-            if open_at and trailing:
-                found.append((n, f"closing fence carries text: {stripped[:60]!r}"))
-            open_at = 0 if open_at else n
+            if open_at:
+                # Too short to close this block, or carrying an info string:
+                # either way it is content, not a close.
+                if run < open_len or trailing:
+                    # Only a fence long enough to close is worth reporting --
+                    # a shorter one is ordinary content inside the block.
+                    if run >= open_len:
+                        found.append(
+                            (n, f"closing fence carries text: {stripped[:60]!r}"))
+                    continue
+                open_at, open_len = 0, 0
+            else:
+                open_at, open_len = n, run
     if open_at:
         found.append((open_at, "fence opened here is never closed"))
     return found
