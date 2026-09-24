@@ -374,6 +374,63 @@ check("a failed gh issue edit fails the step rather than reporting success",
       rc != 0, f"rc={rc} {out}")
 check("...and says the edit failed, with its status", "edit_rc=1" in out, out)
 
+# --- the assignees-unreadable refusal arm (#4514) ----------------------------
+#
+# #4512 added this arm and 62 checks drove none of it: a reviewer instrumented
+# it with a `touch` beside `decide assignees-unreadable`, ran the whole suite,
+# and the probe never fired. Four mutations inside the arm -- deleting the
+# decide line, replacing the message with `echo zzz`, flipping its `exit 0` to
+# `exit 1`, and deleting the exit so it falls through to the release path --
+# were all absorbed at 62 passed, 0 failed. Every property of the arm was free.
+#
+# The fixture is an `assignees` that is a non-iterable SCALAR. Measured:
+#   {"assignees": 7}    -> jq exit 5, "Cannot iterate over number (7)"
+#   {"assignees": "x"}  -> jq exit 5, "Cannot iterate over string"
+#   {"assignees": null} -> jq exit 0   <- the `// []` default absorbs it
+#   {"assignees": {}}   -> jq exit 0   <- so does an object
+# Only the scalar reaches the refusal, which is why the fixture is 7 and not
+# null: a null fixture would drive the ordinary path and pin nothing.
+
+unreadable = {"state": "OPEN", "labels": [{"name": "status: in-progress"},
+                                          {"name": "agent: fbk-2"}],
+              "assignees": 7}
+rc, out, calls = release("Part of #42", unreadable)
+check("an unreadable assignees list refuses rather than reporting nothing to release",
+      "could not read assignees" in out, out)
+check("...naming the issue and jq's own status, so the cause is in the log",
+      "#42" in out and "jq exit 5" in out, out)
+# The decide line is what the PR's argument for exit 0 rests on: it is the
+# record distinguishing "refused" from "nothing to do". Deleting it was the
+# sharpest of the four absorbed mutations, so it gets its own assertion --
+# matching the seven pre-existing `decide` sites, each of which has one.
+check("...and RECORDS the decision, which is what makes the exit 0 a refusal "
+      "rather than a success",
+      "label-hygiene decision: assignees-unreadable" in out, out)
+check("...and still exits 0, the labels above being already released",
+      rc == 0, f"rc={rc} {out}")
+check("...and issues NO assignee edit, having failed to work out who to remove",
+      not [c for c in calls if "--remove-assignee" in c], f"{calls}")
+# The fall-through mutation, and the observable it actually moves. Deleting the
+# arm's `exit 0` does NOT produce a stray assignee edit -- `claimed` is empty
+# precisely because jq failed, so the `if [ -n "$claimed" ]` block is skipped
+# either way and an edit-count assertion cannot see it. What it does reach is
+# the `decide released` at the end of the step, so the run records BOTH
+# `assignees-unreadable` AND `released`: a refusal that also reports success,
+# which is the whole defect the arm exists to prevent. Measured: with the
+# edit-count check alone this mutation was absorbed at 69 passed, 0 failed.
+check("...and does NOT also record `released` -- one decision per run, or the "
+      "refusal reports success alongside itself",
+      "label-hygiene decision: released" not in out, out)
+
+# The GREEN control. Without it every assertion above is satisfied by a step
+# that refuses unconditionally, which is the same defect reversed -- and the
+# reviewer's own control for the instrument was exactly this shape.
+rc, out, calls = release("Part of #42", assigned, actor="the-claiming-bot")
+check("a READABLE assignees list does not take the refusal arm",
+      "could not read assignees" not in out and "assignees-unreadable" not in out, out)
+check("...and releases the assignee it found",
+      [c for c in calls if "--remove-assignee" in c], f"{calls}")
+
 print("")
 print(f"{passes} passed, {len(failures)} failed")
 sys.exit(1 if failures else 0)
