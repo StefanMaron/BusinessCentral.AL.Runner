@@ -13,9 +13,11 @@ agents can work without a human in the loop:
   (`StefanMaron/BusinessCentral.AL.Language.Tests`). Getting a BC-behavior claim in
   front of a real service tier is step 2 of the workflow in
   `bc-behavior-tests-go-upstream.md` — gating it stalled agents for no benefit, since
-  the corpus CI adjudicates the claim and a human still merges. **Open it yourself;
-  the orchestrator reviews and merges it when all 8 BC legs are green.** You still do
-  not merge it.
+  the corpus CI adjudicates the claim. **Open it yourself; the orchestrator reviews and
+  merges it when all 8 BC legs are green** — except that an unattended loop which is both
+  author and coordinator may merge its own, under the bar and the waiver recorded in
+  `bc-behavior-tests-go-upstream.md` step 3. A corpus PR authored by a different identity
+  is still not yours to merge.
 
 **Also ungated, on these two repositories only** (`BusinessCentral.AL.Runner` and
 `BusinessCentral.AL.Language.Tests`): commenting on issues and PRs, closing issues, and applying
