@@ -250,10 +250,13 @@ public static partial class RecordPatches
     ///
     /// <para>Measured against BC's own emitted documents for all four of System Application's
     /// xmlports on 28.1.49838.53910 — 9001, 9862, 9863 and 9864, 91 nodes between them — where
-    /// this rule reproduces every node's ID exactly and plain declaration order reproduces 69
-    /// of them wrongly (#4467). The clearest instance is XmlPort 9862: <c>Permission</c> is the
-    /// twelfth node written and carries sequence 9, while <c>PermissionSetRel</c>'s three
-    /// children, written before it, carry 10, 11 and 12.</para>
+    /// this rule reproduces every node's ID exactly, while plain declaration order renumbers
+    /// <b>33</b> of those nodes (0 + 4 + 5 + 24 per object). That surfaces as <b>69</b>
+    /// member differences in the harness, because a renumbered node differs on both its
+    /// <c>Id</c> and its <c>ParentId</c>: 69 counts MEMBERS, never nodes, and reusing it as
+    /// a node count is the error #4473 fixed here (#4467). The clearest instance is XmlPort
+    /// 9862: <c>Permission</c> is the twelfth node written and carries sequence 9, while
+    /// <c>PermissionSetRel</c>'s three children, written before it, carry 10, 11 and 12.</para>
     ///
     /// <para>ParentID follows for free: it is looked up from the emitted id of the enclosing
     /// node, which this map has already numbered.</para>
