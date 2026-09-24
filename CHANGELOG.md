@@ -36,6 +36,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **preflight:** carry dir_size's completeness flag into the scratch total
 - **guards:** ask whether a server PROVIDES a required MCP tool, not only whether it is listed
 - **cache:** walk every type a container holds, so a dictionary value re-keys
 - **metadata:** read the stated ApplicationArea/Image/Caption/ToolTip onto extension runtime deltas
