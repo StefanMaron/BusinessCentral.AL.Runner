@@ -448,6 +448,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **docs:** follow the corpus 28.5 leg in the matrix-docs drift guard
 - **runtime:** stop per-record reflection, env reads and CWT re-writes on the materialisation hot path
 - **bc:** add BC 28.5 to CI and make it the default build target
 - **compile:** compile a third-party-shaped package fixture on every BC leg, judged on errors, objects and tables
