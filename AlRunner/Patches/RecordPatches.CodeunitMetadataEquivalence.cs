@@ -19,9 +19,9 @@
 //   of it is the runner's answer, arrived at without BC's emitter.
 //
 // WHAT IS AND IS NOT STATED HERE
-//   Eight attributes, because eight are what the runner derives: ID, Name, TableNo,
-//   SingleInstance, Subtype, and — since #3788 — ALNamespace, InherentEntitlements and
-//   InherentPermissions. The last three come from SymbolReference.json the same way the first
+//   Nine attributes, because nine are what the runner derives: ID, Name, TableNo,
+//   SingleInstance, Subtype, EventSubscriberInstance (#4605), and — since #3788 — ALNamespace,
+//   InherentEntitlements and InherentPermissions. The last three come from SymbolReference.json the same way the first
 //   five do: the namespace from the Namespaces TREE PATH the object was reached through (533 of
 //   533 exact against BC's attribute on System Application 28.1.49838.53910), the two masks from
 //   the object's own Properties bag.
@@ -31,7 +31,7 @@
 //   and omitted for every other, including every codeunit of an app that was never scanned.
 //
 //   What is still ABSENT is absent honestly, because the symbol file does not state it:
-//   TestIsolation, EventSubscriberInstance and MetadataVersion. The harness reports each as a
+//   TestIsolation and MetadataVersion. The harness reports each as a
 //   difference and the allowlist declares why, which is the point of the exercise. Writing BC's
 //   own value into any of them would manufacture agreement.
 //
@@ -49,7 +49,7 @@ public static partial class RecordPatches
     /// <c>Types.Metadata.MetaCodeunit(XmlNode)</c> parses — or null when the runner knows no
     /// codeunit with that id, which the caller must report rather than absorb.
     ///
-    /// <para><b>Only the derived attributes are written</b> — eight since #3788. A value the
+    /// <para><b>Only the derived attributes are written</b> — nine since #4605. A value the
     /// runner does not derive is left off the element rather than defaulted, so BC's constructor
     /// applies its own default and the difference the harness then reports is a true statement
     /// about what the runner does not know. See this file's header.</para>
@@ -75,6 +75,10 @@ public static partial class RecordPatches
             root.SetAttribute("TableNo", row.TableNo.ToString(CultureInfo.InvariantCulture));
         root.SetAttribute("SingleInstance", row.SingleInstance ? "1" : "0");
         root.SetAttribute("Subtype", row.Subtype);
+        // Unlike the attributes below, BC's emitter never omits this one: it writes the declared
+        // value, else AL's default StaticAutomatic — 558 of 558 codeunits on 28.1.49838.53910
+        // (#4605). So the default is written rather than left for BC's constructor to apply.
+        root.SetAttribute("EventSubscriberInstance", row.EventSubscriberInstance ?? "StaticAutomatic");
 
         // Each of the three is OMITTED when the codeunit states none, the same rule TableNo
         // follows above: BC's emitter omits the attribute rather than writing a default, and its
