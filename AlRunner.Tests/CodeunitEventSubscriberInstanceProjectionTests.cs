@@ -90,8 +90,8 @@ public sealed class CodeunitEventSubscriberInstanceProjectionTests : IDisposable
 
         Assert.Equal("Manual", Attribute(DeclaresManual));
         Assert.Equal("StaticAutomatic", Attribute(DeclaresStaticAutomatic));
-        // BC's emitter writes the default rather than omitting it (558 of 558 codeunits on the
-        // measured build, #4605), so absence here would be a disagreement, not a match.
+        // BC's emitter writes the default rather than omitting it (every codeunit in the
+        // 28.5.54151.55132 ground-truth bundles, #4605), so absence would be a disagreement.
         Assert.Equal("StaticAutomatic", Attribute(DeclaresNothing));
     }
 
