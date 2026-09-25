@@ -1644,6 +1644,27 @@ compared against the *next* control's. Before this change the runner wrote no va
 shift to misalign, so the shift was invisible on those members; landing the read made an existing
 group-3 artifact observable. Emitting `PagePropertiesChange` removes it for every member at once.
 
+<a id="deltas-actionref"></a>
+### An `actionref` renders as `ActionRefDefinition`, with its stated target (#3926)
+
+An AL `actionref` is a symbol entry of `Kind` 4 stating `TargetId` and `TargetName`, and BC
+writes it as `xsi:type="ActionRefDefinition"` with those two values as `TargetID` and
+`TargetName`. The population is two actionrefs — pageextension 2515's 859995181 on every captured
+build, and 2516's 913465592 on 27.5 only — so five documents over 27.5.46862.53931,
+28.1.49838.53910, 28.1.49838.54308 and 28.4.53241.54407, and both values match the stated ones
+5 of 5. The render reads them verbatim; it never resolves the id from the name, because the
+target can be an action of the extended page, not of the extension.
+
+Before this, the render wrote an `ActionDefinition`, and the harness reported one
+`ActionRefDefinition.<type>` difference per document and compared nothing under it. With the type
+agreeing, `TargetID` and `TargetName` compare clean and five members BC computes become visible,
+each declared: `ControlGUID`, `HelpLink`, `SourceExtensionType` and `SourceExtensionTypeSpecified`
+(the publish-time group the `ActionDefinition` entries already name), and `Visible`, which BC
+writes as `1` on every actionref while each one states no `Properties`. So the difference count
+goes **up** on each build (for example, System Application 28.1.49838.53910 goes from 96,097
+over 196 members to 96,105 over 200). The previous count was low because the type mismatch hid
+those members, not because the render agreed with BC on them.
+
 <a id="deltas-declaration-order"></a>
 ### Declaration order is load-bearing, because the differ pairs positionally
 

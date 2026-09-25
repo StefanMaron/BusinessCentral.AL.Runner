@@ -178,13 +178,22 @@ public static partial class RecordPatches
                 wrapper.SetAttribute("AnchorName", origin.Anchor);
 
             var member = doc.CreateElement(origin.IsAction ? "Actions" : "Controls", MetaObjectsNamespace);
+            // An actionref is the one member whose symbol entry states a TargetName.
+            var actionRefTarget = ext.MemberIdToActionRefTarget.TryGetValue(memberId, out var refTarget)
+                ? refTarget
+                : null;
             // xsi:type is what tells BC's reader which Delta subclass to construct; without it
             // FromXml throws rather than skipping the element.
             member.SetAttribute("type", XsiNamespace,
-                origin.IsAction ? "ActionDefinition" : "ControlDefinition");
+                !origin.IsAction ? "ControlDefinition"
+                : actionRefTarget is null ? "ActionDefinition"
+                : "ActionRefDefinition");
             member.SetAttribute("ID", memberId.ToString(CultureInfo.InvariantCulture));
             member.SetAttribute("Name", memberName);
-            SetStatedMemberAttributes(member, origin.DeclaredProperties);
+            if (actionRefTarget is not null)
+                SetActionRefTarget(member, origin.ActionRefTargetId, actionRefTarget);
+            else
+                SetStatedMemberAttributes(member, origin.DeclaredProperties);
             if (!origin.IsAction
                 && TryBoundRecFieldName(origin.DeclaredProperties) is { } boundField)
             {
@@ -286,6 +295,30 @@ public static partial class RecordPatches
 
         string? Stated(string name)
             => declared.TryGetValue(name, out var v) && !string.IsNullOrWhiteSpace(v) ? v : null;
+    }
+
+    /// <summary>
+    /// An <c>actionref</c>'s <c>TargetID</c> and <c>TargetName</c>, both read VERBATIM off the
+    /// symbol entry's stated <c>TargetId</c> / <c>TargetName</c>.
+    ///
+    /// <para><b>Observably equivalent</b>: BC writes exactly those two stated values — 2 distinct
+    /// actionrefs (pageextensions 2515 and 2516) over 5 documents on four builds, 5/5 exact
+    /// (docs/metadata-equivalence.md#deltas-actionref).</para>
+    ///
+    /// <para><b>Trap: never resolve the id from the name.</b> The target can be an action of the
+    /// extended page rather than of this extension, and a same-named member here is then a
+    /// different action. An unstated <c>TargetId</c> leaves <c>TargetID</c> off.</para>
+    ///
+    /// <para>Nothing else is written. BC's <c>ControlGUID</c>, <c>SourceExtensionType</c> and
+    /// <c>HelpLink</c> are computed, and its <c>Visible="1"</c> is stated nowhere — every
+    /// measured actionref states no <c>Properties</c> at all, so a stated-property read here
+    /// would rest on no measurement.</para>
+    /// </summary>
+    private static void SetActionRefTarget(XmlElement member, int? targetId, string targetName)
+    {
+        if (targetId is { } id)
+            member.SetAttribute("TargetID", id.ToString(CultureInfo.InvariantCulture));
+        member.SetAttribute("TargetName", targetName);
     }
 
     /// <summary>

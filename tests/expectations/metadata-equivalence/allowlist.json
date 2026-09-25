@@ -1223,10 +1223,34 @@
       "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
     },
     {
-      "member": "ActionRefDefinition.<type>",
-      "reason": "A delta KIND the render does not produce at all: PagePropertiesChange, ExpressionAddDelta, ViewDefinitionAddDelta and ContentChangeDelta (#3926). AND THE SECOND-ORDER EFFECT IS WHY ControlDefinition.ID AND .Name APPEAR HERE RATHER THAN AS WRONG VALUES: the differ pairs AllDeltas POSITIONALLY, pageextension 774's document opens with a PagePropertiesChange the runner does not emit, and every later element therefore pairs one slot early. Those 12 differences are on controls the runner rendered CORRECTLY -- measured, by the same misalignment appearing at larger scale when the render was sorted by member id instead of AL declaration order, and shrinking to exactly this residue once declaration order was restored. So do not read an ID or Name difference here as a wrong id; producing the missing kinds removes them.",
+      "member": "ActionRefDefinition.ControlGUID",
+      "reason": "BC COMPUTES this on an actionref and SymbolReference.json states it nowhere, so the render leaves it off (#3926). Same cause as the ActionDefinition entry of the same member: ControlGUID is a real GUID from BC's own emitter against the runner's zeroed one, and SourceExtensionType and HelpLink are publish-time facts about an installed extension, which the runner has no published-app pipeline to produce. Surfaced when the render started emitting actionrefs as ActionRefDefinition rather than ActionDefinition, which made the type agree and exposed the members under it (pageextension 2515 on every captured build, 2516 on 27.5). What invalidates this entry is a derivation or a scope call for these publish-time members, the same as for ActionDefinition.",
       "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
+      "Doc": "docs/metadata-equivalence.md#deltas-actionref"
+    },
+    {
+      "member": "ActionRefDefinition.HelpLink",
+      "reason": "BC COMPUTES this on an actionref and SymbolReference.json states it nowhere, so the render leaves it off (#3926). Same cause as the ActionDefinition entry of the same member: ControlGUID is a real GUID from BC's own emitter against the runner's zeroed one, and SourceExtensionType and HelpLink are publish-time facts about an installed extension, which the runner has no published-app pipeline to produce. Surfaced when the render started emitting actionrefs as ActionRefDefinition rather than ActionDefinition, which made the type agree and exposed the members under it (pageextension 2515 on every captured build, 2516 on 27.5). What invalidates this entry is a derivation or a scope call for these publish-time members, the same as for ActionDefinition.",
+      "issue": 3926,
+      "Doc": "docs/metadata-equivalence.md#deltas-actionref"
+    },
+    {
+      "member": "ActionRefDefinition.SourceExtensionType",
+      "reason": "BC COMPUTES this on an actionref and SymbolReference.json states it nowhere, so the render leaves it off (#3926). Same cause as the ActionDefinition entry of the same member: ControlGUID is a real GUID from BC's own emitter against the runner's zeroed one, and SourceExtensionType and HelpLink are publish-time facts about an installed extension, which the runner has no published-app pipeline to produce. Surfaced when the render started emitting actionrefs as ActionRefDefinition rather than ActionDefinition, which made the type agree and exposed the members under it (pageextension 2515 on every captured build, 2516 on 27.5). What invalidates this entry is a derivation or a scope call for these publish-time members, the same as for ActionDefinition.",
+      "issue": 3926,
+      "Doc": "docs/metadata-equivalence.md#deltas-actionref"
+    },
+    {
+      "member": "ActionRefDefinition.SourceExtensionTypeSpecified",
+      "reason": "BC COMPUTES this on an actionref and SymbolReference.json states it nowhere, so the render leaves it off (#3926). Same cause as the ActionDefinition entry of the same member: ControlGUID is a real GUID from BC's own emitter against the runner's zeroed one, and SourceExtensionType and HelpLink are publish-time facts about an installed extension, which the runner has no published-app pipeline to produce. Surfaced when the render started emitting actionrefs as ActionRefDefinition rather than ActionDefinition, which made the type agree and exposed the members under it (pageextension 2515 on every captured build, 2516 on 27.5). What invalidates this entry is a derivation or a scope call for these publish-time members, the same as for ActionDefinition.",
+      "issue": 3926,
+      "Doc": "docs/metadata-equivalence.md#deltas-actionref"
+    },
+    {
+      "member": "ActionRefDefinition.Visible",
+      "reason": "BC writes Visible=\"1\" on every measured actionref -- pageextensions 2515 and 2516, 5 documents over four builds -- while each symbol entry states no Properties at all, so the value is BC's own default for an actionref and nothing states it. The render leaves it off and BC's reader then answers its type default, 'true' (#3926). Writing \"1\" would rest a default rule on two members; what invalidates this entry is measuring that rule (an actionref stating Visible, or a BC emitter member that decides it).",
+      "issue": 3926,
+      "Doc": "docs/metadata-equivalence.md#deltas-actionref"
     },
     {
       "member": "ControlDefinition.#extensionIdField",

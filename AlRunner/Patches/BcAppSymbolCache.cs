@@ -496,7 +496,11 @@ internal static partial class BcAppSymbolCache
         // origins carried no DeclaredProperties, so every real pageextension rendered as before
         // while the fixture tests passed. #4505 fixed the walk, so a FURTHER member added here
         // re-keys on its own; the PARSE-change reason for bumping is unaffected.
-        Dictionary<string, string>? DeclaredProperties = null);
+        Dictionary<string, string>? DeclaredProperties = null,
+        // An actionref's stated TargetId, verbatim — the member id of the action it promotes,
+        // which BC writes as ActionRefDefinition's TargetID (#3926). Null for every member that
+        // states none, which is every member that is not an actionref.
+        int? ActionRefTargetId = null);
 
     /// <summary>
     /// One subpage PART control of a precompiled dependency page, as SymbolReference.json
@@ -1699,12 +1703,15 @@ internal static partial class BcAppSymbolCache
         // own Properties bag (#3926). Collected on the SAME recursion that names the members —
         // an added group nests its actions, and a nested member's properties are its own.
         var declaredByMember = new Dictionary<int, Dictionary<string, string>>();
+        var actionRefTargetIdByMember = new Dictionary<int, int>();
         void CollectDeclaredProperties(JsonElement node, string childKey)
         {
             if (node.TryGetProperty("Id", out var idProp) && idProp.TryGetInt32(out var id) && id != 0)
             {
                 var props = SymbolProperties(node);
                 if (props.Count > 0) declaredByMember[id] = props;
+                if (node.TryGetProperty("TargetId", out var tid) && tid.TryGetInt32(out var targetId))
+                    actionRefTargetIdByMember[id] = targetId;
             }
             if (node.TryGetProperty(childKey, out var children) && children.ValueKind == JsonValueKind.Array)
                 foreach (var child in children.EnumerateArray())
@@ -1718,7 +1725,8 @@ internal static partial class BcAppSymbolCache
                 if (!before.Contains(id))
                     origins[id] = new PageExtensionMemberOrigin(
                         isAction, anchor, changeKind, sequence++,
-                        declaredByMember.TryGetValue(id, out var declared) ? declared : null);
+                        declaredByMember.TryGetValue(id, out var declared) ? declared : null,
+                        actionRefTargetIdByMember.TryGetValue(id, out var targetId) ? targetId : null);
         }
 
         if (ext.TryGetProperty("ActionChanges", out var actionChanges) && actionChanges.ValueKind == JsonValueKind.Array)
