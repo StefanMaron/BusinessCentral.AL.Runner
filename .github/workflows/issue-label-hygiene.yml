@@ -109,10 +109,10 @@ jobs:
           # be told apart -- the only evaluated line either printed was
           # "Releasing #N", which both printed -- so pinning the cause took two
           # sightings and a timeline read. The line is the falsifiable record.
-          branch_issue=none; declared=0; state=unread; foreign_label=none; edit_rc=na
+          branch_issue=none; branch_agent=none; declared=0; state=unread; foreign_label=none; edit_rc=na
           decide() {
-            printf 'label-hygiene decision: %s pr=%s head=%s branch_issue=%s declared=%s state=%s foreign=%s edit_rc=%s\n' \
-              "$1" "$PR_NUMBER" "$PR_HEAD_REF" "$branch_issue" "$declared" \
+            printf 'label-hygiene decision: %s pr=%s head=%s branch_issue=%s branch_agent=%s declared=%s state=%s foreign=%s edit_rc=%s\n' \
+              "$1" "$PR_NUMBER" "$PR_HEAD_REF" "$branch_issue" "$branch_agent" "$declared" \
               "$state" "$foreign_label" "$edit_rc"
           }
 
@@ -128,6 +128,9 @@ jobs:
             exit 0
           fi
           branch_issue="$resolved"
+          # The identity is the segment the issue regex above already required,
+          # so it is always present here.
+          branch_agent="agent: $(printf '%s' "$PR_HEAD_REF" | cut -d/ -f2)"
 
           while IFS= read -r n; do
             if [ "$n" = "$branch_issue" ]; then
@@ -156,12 +159,17 @@ jobs:
             exit 0
           fi
 
-          # The PR's own agent: labels. An issue whose agent: labels are all in
-          # this set was claimed by the loop that opened this PR, so releasing it
-          # releases this PR's own claim. Any OTHER agent: label means a second
-          # loop is on that issue, and preservation comes first: the issue is
-          # left exactly as it is and the merge pass decides.
-          mine=$(printf '%s' "$PR_LABELS" | jq -r '.[] | select(startswith("agent:"))')
+          # The loop that opened this PR: its branch-prefix identity plus any
+          # agent: labels on the PR. An issue whose agent: labels are all in
+          # this set was claimed by that loop, so releasing it releases this
+          # PR's own claim. Any OTHER agent: label means a second loop is on
+          # that issue, and preservation comes first: the issue is left exactly
+          # as it is and the merge pass decides.
+          #
+          # The branch prefix is not optional: nothing requires an agent: label
+          # on the PR (impl-agent.md labels the ISSUE), and without it a PR
+          # carrying none read its own claim as foreign and left it claimed (#4525).
+          mine=$(printf '%s\n' "$branch_agent"; printf '%s' "$PR_LABELS" | jq -r '.[] | select(startswith("agent:"))')
           foreign=$(printf '%s' "$meta" | jq -r --arg mine "$mine" '
             ($mine | split("\n") | map(select(length > 0))) as $m
             | .labels[].name
