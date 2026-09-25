@@ -147,7 +147,30 @@ internal static class TestDataProvisioner
         // "the run touched", not "the backup holds": under the on-demand policy (#2262) a
         // table is only read when something asks for it, so these counts describe what this
         // suite actually pulled in. A small number here is the feature working, not a gap.
-        internal string Describe() =>
+        internal string Describe() => Describe(Log.Verbose);
+
+        /// <summary>#4565: one short line in the summary, carrying each skip/refusal/drop
+        /// count only when it is non-zero, because only those can explain a failure. Under
+        /// --verbose the full breakdown follows on its own line.</summary>
+        internal string Describe(bool verbose)
+        {
+            var notes = new List<string>();
+            if (TablesSkippedAmbiguous > 0)
+                notes.Add($"{TablesSkippedAmbiguous} skipped (a name no app id could select)");
+            if (TablesRefused > 0)
+                notes.Add($"{TablesRefused} refused (unsupported value types or unknown columns)");
+            if (TablesRefusedByReader > 0)
+                notes.Add($"{TablesRefusedByReader} refused by the backup reader");
+            if (ColumnsFromUninstalledApps > 0)
+                notes.Add($"{ColumnsFromUninstalledApps} extension column(s) dropped for apps this run does not install");
+            if (ColumnsNotInThisBuild > 0)
+                notes.Add($"{ColumnsNotInThisBuild} column(s) dropped that this build's AL tables have no field for");
+            var line = $"Test data: {RowsHydrated} rows loaded from {TablesHydrated} tables"
+                + (notes.Count > 0 ? "; " + string.Join(", ", notes) : string.Empty);
+            return verbose ? line + Environment.NewLine + DescribeDetail() : line;
+        }
+
+        internal string DescribeDetail() =>
             $"[test-data] loaded {RowsHydrated} row(s) in {TablesHydrated} table(s) this run touched, "
             + $"from '{Path.GetFileName(BackupPath)}' company '{Company}'; "
             + $"skipped {TablesSkippedAmbiguous} sharing a name no app id could select, "
@@ -418,6 +441,26 @@ internal static class TestDataProvisioner
         RecordPatches.ResetBackupRowProvenance();
     }
 
+    /// <summary>#4565: which company from which backup, in one line; the plan's counts and
+    /// the full path follow under --verbose. <paramref name="bcVersion"/> is null for an
+    /// explicit --test-data=PATH, whose BC build the runner does not know.</summary>
+    internal static IReadOnlyList<string> DescribeArm(
+        string backup, string company, Version? bcVersion,
+        int tablesInScope, int extendedTables, int skippedAmbiguous, bool verbose)
+    {
+        var lines = new List<string>
+        {
+            $"Test data: company '{company}' from {Path.GetFileName(backup)}"
+                + (bcVersion != null ? $" (BC {bcVersion.Major}.{bcVersion.Minor})" : string.Empty),
+        };
+        if (verbose)
+            lines.Add(
+                $"[test-data] backup '{backup}', company '{company}', {tablesInScope} table(s) in scope "
+                + $"({extendedTables} with table-extension data to merge, "
+                + $"{skippedAmbiguous} sharing a name no app id could select); loading on first touch.");
+        return lines;
+    }
+
     /// <summary>
     /// Resolve the backup, the company and the table plan, and install the on-demand loader.
     /// Reads no table rows: the first touch of a table does that. A no-op when --test-data
@@ -452,10 +495,11 @@ internal static class TestDataProvisioner
         var entries = BackupCatalog.ParseTables(tablesOutput);
 
         var plan = BuildPlan(entries, company, SymbolManifests(symbols));
-        Console.Error.WriteLine(
-            $"[test-data] backup '{backup}', company '{company}', {plan.Hydratable.Count} table(s) in scope "
-            + $"({plan.ExtendedTableNames.Count} with table-extension data to merge, "
-            + $"{plan.SkippedAmbiguous} sharing a name no app id could select); loading on first touch.");
+        foreach (var armLine in DescribeArm(
+                     backup, company,
+                     TestDataOptions.ExplicitBackupPath == null ? BcArtifacts.SelectedVersion : null,
+                     plan.Hydratable.Count, plan.ExtendedTableNames.Count, plan.SkippedAmbiguous, Log.Verbose))
+            Console.Error.WriteLine(armLine);
 
         // BEFORE any hydration: prove the reader is actually merging. A run that got this
         // wrong would hydrate every extended table with its extension fields blank and report

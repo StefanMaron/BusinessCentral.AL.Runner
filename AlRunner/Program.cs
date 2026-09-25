@@ -933,6 +933,11 @@ var deferredStartupLines = new List<Action>();
 AlRunner.Infrastructure.ExpectationManifest? expectations = null;
 {
     var expectationsDir = expectationsDirArg;
+    // #4561: the manifest is this repository's corpus mechanism, so a user app's default run
+    // must not hear about it. Printed when the caller asked about expectations by flag, or
+    // under --verbose.
+    var announceExpectations = AlRunner.Infrastructure.ExpectationsDirectoryResolution.ShouldAnnounce(
+        AlRunner.Log.Verbose, expectationsDirArg != null, expectationsRequireMatch);
     if (expectationsDir != null && !Directory.Exists(expectationsDir))
     {
         Console.Error.WriteLine($"--expectations: directory not found: {expectationsDir}");
@@ -952,7 +957,8 @@ AlRunner.Infrastructure.ExpectationManifest? expectations = null;
             // #2097: deferred — see `deferredStartupLines`'s declaration above. The message is
             // built now, so the closure prints exactly what this generation probed.
             var notFoundMessage = AlRunner.Infrastructure.ExpectationsDirectoryResolution.BuildNotFoundMessage(probeCwd, bundles.Count);
-            deferredStartupLines.Add(() => Console.Error.WriteLine(notFoundMessage));
+            if (announceExpectations)
+                deferredStartupLines.Add(() => Console.Error.WriteLine(notFoundMessage));
         }
     }
     if (expectationsDir != null)
@@ -967,7 +973,8 @@ AlRunner.Infrastructure.ExpectationManifest? expectations = null;
             // eventually flushed.
             var expectationsEntryCountForPrint = expectations.Entries.Count;
             var expectationsDirForPrint = expectationsDir;
-            deferredStartupLines.Add(() => Console.Error.WriteLine(
+            if (announceExpectations)
+                deferredStartupLines.Add(() => Console.Error.WriteLine(
                 $"[expectations] loaded {expectationsEntryCountForPrint} " +
                 (expectationsEntryCountForPrint == 1 ? "entry" : "entries") +
                 $" from {expectationsDirForPrint}"));
@@ -2021,8 +2028,10 @@ if (!provisionSubcommand)
             else
             {
                 Console.Error.WriteLine("[provision] test-toolkit apps missing — downloading...");
+                // #4564: one line per set on a continuing run; per-file lines under --verbose.
                 var rc = AlRunner.Provisioning.ArtifactDownloader.TestApps(
-                    full, testAppsOut, m => Console.Error.WriteLine($"[provision] {m}"));
+                    full, testAppsOut, AlRunner.Infrastructure.ProvisionProgressLog.Condense(
+                        m => Console.Error.WriteLine($"[provision] {m}"), AlRunner.Log.Verbose));
                 if (rc != 0)
                 {
                     Console.Error.WriteLine("[provision] test-toolkit download failed; cannot continue.");
@@ -2090,7 +2099,8 @@ if (!provisionSubcommand)
                 Console.Error.WriteLine("[provision] platform R2R apps missing — downloading...");
                 var rc = AlRunner.Provisioning.ArtifactDownloader.PlatformApps(
                     full, platformAppsOut, AlRunner.Infrastructure.BcArtifacts.SelectedCountry,
-                    m => Console.Error.WriteLine($"[provision] {m}"));
+                    AlRunner.Infrastructure.ProvisionProgressLog.Condense(
+                        m => Console.Error.WriteLine($"[provision] {m}"), AlRunner.Log.Verbose));
                 if (rc != 0)
                 {
                     Console.Error.WriteLine("[provision] platform-apps download failed; cannot continue.");
@@ -4694,6 +4704,7 @@ if (testFilter != null && !watchMode && !willResume && !carryIncomplete)
 // and as the "exitCode" field in --output-json, which reports the real outcome even
 // when the process itself exits 0 for JSON-only consumers.
 int computedExitCode = 0;
+bool anyTestFailedOrErrored = false;
 {
     int failed = 0, errored = 0, compileFail = 0, execFail = 0;
     // #2719: allResults, so a resumed run's exitCode field reports the RUN. Before this the
@@ -4718,6 +4729,7 @@ int computedExitCode = 0;
             else if (t.Outcome == TestOutcome.Error) errored++;
         }
     }
+    anyTestFailedOrErrored = failed + errored > 0;
     // The ladder is ordered by WHAT THE CODE ASSERTS, not by how alarming it sounds. Two
     // tiers, and the boundary between them is the whole design:
     //
@@ -4969,6 +4981,9 @@ if (!serverMode && !watchMode && !dapMode
     && AlRunner.Infrastructure.ExecutionSchedulerShutdown.DisposeIfRealized()
         == AlRunner.Infrastructure.ExecutionSchedulerShutdown.Outcome.Disposed)
     Console.Error.WriteLine("[shutdown] disposed BC ExecutionScheduler that a BC-internal path realized during the run (#2704)");
+
+// #4561: runner limitations that can only explain a failure are named only when a test failed.
+AlRunner.Infrastructure.FailureOnlyNotes.Flush(Console.Error, anyTestFailedOrErrored);
 
 // #3538: company initialization did not finish, so every test above ran against a company
 // real BC cannot produce — codeunit 2 "Company-Initialize" commits exactly once, at the end of
