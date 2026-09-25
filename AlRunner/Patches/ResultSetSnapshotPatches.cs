@@ -1,7 +1,6 @@
 // ResultSetSnapshotPatches — a Find over a database-backed table reads the rows as they were
 // when the find ran, not a live walk of the provider's AVL tree (#4678).
 using System.Runtime.CompilerServices;
-using Microsoft.Dynamics.Nav.Runtime;
 
 namespace AlRunner.Patches;
 
@@ -24,7 +23,7 @@ public static class ResultSetSnapshotPatches
 {
     private sealed class OpenWalks
     {
-        public readonly List<WeakReference<SnapshotCursor>> Cursors = new();
+        public readonly List<WeakReference<IDrainable>> Cursors = new();
     }
 
     private static readonly ConditionalWeakTable<object, OpenWalks> _openWalks = new();
@@ -32,8 +31,8 @@ public static class ResultSetSnapshotPatches
     /// <summary>Wraps a non-FirstOnly Find result over <paramref name="provider"/> so a later
     /// write to the provider cannot change what the walk yields. Identity for a provider that
     /// does not stand in for SQL.</summary>
-    internal static IEnumerable<ReadOnlyRecordBuffer> Wrap(object provider, IEnumerable<ReadOnlyRecordBuffer> rows)
-        => BlobStoreIsolationPatches.IsDatabaseBacked(provider) ? new SnapshotOnWrite(provider, rows) : rows;
+    internal static IEnumerable<T> Wrap<T>(object provider, IEnumerable<T> rows)
+        => BlobStoreIsolationPatches.IsDatabaseBacked(provider) ? new SnapshotOnWrite<T>(provider, rows) : rows;
 
     /// <summary>
     /// Cecil prepend on every <c>TempTableDataProvider</c> write (Insert, Modify, Delete,
@@ -43,7 +42,7 @@ public static class ResultSetSnapshotPatches
     public static void OnBeforeProviderWrite(object? provider)
     {
         if (provider == null || !_openWalks.TryGetValue(provider, out var walks)) return;
-        SnapshotCursor[] toDrain;
+        IDrainable[] toDrain;
         lock (walks)
         {
             toDrain = walks.Cursors
@@ -62,37 +61,39 @@ public static class ResultSetSnapshotPatches
         lock (walks) return walks.Cursors.Count(w => w.TryGetTarget(out _));
     }
 
-    private static void Register(object provider, SnapshotCursor cursor)
+    private static void Register(object provider, IDrainable cursor)
     {
         var walks = _openWalks.GetValue(provider, static _ => new OpenWalks());
         lock (walks)
         {
             walks.Cursors.RemoveAll(w => !w.TryGetTarget(out _));
-            walks.Cursors.Add(new WeakReference<SnapshotCursor>(cursor));
+            walks.Cursors.Add(new WeakReference<IDrainable>(cursor));
         }
     }
 
-    private static void Unregister(object provider, SnapshotCursor cursor)
+    private static void Unregister(object provider, IDrainable cursor)
     {
         if (!_openWalks.TryGetValue(provider, out var walks)) return;
         lock (walks)
             walks.Cursors.RemoveAll(w => !w.TryGetTarget(out var c) || ReferenceEquals(c, cursor));
     }
 
-    private sealed class SnapshotOnWrite : IEnumerable<ReadOnlyRecordBuffer>
+    private interface IDrainable { void Drain(); }
+
+    private sealed class SnapshotOnWrite<T> : IEnumerable<T>
     {
         private readonly object _provider;
-        private readonly IEnumerable<ReadOnlyRecordBuffer> _rows;
+        private readonly IEnumerable<T> _rows;
 
-        public SnapshotOnWrite(object provider, IEnumerable<ReadOnlyRecordBuffer> rows)
+        public SnapshotOnWrite(object provider, IEnumerable<T> rows)
         {
             _provider = provider;
             _rows = rows;
         }
 
-        public IEnumerator<ReadOnlyRecordBuffer> GetEnumerator()
+        public IEnumerator<T> GetEnumerator()
         {
-            var cursor = new SnapshotCursor(_provider, _rows.GetEnumerator());
+            var cursor = new SnapshotCursor<T>(_provider, _rows.GetEnumerator());
             Register(_provider, cursor);
             return cursor;
         }
@@ -100,20 +101,20 @@ public static class ResultSetSnapshotPatches
         System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
-    private sealed class SnapshotCursor : IEnumerator<ReadOnlyRecordBuffer>
+    private sealed class SnapshotCursor<T> : IEnumerator<T>, IDrainable
     {
         private readonly object _provider;
-        private IEnumerator<ReadOnlyRecordBuffer>? _live;
-        private Queue<ReadOnlyRecordBuffer>? _drained;
+        private IEnumerator<T>? _live;
+        private Queue<T>? _drained;
 
-        public SnapshotCursor(object provider, IEnumerator<ReadOnlyRecordBuffer> live)
+        public SnapshotCursor(object provider, IEnumerator<T> live)
         {
             _provider = provider;
             _live = live;
         }
 
-        public ReadOnlyRecordBuffer Current { get; private set; } = null!;
-        object System.Collections.IEnumerator.Current => Current;
+        public T Current { get; private set; } = default!;
+        object System.Collections.IEnumerator.Current => Current!;
 
         public bool MoveNext()
         {
@@ -141,7 +142,7 @@ public static class ResultSetSnapshotPatches
             lock (this)
             {
                 if (_live == null) return;
-                var q = new Queue<ReadOnlyRecordBuffer>();
+                var q = new Queue<T>();
                 while (_live.MoveNext()) q.Enqueue(_live.Current);
                 _drained = q;
                 _live.Dispose();
