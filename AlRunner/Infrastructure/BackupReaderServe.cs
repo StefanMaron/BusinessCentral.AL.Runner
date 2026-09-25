@@ -20,6 +20,7 @@ using System.Buffers;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 
 namespace AlRunner.Infrastructure;
@@ -236,7 +237,8 @@ internal static class BackupReaderServe
         foreach (var h in headers.EnumerateArray()) names.Add(h.GetString() ?? "");
 
         var buffer = new ArrayBufferWriter<byte>();
-        using (var w = new Utf8JsonWriter(buffer))
+        // Relaxed: a header like "Größe" stays as the CLI prints it rather than \u-escaped.
+        using (var w = new Utf8JsonWriter(buffer, new JsonWriterOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping }))
         {
             w.WriteStartArray();
             if (root.TryGetProperty("rows", out var rows) && rows.ValueKind == JsonValueKind.Array)

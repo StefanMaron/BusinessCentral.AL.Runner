@@ -168,6 +168,17 @@ public sealed class BackupReaderServeTests
     }
 
     [Fact]
+    public void ACellIsPassedThroughAsTheReadersOwnBytes_NotReEscaped()
+    {
+        // The CLI prints "€" as UTF-8; re-serialising the cell escaped it to \u20AC, which the
+        // W1 differential caught on Currency. Same value once parsed, different text — so the
+        // cell is copied, not re-written: an escape the reader chose ("\/") survives too.
+        var text = BackupReaderServe.TranslateReadResponse(
+            "{\"id\":1,\"ok\":true,\"headers\":[\"Symbol\",\"Path\"],\"rows\":[[\"€\",\"a\\/b\"]]}", "read Currency");
+        Assert.Equal("[{\"Symbol\":\"€\",\"Path\":\"a\\/b\"}]", text);
+    }
+
+    [Fact]
     public void EmptyTableTranslatesToAnEmptyArray()
     {
         var text = BackupReaderServe.TranslateReadResponse(
