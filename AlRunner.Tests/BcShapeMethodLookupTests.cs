@@ -345,7 +345,7 @@ public sealed class BcShapeMethodLookupTests
     /// it as sites are converted; it may never rise. On a mismatch the assertion prints the
     /// per-file breakdown, which is the number to put here.
     /// </summary>
-    private const int NameOnlyBcTypedMethodLookups = 67;
+    private const int NameOnlyBcTypedMethodLookups = 64;
 
     /// <summary>The floor is not cosmetic: a scan that silently narrowed to a handful of files
     /// would report a small number and read as progress. AlRunner/ holds ~195 sources.</summary>
