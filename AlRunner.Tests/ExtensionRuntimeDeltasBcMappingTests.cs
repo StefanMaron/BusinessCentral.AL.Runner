@@ -89,38 +89,17 @@ public sealed class ExtensionRuntimeDeltasBcMappingTests
     }
 
     /// <summary>
-    /// The runner's pageextension <c>ControlGUID</c> is what BC's own
-    /// <c>MetadataEmitterHelper.GeneratePageControlGuidString(controlId, objectId,
-    /// SymbolKind.PageExtension)</c> answers, over ids chosen to reach every byte of the encoding:
-    /// both 16-bit halves, the high byte's sign bit, and 0, which BC special-cases.
+    /// The render's <c>ControlGUID</c> comes from BC's own
+    /// <c>MetadataEmitterHelper.GeneratePageControlGuidString</c>, bound on this build. Expected
+    /// values: two literals copied from BC's captured documents, and member id 0, which BC's
+    /// method special-cases (third group <c>0001</c>) and no captured document reaches.
     /// </summary>
-    [SkippableTheory]
-    [InlineData(2515, 1174679510)]
-    [InlineData(774, 191117080)]
-    [InlineData(9862, 2032512200)]
-    [InlineData(2147483647, -1)]
-    [InlineData(1, int.MinValue)]
-    [InlineData(324, 0)]
-    public void The_runners_ControlGUID_agrees_with_BCs_own_emitter(int extensionId, int memberId)
-    {
-        var dll = Path.Combine(AlRunner.Infrastructure.BcArtifacts.ServiceTierDir,
-            "Microsoft.Dynamics.Nav.CodeAnalysis.dll");
-        Skip.IfNot(File.Exists(dll),
-            $"Microsoft.Dynamics.Nav.CodeAnalysis.dll is not on this box ({dll}), so there is no " +
-            "oracle to compare against and this test would assert nothing.");
-
-        var ca = Assembly.LoadFrom(dll);
-        var kind = ca.GetType("Microsoft.Dynamics.Nav.CodeAnalysis.SymbolKind", throwOnError: true)!;
-        var method = ca.GetType("Microsoft.Dynamics.Nav.CodeAnalysis.Emit.MetadataEmitterHelper", throwOnError: true)!
-            .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
-            .Single(m => m.Name == "GeneratePageControlGuidString");
-
-        // Every parameter supplied explicitly: MethodInfo.Invoke does not apply C# defaults.
-        var bc = (string)method.Invoke(null, new object?[]
-            { memberId, extensionId, Enum.Parse(kind, "PageExtension"), "B" })!;
-
-        Assert.Equal(bc, RecordPatches.PageExtensionControlGuidForTests(extensionId, memberId));
-    }
+    [Theory]
+    [InlineData(2515, 1174679510, "{000009d3-2fd6-0000-1046-0400836bd2d2}")]
+    [InlineData(774, 191117080, "{00000306-3718-0000-100b-6400836bd2d2}")]
+    [InlineData(324, 0, "{00000144-0000-0001-1000-0000836bd2d2}")]
+    public void The_ControlGUID_is_BCs_own_emitter_answer(int extensionId, int memberId, string expected)
+        => Assert.Equal(expected, RecordPatches.PageExtensionControlGuidForTests(extensionId, memberId));
 
     /// <summary>
     /// A word from neither vocabulary — a sibling member's name — is NOT a container, on either
