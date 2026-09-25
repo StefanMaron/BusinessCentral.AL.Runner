@@ -38,6 +38,8 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **testpage:** a row the page's own AL saved is modified, not re-inserted
+- **guards:** stop pinning growing guard counts that two clean-merging PRs can drift
 - **testpage:** a new row raises OnAfterGetCurrRecord, and a row that trigger hands over is modified, not re-inserted
 - **metadata:** emit the constant defaults BC writes for unstated delta members
 - **metadata:** derive by-value Text/Code length, var Interface and local InherentPermissions methods
