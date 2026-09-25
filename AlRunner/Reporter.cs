@@ -500,9 +500,31 @@ public static class Reporter
     /// the only place a default run names a gap. The entries are the discovery messages
     /// verbatim — their wording is DependencyResolver's / ProvisionGapLog's, not this method's.
     /// </summary>
-    public static void PrintActionNeeded(IReadOnlyList<BucketResult> buckets, TextWriter w)
+    public static void PrintActionNeeded(IReadOnlyList<BucketResult> buckets, TextWriter w) =>
+        PrintActionNeededEntries(ActionNeededEntries(buckets), w);
+
+    /// <summary>
+    /// For every early `return 1` in the bundle loop (#4636): the closing block never prints on
+    /// those paths, so a deferred gap — possibly the abort's cause — would be printed nowhere.
+    /// Writes to stderr what is pending: finished buckets' gaps plus this bundle's so far.
+    /// </summary>
+    public static void PrintActionNeededOnAbort(
+        IReadOnlyList<BucketResult> finished, IReadOnlyList<string> bundleGaps) =>
+        PrintActionNeededOnAbort(finished,
+            bundleGaps.Concat(AlRunner.Infrastructure.ProvisionGapLog.Collected).ToList(),
+            deferred: !AlRunner.Infrastructure.ProvisionGapLog.WriteAtDiscovery, Console.Error);
+
+    /// <summary>Nothing when <paramref name="deferred"/> is false: every gap was written at discovery.</summary>
+    internal static void PrintActionNeededOnAbort(
+        IReadOnlyList<BucketResult> finished, IReadOnlyList<string> pending, bool deferred, TextWriter w)
     {
-        var entries = ActionNeededEntries(buckets);
+        if (!deferred) return;
+        PrintActionNeededEntries(
+            ActionNeededEntries(finished.SelectMany(b => b.ProvisionGaps ?? Array.Empty<string>()).Concat(pending)), w);
+    }
+
+    private static void PrintActionNeededEntries(IReadOnlyList<string> entries, TextWriter w)
+    {
         if (entries.Count == 0) return;
         w.WriteLine();
         w.WriteLine($"Action needed ({entries.Count}):");
@@ -518,11 +540,14 @@ public static class Reporter
     /// are not part of the key. The whole first line, not just the app: a floor gap names the
     /// dependent AND the floor, and two different floors are two things to fix.
     /// </summary>
-    internal static IReadOnlyList<string> ActionNeededEntries(IReadOnlyList<BucketResult> buckets)
+    internal static IReadOnlyList<string> ActionNeededEntries(IReadOnlyList<BucketResult> buckets) =>
+        ActionNeededEntries(buckets.SelectMany(b => b.ProvisionGaps ?? Array.Empty<string>()));
+
+    private static IReadOnlyList<string> ActionNeededEntries(IEnumerable<string> gaps)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var result = new List<string>();
-        foreach (var g in buckets.SelectMany(b => b.ProvisionGaps ?? Array.Empty<string>()))
+        foreach (var g in gaps)
         {
             var firstLine = g.Split('\n')[0].TrimEnd('\r');
             if (seen.Add(firstLine)) result.Add(g);

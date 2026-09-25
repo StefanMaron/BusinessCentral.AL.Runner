@@ -2959,6 +2959,7 @@ foreach (var bundle in bundles)
                 if (stdoutSilenced) { Console.SetOut(savedOut); Console.SetError(savedErr); }
                 Console.Error.WriteLine(
                     $"FATAL: dependency compile failed — cannot continue. {ex.Message}");
+                Reporter.PrintActionNeededOnAbort(results, bundleProvisionGaps);
                 return 1;
             }
             catch (AlRunner.Infrastructure.BcAppSymbolReadException ex)
@@ -2973,6 +2974,7 @@ foreach (var bundle in bundles)
                 if (stdoutSilenced) { Console.SetOut(savedOut); Console.SetError(savedErr); }
                 Console.Error.WriteLine(
                     $"FATAL: dependency symbols unreadable — cannot continue. {ex.Message}");
+                Reporter.PrintActionNeededOnAbort(results, bundleProvisionGaps);
                 return 1;
             }
             catch (AlRunner.Infrastructure.MissingDependencyException ex)
@@ -2986,6 +2988,7 @@ foreach (var bundle in bundles)
                 Console.Error.WriteLine();
                 Console.Error.WriteLine(ex.ToDetailedMessage(bcVer));
                 Console.Error.WriteLine();
+                Reporter.PrintActionNeededOnAbort(results, bundleProvisionGaps);
                 return 1;
             }
             catch (AlRunner.Infrastructure.AppIdCollisionException ex)
@@ -2999,6 +3002,7 @@ foreach (var bundle in bundles)
                 Console.Error.WriteLine();
                 Console.Error.WriteLine($"FATAL: {ex.Message}");
                 Console.Error.WriteLine();
+                Reporter.PrintActionNeededOnAbort(results, bundleProvisionGaps);
                 return 1;
             }
             catch (Exception ex)
@@ -3263,6 +3267,7 @@ foreach (var bundle in bundles)
             Console.Error.WriteLine();
             Console.Error.WriteLine($"FATAL: {ex.Message}");
             Console.Error.WriteLine();
+            Reporter.PrintActionNeededOnAbort(results, bundleProvisionGaps);
             return 1;
         }
         bool needCompile = reusedAsm == null;
@@ -4043,6 +4048,7 @@ foreach (var bundle in bundles)
                         Console.Error.WriteLine();
                         Console.Error.WriteLine($"FATAL: {ex.Message}");
                         Console.Error.WriteLine();
+                        Reporter.PrintActionNeededOnAbort(results, bundleProvisionGaps);
                         return 1;
                     }
                 }

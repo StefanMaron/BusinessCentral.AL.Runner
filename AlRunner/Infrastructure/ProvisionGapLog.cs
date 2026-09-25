@@ -22,7 +22,8 @@
 //   Every gap reaches the "Action needed" block right before the Result line, once per app —
 //   printing each at discovery too repeated it per dependency edge (17 blocks for 7 apps).
 //   --verbose still prints it at discovery. Nothing is dropped: every bucket, including one
-//   that failed to compile or execute, carries its gaps to that block. A run that prints no
+//   that failed to compile or execute, carries its gaps to that block, and an abort out of the
+//   bundle loop prints them first (Reporter.PrintActionNeededOnAbort, #4636). A run that prints no
 //   such block (--output-json, --server) keeps the discovery write: see DeferToActionNeeded.
 namespace AlRunner.Infrastructure;
 

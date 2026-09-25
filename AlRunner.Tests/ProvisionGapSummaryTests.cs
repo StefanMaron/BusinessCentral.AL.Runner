@@ -155,4 +155,68 @@ public sealed class ProvisionGapSummaryTests
         Assert.DoesNotContain("Library Assert", w.ToString());
         Assert.DoesNotContain("Provisioning gaps", w.ToString());
     }
+    // ── #4636: a run that aborts in the bundle loop never reaches the closing block ──
+
+    private static string OnAbort(bool deferred, IReadOnlyList<BucketResult> finished, params string[] pending)
+    {
+        var w = new StringWriter();
+        Reporter.PrintActionNeededOnAbort(finished, pending, deferred, w);
+        return w.ToString();
+    }
+
+    /// <summary>
+    /// An abort prints what was deferred: an earlier bundle's gap AND the aborting bundle's own,
+    /// one entry per app, in the same block the closing path would have printed.
+    /// </summary>
+    [Fact]
+    public void OnAbort_Deferred_PrintsEarlierBundlesGapsAndThisBundlesOwn()
+    {
+        var output = OnAbort(true, new[] { Bucket("/bundle-a", new[] { AnyGap }) }, AssertViaEdgeA, AssertViaEdgeB);
+
+        Assert.Contains("Action needed (2):", output);
+        Assert.Equal(1, Occurrences(output, "Microsoft/Any v28.1.49838.55128"));
+        Assert.Equal(1, Occurrences(output, "Microsoft/Library Assert v28.1.49838.55128"));
+    }
+
+    /// <summary>Negative: gaps already written at discovery (--verbose, --server, --output-json) are not repeated.</summary>
+    [Fact]
+    public void OnAbort_NotDeferred_PrintsNothing()
+    {
+        Assert.Equal("", OnAbort(false, new[] { Bucket("/bundle-a", new[] { AnyGap }) }, AssertViaEdgeA));
+    }
+
+    [Fact]
+    public void OnAbort_Deferred_NoGaps_PrintsNothing()
+    {
+        Assert.Equal("", OnAbort(true, Array.Empty<BucketResult>()));
+    }
+
+    /// <summary>
+    /// Wiring: every `return 1;` between the bundle's gap list and its BucketResult is an abort
+    /// that skips the closing block, so each must print the pending gaps first. Zero sites found
+    /// means the anchors moved, not that the loop is clean.
+    /// </summary>
+    [Fact]
+    public void EveryEarlyReturnInTheBundleLoop_PrintsThePendingGapsFirst()
+    {
+        var programCs = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory, "..", "..", "..", "..", "AlRunner", "Program.cs"));
+        var lines = File.ReadAllLines(programCs);
+        int start = Array.FindIndex(lines, l => l.Contains("var bundleProvisionGaps = new List<string>();"));
+        int end = start < 0 ? -1 : Array.FindIndex(lines, start, l => l.Contains("results.Add(new BucketResult(bundleAbs"));
+        Assert.True(start >= 0 && end > start, $"bundle-loop anchors not found in {programCs} (start={start}, end={end})");
+
+        var unguarded = new List<int>();
+        int sites = 0;
+        for (int i = start + 1; i < end; i++)
+        {
+            if (lines[i].Trim() != "return 1;") continue;
+            sites++;
+            if (lines[i - 1].Trim() != "Reporter.PrintActionNeededOnAbort(results, bundleProvisionGaps);")
+                unguarded.Add(i + 1);
+        }
+        Assert.True(sites > 0, "no `return 1;` found in the bundle loop: the scan measured nothing");
+        Assert.True(unguarded.Count == 0,
+            $"early return(s) at Program.cs line(s) {string.Join(", ", unguarded)} drop deferred provisioning gaps (#4636)");
+    }
 }
