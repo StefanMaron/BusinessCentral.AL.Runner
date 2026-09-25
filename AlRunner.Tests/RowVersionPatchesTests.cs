@@ -344,6 +344,24 @@ public sealed class RowVersionPatchesTests
         Assert.Null(buffer[0]);
     }
 
+    // ── #4680: the SQL stand-in buffers its result sets, as SQL's provider does ──
+    // Without the buffer, the version bump above invalidates the MODIFYING record's own result,
+    // and Find() on a record that moved itself out of its filter answers false (corpus 60367).
+
+    [Fact]
+    public void ShouldResultSetBufferRows_DatabaseBackedProvider_IsTrue()
+    {
+        var provider = MarkDatabaseBackedProvider();
+        Assert.True(RowVersionPatches.ShouldResultSetBufferRows(provider));
+    }
+
+    [Fact]
+    public void ShouldResultSetBufferRows_TemporaryProvider_KeepsBcsFalse()
+    {
+        Assert.False(RowVersionPatches.ShouldResultSetBufferRows(new object()));
+        Assert.False(RowVersionPatches.ShouldResultSetBufferRows(null));
+    }
+
     // ── Guard clauses stay quiet: nothing to stamp, no reflection even attempted ──
 
     [Fact]

@@ -220,6 +220,21 @@ public static partial class RowVersionPatches
         _pItem!.SetValue(pending.Buffer, pending.Previous, new object[] { pending.Index });
     }
 
+    /// <summary>
+    /// Replaces TempTableDataProvider.get_ShouldResultSetBufferRows. True for the SQL stand-in,
+    /// BC's own false for a `temporary` table.
+    ///
+    /// <para>Observably equivalent: a database-backed table lives in SQL on real BC, whose
+    /// provider inherits DataProvider's true. The flag decides one thing AL can see: after a
+    /// Modify bumps the table version (#4678), ResultSetEnumerator.UpdateCurrentRowAndClone keeps
+    /// the modifying record's own result valid only if ResultSet.TryUpdateAtIndex has a buffered
+    /// row to overwrite. Without it, Find() on a record that modified itself out of its own filter
+    /// answers false; BC finds it (corpus 60367 OwnFilter_*, Base Application test 134932
+    /// MakeTwoMultilineDocumentsOutOfBalanceByMovingToThirdDocument).</para>
+    /// </summary>
+    public static bool ShouldResultSetBufferRows(object? provider)
+        => BlobStoreIsolationPatches.IsDatabaseBacked(provider);
+
     private static object NextRowVersion()
     {
         _mCreate ??= typeof(Microsoft.Dynamics.Nav.Runtime.NavBigInteger).GetMethod(

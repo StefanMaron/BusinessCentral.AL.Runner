@@ -963,6 +963,14 @@ public static partial class NclCecilRewrite
                     H(rowVersion, "OnModifyOutputBuilt"),
                     argSlots: 1); // oldRecord — the buffer OnBeforeModify stamped
 
+                // That version bump also reaches the MODIFYING record's own result set; BC keeps
+                // it valid only by writing the output into the set's row buffer, which exists
+                // only when the provider asks for buffering. The SQL provider does; the SQL
+                // stand-in answers TempTableDataProvider's false. Answer as SQL for it.
+                ReplaceBodyWithHelper(nclMod,
+                    FindNclMethod(nclMod, Rt + "TempTableDataProvider", "get_ShouldResultSetBufferRows", 0),
+                    H(rowVersion, "ShouldResultSetBufferRows"));
+
                 // ── Rename store-aliasing boundary for `temporary` records (issue #1765) ──
                 // A temporary record's BLOB committed with Modify() is LOST across a
                 // subsequent Rename() on real BC (corpus 60944, green on BC 27.5/28.3) —
