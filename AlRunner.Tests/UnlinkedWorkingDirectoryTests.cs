@@ -127,8 +127,9 @@ public sealed class UnlinkedWorkingDirectoryTests
             $" from {Path.Combine(RepoRoot, "tests", "expectations")}", output, StringComparison.Ordinal);
         Assert.True(exit == 0 && output.Contains("passed 1 ", StringComparison.Ordinal),
             $"the run must complete from an unlinked working directory:\n{output}");
-        // The bundle label falls back to the absolute path.
-        Assert.Contains($"[1/1] {FixtureDir} ", output, StringComparison.Ordinal);
+        // The display path falls back to the absolute path; the progress line prints its last
+        // segment (#4562), which is still read from that fallback.
+        Assert.Contains($"[1/1] {Path.GetFileName(Path.TrimEndingDirectorySeparator(FixtureDir))} — ", output, StringComparison.Ordinal);
     }
 
     /// <summary>
