@@ -378,11 +378,11 @@ public static partial class BcRuntime
     {
         if (!disposing) return;
 
-        // BC disposes a local TestPage when its procedure returns, and that teardown flushes the
-        // row the page is still holding — raising if the table refuses it (corpus 60045 "IPF
-        // Tests", DelayedCard_DuplicateKey_OK_RaisesWhenThePageGoesOutOfScope; #4624). The scope
+        // BC's teardown of a local TestPage, when its procedure returns, inserts the new row the
+        // page still holds and raises if the table refuses it (corpus 60045 "IPF Tests",
+        // DelayedCard_DuplicateKey_OK_RaisesWhenThePageGoesOutOfScope; #4624). The scope
         // bookkeeping below must still run, so the error is rethrown only after it.
-        var testPageTeardownError = DisposeLocalTestPages(self);
+        var testPageTeardownError = FlushLocalTestPagesNewRows(self);
 
         _navMethodScopeDepth = Math.Max(0, _navMethodScopeDepth - 1);
 
@@ -407,13 +407,17 @@ public static partial class BcRuntime
     }
 
     /// <summary>
-    /// Dispose each TestPage declared as a local of this scope — a NavTestPageHandle direct tree child, as
-    /// <see cref="UnbindLocalManualSubscriptions"/> finds local codeunits. Only TestPage handles
-    /// are touched, so the no-cascade rule above still holds for every other value.
-    /// Returns the first teardown error for the caller to rethrow.
+    /// Insert the pending new row of each TestPage declared as a local of this scope — a
+    /// NavTestPageHandle direct tree child, found as <see cref="UnbindLocalManualSubscriptions"/>
+    /// finds local codeunits. Returns the first error for the caller to rethrow.
+    ///
+    /// <para>Only the pending INSERT, not a full Dispose and not the pending Modify. The insert at
+    /// teardown is what corpus 60045 measured. A Modify at teardown is not: corpus 60514
+    /// AWriteAfterARefusedOneTracesFromTheRestoredBuffer leaves a page whose row a rolled-back
+    /// insert removed, is green on every leg, and fails here if teardown flushes its Modify.</para>
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    internal static System.Runtime.ExceptionServices.ExceptionDispatchInfo? DisposeLocalTestPages(object? self)
+    internal static System.Runtime.ExceptionServices.ExceptionDispatchInfo? FlushLocalTestPagesNewRows(object? self)
     {
         if (self == null) return null;
         if (_fTreeObjTree == null || _fTreeHandlerFirstChildBase == null ||
@@ -435,7 +439,7 @@ public static partial class BcRuntime
         System.Runtime.ExceptionServices.ExceptionDispatchInfo? first = null;
         foreach (var page in pages)
         {
-            try { ((IDisposable)page).Dispose(); }
+            try { NavTestPageBase_FlushPendingNewRow(page.Target); }
             catch (Exception ex) { first ??= System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex); }
         }
         return first;
