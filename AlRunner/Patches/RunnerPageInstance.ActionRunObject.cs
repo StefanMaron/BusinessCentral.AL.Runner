@@ -229,29 +229,13 @@ internal sealed partial class RunnerPageInstance
     /// <summary>
     /// Run a <c>RunObject = Codeunit</c> target the way BC's <c>InvokeCodeUnitAction</c> does:
     /// <c>Codeunit.Run</c> on the HOST's current row, whether or not <c>RunPageOnRec</c> is
-    /// declared (corpus codeunit 60559: both arms measure the host's row on all eight cloud
-    /// legs). BC hands over <c>NavBindingManager.GetRecContext()</c> — a snapshot of the row,
-    /// not the page's live cursor — so the codeunit gets a copy here too, and whatever it does
-    /// to its <c>Rec</c>'s filters or position cannot move the TestPage under the test.
+    /// declared (corpus codeunit 60559). The codeunit is handed the host's OWN record, not a
+    /// copy: a codeunit moving or resetting its <c>Rec</c> moves the host with it, and its
+    /// <c>Modify</c> is what the host then shows (corpus codeunit 60606, every cloud leg of
+    /// corpus PR 410). Trap: an <c>ALCopy</c> here is the defect #4589 fixed twice.
     /// </summary>
     private void RunTargetCodeunit(ActionRunTarget target)
-    {
-        NavRecord? record = null;
-        if (_record != null)
-        {
-            var temporary = _record.IsTemporary;
-            record = TestPageFactory.TryBuildBlankRecord(_owner, _record.TableID, temporary, out var why)
-                ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                    $"TestPage action RunObject = Codeunit {Describe(target)} on page {_pageId}",
-                    $"not-yet-implemented — the runner could not build a record of the host's "
-                    + $"table {_record.TableID} to hand the codeunit the host's row ({why})");
-            // shareTable only for a temporary host: a temporary copy must see the host's rows,
-            // and BC refuses shareTable: true unless both records are temporary.
-            record.ALCopy(_record, temporary);
-        }
-
-        BcRuntime.NavCodeunit_RunCodeunit(Microsoft.Dynamics.Nav.Types.DataError.ThrowError, target.ObjectId, record);
-    }
+        => BcRuntime.NavCodeunit_RunCodeunit(Microsoft.Dynamics.Nav.Types.DataError.ThrowError, target.ObjectId, _record);
 
     /// <summary>
     /// Open <paramref name="pageId"/> through BC's own <c>NavForm.RunAsync</c> /
