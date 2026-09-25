@@ -53,9 +53,14 @@ public static class BlobStoreIsolationPatches
     public static bool MarkDatabaseBacked(object? dataAccess)
     {
         if (dataAccess == null) return false;
+        // BC's DataAccess declares DataProvider, so a missing property is a moved shape; answering
+        // "not database-backed" would silently re-open the #1751 leak. A throwing factory caches nothing.
         var provider = _dataProviderProps.GetOrAdd(dataAccess.GetType(), static t =>
-                t.GetProperty("DataProvider", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
-            ?.GetValue(dataAccess);
+                t.GetProperty("DataProvider", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                ?? throw new BcShapeGapException(
+                    "BLOB isolation (database-backed provider registry)", $"{t.Name}.DataProvider",
+                    "property not found — BC's DataAccess.DataProvider moved"))
+            .GetValue(dataAccess);
         if (provider == null) return false;
         // GetDataAccessForTable runs per Record construction and returns the same cached
         // DataAccess every time. Look before writing: ConditionalWeakTable.AddOrUpdate on an
@@ -66,7 +71,7 @@ public static class BlobStoreIsolationPatches
         return true;
     }
 
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, PropertyInfo?> _dataProviderProps = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, PropertyInfo> _dataProviderProps = new();
 
     /// <summary>
     /// Cecil prepend on TempTableDataProvider.Insert. Latches whether the row about

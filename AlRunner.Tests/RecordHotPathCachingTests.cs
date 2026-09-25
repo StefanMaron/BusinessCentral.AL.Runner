@@ -52,6 +52,22 @@ public sealed class RecordHotPathCachingTests
         Assert.False(BlobStoreIsolationPatches.IsDatabaseBacked(new FakeProvider()));
     }
 
+    private sealed class DataAccessWithoutProvider { }
+
+    [Fact]
+    public void MarkDatabaseBacked_RefusesADataAccessWithNoDataProviderProperty()
+    {
+        // BC's DataAccess declares DataProvider; a type without it is a moved shape, not a
+        // temporary table, so it must refuse rather than read as "not database-backed".
+        var ex = Assert.Throws<AlRunner.Infrastructure.BcShapeGapException>(
+            () => BlobStoreIsolationPatches.MarkDatabaseBacked(new DataAccessWithoutProvider()));
+        Assert.Contains("DataAccessWithoutProvider.DataProvider", ex.Message);
+
+        // The refusal is not cached as an answer: a second call refuses again.
+        Assert.Throws<AlRunner.Infrastructure.BcShapeGapException>(
+            () => BlobStoreIsolationPatches.MarkDatabaseBacked(new DataAccessWithoutProvider()));
+    }
+
     [Fact]
     public void SimpleName_IsReadOncePerAssembly_AndMatchesGetName()
     {

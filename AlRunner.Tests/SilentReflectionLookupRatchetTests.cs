@@ -102,7 +102,9 @@ public sealed class SilentReflectionLookupRatchetTests
     // is the guard's own answer on the merge tree, not a subtraction: a conversion of this shape
     // may legitimately move the count by less than the number of sites converted (test 15), so
     // the number comes from running it.
-    private const int Baseline = 120;
+    // 120 -> 119: BlobStoreIsolationPatches.MarkDatabaseBacked's DataProvider lookup now refuses
+    // with a BcShapeGapException (#4487).
+    private const int Baseline = 119;
 
     // ── The assertions ──────────────────────────────────────────────────────────────────
 
@@ -197,8 +199,7 @@ public sealed class SilentReflectionLookupRatchetTests
         ("AlRunner/Patches/AlCompilerStreamPatches.cs", "tree?.GetType()", "GetProperty", "\"Session\"", 1),
         // ApplicationObjectBasePatches.cs — 1
         ("AlRunner/Patches/ApplicationObjectBasePatches.cs", "self.GetType()", "GetField", "\"executePermissionsValidated\"", 1),
-        // BlobStoreIsolationPatches.cs — 4
-        ("AlRunner/Patches/BlobStoreIsolationPatches.cs", "dataAccess.GetType()", "GetProperty", "\"DataProvider\"", 1),
+        // BlobStoreIsolationPatches.cs — 3 (DataProvider converted to `?? throw` by #4487)
         ("AlRunner/Patches/BlobStoreIsolationPatches.cs", "field?.GetType()", "GetProperty", "\"FieldNclType\"", 1),
         ("AlRunner/Patches/BlobStoreIsolationPatches.cs", "mrbType", "GetProperty", "\"FieldCount\"", 1),
         ("AlRunner/Patches/BlobStoreIsolationPatches.cs", "mrbType", "GetProperty", "\"MetaTable\"", 1),
