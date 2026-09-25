@@ -12,8 +12,12 @@ instant from the payload's `cwd`.
 
 Blocks (exit 2) only the MAIN session: a payload carrying `agent_type` is a subagent
 dispatching its own helper, and a helper inheriting that agent's own worktree is
-correct. The per-call escape is the marker `dispatch:allow-worktree-cwd` in the
-prompt, for a dispatch that is deliberately meant to work in that tree.
+correct. Also allowed without the escape: a dispatch requesting its own worktree
+(`isolation: "worktree"`), which does not inherit the cwd; and a session LAUNCHED in
+that worktree (Claude Code's `--worktree`), recognised by `$CLAUDE_PROJECT_DIR`
+naming the same `.claude/worktrees/<name>` -- the tree is the session's own, not
+another loop's. The per-call escape is the marker `dispatch:allow-worktree-cwd` in
+the prompt, for any other dispatch deliberately meant to work in that tree.
 
 Tested by tools/test_agent_workflow_hooks.py (pr-gate.yml globs `tools/test_*.py`).
 """
@@ -34,7 +38,10 @@ WORKTREE = re.compile(r'^(?P<root>.*?)[\\/]\.claude[\\/]worktrees[\\/](?P<name>[
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
-    except Exception:
+    except Exception as exc:
+        # Fail open (a payload-format change must not refuse every dispatch), but say so.
+        print(f"refuse-dispatch-from-worktree: could not read the hook payload "
+              f"({exc.__class__.__name__}); not checking this dispatch.", file=sys.stderr)
         return ALLOW
     if payload.get("tool_name") not in DISPATCH_TOOLS:
         return ALLOW
@@ -43,9 +50,14 @@ def main() -> int:
     tool_input = payload.get("tool_input") or {}
     if ESCAPE in str(tool_input.get("prompt") or ""):
         return ALLOW
+    if str(tool_input.get("isolation") or "").strip().lower() == "worktree":
+        return ALLOW
     cwd = str(payload.get("cwd") or "") or os.getcwd()
     m = WORKTREE.match(cwd)
     if not m:
+        return ALLOW
+    launched = WORKTREE.match(os.environ.get("CLAUDE_PROJECT_DIR", ""))
+    if launched and launched.group("name") == m.group("name"):
         return ALLOW
     root = m.group("root") or "/"
     print(
@@ -55,7 +67,8 @@ def main() -> int:
         f"a commit made there lands on that loop's branch (#3014), and a reviewer's "
         f"mutate-and-restore edits the branch it is judging.\n"
         f"Fix: `cd {root}` (a neutral checkout), then dispatch again.\n"
-        f"If this dispatch is MEANT to work in that tree, put `{ESCAPE}` in the prompt.",
+        f"If this dispatch is MEANT to work in that tree, put `{ESCAPE}` in the prompt, "
+        f"or dispatch with `isolation: \"worktree\"`.",
         file=sys.stderr)
     return BLOCK
 

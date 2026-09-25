@@ -74,7 +74,7 @@ verdict is about (#4534). If the checkout you land in is stale, preflight refuse
 **Your scratch files go under `tools/agent_scratchpad.py ... path <file>`, never at the
 scratchpad root** — a shared `review.md` there once carried another reviewer's verdict onto the
 wrong PR (#4534). `.claude/hooks/shared-scratchpad-guard.py` refuses such a write in a reviewer
-context.
+context; reading a shared file is never refused.
 
 ## 1. Does the proving test prove anything?
 

@@ -3551,6 +3551,15 @@ try:
     subprocess.run(["git", "init", "-q", "-b", "agent/fbk-9/issue-1234", _x_wt], check=True)
     subprocess.run(["git", "-C", _x_wt, "-c", "user.name=t", "-c", "user.email=t@example.invalid",
                     "commit", "-q", "--allow-empty", "-m", "x"], check=True)
+    subprocess.run(["git", "-C", _x_wt, "remote", "add", "origin",
+                    "https://github.com/StefanMaron/BusinessCentral.AL.Runner.git"], check=True)
+    _x_foreign = os.path.join(_x_tmp, "unrelated")
+    _x_bare = os.path.join(_x_tmp, "no-origin")
+    for _d, _origin in ((_x_foreign, "https://github.com/someone/unrelated.git"), (_x_bare, None)):
+        os.makedirs(_d)
+        subprocess.run(["git", "init", "-q", _d], check=True)
+        if _origin:
+            subprocess.run(["git", "-C", _d, "remote", "add", "origin", _origin], check=True)
 
     check("resolve_repo: no repository at either place is (None, 'none'), never a guess",
           pf.resolve_repo(_x_tools, _x_nothing) == (None, "none"),
@@ -3586,6 +3595,21 @@ try:
     check("an extracted copy with no repository at the cwd either refuses with exit 3",
           _x_none.returncode == 3 and "nothing was probed" in _x_none.stderr,
           f"rc={_x_none.returncode} stderr={_x_none.stderr.strip()[-200:]!r}")
+
+    check("is_this_repository: this repository, a fork of it, and nothing else",
+          pf.is_this_repository("StefanMaron/BusinessCentral.AL.Runner")
+          and pf.is_this_repository("fbk/businesscentral.al.runner")
+          and not pf.is_this_repository("someone/unrelated")
+          and not pf.is_this_repository("StefanMaron/BusinessCentral.AL.Language.Tests")
+          and not pf.is_this_repository(None), "")
+    for _d, _why in ((_x_foreign, "someone/unrelated"), (_x_bare, "no GitHub origin")):
+        _x_other = subprocess.run(
+            [sys.executable, os.path.join(_x_tools, "preflight.py"), "--json", "--no-tools",
+             "--no-freshness-fetch"],
+            cwd=_d, capture_output=True, text=True, timeout=120)
+        check(f"an extracted copy run from a repository that is not this one ({_why}) refuses, exit 3",
+              _x_other.returncode == 3 and "not this repository" in _x_other.stderr,
+              f"rc={_x_other.returncode} stderr={_x_other.stderr.strip()[-200:]!r}")
 finally:
     shutil.rmtree(_x_tmp, ignore_errors=True)
 # ------------------------------------------- END extracted copy (#4534)

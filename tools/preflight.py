@@ -984,6 +984,14 @@ def resolve_repo(script_dir: str, cwd: str) -> tuple[Optional[str], str]:
     return (repo, "cwd") if repo else (None, "none")
 
 
+THIS_REPOSITORY_NAME = "BusinessCentral.AL.Runner"
+
+
+def is_this_repository(slug: Optional[str]) -> bool:
+    """True for this repository or a fork of it (the owner may differ, the name may not)."""
+    return bool(slug) and slug.rsplit("/", 1)[-1].lower() == THIS_REPOSITORY_NAME.lower()
+
+
 def repo_slug(repo: str) -> Optional[str]:
     r = run(["git", "-C", repo, "remote", "get-url", "origin"])
     if not r.ok:
@@ -3983,6 +3991,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     if where == "cwd":
         print(f"note: this copy of preflight.py lives outside any repository (an extracted "
               f"copy), so it probes the repository at the cwd: {repo}", file=sys.stderr)
+        # Only the script's own location vouches for the subject; a cwd can be anything.
+        cwd_slug = repo_slug(repo)
+        if not is_this_repository(cwd_slug):
+            print(f"preflight: the repository at the cwd ({cwd_slug or 'no GitHub origin'}) is "
+                  f"not this repository ({THIS_REPOSITORY_NAME}); nothing was probed",
+                  file=sys.stderr)
+            return 3
     # The MAIN checkout, not whichever worktree this copy of the script lives in:
     # the worktree census and the reaper both have to see every worktree.
     running_root = repo

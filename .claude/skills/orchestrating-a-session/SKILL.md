@@ -65,7 +65,8 @@ starts in your shell's cwd, so standing in another loop's worktree hands it that
 standing in the worktree of a PR you are sending a reviewer to hands it the branch it is judging
 (#4340, #4534). `.claude/hooks/refuse-dispatch-from-worktree.py` refuses the dispatch and names
 the directory to `cd` to; put `dispatch:allow-worktree-cwd` in the prompt only when the agent is
-meant to work in that tree. A neutral checkout that has drifted behind `origin/main` makes
+meant to work in that tree. A dispatch with `isolation: "worktree"`, and a session launched
+inside that worktree (`$CLAUDE_PROJECT_DIR` names it), are allowed without it. A neutral checkout that has drifted behind `origin/main` makes
 `tools/preflight.py` refuse as stale; its refusal message gives the extracted-copy route, which
 probes the cwd rather than its own location.
 
