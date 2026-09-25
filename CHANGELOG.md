@@ -38,6 +38,8 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **build:** keep every service-tier-sourced DLL out of bin, not only the named ones
+- **cache:** fingerprint only runner-declared members, not a BCL base's inherited surface
 - **metadata:** a ground-truth bundle records the generator that wrote it; a stale one fails loudly
 - **provisioning:** default BC version selection picks only versions a shipped engine variant runs
 - **tools:** derive the corpus's required cloud legs instead of assuming eight
