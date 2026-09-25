@@ -1,8 +1,8 @@
 // TestDataStaticsSerialCollection — serialises the classes that MUTATE the process-wide
 // --test-data statics (#4220).
 //
-// TestDataOptions, TestDataNormalization, TestDataProvisioner and BackupReaderTool are all
-// `static class`, correctly so: in production they model one CLI invocation's flags. A test
+// TestDataOptions, TestDataNormalization, TestDataProvisioner, BackupReaderTool and
+// BackupReaderServe are all `static class`, correctly so: in production they model one CLI invocation's flags. A test
 // process runs many logical invocations at once, and xunit gives every test class its own
 // collection and runs collections in parallel (xunit.runner.json: parallelizeTestCollections
 // true, maxParallelThreads 4), so one class's write lands inside another's arrange/act.

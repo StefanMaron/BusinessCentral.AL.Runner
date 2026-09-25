@@ -23,7 +23,7 @@ public sealed class TestDataStaticsCollectionGuardTests
     private static readonly string TestsDir = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "AlRunner.Tests"));
 
-    /// <summary>The mutating members of the four --test-data statics. Assignments and calls
+    /// <summary>The mutating members of the --test-data statics. Assignments and calls
     /// only: `nameof(TestDataProvisioner.ResetForTests)` is how TestDataProvisionerTallyAtomicityTests
     /// names the method for a Cecil scan without ever calling it, and a pattern without the
     /// parentheses would report that class as a mutator it is not.</summary>
@@ -38,6 +38,7 @@ public sealed class TestDataStaticsCollectionGuardTests
         ("TestDataOptions",       new Regex(@"TestDataOptions\.(Enabled\s*=[^=]|ExplicitBackupPath\s*=[^=]|CompanyOverride\s*=[^=]|ResetForTests\(\)|TryParseArg\()", RegexOptions.Compiled)),
         ("TestDataProvisioner",   new Regex(@"TestDataProvisioner\.(ResetForTests\(\)|Arm\()", RegexOptions.Compiled)),
         ("BackupReaderTool",      new Regex(@"BackupReaderTool\.ResetForTests\(\)", RegexOptions.Compiled)),
+        ("BackupReaderServe",     new Regex(@"BackupReaderServe\.(ResetForTests\(\)|TryRun\(|Shutdown\()", RegexOptions.Compiled)),
     };
 
     private static readonly Regex Mutation = new(
@@ -189,7 +190,7 @@ public sealed class TestDataStaticsCollectionGuardTests
         // the count floor this replaced had already built (found in review).
         var census = MutatorsByStatic().ToList();
         Assert.Equal(
-            new[] { "BackupReaderTool", "TestDataNormalization", "TestDataOptions", "TestDataProvisioner" },
+            new[] { "BackupReaderServe", "BackupReaderTool", "TestDataNormalization", "TestDataOptions", "TestDataProvisioner" },
             census.Select(c => c.Static).OrderBy(n => n, StringComparer.Ordinal).ToArray());
 
         foreach (var (statik, seen) in census)
