@@ -216,8 +216,30 @@ public sealed class MetadataEquivalenceBundleGateTests
             File.WriteAllText(Path.Combine(copy, "notes.md"), "not generator source");
             Assert.Equal(original, AlRunner.Tools.MetadataGroundTruth.GeneratorFingerprint.Compute(copy));
 
+            // Build output is not source: obj/ holds generated *.cs that change on every build.
+            Directory.CreateDirectory(Path.Combine(copy, "obj", "Release"));
+            File.WriteAllText(Path.Combine(copy, "obj", "Release", "Gen.AssemblyInfo.cs"), "// generated");
+            Directory.CreateDirectory(Path.Combine(copy, "bin"));
+            File.WriteAllText(Path.Combine(copy, "bin", "Stray.cs"), "// output");
+            Assert.Equal(original, AlRunner.Tools.MetadataGroundTruth.GeneratorFingerprint.Compute(copy));
+
+            // The SDK's default glob compiles **/*.cs, so a subdirectory source is generator input.
+            Directory.CreateDirectory(Path.Combine(copy, "Emit"));
+            var sub = Path.Combine(copy, "Emit", "Extra.cs");
+            File.WriteAllText(sub, "internal static class Extra { public static int K = 1; }");
+            var withSub = AlRunner.Tools.MetadataGroundTruth.GeneratorFingerprint.Compute(copy);
+            Assert.NotEqual(original, withSub);
+            File.WriteAllText(sub, "internal static class Extra { public static int K = 2; }");
+            var subEdited = AlRunner.Tools.MetadataGroundTruth.GeneratorFingerprint.Compute(copy);
+            Assert.NotEqual(withSub, subEdited);
+
+            // The csproj pins packages and stages shims; missing one emits zero objects.
+            File.AppendAllText(Path.Combine(copy, "MetadataGroundTruth.csproj"), "<!-- edited -->");
+            var csprojEdited = AlRunner.Tools.MetadataGroundTruth.GeneratorFingerprint.Compute(copy);
+            Assert.NotEqual(subEdited, csprojEdited);
+
             File.AppendAllText(Path.Combine(copy, "Program.cs"), "// edited");
-            Assert.NotEqual(original, AlRunner.Tools.MetadataGroundTruth.GeneratorFingerprint.Compute(copy));
+            Assert.NotEqual(csprojEdited, AlRunner.Tools.MetadataGroundTruth.GeneratorFingerprint.Compute(copy));
 
             File.Delete(Path.Combine(copy, "MetadataGroundTruth.csproj"));
             Assert.Throws<DirectoryNotFoundException>(

@@ -71,8 +71,9 @@ those bundles the harness failed 6 of 15, and the query/xmlport/report oracles f
 every BC build on that box. The messages named #3499 and stale allowlist entries, not the
 bundle, so the failure looked like a runner regression on one BC build that CI did not cover.
 
-So the manifest now records `generatorFingerprint`: a SHA-256 over the generator directory's
-top-level `*.cs` and `*.csproj` (`tools/metadata-ground-truth/GeneratorFingerprint.cs`, linked
+So the manifest now records `generatorFingerprint`: a SHA-256 over every `*.cs` under the
+generator directory except `bin/` and `obj/` (the SDK compiles `**/*.cs`), plus its `*.csproj`
+(`tools/metadata-ground-truth/GeneratorFingerprint.cs`, linked
 into `AlRunner.Tests` so both sides use one implementation). `RequireBundles()` compares it with
 the fingerprint of the checked-out generator. A bundle with no fingerprint, or a different one,
 **fails on CI and locally** with `MetadataGroundTruthStaleException`, which names the
@@ -82,6 +83,11 @@ turn a wrong measurement into a green summary line.
 Trap: any edit to the generator's source, a comment included, makes every local bundle stale
 until you regenerate. That is on purpose. A fingerprint that only changed on "meaningful"
 edits would need someone to decide which edits count, and #3796 shows nobody does.
+
+Trap: the generator hashes its source directory **when it runs**, not what was compiled. Running
+a stale `metadata-ground-truth.dll` directly after editing the source records the new source's
+fingerprint over the old code's output. `tools/gen-metadata-ground-truth.sh` rebuilds first, so
+use it.
 
 The harness enforces that rather than assuming it: it reads only
 `<ground-truth-root>/<the build this process loaded>/`, and it finds each bundle's `.app` inside
