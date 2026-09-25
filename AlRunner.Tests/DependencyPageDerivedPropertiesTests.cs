@@ -390,6 +390,50 @@ public class DependencyPageDerivedPropertiesTests
         }
     }
 
+    /// <summary>
+    /// The three new PageSymbol members sit behind BcAppSymbolCache's on-disk cache, so the same
+    /// answers are asserted on a WARM read -- served from disk, not re-parsed -- as on the cold
+    /// one (local-test-scope.md: a fix correct cold can be wrong warm).
+    /// </summary>
+    [Fact]
+    public void TheDerivations_AnswerTheSameOnAWarmSymbolCacheRead()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-page-derived-4282");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var appPath = WriteApp(dir, DerivationSymbolReference);
+            void AssertAll()
+            {
+                Assert.Equal("1", ReadProperties(NoPageTypePageId).GetAttribute("AnalysisModeEnabled"));
+                Assert.Equal("0", ReadProperties(ListStatedOffPageId).GetAttribute("AnalysisModeEnabled"));
+                Assert.Equal(StatedCardPageId.ToString(), ReadProperties(ListPageId).GetAttribute("CardFormID"));
+                Assert.Equal(
+                    $"{PermTableId}, 288, 700, 480, 0, 0",
+                    ReadSourceObject(PermissionsPageId).GetAttribute("IndirectPermissions"));
+            }
+
+            BcAppSymbolCache.ResetProcessCacheForTests();
+            RecordPatches.ResetForReload();
+            RecordPatches.AddBcAppPath(appPath);
+            AssertAll();
+            var parsesCold = BcAppSymbolCache.ParseInvocationCountForTests(appPath);
+            Assert.True(parsesCold >= 1, "the cold read never parsed the symbol file");
+
+            BcAppSymbolCache.ResetProcessCacheForTests();
+            RecordPatches.ResetForReload();
+            RecordPatches.AddBcAppPath(appPath);
+            AssertAll();
+            Assert.Equal(parsesCold, BcAppSymbolCache.ParseInvocationCountForTests(appPath));
+        }
+        finally
+        {
+            RecordPatches.ResetForReload();
+            BcAppSymbolCache.ResetProcessCacheForTests();
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
     [Theory]
     [InlineData("tabledata \"A, B\" = r", "10, 32, 0, 0")]
     [InlineData("tabledata Plain = imd", "11, 448, 0, 0")]
