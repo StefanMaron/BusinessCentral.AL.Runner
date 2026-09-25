@@ -2053,11 +2053,6 @@ public static partial class NavReportSync
     /// </summary>
     internal static void RunOnInitReportAtConstruction(object navReport)
     {
-        lock (_onInitReportRan)
-        {
-            if (_onInitReportRan.TryGetValue(navReport, out _)) return;
-            _onInitReportRan.Add(navReport, navReport);
-        }
         Type? navReportBase = navReport.GetType();
         while (navReportBase != null && navReportBase.Name != "NavReport")
             navReportBase = navReportBase.BaseType;
@@ -2065,6 +2060,18 @@ public static partial class NavReportSync
             throw new AlRunner.Infrastructure.BcShapeGapException(
                 "NavReport.EndInitialization", "NavReport",
                 "base type not found on " + navReport.GetType().FullName + ", so OnInitReport cannot be run");
+        RunOnInitReportAtConstruction(navReport, navReportBase);
+    }
+
+    /// <summary>Testable core: <paramref name="navReportBase"/> is the type declaring the
+    /// trigger virtuals and <c>quitCalledOnReportTrigger</c> (NavReport in production).</summary>
+    internal static void RunOnInitReportAtConstruction(object navReport, Type navReportBase)
+    {
+        lock (_onInitReportRan)
+        {
+            if (_onInitReportRan.TryGetValue(navReport, out _)) return;
+            _onInitReportRan.Add(navReport, navReport);
+        }
         try
         {
             RunLifecycleTrigger(navReport, navReportBase, "OnInitReport");
@@ -2080,14 +2087,20 @@ public static partial class NavReportSync
         Type? navReportBase = navReport.GetType();
         while (navReportBase != null && navReportBase.Name != "NavReport")
             navReportBase = navReportBase.BaseType;
-        return navReportBase != null
-            && QuitCalledOnReportTriggerField(navReportBase).GetValue(navReport) is true;
+        return navReportBase != null && ReadQuitCalledOnReportTrigger(navReport, navReportBase);
     }
+
+    internal static bool ReadQuitCalledOnReportTrigger(object navReport, Type navReportBase)
+        => QuitCalledOnReportTriggerField(navReportBase).GetValue(navReport) is true;
 
     private static FieldInfo QuitCalledOnReportTriggerField(Type navReportBase)
     {
-        var f = _quitCalledOnReportTriggerField ??= navReportBase.GetField("quitCalledOnReportTrigger",
-            BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+        // Not cached across types: the mechanism tests bind a stand-in base type.
+        var f = _quitCalledOnReportTriggerField;
+        if (f == null || f.DeclaringType != navReportBase)
+            f = navReportBase.GetField("quitCalledOnReportTrigger",
+                BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+        if (navReportBase.Name == "NavReport") _quitCalledOnReportTriggerField = f;
         if (f == null || f.FieldType != typeof(bool))
             throw new AlRunner.Infrastructure.BcShapeGapException(
                 "NavReport.EndInitialization", "NavReport.quitCalledOnReportTrigger",
