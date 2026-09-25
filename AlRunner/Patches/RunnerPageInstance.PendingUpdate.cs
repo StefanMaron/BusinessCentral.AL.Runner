@@ -41,13 +41,17 @@ internal sealed partial class RunnerPageInstance
         if (_updateRequestSubscribed) return;
         _updateRequestSubscribed = true;
         if (_form is not NavForm form) return;
-        form.UpdateRequest += (_, e) =>
+        form.UpdateRequest += (sender, e) =>
         {
             // RecordSaved is the client's cue to re-read the row it just saved — see
             // RefreshBeforeImageAfterSave. It is a different flag from Update and arrives on
             // its own from SaveRecordAsync, so it is handled before the Update filter below
             // rather than instead of it.
-            if ((e.UpdateRequestType & NavFormUpdateTypes.RecordSaved) != 0)
+            //
+            // Only when THIS form saved: NavForm.form_UpdateRequest re-raises a part's request on
+            // the host with the part as sender, and a part's save says nothing about the host's
+            // row. Taking it as the host's cue marked an unsaved host edit as saved (#4577).
+            if ((e.UpdateRequestType & NavFormUpdateTypes.RecordSaved) != 0 && ReferenceEquals(sender, form))
                 RefreshBeforeImageAfterSave();
             if ((e.UpdateRequestType & NavFormUpdateTypes.Update) == 0) return;
             // A request raised while the refresh itself is running is dropped. Realising it

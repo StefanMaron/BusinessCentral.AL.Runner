@@ -146,6 +146,7 @@ internal partial class LiveNavTestPage
 
     internal void FlushPendingNewRow()
     {
+        if (NewRowAlreadyInsertedByThePage()) return;
         if (!_pendingNewRow) return;
         _pendingNewRow = false;
         // A row New() started and nothing wrote to is not persisted — BC discards it rather
@@ -621,9 +622,30 @@ internal partial class LiveNavTestPage
         // InsertIfFormEditable: a form showing validation errors does not insert.
         if (_validationErrors.Count > 0) return;
 
+        if (NewRowAlreadyInsertedByThePage()) return;
         _pendingNewRow = false;
         // A vetoed insert leaves the row a started draft, as the client's does.
         if (!InsertPendingRow()) _pendingNewRow = true;
+    }
+
+    /// <summary>
+    /// The started row is already in the table because the page's own AL wrote it —
+    /// <c>CurrPage.SaveRecord()</c> / <c>CurrPage.Update(true)</c> reach
+    /// <c>NavForm.SaveRecordAsync</c>, which inserts it. From then on the row is edited, not
+    /// started: the pending insert becomes a pending Modify.
+    ///
+    /// Observably equivalent: <c>NavForm.SaveRecordAsync</c> itself chooses Insert versus
+    /// Modify on <c>!SourceTable.HasBeenInserted</c>, the same flag read here. Trap: inserting
+    /// again instead fails on the duplicate key and, through <c>InsertPendingRow</c>'s
+    /// <c>TrapError</c>, silently drops every value typed after the page's save (#4577).
+    /// </summary>
+    private bool NewRowAlreadyInsertedByThePage()
+    {
+        if (!_pendingNewRow || _record?.HasBeenInserted != true) return false;
+        _pendingNewRow = false;
+        _insertPositionCaptured = false;
+        _pendingModify = true;
+        return true;
     }
 
     // BC's IsFieldControl needs a column binder and a row: a Rec-bound control. Page-variable
