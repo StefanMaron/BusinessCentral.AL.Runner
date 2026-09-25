@@ -76,8 +76,8 @@ public static partial class RecordPatches
         root.SetAttribute("SingleInstance", row.SingleInstance ? "1" : "0");
         root.SetAttribute("Subtype", row.Subtype);
         // Unlike the attributes below, BC's emitter never omits this one: it writes the declared
-        // value, else AL's default StaticAutomatic — 558 of 558 codeunits on 28.1.49838.53910
-        // (#4605). So the default is written rather than left for BC's constructor to apply.
+        // value, else AL's default StaticAutomatic, on every codeunit of Business Foundation and
+        // System Application 28.5.54151.55132 (#4605). So the default is written, not left off.
         root.SetAttribute("EventSubscriberInstance", row.EventSubscriberInstance ?? "StaticAutomatic");
 
         // Each of the three is OMITTED when the codeunit states none, the same rule TableNo
