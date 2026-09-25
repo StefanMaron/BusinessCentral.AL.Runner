@@ -319,6 +319,7 @@ var allAbortReasons = new List<string>();   // #2280: watchdog aborts seen this 
 bool coverageEnabled = false;
 string coverageOutputPath = "cobertura.xml";
 var bundles = new List<string>();
+var bundleArgIndices = new List<int>(); // #4553: argv index of each bundle, for the spilled-value hint
 var packageCacheArgs = new List<string>();
 // Bundled mode is the canonical fast path (5-7× faster, parity-verified across
 // all 4 sub-buckets). `--per-suite` falls back to the legacy per-Compilation
@@ -690,6 +691,7 @@ for (int i = 0; i < args.Length; i++)
         return 2;
     }
     bundles.Add(args[i]);
+    bundleArgIndices.Add(i);
 }
 // Issue #2236: set the process-wide selected country as early as possible — before
 // RunExplicitProvisionModes, PlatformCheckDirs, DefaultPackageCacheDirs, or any other
@@ -842,7 +844,9 @@ if (tddMode && alCacheDir != null)
 // entry for "could not execute (process-level error)" and is what every other CLI usage
 // error above already returns — no new code introduced.
 {
-    var rootProblem = AlRunner.Infrastructure.BundleRootValidation.Validate(bundles);
+    var bundleIndexSet = new HashSet<int>(bundleArgIndices);
+    var rootProblem = AlRunner.Infrastructure.BundleRootValidation.Validate(bundles,
+        bundleArgIndices.Select(ix => AlRunner.Infrastructure.BundleRootValidation.SpilledOptionValueHint(args, ix, bundleIndexSet)).ToList());
     if (rootProblem != null)
     {
         Console.Error.WriteLine(rootProblem);

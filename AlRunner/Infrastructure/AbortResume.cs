@@ -94,7 +94,7 @@ internal static class AbortResume
         IReadOnlyCollection<string>? carryResultFiles = null,
         string? carryDirectory = null)
     {
-        var childArgs = BuildChildArgs(originalArgs, exclusions, remainingBudget,
+        var childArgs = BuildChildArgs(TestDataOptions.WithResolvedCompany(originalArgs), exclusions, remainingBudget,
             carryFiles ?? Array.Empty<string>(), carryResultFiles ?? Array.Empty<string>());
 
         Console.Error.WriteLine();

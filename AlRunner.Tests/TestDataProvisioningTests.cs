@@ -93,6 +93,8 @@ public sealed class TestDataProvisioningTests : IDisposable
             TestDataOptions.Enabled = true;
             TestDataOptions.ExplicitBackupPath = backup;
             TestDataOptions.CompanyOverride = "CRONUS International Ltd_";
+            // What Arm() records; the key is computed after it (#4553).
+            TestDataOptions.RecordResolvedCompany(Path.GetFullPath(backup), "CRONUS International Ltd_");
             var withTestData = TestExecutor.CurrentInstallBaselineCacheKey();
 
             Assert.NotEqual(plain, withTestData);
@@ -126,6 +128,26 @@ public sealed class TestDataProvisioningTests : IDisposable
     /// all 210 tests matching InstallBaseline|CacheKey|CacheIdentity|TestData — green. Only
     /// driving the live CacheIdentity() catches it.
     /// </summary>
+    /// <summary>#4553: a key computed before Arm() resolved the typed company would name the
+    /// typed text, so it refuses instead of silently keying on it.</summary>
+    [Fact]
+    public void CacheIdentity_BeforeTheCompanyIsResolved_Refuses()
+    {
+        var dir = Directory.CreateDirectory(TestScratch.Dir("al-runner-testdata-unresolved"));
+        try
+        {
+            var backup = Path.Combine(dir.FullName, "BusinessCentral-W1.bak");
+            File.WriteAllBytes(backup, new byte[256]);
+            TestDataOptions.Enabled = true;
+            TestDataOptions.ExplicitBackupPath = backup;
+            TestDataOptions.CompanyOverride = "cr";
+
+            var ex = Assert.Throws<InvalidOperationException>(() => TestDataOptions.CacheIdentity());
+            Assert.Contains("'cr' has not been resolved", ex.Message, StringComparison.Ordinal);
+        }
+        finally { dir.Delete(recursive: true); }
+    }
+
     [Fact]
     public void NormalizedRun_AndUnnormalizedRun_DoNotShareAnInstallBaselineCacheKey()
     {
@@ -149,6 +171,7 @@ public sealed class TestDataProvisioningTests : IDisposable
                 TestDataOptions.Enabled = true;
                 TestDataOptions.ExplicitBackupPath = backup;
                 TestDataOptions.CompanyOverride = "CRONUS International Ltd_";
+                TestDataOptions.RecordResolvedCompany(Path.GetFullPath(backup), "CRONUS International Ltd_");
             }
 
             TestDataNormalization.ResetForTests();

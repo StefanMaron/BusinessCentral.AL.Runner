@@ -171,7 +171,8 @@ internal static partial class ProgramSupport
         w.WriteLine("    al-runner --test-data <bundle-dir>              # the shipped backup for the selected version/country");
         w.WriteLine("    al-runner --test-data=/path/to/X.bak <dirs>     # an explicit backup");
         w.WriteLine("    al-runner --test-data --test-data-company NAME  # which company inside it (required");
-        w.WriteLine("                                                    # when the backup holds more than one)");
+        w.WriteLine("                                                    # when the backup holds more than one;");
+        w.WriteLine("                                                    # a case-insensitive prefix is enough)");
         w.WriteLine("    al-runner --test-data --test-data-normalize-company  # narrow the restored company");
         w.WriteLine("                                                    # towards Microsoft's test company");
         w.WriteLine("  --test-data-normalize-company is OFF by default and only does anything alongside");
@@ -553,6 +554,10 @@ internal static partial class ProgramSupport
         w.WriteLine("                          choose for you, and names the companies it found. A backup");
         w.WriteLine("                          holding exactly one company is hydrated without this flag,");
         w.WriteLine("                          and the company used is printed at the start of the run.");
+        w.WriteLine("                          NAME may be a case-insensitive prefix (`cronus`); a unique");
+        w.WriteLine("                          match is used and named, an exact name beats a prefix, and");
+        w.WriteLine("                          several matches are listed — asked about on a terminal,");
+        w.WriteLine("                          refused otherwise. Quote a name containing spaces.");
         w.WriteLine("  --test-data-normalize-company");
         w.WriteLine("                          OFF BY DEFAULT. With --test-data, rewrite named fields of");
         w.WriteLine("                          the restored company to match the company Microsoft's");
