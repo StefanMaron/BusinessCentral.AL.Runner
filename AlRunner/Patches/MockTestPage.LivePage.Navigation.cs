@@ -32,9 +32,10 @@ internal partial class LiveNavTestPage
     public override bool MoveFirst()
     {
         var record = RequireRecord("MoveFirst()");
-        // A failed insert of the row being left raises here, as it does for Previous() — corpus
-        // 60045 DelayedList_DuplicateKey_First (#4624); Next() and Last() record it instead.
-        FlushParts(); FlushRow();
+        // A refused insert raises nothing here and shows no error, so the Close() after it raises
+        // (corpus 60045 DelayedList_DuplicateKey_First_CloseRaisesTheInsertError, #4624).
+        FlushParts();
+        if (FlushRow(RefusedInsert.Defer)) return false;
 
         // Whether the cursor was ALREADY on the draft line, read before LeaveNewRowLine clears
         // it. A First() over a rowset that is still empty does not move anywhere: the draft line
@@ -133,9 +134,10 @@ internal partial class LiveNavTestPage
     public override bool MovePrevious()
     {
         var record = RequireRecord("MovePrevious()");
-        // A failed insert of the row being left raises here (corpus 60045
-        // DelayedList_DuplicateKey_Previous, #4624).
-        FlushParts(); FlushRow();
+        // As MoveFirst: a refused insert is deferred to the Close() after it (corpus 60045
+        // DelayedList_DuplicateKey_Previous_CloseRaisesTheInsertError, #4624).
+        FlushParts();
+        if (FlushRow(RefusedInsert.Defer)) return false;
 
         // Stepping back off the new-row line lands on the last data row — the row the cursor
         // was on when it walked onto the blank line. It is restored rather than re-sought

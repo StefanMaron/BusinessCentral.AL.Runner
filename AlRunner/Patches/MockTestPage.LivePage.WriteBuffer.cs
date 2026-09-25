@@ -187,11 +187,13 @@ internal partial class LiveNavTestPage
     /// What a flush does when the started row's insert fails. <see cref="Record"/> is the
     /// client's <c>NavTransactionManager.Save</c>: it catches the failure and
     /// <c>NavRowEntry.CreateRowFailures</c> records it on the first control-bound key column, and
-    /// the row stays the current, still-unsaved row. Corpus 60045 "IPF Tests" measured which
-    /// TestPage routes do which on every cloud leg (#4624): insert on focus, Close() on a page
-    /// with no errors yet, Previous() and First() raise; New(), Next(), Last() and OK() record.
+    /// the row stays the current, still-unsaved row. <see cref="Defer"/> neither raises nor
+    /// records: the row stays pending with no error shown, so the next flush tries again. Corpus
+    /// 60045 "IPF Tests" measured which TestPage routes do which on every cloud leg (#4624):
+    /// insert on focus and Close() on a page with no errors yet raise; New(), Next(), Last() and
+    /// OK() record; Previous() and First() defer, so the Close() after them raises.
     /// </summary>
-    internal enum RefusedInsert { Raise, Record }
+    internal enum RefusedInsert { Raise, Record, Defer }
 
     // The refusal recorded for the pending row, withdrawn when a later attempt succeeds.
     private (TestFieldValidationErrors? Field, string Message)? _recordedInsertFailure;
@@ -211,13 +213,14 @@ internal partial class LiveNavTestPage
         // may be on another row or another part entirely.
         if (!RowValuesChangedSinceLoad()) { _insertPositionCaptured = false; return false; }
 
-        var outcome = InsertPendingRow(out var failure, recordFailure: onRefused == RefusedInsert.Record);
+        var outcome = InsertPendingRow(out var failure, recordFailure: onRefused != RefusedInsert.Raise);
         if (outcome == InsertOutcome.Refused)
         {
             _pendingNewRow = true;
             // Each save attempt clears the last one's failure first (ClearSaveResults), so a row
             // refused twice still carries one error.
-            if (_recordedInsertFailure == null) RecordInsertFailure(failure!.Message);
+            if (onRefused == RefusedInsert.Record && _recordedInsertFailure == null)
+                RecordInsertFailure(failure!.Message);
             return true;
         }
         WithdrawInsertFailure();
@@ -300,7 +303,7 @@ internal partial class LiveNavTestPage
             // Non-null: _pendingNewRow is only ever set true by InsertEmptyRow, which refuses by
             // name first when the page has no record — see RequireRecord there.
             // ThrowError, as NavForm.SaveRecordAsync's insert. Where the client records the
-            // failure instead (RefusedInsert.Record) it catches NavBaseException, as
+            // failure instead (RefusedInsert.Record, .Defer) it catches NavBaseException, as
             // NavTransactionManager.Save does — corpus 60045, #4624.
             var unstampedBefore = !_record!.IsTemporary && !_record.HasBeenInserted;
             try

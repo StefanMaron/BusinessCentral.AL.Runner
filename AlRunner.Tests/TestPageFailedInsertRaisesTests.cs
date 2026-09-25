@@ -1,6 +1,7 @@
 // TestPageFailedInsertRaisesTests — issue #4624. What a refused page insert (a duplicate key)
-// does on each TestPage route, per LiveNavTestPage.RefusedInsert: insert on focus, Close() and
-// Previous() raise at the call; OK() raises nothing, then or at scope exit; New() and Next() on a
+// does on each TestPage route, per LiveNavTestPage.RefusedInsert: insert on focus and Close() raise
+// at the call; Previous() raises nothing and leaves the error to the Close() after it; OK() raises
+// nothing, then or at scope exit; New() and Next() on a
 // DelayedInsert List record one validation error on the key control and keep the cursor on the
 // refused line. The BC behaviour is adjudicated upstream by corpus codeunit 60045 "IPF Tests".
 using System.Diagnostics;
@@ -195,13 +196,13 @@ public sealed class TestPageFailedInsertRaisesTests : IDisposable
                 CheckList(DriveDelayedList(false), 'cur=DUP;noErr=1;descErr=0;rows=1;dup=orig');
             end;
 
-            // Previous() leaving the line raises the insert error.
+            // Previous() leaving the line raises nothing; the Close() after it raises the error.
             [Test]
-            procedure DelayedListPrevious_DuplicateKey_Raises()
+            procedure DelayedListPrevious_DuplicateKey_CloseRaises()
             begin
                 Seed();
                 asserterror DriveDelayedListPrevious();
-                Check('Previous|already exists');
+                Check('Close|already exists');
             end;
 
             local procedure CheckList(Actual: Text; Expected: Text)
@@ -350,7 +351,7 @@ public sealed class TestPageFailedInsertRaisesTests : IDisposable
                      "DelayedOK_DuplicateKey_RaisesNothing",
                      "DelayedListNew_DuplicateKey_RecordsOnTheKeyControl",
                      "DelayedListNext_DuplicateKey_RecordsOnTheKeyControl",
-                     "DelayedListPrevious_DuplicateKey_Raises",
+                     "DelayedListPrevious_DuplicateKey_CloseRaises",
                  })
             Assert.Contains("PASS  Codeunit62873." + name, output);
         Assert.DoesNotContain("FAIL", output);
