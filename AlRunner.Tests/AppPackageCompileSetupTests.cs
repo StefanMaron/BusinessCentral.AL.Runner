@@ -225,11 +225,12 @@ public sealed class AppPackageCompileSetupTests
     [InlineData("AL0161", AppPackageSetupPart.AppIdentity)]
     [InlineData("AL0327", AppPackageSetupPart.EntryNameNormalization)]
     [InlineData("AL1081", AppPackageSetupPart.EntryNameNormalization)]
+    // A code the setup cannot cause. PartFor must be CALLED for None rows too: an assertion that
+    // short-circuits on `expected == None` accepts any mapping for them (#4496).
+    [InlineData("AL0432", AppPackageSetupPart.None)]
     public void PartFor_NamesTheSetupPartTheAblationAttributedTheCodeTo(
         string code, AppPackageSetupPart expected)
-        => Assert.Equal(expected, AppPackageSetupPart.None == expected
-            ? AppPackageSetupPart.None
-            : AppPackageSetupDiagnosis.PartFor(code));
+        => Assert.Equal(expected, AppPackageSetupDiagnosis.PartFor(code));
 
     [Fact]
     public void PartFor_ACodeTheSetupCannotCause_IsNone()
@@ -419,7 +420,8 @@ public sealed class AppPackageCompileSetupTests
         // The population has to actually EXERCISE the reader, not merely be non-empty: a corpus
         // of packages that declare no features and no help URL would pass the loop above while
         // proving nothing about either field. These floors are well under what this box holds
-        // (measured 28.1: 76 of 113 declare a help URL), so they pin
+        // (measured 28.1: 76 of 113 declare a help URL; EVERY readable package declares
+        // <Features> -- 108 of 108 on the 28.1.49838.53910 platform + test apps, #4496), so they pin
         // "the corpus reaches these fields" without pinning a count that drifts per artifact set.
         Assert.True(withFeatures >= 2,
             $"only {withFeatures} of {corpus.Count} package(s) declared any <Features>; "
@@ -492,7 +494,6 @@ public sealed class AppPackageCompileSetupTests
         // works: backslash layout paths are a defect in specific Microsoft report files, not a
         // convention. Each one is a file emit throws on, producing zero objects.
         var raw = new List<string>();
-        foreach (var (_, _, entries) in corpus) { }  // entries are not the subject here
 
         // Read the AL sources of the one package known to carry them, if present.
         foreach (var (path, _, _) in corpus)
