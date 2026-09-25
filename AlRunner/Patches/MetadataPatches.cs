@@ -426,6 +426,9 @@ public static partial class BcRuntime
         if (entryT  != null) PopulateCacheArray("metadataCacheEntries",          entryT);
         if (extEntT != null) PopulateCacheArray("metadataExtensionCacheEntries", extEntT);
 
+        // 1b. The code environment NCLMetadata's ctor builds; CODECOVERAGELOG(TRUE) needs it (#4468).
+        AlRunner.Patches.CodeCoveragePatches.SeedCodeEnvironment(_skeletonNCLMetadata, navNcl);
+
         // 2. Build skeleton NavSystemTenant.
         _skeletonSystemTenant = RuntimeHelpers.GetUninitializedObject(systemTenantType);
 

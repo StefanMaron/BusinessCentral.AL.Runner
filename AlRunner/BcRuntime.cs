@@ -1047,26 +1047,6 @@ public static partial class BcRuntime
             }
         }
 
-        // CodeCoverageManager — LoadTableDataIntoCounters and CodeCoverageRecorderForSession
-        // access the execution listener and session infrastructure. No-op them; code
-        // coverage tracking is not available in headless mode.
-        var ccMgrType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.CodeCoverageManager");
-        if (ccMgrType != null)
-        {
-            // LoadTableDataIntoCounters(NavSession) → void — no-op to prevent ExecutionListener.AsArray crash
-            var loadTdc = ccMgrType.GetMethod("LoadTableDataIntoCounters", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-            if (loadTdc != null) Hook(loadTdc, nameof(NoOp_OneArg), "CodeCoverageManager.LoadTableDataIntoCounters");
-            // StartCodeCoverage(NavSession) → void
-            var startCov = ccMgrType.GetMethod("StartCodeCoverage", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-            if (startCov != null) Hook(startCov, nameof(NoOp_OneArg), "CodeCoverageManager.StartCodeCoverage");
-            // StopCodeCoverageRecording(NavSession) → void
-            var stopCov = ccMgrType.GetMethod("StopCodeCoverageRecording", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-            if (stopCov != null) Hook(stopCov, nameof(NoOp_OneArg), "CodeCoverageManager.StopCodeCoverageRecording");
-            // RefreshTable(NavSession) → void
-            var refresh = ccMgrType.GetMethod("RefreshTable", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-            if (refresh != null) Hook(refresh, nameof(NoOp_OneArg), "CodeCoverageManager.RefreshTable");
-        }
-
         // Try the real factory first: NavEnvironment.InstantiateStandaloneNavEnvironment(true, false).
         // The cctor replacement above already wired the static `lockObject`/`instanceId`/
         // `serviceInstanceName` so the factory's MonitorLock(lockObject, ...) succeeds.

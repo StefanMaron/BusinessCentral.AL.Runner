@@ -624,78 +624,29 @@ public static partial class NclCecilRewrite
             }
         }
 
-        // CodeCoverageManager start — AL's CODECOVERAGELOG(TRUE) (#3517).
-        //
-        // BC's ALCodeCoverage.ALCodeCoverageLog reads session.NCLMetadata.CodeEnvironment and
-        // hands it to Start{Single,Multi}SessionCodeCoverage, whose recorder ctor opens with
-        // `if (codeEnvironment == null) throw new ArgumentNullException("codeEnvironment")`.
-        // The runner's skeleton NCLMetadata is built with GetUninitializedObject
-        // (MetadataPatches.InjectSkeletonSystemTenant), so that field is null by construction
-        // and AL saw a bare .NET parameter name naming no API. See
-        // AlRunner/Patches/CodeCoveragePatches.cs for why both members refuse and why the two
-        // read-only members below are deliberately left alone.
-        //
-        // These two members are the choke points: all three AL start spellings —
-        // CODECOVERAGELOG(TRUE), (TRUE, FALSE) and (TRUE, TRUE) — funnel through them, and
-        // rewriting here leaves BC's own overload forwarding intact.
-        //
-        // Four JmpHook registrations over this type still sit in BcRuntime.cs and are ORPHANED
-        // (AL_RUNNER_HOOK_AUDIT=1 lists them under "owned by neither JmpHook (disabled) nor
-        // Cecil"), which is why BC's real bodies ran at all. They are left in place here: none
-        // of them covers StartSingleSessionCodeCoverage or StartMultiSessionCodeCoverage, so
-        // deleting them is a separate question from this refusal.
+        // Code coverage: CODECOVERAGELOG(TRUE) is NOT rewritten — BC's own recorder runs over the
+        // ALCodeEnvironment the skeleton NCLMetadata is seeded with (CodeCoveragePatches, #4468).
+        // What IS rewritten is the one step that needs AL source text the runner cannot serve:
+        // CodeCoverageDataProvider.ComputeRecordsForObject, which builds the Code Coverage
+        // (2000000049) line rows. Unpatched it reaches ALCodeEnvironment.GetSourceCodeLines and
+        // fails with a NavMetadataNotFoundException claiming the object does not exist.
         {
-            var ccMgrType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.CodeCoverageManager");
-            if (ccMgrType != null)
-            {
-                foreach (var (name, helperName) in new[]
-                {
-                    ("StartSingleSessionCodeCoverage",
-                        nameof(AlRunner.Patches.CodeCoveragePatches.StartSingleSessionCodeCoverage_Replacement)),
-                    ("StartMultiSessionCodeCoverage",
-                        nameof(AlRunner.Patches.CodeCoveragePatches.StartMultiSessionCodeCoverage_Replacement)),
-                })
-                {
-                    var helperMi = typeof(AlRunner.Patches.CodeCoveragePatches).GetMethod(
-                        helperName, BindingFlags.Public | BindingFlags.Static)
-                        ?? throw new InvalidOperationException(
-                            $"[Cecil] CodeCoveragePatches.{helperName} not found");
-
-                    int rewritten = 0;
-                    foreach (var m in ccMgrType.Methods.Where(x => x.Name == name && x.HasBody))
-                    {
-                        // Return type and arity are load-bearing: ReplaceBodyWithHelper emits
-                        // `ldarg…; call helper; ret`, so a helper whose shape stopped matching
-                        // BC's would produce IL that fails only when the method is first JITted
-                        // — long after the rewrite, with nothing pointing back here.
-                        if (m.ReturnType.FullName != "System.Void" || m.Parameters.Count != 2)
-                            throw new InvalidOperationException(
-                                $"[Cecil] CodeCoverageManager.{name} is {m.ReturnType.FullName} with "
-                                + $"{m.Parameters.Count} parameter(s), expected System.Void with 2. BC's "
-                                + "CodeCoverageManager shape has changed; see "
-                                + "AlRunner/Patches/CodeCoveragePatches.cs and issue #3517.");
-
-                        ReplaceBodyWithHelper(asm.MainModule, m, helperMi);
-                        rewritten++;
-                    }
-
-                    // Loud when the shape moves. "We could not find it" must never degrade back
-                    // into the bare ArgumentNullException this fix removed — that would read as
-                    // a regression on a new BC build with nothing in the log to explain it.
-                    if (rewritten == 1)
-                        Console.Error.WriteLine(
-                            $"[Cecil] Rewrote CodeCoverageManager.{name} → throw OOS (code-coverage start)");
-                    else
-                        throw new InvalidOperationException(
-                            $"[Cecil] Expected exactly ONE CodeCoverageManager.{name} to rewrite as the "
-                            + $"code-coverage-start refusal, found {rewritten}. BC's CodeCoverageManager "
-                            + "shape has changed; AL would otherwise hit a bare ArgumentNullException out "
-                            + "of BC's recorder constructor again. See "
-                            + "AlRunner/Patches/CodeCoveragePatches.cs and issue #3517.");
-                }
-            }
+            var ccDataProvider = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.CodeCoverageDataProvider");
+            var targets = ccDataProvider?.Methods
+                .Where(x => x.Name == "ComputeRecordsForObject" && x.HasBody).ToList();
+            if (targets == null || targets.Count != 1)
+                throw new InvalidOperationException(
+                    "[Cecil] Expected exactly ONE CodeCoverageDataProvider.ComputeRecordsForObject to "
+                    + $"prepend the code-coverage line-rows refusal to, found {targets?.Count ?? 0}. BC's "
+                    + "shape has changed; reading Code Coverage (2000000049) would fail with a message "
+                    + "naming the wrong cause. See AlRunner/Patches/CodeCoveragePatches.cs and issue #4468.");
+            var helper = typeof(AlRunner.Patches.CodeCoveragePatches).GetMethod(
+                nameof(AlRunner.Patches.CodeCoveragePatches.RefuseCodeCoverageLineRows),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] CodeCoveragePatches.RefuseCodeCoverageLineRows not found");
+            PrependStaticCall(asm.MainModule, targets[0], helper, argSlots: 0);
         }
-
 
         // ALNavApp resource retrieval — NavApp.GetResource / GetResourceAsText are IN
         // SCOPE: the runner knows every loaded AL assembly's owning app and where its

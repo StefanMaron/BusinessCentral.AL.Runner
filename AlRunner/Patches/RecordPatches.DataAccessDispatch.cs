@@ -21,6 +21,10 @@ public static partial class RecordPatches
     /// </summary>
     internal static Action<object, int>? TestDataOnDemandLoader;
 
+    private const int CodeCoverageTableId = 2000000049;
+    private const int CodeCoverageTestLookupTableId = 2000000288;
+    private const int CodeCoverageTestsRunTableId = 2000000289;
+
     /// <summary>
     /// Told the id of a table whose storage was published from inside ANOTHER table's hydration
     /// and therefore could not be loaded there (#2877). Installed by TestDataProvisioner.Arm()
@@ -215,6 +219,16 @@ public static partial class RecordPatches
             if (IsIntegerVirtualTable(table))
             {
                 return GetIntegerVirtualDataAccess(self, table);
+            }
+
+            // ── Code coverage virtual tables (2000000049, 2000000288, 2000000289) ─────────
+            // Served by BC's OWN CodeCoverage*DataProvider, the per-session instances
+            // CODECOVERAGELOG(FALSE) fills (CodeCoverageManager.LoadDataIntoVirtualTable), so the
+            // runner's empty store can no longer answer "nothing was covered" (#4468).
+            if (tableId is CodeCoverageTableId or CodeCoverageTestLookupTableId or CodeCoverageTestsRunTableId)
+            {
+                return GetBcVirtualDataAccess(self, table,
+                    "every read of the code coverage tables would answer from an empty store");
             }
 
             // ── Table Relations Metadata system virtual table (2000000141) ──────────────
