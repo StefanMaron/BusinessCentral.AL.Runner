@@ -19,7 +19,7 @@
 //   - 5098 "Task Card", action "Co&mment"                    (RunObject only) target AND its
 //                                                            three-entry RunPageLink resolved from
 //                                                            the symbol file, then applied
-//   - 31   "Item List", action "Item Substitutions"          (RunObject naming an AMBIGUOUS name)
+//   - 31   "Item List", action "Item Substitutions"          (RunObject naming a SHARED name; runs the kind the AL wrote)
 //
 // #3825 added four arms for an EXPRESSION-BOUND Editable/Visible/Enabled, which is a different
 // claim from trigger dispatch and shares these pages because they are the precompiled surface
@@ -328,16 +328,15 @@ codeunit 64571 "PMN Precompiled Member Tests"
         Comment.Insert(false);
     end;
 
-    // #2931, and the reason the resolution above cannot simply trust a name. A precompiled
-    // page's SymbolReference.json states RunObject as a bare NAME with no object type, and
-    // 73 names in Base Application 28.1 are shared between a page and a report / codeunit /
-    // xmlport / query. Page 31's action is one of 326 such actions: its AL says
-    // `RunObject = Report "Item Substitutions"` (report 5701), and there is ALSO a page 5720
-    // of that exact name. Resolving the name to a page and opening it would run the wrong
-    // object and report nothing wrong — the silent-default failure loud-failures.md exists to
-    // prevent — so the runner refuses and names the ambiguity.
+    // A precompiled page's SymbolReference.json states RunObject as a bare NAME, and page 31's
+    // "Item Substitutions" names both report 5701 and page 5720. #2931 refused that; #4622 reads
+    // the kind from the page's own AL source in the .app (`RunObject = Report "Item Substitutions"`)
+    // and runs the report, which on a TestPage raises BC's own RunReport refusal. Real BC does
+    // exactly that for this name pair: corpus 60571's
+    // PrecompiledPageRunObjectNamingASharedNameAsAReportIsRefusedAsAReport (host page 5726),
+    // green on all nine cloud legs (corpus PR 419, run 36176696169).
     [Test]
-    procedure AmbiguousRunObjectName_OnPrecompiledBasePage_RefusesRatherThanGuessing()
+    procedure SharedRunObjectName_OnPrecompiledBasePage_RunsTheKindTheSourceStates()
     var
         ItemList: TestPage "Item List";
     begin
@@ -347,15 +346,9 @@ codeunit 64571 "PMN Precompiled Member Tests"
         // [WHEN] The action whose RunObject names "Item Substitutions" is invoked.
         asserterror ItemList."Item Substitutions".Invoke();
 
-        // [THEN] A loud refusal, anchored as a GAP so an expectations entry can track it.
-        Assert.ExpectedError('out-of-scope: TestPage action');
-        Assert.ExpectedError('not-yet-implemented');
-
-        // [AND] It says WHY it will not act: the name is ambiguous, and it names the other
-        // kind it collides with. Asserting the word "report" is what separates "refused
-        // because ambiguous" from the unrelated refusals in this same method.
-        Assert.ExpectedError('Item Substitutions');
-        Assert.ExpectedError('report');
+        // [THEN] The report ran, so BC's TestPage refusal for a report - not page 5720 opening,
+        // and not the runner's former ambiguity refusal.
+        Assert.ExpectedError('The method RunReport is not supported for TestPages.');
     end;
 
     [MessageHandler]
