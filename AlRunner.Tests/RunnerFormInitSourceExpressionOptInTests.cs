@@ -58,8 +58,8 @@ public sealed class RunnerFormInitSourceExpressionOptInTests
     }
 
     // The opt-in is per INSTANCE, not global: marking one form must leave every other form on
-    // the previous behaviour. A table keyed on anything coarser (page id, "is a request page")
-    // would fail this.
+    // the previous behaviour. A table keyed on anything coarser (page id) would fail this.
+    // Request pages are the one type admitted without a mark — see the #4649 test below.
     [Fact]
     public void MarkSourceExpressionsWanted_DoesNotLeakToOtherForms()
     {
@@ -85,6 +85,27 @@ public sealed class RunnerFormInitSourceExpressionOptInTests
         Assert.True(RunnerFormInit.ShouldRegisterSourceExpressions(form));
         // ...but it is not the mark the request-page path uses, so the narrow table stays empty.
         Assert.False(RunnerFormInit.WantsSourceExpressions(form));
+    }
+
+    // #4649: a request page BC's own report engine opens (precompiled AL -> RunReportAsync ->
+    // RunRequestPageCoreAsync) registers inside that RunModal, before the runner ever sees the
+    // form, so no per-instance mark can reach it. Every request page is admitted to
+    // registration by its type — and to nothing else.
+    [Fact]
+    public void UnmarkedRequestPage_IsAdmittedToRegistrationOnly()
+    {
+        var form = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(typeof(UnrunRequestPage));
+
+        Assert.False(RunnerFormInit.WantsSourceExpressions(form));
+        Assert.True(RunnerFormInit.ShouldRegisterSourceExpressions(form));
+        Assert.False(RunnerFormInit.ShouldRunRealFormInit(form));
+        Assert.False(RunnerFormInit.ShouldResolveMasterPage(form));
+    }
+
+    // Never constructed: GetUninitializedObject skips the ctor, which needs a live session.
+    private sealed class UnrunRequestPage : Microsoft.Dynamics.Nav.Runtime.RequestPageBase
+    {
+        private UnrunRequestPage() : base(null!, null!) { }
     }
 
     // The guards run inside BC's own IL and must never throw — a null form is the cheapest
