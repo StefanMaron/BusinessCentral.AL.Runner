@@ -8,13 +8,9 @@ That warning is what this checks: the sentence is present, and the directory rea
 both kinds. If either kind disappears the warning sends readers to dispatch on an extension
 for no reason; if the sentence is reworded this guard measures nothing and says so.
 
-Until #4248 this guard pinned the per-set COUNTS. Two PRs each adding a guard each bumped
-the figure the same way, identical hunks merged cleanly, and `main` went red on the merged
-count. The counts are gone on the owner's direction that figures which change without anyone
-editing the sentence belong in no durable text (#4539), and
-tools/test_agent_doc_claims_survive_a_clean_merge.py replays that merge against this file.
-Deliberately no check for numbers in the prose: see verify-execution-not-the-tick.md
-§ "Does this want a tool?".
+No counts (#4248, #4539); tools/test_agent_doc_claims_survive_a_clean_merge.py replays a
+clean two-PR merge against this file. Deliberately no check for numbers in the prose: see
+verify-execution-not-the-tick.md § "Does this want a tool?".
 
 Exit (guards-need-a-third-state.md):
   0  the warning is present and the directory holds both `.py` and `.sh` guards

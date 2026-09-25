@@ -9,11 +9,6 @@ namespace AlRunner.Tests;
 /// The `--filter "FullyQualifiedName~GuardTests"` command `.claude/agents/impl-agent.md` tells
 /// every implementation agent to run must select tests. `dotnet test` answers a filter matching
 /// nothing with exit 0 (tdd.md), so a renamed suite would turn that step into a silent pass.
-///
-/// Until #4248 this pinned the doc's `# N tests` figure. Every PR adding a guard test edited it
-/// the same way, identical hunks merge cleanly, and two such PRs red `main` together; the figure
-/// is gone on the owner's direction that counts which change without anyone editing the sentence
-/// belong in no durable text (#4539).
 /// </summary>
 public sealed class AgentDocGuardFilterTests
 {

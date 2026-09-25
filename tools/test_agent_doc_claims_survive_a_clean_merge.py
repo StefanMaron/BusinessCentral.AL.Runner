@@ -23,12 +23,12 @@ WHAT THIS DOES
   are copied verbatim.
 
 CONTROLS, run every time, so a green here cannot be vacuous
-  * a synthetic guard pinning a count the same way MUST come back red on the merge -- the
-    replay can still see the class;
+  * a synthetic guard pinning a count the same way MUST come back red on the merge, once per
+    population directory the branches grow -- the replay can still see the class in each;
   * a synthetic guard that crashes MUST come back UNMEASURED -- a traceback is not a verdict.
 
 Exit (guards-need-a-third-state.md):
-  0  every real guard survives the merge and both controls behave
+  0  every real guard survives the merge and every control behaves
   1  a real guard is green on each branch and red on their clean merge -- the #4248 class
   3  nothing measured: no guard found, git unavailable, a guard not green on the unmerged
      base, a branch that could not be brought green, or a control that misbehaved
@@ -54,6 +54,12 @@ DOC = os.path.join(".claude", "agents", "impl-agent.md")
 GUARD_GLOB = os.path.join("tools", "test_agent_doc_guard_*.py")
 # Directories whose file NAMES the guards may read; reproduced as empty files.
 POPULATIONS = ["tools", os.path.join(".github", "scripts")]
+# Each branch grows every population, and both kinds the .github/scripts warning splits.
+PROBES = [
+    os.path.join("tools", "test_zz_merge_probe_{branch}.py"),
+    os.path.join(".github", "scripts", "test_zz_merge_probe_{branch}.py"),
+    os.path.join(".github", "scripts", "test_zz_merge_probe_{branch}.sh"),
+]
 DRIFT = re.compile(r"doc says (\d+), tree has (\d+)")
 
 PASS, RED, UNMEASURED = "pass", "red", "unmeasured"
@@ -83,7 +89,12 @@ def run_guard(repo: str, guard_rel: str) -> tuple[int, str]:
 
 
 def bring_green(repo: str, guard_rel: str, doc_rel: str) -> None:
-    """Do what an author does with the guard's FAIL line: write the tree's figure."""
+    """Do what an author does with the guard's FAIL line: write the tree's figure.
+
+    The figure sits in a bold span, alone (`**55**`) or inside a phrase
+    (`**8 `.py` and 13 `.sh`**`). Each candidate span is tried and kept only if the guard
+    then stops reporting that drift, so an unrelated bold number is never the one rewritten.
+    """
     rc, out = run_guard(repo, guard_rel)
     if rc == 0:
         return
@@ -92,15 +103,24 @@ def bring_green(repo: str, guard_rel: str, doc_rel: str) -> None:
         raise Unmeasured(f"{guard_rel} is not green on a branch and says no fixable drift "
                          f"(rc={rc}):\n{out.strip()}")
     path = os.path.join(repo, doc_rel)
-    with open(path, encoding="utf-8") as fh:
-        text = fh.read()
     for stated, actual in drifts:
-        old, new = f"**{stated}**", f"**{actual}**"
-        if old not in text:
-            raise Unmeasured(f"cannot apply '{stated} -> {actual}': no {old} in {doc_rel}")
-        text = text.replace(old, new, 1)
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write(text)
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        number = re.compile(r"(?<![\d.])" + stated + r"(?![\d.])")
+        for span in re.finditer(r"\*\*.+?\*\*", text):
+            if not number.search(span.group(0)):
+                continue
+            fixed = number.sub(actual, span.group(0), count=1)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text[:span.start()] + fixed + text[span.end():])
+            _, out = run_guard(repo, guard_rel)
+            if f"doc says {stated}, tree has {actual}" not in out:
+                break
+        else:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            raise Unmeasured(f"cannot apply '{stated} -> {actual}': no bold figure in "
+                             f"{doc_rel} clears that drift")
     rc, out = run_guard(repo, guard_rel)
     if rc != 0:
         raise Unmeasured(f"{guard_rel} still not green after its own remedy (rc={rc}):\n{out}")
@@ -114,9 +134,11 @@ def replay(repo: str, guard_rel: str, doc_rel: str) -> str:
 
     for branch in ("a", "b"):
         git_must(repo, "checkout", "-q", "-b", branch, "main")
-        probe = os.path.join(repo, "tools", f"test_zz_merge_probe_{branch}.py")
-        with open(probe, "w", encoding="utf-8") as fh:
-            fh.write("")
+        for rel in PROBES:
+            probe = os.path.join(repo, rel.format(branch=branch))
+            os.makedirs(os.path.dirname(probe), exist_ok=True)
+            with open(probe, "w", encoding="utf-8") as fh:
+                fh.write("")
         bring_green(repo, guard_rel, doc_rel)
         git_must(repo, "add", "-A")
         git_must(repo, "commit", "-q", "-m", f"branch {branch}")
@@ -165,34 +187,45 @@ def population_placeholders() -> dict[str, str | None]:
     return files
 
 
+# A count pin on one population directory: {rx} captures the doc's figure, {d} is counted.
 PINNING_CONTROL_GUARD = r'''
 import os, re, sys
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 text = open(os.path.join(root, "doc.md"), encoding="utf-8").read()
-stated = int(re.search(r"runs \*\*(\d+)\*\* guards", text).group(1))
-actual = sum(1 for n in os.listdir(os.path.join(root, "tools"))
-             if n.startswith("test_") and n.endswith(".py"))
+stated = int(re.search(r"{rx}", text).group(1))
+actual = sum(1 for n in os.listdir(os.path.join(root, *{d!r}.split("/")))
+             if n.startswith("test_"))
 if stated != actual:
-    print(f"FAIL: doc says {stated}, tree has {actual}", file=sys.stderr)
+    print(f"FAIL: doc says {{stated}}, tree has {{actual}}", file=sys.stderr)
     sys.exit(1)
 '''
+
+# One pinning control per population the probes grow; each must go red on the merge.
+PINNING_CONTROLS = [
+    ("tools", r"runs \*\*(\d+)\*\* guards"),
+    (".github/scripts", r"holds a further \*\*(\d+)\*\*"),
+]
 
 
 def controls() -> list[str]:
     problems = []
     base = {"tools/test_one.py": "", "tools/test_two.py": "",
-            "doc.md": "The loop runs **2** guards.\n",
-            "tools/control_guard.py": PINNING_CONTROL_GUARD}
-    repo = scratch_repo(base)
-    try:
-        verdict = replay(repo, "tools/control_guard.py", "doc.md")
-        if verdict != RED:
-            problems.append(f"pinning control answered {verdict}, expected red -- the replay "
-                            "can no longer see the #4248 class, so a green here means nothing")
-    except Unmeasured as e:
-        problems.append(f"pinning control was unmeasured: {e}")
-    finally:
-        shutil.rmtree(repo, ignore_errors=True)
+            ".github/scripts/test_three.sh": "",
+            "doc.md": "The loop runs **2** guards; scripts holds a further **1**.\n"}
+    for d, rx in PINNING_CONTROLS:
+        pinned = dict(base)
+        pinned["tools/control_guard.py"] = PINNING_CONTROL_GUARD.format(rx=rx, d=d)
+        repo = scratch_repo(pinned)
+        try:
+            verdict = replay(repo, "tools/control_guard.py", "doc.md")
+            if verdict != RED:
+                problems.append(f"{d} pinning control answered {verdict}, expected red -- the "
+                                "replay can no longer see the #4248 class there, so a green "
+                                "here means nothing")
+        except Unmeasured as e:
+            problems.append(f"{d} pinning control was unmeasured: {e}")
+        finally:
+            shutil.rmtree(repo, ignore_errors=True)
 
     crash = dict(base)
     crash["tools/control_guard.py"] = "raise RuntimeError('control crash')\n"
@@ -252,7 +285,7 @@ def main() -> int:
                   f"the population instead of a count (#4539).", file=sys.stderr)
         return 1
     print(f"PASS: {len(guards)} impl-agent.md guard(s) survive a clean merge of two green PRs; "
-          f"both controls behaved")
+          f"every control behaved")
     return 0
 
 
