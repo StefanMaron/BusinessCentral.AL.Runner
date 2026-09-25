@@ -12,11 +12,17 @@ one, reading one into a `gh`/`git` command, or cloning onto one. It does NOT
 warn when the path already carries an agent directory, which is what makes it a
 usable signal rather than noise on every command.
 
-ADVISORY, exit 0, never blocks. Blocking would be wrong here: a shared path is
-sometimes exactly right (reading another agent's log to diagnose a collision is
-the obvious case), and a hook that blocks legitimate work gets switched off,
-taking the warning with it. The refusal that CAN block lives in
-`tools/agent_scratchpad.py check`, where a caller opts into it explicitly.
+ADVISORY (exit 0) for the coordinator. BLOCKING (exit 2) when the payload's
+`agent_type` is `impl-agent` or `reviewer`: a reviewer wrote `review.md` into the
+shared directory and posted another reviewer's draft verdict onto the wrong PR
+(#4534). The escape for a deliberate write there is `# hook:allow-shared-scratch`
+in the command. Reads stay silent in every context, because only the verbs in
+DANGEROUS reach the check.
+
+The path match is keyed on the harness's `claude-<uid>/<slug>/<session>/scratchpad`
+shape under ANY root: the scratchpad is not always under /tmp (on the loop's box it
+is ~/.cache/claude-tmp/claude-<uid>/...), and a /tmp-anchored pattern never fired
+there (#4534).
 
 Tested by tools/test_shared_scratchpad_guard.py. The suite lives there rather than
 beside the hook because `pr-gate.yml`'s tools-tests job globs `tools/test_*.py`
@@ -28,8 +34,11 @@ import os
 import re
 import sys
 
-# The session scratchpad, as the harness names it: /tmp/claude-<uid>/<slug>/<uuid>/scratchpad
-SCRATCHPAD_PATH = re.compile(r'(/tmp/claude-\d+/[^\s"\':;|&]*?/scratchpad)(/[^\s"\':;|&)]*)?')
+# The session scratchpad, as the harness names it: <root>/claude-<uid>/<slug>/<uuid>/scratchpad
+SCRATCHPAD_PATH = re.compile(r'((?:~|/)[^\s"\':;|&]*?/claude-\d+/[^\s"\':;|&]*?/scratchpad)(/[^\s"\':;|&)]*)?')
+
+BLOCKING_AGENT_TYPES = {"impl-agent", "reviewer"}
+ESCAPE = "# hook:allow-shared-scratch"
 
 # A path is SAFE once it names an agent directory anywhere below the scratchpad.
 OWNED = re.compile(r'/agent-[A-Za-z0-9][A-Za-z0-9._-]*(?:/|$)')
@@ -46,7 +55,7 @@ DANGEROUS = re.compile(
 )
 
 MESSAGE = (
-    "Shared-scratchpad warning (advisory, nothing was blocked).\n"
+    "Shared-scratchpad warning.\n"
     "This command uses a session-scratchpad path with no `agent-<id>/` owner in it.\n"
     "That directory is SHARED by every agent of this session -- it looks per-agent and\n"
     "is not. Measured 2026-09-07: 200 entries in one session's scratchpad, ONE of them\n"
@@ -89,12 +98,16 @@ def main() -> int:
     paths = flagged_paths(cmd)
     if not paths:
         return 0
+    blocking = (str(payload.get("agent_type") or "").strip().lower() in BLOCKING_AGENT_TYPES
+                and ESCAPE not in cmd)
+    if blocking:
+        print("BLOCKED (impl-agent/reviewer context; append "
+              f"`{ESCAPE}` to override one call).", file=sys.stderr)
     print(MESSAGE, file=sys.stderr)
     print("Shared path(s) in this command:", file=sys.stderr)
     for p in sorted(set(paths))[:5]:
         print(f"  {p}", file=sys.stderr)
-    # Exit 0: advisory only, for the reason in the module docstring.
-    return 0
+    return 2 if blocking else 0
 
 
 if __name__ == "__main__":

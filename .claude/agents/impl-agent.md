@@ -146,6 +146,10 @@ pwd
 tools/preflight.py --agent-id <AGENT-ID>   # its `branch-ownership` row
 ```
 
+The coordinator-side half is mechanical: `.claude/hooks/refuse-dispatch-from-worktree.py`
+refuses a main-session dispatch from inside `.claude/worktrees/` (#4534), so this check is the
+backstop for a resumed agent, which no dispatch-time hook sees.
+
 FAIL means the directory is not yours — do not `cd` out and carry on quietly; build your own
 worktree below and use **absolute paths** into it. `branch-ownership` judges the directory
 name before it looks up any pull request, so a merged, closed or never-opened PR cannot make

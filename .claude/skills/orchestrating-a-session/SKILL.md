@@ -60,6 +60,15 @@ every state change carries its reasoning, and every agent-authored post says an 
 
 ## Implementation agents
 
+**Dispatch from a neutral checkout, never from inside `.claude/worktrees/`.** A dispatched agent
+starts in your shell's cwd, so standing in another loop's worktree hands it that tree — and
+standing in the worktree of a PR you are sending a reviewer to hands it the branch it is judging
+(#4340, #4534). `.claude/hooks/refuse-dispatch-from-worktree.py` refuses the dispatch and names
+the directory to `cd` to; put `dispatch:allow-worktree-cwd` in the prompt only when the agent is
+meant to work in that tree. A neutral checkout that has drifted behind `origin/main` makes
+`tools/preflight.py` refuse as stale; its refusal message gives the extracted-copy route, which
+probes the cwd rather than its own location.
+
 Use the `impl-agent` subagent type, not `general-purpose`. Its definition carries the
 workflow contract — branch naming, labels, the CI rules, the navigation tooling — so your
 brief only needs the cluster context and the traps.
