@@ -183,7 +183,11 @@ The corpus runs a cloud and an OnPrem leg for every BC version in its `.github/w
 matrix, and **only the cloud legs are the required contexts**. The OnPrem legs run a different,
 much smaller suite and have run none of the recent cloud additions. So on a cloud-app corpus PR,
 zeros on the OnPrem legs are the correct answer and non-zeros on the cloud legs are the finding; `corpus-pass-count.py` labels the OnPrem legs `not-run` for
-exactly that reason.
+exactly that reason. **Which cloud legs are required is the corpus ruleset's answer**, which
+the tool reads on every call: a required leg that did not run your codeunit, or is absent from
+the run, is exit 1, and a ruleset it could not read is exit 3. Trap: the ruleset can require a
+leg the branch's `ci.yml` never dispatches — `BC 28.5 / test` was required before the corpus
+ran it (#4593), and such a branch stays blocked until it runs on a `ci.yml` that does.
 
 ## Sister rules
 

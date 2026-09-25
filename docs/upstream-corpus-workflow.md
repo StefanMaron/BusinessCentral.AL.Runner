@@ -34,10 +34,13 @@ check of the two. `.github/workflows/ci.yml` there boots a real BC sandbox on
 Linux (via `StefanMaron/MsDyn365Bc.On.Linux`) and runs the suite on **eight BC
 versions — 27.0, 27.3, 27.5, 28.0, 28.1, 28.2, 28.3 and 28.4**,
 `fail-fast: false`. Not every minor in that span: 27.1, 27.2 and 27.4 are not
-run. Sixteen legs, because the cloud app and the OnPrem app are built and run
-separately on each version; the **eight cloud legs are the required status
-contexts** on the corpus's `master`, and the eight OnPrem legs run alongside
-them without gating. So a green PR check upstream *is* the service-tier
+run. Two legs per version, because the cloud app and the OnPrem app are built
+and run separately on each; the **required status contexts are the cloud legs
+the corpus ruleset names** on its `master`, and the OnPrem legs run alongside
+them without gating. The ruleset, not this list, is the merge bar: it can name a
+leg `ci.yml` does not dispatch yet, as it did when `BC 28.5 / test` was added
+(#4593). `tools/corpus-pass-count.py` and `.github/scripts/corpus_pr_state.py`
+read it on every call. So a green PR check upstream *is* the service-tier
 adjudication this rule demands. If you have no local container, opening the PR
 and letting CI run is a legitimate way to perform step 2 — not a way to skip
 it. Having no
@@ -61,14 +64,15 @@ file and exits 0 on a coloured log — each of which reports zero while the test
 running fine. `.claude/rules/verify-execution-not-the-tick.md` has all five measured
 mechanisms and the second-query habit that catches them.
 
-Expect the eight OnPrem legs to report zero: they run a much smaller separate suite (29
+Expect the OnPrem legs to report zero: they run a much smaller separate suite (29
 tests against 2915 on run `34079169063`) and are green for unrelated reasons. Only the
-eight cloud legs are the required contexts.
+cloud legs the corpus ruleset names are required, and the tool exits 1 when one of them
+did not run your codeunit — including a required leg absent from the run.
 
 ## Step 3 in full — why the orchestrator merges, not the authoring agent
 
 An impl agent opens the corpus PR and stops there. The orchestrator reviews
-it and merges once the corpus's eight required BC legs are green. This split is deliberate — an
+it and merges once every required BC leg of the corpus is green. This split is deliberate — an
 agent merging its own test means the same reasoning that wrote the test also
 clears it, which is this rule's original failure mode relocated from
 "unvalidated" to "unreviewed". Green CI proves the test *runs and passes

@@ -93,13 +93,13 @@ check("a draft corpus PR is NOT-MERGEABLE",
 check("open + has_hooks is MERGEABLE (clean, with a webhook configured)",
       cps.classify(payload(mergeable_state="has_hooks"))[0] == "MERGEABLE",
       str(cps.classify(payload(mergeable_state="has_hooks"))))
-# The corpus runs 16 legs and requires 8; a red OnPrem leg leaves the PR
+# The corpus requires only its cloud legs; a red OnPrem leg leaves the PR
 # mergeable with a non-passing check, which is `unstable`. Reading that as
 # NOT-MERGEABLE would refuse a corpus PR the merge bar accepts.
 check("open + unstable is MERGEABLE -- the failing check is not a required one",
       cps.classify(payload(mergeable_state="unstable"))[0] == "MERGEABLE",
       str(cps.classify(payload(mergeable_state="unstable"))))
-check("...and says so, so nobody reads it as all sixteen legs green",
+check("...and says so, so nobody reads it as every leg green",
       "required" in cps.classify(payload(mergeable_state="unstable"))[1].lower(),
       str(cps.classify(payload(mergeable_state="unstable"))))
 
@@ -344,6 +344,81 @@ _calls.clear()
 _got, _why = cps.fetch_pull(226, run=_runner([(0, "not json at all")]), sleep=lambda s: None)
 check("an unparseable answer is a failed read, not an empty payload",
       _got is None and _why, f"{_got!r} {_why!r}")
+
+# ===========================================================================
+# The corpus's required legs, read from its ruleset (#4593)
+#
+# On 2026-09-25 the owner added `BC 28.5 / test` to the corpus ruleset, and
+# every place on this side that wrote "eight" went stale the same day. The set
+# is now read where it lives. A read that fails is the third state, never an
+# empty list -- an empty required set would make every leg "not required".
+# ===========================================================================
+print("\ncorpus_pr_state.py -- the corpus's required legs (#4593)")
+
+# The shape `gh api repos/<corpus>/rules/branches/master --jq <filter>` printed
+# on 2026-09-25, the day the ninth context was added.
+RULESET_2026_09_25 = ('["BC 27.0 / test","BC 27.3 / test","BC 27.5 / test",'
+                      '"BC 28.0 / test","BC 28.1 / test","BC 28.2 / test",'
+                      '"BC 28.3 / test","BC 28.4 / test","BC 28.5 / test"]')
+
+_calls.clear()
+_req, _why = cps.required_contexts(run=_runner([(0, RULESET_2026_09_25)]))
+check("the required contexts are read from the corpus ruleset, not a constant",
+      _req is not None and len(_req) == 9 and "BC 28.5 / test" in _req, f"{_req!r} {_why!r}")
+check("...by asking the corpus repository's ruleset for its master branch",
+      any("BusinessCentral.AL.Language.Tests/rules/branches/master" in " ".join(a)
+          for a in _calls), repr(_calls))
+
+_calls.clear()
+_req8, _ = cps.required_contexts(run=_runner([(0, RULESET_2026_09_25.replace(
+    ',"BC 28.5 / test"', ''))]))
+check("...and a different ruleset gives a different answer, so nothing is hardcoded",
+      _req8 is not None and len(_req8) == 8 and "BC 28.5 / test" not in _req8, repr(_req8))
+
+for _label, _res in (("a failed gh call", (1, "HTTP 403")),
+                     ("an unparseable answer", (0, "<html>")),
+                     ("a ruleset naming no required checks", (0, "[]")),
+                     ("a non-list answer", (0, '{"context":"BC 27.0 / test"}'))):
+    _calls.clear()
+    _r, _w = cps.required_contexts(run=_runner([_res]))
+    check(f"{_label} is the third state (None and a reason), never an empty set",
+          _r is None and bool(_w), f"{_r!r} {_w!r}")
+
+check("a leg the ruleset requires and the head never reported is named",
+      cps.missing_legs(["BC 27.0 / test", "BC 28.5 / test"],
+                       ["BC 27.0 / test", "BC OnPrem 27.0 / test"]) == ["BC 28.5 / test"])
+check("...and nothing is missing when every required leg reported",
+      cps.missing_legs(["BC 27.0 / test"], ["BC 27.0 / test", "prepare"]) == [])
+
+
+def _legs(missing, why=""):
+    def _f(head):
+        return missing, why
+    return _f
+
+
+_e, _ = cps.states_for_body(GOOD, fetch=faker({226: payload(mergeable_state="blocked")}),
+                            legs=_legs(["BC 28.5 / test"]))
+check("a blocked corpus PR names the required leg that never reported on its head -- "
+      "the #402 sequencing trap",
+      _e[0].state == "NOT-MERGEABLE" and "BC 28.5 / test" in _e[0].detail, repr(_e[0]))
+check("...and says the branch has to pick up master's ci.yml",
+      "master" in _e[0].detail, repr(_e[0]))
+
+_e, _ = cps.states_for_body(GOOD, fetch=faker({226: payload(mergeable_state="blocked")}),
+                            legs=_legs(None, "HTTP 403"))
+check("a leg read that fails leaves the verdict NOT-MERGEABLE (GitHub's own answer) "
+      "and says the leg list could not be read",
+      _e[0].state == "NOT-MERGEABLE" and "could not" in _e[0].detail, repr(_e[0]))
+
+_e, _ = cps.states_for_body(GOOD, fetch=faker({226: MEASURED[319]}),
+                            legs=_legs(["BC 28.5 / test"]))
+check("a MERGEABLE corpus PR is not second-guessed by the leg read",
+      _e[0].state == "MERGEABLE" and "28.5" not in _e[0].detail, repr(_e[0]))
+
+check("no leg count survives in the module's prose or messages",
+      not any(w in open(os.path.join(HERE, "corpus_pr_state.py")).read().lower()
+              for w in ("eight cloud", "eight onprem", "eight required", "sixteen legs")))
 
 # ===========================================================================
 # The stale check run (#4206)

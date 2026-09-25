@@ -308,6 +308,100 @@ check("the 28.x corpus fixture parses to those same four names too",
 check("a bare corpus name is still captured without a dot",
       all("." not in n for n in r27["passed"]), str(r27["passed"]))
 
+# --------------------------------------------------------------------------
+# 8. Every REQUIRED leg, read from the corpus ruleset (#4593).
+#
+# The corpus's required legs are whatever its ruleset says -- nine since
+# 2026-09-25, when `BC 28.5 / test` was added -- and a required leg that did not
+# run the codeunit is the finding, whether it ran another suite, never reached
+# the test phase, or is absent from the run altogether. Before this, one leg
+# running the codeunit was enough for exit 0.
+# --------------------------------------------------------------------------
+print("\nevery required leg, from the ruleset")
+
+REQ = ["BC 27.0 / test", "BC 28.4 / test", "BC 28.5 / test"]
+
+
+def _row(name, log, prefix="TestPart_"):
+    leg = cpc.parse_leg(log, prefix)
+    return ({"id": name, "name": name, "conclusion": "success"}, leg, cpc.classify(leg))
+
+
+ROWS_ALL = [_row("BC 27.0 / test", LOG_27X), _row("BC 28.4 / test", LOG_28X),
+            _row("BC 28.5 / test", LOG_28X), _row("BC OnPrem 27.0 / test", LOG_ONPREM)]
+
+code, lines = cpc.required_leg_verdict(ROWS_ALL, REQ, "")
+check("every required leg ran it and the OnPrem leg did not: exit 0",
+      code == 0, f"{code} {lines}")
+
+code, lines = cpc.required_leg_verdict(ROWS_ALL[:2] + ROWS_ALL[3:], REQ, "")
+check("a required leg ABSENT from the run is a finding (exit 1) -- the run predates it",
+      code == 1, f"{code} {lines}")
+check("...and the line names that leg",
+      any("BC 28.5 / test" in l and "absent" in l for l in lines), str(lines))
+
+code, lines = cpc.required_leg_verdict(
+    ROWS_ALL[:2] + [_row("BC 28.5 / test", LOG_ONPREM)] + ROWS_ALL[3:], REQ, "")
+check("a required leg that ran a suite WITHOUT the codeunit is a finding (exit 1)",
+      code == 1 and any("BC 28.5 / test" in l for l in lines), f"{code} {lines}")
+
+code, lines = cpc.required_leg_verdict(
+    ROWS_ALL[:2] + [_row("BC 28.5 / test", LOG_NO_SUITE)] + ROWS_ALL[3:], REQ, "")
+check("a required leg that never reached the test phase is a finding (exit 1)",
+      code == 1, f"{code} {lines}")
+
+code, lines = cpc.required_leg_verdict(
+    ROWS_ALL[:2] + [({"id": "x", "name": "BC 28.5 / test", "conclusion": "success"},
+                     None, "log-unavailable")] + ROWS_ALL[3:], REQ, "")
+check("a required leg whose log could not be fetched is UNMEASURED (exit 3), not a pass",
+      code == 3, f"{code} {lines}")
+
+code, lines = cpc.required_leg_verdict(ROWS_ALL, None, "HTTP 403")
+check("a ruleset that could not be read is exit 3 -- never 0, never 1",
+      code == 3 and any("HTTP 403" in l for l in lines), f"{code} {lines}")
+
+code, _ = cpc.required_leg_verdict(ROWS_ALL, ["BC OnPrem 27.0 / test"], "")
+check("the verdict follows the ruleset it is handed, not a built-in list",
+      code == 1, str(code))
+
+
+def _main_with(rows_by_name, required, why=""):
+    """Drive main() end to end with the three GitHub reads stubbed."""
+    saved = (cpc.fetch_jobs, cpc.fetch_log, cpc.required_legs, sys.argv)
+    logs = {n: lg for n, lg in rows_by_name}
+    cpc.fetch_jobs = lambda run_id: [{"id": n, "name": n, "conclusion": "success"}
+                                     for n, _ in rows_by_name]
+    cpc.fetch_log = lambda job_id: logs[job_id]
+    cpc.required_legs = lambda repo: (required, why)
+    sys.argv = ["corpus-pass-count.py", "1", "TestPart_"]
+    buf = io.StringIO()
+    out = sys.stdout
+    try:
+        sys.stdout = buf
+        rc = cpc.main()
+    finally:
+        sys.stdout = out
+        cpc.fetch_jobs, cpc.fetch_log, cpc.required_legs, sys.argv = saved
+    return rc, buf.getvalue()
+
+
+import io  # noqa: E402
+
+EIGHT_LEG_RUN = [("BC 27.0 / test", LOG_27X), ("BC 28.4 / test", LOG_28X),
+                 ("BC OnPrem 27.0 / test", LOG_ONPREM)]
+rc, out = _main_with(EIGHT_LEG_RUN, REQ)
+check("main(): a run with no leg for a required context exits 1 (was 0: one leg ran it)",
+      rc == 1 and "BC 28.5 / test" in out, f"rc={rc}\n{out}")
+rc, out = _main_with(EIGHT_LEG_RUN + [("BC 28.5 / test", LOG_28X)], REQ)
+check("main(): the same run with that leg present exits 0", rc == 0, f"rc={rc}\n{out}")
+rc, out = _main_with(EIGHT_LEG_RUN + [("BC 28.5 / test", LOG_28X)], None, "no gh auth")
+check("main(): an unreadable ruleset exits 3 even when every leg ran it",
+      rc == 3, f"rc={rc}\n{out}")
+
+check("no leg count survives in the tool's prose",
+      not any(w in open(os.path.join(HERE, "corpus-pass-count.py")).read().lower()
+              for w in ("eight onprem", "eight cloud", "eight required")))
+
 print()
 if FAILURES:
     print(f"FAILED: {len(FAILURES)} check(s): {', '.join(FAILURES)}")
