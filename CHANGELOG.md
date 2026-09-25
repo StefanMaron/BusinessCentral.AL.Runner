@@ -323,6 +323,7 @@ All notable changes to this project are documented here. Format based on
 - **integer-vt:** judge a half-open range against the base window, not the envelope-widened span
 
 ### Documentation
+- **tests:** state the direction, not an example, in the stale-ratchet note — and drop one derivation paragraph
 - **tools:** the top-level Codeunits key is a remainder, not empty — it holds the namespace-less ones
 - **xmlport:** say what 69 counts — it is member differences, not renumbered nodes
 - **rules:** a single-agent loop may merge the corpus PR it authored, under a stated bar
