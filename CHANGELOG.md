@@ -38,6 +38,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **testpage:** resolve a precompiled page action's RunObject name to a codeunit, report, xmlport or query
 - **testpage:** link a part's new line to a header opened with OpenNew
 - **metadata:** dependency xmlport metadata must not trip MetaXmlPort's Format parse (5050, 9991)
 - **testpage:** a row the page's own AL saved is modified, not re-inserted
