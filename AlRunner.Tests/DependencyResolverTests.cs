@@ -596,6 +596,156 @@ public sealed class DependencyResolverTests : IDisposable
         Assert.False(AppLoader.IsR2R(result[0].AppPath));
     }
 
+    // ── #4556: "can run" means R2R, AL source or a sidecar — in the ranking too ──
+    //
+    // Microsoft's test-toolkit apps ship AL source and no R2R DLL, so ranking on IsR2R alone
+    // put the provisioned toolkit and a symbols-only .alpackages copy in one tier, and the
+    // higher version — the one no loader tier can run — won.
+
+    /// <summary>
+    /// A symbols-only v28.4 in .alpackages beside a provisioned v28.1 that ships AL source,
+    /// both above the 28.0 minimum: the v28.1 copy must win, whichever directory is scanned
+    /// first, and nothing is reported as unservable.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void LowerCopyWithAlSource_Beats_HigherSymbolsOnlyCopy(bool symbolsOnlyDirFirst)
+    {
+        var appId = "45560000-0000-0000-0000-000000000001";
+        var alpackages = MakeDir("4556-alpackages-" + symbolsOnlyDirFirst);
+        var testApps = MakeDir("4556-test-apps-" + symbolsOnlyDirFirst);
+        WriteApp(alpackages, "Microsoft_Tests-TestLibraries_28.4.53241.53504.app", appId,
+            "Tests-TestLibraries", "Microsoft", "28.4.53241.53504", r2r: false);
+        File.WriteAllBytes(Path.Combine(testApps, "Microsoft_Tests-TestLibraries.app"),
+            MakeMinimalApp(appId, "Tests-TestLibraries", "Microsoft", "28.1.49838.53479",
+                r2r: false, alSource: true));
+
+        var dirs = symbolsOnlyDirFirst ? new[] { alpackages, testApps } : new[] { testApps, alpackages };
+        var resolver = new DependencyResolver(dirs);
+        var result = resolver.Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(appId), "Tests-TestLibraries", "Microsoft", new Version(28, 0, 0, 0)),
+        });
+
+        var resolved = Assert.Single(result);
+        Assert.Equal(new Version(28, 1, 49838, 53479), resolved.Manifest.Version);
+        Assert.Equal(Path.Combine(testApps, "Microsoft_Tests-TestLibraries.app"), resolved.AppPath);
+        Assert.Empty(resolver.UnservableDependencies);
+    }
+
+    /// <summary>
+    /// Control for the ranking above: an R2R copy still outranks a HIGHER copy that ships
+    /// only AL source, so the #4556 change reorders only candidates that have no R2R payload.
+    /// </summary>
+    [Fact]
+    public void R2RCopy_StillBeats_HigherCopyThatShipsOnlyAlSource()
+    {
+        var appId = "45560000-0000-0000-0000-000000000002";
+        var dir = MakeDir("4556-r2r-vs-source");
+        WriteApp(dir, "Lib_v28_1_r2r.app", appId, "SomeLib", "SomeVendor", "28.1.0.0", r2r: true);
+        File.WriteAllBytes(Path.Combine(dir, "Lib_v28_4_src.app"),
+            MakeMinimalApp(appId, "SomeLib", "SomeVendor", "28.4.0.0", r2r: false, alSource: true));
+
+        var resolver = new DependencyResolver(new[] { dir });
+        var result = resolver.Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(appId), "SomeLib", "SomeVendor", new Version(28, 0, 0, 0)),
+        });
+
+        var resolved = Assert.Single(result);
+        Assert.Equal("Lib_v28_1_r2r.app", Path.GetFileName(resolved.AppPath));
+    }
+
+    /// <summary>
+    /// When no copy can run, the report must say what the resolver found: every other copy,
+    /// and why each was not used — never "no other copy was found" when one was. And it must
+    /// not recommend --auto-provision (the default) or a `provision --bc-version` for the
+    /// winner's own build, whose output directory this run does not search.
+    /// </summary>
+    [Fact]
+    public void SymbolsOnlyWinner_ReportNamesTheOtherCopies_AndNoRemedyTheRunCannotHonour()
+    {
+        var appId = "45560000-0000-0000-0000-000000000003";
+        var alpackages = MakeDir("4556-report-alpackages");
+        var other = MakeDir("4556-report-other");
+        WriteApp(alpackages, "Microsoft_Library Assert_28.4.53241.53504.app", appId,
+            "Library Assert", "Microsoft", "28.4.53241.53504", r2r: false);
+        WriteApp(other, "Microsoft_Library Assert_28.1.app", appId,
+            "Library Assert", "Microsoft", "28.1.49838.53479", r2r: false);
+
+        var resolver = new DependencyResolver(new[] { alpackages, other });
+        resolver.Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(appId), "Library Assert", "Microsoft", new Version(28, 0, 0, 0)),
+        });
+
+        var report = Assert.Single(resolver.UnservableDependencies);
+        Assert.Contains(Path.Combine(alpackages, "Microsoft_Library Assert_28.4.53241.53504.app"), report);
+        Assert.Contains("v28.1.49838.53479 " + Path.Combine(other, "Microsoft_Library Assert_28.1.app"), report);
+        Assert.DoesNotContain("no other copy", report, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("--auto-provision", report);
+        Assert.DoesNotContain("--bc-version", report);
+        // The remedy it does give names the directories a copy would be found in.
+        Assert.Contains(other, report[report.IndexOf("searched:", StringComparison.Ordinal)..]);
+    }
+
+    /// <summary>
+    /// The owner's #4556 layout with the declared minimum above the provisioned toolkit: the
+    /// only runnable copy (AL source) is below the minimum, so the symbols-only copy wins and
+    /// every call into it fails. That must reach the always-printed unservable report, which
+    /// labels the below-minimum copy — never the --verbose-only diagnostics channel.
+    /// </summary>
+    [Fact]
+    public void SymbolsOnlyWinner_WithRunnableSourceCopyBelowMinimum_IsReportedAsUnservable()
+    {
+        var appId = "45560000-0000-0000-0000-000000000004";
+        var alpackages = MakeDir("4556-belowmin-alpackages");
+        var testApps = MakeDir("4556-belowmin-test-apps");
+        WriteApp(alpackages, "Microsoft_Library Assert_28.4.53241.53504.app", appId,
+            "Library Assert", "Microsoft", "28.4.53241.53504", r2r: false);
+        var sourceCopy = Path.Combine(testApps, "Microsoft_Library Assert.app");
+        File.WriteAllBytes(sourceCopy,
+            MakeMinimalApp(appId, "Library Assert", "Microsoft", "28.1.49838.53479",
+                r2r: false, alSource: true));
+
+        var resolver = new DependencyResolver(new[] { alpackages, testApps });
+        resolver.Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(appId), "Library Assert", "Microsoft", new Version(28, 2, 0, 0)),
+        });
+
+        var report = Assert.Single(resolver.UnservableDependencies);
+        Assert.Contains($"v28.1.49838.53479 {sourceCopy} — below the minimum v28.2.0.0", report);
+        Assert.Empty(resolver.Diagnostics);
+    }
+
+    /// <summary>
+    /// Platform apps stay R2R-only in the ranking: their AL is declarations whose bodies are
+    /// native, so AL source does not make a copy runnable. With no R2R copy at all, the higher
+    /// version wins even when only the lower one ships AL source.
+    /// </summary>
+    [Fact]
+    public void PlatformApp_AlSourceDoesNotOutrankAHigherNonR2RCopy()
+    {
+        var appId = "45560000-0000-0000-0000-000000000005";
+        var dir = MakeDir("4556-platform-tier");
+        WriteApp(dir, "SysApp_28_4_symbols.app", appId,
+            "System Application", "Microsoft", "28.4.0.0", r2r: false);
+        File.WriteAllBytes(Path.Combine(dir, "SysApp_28_1_src.app"),
+            MakeMinimalApp(appId, "System Application", "Microsoft", "28.1.0.0",
+                r2r: false, alSource: true));
+
+        var resolver = new DependencyResolver(new[] { dir });
+        var result = resolver.Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(appId), "System Application", "Microsoft", new Version(28, 0, 0, 0)),
+        });
+
+        var resolved = Assert.Single(result);
+        Assert.Equal("SysApp_28_4_symbols.app", Path.GetFileName(resolved.AppPath));
+    }
+
     private static void WriteApp(string dir, string fileName,
         string appId, string name, string publisher, string version, bool r2r)
     {
@@ -1399,12 +1549,12 @@ public sealed class DependencyResolverTests : IDisposable
     }
 
     /// <summary>
-    /// The pre-existing "code-bearing copies exist but are below the minimum" diagnostic
-    /// still fires, and stays on the verbose-only Diagnostics channel rather than being
-    /// promoted to the always-on one.
+    /// An R2R copy below the minimum cannot rescue a symbols-only winner, so the run still
+    /// fails with object-ID-0: reported on the always-printed channel with the below-minimum
+    /// copy labelled, never as a --verbose-only note (#4556 review).
     /// </summary>
     [Fact]
-    public void CodeBearingCopiesBelowMinimum_StillUseTheVersionDiagnostic()
+    public void CodeBearingCopiesBelowMinimum_AreReportedAsUnservable()
     {
         var appId = "aaaaaaaa-1111-0000-0000-000000000001";
         var dir = MakeDir("below-min");
@@ -1415,8 +1565,9 @@ public sealed class DependencyResolverTests : IDisposable
         var result = resolver.Resolve(new[] { new DependencyRef(Guid.Parse(appId), "SomeLib", "SomeVendor", new Version(28, 0, 0, 0)) });
         Assert.Single(result);
 
-        Assert.Empty(resolver.UnservableDependencies);
-        Assert.Contains(resolver.Diagnostics, d => d.Contains("SYMBOLS-ONLY"));
+        var report = Assert.Single(resolver.UnservableDependencies);
+        Assert.Contains("v5.0.0.0 " + Path.Combine(dir, "Lib_v5_r2r.app") + " — below the minimum v28.0.0.0", report);
+        Assert.Empty(resolver.Diagnostics);
     }
 
     // ── Issue #2251 pin-bump fallout: Microsoft PLATFORM apps must prefer the

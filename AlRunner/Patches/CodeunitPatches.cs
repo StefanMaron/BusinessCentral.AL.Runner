@@ -1496,8 +1496,8 @@ public static partial class BcRuntime
                 $"Point --package-cache at a directory holding " +
                 $"'Microsoft_{known.Package}*.app' (the test-toolkit apps live in " +
                 $"~/.al-runner/test-apps, the platform apps in ~/.al-runner/platform-apps), " +
-                $"or run 'al-runner provision' — or re-run with --auto-provision — to fetch " +
-                $"them. Note --package-cache may be repeated, and a cache holding only " +
+                $"or run 'al-runner provision' to fetch them " +
+                $"({AlRunner.Infrastructure.ProvisioningCheck.AutoProvisionIsDefaultNote}). Note --package-cache may be repeated, and a cache holding only " +
                 $"symbol/dev packages cannot satisfy this: the runtime .app is required.";
         }
         return
@@ -1507,8 +1507,8 @@ public static partial class BcRuntime
             $"app) whose runtime package is not loaded. " +
             $"Check that the app declaring codeunit {id} is listed in your app.json " +
             $"dependencies, and that --package-cache points at a directory holding its " +
-            $"runtime .app; run 'al-runner provision' — or re-run with --auto-provision — " +
-            $"to fetch Microsoft's. Note --package-cache may be repeated, and a cache " +
+            $"runtime .app; run 'al-runner provision' to fetch Microsoft's " +
+            $"({AlRunner.Infrastructure.ProvisioningCheck.AutoProvisionIsDefaultNote}). Note --package-cache may be repeated, and a cache " +
             $"holding only symbol/dev packages cannot satisfy this: the runtime .app is " +
             $"required.";
     }

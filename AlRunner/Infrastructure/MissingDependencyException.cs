@@ -87,7 +87,7 @@ public sealed class MissingDependencyException : Exception, IDependencyProvision
         {
             lines.Add("  (a) One command (recommended) — provisions all missing Microsoft artifacts:");
             lines.Add("        al-runner provision");
-            lines.Add("      or re-run with --auto-provision.");
+            lines.Add($"      ({AlRunner.Infrastructure.ProvisioningCheck.AutoProvisionIsDefaultNote}).");
             lines.Add("");
             lines.Add("  (b) Force-download Microsoft test-toolkit apps only:");
             lines.Add($"        al-runner provision --test-apps --bc-version {versionHint}");
