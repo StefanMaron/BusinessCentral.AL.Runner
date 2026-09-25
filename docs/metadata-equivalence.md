@@ -1701,14 +1701,15 @@ and a value is written only when no element disagrees.
 
 | value | rule | measured | settled by |
 |---|---|---|---|
-| `ControlGUID` | `new Guid(extensionId, (short)memberId, memberId == 0 ? 1 : 0, 0x10, memberId >> 24, memberId >> 16, 0, 0x83, 0x6b, 0xd2, 0xd2)` | 50/50 | BC's `CodeAnalysis.Emit.MetadataEmitterHelper.GeneratePageControlGuid`, with `SymbolKind.PageExtension` (0x10); `ExtensionRuntimeDeltasBcMappingTests` calls it |
+| `ControlGUID` | BC's own `MetadataEmitterHelper.GeneratePageControlGuidString(memberId, extensionId, SymbolKind.PageExtension, "B")`, called through a required reflection bind (it is `internal`) | 50/50 | the method itself; its caller is `PageBaseMetadataEmitter.WriteCommonControlAttributes` |
 | `SourceExtensionType` | `ModernDev` on every member | 50/50 | a literal in `PageBaseMetadataEmitter.WriteExtensionSpecificMetadataAttributes` |
-| `Visible` on an actionref | `1` when the actionref states no `Visible` | 5/5 | measurement only |
-| `Importance` on a field control | `Standard` when the control states a `SourceExpression` and no `Importance` | 16/16 | measurement only |
+| `Visible` on an actionref | `1` when the actionref states no `Visible` | 5/5 | `WriteAction` → `WriteProperties(..., shouldOutputDefaultValues: true)` → `DefaultPropertyValuesEmitter`, from `ObjectParser.PageActionRefProperties` (Visible, default `true`, generates metadata) |
+| `Importance` on a field control | `Standard` when the control states a `SourceExpression` and no `Importance` | 16/16 | the same path, from `ObjectParser.PageFieldProperties` (Importance, default `Standard`) |
 
-The last two are measured defaults, not emitter code, so each is kept to the shape it was measured
-on: no measured actionref states `Visible`, no measured control states `Importance`, and every
-measured control is a field.
+The last two are written as literals rather than read from BC's property tables: the table holds
+`true` where the document holds `1`, and running `DefaultPropertyValuesEmitter` itself needs the
+compiler's symbol objects, which this render does not have. A stated `SourceExpression` stands in
+for "field control"; groups and parts use other tables with other defaults.
 
 **Not written, because the data does not support one answer:**
 
