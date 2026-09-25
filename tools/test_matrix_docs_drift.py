@@ -129,11 +129,12 @@ def canonical(versions) -> str:
     return " ".join(sorted(dict.fromkeys(versions), key=version_key))
 
 
-# The corpus's OWN cloud matrix -- a fourth legitimate set, distinct from ours since #4546
-# added 28.5 here before the corpus ran it. Docs quoting corpus runs name these legs.
-# Spelled out statically because pr-gate's tools-tests job has no corpus checkout;
-# check_corpus_version_claim holds it equal to the corpus ci.yml wherever one exists.
-CORPUS_LEGS = "27.0 27.3 27.5 28.0 28.1 28.2 28.3 28.4"
+# The corpus's OWN cloud matrix -- a fourth legitimate set, which can differ from ours
+# while one repository adds a version before the other (#4546, corpus #402). Docs quoting
+# corpus runs name these legs. Spelled out statically because pr-gate's tools-tests job
+# has no corpus checkout; check_corpus_version_claim holds it equal to the corpus ci.yml
+# wherever one exists.
+CORPUS_LEGS = "27.0 27.3 27.5 28.0 28.1 28.2 28.3 28.4 28.5"
 
 
 # Version runs that are NOT a claim about a matrix, keyed by (file, the run's
@@ -189,6 +190,17 @@ NOT_A_MATRIX_CLAIM = [
      "the three builds that are one Ncl.dll file, quoted as the misleading phrasing the "
      "section warns against -- a binary-identity example pinned by "
      "tools/test_bc_binary_identity_claims.py, not a leg set (moved from CLAUDE.md, #4542)"),
+    # Dated corpus runs from before the corpus added 28.5 (corpus #402): the legs each
+    # run had. Rewriting them to today's CORPUS_LEGS would claim a leg that never ran.
+    ("docs/codeunit-metadata-from-bc.md", "27.0 27.3 27.5 28.0 28.1 28.2 28.3 28.4",
+     "the cloud legs corpus PR 296 ran on -- a historical measurement, not the matrix"),
+    ("docs/page-control-field-from-bc-document.md", "27.0 27.3 27.5 28.0 28.1 28.2 28.3 28.4",
+     "the cloud legs of corpus run 34329910568 -- a historical measurement, not the matrix"),
+    ("docs/testpage-lookup.md", "27.0 27.3 27.5 28.0 28.1 28.2 28.3 28.4",
+     "the cloud legs of corpus runs 35445556865 and 35493508143 -- historical "
+     "measurements, not the matrix"),
+    ("docs/testpage-write-buffer.md", "27.0 27.3 27.5 28.0 28.1 28.2 28.3 28.4",
+     "the cloud legs of corpus run 34319509704 -- a historical measurement, not the matrix"),
     ("docs/runtime-packages.md", "27.5 28.1 28.4",
      "the three BC compilers that built the three genuine third-party runtime packages measured "
      "for #3537 -- a historical measurement of which builds were compared, not the matrix"),
@@ -301,19 +313,16 @@ def check_corpus_version_claim() -> None:
             f"({expected}) -- that is the list an agent counts green legs against. "
             f"Version lists it does state: {' | '.join(stated) if stated else '(none)'}")
 
-    # And the count claim next to it. "eight" is a word, not a number, in that sentence.
-    number_words = {2: "two", 3: "three", 4: "four", 5: "five", 6: "six",
-                    7: "seven", 8: "eight", 9: "nine", 10: "ten"}
-    word = number_words.get(len(corpus_versions))
-    if word is None:
-        offenders.append(f"the corpus now runs {len(corpus_versions)} versions -- "
-                         "extend number_words.")
-    else:
-        flowed = re.sub(r"\s+", " ", doc_text)
-        if f"**{word} BC versions" not in flowed:
+    # The doc names the versions, not how many (#4539). A count that does come back
+    # must be the right one.
+    number_words = {2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven",
+                    8: "eight", 9: "nine", 10: "ten", 11: "eleven", 12: "twelve"}
+    flowed = re.sub(r"\s+", " ", doc_text)
+    for n, word in number_words.items():
+        if n != len(corpus_versions) and re.search(rf"\b{word} BC versions", flowed, re.I):
             offenders.append(
-                f'docs/upstream-corpus-workflow.md must say "**{word} BC versions" -- the '
-                f"corpus dispatches {len(corpus_versions)} of them.")
+                f'docs/upstream-corpus-workflow.md says "{word} BC versions" but the corpus '
+                f"dispatches {len(corpus_versions)} -- drop the count; the list is the claim.")
 
     check("the corpus version claim matches the submodule's own workflow",
           offenders, len(corpus_versions), "corpus versions")
