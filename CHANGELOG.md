@@ -342,6 +342,7 @@ All notable changes to this project are documented here. Format based on
 - **integer-vt:** judge a half-open range against the base window, not the envelope-widened span
 
 ### Documentation
+- **agents:** delete figures that go stale on their own from skills and agent definitions
 - **rules:** cut ci-verdicts.md to claim, citation and trap; recipes move to a reading-ci-runs skill
 - **rules:** delete figures that go stale on their own from rules and CLAUDE.md
 - **metadata:** state the BC build every document count was measured on
