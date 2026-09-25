@@ -904,13 +904,16 @@ internal sealed partial class RunnerPageInstance
     /// this replaced.
     /// </summary>
     private BcAppSymbolCache.RequestPageControlSymbol RequestPageControl(int controlId, string propertyName)
+        => FindRequestPageControl(RecordPatches.TryGetDependencyRequestPageControls(_pageId), _pageId, controlId, propertyName);
+
+    internal static BcAppSymbolCache.RequestPageControlSymbol FindRequestPageControl(
+        IReadOnlyList<BcAppSymbolCache.RequestPageControlSymbol>? controls, int reportId, int controlId, string propertyName)
     {
-        var controls = RecordPatches.TryGetDependencyRequestPageControls(_pageId);
         foreach (var node in controls ?? (IReadOnlyList<BcAppSymbolCache.RequestPageControlSymbol>)Array.Empty<BcAppSymbolCache.RequestPageControlSymbol>())
             if (node.Id == controlId) return node;
 
         throw TestPageShapeGap.ControlProperty(
-            $"TestRequestPage {propertyName} on report {_pageId} element {controlId}",
+            $"TestRequestPage {propertyName} on report {reportId} element {controlId}",
             "the request page's metadata has no definition for this control and no loaded "
             + "dependency's symbol file states it, so what the report declares for the property is unknown");
     }

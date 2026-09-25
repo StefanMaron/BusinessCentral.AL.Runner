@@ -155,4 +155,25 @@ public sealed class ReportRequestPageControlSymbolTests
         Assert.Null(noControls);
         Assert.Null(noRequestPage);
     }
+    [Fact]
+    public void AControlTheSymbolFileDoesNotStateIsRefusedNotDefaulted()
+    {
+        var controls = InScratch("al-runner-rp-control-symbol-refuse",
+            dir => Report(dir, WithControls).RequestPageControls);
+
+        // Stated: the node comes back, with the expression the report declares.
+        Assert.Equal("VATDateEnabled",
+            RunnerPageInstance.FindRequestPageControl(controls, WithControls, 966077527, "Visible").VisibleExpr);
+
+        // Not stated: a blank node would read as "declares none" and answer true, the silent
+        // wrong answer the symbol read replaced, so it must refuse instead.
+        foreach (var (tree, id) in new[] { (controls, 123456789), (null, 966077527) })
+        {
+            var ex = Assert.Throws<AlRunner.Infrastructure.RunnerOutOfScopeException>(
+                () => RunnerPageInstance.FindRequestPageControl(tree, WithControls, id, "Editable"));
+            Assert.StartsWith("not-yet-implemented", ex.Reason, StringComparison.Ordinal);
+            Assert.Contains("testpage-control-property:", ex.Reason, StringComparison.Ordinal);
+            Assert.Equal($"TestRequestPage Editable on report {WithControls} element {id}", ex.Api);
+        }
+    }
 }
