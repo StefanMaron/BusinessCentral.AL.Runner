@@ -740,7 +740,7 @@ internal sealed partial class RunnerPageInstance
                 $"not-yet-implemented — the action declares RunObject = '{spec.ObjectName}', and this "
                 + "page ships precompiled, so its symbol file states the target by NAME with no "
                 + "object type. That name answers "
-                + string.Join(", ", candidates.Select(c => $"{c.Kind} {c.Id}"))
+                + string.Join(", ", candidates.Select(c => $"{c.Kind.ToString().ToLowerInvariant()} {c.Id}"))
                 + " in this run, so the runner cannot tell which object the AL named and will not "
                 + "guess; tracked by issue #4622");
 
