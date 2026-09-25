@@ -330,6 +330,8 @@ public sealed class CleanRunStartupVerbosityTests
 
         Assert.Contains("[expectations] no tests/expectations manifest found", output);
         Assert.Contains("[provision] found cached BC ", output);
+        // Deferred to the final generation, so the shadow re-exec does not print it twice (#4481).
+        Assert.Equal(1, output.Split("[provision] found cached BC ").Length - 1);
     }
 
     /// <summary>A caller who names an expectations directory asked about it, so the

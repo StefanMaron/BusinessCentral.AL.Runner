@@ -693,12 +693,19 @@ internal static partial class ProgramSupport
                 var cachedDir = AlRunner.Infrastructure.BcArtifacts.SelectArtifactVersionDir(
                     AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, prefix);
                 full = Path.GetFileName(cachedDir);
-                // #4561: "nothing changed" on a continuing run, so --verbose only, like the
-                // `already complete` line below; the `provision` subcommand (deferredLines
-                // null) always reports it. The parent's "no cached ... resolving from the
-                // CDN" branch stays loud: that one announces a download.
-                if (deferredLines == null || AlRunner.Log.Verbose)
-                    Console.Error.WriteLine($"[provision] found cached BC {full} for prefix '{prefix}' — verifying completeness.");
+                // #4561: "nothing changed" on a continuing run, so --verbose only and deferred
+                // to the final generation, like the `already complete` line below; the
+                // `provision` subcommand (deferredLines null) always reports it. The "no cached
+                // ... resolving from the CDN" branch stays loud: that one announces a download.
+                var foundCached = $"[provision] found cached BC {full} for prefix '{prefix}' — verifying completeness.";
+                if (deferredLines == null)
+                    Console.Error.WriteLine(foundCached);
+                else
+                    deferredLines.Add(() =>
+                    {
+                        if (AlRunner.Log.Verbose)
+                            Console.Error.WriteLine(foundCached);
+                    });
             }
             catch (InvalidOperationException)
             {
