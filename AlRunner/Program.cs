@@ -1126,11 +1126,20 @@ if (bcVersionArg == null && artifactPathArg == null)
         // (application/platform are minima, not pins), not a risk this branch's
         // sibling warning below is exempt from just because it lives in a different
         // half of the if/else. Gated the same way for the same reason.
+        // #2230: one fact, one wording. This branch used to hand-roll its own sentence
+        // ("warning: ... targets BC major X but the latest cached artifact is Y") for the
+        // SAME declared-floor-vs-selected-major comparison the no-variants half below
+        // describes through DescribeCrossMajorNote, so the two halves of this if/else
+        // disagreed about both vocabulary and framing -- "warning" for a condition #2210
+        // measured as a non-event. Nothing pinned this text, which is why it drifted.
+        // DescribeCrossMajorNote returns a bare body; this call site owns its tag, the same
+        // contract the other two callers follow.
         var projMajorV = TryDeriveBcMajorFromProject(bundles);
         if (AlRunner.Log.Verbose && projMajorV != null && bcVersionArg != null
-            && Version.TryParse(bcVersionArg, out var selV) && selV.Major.ToString() != projMajorV)
-            Console.Error.WriteLine($"[bc] warning: project app.json targets BC major {projMajorV} but the " +
-                $"latest cached artifact is {bcVersionArg} (major {selV.Major}).");
+            && Version.TryParse(bcVersionArg, out var selV)
+            && AlRunner.Infrastructure.BcArtifacts.DescribeCrossMajorNote(projMajorV, selV.Major)
+               is { } crossMajorNoteV)
+            Console.Error.WriteLine($"[bc] note: {crossMajorNoteV}");
     }
     else
     {
