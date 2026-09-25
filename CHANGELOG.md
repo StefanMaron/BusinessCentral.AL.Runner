@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **coverage:** serve Code Coverage (2000000049) line rows from the compiled AL source
 - **coverage:** implement code-coverage recording for CODECOVERAGELOG(TRUE)
 - **cli:** --test-data-company accepts a case-insensitive name prefix
 - **metadata:** emit PagePropertiesChange, so a pageextension's deltas pair against BC from index 0
