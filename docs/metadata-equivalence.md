@@ -1713,13 +1713,10 @@ for "field control"; groups and parts use other tables with other defaults.
 
 **Not written, because the data does not support one answer:**
 
-- **Unstated `RunPageMode`.** BC writes `Edit` on the three unstated trigger actions of 324, 4318
-  and 9862, and nothing on the three unstated `RunObject` actions of 774. That is a counter-example,
-  so it is not a constant default.
 - **`HelpLink`.** BC's emitter builds it from the app's `contextSensitiveHelpUrl` option and the
   pageextension's `ContextSensitiveHelpPage` (`WriteContextSpecificHelpUrlPropertyIfNeeded`). 774's
-  three `RunObject` actions carry none, and every other member carries
-  `https://learn.microsoft.com/dynamics365/business-central/`.
+  three views carry none ([they are not actions](#deltas-action-defaults)), and every other member
+  carries `https://learn.microsoft.com/dynamics365/business-central/`.
 - **`ExtensionId`.** BC writes `774` on pageextension 774's four field controls, which bind fields
   of tableextension 774. Both ids are 774, so the captured data cannot say which one BC writes.
 - **`UIElementIdentifier.ControlRuntimeId`.** This parses from BC's `AnchorId` hash, which the
@@ -1728,6 +1725,38 @@ for "field control"; groups and parts use other tables with other defaults.
 
 On 28.1.49838.53910 the runtime-delta difference rows went from 908 to 850. The 58 rows removed are
 exactly the eleven members the allowlist no longer declares, and no row was added.
+
+<a id="deltas-action-defaults"></a>
+### An `action` gets BC's always-emitted defaults; 774's "actions" are views (#3926)
+
+BC writes `Visible="true"`, `Enabled="true"` and `RunPageMode="Edit"` on an added AL `action`
+(symbol `Kind` 2) that does not state them. The rule is BC's own code, not an inference:
+`PageBaseMetadataEmitter.WriteAction` calls `WriteProperties(..., shouldOutputDefaultValues: true)`,
+and `DefaultPropertyValuesEmitter` then writes each unstated entry of
+`ObjectParser.PageActionProperties` whose `AlwaysGenerateMetadata` is set. Read by reflection on
+three distinct `Microsoft.Dynamics.Nav.CodeAnalysis.dll` binaries (sha256 prefixes `71923cc3` for
+27.5.46862.53931, `5fbb36d5` for 28.1.49838.53910, and `47e4d187` for both 28.1.49838.54308 and
+28.4.53241.54407), that set is `Visible` (default `true`), `Enabled` (`true`), `RunPageMode`
+(`Edit`) and `ApplicationArea` (no default; it comes from the declaring object). None of the three
+has a dependent property.
+
+Against the captured documents on all four builds: ext 9862's `Permissions` states none of the
+three and BC writes all three defaults, and exts 324 and 4318 state `Visible`/`Enabled`
+expressions and no `RunPageMode`, and BC writes `RunPageMode="Edit"` on both.
+
+**The counter-example is not an action.** Pageextension 774's three `ActionAdd` members
+carry none of these attributes and no `HelpLink`. Its symbol entry has no `ActionChanges`. It has
+`ViewChanges`, with three AL `view`s. BC writes a view into `ParentContainer="ViewActions"`,
+`SemanticKind="View"`, through `WriteViewAction`, which calls
+`WriteProperties(..., shouldOutputDefaultValues: false)` and never calls
+`WriteContextSpecificHelpUrlPropertyIfNeeded`. The render reads only `ActionChanges` and
+`ControlChanges`, so it produces nothing for those members. Rendering views is separate work on
+#3926.
+
+**Other kinds use other tables, so the rule is keyed on `Kind`.** `PageActionGroupProperties`
+has `Visible`, `Enabled` and `ShowAs=Standard`, and no `RunPageMode`. `PageActionRefProperties`
+has only `Visible`, which is typed `Boolean` and so serialises as `1`. No group is captured, so
+the render writes no group defaults.
 
 <a id="deltas-declaration-order"></a>
 ### Declaration order is load-bearing, because the differ pairs positionally

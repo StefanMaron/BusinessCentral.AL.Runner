@@ -198,6 +198,8 @@ public static partial class RecordPatches
             else
                 SetStatedMemberAttributes(member, origin.DeclaredProperties);
             SetEmitterDefaults(member, ext.Id, memberId, origin, isActionRef: actionRefTarget is not null);
+            if (origin.IsAction && origin.Kind == ActionKindAction)
+                SetActionDefaults(member, origin.DeclaredProperties);
             if (!origin.IsAction
                 && TryBoundRecFieldName(origin.DeclaredProperties) is { } boundField)
             {
@@ -250,10 +252,9 @@ public static partial class RecordPatches
     /// the page inventory this layer does not have, for the reason
     /// <see cref="BcAppSymbolCache.ActionRunObjectSymbol"/>'s own summary gives.</para>
     ///
-    /// <para><c>RunPageMode</c> is read ONLY when stated: every stated value in the four captured
-    /// builds is what BC writes (5 of 5). An unstated one is left off: it is not a constant, since
-    /// BC writes <c>Edit</c> on three unstated actions (324, 4318, 9862) and nothing on three
-    /// others (774's RunObject actions).</para>
+    /// <para><c>RunPageMode</c> is read verbatim when stated: every stated value in the four
+    /// captured builds is what BC writes (5 of 5). An unstated one is
+    /// <see cref="SetActionDefaults"/>'s.</para>
     /// </summary>
     private static void SetStatedMemberAttributes(
         XmlElement member, Dictionary<string, string>? declared)
@@ -299,6 +300,41 @@ public static partial class RecordPatches
 
         string? Stated(string name)
             => declared.TryGetValue(name, out var v) && !string.IsNullOrWhiteSpace(v) ? v : null;
+    }
+
+    /// <summary>BC's <c>ActionKind.Action</c> ordinal, as the symbol file's action <c>Kind</c>.</summary>
+    private const int ActionKindAction = 2;
+
+    /// <summary>
+    /// The defaults BC's emitter writes on an AL <c>action</c> (symbol <c>Kind</c> 2) that does
+    /// not state them: <c>Visible="true"</c>, <c>Enabled="true"</c>, <c>RunPageMode="Edit"</c>.
+    ///
+    /// <para><b>Observably equivalent</b>: <c>PageBaseMetadataEmitter.WriteAction</c> passes
+    /// <c>shouldOutputDefaultValues: true</c>, and <c>DefaultPropertyValuesEmitter</c> writes every
+    /// unstated <c>ObjectParser.PageActionProperties</c> entry marked always-generated — exactly
+    /// these three, each with no dependent property, on CodeAnalysis 71923cc3 (27.5.46862.53931),
+    /// 5fbb36d5 (28.1.49838.53910) and 47e4d187 (28.1.49838.54308, 28.4.53241.54407). Matches BC's
+    /// documents on all four builds: all three on ext 9862, <c>RunPageMode</c> on 324 and 4318
+    /// (docs/metadata-equivalence.md#deltas-action-defaults).</para>
+    ///
+    /// <para>Trap: pageextension 774's three members that carry none of these are not actions —
+    /// they are AL <c>view</c>s, which BC renders through <c>WriteViewAction</c> with
+    /// <c>shouldOutputDefaultValues: false</c>. Other action kinds read other tables (a group's
+    /// has no <c>RunPageMode</c>, an actionref's <c>Visible</c> serialises as <c>1</c>), so the
+    /// Kind check is not a formality. An expression-valued <c>Visible</c>/<c>Enabled</c> is
+    /// stated, so no default is written over it even though the render leaves it off.</para>
+    /// </summary>
+    private static void SetActionDefaults(XmlElement member, Dictionary<string, string>? declared)
+    {
+        Default("Visible", "true");
+        Default("Enabled", "true");
+        Default("RunPageMode", "Edit");
+
+        void Default(string property, string value)
+        {
+            if (declared is null || !declared.ContainsKey(property))
+                member.SetAttribute(property, value);
+        }
     }
 
     /// <summary>
@@ -489,7 +525,7 @@ public static partial class RecordPatches
     /// table holds <c>true</c> where the document holds <c>1</c> and driving the emitter itself
     /// needs compiler symbols this render does not have. A stated <c>SourceExpression</c> stands
     /// in for "field control"; groups and parts have their own tables with other defaults.
-    /// Unstated <c>RunPageMode</c> is NOT written: 774's three RunObject actions carry none.</para>
+    /// A Kind-2 action's defaults are <see cref="SetActionDefaults"/>'s.</para>
     /// </summary>
     private static void SetEmitterDefaults(
         XmlElement member, int extensionId, int memberId, BcAppSymbolCache.PageExtensionMemberOrigin origin,
