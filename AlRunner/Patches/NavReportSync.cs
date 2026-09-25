@@ -43,10 +43,14 @@ namespace AlRunner;
 
 public static partial class NavReportSync
 {
+    // Read once: the Cecil rewrite prepends Diag to NavRecordHandle's constructor, so it runs
+    // on every record variable a test creates (#4487).
+    internal static readonly bool DiagIcEnabled = Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_IC") == "1";
+
     /// <summary>Diagnostic marker; gated by AL_RUNNER_DIAG_IC=1.</summary>
     public static void Diag(string msg)
     {
-        if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_IC") == "1")
+        if (DiagIcEnabled)
             Console.Error.WriteLine($"[DiagIC] {msg}");
     }
 
@@ -729,7 +733,7 @@ public static partial class NavReportSync
     /// </summary>
     public static void SyncRun(object navReport)
     {
-        if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_IC") == "1")
+        if (DiagIcEnabled)
             Console.Error.WriteLine($"[NavReportSync] SyncRun entry: type={navReport?.GetType().FullName}");
         if (navReport == null) return;
 
@@ -826,7 +830,7 @@ public static partial class NavReportSync
             {
                 // BC: ReportExecutionResult.Cancel. No trigger runs, no layout is resolved,
                 // and no error is raised — cancelling a request page is an ordinary outcome.
-                if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_IC") == "1")
+                if (DiagIcEnabled)
                     Console.Error.WriteLine("[NavReportSync] SyncRun: request page cancelled — report body not executed");
                 return true;
             }
@@ -900,7 +904,7 @@ public static partial class NavReportSync
             // triggers we don't yet special-case) is a control-flow signal,
             // not an error. NavReport.Skip() etc. throw NavControlException
             // by design. Swallow it — the report ends here, no layout.
-            if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_IC") == "1")
+            if (DiagIcEnabled)
                 Console.Error.WriteLine($"[NavReportSync] SyncRun: report terminated by {ex.GetType().Name} (control-flow)");
             return true;
         }
@@ -974,7 +978,7 @@ public static partial class NavReportSync
     private static bool IsProcessingOnly(object navReport, Type navReportBase)
     {
         int reportId = TryGetObjectId(navReport, navReportBase);
-        bool diag = Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_IC") == "1";
+        bool diag = DiagIcEnabled;
         if (reportId <= 0)
         {
             if (diag) Console.Error.WriteLine($"[NavReportSync] SyncRun: reportId=0 (could not resolve), defaulting ProcessingOnly=true");
@@ -1789,7 +1793,7 @@ public static partial class NavReportSync
             }
         }
 
-        if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_IC") == "1")
+        if (DiagIcEnabled)
         {
             var recProp = dataItem.GetType().GetProperty("Record",
                 BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
