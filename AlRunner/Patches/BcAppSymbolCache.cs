@@ -346,7 +346,10 @@ internal static partial class BcAppSymbolCache
         string? Permissions = null,
         // #4282. The page's own ApplicationArea, verbatim ("#All", "#Basic,#Suite"); null when
         // not stated. Read for its parts, which inherit it (RecordPatches.EmitPartControlXml).
-        string? ApplicationArea = null);
+        string? ApplicationArea = null,
+        // The .app-relative AL source file the symbol file says this page was compiled from;
+        // read only to recover a shared-name RunObject's kind (#4622). Null when not stated.
+        string? ReferenceSourceFileName = null);
 
     /// <summary>
     /// The <c>Enabled</c> / <c>Visible</c> one action DECLARES, exactly as the compiler wrote
@@ -455,7 +458,9 @@ internal static partial class BcAppSymbolCache
         // Null means "this payload predates the field"; empty means the extension states none,
         // which is a DIFFERENT answer -- four of the seven pageextensions carrying deltas state
         // none and correctly get no element.
-        Dictionary<string, string>? ObjectProperties = null);
+        Dictionary<string, string>? ObjectProperties = null,
+        // Same as PageSymbol.ReferenceSourceFileName (#4622).
+        string? ReferenceSourceFileName = null);
 
     /// <summary>
     /// Where one member an AL <c>pageextension</c> adds came from, as SymbolReference.json
@@ -1717,8 +1722,16 @@ internal static partial class BcAppSymbolCache
             PageTypeStated: !string.IsNullOrWhiteSpace(pageType),
             AnalysisModeEnabled: analysisModeEnabled,
             Permissions: OrNullIfBlank(permissions),
-            ApplicationArea: OrNullIfBlank(pageApplicationArea));
+            ApplicationArea: OrNullIfBlank(pageApplicationArea),
+            ReferenceSourceFileName: ReadReferenceSourceFileName(page));
     }
+
+    private static string? ReadReferenceSourceFileName(JsonElement node)
+        => node.TryGetProperty("ReferenceSourceFileName", out var rsf)
+           && rsf.ValueKind == JsonValueKind.String
+           && rsf.GetString() is { Length: > 0 } path
+            ? path
+            : null;
 
     /// <summary>
     /// Parse one entry of a SymbolReference.json <c>PageExtensions</c> array into a
@@ -1803,7 +1816,8 @@ internal static partial class BcAppSymbolCache
             memberNames, actionRefTargets, runObjects, origins,
             // The extension node's own bag, read with the same helper the members use. Always
             // non-null here so an empty bag and a pre-field payload stay distinguishable.
-            SymbolProperties(ext));
+            SymbolProperties(ext),
+            ReadReferenceSourceFileName(ext));
     }
 
     /// <summary>
