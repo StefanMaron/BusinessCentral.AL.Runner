@@ -39,6 +39,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **report:** precompiled report FlowField columns calculate in the dataset
 - **report:** register request-page controls when precompiled AL runs the report
 - **testpage:** surface a failing page-driven row insert instead of trapping it
 - **testpage:** show a RunObject codeunit's write on the host page and pin its Rec's filters and isolation
