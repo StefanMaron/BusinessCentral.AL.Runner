@@ -704,29 +704,48 @@ internal sealed partial class RunnerPageInstance
     /// </summary>
     private ActionRunTarget? ResolveRunTargetFromSymbols(int actionId)
     {
+        var declaringId = _pageId;
+        var declaredByExtension = false;
         var declared = RecordPatches.TryGetActionRunObject(_pageId, actionId, isExtension: false);
         if (declared == null)
             foreach (var extensionId in RecordPatches.GetPageExtensionIdsForPage(_pageId))
             {
                 declared = RecordPatches.TryGetActionRunObject(extensionId, actionId, isExtension: true);
-                if (declared != null) break;
+                if (declared == null) continue;
+                (declaringId, declaredByExtension) = (extensionId, true);
+                break;
             }
         if (declared is not { } spec) return null;
 
         var candidates = RecordPatches.ResolveRunObjectName(spec.ObjectName);
 
-        // Two objects answer the name — a page and a report ("Chart of Accounts"), or two
-        // codeunits in different apps. The symbol file cannot say which the AL named, and
-        // picking one would run the wrong object silently, so refuse by name.
+        // Two objects answer the name — a page and a report ("Purchase Statistics"), or two
+        // codeunits in different apps. The declaring object's AL source in the .app states the
+        // kind (`RunObject = Page "Purchase Statistics";`), which narrows the candidates to the
+        // one the AL named (#4622). Anything short of exactly one is refused by name: picking
+        // would run the wrong object silently.
         if (candidates.Count > 1)
-            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                $"TestPage action {actionId} on page {_pageId}",
-                $"not-yet-implemented — the action declares RunObject = '{spec.ObjectName}', and this "
-                + "page ships precompiled, so its symbol file states the target by NAME with no "
-                + "object type. That name answers "
-                + string.Join(", ", candidates.Select(c => $"{c.Kind.ToString().ToLowerInvariant()} {c.Id}"))
-                + " in this run, so the runner cannot tell which object the AL named and will not "
-                + "guess; tracked by issue #4622");
+        {
+            var sourceKind = RecordPatches.TryReadActionRunObjectKindFromSource(
+                declaringId, actionId, declaredByExtension, out var whyNot);
+            var narrowed = sourceKind is { } kind
+                ? candidates.Where(c => c.Kind == kind).ToList()
+                : null;
+            if (narrowed is { Count: 1 })
+                candidates = narrowed;
+            else
+                throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                    $"TestPage action {actionId} on page {_pageId}",
+                    $"not-yet-implemented — the action declares RunObject = '{spec.ObjectName}', and this "
+                    + "page ships precompiled, so its symbol file states the target by NAME with no "
+                    + "object type. That name answers "
+                    + string.Join(", ", candidates.Select(c => $"{c.Kind.ToString().ToLowerInvariant()} {c.Id}"))
+                    + " in this run, and "
+                    + (sourceKind is { } stated
+                        ? $"the AL source states {stated}, which does not narrow it to one object"
+                        : $"the kind could not be read from the AL source: {whyNot}")
+                    + ". The runner will not guess; tracked by issue #4622");
+        }
 
         // Nothing answers it: ObjectId 0, refused by name in TryRunActionRunObject.
         if (candidates.Count == 0)
