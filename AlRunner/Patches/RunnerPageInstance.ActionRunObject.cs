@@ -110,7 +110,7 @@
 //   TestPages." (raised by Ncl's TestServiceConnection). TryRunActionRunObject does both. What
 //   stays refused by name is a link whose fields this run cannot resolve to numbers — a dropped
 //   link shows the target's WHOLE table — and a precompiled page's RunObject name that does not
-//   resolve to exactly one page (#4582).
+//   resolve to exactly one object across the five kinds (#4582, #4622).
 using System.Reflection;
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types.Exceptions;
@@ -124,7 +124,7 @@ internal sealed partial class RunnerPageInstance
     /// One action's RunObject declaration, however it was recovered.
     /// <paramref name="ObjectId"/> is 0 when only a NAME was available (a page shipped
     /// precompiled in a dependency .app states <c>RunObject</c> as a name, with no object type
-    /// alongside it) and the name could not be resolved against this run's page inventory.
+    /// alongside it) and no object in this run answers that name.
     /// </summary>
     private readonly record struct ActionRunTarget(
         MetaTypes.RunObjectType Kind,
@@ -196,10 +196,8 @@ internal sealed partial class RunnerPageInstance
             throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 $"TestPage action {actionId} on page {_pageId}",
                 $"not-yet-implemented — the action declares RunObject = {Describe(target)}, but "
-                + "that name does not resolve to a page this run knows about. It is either a "
-                + "report / codeunit / xmlport / query (which the symbol file states by name "
-                + "only, with no object type) or a page that is not loaded, and the runner will "
-                + "not guess which; tracked by issue #4582");
+                + "no page, codeunit, report, xmlport or query this run has loaded answers that "
+                + "name (the symbol file states it by name only, with no object type)");
 
         RunTargetPage(actionId, target);
         return true;
@@ -715,11 +713,10 @@ internal sealed partial class RunnerPageInstance
     ///
     /// <para>The symbol file states <c>RunObject</c> as a bare object NAME — measured across
     /// Base Application 28.1's 5,455 action RunObject properties, not one carries an object
-    /// type — so the kind cannot be read off it. It is inferred from the page inventory: a name
-    /// that resolves to a page IS a page. That is the same by-name resolution
-    /// <c>CardPageId</c> / <c>LookupPageId</c> / <c>DrillDownPageId</c> already use, and an
-    /// unresolvable name is reported loudly by the caller rather than answered with a
-    /// default.</para>
+    /// type — so the kind cannot be read off it. It is read off the run's object inventory
+    /// instead, across the five RunObject kinds and every loaded dependency (#4582): a name
+    /// exactly one object answers IS that object. A name two objects answer is refused here,
+    /// and one nothing answers is reported loudly by the caller, never defaulted.</para>
     /// </summary>
     private ActionRunTarget? ResolveRunTargetFromSymbols(int actionId)
     {
@@ -732,31 +729,37 @@ internal sealed partial class RunnerPageInstance
             }
         if (declared is not { } spec) return null;
 
-        var (pageId, otherKinds) = RecordPatches.ResolveObjectNameAsPage(spec.ObjectName);
+        var candidates = RecordPatches.ResolveRunObjectName(spec.ObjectName);
 
-        // Ambiguous: the same name also names a report / codeunit / xmlport / query. Measured
-        // on Base Application 28.1, 73 names are shared that way, so this is a routine case and
-        // not a corner one — "Chart of Accounts" is both a page and a report. Opening the page
-        // for an action whose AL said `RunObject = Report "Chart of Accounts"` would be a
-        // silent wrong answer, so ObjectId 0 sends it to the caller's loud refusal.
-        if (pageId > 0 && otherKinds.Count > 0)
+        // Two objects answer the name — a page and a report ("Chart of Accounts"), or two
+        // codeunits in different apps. The symbol file cannot say which the AL named, and
+        // picking one would run the wrong object silently, so refuse by name.
+        if (candidates.Count > 1)
             throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 $"TestPage action {actionId} on page {_pageId}",
                 $"not-yet-implemented — the action declares RunObject = '{spec.ObjectName}', and this "
                 + "page ships precompiled, so its symbol file states the target by NAME with no "
-                + $"object type. That name is also a {string.Join("/", otherKinds)} in this run, so "
-                + "the runner cannot tell which object the AL named and will not guess; tracked "
-                + "by issue #4582");
+                + "object type. That name answers "
+                + string.Join(", ", candidates.Select(c => $"{c.Kind.ToString().ToLowerInvariant()} {c.Id}"))
+                + " in this run, so the runner cannot tell which object the AL named and will not "
+                + "guess; tracked by issue #4622");
 
+        // Nothing answers it: ObjectId 0, refused by name in TryRunActionRunObject.
+        if (candidates.Count == 0)
+            return new ActionRunTarget(
+                MetaTypes.RunObjectType.Page, 0, spec.ObjectName, spec.RunPageOnRec, NoLinks);
+
+        var (runObjectType, objectId) = candidates[0];
         return new ActionRunTarget(
-            // A name this run's page inventory answers, and nothing else answers, IS a page. A
-            // name it does not answer at all is reported by ObjectId 0, and the caller refuses
-            // it by name rather than guessing which kind the symbol file meant.
-            MetaTypes.RunObjectType.Page,
-            pageId,
+            runObjectType,
+            objectId,
             spec.ObjectName,
             spec.RunPageOnRec,
-            LinksFromSymbols(actionId, spec, pageId));
+            // RunPageLink filters a TARGET PAGE's rowset; BC's codeunit/report/xmlport/query
+            // dispatch never reads it, and neither does the compiled-metadata route above.
+            runObjectType == MetaTypes.RunObjectType.Page
+                ? LinksFromSymbols(actionId, spec, objectId)
+                : NoLinks);
     }
 
     /// <summary>
