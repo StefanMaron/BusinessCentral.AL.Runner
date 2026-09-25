@@ -55,3 +55,45 @@ A hello-world `net8.0` console app measures 0.149G on the same box, so the paren
 The whole al-language corpus (corpus `0d9d246b`, 3,348 tests) passed 3,348 of 3,348 with both
 binaries. Its instruction count varies by about 60G between identical warm runs, so it can show
 that nothing regressed, not the size of the gain.
+
+## Package-directory discovery memo
+
+**Rule: a recursive search for `.alpackages` or `.deps-bin` walks each root once per run.**
+`SafeDirectoryScan.Directories` answers those two names from a memo while a
+`SafeDirectoryScan.BeginRunMemo()` scope is open, and walks on every call otherwise.
+`AlRunner.Tests/SafeDirectoryScanRunMemoTests.cs` pins the scope behaviour, and the
+`package_dir_repeat_walks` field of the `AL_RUNNER_PHASE_LOG` process row — asserted `0` in
+`PhaseLogIntegrationTests.RealRun_EmitsOrderedPerBundleRecordsAndOneProcessRecord` — pins that a
+one-shot run actually opens the scope.
+
+### Where the scope opens
+
+| mode | scope |
+|---|---|
+| one-shot CLI, `--dap` | the whole run, opened before the first `.alpackages` scan in `Program.cs` |
+| `--watch` | renewed at the top of every cycle after the first |
+| `--server` | one per request, inside `RunAllBundlesForServer`; the startup scope is closed before the server goes resident |
+
+Never the process: both directories are user-owned, and a developer can add an `.alpackages`
+(a symbol download) between two watch cycles or two server requests. The runner itself never
+creates either name — provisioning writes to its own artifact directories (#1653) — so within
+one run the memo cannot go stale. **Trap:** a name the runner *does* create during a run must not
+be added to `MemoizedPatterns`; a later search in the same run would miss the new directory.
+
+The memo keys on the root **as spelled**, because the returned paths are spelled from it. Two
+spellings of one directory (a relative and an absolute path) are two entries and two walks.
+
+### Measured (#2218)
+
+Warm page cache, NVMe, BC 28.1.49838.53910 build, the runner pointed at a repository root with
+`--package-cache ~/.al-runner/platform-apps`, walks traced per `(pattern, root)`:
+
+| tree | directories | before: walks / repeats / ms in walks | after |
+|---|---|---|---|
+| fresh worktree of this repository, full run | 2,380 | 358 / 66 / 736 ms | 293 / 1 / 57 ms |
+| main checkout with 31 worktrees, first 150 s | 78,203 | 280 / 206 / 83.6 s | 547 / 1 / 1.3 s |
+
+In the second row the root itself was walked 73 times for `.alpackages` (477 ms each) and 135
+times for `.deps-bin` (360 ms each) before the change; after it, twice and once. The run did not
+finish inside the window either way, so the row compares work done in the same 150 s — after the
+change the run had reached 546 distinct roots instead of 74.
