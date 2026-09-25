@@ -470,6 +470,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **startup:** run the startup housekeeping once per invocation, not once per re-exec generation
 - **startup:** walk each .alpackages root once per invocation
 - **expectations:** record permission enforcement as a known gap, pinned by corpus codeunit 60026
 - **docs:** follow the corpus 28.5 leg in the matrix-docs drift guard
