@@ -255,9 +255,21 @@ internal partial class LiveNavTestPage
             // TrapError only where BC measured silence (RefusedInsert); TrapError still raises an
             // OnInsert trigger's own error, so only the table's refusal of the row is trapped.
             // Everywhere else ThrowError, as NavForm.SaveRecordAsync's insert — corpus 60045, #4624.
-            var inserted = _record!.ALInsertAsync(trapRefusal ? DataError.TrapError : DataError.ThrowError, true, false)
+            var unstampedBefore = !_record!.IsTemporary && !_record.HasBeenInserted;
+            var inserted = _record.ALInsertAsync(trapRefusal ? DataError.TrapError : DataError.ThrowError, true, false)
                 .GetAwaiter().GetResult();
-            if (!inserted) return InsertOutcome.Refused;
+            if (!inserted)
+            {
+                // A refused row gets no rowversion on SQL, so HasBeenInserted stays false. The
+                // runner's stamp (RowVersionPatches.OnBeforeInsert) runs BEFORE the provider's
+                // duplicate check and leaves one on the refused buffer, which made the pending
+                // row read as "already inserted by the page" and turned OK()'s teardown insert
+                // into a silent Modify (corpus 60045 OK arm, #4624). Clearing it is observably
+                // equivalent: zero is what the buffer held before the attempt.
+                if (unstampedBefore && _record.HasBeenInserted)
+                    _record.SetFieldValue(0, Microsoft.Dynamics.Nav.Runtime.NavBigInteger.Create(0L));
+                return InsertOutcome.Refused;
+            }
             // The row is now the page's own row, so it is also its own before-image — BC's
             // NavForm.InsertAsync does exactly this, under exactly this guard
             // (`if (SourceTable.HasBeenInserted) OldRecord.ALAssign(SourceTable)`). Without it the

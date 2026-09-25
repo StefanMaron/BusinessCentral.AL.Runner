@@ -427,14 +427,16 @@ public static partial class BcRuntime
         var handler = _fTreeObjTree.GetValue(self);
         if (handler == null) return null;
 
-        var pages = new List<Microsoft.Dynamics.Nav.Runtime.NavTestPageHandle>();
+        // Allocated only when a TestPage is found: this runs on every procedure scope exit.
+        List<Microsoft.Dynamics.Nav.Runtime.NavTestPageHandle>? pages = null;
         for (var child = _fTreeHandlerFirstChildBase.GetValue(handler); child != null;
              child = _fTreeHandlerNextSiblingBase.GetValue(child))
         {
             if (_fTreeHandlerHostObject.GetValue(child) is Microsoft.Dynamics.Nav.Runtime.NavTestPageHandle page
                 && page.HasTarget)
-                pages.Add(page);
+                (pages ??= new()).Add(page);
         }
+        if (pages == null) return null;
 
         System.Runtime.ExceptionServices.ExceptionDispatchInfo? first = null;
         foreach (var page in pages)
