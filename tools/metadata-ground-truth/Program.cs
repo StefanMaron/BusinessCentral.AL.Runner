@@ -135,6 +135,13 @@ internal static class Program
                               $"objects={capture.Items.Count} errors={emitErrors.Count}");
             foreach (var g in emitErrors.GroupBy(d => d.Id).OrderByDescending(g => g.Count()).Take(10))
                 Console.WriteLine($"   [{g.Key}] x{g.Count()} :: {g.First().GetMessage()} @ {g.First().Location}");
+            // #4495: name the setup part a failure points at (#3530 point 2). Objects are counted
+            // too, but they are not the verdict: continueBuildOnError captures every object that
+            // did emit, so a failed package can still hand over all of its tables.
+            if (emitErrors.Count > 0 || capture.Items.Count == 0)
+                Console.WriteLine("[diagnosis] " + AlRunner.Infrastructure.AppPackageSetupDiagnosis.Explain(
+                    emitErrors.Select(d => d.Id), capture.Items.Count)
+                    .Replace(Environment.NewLine, Environment.NewLine + "[diagnosis] "));
 
             // Loud, not smaller. An app that emits nothing is the #3549 shape — Base
             // Application emitting ZERO objects because one .NET reference could not be

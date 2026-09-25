@@ -1,0 +1,5 @@
+{
+  "comment": "What BC's emitter must produce from this package on every BC version the pipeline runs. These are counts of objects this fixture DECLARES, so they change only when the fixture's own source does.",
+  "tables": 3,
+  "objects": 6
+}

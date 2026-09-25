@@ -34,6 +34,11 @@
   <ItemGroup>
     <Compile Include="../../AlRunner/Infrastructure/EngineClosure.cs"
              Link="Linked/EngineClosure.cs" />
+    <!-- #4495: the package-entry normalization of #3530, linked for the same reason. It is a
+         pure function of package bytes (System.Text.RegularExpressions and System.Xml.Linq,
+         nothing else), and LayeredFileSystem needs the runner's decode rather than its own. -->
+    <Compile Include="../../AlRunner/Infrastructure/AppPackageCompileSetup.cs"
+             Link="Linked/AppPackageCompileSetup.cs" />
   </ItemGroup>
 
   <ItemGroup>

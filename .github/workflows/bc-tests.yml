@@ -527,6 +527,15 @@ jobs:
           tools/gen-metadata-ground-truth.sh \
             --artifacts "$HOME/.local/share/al-runner/artifacts/${{ matrix.target.bc-version }}"
 
+      - name: App-package compile pipeline (#4495)
+        # EVERY leg, not only the unit legs: the claim is "a package compiles on this BC
+        # build", so each build is its own subject. A few seconds per fixture. Placement and
+        # cost: docs/app-package-compile-pipeline.md. NOT continue-on-error.
+        run: |
+          tools/app-package-pipeline.sh \
+            --artifacts "$HOME/.local/share/al-runner/artifacts/${{ matrix.target.bc-version }}" \
+            --out "$RUNNER_TEMP/app-package-pipeline"
+
       # Issue #1825: AL_RUNNER_PHASE_LOG makes each runner subprocess append one JSONL
       # record per app group / bundle / process to a shared file. The 76 spawns' stdout
       # is captured into strings and discarded by the tests (and several assert on it

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/navx/2015/manifest">
+  <App Id="4a3c9d7e-6b1f-4e2a-9c58-0d7e2f4b1a95" Name="AL Runner Third-Party-Shaped Fixture" Publisher="AL Runner Fixtures" Brief="" Description="" Version="1.0.0.0" CompatibilityId="0.0.0.0" PrivacyStatement="" EULA="" Help="" HelpBaseUrl="" ContextSensitiveHelpUrl="https://example.invalid/help/" Url="" Logo="" Platform="27.0.0.0" Runtime="16.0" Target="Cloud" ShowMyCode="True" />
+  <IdRanges>
+    <IdRange MinObjectId="70000" MaxObjectId="70099" />
+  </IdRanges>
+  <Dependencies />
+  <InternalsVisibleTo />
+  <ScreenShots />
+  <SupportedLocales />
+  <Features>
+    <Feature>NOIMPLICITWITH</Feature>
+    <Feature>NOPROMOTEDACTIONPROPERTIES</Feature>
+  </Features>
+  <PreprocessorSymbols>
+    <PreprocessorSymbol>TPFIXTURE</PreprocessorSymbol>
+  </PreprocessorSymbols>
+  <SuppressWarnings />
+  <ResourceExposurePolicy AllowDebugging="true" AllowDownloadingSource="true" IncludeSourceInSymbolFile="true" ApplyToDevExtension="false" />
+  <KeyVaultUrls />
+  <AlternateIds />
+</Package>

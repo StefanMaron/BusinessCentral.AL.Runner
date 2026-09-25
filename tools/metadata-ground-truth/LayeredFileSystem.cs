@@ -1,6 +1,7 @@
 // The IFileSystem BC's compiler resolves an app's resources through: ordered roots, so an
-// overlay such as addin/src sits beside the package root, plus '\' -> '/', URL-decoding and
-// case-folded lookup applied unconditionally. Microsoft's own apps rely on all three.
+// overlay such as addin/src sits beside the package root, plus '\' -> '/', URL-decoding (of
+// both the requested path and the shipped entry names) and case-folded lookup, applied
+// unconditionally.
 
 using NavCA = Microsoft.Dynamics.Nav.CodeAnalysis;
 
@@ -19,6 +20,11 @@ internal sealed class LayeredFileSystem : NavCA.IFileSystem
             {
                 var rel = Path.GetRelativePath(root, file).Replace('\\', '/');
                 _caseFolded.TryAdd(rel, file);
+                // A package can ship an entry percent-encoded while the AL names it literally
+                // (#3530, AL1081; the third-party-shaped fixture pins it). Decoding the REQUEST
+                // below cannot reach that: the encoded side is the file on disk.
+                _caseFolded.TryAdd(
+                    AlRunner.Infrastructure.AppPackageCompileSetup.NormalizeEntryName(rel), file);
             }
     }
 
