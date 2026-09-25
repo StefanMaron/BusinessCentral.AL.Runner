@@ -215,9 +215,13 @@ internal partial class LiveNavTestPage
     // was wrong in both directions — it would mistranslate a field number that happens to
     // collide with a control id, and it rejected small, perfectly valid field numbers as
     // "not a control" (Pageworks SetFilter(3, …) on PageworksPartial).
+    //
+    // Both read and write filter group 0 whatever group Rec was left in — see TestFilterUserGroup.
     public override void SetFilter(int fieldNo, string filterValue)
     {
-        RequireRecord("SetFilter()").ALSetFilter(fieldNo, filterValue);
+        var record = RequireRecord("SetFilter()");
+        TestFilterUserGroup.Run(() => record.ALFilterGroup, g => record.ALFilterGroup = g,
+            () => { record.ALSetFilter(fieldNo, filterValue); return 0; });
         RepositionAfterFilterChange();
     }
 
@@ -252,7 +256,11 @@ internal partial class LiveNavTestPage
     }
 
     public override string GetFilter(int fieldNo)
-        => RequireRecord("GetFilter()").ALGetFilter(fieldNo);
+    {
+        var record = RequireRecord("GetFilter()");
+        return TestFilterUserGroup.Run(() => record.ALFilterGroup, g => record.ALFilterGroup = g,
+            () => record.ALGetFilter(fieldNo));
+    }
 
     // ── ITestFilter: the key and the direction the page walks (#3316) ─────────────
     //
@@ -357,5 +365,26 @@ internal partial class LiveNavTestPage
         left = Unwrap(left);
         right = Unwrap(right);
         return Equals(left, right);
+    }
+}
+
+/// <summary>
+/// Runs a TestFilter read or write in filter group 0 — the page's user filters — and restores
+/// whatever group the record was in, even when the body throws. A page whose OnOpenPage ends in
+/// FilterGroup(2) (GenJnlManagement.OpenJnlBatch) must not route the test's filter into group 2,
+/// where it would AND with the group-0 filter it should replace. Observably equivalent to BC:
+/// corpus codeunit 60919 (#4677) pins both that it replaces a group-0 filter and that it leaves
+/// a group-2 filter in force.
+/// </summary>
+internal static class TestFilterUserGroup
+{
+    internal const int UserFilterGroup = 0;
+
+    internal static T Run<T>(Func<int> getGroup, Action<int> setGroup, Func<T> body)
+    {
+        var saved = getGroup();
+        setGroup(UserFilterGroup);
+        try { return body(); }
+        finally { setGroup(saved); }
     }
 }
