@@ -11,6 +11,7 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+[Collection(ConsoleFilterSerialCollection.Name)]
 public sealed class RecordHotPathCachingTests
 {
     private sealed class FakeProvider { }
