@@ -1,0 +1,10 @@
+[
+  {
+    "codeunitId": 60925,
+    "CodeunitName": "Test Code Coverage Per Test",
+    "Method": "TestsRun_TestStartedWhileRecording_NamesTheOwningApp",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4676",
+    "Note": "Expected the corpus app's id, got {00000000-0000-0000-0000-000000000000}: the Code Coverage Tests Run row's Owning Application is BC's CodeCoverageTestInfo reading NavMethodScope.AppId, which is NavApplicationObjectBase.AppId, set from navAppGroup.GetObjectOwner in its constructor -- and the runner's BaseGroup knows no owner for an object it compiled. The rest of codeunit 60925 passes on the runner with #4666's fix (the row exists, names the test, and the lookup table links the method that ran), so ONE method is named rather than a wildcard. No service-tier verdict when this entry was written: corpus PR #422's cloud legs are it. Remove this file when #4676 lands."
+  }
+]
