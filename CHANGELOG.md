@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **cli:** --test-data-company accepts a case-insensitive name prefix
 - **metadata:** emit PagePropertiesChange, so a pageextension's deltas pair against BC from index 0
 - **compile:** one package-manifest compile path with a part-naming diagnostic
 - **queue:** order the ready queue by an explicit priority label
@@ -37,6 +38,8 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **provisioning:** default BC version selection picks only versions a shipped engine variant runs
+- **tools:** derive the corpus's required cloud legs instead of assuming eight
 - **metadata:** extension-runtime-delta render states actionref members
 - **testpage:** perform an action's non-page RunObject the way BC does
 - **report-layout-list:** carry ObsoleteState and Excel sheet configuration for precompiled dependency layouts
