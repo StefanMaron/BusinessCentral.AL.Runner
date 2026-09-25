@@ -48,6 +48,11 @@ public readonly record struct SourceScanFailure(string Path, string Reason, Sour
 public sealed class AlSourceLocationMap : IReadOnlyDictionary<(string Label, int Id), string>
 {
     private readonly Dictionary<(string Label, int Id), (string Path, int LineOffset)> _entries = new();
+    private readonly Dictionary<(string Label, int Id), ObjectTextSpan> _texts = new();
+
+    /// <summary>Where one object's BC source text lives in its file: the file preamble's line
+    /// count, and the object's first and last line (0-based, inclusive).</summary>
+    internal readonly record struct ObjectTextSpan(string AbsolutePath, int PreambleLines, int StartLine, int EndLine);
     private readonly List<SourceScanFailure> _scanFailures = new();
 
     /// <summary>A map with no objects; never mutated.</summary>
@@ -76,6 +81,35 @@ public sealed class AlSourceLocationMap : IReadOnlyDictionary<(string Label, int
     internal void Add(string label, int id, string path, int lineOffset) =>
         _entries[(label, id)] = (path, lineOffset);
 
+    internal void AddText(string label, int id, ObjectTextSpan text) => _texts[(label, id)] = text;
+
+    /// <summary>
+    /// The object's source text as BC stores it for the object ("User AL Code"): the file's
+    /// preamble followed by the object's own lines, so index L is the line a decoded
+    /// [SourceSpans] line L names. Null when the map has no entry for the object. Throws on a
+    /// file that can no longer be read — an answer from a half-read file would put rows on the
+    /// wrong lines.
+    /// </summary>
+    public IReadOnlyList<string>? ObjectSourceLines(string label, int id)
+    {
+        if (!_texts.TryGetValue((label, id), out var t)) return null;
+        var fileLines = new List<string>();
+        using (var reader = new StreamReader(t.AbsolutePath, System.Text.Encoding.UTF8))
+        {
+            // StreamReader.ReadLine, as BC's ALCodeEnvironment.ReadLines splits its BLOB.
+            string? line;
+            while ((line = reader.ReadLine()) != null) fileLines.Add(line);
+        }
+        if (t.EndLine >= fileLines.Count || t.PreambleLines > t.StartLine)
+            throw new InvalidOperationException(
+                $"[coverage] {t.AbsolutePath}: {label} {id} was parsed at lines {t.StartLine}-{t.EndLine} "
+                + $"but the file now has {fileLines.Count} line(s); it changed after the run parsed it.");
+        var result = new List<string>(t.PreambleLines + t.EndLine - t.StartLine + 1);
+        result.AddRange(fileLines.Take(t.PreambleLines));
+        result.AddRange(fileLines.Skip(t.StartLine).Take(t.EndLine - t.StartLine + 1));
+        return result;
+    }
+
     /// <summary>Drops every object declared by one file. Used only by the test seam in
     /// <see cref="AlCoverageSourceMap.Build"/>, which has to reproduce what an unreadable file
     /// DOES — its objects are absent — and not merely that it was reported (#3884).</summary>
@@ -93,7 +127,7 @@ public sealed class AlSourceLocationMap : IReadOnlyDictionary<(string Label, int
             .Where(kv => string.Equals(Canonical(kv.Value.Path), want, StringComparison.OrdinalIgnoreCase))
             .Select(kv => kv.Key)
             .ToList();
-        foreach (var key in doomed) _entries.Remove(key);
+        foreach (var key in doomed) { _entries.Remove(key); _texts.Remove(key); }
     }
 
     internal void AddScanFailure(string path, string reason, SourceScanFailureKind kind)
@@ -132,7 +166,7 @@ public sealed class AlSourceLocationMap : IReadOnlyDictionary<(string Label, int
 public static class AlCoverageSourceMap
 {
     /// <summary>One object as parsed from a file: label, id, and its line offset.</summary>
-    private readonly record struct ParsedObject(string Label, int Id, int LineOffset);
+    private readonly record struct ParsedObject(string Label, int Id, int LineOffset, int PreambleLines, int StartLine, int EndLine);
 
     // Parse results per file, keyed by (path, length, last write, symbols). A --server process
     // builds this map on every coverage request over the same tree; re-parsing thousands of
@@ -301,7 +335,11 @@ public static class AlCoverageSourceMap
                     : AbsolutePathOf(file);
                 var parsed = ParseObjects(file, symbols, out var readFailure);
                 foreach (var o in parsed)
+                {
                     map.Add(o.Label, o.Id, path, o.LineOffset);
+                    map.AddText(o.Label, o.Id, new AlSourceLocationMap.ObjectTextSpan(
+                        AbsolutePathOf(file), o.PreambleLines, o.StartLine, o.EndLine));
+                }
                 if (readFailure != null)
                     map.AddScanFailure(file, readFailure, SourceScanFailureKind.File);
             }
@@ -462,7 +500,7 @@ public static class AlCoverageSourceMap
             var tree = NavSyntax.SyntaxTree.ParseObjectText(content, path: file, encoding: null!, parseOpts, default);
             var root = tree.GetCompilationUnitRoot();
 
-            var objects = new List<(string Label, int Id, int Start)>();
+            var objects = new List<(string Label, int Id, int Start, int End)>();
             var allStarts = new List<int>();
             foreach (var obj in root.Objects)
             {
@@ -470,7 +508,8 @@ public static class AlCoverageSourceMap
                 var label = LabelOf(obj);
                 if (label == null) continue;
                 if (obj is not NavSyntax.ApplicationObjectSyntax ao || ao.ObjectId?.Value.Value is not int id) continue;
-                objects.Add((label, id, tree.GetLineSpan(obj.FullSpan).StartLinePosition.Line));
+                var lineSpan = tree.GetLineSpan(obj.Span);
+                objects.Add((label, id, tree.GetLineSpan(obj.FullSpan).StartLinePosition.Line, lineSpan.EndLinePosition.Line));
             }
             // Offset = this object's FullSpan start minus the FIRST object's: BC measures every
             // object from its own text but keeps the file's preamble in front of each of them,
@@ -482,7 +521,7 @@ public static class AlCoverageSourceMap
             // object in front is not preamble, and taking the first MAPPED object's start
             // subtracts it as though it were.
             var firstStart = allStarts.Count > 0 ? allStarts.Min() : 0;
-            result = objects.Select(o => new ParsedObject(o.Label, o.Id, o.Start - firstStart)).ToList();
+            result = objects.Select(o => new ParsedObject(o.Label, o.Id, o.Start - firstStart, firstStart, o.Start, o.End)).ToList();
         }
         catch (Exception ex)
         {

@@ -1,0 +1,19 @@
+{
+  "id": "7c5e2b10-93d4-4a6f-8e21-4b7f0c9a5d38",
+  "name": "Runner Extras - Code Coverage Line Rows",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #4572: the Code Coverage (2000000049) line rows are BC's projection of each covered object's AL source text, which BC reads from the application database. The runner serves that text from the .al files it compiled, so objects compiled from source in the run get BC's own rows at their file line numbers (the file preamble counted, as BC counts it). A covered object the run did not compile from source, a precompiled dependency, has no text here and refuses by name. This suite pins the line numbering end to end, that the refusal is per object and tears through an AL [TryFunction], and that recording and emptying the table do not refuse.",
+  "description": "Runner-specific: which text the runner serves, which objects it refuses and under which name. What real BC answers for line rows in general is corpus codeunit 60341 'Test Code Coverage Table'; the start/stop state transitions are corpus codeunit 60339.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65650,
+      "to": 65659
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}

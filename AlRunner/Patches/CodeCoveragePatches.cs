@@ -148,17 +148,64 @@ public static class CodeCoveragePatches
     }
 
     /// <summary>
-    /// Prepended to CodeCoverageDataProvider.ComputeRecordsForObject: the Code Coverage
-    /// (2000000049) line rows are BC's projection of the object's AL SOURCE TEXT, which BC reads
-    /// from the application database and the runner has no store for. Recording, the hit counts,
-    /// and every other read of the coverage tables stay BC's own code.
+    /// Replaces the body of ALCodeEnvironment.GetSourceCodeLines(RuntimePackageApplicationObjectId),
+    /// the one reader of an object's AL source text behind both the Code Coverage (2000000049)
+    /// line rows (CodeCoverageDataProvider.ComputeRecordsForObject) and the recorder's test-method
+    /// names (CreateSourceContextInfo). BC reads the text from table 2000000207 "User AL Code";
+    /// the runner serves the same text from the .al files it compiled.
+    /// <para>OBSERVABLY EQUIVALENT: BC's text for an object is the file preamble followed by the
+    /// object, which is the numbering its [SourceSpans] lines use
+    /// (<see cref="AlSourceLocationMap.ObjectSourceLines"/>, docs/coverage-attribution.md), and
+    /// every row, hit count and status after it is BC's own code. Settled by corpus codeunit 60341
+    /// "Test Code Coverage Table" (#4572). IsNavAppApplicationObject is true, as BC answers for
+    /// every object it finds in 2000000207.</para>
+    /// <para>An object the run did not compile from source (a precompiled dependency) refuses by
+    /// name: BC would read its text from the database, and the runner does not serve a
+    /// dependency's embedded source yet.</para>
     /// </summary>
-    public static void RefuseCodeCoverageLineRows()
-        => throw new RunnerOutOfScopeException("Record \"Code Coverage\" (2000000049) line rows",
-            "not-yet-implemented — the rows are built from each covered object's AL source text, "
-            + "which BC reads from the application database (ALCodeEnvironment.GetSourceCodeLines) "
-            + "and the runner has no store for. Recording itself works: CODECOVERAGELOG(TRUE) "
-            + "starts BC's own recorder and CODECOVERAGELOG() reports it", DocLink);
+    public static (IReadOnlyList<string> SourceCodeLines, bool IsNavAppApplicationObject) SourceCodeLinesFor(
+        object runtimePackageQualifiedObjectId)
+    {
+        var t = runtimePackageQualifiedObjectId.GetType();
+        var typeProp = t.GetProperty("ObjectType") ?? throw ShapeGap("RuntimePackageApplicationObjectId.ObjectType not found");
+        var numberProp = t.GetProperty("ObjectNumber") ?? throw ShapeGap("RuntimePackageApplicationObjectId.ObjectNumber not found");
+        var objectType = typeProp.GetValue(runtimePackageQualifiedObjectId)!.ToString()!;
+        var objectNumber = (int)numberProp.GetValue(runtimePackageQualifiedObjectId)!;
+
+        var lines = CompiledSourceMap().ObjectSourceLines(SourceMapLabel(objectType), objectNumber);
+        if (lines == null)
+            throw new RunnerOutOfScopeException("ALCodeEnvironment.GetSourceCodeLines",
+                $"not-yet-implemented — {objectType} {objectNumber} was not compiled from AL source in this run "
+                + "(a precompiled dependency), so the runner has no AL source text for it; BC reads that text "
+                + "from the application database to build the Code Coverage (2000000049) line rows and the "
+                + "code-coverage test-method names", DocLink);
+        return (lines, true);
+    }
+
+    /// <summary>The map's label for a BC ObjectType name; the map spells codeunits "CodeUnit".</summary>
+    internal static string SourceMapLabel(string objectType)
+        => objectType.Equals("Codeunit", StringComparison.OrdinalIgnoreCase) ? "CodeUnit" : objectType;
+
+    private static readonly object _mapLock = new();
+    private static string? _mapKey;
+    private static AlSourceLocationMap? _map;
+
+    /// <summary>The source map over every directory this run parsed as AL, rebuilt only when that
+    /// set changes (a --server reload registers new directories).</summary>
+    private static AlSourceLocationMap CompiledSourceMap()
+    {
+        var dirs = RecordPatches.RegisteredSourceDirs();
+        var key = string.Join("\n", dirs);
+        lock (_mapLock)
+        {
+            if (_map == null || _mapKey != key)
+            {
+                _map = AlCoverageSourceMap.Build(dirs);
+                _mapKey = key;
+            }
+            return _map;
+        }
+    }
 
     private static bool IsFunc(Type t, string argName, string resultName)
         => t.IsGenericType && t.GetGenericTypeDefinition() == typeof(Func<,>)
