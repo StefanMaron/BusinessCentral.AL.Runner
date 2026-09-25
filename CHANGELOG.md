@@ -37,6 +37,8 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **metadata:** extension-runtime-delta render states actionref members
+- **testpage:** perform an action's non-page RunObject the way BC does
 - **report-layout-list:** carry ObsoleteState and Excel sheet configuration for precompiled dependency layouts
 - **metadata:** EmitPageXml reads page properties SymbolReference.json states
 - **metadata:** extension-runtime-delta render reads the remaining stated member attributes
