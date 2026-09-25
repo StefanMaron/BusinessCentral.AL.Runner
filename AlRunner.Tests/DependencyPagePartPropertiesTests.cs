@@ -27,7 +27,7 @@ public class DependencyPagePartPropertiesTests
     // HostWithArea states an ApplicationArea AND a page-level AboutTitle: the first is what an
     // unstated part inherits, the second is a decoy a part must never pick up. The stated part
     // declares a DIFFERENT area than its host, so a reader taking the wrong one is visible.
-    private const string SymbolReference = """
+    internal const string SymbolReference = """
         {
           "RuntimeVersion": "15.1",
           "Pages": [
