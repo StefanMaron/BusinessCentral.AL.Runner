@@ -186,6 +186,28 @@ and kills the whole document over one node. Measured on fixture xmlport 61602 wh
 A type the live enum does not know makes the element **omitted**, never written as raw text: an
 unparseable value costs the whole document, an absent one costs a single node its declared type.
 
+Two field shapes BC types that the runner used to leave untyped (#4651), both measured on Base
+Application xmlport 99000751 against BC's own document (`tools/metadata-ground-truth`, BC
+28.5.54151.55132):
+
+- **An Enum field is `Option`.** `Item."Costing Method"` is `Enum "Costing Method"`; BC wrote
+  `<DataType>Option</DataType>`.
+- **A same-app tableextension's field is typed.** `Item."Routing No."` is declared in
+  tableextension 99000750; BC wrote `Code`, because its compiler folds an added field into the
+  base table. The runner resolves bound fields, `SourceTableView`/`LinkFields` names and report
+  column `FieldNo`s through `GetAllFieldsIncludingExtensions` for the same reason.
+
+<a id="source-field-record-name"></a>
+
+## `SourceField` spells the record as its `tableelement` declares it
+
+BC wrote `item::No.` for `Item."No."` under `tableelement(item; Item)`: the record half is the
+tableelement's **declared** name, not the reference's spelling. This is load-bearing, not
+cosmetic. With the reference's spelling (`Item::No.`) BC's engine threw
+`NavNCLXmlPortMetadataException: Internal XmlPort error. Metadata mismatch for node type.` on
+`Xmlport.Export(99000751, …)` and on 5801. With the declared spelling both ports ran into their
+own AL triggers (#4651).
+
 <a id="table-views-link-fields-and-permissions"></a>
 
 ## `SourceTableView`, `LinkFields` and `Permissions` are re-encoded, not copied (#4471)
@@ -216,6 +238,7 @@ same strings.
 | `Name = filter('a*\|b')`, `Txt = filter('<>''x''')`, `Txt = filter('')` | `1(a*\|b)`, `1(<>'x')`, `1('')` |
 | `"Doc No." = field("No."), "Hdr Kind" = field(Kind)` | `Field1=FIELD(Field1),Field4=FIELD(Field2)` |
 | `tabledata "XP Hdr" = RIMD, tabledata "XP Ln" = Rm` | `TableData XP Hdr=rimd,TableData XP Ln=rm` |
+| `tabledata Probe.Alpha.Data."NS Cap Entry" = rimd` | `TableData NS Cap Entry=rimd` (#4650, BC 28.5.54151.55132) |
 
 An xmlport's `Permissions` accepts only `tabledata` entries; `codeunit "X" = X` is `AL0104`.
 
@@ -300,6 +323,11 @@ That is deliberate and it is the whole reason the removed expectation entry
 `expect-fail-known-gap`: a document with no `<Node>` reads to BC as *"this port has an empty
 schema"*, so the port would **silently export nothing** — a green test asserting a wrong answer,
 which is worse than a loud refusal.
+
+**The refusal names its reason.** When a loaded `.app` declares the xmlport but the projection
+refused it (no recoverable schema, or a property with no measured canonical form), the loader's
+`RunnerOutOfScopeException` carries that reason. Only an xmlport no loaded `.app` declares reads
+"no loaded dependency .app declares it" (#4650).
 
 The case that reaches it in practice is a **symbols-only `.app`** — one shipping
 `SymbolReference.json` and no `src/`. That is a legitimate package shape rather than an error, so
