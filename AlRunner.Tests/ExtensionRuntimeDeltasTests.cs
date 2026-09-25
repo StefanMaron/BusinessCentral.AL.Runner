@@ -674,23 +674,23 @@ public sealed class ExtensionRuntimeDeltasTests
                 .Root!.Elements($"{Ns}ActionAdd").Elements($"{Ns}Actions").Single();
 
             Assert.Equal("Bare", action.Attribute("Name")!.Value);
-            foreach (var absent in new[]
-                     { "ApplicationArea", "Image", "CaptionML", "ToolTipML", "Visible", "Enabled" })
+            foreach (var absent in new[] { "ApplicationArea", "Image", "CaptionML", "ToolTipML" })
                 Assert.Null(action.Attribute(absent));
+            // Visible/Enabled here are BC's always-emitted Kind-2 defaults, not a read — see
+            // An_action_stating_none_of_them_gets_BCs_always_emitted_action_defaults.
+            Assert.Equal("true", action.Attribute("Visible")?.Value);
+            Assert.Equal("true", action.Attribute("Enabled")?.Value);
         }
         finally { Directory.Delete(dir, recursive: true); }
     }
 
     /// <summary>
-    /// A STATED <c>RunPageMode</c> is written verbatim, and an unstated one is left off.
-    /// Measured: every stated value in the four captured builds (5 members, all <c>View</c>)
-    /// is what BC writes; the three unstated members get <c>Edit</c> from BC by a rule nobody
-    /// has measured, so writing anything there would be a guess
-    /// (docs/metadata-equivalence.md#deltas-stated-member-attributes). The fixture states
-    /// <c>Edit</c>, not the measured <c>View</c>, so a render hardcoding the common value fails.
+    /// A STATED <c>RunPageMode</c> is written verbatim; an unstated one on an action gets BC's
+    /// default <c>Edit</c>. The fixture states <c>Create</c> — neither the measured <c>View</c>
+    /// nor the default — so a render hardcoding either fails the first arm.
     /// </summary>
     [Fact]
-    public void A_stated_RunPageMode_is_rendered_verbatim_and_an_unstated_one_is_left_off()
+    public void A_stated_RunPageMode_is_rendered_verbatim_and_an_unstated_one_defaults_to_Edit()
     {
         var dir = TestScratch.Dir("al-runner-extension-runtime-deltas-runpagemode");
         Directory.CreateDirectory(dir);
@@ -709,7 +709,7 @@ public sealed class ExtensionRuntimeDeltasTests
                           "Actions": [
                             { "Kind": 2, "Id": 640938012, "Name": "Stated Mode",
                               "Properties": [ { "Name": "RunObject", "Value": "Some Page" },
-                                              { "Name": "RunPageMode", "Value": "Edit" } ] },
+                                              { "Name": "RunPageMode", "Value": "Create" } ] },
                             { "Kind": 2, "Id": 640938013, "Name": "No Mode",
                               "Properties": [ { "Name": "Image", "Value": "Sparkle" } ] }
                           ] }
@@ -722,8 +722,82 @@ public sealed class ExtensionRuntimeDeltasTests
             var actions = Render(appPath, "Page", 88380910)!
                 .Root!.Elements($"{Ns}ActionAdd").Elements($"{Ns}Actions").ToArray();
             Assert.Equal(2, actions.Length);
-            Assert.Equal("Edit", actions[0].Attribute("RunPageMode")?.Value);
-            Assert.Null(actions[1].Attribute("RunPageMode"));
+            Assert.Equal("Create", actions[0].Attribute("RunPageMode")?.Value);
+            Assert.Equal("Edit", actions[1].Attribute("RunPageMode")?.Value);
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    /// <summary>
+    /// BC's emitter writes <c>Visible="true"</c>, <c>Enabled="true"</c> and
+    /// <c>RunPageMode="Edit"</c> on every <c>action</c> (symbol <c>Kind</c> 2) that does not
+    /// state them, and on nothing else this render produces
+    /// (docs/metadata-equivalence.md#deltas-action-defaults).
+    ///
+    /// <para>Four decoys, each a way a looser rule would be wrong: an action stating an
+    /// EXPRESSION <c>Visible</c> (the default must not paper over it); a GROUP (<c>Kind</c> 1,
+    /// another table, no <c>RunPageMode</c>); an ACTIONREF (<c>Kind</c> 4, no
+    /// <c>Enabled</c>/<c>RunPageMode</c>); and a CONTROL, which has no action table at all.</para>
+    /// </summary>
+    [Fact]
+    public void An_action_stating_none_of_them_gets_BCs_always_emitted_action_defaults()
+    {
+        var dir = TestScratch.Dir("al-runner-extension-runtime-deltas-action-defaults");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var appPath = WriteAppWith(dir, """
+                {
+                  "RuntimeVersion": "17.0",
+                  "PageExtensions": [
+                    {
+                      "Id": 88380911,
+                      "Name": "Action Defaults Ext",
+                      "TargetObject": "ERD Target Page",
+                      "ActionChanges": [
+                        { "Anchor": "Processing", "ChangeKind": 2,
+                          "Actions": [
+                            { "Kind": 2, "Id": 640938040, "Name": "Plain",
+                              "Properties": [ { "Name": "Image", "Value": "Permission" } ] },
+                            { "Kind": 2, "Id": 640938041, "Name": "Expression Visible",
+                              "Properties": [ { "Name": "Visible", "Value": "IsSaas" },
+                                              { "Name": "RunPageMode", "Value": "View" } ] },
+                            { "Kind": 1, "Id": 640938042, "Name": "A Group" }
+                          ] },
+                        { "Anchor": "Promoted", "ChangeKind": 1,
+                          "Actions": [ { "Kind": 4, "TargetId": 640938040, "TargetName": "Plain",
+                                         "Id": 640938043, "Name": "Plain_Promoted" } ] }
+                      ],
+                      "ControlChanges": [
+                        { "Anchor": "Content", "ChangeKind": 2,
+                          "Controls": [ { "Kind": 8, "Id": 640938044, "Name": "A Field" } ] }
+                      ]
+                    }
+                  ]
+                }
+                """);
+
+            var root = Render(appPath, "Page", 88380911)!.Root!;
+            var byName = root.Elements().Elements()
+                .ToDictionary(e => e.Attribute("Name")!.Value);
+
+            var plain = byName["Plain"];
+            Assert.Equal("true", plain.Attribute("Visible")?.Value);
+            Assert.Equal("true", plain.Attribute("Enabled")?.Value);
+            Assert.Equal("Edit", plain.Attribute("RunPageMode")?.Value);
+
+            var expr = byName["Expression Visible"];
+            Assert.Null(expr.Attribute("Visible"));
+            Assert.Equal("true", expr.Attribute("Enabled")?.Value);
+            Assert.Equal("View", expr.Attribute("RunPageMode")?.Value);
+
+            foreach (var decoy in new[] { "A Group", "Plain_Promoted", "A Field" })
+            {
+                Assert.Null(byName[decoy].Attribute("RunPageMode"));
+                Assert.Null(byName[decoy].Attribute("Enabled"));
+            }
+            Assert.Null(byName["A Group"].Attribute("Visible"));
+            Assert.Null(byName["A Field"].Attribute("Visible"));
         }
         finally { Directory.Delete(dir, recursive: true); }
     }

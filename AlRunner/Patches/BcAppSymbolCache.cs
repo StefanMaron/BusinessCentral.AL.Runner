@@ -500,7 +500,12 @@ internal static partial class BcAppSymbolCache
         // An actionref's stated TargetId, verbatim — the member id of the action it promotes,
         // which BC writes as ActionRefDefinition's TargetID (#3926). Null for every member that
         // states none, which is every member that is not an actionref.
-        int? ActionRefTargetId = null);
+        int? ActionRefTargetId = null,
+        // The member node's stated "Kind", verbatim: BC's ActionKind ordinal for an action
+        // (0 Area, 1 Group, 2 Action, 3 Separator, 4 ActionRef, ...), the control kind for a
+        // control. It picks which of BC's property tables supplies the defaults the emitter
+        // writes (#3926). Null when the node states none.
+        int? Kind = null);
 
     /// <summary>
     /// One subpage PART control of a precompiled dependency page, as SymbolReference.json
@@ -1718,6 +1723,7 @@ internal static partial class BcAppSymbolCache
         // an added group nests its actions, and a nested member's properties are its own.
         var declaredByMember = new Dictionary<int, Dictionary<string, string>>();
         var actionRefTargetIdByMember = new Dictionary<int, int>();
+        var kindByMember = new Dictionary<int, int>();
         void CollectDeclaredProperties(JsonElement node, string childKey)
         {
             if (node.TryGetProperty("Id", out var idProp) && idProp.TryGetInt32(out var id) && id != 0)
@@ -1726,6 +1732,8 @@ internal static partial class BcAppSymbolCache
                 if (props.Count > 0) declaredByMember[id] = props;
                 if (node.TryGetProperty("TargetId", out var tid) && tid.TryGetInt32(out var targetId))
                     actionRefTargetIdByMember[id] = targetId;
+                if (node.TryGetProperty("Kind", out var kindProp) && kindProp.TryGetInt32(out var kind))
+                    kindByMember[id] = kind;
             }
             if (node.TryGetProperty(childKey, out var children) && children.ValueKind == JsonValueKind.Array)
                 foreach (var child in children.EnumerateArray())
@@ -1740,7 +1748,8 @@ internal static partial class BcAppSymbolCache
                     origins[id] = new PageExtensionMemberOrigin(
                         isAction, anchor, changeKind, sequence++,
                         declaredByMember.TryGetValue(id, out var declared) ? declared : null,
-                        actionRefTargetIdByMember.TryGetValue(id, out var targetId) ? targetId : null);
+                        actionRefTargetIdByMember.TryGetValue(id, out var targetId) ? targetId : null,
+                        kindByMember.TryGetValue(id, out var kind) ? kind : null);
         }
 
         if (ext.TryGetProperty("ActionChanges", out var actionChanges) && actionChanges.ValueKind == JsonValueKind.Array)
