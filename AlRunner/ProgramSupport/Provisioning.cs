@@ -228,6 +228,21 @@ internal static partial class ProgramSupport
         }
     }
 
+    // False in a shadow/re-exec child, which re-reads the same cache and would repeat a line the
+    // first generation already printed.
+    internal static bool IsFirstGeneration() =>
+        Environment.GetEnvironmentVariable("AL_RUNNER_NCL_SHADOW_DONE") != "1"
+        && Environment.GetEnvironmentVariable("AL_RUNNER_REEXECED") != "1";
+
+    // Names of the version directories in the artifacts cache; empty when the cache does not
+    // exist yet. Throws only when the artifacts root itself cannot be resolved ($HOME missing).
+    internal static IReadOnlyList<string> CachedArtifactVersionNames()
+    {
+        var root = AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir;
+        if (!Directory.Exists(root)) return Array.Empty<string>();
+        return Directory.EnumerateDirectories(root).Select(d => Path.GetFileName(d)!).ToList();
+    }
+
     // Highest version-named child of <root> matching <versionPrefix> (System.Version sort),
     // or null if the root is absent or has no matching version dir. Unlike the artifact
     // helper this returns null rather than throwing: these caches are optional augmentation

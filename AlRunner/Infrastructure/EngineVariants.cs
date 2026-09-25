@@ -135,4 +135,76 @@ public static class EngineVariants
     /// <summary>Human-readable list of available variant versions, for the loud-fail message.</summary>
     public static string DescribeAvailable(IReadOnlyList<Variant> variants) =>
         variants.Count == 0 ? "(none)" : string.Join(", ", variants.Select(v => v.BuildVersion.ToString()));
+
+    /// <summary>The shipped BC minors, ascending and distinct ("27.0, 27.3, ... 28.4").</summary>
+    public static string DescribeSupportedMinors(IReadOnlyList<Variant> variants) =>
+        variants.Count == 0 ? "(none)" : string.Join(", ", variants
+            .Select(v => new Version(v.BuildVersion.Major, v.BuildVersion.Minor))
+            .Distinct().OrderBy(v => v).Select(v => v.ToString()));
+
+    /// <summary>What a no-flags (or bare-major) selection should target, and which cached
+    /// versions it passed over because no shipped variant runs them.</summary>
+    public sealed record DefaultChoice(string? Version, IReadOnlyList<string> SkippedUnsupported)
+    {
+        /// <summary>The one "[bc] skipping cached BC ..." line naming what was passed over; null
+        /// when nothing was skipped or no version was chosen.</summary>
+        public string? SkipLine(IReadOnlyList<Variant> variants) =>
+            SkippedUnsupported.Count == 0 || Version == null ? null :
+            $"[bc] skipping cached BC {string.Join(", ", SkippedUnsupported)}: this install ships no " +
+            $"engine for it (supported: {DescribeSupportedMinors(variants)}) — using BC {Version} instead.";
+    }
+
+    /// <summary>
+    /// The default BC version for a multi-variant install (#4557): the newest cached version a
+    /// shipped variant runs, else the newest shipped variant's <c>major.minor</c> — a prefix the
+    /// provisioning step resolves against the CDN, so it can only ever fetch a minor this install
+    /// has an engine for. Restricted to <paramref name="major"/> when given (a bare-major
+    /// <c>--bc-version</c>). <c>Version</c> is null when no variant is shipped (for that major).
+    /// Trap: the CDN publishes a minor before a release ships its variant, so "newest on the CDN"
+    /// and "newest cached" are both unsafe defaults — each left a fresh box exiting 2 forever.
+    /// </summary>
+    public static DefaultChoice ChooseDefault(
+        IReadOnlyList<Variant> variants, IEnumerable<string> cachedVersionNames, int? major = null)
+    {
+        var inScope = variants.Where(v => major == null || v.BuildVersion.Major == major).ToList();
+        if (inScope.Count == 0) return new DefaultChoice(null, Array.Empty<string>());
+
+        var cached = cachedVersionNames
+            .Select(n => (Name: n, Ver: Version.TryParse(n, out var v) ? v : null))
+            .Where(t => t.Ver != null && (major == null || t.Ver.Major == major))
+            .OrderByDescending(t => t.Ver)
+            .ToList();
+
+        var skipped = new List<string>();
+        foreach (var (name, ver) in cached)
+        {
+            if (SelectBestMatch(inScope, ver!) != null)
+                return new DefaultChoice(name, skipped);
+            skipped.Add(name);
+        }
+
+        var newest = inScope.Max(v => v.BuildVersion)!;
+        return new DefaultChoice($"{newest.Major}.{newest.Minor}", skipped);
+    }
+
+    /// <summary>
+    /// The loud refusal for an explicit <c>--bc-version</c> naming a minor no shipped variant runs
+    /// — returned BEFORE any download, so the user is not charged a ~340 MB fetch for a version
+    /// the variant check would refuse anyway. Null when a variant runs it, when no variant is
+    /// shipped (a single-build install decides for itself), or when the request is a bare major
+    /// (<see cref="ChooseDefault"/> maps that one onto a supported minor instead).
+    /// </summary>
+    public static string? DescribeUnsupported(IReadOnlyList<Variant> variants, string requested)
+    {
+        if (variants.Count == 0) return null;
+        var parts = requested.Trim().Split('.');
+        if (parts.Length < 2
+            || !int.TryParse(parts[0], out var maj) || !int.TryParse(parts[1], out var min))
+            return null;
+        if (variants.Any(v => v.BuildVersion.Major == maj && v.BuildVersion.Minor == min))
+            return null;
+        return $"BC version selection failed: this install ships no engine for BC {maj}.{min} " +
+               $"(requested '{requested}'). Supported BC versions: {DescribeSupportedMinors(variants)}. " +
+               $"Pass one of those with --bc-version, or omit --bc-version to use the newest supported one.";
+    }
 }
