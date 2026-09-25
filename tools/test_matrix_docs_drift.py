@@ -17,7 +17,7 @@ What each check measures, and against what:
   * The NotAMatrixClaim allowlist     -> itself; a dead entry fails
   * The corpus's eight-version claim  -> tests/al-language/.github/workflows/ci.yml
   * "AlRunner.Tests runs on N legs"   -> the unit-test prefixes bc-tests.yml derives
-  * The impl-agent definition         -> both version files, positively
+  * The impl-agent definition         -> names both version files and the unit-leg rule
   * The aggregate required check name -> .github/workflows/test-matrix.yml
   * Worktree path templates           -> .claude/agents/**.md, rendered
 
@@ -359,34 +359,34 @@ def check_no_doc_claims_the_suite_runs_on_every_leg() -> None:
 
 def check_impl_agent_names_the_pr_and_unit_legs() -> None:
     """The positive half of the check above: the impl-agent definition -- the one
-    document every implementation agent loads before it pushes -- must name the
-    legs a pull request actually runs and the legs that carry the C# suite, both
-    derived from the version files. Without this, deleting the sentence would
-    satisfy the negative check."""
+    document every implementation agent loads before it pushes -- must say where
+    the legs a pull request runs come from, and which legs carry the C# suite.
+    Without this, deleting the sentence would satisfy the negative check.
+
+    Since #4540 it names the version FILES and the rule, never the versions: a
+    written-out list changes whenever a version file does, without anyone editing
+    the sentence, which is the figure that belongs in no durable text. So what is
+    pinned is the pointer and the rule -- and that the doc no longer spells out a
+    list that could go stale is left to review (no number-detecting guard)."""
     path = os.path.join(ROOT, ".claude", "agents", "impl-agent.md")
     text = read(path)
-    pr_canon = canonical(prefixes("pr-bc-versions.txt"))
-    unit = unit_prefixes()
-
-    runs = {canonical(members_of(m.group(0))) for m in VERSION_RUN.finditer(text)}
+    flowed = re.sub(r"\s+", " ", text)
     offenders = []
-    if pr_canon not in runs:
-        offenders.append(
-            f"impl-agent.md must write out the pull-request legs ({pr_canon}); "
-            f"version lists it does state: {' | '.join(sorted(runs)) if runs else '(none)'}")
-
-    # The unit legs are a pair, which VERSION_RUN deliberately does not match, so
-    # assert the pair literally instead of widening a regex that would then
-    # swallow every historical "green on BC 27.5 and 28.3".
-    pair = f"{unit[0]} and {unit[1]}"
-    if pair not in text:
-        offenders.append(f'impl-agent.md must name the unit legs as "{pair}".')
     for named in (".github/pr-bc-versions.txt", ".github/bc-versions.txt"):
         if named not in text:
             offenders.append(f"impl-agent.md must name {named}, the file the legs come from.")
+    rule = "unit legs — the newest minor of each major"
+    if rule not in flowed:
+        offenders.append(f'impl-agent.md must state the unit-leg rule as "{rule}" (#2674).')
+    # The rule is only worth pinning while it is what bc-tests.yml derives: a
+    # version file with fewer than two majors would make "newest minor of each
+    # major" a single leg, and the wording would need revisiting.
+    if len(unit_prefixes()) < 2:
+        offenders.append("bc-versions.txt now spans fewer than two majors -- revisit the "
+                         "unit-leg wording in impl-agent.md.")
 
     check("impl-agent.md names the pull-request legs and the unit legs",
-          offenders, 4, "claims")
+          offenders, 3, "claims")
 
 
 # --- the aggregate required check, by name -----------------------------------

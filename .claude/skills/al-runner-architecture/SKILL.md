@@ -109,7 +109,7 @@ default in v2), `--strict` (back-compat; the default since the v2 cut), `--tdd`,
 Auto-provisioning is **on by default** (#2024) — `--no-auto-provision` is the opt-out for
 offline/air-gapped runs.
 
-Environment: ~39 `AL_RUNNER_*` variables; the ones worth knowing are `AL_RUNNER_VERBOSE`,
+Environment: many `AL_RUNNER_*` variables; the ones worth knowing are `AL_RUNNER_VERBOSE`,
 `AL_RUNNER_TRACE_NRE`, `AL_RUNNER_HOOK_AUDIT` (live-vs-orphaned hook triage),
 `AL_RUNNER_HOOK_TRACE`, `AL_RUNNER_PHASE_LOG`, `AL_RUNNER_PERF`, `AL_RUNNER_NCL_CACHE`,
 `AL_RUNNER_TEST_TIMEOUT_SEC`. Full list: `grep -ohE 'AL_RUNNER_[A-Z0-9_]+' AlRunner -r --include=*.cs | sort -u`.
@@ -122,7 +122,7 @@ Environment: ~39 `AL_RUNNER_*` variables; the ones worth knowing are `AL_RUNNER_
 
 As of 2026-05-20, new runtime patches go through Cecil IL rewriting (`NclCecilRewrite`). Do not add new `JmpHook` patches — since the Cecil-only cutover a JmpHook call site does nothing at all. Existing JmpHook code migrates to Cecil opportunistically in hotspot order. See `docs/cecil-migration.md`.
 
-**Measured twice, both negative: re-enabling orphaned JmpHooks is a net loss** (−7 Pageworks passes; −42 corpus passes on 2026-08-21). The remedy for an orphaned hook is to migrate it to Cecil or delete it — never `AL_RUNNER_ENABLE_JMPHOOK=1`. Roughly half the remainder are silent-fake stubs that `.claude/rules/loud-failures.md` forbids reviving at all.
+**Measured twice, both negative: re-enabling orphaned JmpHooks is a net loss** (Pageworks and corpus passes both fell, 2026-08-21). The remedy for an orphaned hook is to migrate it to Cecil or delete it — never `AL_RUNNER_ENABLE_JMPHOOK=1`. Many of the remainder are silent-fake stubs that `.claude/rules/loud-failures.md` forbids reviving at all.
 
 ## Sister docs
 

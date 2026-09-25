@@ -113,14 +113,14 @@ Today the reporter prints raw PASS / FAIL / ERROR per test plus aggregate counts
 
 Drift is loud in every direction: a test passing despite an entry fails with "remove the entry"; a test raising an OOS signal without an entry fails with "add an entry"; a wrong or near-miss `Reason` still fails. See `docs/expectations.md`.
 
-**A wholesale EXEC-FAIL sweep on one identical missing path is another agent, not a regression.** Concurrent agents on one box drive the runner against a shared shadow cache under `~/.cache/al-runner/ncl-shadow/`, and one publishing into it while another loads from it produced **18 bundles failing with the same `Could not load file or assembly '…/ncl-shadow/<hash>/AlRunner.QueryJoin.dll'`** — the directory was gone by the time it was looked at, and it cleared on re-run. The tell is *every* bundle failing on one identical path, rather than a scattered set failing on their own assertions. Check for other runner processes (`pgrep -af 'dotnet.*AlRunner'`) and re-run before concluding anything; an unattended loop that files issues from that sweep files spectacular nonsense. `f461e5bf` addresses the publish side of this race; the consumer side is what you see.
+**A wholesale EXEC-FAIL sweep on one identical missing path is another agent, not a regression.** Concurrent agents on one box drive the runner against a shared shadow cache under `~/.cache/al-runner/ncl-shadow/`, and one publishing into it while another loads from it produced **a sweep of bundles failing with the same `Could not load file or assembly '…/ncl-shadow/<hash>/AlRunner.QueryJoin.dll'`** — the directory was gone by the time it was looked at, and it cleared on re-run. The tell is *every* bundle failing on one identical path, rather than a scattered set failing on their own assertions. Check for other runner processes (`pgrep -af 'dotnet.*AlRunner'`) and re-run before concluding anything; an unattended loop that files issues from that sweep files spectacular nonsense. `f461e5bf` addresses the publish side of this race; the consumer side is what you see.
 
 ## If a run dies with no output (exit 139 / 134)
 
 An exit of 139 is SIGSEGV and 134 is SIGABRT — the process was killed by a signal, so there
 is no managed stack, no test result and usually nothing in the log but the missing output.
-#2819 is one such corpus run: it died seconds in, before any test reported, and four further
-runs of the same tree finished 2523/2523.
+#2819 is one such corpus run: it died seconds in, before any test reported, and further
+runs of the same tree finished with every test passing.
 
 **Do not re-run hoping to see it again.** A rare crash re-run without dump capture produces
 another sighting and no evidence, and on a shared box it costs everyone else queue time.
@@ -138,9 +138,8 @@ Verified locally on .NET 8: a real `SIGSEGV` (`signal 11`) is caught and written
 managed `AccessViolationException`. `createdump` prints `Writing minidump with heap to file
 …` on the dying process's stderr, so its absence tells you the settings did not take.
 
-`DOTNET_DbgMiniDumpType=4` is full memory. Measured: type 2 on a trivial hello-world process
-is already ~127 MB, and it scales with committed memory — a runner with BC loaded is measured
-in GB. Type 2 carries the faulting native stack, the module list and the managed heap, which
+`DOTNET_DbgMiniDumpType=4` is full memory. Type 2 on a trivial hello-world process is already
+large, and it scales with committed memory — a runner with BC loaded is measured in GB. Type 2 carries the faulting native stack, the module list and the managed heap, which
 is what the first read of an unexplained crash needs. Reach for 4 only when 2 has been read
 and found wanting.
 
@@ -152,10 +151,10 @@ Read one with `dotnet-dump analyze <file>` (`clrstack`, `clrmodules`, `eeversion
 
 ## `dotnet test` skips the BC-engine tests locally unless you bootstrap first
 
-The ~28 rows in AlRunner.Tests' **`bc-engine-serial`** collection load the BC engine
+The rows in AlRunner.Tests' **`bc-engine-serial`** collection load the BC engine
 in-process. On a local box they **skip** unless two things are set up, and at `dotnet test`'s
-default verbosity a skip prints no reason at all — measured 2026-09-06: five of five rows
-`[SKIP]`, no reason shown, `Skipped! - Failed: 0, Passed: 0, Skipped: 5`, **exit code 0**. A
+default verbosity a skip prints no reason at all — measured 2026-09-06: every row `[SKIP]`, no
+reason shown, `Failed: 0, Passed: 0` and only a skip count, **exit code 0**. A
 RED baseline taken in that state is worthless: revert the fix, see "passed", and you have
 concluded the opposite of the truth.
 

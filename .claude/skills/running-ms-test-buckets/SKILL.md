@@ -1,19 +1,14 @@
 ---
 name: running-ms-test-buckets
-description: Run Microsoft's BaseApp test buckets through AL Runner to find real gaps — where the sources come from, the configuration that must be exact, how to size a run, and how to turn failures into issues worth filing. --test-data is mandatory; without it roughly 40% of failures are missing setup data rather than defects. And even with it, --test-data presents a RESTORED CRONUS, not one prepared the way Microsoft's pipelines prepare it, so some failures are a company-configuration difference on our side rather than runner defects — triage for that before filing, and capture a real difference as a normalization rule rather than proposing to replicate Microsoft's DemoTool, whose executing code they do not publish. Use when generating work from the Microsoft surface, when triaging a bucket failure, or when measuring where the runner stands against it.
+description: Run Microsoft's BaseApp test buckets through AL Runner to find real gaps — where the sources come from, the configuration that must be exact, how to size a run, and how to turn failures into issues worth filing. --test-data is mandatory; without it a large share of failures are missing setup data rather than defects. And even with it, --test-data presents a RESTORED CRONUS, not one prepared the way Microsoft's pipelines prepare it, so some failures are a company-configuration difference on our side rather than runner defects — triage for that before filing, and capture a real difference as a normalization rule rather than proposing to replicate Microsoft's DemoTool, whose executing code they do not publish. Use when generating work from the Microsoft surface, when triaging a bucket failure, or when measuring where the runner stands against it.
 ---
 
 # Running Microsoft's BaseApp test buckets
 
-Microsoft ships **34 `Tests-*` buckets** inside the BC artifact, 32 of them non-empty, holding
-**40,530 `[Test]` methods** — counted per bucket on the 28.1.49838.53507 platform artifact
-(#3409). They run through AL Runner as ordinary bundles, with no container.
-
-Older notes in this repository say "about 40,550", and three of them stay that way on purpose:
-`ParallelFanOut.cs` and the two `ParallelFanOut*TimeoutTests` describe one specific past run
-("a 40,550-test run down to 14,856"), and rewriting a recorded measurement to match a later
-count would falsify it. 40,530 is the counted figure for the artifact; 40,550 is what that run
-totalled. That makes them the largest supply of
+Microsoft ships `Tests-*` buckets inside the BC artifact, holding tens of thousands of `[Test]`
+methods (the per-bucket inventory is #3409, and `AlRunner.Tests/MsSurfaceWorkflowTests.cs` holds
+the surface list to the artifact's own). They run through AL Runner as ordinary bundles, with no
+container. That makes them the largest supply of
 real, un-guessed work available: every failure is a concrete difference between the runner and
 what Microsoft's own tests expect.
 
@@ -25,18 +20,19 @@ confident, wrong issues.
 
 Not a refinement — a correctness precondition for the *conclusions*, not just the pass rate.
 
-Measured on Tests-SMB (1,027 tests): **259 passing without test data, 595 with it.** More
-importantly, in a full no-test-data run of 29,514 classified failures, the largest clusters were
+On Tests-SMB, turning `--test-data` on more than doubled the passing count. More importantly,
+in a full no-test-data run the largest failure clusters were
 
 ```
-2690  Order Nos. must have a value in Purchases & Payables Setup
-2214  The General Posting Setup does not exist
-2020  Order Nos. must have a value in Sales & Receivables Setup
-1507  Invoice Nos. must have a value in Sales & Receivables Setup
-1001  There is no Unit of Measure within the filter
+Order Nos. must have a value in Purchases & Payables Setup
+The General Posting Setup does not exist
+Order Nos. must have a value in Sales & Receivables Setup
+Invoice Nos. must have a value in Sales & Receivables Setup
+There is no Unit of Measure within the filter
 ```
 
-Roughly **40% of all failures were missing setup data**, not runner defects. Clustering that run
+**A large share of all failures were missing setup data**, not runner defects (figures:
+`docs/incidents/skills-and-agents.md`). Clustering that run
 and filing the top items would have produced a stream of issues describing nothing real.
 
 With test data the same bucket's top clusters are genuine runner gaps — missing trigger
@@ -51,14 +47,14 @@ rewrites the methods that cannot work there — `ALDatabase.ALSid` answers a has
 `WindowsPrincipal.IsInRole` is always `true`, RDLC rendering goes to a no-op
 `CustomReportingServiceClient`, encryption and Azure AD factories are bypassed. A cluster that
 passes on the container because of one of those is passing against the patch, and the runner
-has no BC behaviour there to copy; the 65-test `ALSid` cluster in #2312 was exactly that. Check
+has no BC behaviour there to copy; the `ALSid` cluster in #2312 was exactly that. Check
 a container-passing cluster against the patch table in `docs/upstream-corpus-workflow.md`
 § "How to find out whether a surface you care about is patched" before calling it a gap
 (#2314).
 
 ### …and `--test-data` still gives a restored CRONUS, not a *prepared* one
 
-The 40% above is the coarse form of a sharper fact. **Microsoft does not restore the demo backup
+The setup-data finding above is the coarse form of a sharper fact. **Microsoft does not restore the demo backup
 at all — it generates the test company from scratch**, and `--test-data` presents the company **as
 restored**, not as Microsoft's tests were written against.
 
@@ -79,8 +75,8 @@ Measured, not assumed:
 
 | where | result |
 |---|---|
-| `microsoft/BCApps` `src/DemoTool/` | 315 files — `DemoDataConfig.xml`, 95 png, 94 jpg, 32 gif, docs, spreadsheets. **Zero `.al` files.** |
-| shipped Base Application 28.1 | 8,026 AL files, 1,691 codeunits, 2,610 pages. **Zero objects in the 101000–101999 band.** Zero files containing `Create Demo Data from Config` or `Demonstration Data Tool`. |
+| `microsoft/BCApps` `src/DemoTool/` | `DemoDataConfig.xml`, images, docs, spreadsheets. **Zero `.al` files.** |
+| shipped Base Application 28.1 | **Zero objects in the 101000–101999 band.** Zero files containing `Create Demo Data from Config` or `Demonstration Data Tool`. |
 
 Codeunit 2 `Company-Initialize` **is** in the shipped Base Application — confirmed twice, by an
 object-id scan of the package's AL sources and by name. Codeunit 101899 and page 101900 are in
@@ -102,27 +98,19 @@ difference and write it down as a rule (see "Capturing a configuration differenc
 **This is deliberately not the priority** (Stefan, resolving #2730): fix the clear runner failures
 first.
 
-**How much it is worth, measured.** Do not go in expecting a large lever. Full `Tests-ERM`, both
-arms identical but for the flag:
-
-| | total | pass | fail | error |
-|---|---|---|---|---|
-| without `--test-data-normalize-company` | 9,497 | 6,691 | 2,790 | 16 |
-| with it | 9,497 | **6,709** | 2,772 | 16 |
-
-**+18 passing, +0.19 points**, on the bucket where the one implemented rule should matter most.
-Both arms measured exactly the same 9,497 tests — identical key sets, nothing present in one and
-not the other — and all 18 flips are fail → pass with no regressions. **11 of the 18 are tests
-Microsoft itself never runs**, so against their suite it is +7.
+**How much it is worth, measured.** Do not go in expecting a large lever. A full `Tests-ERM`
+run with both arms identical but for the flag moved a small handful of tests from fail to pass,
+on the bucket where the one implemented rule should matter most — same test set in both arms,
+every flip fail → pass, no regressions, and most of the flips were tests Microsoft itself never
+runs (figures: `docs/incidents/skills-and-agents.md`).
 
 The mechanism is real and every flip went the way it was predicted to. The scale is what an earlier
 version of this section got wrong.
 
-**The denominator is also not 40,530.** 12,018 of the 40,828 `[Test]` methods across the 32 buckets
-are listed in Microsoft's `src/DisabledTests/` and are skipped by their own pipeline, so Microsoft
-runs 28,810 of them. A cluster made mostly of tests they disable is worth proportionally less.
-Correcting for it moves our headline from 59.2% to 60.3% — about one point, because we pass their
-disabled tests at 59.1% and their live ones at 66.9%.
+**The denominator is also not the whole surface.** Microsoft's own pipeline skips every test
+listed in its `src/DisabledTests/`, a sizeable share of the buckets. A cluster made mostly of
+tests they disable is worth proportionally less, and a headline pass rate moves when you correct
+for it.
 
 **One piece of the recipe now exists as an opt-in flag: `--test-data-normalize-company`.** It
 rewrites named, measured fields of the restored company towards the DemoTool one; today the
@@ -130,21 +118,16 @@ rule set is a single field, `General Ledger Setup."Additional Reporting Currency
 
 **It is off by default and every number below was measured without it.** Turning it on changes
 which company the tests run against, so a normalized run's counts are not comparable with any
-recorded here — including the 259/595 Tests-SMB figures. The run says so itself: with the flag
+un-normalized one. The run says so itself: with the flag
 on, the summary prints every rule, what it changed and from which value, and names the rules
 that never fired.
 
-Measured on this box (BC 28.1, `--test-data`, one bucket, everything else identical):
-
-| | without the flag | with it |
-|---|---|---|
-| Tests-SMB (1,028 discovered) | 727 pass / 286 fail / 15 error | **727 / 286 / 15 — no change** |
-| Tests-ERM `Codeunit134157` in isolation | 3 pass / 3 fail | **6 pass / 0 fail** |
-
-So the flag pays where the ACY is actually load-bearing and costs nothing where it is not.
-Tests-SMB has no ACY-sensitive assertion; #2730's clusters are in Tests-ERM. Do not read the
-flat Tests-SMB row as the flag not working — the run reported `1 of 1 row(s) changed (was
-'EUR')` in both cases.
+Measured on BC 28.1 with `--test-data`, one bucket at a time, everything else identical: the
+flag left Tests-SMB's counts exactly unchanged, and turned every failing test in Tests-ERM's
+`Codeunit134157` green in isolation. So the flag pays where the ACY is actually load-bearing and
+costs nothing where it is not. Tests-SMB has no ACY-sensitive assertion; #2730's clusters are in
+Tests-ERM. Do not read the flat Tests-SMB result as the flag not working — the run reported the
+row changed from `'EUR'` in both cases.
 
 **To measure it across the surface, dispatch `ms-surface.yml` with `normalize-company: true`**
 (#3450). It hands the switch down to `ms-bucket.yml`, which appends
@@ -217,11 +200,10 @@ a measured before/after cannot be checked by anyone later.
 is public, and it is the authoritative statement of what their generated company contains. It is the
 one half of the recipe we can read.
 
-Read the right one. There are **25** files by that name in BCApps: `src/DemoTool/DemoDataConfig.xml`
-is **W1**, and the other 24 are country layers at `src/GDL/<country>/DevBase/DemoTool/DemoDataConfig.xml`
-(AU, BE, CA, CH, CZ, DACH, DE, DK, ES, FI, FR, GB, IN, IS, IT, MX, NA, NL, NO, NZ, RU, SE, AT, APAC).
+Read the right one. BCApps carries one file by that name per layer: `src/DemoTool/DemoDataConfig.xml`
+is **W1**, and the rest are country layers at `src/GDL/<country>/DevBase/DemoTool/DemoDataConfig.xml`.
 **We run the W1 buckets, so W1 is the file that governs** — a rule justified from a country layer's
-config is describing a company we do not build. The existing ACY rule's `Why` cites all 25 because it
+config is describing a company we do not build. The existing ACY rule's `Why` cites every layer because it
 happens to hold in every one of them; that is a stronger claim than a rule normally needs, not the
 standard shape.
 
@@ -231,12 +213,12 @@ space.
 
 #### The worked example, measured
 
-`Codeunit134157`, three tests asserting a G/L Entry count, each off by exactly +1:
+`Codeunit134157`, whose tests asserting a G/L Entry count were each off by exactly +1:
 
 | `General Ledger Setup."Additional Reporting Currency"` | result |
 |---|---|
-| `EUR` — what `--test-data` presents | **3 failed / 3 passed** |
-| blank — what Microsoft's test database has | **6 passed / 0 failed** |
+| `EUR` — what `--test-data` presents | the G/L Entry count tests fail |
+| blank — what Microsoft's test database has | every test in the codeunit passes |
 
 Nothing else changed. `HandleAddCurrResidualGLEntry` opens with
 
@@ -250,22 +232,22 @@ it was handed. There is no runner defect anywhere in that chain.
 
 #### The scale — a class, but a small one
 
-#2730 records two more clusters from the same single setting: codeunit 134880's four `Reverse…`
-tests, and a 16-test exchange-rate cluster (`There is no Detailed Cust. Ledg. Entry within the
-filter` after report 596). #2833 is a fourth. One field of one setup table, four independent
+#2730 records two more clusters from the same single setting: codeunit 134880's `Reverse…`
+tests, and an exchange-rate cluster (`There is no Detailed Cust. Ledg. Entry within the
+filter` after report 596). #2833 is another. One field of one setup table, several independent
 clusters, which is what makes this a recipe question rather than a handful of odd tests.
 
-**But measure before predicting.** In the full-bucket run above, cu 134157 goes 3/6 → 6/6 and
-cu 134880 goes 22/28 → 26/28, both reproducing outside isolation — and the 16-test exchange-rate
-cluster **did not move at all**. The whole flag is worth 18 tests in a 9,497-test bucket. An earlier
+**But measure before predicting.** In the full-bucket run above, codeunits 134157 and 134880 both
+improved, reproducing outside isolation — and the exchange-rate cluster **did not move at all**.
+The whole flag is worth a handful of tests in a large bucket. An earlier
 version of this section said "expect other prepared state to behave the same way", which primed
 agents to expect a large payoff; the honest version is that each difference is worth a handful of
 tests and the class is worth pursuing for correctness, not for the coverage number.
 
 #### One thing this does NOT explain, and must not bury
 
-Under ACY the runner's Additional-Currency amounts **miss balance by 0.01** — debits
-`54,426.58` against payables `-54,426.57`. If the recipe blanks ACY, that divergence becomes
+Under ACY the runner's Additional-Currency amounts **miss balance by 0.01** between the debits
+and the payables. If the recipe blanks ACY, that divergence becomes
 **unreachable in these tests rather than fixed.** It may still be a real runner defect. Do not
 let "explained as a recipe gap" be read as "the arithmetic was fine".
 
@@ -278,12 +260,12 @@ whole artifact — `tools/DownloadArtifacts test-sources` and `test-data` are th
 Each zip carries its own `app.json` and needs no edits; the `$(app_*)` version placeholders are
 fine.
 
-`--test-data` additionally needs the demo backup (`BusinessCentral-W1.bak`, ~900 MB, from the
+`--test-data` additionally needs the demo backup (`BusinessCentral-W1.bak`, from the
 sandbox artifact) at the selected build's artifact path, and the backup reader binary the runner
 looks for at `~/.cache/al-runner/bcbak/bcbak`.
 
 **Check the reader's version before measuring anything on BC 28.2 or newer.** `ms-bucket.yml`
-pins **v0.1.2**; a box carrying **v0.1.1** refuses those backups with `block N of MSDA region is
+pins it as `READER_TAG`; a box carrying **v0.1.1** refuses those backups with `block N of MSDA region is
 neither mapped by the derived extent list nor padding filler`. The trap is what that looks like
 from the outside: the bucket EXEC-FAILs and the run reports **`Tests: 0 total`** with `pass: 0`
 and `fail: 0` — not a hang, not a pass, and a `--test` filter then reports that it selected no
@@ -291,17 +273,17 @@ test, which reads like a wrong filter rather than an unread backup (measured on 
 re-measuring #3495's Tests-SCM entry point, #4486).
 
 ```bash
-~/.cache/al-runner/bcbak/bcbak --version     # want >= 0.1.2 for 28.2+
+~/.cache/al-runner/bcbak/bcbak --version     # want >= ms-bucket.yml's READER_TAG
 ```
 
-Install it the way the workflow does — `gh release download v0.1.2 --repo
+Install it the way the workflow does — `gh release download <READER_TAG> --repo
 StefanMaron/BusinessCentral.DbReader --pattern bcdb-linux-x64 --pattern SHA256SUMS`, verify the
 checksum, then `install -D -m 0755 bcdb-linux-x64 "$HOME/.cache/al-runner/bcbak/bcbak"`. The
 path is shared across every agent on the box, so back up what is there before overwriting it.
 
 **And rebuild the engine for the BC version you select, rather than passing `--bc-version`
 alone.** `--bc-version 28.4` against an engine built for 28.1 prints a KNOWN-DEGRADED warning and
-costs dozens of extra failures from minor skew (#2008); `dotnet build AlRunner -c Release
+costs extra failures from minor skew (#2008); `dotnet build AlRunner -c Release
 -p:_BCVersion=<full-version>` is the fix.
 
 ## The configuration that must be exact
@@ -319,11 +301,11 @@ Get these wrong and the numbers mean nothing:
 
 ## Sizing a run
 
-Do not run all 33 at once to answer a question. Pick by what you are asking:
+Do not run all of them at once to answer a question. Pick by what you are asking:
 
-- **A quick signal** — Tests-SMB (1,027 tests, ~2 minutes warm with test data). Also the natural
-  known-good baseline: 259 without test data, 595 with.
-- **A representative sample** — Tests-ERM alone is 9,496 tests, about a quarter of the surface,
+- **A quick signal** — Tests-SMB, a few minutes warm with test data. Also the natural
+  known-good baseline: record its count with and without test data on your own box.
+- **A representative sample** — Tests-ERM alone is a large share of the surface,
   and its cluster ranking has matched the full run's. Big enough to rank work, small enough to
   finish.
 - **The complete picture** — all buckets, but expect hours and size the worker count from
@@ -331,9 +313,8 @@ Do not run all 33 at once to answer a question. Pick by what you are asking:
   `.github/workflows/ms-surface.yml` (below); on a developer machine it competes with
   everything else for memory and has OOMed the box.
 
-Memory, measured after the per-worker GC tuning: roughly **1.1 GB per worker** without test
-data, **~2.3 GB with it** (including its backup-reader sidecar). Derive the job count from free
-RAM, never hardcode it, and set `MemoryHigh` below `MemoryMax` so a cgroup throttles before the
+Memory per worker is much higher with test data than without (its backup-reader sidecar
+included). Measure it on your box, derive the job count from free RAM, never hardcode it, and set `MemoryHigh` below `MemoryMax` so a cgroup throttles before the
 kernel's global OOM killer starts choosing victims elsewhere on the machine.
 
 A single bundle cannot be split across workers, so the largest bucket sets the wall-clock floor
@@ -349,13 +330,13 @@ however many workers you add.
    different responses:
    - a **real gap** — the runner refuses or mishandles something BC supports;
    - a **cascade** — one early failure leaves state broken for the rest of the codeunit. In one
-     measured case **46 of 47 failures were a cascade** from a single test that renamed a row and
-     died before restoring it. Fixing the first test fixes all 47, and filing 47 issues would
-     have been noise;
+     measured case **nearly a whole cluster was a cascade** from a single test that renamed a row
+     and died before restoring it. Fixing the first test fixed the rest, and filing one issue per
+     failure would have been noise;
    - a **symptom** — the failure is downstream of something else entirely. "Declared UI handler
      was not executed" turned out to have at least two unrelated causes.
 3. **Confirm against a clean cache before filing.** A cache left inconsistent by a killed run
-   silently cost 76% of passing tests once, and three commits were bisected before anyone tried a
+   silently cost most passing tests once, and several commits were bisected before anyone tried a
    fresh cache. One re-run is cheaper than one wrong issue.
 4. **File with the measured count.** "955 failures, 77% of this cluster, here is the sub-shape
    breakdown" is actionable. "Some tests fail" is not.
@@ -367,7 +348,7 @@ Large clusters that are already understood, so a fresh run does not generate dup
 - Failures that vanish with `--test-data` (see above) are configuration, not defects.
 - **Failures that vanish when the company is *prepared* the way Microsoft's pipelines prepare
   it** — the data-recipe class above — are not defects either. The ACY clusters (#2730, #2833,
-  codeunit 134157, codeunit 134880's `Reverse…` four, the 16-test exchange-rate cluster) are the
+  codeunit 134157, codeunit 134880's `Reverse…` tests, the exchange-rate cluster) are the
   known instances. Do not refile them, do not bend the runner to them, and do not mark them
   `expect-divergence`.
 - `RunObject`-only page actions are refused deliberately and loudly; supporting them is a
@@ -387,10 +368,10 @@ job — on a hosted runner with the full configuration, `workflow_dispatch` only
 measurement job, not a gate: green means it produced a number, not that the suite passed.
 Prefer it over a developer machine when the machine is also doing something else.
 
-`.github/workflows/ms-surface.yml` is the whole surface: one dispatch, one job, all 32
-non-empty buckets in sequence, one combined total (#3409). Each bucket's numbers reach the job
-summary and the run's annotations as that bucket finishes, so a run that hits the 360-minute
-hosted ceiling still hands over everything that completed. It excludes `Tests-TestLibraries`
+`.github/workflows/ms-surface.yml` is the whole surface: one dispatch, one job, every
+non-empty bucket in sequence, one combined total (#3409). Each bucket's numbers reach the job
+summary and the run's annotations as that bucket finishes, so a run that hits its
+`timeout-minutes` ceiling still hands over everything that completed. It excludes `Tests-TestLibraries`
 (a library, zero tests) and `Tests-Local` (empty in the W1 artifact); the bucket list is held
 to the artifact's own inventory by `AlRunner.Tests/MsSurfaceWorkflowTests.cs`. For a subset,
 dispatch `ms-bucket.yml` with its `buckets` input rather than editing the surface list.

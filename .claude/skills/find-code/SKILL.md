@@ -5,10 +5,10 @@ description: Find where a C# symbol is defined and what calls it in AlRunner/, u
 
 # Find code without grepping
 
-`AlRunner/` is ~139,000 lines across 341 tracked `.cs` files, the largest `Program.cs`
-at 6,952 (`git ls-files | xargs wc -l`, 2026-09-10). #3676 split the two files that used
+`AlRunner/` is large enough that grepping it is the expensive way to navigate
+(`git ls-files 'AlRunner/*.cs' | xargs wc -l` says how large today). #3676 split the two files that used
 to dominate this — `RecordPatches.cs` and `MockTestPage.cs` — into partials by surface. Grep gives you line numbers you then have to read windows around; measured on
-one implementation agent, that loop was **63% of all its tool calls**. The language
+one implementation agent, that loop was **most of its tool calls**. The language
 server answers the same questions exactly, in one call.
 
 **The built-in `LSP` tool does not work in subagents on this Claude Code build** —
@@ -61,8 +61,8 @@ for the rest of the session.
 
 ## Cost
 
-Measured on this repo, one process per query, cold: **~8.5s** for a hit, ~10s for a
-genuine miss. There is no daemon and none is needed. That is far cheaper than the
+One process per query, cold, on the order of seconds for a hit or a genuine miss. There is no
+daemon and none is needed. That is far cheaper than the
 grep-then-read-several-windows loop it replaces.
 
 ## What it cannot tell you
