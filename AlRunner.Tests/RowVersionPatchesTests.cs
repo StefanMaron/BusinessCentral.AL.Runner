@@ -48,7 +48,7 @@ public sealed class RowVersionPatchesTests
             "_pMetaTable", "_pTimestampField", "_pFieldIndex", "_pItem", "_mCreate",
             "_pSystemIdField", "_pSystemIdProp", "_pReadOnlyBuffer", "_pReadOnlyBufferSystemId",
             "_pTableCaptionSafe", "_fPrimaryTree", "_mCreateUniqueConstraint", "_pStoredItem",
-            "_pendingInsertStampIndex",
+            "_pendingInsertStampIndex", "_pendingModifyRestore",
         })
         {
             var f = t.GetField(name, BindingFlags.NonPublic | BindingFlags.Static)
@@ -291,6 +291,57 @@ public sealed class RowVersionPatchesTests
         RowVersionPatches.OnInsertStored(tempRow);
 
         Assert.Null(tempRow[0]);
+    }
+
+    // ── #4678: after the output exists, the Modify INPUT carries its old rowversion again ──
+    // DataAccess.ModifyAsync bumps the table version only when output and input rowversions
+    // differ; these pin that the input gets its pre-stamp value back, and only that buffer.
+
+    [Fact]
+    public void OnModifyOutputBuilt_AfterDatabaseBackedModify_RestoresTheInputsPreviousRowVersion()
+    {
+        ResetReflectionCache();
+        var provider = MarkDatabaseBackedProvider();
+        var previous = NavBigInteger.Create(5);
+        var buffer = new FakeBuffer(new FakeMetaTable(new FakeMetaField(0)), slotCount: 1) { [0] = previous };
+
+        RowVersionPatches.OnBeforeModify(provider, CompanyToken, buffer);
+        var stamped = Assert.IsType<NavBigInteger>(buffer[0]);
+        Assert.NotEqual(5L, stamped.ToInt64());
+
+        RowVersionPatches.OnModifyOutputBuilt(buffer);
+
+        Assert.Equal(5L, Assert.IsType<NavBigInteger>(buffer[0]).ToInt64());
+    }
+
+    [Fact]
+    public void OnModifyOutputBuilt_ForAnotherBuffer_RestoresNothing_AndConsumesTheLatch()
+    {
+        ResetReflectionCache();
+        var provider = MarkDatabaseBackedProvider();
+        var modified = new FakeBuffer(new FakeMetaTable(new FakeMetaField(0)), slotCount: 1) { [0] = NavBigInteger.Create(5) };
+        var other = new FakeBuffer(new FakeMetaTable(new FakeMetaField(0)), slotCount: 1) { [0] = NavBigInteger.Create(7) };
+
+        RowVersionPatches.OnBeforeModify(provider, CompanyToken, modified);
+        var stamp = Assert.IsType<NavBigInteger>(modified[0]).ToInt64();
+        RowVersionPatches.OnModifyOutputBuilt(other);   // an Insert's output, say
+        RowVersionPatches.OnModifyOutputBuilt(modified); // latch already gone
+
+        Assert.Equal(7L, Assert.IsType<NavBigInteger>(other[0]).ToInt64());
+        Assert.Equal(stamp, Assert.IsType<NavBigInteger>(modified[0]).ToInt64());
+    }
+
+    [Fact]
+    public void OnModifyOutputBuilt_AfterTemporaryModify_LeavesTheBufferAsItWas()
+    {
+        ResetReflectionCache();
+        var tempProvider = new object(); // never marked => temporary
+        var buffer = new FakeBuffer(new FakeMetaTable(new FakeMetaField(0)), slotCount: 1);
+
+        RowVersionPatches.OnBeforeModify(tempProvider, CompanyToken, buffer);
+        RowVersionPatches.OnModifyOutputBuilt(buffer);
+
+        Assert.Null(buffer[0]);
     }
 
     // ── Guard clauses stay quiet: nothing to stamp, no reflection even attempted ──
