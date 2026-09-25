@@ -235,7 +235,10 @@ internal partial class LiveNavTestPage
             // wrote a row the table had never agreed to.
             // Non-null: _pendingNewRow is only ever set true by InsertEmptyRow, which refuses by
             // name first when the page has no record — see RequireRecord there.
-            _record!.ALInsertAsync(DataError.TrapError, true, false).GetAwaiter().GetResult();
+            // ThrowError, as NavForm.SaveRecordAsync's insert: a refused insert (a duplicate key)
+            // raises at the TestPage call that flushed the row — corpus 60045 "IPF Tests", #4624.
+            // TrapError dropped the row and every value typed into it silently (it hid #4577).
+            _record!.ALInsertAsync(DataError.ThrowError, true, false).GetAwaiter().GetResult();
             // The row is now the page's own row, so it is also its own before-image — BC's
             // NavForm.InsertAsync does exactly this, under exactly this guard
             // (`if (SourceTable.HasBeenInserted) OldRecord.ALAssign(SourceTable)`). Without it the
