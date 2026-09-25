@@ -65,6 +65,9 @@ internal sealed class LiveNavTestField : ITestField
     // Null for the record-only ctor above, which has no page to report to.
     private readonly TestFieldValidationErrors _validationErrors;
 
+    /// <summary>This control's ledger, for a failure the PAGE attributes to it (a refused row insert).</summary>
+    internal TestFieldValidationErrors ValidationErrors => _validationErrors;
+
     public string Value
     {
         // An option field answers with its MEMBER NAME, not the ordinal it stores. Returning the

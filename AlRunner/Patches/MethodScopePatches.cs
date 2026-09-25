@@ -378,12 +378,6 @@ public static partial class BcRuntime
     {
         if (!disposing) return;
 
-        // BC's teardown of a local TestPage, when its procedure returns, inserts the new row the
-        // page still holds and raises if the table refuses it (corpus 60045 "IPF Tests",
-        // DelayedCard_DuplicateKey_OK_RaisesWhenThePageGoesOutOfScope; #4624). The scope
-        // bookkeeping below must still run, so the error is rethrown only after it.
-        var testPageTeardownError = FlushLocalTestPagesNewRows(self);
-
         _navMethodScopeDepth = Math.Max(0, _navMethodScopeDepth - 1);
 
         // Restore CurrentMethodScope to the scope's parent (captured at ctor entry in parentScope).
@@ -402,49 +396,6 @@ public static partial class BcRuntime
         UnbindLocalManualSubscriptions(self);
 
         DetachTreeHandlerFromParent(self);
-
-        testPageTeardownError?.Throw();
-    }
-
-    /// <summary>
-    /// Insert the pending new row of each TestPage declared as a local of this scope — a
-    /// NavTestPageHandle direct tree child, found as <see cref="UnbindLocalManualSubscriptions"/>
-    /// finds local codeunits. Returns the first error for the caller to rethrow.
-    ///
-    /// <para>Only the pending INSERT, not a full Dispose and not the pending Modify. The insert at
-    /// teardown is what corpus 60045 measured. A Modify at teardown is not: corpus 60514
-    /// AWriteAfterARefusedOneTracesFromTheRestoredBuffer leaves a page whose row a rolled-back
-    /// insert removed, is green on every leg, and fails here if teardown flushes its Modify.</para>
-    /// </summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    internal static System.Runtime.ExceptionServices.ExceptionDispatchInfo? FlushLocalTestPagesNewRows(object? self)
-    {
-        if (self == null) return null;
-        if (_fTreeObjTree == null || _fTreeHandlerFirstChildBase == null ||
-            _fTreeHandlerNextSiblingBase == null || _fTreeHandlerHostObject == null)
-            return null;
-
-        var handler = _fTreeObjTree.GetValue(self);
-        if (handler == null) return null;
-
-        // Allocated only when a TestPage is found: this runs on every procedure scope exit.
-        List<Microsoft.Dynamics.Nav.Runtime.NavTestPageHandle>? pages = null;
-        for (var child = _fTreeHandlerFirstChildBase.GetValue(handler); child != null;
-             child = _fTreeHandlerNextSiblingBase.GetValue(child))
-        {
-            if (_fTreeHandlerHostObject.GetValue(child) is Microsoft.Dynamics.Nav.Runtime.NavTestPageHandle page
-                && page.HasTarget)
-                (pages ??= new()).Add(page);
-        }
-        if (pages == null) return null;
-
-        System.Runtime.ExceptionServices.ExceptionDispatchInfo? first = null;
-        foreach (var page in pages)
-        {
-            try { NavTestPageBase_FlushPendingNewRow(page.Target); }
-            catch (Exception ex) { first ??= System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex); }
-        }
-        return first;
     }
 
     /// <summary>

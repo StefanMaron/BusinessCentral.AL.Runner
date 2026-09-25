@@ -152,6 +152,33 @@ internal sealed class TestFieldValidationErrors
     }
 
     /// <summary>
+    /// Remove the newest entry equal to <paramref name="stored"/>, here and on the page. BC's
+    /// client clears a row's save failure before the next save attempt
+    /// (<c>NavRowEntry.ClearSaveResults</c>), so a refused insert that later succeeds leaves no
+    /// error behind.
+    /// </summary>
+    internal void Withdraw(string stored)
+    {
+        var i = _errors.LastIndexOf(stored);
+        if (i >= 0) _errors.RemoveAt(i);
+        // Ids are the count here, so the next recorded error must again read as new.
+        if (_lastUsedId > _errors.Count) _lastUsedId = _errors.Count;
+        _page?.Withdraw(stored);
+    }
+
+    /// <summary>
+    /// Record an error that arose outside any operation on this control (a refused row insert),
+    /// marked as already seen. BC's <c>LastUsedValidationErrorId</c> is the client's newest id
+    /// overall, so <c>NavTestField.CheckError</c>'s snapshot before the next operation already
+    /// covers this error and does not raise it; only an error new DURING an operation raises.
+    /// </summary>
+    internal void RecordOutsideAnOperation(string message)
+    {
+        Record(message, appendRefreshSuffix: false);
+        _lastUsedId = MaxId;
+    }
+
+    /// <summary>
     /// The recorded error at a ZERO-based index, marking its id used.
     /// <para>Out of range goes through <see cref="Enumerable.ElementAt{TSource}(IEnumerable{TSource}, int)"/>
     /// because that is literally what BC's own client does — corpus run 34002487601's stack is
@@ -276,6 +303,14 @@ internal sealed class TestPageValidationErrors
     /// be the one way the two could disagree.
     /// </summary>
     internal void Record(string storedMessage) => _errors.Add(storedMessage ?? string.Empty);
+
+    /// <summary>Remove the newest entry equal to <paramref name="storedMessage"/>; see
+    /// <see cref="TestFieldValidationErrors.Withdraw"/>.</summary>
+    internal void Withdraw(string storedMessage)
+    {
+        var i = _errors.LastIndexOf(storedMessage);
+        if (i >= 0) _errors.RemoveAt(i);
+    }
 
     /// <summary>
     /// The recorded error at a ZERO-based index (BC's AL boundary has already subtracted 1).

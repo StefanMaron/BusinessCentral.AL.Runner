@@ -66,9 +66,10 @@ internal partial class LiveNavTestPage
         // — the NEXT draft line owes its own new-record step (#3029).
         _newRowLineRecordStarted = false;
 
-        // Starting a second row persists the first; a refused insert is dropped without an
-        // error, as BC's List New() does (corpus 60045 "IPF Tests", DelayedList_DuplicateKey_New).
-        FlushPendingNewRow(RefusedInsert.Discard);
+        // Starting a second row persists the first. A refused insert raises nothing: the error
+        // is recorded on the key control and the cursor stays on the refused row, so no second
+        // row is started (corpus 60045 "IPF Tests", DelayedList_DuplicateKey_New; #4624).
+        if (FlushPendingNewRow(RefusedInsert.Record)) return;
 
         // The rows around the insert decide the new row's AutoSplitKey number, and the row
         // the cursor sits on is about to be wiped by NewRecord's ALInit — so the position is
@@ -183,18 +184,24 @@ internal partial class LiveNavTestPage
     }
 
     /// <summary>
-    /// What a flush does when the table refuses the started row's insert (a duplicate key).
-    /// BC answers differently per TestPage route; corpus 60045 "IPF Tests" measured each one
-    /// (#4624): insert on focus and Close() raise, OK() raises nothing and leaves the row for
-    /// the page's teardown to raise, and New() and the cursor moves drop the row silently.
+    /// What a flush does when the started row's insert fails. <see cref="Record"/> is the
+    /// client's <c>NavTransactionManager.Save</c>: it catches the failure and
+    /// <c>NavRowEntry.CreateRowFailures</c> records it on the first control-bound key column, and
+    /// the row stays the current, still-unsaved row. Corpus 60045 "IPF Tests" measured which
+    /// TestPage routes do which on every cloud leg (#4624): insert on focus, Close() on a page
+    /// with no errors yet, Previous() and First() raise; New(), Next(), Last() and OK() record.
     /// </summary>
-    internal enum RefusedInsert { Raise, KeepPending, Discard }
+    internal enum RefusedInsert { Raise, Record }
 
-    internal void FlushPendingNewRow(RefusedInsert onRefused = RefusedInsert.Raise)
+    // The refusal recorded for the pending row, withdrawn when a later attempt succeeds.
+    private (TestFieldValidationErrors? Field, string Message)? _recordedInsertFailure;
+
+    /// <returns>True when the insert failed and was recorded; the row is still pending.</returns>
+    internal bool FlushPendingNewRow(RefusedInsert onRefused = RefusedInsert.Raise)
     {
-        if (!_pendingNewRow) return;
+        if (!_pendingNewRow) return false;
         _pendingNewRow = false;
-        if (NewRowAlreadyInsertedByThePage()) { ContinueAsAnEditOfTheSavedRow(); return; }
+        if (NewRowAlreadyInsertedByThePage()) { ContinueAsAnEditOfTheSavedRow(); return false; }
         // A row New() started and nothing wrote to is not persisted — BC discards it rather
         // than inserting a blank line, so a subpage part that showed 2 rows still shows 2.
         // See RowValuesChangedSinceLoad for the mechanism and what measured it.
@@ -202,20 +209,61 @@ internal partial class LiveNavTestPage
         // The captured insert position is dropped with the row: it describes bounds read at
         // THIS New()'s cursor, and leaving it armed would offer them to the next insert, which
         // may be on another row or another part entirely.
-        if (!RowValuesChangedSinceLoad()) { _insertPositionCaptured = false; return; }
-        if (InsertPendingRow(onRefused != RefusedInsert.Raise) == InsertOutcome.Refused
-            && onRefused == RefusedInsert.KeepPending)
+        if (!RowValuesChangedSinceLoad()) { _insertPositionCaptured = false; return false; }
+
+        var outcome = InsertPendingRow(out var failure, recordFailure: onRefused == RefusedInsert.Record);
+        if (outcome == InsertOutcome.Refused)
+        {
             _pendingNewRow = true;
+            // Each save attempt clears the last one's failure first (ClearSaveResults), so a row
+            // refused twice still carries one error.
+            if (_recordedInsertFailure == null) RecordInsertFailure(failure!.Message);
+            return true;
+        }
+        WithdrawInsertFailure();
+        return false;
+    }
+
+    // CreateRowFailures: the first key column that has a control, in key order, gets the error;
+    // with none, the row itself does, which only the page-level ledger shows. The description is
+    // the exception text with no refresh suffix.
+    private void RecordInsertFailure(string message)
+    {
+        TestFieldValidationErrors? target = null;
+        var primaryKey = _record?.MetaTable?.PrimaryKey;
+        var controls = _page?.ControlIdsInPageOrder().Select(c => c.Id).ToList()
+                       ?? _controlIdToFieldNo.Keys.ToList();
+        if (primaryKey != null)
+            for (var i = 0; i < primaryKey.KeyFieldCount && target == null; i++)
+                foreach (var id in controls)
+                    if (_controlIdToFieldNo.TryGetValue(id, out var fieldNo)
+                        && fieldNo == primaryKey.KeyFieldsList[i].FieldNo
+                        && GetField(id) is LiveNavTestField field)
+                    { target = field.ValidationErrors; break; }
+
+        if (target != null) target.RecordOutsideAnOperation(message);
+        else _validationErrors.Record(message);
+        _recordedInsertFailure = (target, message);
+    }
+
+    private void WithdrawInsertFailure()
+    {
+        if (_recordedInsertFailure is not { } recorded) return;
+        _recordedInsertFailure = null;
+        if (recorded.Field != null) recorded.Field.Withdraw(recorded.Message);
+        else _validationErrors.Withdraw(recorded.Message);
     }
 
     private enum InsertOutcome { Inserted, Vetoed, Refused }
 
     /// <summary>
-    /// Write the started row, in BC's order. <paramref name="trapRefusal"/> turns a refused insert
-    /// into <see cref="InsertOutcome.Refused"/> instead of raising it; see <see cref="RefusedInsert"/>.
+    /// Write the started row, in BC's order. <paramref name="recordFailure"/> turns a failed insert
+    /// into <see cref="InsertOutcome.Refused"/>, handing back the error, instead of raising it;
+    /// see <see cref="RefusedInsert"/>.
     /// </summary>
-    private InsertOutcome InsertPendingRow(bool trapRefusal = false)
+    private InsertOutcome InsertPendingRow(out NavBaseException? failure, bool recordFailure = false)
     {
+        failure = null;
         // #3586: BC's NavForm.InsertAsync(belowXRec) opens Session.BeginTransaction() and
         // closes it with Session.EndTransaction(commit) in a finally, around exactly the three
         // steps below. So a page-driven row Insert carries its own transaction and is legal
@@ -252,22 +300,27 @@ internal partial class LiveNavTestPage
             // wrote a row the table had never agreed to.
             // Non-null: _pendingNewRow is only ever set true by InsertEmptyRow, which refuses by
             // name first when the page has no record — see RequireRecord there.
-            // TrapError only where BC measured silence (RefusedInsert); TrapError still raises an
-            // OnInsert trigger's own error, so only the table's refusal of the row is trapped.
-            // Everywhere else ThrowError, as NavForm.SaveRecordAsync's insert — corpus 60045, #4624.
+            // ThrowError, as NavForm.SaveRecordAsync's insert. Where the client records the
+            // failure instead (RefusedInsert.Record) it catches NavBaseException, as
+            // NavTransactionManager.Save does — corpus 60045, #4624.
             var unstampedBefore = !_record!.IsTemporary && !_record.HasBeenInserted;
-            var inserted = _record.ALInsertAsync(trapRefusal ? DataError.TrapError : DataError.ThrowError, true, false)
-                .GetAwaiter().GetResult();
-            if (!inserted)
+            try
+            {
+                _record.ALInsertAsync(DataError.ThrowError, true, false).GetAwaiter().GetResult();
+            }
+            catch (NavBaseException ex) when (recordFailure
+                && ex is not NavTestValidationException
+                && AlRunner.Infrastructure.OutOfScopeMessage.FromException(ex) is null)
             {
                 // A refused row gets no rowversion on SQL, so HasBeenInserted stays false. The
                 // runner's stamp (RowVersionPatches.OnBeforeInsert) runs BEFORE the provider's
-                // duplicate check and leaves one on the refused buffer, which made the pending
-                // row read as "already inserted by the page" and turned OK()'s teardown insert
-                // into a silent Modify (corpus 60045 OK arm, #4624). Clearing it is observably
-                // equivalent: zero is what the buffer held before the attempt.
+                // duplicate check and leaves one on the refused buffer, which made the still
+                // pending row read as "already inserted by the page", and the next flush a
+                // Modify of the row it collided with (corpus 60045 List arms keep dup=orig).
+                // Clearing it is observably equivalent: zero is what the buffer held before.
                 if (unstampedBefore && _record.HasBeenInserted)
                     _record.SetFieldValue(0, Microsoft.Dynamics.Nav.Runtime.NavBigInteger.Create(0L));
+                failure = ex;
                 return InsertOutcome.Refused;
             }
             // The row is now the page's own row, so it is also its own before-image — BC's
@@ -707,7 +760,7 @@ internal partial class LiveNavTestPage
         _pendingNewRow = false;
         if (NewRowAlreadyInsertedByThePage()) { ContinueAsAnEditOfTheSavedRow(); return; }
         // A vetoed insert leaves the row a started draft, as the client's does.
-        if (InsertPendingRow() == InsertOutcome.Vetoed) _pendingNewRow = true;
+        if (InsertPendingRow(out _) == InsertOutcome.Vetoed) _pendingNewRow = true;
     }
 
     /// <summary>
@@ -924,10 +977,12 @@ internal partial class LiveNavTestPage
 
     // Order matters at every flush point: an in-progress new row is finished by an Insert, an
     // edited existing row by a Modify, and only one of the two is ever pending.
-    private void FlushRow(RefusedInsert onRefused = RefusedInsert.Raise)
+    /// <returns>True when the pending new row's insert failed and was recorded.</returns>
+    private bool FlushRow(RefusedInsert onRefused = RefusedInsert.Raise)
     {
-        FlushPendingNewRow(onRefused);
+        if (FlushPendingNewRow(onRefused)) return true;
         FlushPendingModify();
+        return false;
     }
 
     /// <summary>
@@ -944,6 +999,12 @@ internal partial class LiveNavTestPage
     /// found nothing.
     /// </summary>
     internal void SaveCurrentRow() { FlushParts(); FlushRow(); }
+
+    // TestPageProxy.InternalClose raises a save failure only when the page showed no error
+    // before the close; otherwise the failure is recorded and Close() returns (corpus 60045
+    // DelayedList_DuplicateKey_New/Next/Last, which close after a recorded refusal; #4624).
+    internal RefusedInsert OnRefusedInsertAtClose
+        => _validationErrors.Count > 0 ? RefusedInsert.Record : RefusedInsert.Raise;
 
     // BC routes TestPage teardown through both Close() and Dispose() depending on whether
     // the AL test calls Close() explicitly or lets the variable go out of scope. Flush on
@@ -978,7 +1039,8 @@ internal partial class LiveNavTestPage
         // (StefanMaron/BusinessCentral.AL.Language.Tests#311, merged 22e226c4) drives one page
         // through both routes and both persist the row, green on all eight cloud legs of run
         // 34345468218. So neither call site may lose its flush; issue #3682.
-        FlushParts(); FlushRow();
+        FlushParts();
+        FlushRow(OnRefusedInsertAtClose);
 
         // Two ways BC refuses a close, and they are not the same question — see
         // RunnerPageInstance.CloseRefusal.

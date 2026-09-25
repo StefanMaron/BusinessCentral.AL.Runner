@@ -391,8 +391,9 @@ internal partial class LiveNavTestPage
                 // (StefanMaron/BusinessCentral.AL.Language.Tests#354); issue #4146.
                 if (_result is FormResult.OK)
                     _page.FlushParts();
-                // OK leaves a row the table refuses for the teardown to raise (corpus 60045).
-                _page.FlushRow(_result is FormResult.OK ? RefusedInsert.KeepPending : RefusedInsert.Raise);
+                // OK() raises nothing when the table refuses the row, then or when the page goes
+                // out of scope (corpus 60045 DelayedCard_DuplicateKey_OK, #4624).
+                _page.FlushRow(_result is FormResult.OK ? RefusedInsert.Record : RefusedInsert.Raise);
             }
 
             // On BC this invoke IS the close attempt -- see AttemptHandlerDrivenClose.
