@@ -1012,17 +1012,12 @@ Four object-level members BC states unconditionally and AL states nowhere — `F
 emits. `RecordSeparator`/`TableSeparator` carry BC's own `<NewLine>` escape rather than a literal
 newline, because BC's reader decodes the token.
 
-**What remains, and where it went.** 66 differences over 14 signatures, none of them undeclared:
+**What remained after #4467, and where it went.** 66 differences over 14 signatures, none of them undeclared:
 
-- **38 on `SourceTableView` and `LinkFields`** — the derivation passes the AL source text through
-  verbatim where BC writes its own canonical form with field **names** replaced by `Field<n>`
-  ordinals. Tracked on **#4471**, deliberately not folded: `LinkFields` resolves its two halves
-  against *different* tables, and `SourceTableView` additionally needs BC's `ORDER(...)` encoding
-  measured rather than assumed.
-- **2 on `Permissions`** — the same canonicalisation one level up
-  (`tabledata "Security Group" = r` against BC's `TableData Security Group=r`). #4467 made the
-  runner state the value; the notation is #4471's. Also the one place the two surviving
-  `versionContingent` flags came off, because the member is now stated on every build.
+- **38 on `SourceTableView` and `LinkFields`, and 2 on `Permissions`** — the AL text passed
+  through where BC writes its own canonical form. **Closed by #4471**: all 40 are gone, and so
+  are their six allowlist entries. The encoding and its refusal rules are in
+  [xmlport-metadata-from-bc.md](xmlport-metadata-from-bc.md#table-views-link-fields-and-permissions).
 - **24 on `TranslationKey.*` and `MetaRuntimeInfo.Methods`**, matched by entries that span every
   object kind rather than by anything xmlport-specific.
 
