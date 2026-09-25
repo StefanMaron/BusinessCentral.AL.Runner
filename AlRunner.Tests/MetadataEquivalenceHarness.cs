@@ -38,7 +38,9 @@ internal sealed record GroundTruthBundle(
     string AppVersion,
     string BcBuild,
     IReadOnlyDictionary<string, int> Census,
-    IReadOnlyList<GroundTruthObject> Objects)
+    IReadOnlyList<GroundTruthObject> Objects,
+    // Null for a bundle written before the generator recorded one (#4536).
+    string? GeneratorFingerprint = null)
 {
     public string Label => $"{AppPublisher}_{AppName} {AppVersion}";
 }
@@ -80,6 +82,9 @@ internal static class MetadataEquivalencePaths
         => Path.Combine(RepoRoot, "tests", "expectations", "metadata-equivalence");
 
     public static string AllowlistFile() => Path.Combine(ExpectationsDir(), "allowlist.json");
+
+    /// <summary>The ground-truth generator's source, whose fingerprint a fresh bundle records.</summary>
+    public static string GeneratorSourceDir() => Path.Combine(RepoRoot, "tools", "metadata-ground-truth");
 
     public static string AppsFile() => Path.Combine(ExpectationsDir(), "apps.json");
 
@@ -141,10 +146,37 @@ internal static class MetadataEquivalenceBundleGate
     /// writing their own <c>Skip.If</c>.
     /// </summary>
     public static IReadOnlyList<GroundTruthBundle> RequireBundles()
+        => RequireBundles(
+            MetadataEquivalencePaths.GroundTruthDirForThisBuild(),
+            AlRunner.Tools.MetadataGroundTruth.GeneratorFingerprint.Compute(
+                MetadataEquivalencePaths.GeneratorSourceDir()));
+
+    /// <summary>
+    /// <paramref name="currentGeneratorFingerprint"/> is the checked-out generator's. A bundle
+    /// recording another one, or none, was written by a different generator and throws
+    /// <see cref="MetadataGroundTruthStaleException"/> on CI and locally alike (#4536).
+    /// </summary>
+    internal static IReadOnlyList<GroundTruthBundle> RequireBundles(string root, string currentGeneratorFingerprint)
     {
-        var root = MetadataEquivalencePaths.GroundTruthDirForThisBuild();
         var bundles = MetadataEquivalenceHarness.LoadBundles(root);
-        if (bundles.Count > 0) return bundles;
+        if (bundles.Count > 0)
+        {
+            var stale = bundles
+                .Where(b => !string.Equals(b.GeneratorFingerprint, currentGeneratorFingerprint, StringComparison.Ordinal))
+                .Select(b => $"  {b.Directory}: generator {b.GeneratorFingerprint ?? "<not recorded>"}")
+                .ToArray();
+            if (stale.Length == 0) return bundles;
+
+            throw new MetadataGroundTruthStaleException(
+                $"{stale.Length} ground-truth bundle(s) under '{root}' were written by a different " +
+                $"revision of tools/metadata-ground-truth than the checked-out one " +
+                $"({currentGeneratorFingerprint}). Measuring against them compares the runner with " +
+                "what an older generator emitted, and fails with messages about the runner. " +
+                $"Regenerate:{Environment.NewLine}" +
+                $"  tools/gen-metadata-ground-truth.sh --artifacts " +
+                $"\"{AlRunner.Infrastructure.BcArtifacts.ServiceTierDir}\"{Environment.NewLine}" +
+                string.Join(Environment.NewLine, stale));
+        }
 
         // Names the exact --artifacts to pass. A dev box holds several BC builds and the
         // generator's own default is the NEWEST one, while this process loaded whichever build
@@ -179,6 +211,15 @@ internal static class MetadataEquivalenceBundleGate
 internal sealed class MetadataGroundTruthMissingOnCiException : Exception
 {
     public MetadataGroundTruthMissingOnCiException(string message) : base(message) { }
+}
+
+/// <summary>
+/// Thrown, never skipped, when a bundle was written by another generator revision (#4536).
+/// See docs/metadata-equivalence.md#a-bundle-records-the-generator-that-wrote-it.
+/// </summary>
+internal sealed class MetadataGroundTruthStaleException : Exception
+{
+    public MetadataGroundTruthStaleException(string message) : base(message) { }
 }
 
 internal static class MetadataEquivalenceHarness
@@ -236,7 +277,9 @@ internal static class MetadataEquivalenceHarness
             Path.GetDirectoryName(manifestPath)!, schema,
             app.GetProperty("Id").GetGuid(), app.GetProperty("Name").GetString()!,
             app.GetProperty("Publisher").GetString()!, app.GetProperty("Version").GetString()!,
-            root.GetProperty("bcBuild").GetString()!, census, objects);
+            root.GetProperty("bcBuild").GetString()!, census, objects,
+            root.TryGetProperty(AlRunner.Tools.MetadataGroundTruth.GeneratorFingerprint.ManifestProperty, out var fp)
+                ? fp.GetString() : null);
     }
 
     /// <summary>

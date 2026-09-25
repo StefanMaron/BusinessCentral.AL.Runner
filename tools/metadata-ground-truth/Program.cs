@@ -224,6 +224,10 @@ internal static class Program
             Path.GetFileName(Path.TrimEndingDirectorySeparator(artifacts)),
             Path.GetFileName(appPath),
             DateTime.UtcNow.ToString("O"),
+            // Resolved from the running binary's location (bin/<cfg>/<tfm>/ under the source
+            // directory); Compute refuses a directory that is not the generator's, so a bundle
+            // never records a fingerprint of something else (#4536).
+            GeneratorFingerprint.Compute(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", ".."))),
             new BundleEmit(emitSuccess, capture.Items.Count, objects.Count, emitErrors, emitMs),
             census,
             objects.OrderBy(o => o.Kind, StringComparer.Ordinal).ThenBy(o => o.Id).ThenBy(o => o.Name, StringComparer.Ordinal).ToArray());
@@ -299,6 +303,7 @@ internal sealed record BundleManifest(
     [property: JsonPropertyName("bcBuild")] string BcBuild,
     [property: JsonPropertyName("sourcePackage")] string SourcePackage,
     [property: JsonPropertyName("generatedAtUtc")] string GeneratedAtUtc,
+    [property: JsonPropertyName(GeneratorFingerprint.ManifestProperty)] string GeneratorFingerprint,
     [property: JsonPropertyName("emit")] BundleEmit Emit,
     [property: JsonPropertyName("census")] IReadOnlyDictionary<string, int> Census,
     [property: JsonPropertyName("objects")] IReadOnlyList<BundleObject> Objects);
