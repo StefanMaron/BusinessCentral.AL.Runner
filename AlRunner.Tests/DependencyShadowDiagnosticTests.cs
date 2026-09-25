@@ -103,7 +103,7 @@ public sealed class DependencyShadowDiagnosticTests : IDisposable
         Assert.Single(result);
         Assert.Equal("Lib_symbols_2.0.app", Path.GetFileName(result[0].AppPath));
 
-        var diag = string.Join("\n", resolver.Diagnostics);
+        var diag = Assert.Single(resolver.UnservableDependencies);
         Assert.Contains("Test Library", diag);
         Assert.Contains("Lib_symbols_2.0.app", diag);   // what won
         Assert.Contains("Lib_code_1.0.app", diag);      // what could not be used

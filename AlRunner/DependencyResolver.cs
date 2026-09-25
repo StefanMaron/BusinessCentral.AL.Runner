@@ -504,25 +504,7 @@ public sealed class DependencyResolver
             // Quiet for Microsoft platform apps, whose runtime is the service-tier DLLs.
             if (Tier(best) == 0
                 && !IsMicrosoftPlatformApp(best.Manifest.Name, best.Manifest.Publisher))
-            {
-                var tooOld = candidates
-                    .Where(c => c.Manifest.Version < dep.Version && Tier(c) > 0)
-                    .OrderByDescending(c => c.Manifest.Version)
-                    .ToList();
-                if (tooOld.Count == 0)
-                    _unservable.Add(BuildUnservableReport(dep, best, candidates, Tier));
-                else
-                    _diagnostics.Add(
-                        $"[dep] note: {best.Manifest.Publisher}/{best.Manifest.Name} resolved to a "
-                        + $"SYMBOLS-ONLY package v{best.Manifest.Version} (no publishedartifacts DLL):"
-                        + $"\n           winner: {best.Path}"
-                        + string.Concat(tooOld.Select(c =>
-                            $"\n      below min: v{c.Manifest.Version} {c.Path} ({(Tier(c) == 2 ? "R2R" : "AL source or sidecar DLL")})"))
-                        + $"\n           Runnable copies exist but are all below the required minimum"
-                        + $"\n           v{dep.Version}, so none could be chosen. Provide a runnable"
-                        + "\n           package at or above that version, or execution will fail with"
-                        + "\n           \"The object with ID 0 does not have a member with that ID\".");
-            }
+                _unservable.Add(BuildUnservableReport(dep, best, candidates, Tier));
 
             found = best;
             return true;
