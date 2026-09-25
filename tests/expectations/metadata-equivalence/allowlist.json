@@ -1038,12 +1038,6 @@
       "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
     },
     {
-      "member": "ActionDefinition.#runPageModeField",
-      "reason": "BC writes RunPageMode on some actions, and the render writes it only where SymbolReference.json STATES it (#3926). The stated case agrees: all five stated members across 27.5.46862.53931, 28.1.49838.53910, 28.1.49838.54308 and 28.4.53241.54407 state View and BC writes View. The unstated case is NOT a constant default: BC writes Edit (RunPageModeSpecified True) on the three unstated trigger actions of 324, 4318 and 9862, and writes nothing on the three unstated RunObject actions of 774. What invalidates this entry is a measured rule separating those two groups (docs/metadata-equivalence.md#deltas-emitter-defaults).",
-      "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#deltas-emitter-defaults"
-    },
-    {
       "member": "ActionDefinition.#targetIDField",
       "reason": "The extension-runtime-delta render emits the member's ID and Name and the wrapper's placement attributes, and states nothing else -- so BC emits this value and the runner leaves it OFF rather than answering it wrongly (#3926). This value IS stated in the same ActionChanges[].Actions / ControlChanges[].Controls entry the render already walks, so it is a read-don't-guess fix rather than a limit: what the runner shows here is the type's own default (null / 0 / False / the zero enum), never a derivation anyone checked. LEFT OFF DELIBERATELY: writing BC's value without reading it from the symbol file would manufacture agreement, which is the failure this harness exists to catch. What invalidates this entry is #3926 landing the read.",
       "issue": 3926,
@@ -1150,18 +1144,6 @@
       "reason": "The extension-runtime-delta render emits the member's ID and Name and the wrapper's placement attributes, and states nothing else -- so BC emits this value and the runner leaves it OFF rather than answering it wrongly (#3926). This value IS stated in the same ActionChanges[].Actions / ControlChanges[].Controls entry the render already walks, so it is a read-don't-guess fix rather than a limit: what the runner shows here is the type's own default (null / 0 / False / the zero enum), never a derivation anyone checked. LEFT OFF DELIBERATELY: writing BC's value without reading it from the symbol file would manufacture agreement, which is the failure this harness exists to catch. What invalidates this entry is #3926 landing the read.",
       "issue": 3926,
       "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
-    },
-    {
-      "member": "ActionDefinition.RunPageMode",
-      "reason": "BC writes RunPageMode on some actions, and the render writes it only where SymbolReference.json STATES it (#3926). The stated case agrees: all five stated members across 27.5.46862.53931, 28.1.49838.53910, 28.1.49838.54308 and 28.4.53241.54407 state View and BC writes View. The unstated case is NOT a constant default: BC writes Edit (RunPageModeSpecified True) on the three unstated trigger actions of 324, 4318 and 9862, and writes nothing on the three unstated RunObject actions of 774. What invalidates this entry is a measured rule separating those two groups (docs/metadata-equivalence.md#deltas-emitter-defaults).",
-      "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#deltas-emitter-defaults"
-    },
-    {
-      "member": "ActionDefinition.RunPageModeSpecified",
-      "reason": "BC writes RunPageMode on some actions, and the render writes it only where SymbolReference.json STATES it (#3926). The stated case agrees: all five stated members across 27.5.46862.53931, 28.1.49838.53910, 28.1.49838.54308 and 28.4.53241.54407 state View and BC writes View. The unstated case is NOT a constant default: BC writes Edit (RunPageModeSpecified True) on the three unstated trigger actions of 324, 4318 and 9862, and writes nothing on the three unstated RunObject actions of 774. What invalidates this entry is a measured rule separating those two groups (docs/metadata-equivalence.md#deltas-emitter-defaults).",
-      "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#deltas-emitter-defaults"
     },
     {
       "member": "ActionDefinition.TargetID",
