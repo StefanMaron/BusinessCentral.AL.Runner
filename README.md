@@ -235,8 +235,8 @@ symptom and not the cause. The runner prints the error it was reported in place 
 `GetLastErrorText` still read only BC's message.
 
 Without `--bc-version`, the runner picks the newest BC version it ships an engine for that is at
-or above the `application`/`platform` minimum your app.json files declare (the highest across
-the run's apps). It prefers a cached build that meets the minimum and provisions one otherwise.
+or above the `application`/`platform` minimum declared by the app.json at the root of each path
+you pass (the highest of them; app folders nested below a path are not read). It prefers a cached build that meets the minimum and provisions one otherwise.
 It never falls back below the minimum: when no supported version meets it, the run stops and
 names the minimum and the supported versions. An explicit `--bc-version` below the minimum still
 runs, with a warning.
