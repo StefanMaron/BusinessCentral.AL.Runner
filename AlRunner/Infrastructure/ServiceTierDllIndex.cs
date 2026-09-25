@@ -99,7 +99,7 @@ public static class ServiceTierDllIndex
             if (name.Name == null) return null;
             var probe = Path.Combine(dir, name.Name + ".dll");
             if (File.Exists(probe))
-                return ctx.LoadFromAssemblyPath(probe);
+                return ResolvedAssemblyVersionGuard.LoadIfSatisfies(ctx, name, probe);
             return null;
         };
     }

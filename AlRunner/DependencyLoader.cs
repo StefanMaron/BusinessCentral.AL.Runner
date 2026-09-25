@@ -1321,7 +1321,7 @@ public sealed class DependencyLoader
         {
             if (name.Name == null) return null;
             if (_byName.TryGetValue(name.Name, out var asm))
-                return asm;
+                return ResolvedAssemblyVersionGuard.EnsureSatisfies(name, asm);
             // Serve any service-tier assembly from the artifact dir. BC 28 modernised its
             // runtime onto a large external closure (Azure SDK, Microsoft.Identity / .Extensions,
             // IdentityModel) beyond the Microsoft.Dynamics.Nav.* set; all ship in the artifact
@@ -1341,8 +1341,9 @@ public sealed class DependencyLoader
             try { serviceTierPath = AlRunner.Infrastructure.BcArtifacts.ServiceTierDir; }
             catch { return null; } // no artifacts provisioned — let the default binder fail loud
             var probe = Path.Combine(serviceTierPath, name.Name + ".dll");
+            // A file older than the request throws rather than binding silently (#4569).
             if (File.Exists(probe))
-                return ctx.LoadFromAssemblyPath(probe);
+                return ResolvedAssemblyVersionGuard.LoadIfSatisfies(ctx, name, probe);
             return null;
         };
     }
