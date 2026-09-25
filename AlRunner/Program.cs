@@ -2706,6 +2706,7 @@ foreach (var bundle in bundles)
     var depRootDir = bucketRoot ?? bundleAbs;
     // #4567: set when DEP-RESOLVE-FAIL printed the cause, so what follows does not restate it.
     bool bundleDependencyUnresolved = false;
+    bool bundleDependenciesResolved = false;
     {
         var appJsonPath = Path.Combine(depRootDir, "app.json");
         if (bundleManifests.Count > 0)
@@ -2737,6 +2738,7 @@ foreach (var bundle in bundles)
                 using (AlRunner.Infrastructure.PhaseLog.Stage("dep-resolve"))
                     ordered = resolver.Resolve(roots);
                 bundleResolvedDeps = ordered;
+                bundleDependenciesResolved = true;
                 // Issue #2239: per-bundle dep counts are diagnostic detail — gated behind
                 // --verbose.
                 if (AlRunner.Log.Verbose)
@@ -2916,7 +2918,9 @@ foreach (var bundle in bundles)
             }
             catch (Exception ex)
             {
-                bundleDependencyUnresolved = true;
+                // Only a failure before resolution finished is an unresolved dependency; one
+                // later in this block (SetResolvedDeps, LoadAll) must not hide AL errors.
+                bundleDependencyUnresolved = !bundleDependenciesResolved;
                 // A helper, not a loop here: a loop inside a handler forces Main to FullOpts
                 // (HandlerLoopJitTierGuardTests).
                 DependencyResolveFailureOutput.WriteDependencyResolveFailure(
@@ -3226,7 +3230,8 @@ foreach (var bundle in bundles)
                 {
                     cacheBlockerReported = true;
                     // #4567: after DEP-RESOLVE-FAIL this only restates that cause.
-                    if (AlRunner.Log.Verbose || !bundleDependencyUnresolved)
+                    if (DependencyResolveFailureOutput.ShouldPrintNokey(AlRunner.Log.Verbose,
+                            bundleDependencyUnresolved, AlRunner.Infrastructure.RunnerFingerprint.UncacheableReason, depIds))
                         Console.Error.WriteLine(
                             $"  [{rel}] [cache] NOKEY — this run cannot compute an AL-output cache "
                             + $"identity, so the cache is neither consulted nor written: {cacheBlocker}");
@@ -3646,8 +3651,8 @@ foreach (var bundle in bundles)
                             {
                                 Console.Error.WriteLine(
                                     $"<bundled>: AL diagnostics that identified the excluded object(s):");
-                                foreach (var d in exclDiags)
-                                    Console.Error.WriteLine($"  {d}");
+                                foreach (var line in DependencyResolveFailureOutput.AlDiagnosticListing(exclDiags, bundleDependencyUnresolved, AlRunner.Log.Verbose))
+                                    Console.Error.WriteLine(line);
                             }
                             if (!allProfiles)
                             {

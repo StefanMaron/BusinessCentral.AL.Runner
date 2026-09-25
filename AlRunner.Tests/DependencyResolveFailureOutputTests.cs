@@ -56,10 +56,49 @@ public sealed class DependencyResolveFailureOutputTests : IDisposable
         Assert.DoesNotContain("[cache] dependency resolution failed", run.Output);
         Assert.DoesNotContain("[cache] NOKEY", run.Output);
 
-        // No cascade: the compile errors are named as a consequence and counted, not listed.
-        Assert.DoesNotContain("AL0185", run.Output);
-        Assert.Contains("follow from the unresolved dependency above", run.Output);
+        // No cascade: the compile errors a missing dependency produces are counted, not listed.
+        Assert.DoesNotContain("error AL0185", run.Output);
+        Assert.Contains("of the kind a missing dependency produces", run.Output);
         Assert.Contains("--verbose", run.Output);
+    }
+
+    /// <summary>
+    /// Review of PR #4580: an AL error unrelated to the missing dependency must still be listed
+    /// on a default run. Only the cascade's own kind (AL0185 "is missing", emit-crash) is hidden.
+    /// </summary>
+    [SkippableFact]
+    public void DefaultRun_StillListsAnUnrelatedAlError()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (bundle, pkgDir, cacheDir) = Arrange("unrelated", probeBody: ProbeWithUnrelatedError);
+
+        var run = Spawn(bundle, pkgDir, cacheDir, verbose: false);
+
+        Assert.True(run.ExitCode == 3, $"exit {run.ExitCode}, expected 3\n{run.Output}");
+        Assert.Contains("AL0118", run.Output);
+        Assert.Contains("UndeclaredThing", run.Output);
+        Assert.DoesNotContain("error AL0185", run.Output);
+        Assert.DoesNotContain("follow from the unresolved dependency", run.Output);
+        Assert.Contains("of the kind a missing dependency produces", run.Output);
+    }
+
+    /// <summary>
+    /// Review of PR #4580: with two codeunits failing independently the run reports EMIT-EXCLUDED,
+    /// whose diagnostic listing must collapse the same cascade and keep the unrelated error.
+    /// </summary>
+    [SkippableFact]
+    public void DefaultRun_EmitExcluded_HidesTheCascade_AndListsTheUnrelatedError()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (bundle, pkgDir, cacheDir) = Arrange("excluded", extraCodeunit: SecondCodeunitWithUnrelatedError);
+
+        var run = Spawn(bundle, pkgDir, cacheDir, verbose: false);
+
+        Assert.True(run.ExitCode == 3, $"exit {run.ExitCode}, expected 3\n{run.Output}");
+        Assert.Contains("EMIT-EXCLUDED", run.Output);
+        Assert.Contains("UndeclaredThing", run.Output);
+        Assert.DoesNotContain("error AL0185", run.Output);
+        Assert.Contains("of the kind a missing dependency produces", run.Output);
     }
 
     [SkippableFact]
@@ -107,20 +146,109 @@ public sealed class DependencyResolveFailureOutputTests : IDisposable
     }
 
     [Fact]
-    public void AlDiagnosticListing_CollapsesOnlyAfterAnUnresolvedDependency_AndNotUnderVerbose()
+    public void AlDiagnosticListing_CollapsesOnlyTheMissingDependencyKind_AndNotUnderVerbose()
     {
-        var diags = new[] { "error AL0185: Codeunit 'A' is missing", "error AL0185: Codeunit 'B' is missing" };
+        var diags = new[]
+        {
+            "SourceFile(a.al@8:17): error AL0185: Codeunit 'A' is missing",
+            "SourceFile(a.al@9:16): error AL0185: Codeunit 'B' is missing",
+            "SourceFile(a.al@12:14): error AL0118: The name 'UndeclaredThing' does not exist in the current context.",
+            "emit-crash: Codeunit \"P\" :: T() — Unexpected value 'None'",
+        };
 
-        Assert.Equal(2, DependencyResolveFailureOutput.AlDiagnosticListing(diags, dependencyUnresolved: false, verbose: false).Count);
-        Assert.Equal(2, DependencyResolveFailureOutput.AlDiagnosticListing(diags, dependencyUnresolved: true, verbose: true).Count);
-        var collapsed = Assert.Single(DependencyResolveFailureOutput.AlDiagnosticListing(diags, dependencyUnresolved: true, verbose: false));
-        Assert.Contains("These 2 error(s) follow from the unresolved dependency above", collapsed);
+        Assert.Equal(4, DependencyResolveFailureOutput.AlDiagnosticListing(diags, dependencyUnresolved: false, verbose: false).Count);
+        Assert.Equal(4, DependencyResolveFailureOutput.AlDiagnosticListing(diags, dependencyUnresolved: true, verbose: true).Count);
+
+        var collapsed = DependencyResolveFailureOutput.AlDiagnosticListing(diags, dependencyUnresolved: true, verbose: false);
+        Assert.Equal(2, collapsed.Count);
+        Assert.Contains("AL0118", collapsed[0]);
+        Assert.Contains("3 error(s) of the kind a missing dependency produces", collapsed[1]);
+
+        // Nothing of the missing-dependency kind: no count line at all.
+        var onlyUnrelated = DependencyResolveFailureOutput.AlDiagnosticListing(new[] { diags[2] }, dependencyUnresolved: true, verbose: false);
+        Assert.Contains("AL0118", Assert.Single(onlyUnrelated));
     }
+
+    /// <summary>
+    /// NOKEY is hidden on a default run only when it restates this bundle's DEP-RESOLVE-FAIL — the
+    /// blocker is the unresolved-closure reason. Any other blocker still prints, and --verbose
+    /// always prints. No CLI spawn reaches another blocker (a location-less runner assembly, or a
+    /// resolved-but-unhashable package, which #2987 made unreachable), so the gate is pinned here.
+    /// </summary>
+    [Fact]
+    public void ShouldPrintNokey_HidesOnlyARestatementOfTheDependencyFailure()
+    {
+        var unresolved = new ProgramSupport.OrderedDependencyIds(
+            new[] { "unresolved:DependencyVersionMismatchException:too old" }, "the dependency closure of '/x' could not be resolved");
+        var degraded = new ProgramSupport.OrderedDependencyIds(
+            new[] { "id:1.0.0.0:unhashable:/p:absent" }, "package /p could not be hashed");
+
+        Assert.False(DependencyResolveFailureOutput.ShouldPrintNokey(false, true, null, unresolved));
+        Assert.True(DependencyResolveFailureOutput.ShouldPrintNokey(true, true, null, unresolved));
+        Assert.True(DependencyResolveFailureOutput.ShouldPrintNokey(false, false, null, unresolved));
+        Assert.True(DependencyResolveFailureOutput.ShouldPrintNokey(false, true, "runner has no location", unresolved));
+        Assert.True(DependencyResolveFailureOutput.ShouldPrintNokey(false, true, null, degraded));
+    }
+
+    private const string DefaultProbe = """
+        codeunit 60797 "DepResolve Probe"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure UsesTheDependency()
+            var
+                Helper: Codeunit "Fabrikam Helper";
+                Other: Codeunit "Fabrikam Other Helper";
+            begin
+                Helper.DoIt();
+                Other.DoIt();
+            end;
+        }
+        """;
+
+    // The default probe plus one error that has nothing to do with the dependency (AL0118).
+    private const string ProbeWithUnrelatedError = """
+        codeunit 60797 "DepResolve Probe"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure UsesTheDependency()
+            var
+                Helper: Codeunit "Fabrikam Helper";
+                Other: Codeunit "Fabrikam Other Helper";
+                n: Integer;
+            begin
+                Helper.DoIt();
+                Other.DoIt();
+                n := UndeclaredThing;
+            end;
+        }
+        """;
+
+    // A second codeunit carrying only the unrelated error: two objects fail independently, so
+    // the run takes the EMIT-EXCLUDED path rather than EMIT-ZERO.
+    private const string SecondCodeunitWithUnrelatedError = """
+        codeunit 60798 "DepResolve Second"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure HasItsOwnError()
+            var
+                n: Integer;
+            begin
+                n := UndeclaredThing;
+            end;
+        }
+        """;
 
     private static int CountOf(string haystack, string needle) =>
         Regex.Matches(haystack, Regex.Escape(needle)).Count;
 
-    private (string Bundle, string PkgDir, string CacheDir) Arrange(string name)
+    private (string Bundle, string PkgDir, string CacheDir) Arrange(
+        string name, string? probeBody = null, string? extraCodeunit = null)
     {
         var root = Path.Combine(_scratch, name);
         var bundle = Path.Combine(root, "bundle");
@@ -139,27 +267,14 @@ public sealed class DependencyResolveFailureOutputTests : IDisposable
           "dependencies": [
             { "id": "{{DepId}}", "name": "{{DepName}}", "publisher": "{{DepPublisher}}", "version": "{{RequiredVersion}}" }
           ],
-          "idRanges": [ { "from": 60797, "to": 60797 } ],
+          "idRanges": [ { "from": 60797, "to": 60798 } ],
           "runtime": "14.0"
         }
         """);
         // Two references into the dependency, so the default run has a cascade to hide.
-        File.WriteAllText(Path.Combine(bundle, "Probe.Codeunit.al"), """
-        codeunit 60797 "DepResolve Probe"
-        {
-            Subtype = Test;
-
-            [Test]
-            procedure UsesTheDependency()
-            var
-                Helper: Codeunit "Fabrikam Helper";
-                Other: Codeunit "Fabrikam Other Helper";
-            begin
-                Helper.DoIt();
-                Other.DoIt();
-            end;
-        }
-        """);
+        File.WriteAllText(Path.Combine(bundle, "Probe.Codeunit.al"), probeBody ?? DefaultProbe);
+        if (extraCodeunit != null)
+            File.WriteAllText(Path.Combine(bundle, "Extra.Codeunit.al"), extraCodeunit);
 
         WriteApp(pkgDir);
         return (bundle, pkgDir, cacheDir);
