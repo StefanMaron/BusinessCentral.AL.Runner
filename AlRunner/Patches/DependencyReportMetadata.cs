@@ -454,6 +454,14 @@ public static partial class RecordPatches
         // MetaPageDefinition deserializes a MISSING element to null rather than an empty one.
         // Same reasoning as the three present-but-empty elements in DependencyPageMetadataXml.
         w.WriteStartElement("SourceObject", MetaObjectsNamespace);
+        // #4659: a request page declaring `SourceTable` is emitted by BC as
+        // <SourceObject … SourceTable="<id>"/> (measured: the runner's own emit-captured document
+        // for a source-compiled report). Without it NavForm.SourceTable stays null and the
+        // request page's OnOpenPage NREs on its first `Rec` access — report 742.
+        // SaveValues / ShowFilter sit on this element too and are not written yet: #4664.
+        if (report.RequestPageSourceTableId > 0)
+            w.WriteAttributeString("SourceTable",
+                report.RequestPageSourceTableId.ToString(System.Globalization.CultureInfo.InvariantCulture));
         w.WriteEndElement();
         w.WriteEndElement(); // Properties
 
