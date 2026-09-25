@@ -217,7 +217,18 @@ public static class RunnerFormInit
     /// that method for why.
     /// </summary>
     public static bool ShouldRegisterSourceExpressions(object form)
-        => ShouldResolveMasterPage(form) || WantsSourceExpressions(form);
+        => ShouldResolveMasterPage(form) || WantsSourceExpressions(form) || IsRequestPageForm(form);
+
+    /// <summary>
+    /// Every request page registers its control -> report-global bindings, whoever opened it.
+    /// The per-instance mark cannot reach a request page BC's own report engine opens for
+    /// precompiled AL (<c>RunReportAsync</c> -> <c>RunRequestPageCoreAsync</c> ->
+    /// <c>NavForm.RunModalAsync</c>): OnMetadataLoaded registers inside that RunModal, before
+    /// the runner first sees the form in <c>RunnerTestClientSession.GetPage</c> (#4649).
+    /// Registration still grants nothing else — see <see cref="MarkSourceExpressionsWanted"/>.
+    /// </summary>
+    internal static bool IsRequestPageForm(object form)
+        => form is Microsoft.Dynamics.Nav.Runtime.RequestPageBase;
 
     // ── request pages: registration only, per instance ────────────────────────────────
     //
