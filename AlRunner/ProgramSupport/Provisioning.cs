@@ -377,14 +377,8 @@ internal static partial class ProgramSupport
     // when no app.json / no version field is found (caller then falls back to latest-in-cache).
     internal static string? TryDeriveBcMajorFromProject(IEnumerable<string> bundlePaths)
     {
-        foreach (var bundle in bundlePaths)
+        foreach (var appJson in ProjectAppJsonPaths(bundlePaths))
         {
-            string abs;
-            try { abs = Path.GetFullPath(bundle); } catch { continue; }
-            var root = FindBucketRoot(abs) ?? (Directory.Exists(abs) ? abs : Path.GetDirectoryName(abs));
-            if (string.IsNullOrEmpty(root)) continue;
-            var appJson = Path.Combine(root, "app.json");
-            if (!File.Exists(appJson)) continue;
             try
             {
                 using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(appJson));
@@ -401,6 +395,34 @@ internal static partial class ProgramSupport
             catch { /* unparseable manifest — fall through to next bundle / latest-in-cache */ }
         }
         return null;
+    }
+
+    // Each bundle's project app.json (the bucket root's), in bundle order; bundles without one
+    // are skipped.
+    private static IEnumerable<string> ProjectAppJsonPaths(IEnumerable<string> bundlePaths)
+    {
+        foreach (var bundle in bundlePaths)
+        {
+            string abs;
+            try { abs = Path.GetFullPath(bundle); } catch { continue; }
+            var root = FindBucketRoot(abs) ?? (Directory.Exists(abs) ? abs : Path.GetDirectoryName(abs));
+            if (string.IsNullOrEmpty(root)) continue;
+            var appJson = Path.Combine(root, "app.json");
+            if (File.Exists(appJson)) yield return appJson;
+        }
+    }
+
+    // #4590: the highest application/platform minimum across the run's project app.json files
+    // (the same per-bundle app.json TryDeriveBcMajorFromProject reads); null when none declares one.
+    internal static Version? TryDeriveBcFloorFromProject(IEnumerable<string> bundlePaths)
+    {
+        Version? floor = null;
+        foreach (var appJson in ProjectAppJsonPaths(bundlePaths))
+        {
+            var f = AlRunner.Infrastructure.InProcessAppPackager.ReadMinimumBcVersion(appJson);
+            if (f != null && (floor == null || f > floor)) floor = f;
+        }
+        return floor;
     }
 
     // Issue #2085: `al-runner provision --platform-apps|--test-apps|--service-tier [--force]`
@@ -610,6 +632,15 @@ internal static partial class ProgramSupport
         if (bcVersionArg == null)
         {
             var fromEngine = ResolveDefaultProvisionVersion(bundles, Log);
+            // #4590: the default target never goes below the app.json floor, here as on the run path.
+            if (fromEngine != null && TryDeriveBcFloorFromProject(bundles) is { } floor
+                && !AlRunner.Infrastructure.BcVersionFloor.Meets(fromEngine, floor))
+            {
+                Log($"the project's app.json declares a minimum of BC {floor} (application/platform), above " +
+                    $"the default target BC {fromEngine} (this binary's engine build). Pass --bc-version with a " +
+                    $"version at or above the minimum.");
+                return null;
+            }
             if (fromEngine != null)
                 return fromEngine;
         }

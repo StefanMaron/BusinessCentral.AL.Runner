@@ -1,0 +1,463 @@
+// DefaultBcVersionFloorTests — issue #4590.
+//
+// app.json's application/platform versions are a floor: with no --bc-version the runner must
+// select the newest version it can run AT OR ABOVE that floor, refuse when none is, and warn
+// (not refuse) when an explicit --bc-version is below it.
+//
+// The unit half pins EngineVariants.ChooseDefault's floor handling, BcVersionFloor.Meets and the
+// floor reader; the subprocess half drives Program.cs the way DefaultBcVersionSupportedVariantTests
+// does (a private mirror of the build output with placeholder variants, --no-auto-provision, a
+// scratch AL_RUNNER_ARTIFACTS_ROOT), so nothing is downloaded and the shared cache is never read.
+// Fixtures declare the floor through "platform" only (.claude/rules/no-base-app-in-csharp-tests.md);
+// the reader takes the higher of the two fields through InProcessAppPackager.ReadMinimumBcVersion,
+// which BcVersionFloorSkipTests already covers for "application".
+using System.Diagnostics;
+using System.Text;
+using AlRunner.Infrastructure;
+using Xunit;
+
+namespace AlRunner.Tests;
+
+public sealed class DefaultBcVersionFloorTests
+{
+    private const int SpawnTimeoutMs = 300_000;
+
+    private static readonly string RepoRoot = Path.GetFullPath(
+        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+
+    private static EngineVariants.Variant V(string version) => new(Version.Parse(version), "/unused");
+
+    private static readonly IReadOnlyList<EngineVariants.Variant> Shipped = new[]
+    {
+        V("27.5.46862.53931"), V("28.1.49838.54368"), V("28.3.52162.54374"), V("28.4.53241.54387"),
+    };
+
+    // ───────────────────────────── ChooseDefault with a floor ─────────────────────────────
+
+    /// <summary>The owner's run behind the issue: dependencies need 28.4, the newest cached build is
+    /// 28.1. The cached builds below the floor are skipped and the newest shipped minor is targeted.</summary>
+    [Fact]
+    public void ChooseDefault_FloorAboveEveryCachedBuild_SkipsThemAndTargetsNewestShippedMinor()
+    {
+        var choice = EngineVariants.ChooseDefault(Shipped,
+            new[] { "28.1.49838.54368", "27.5.46862.53931" }, floor: new Version(28, 4, 0, 0));
+
+        Assert.Equal("28.4", choice.Version);
+        Assert.False(choice.FloorUnmet);
+        Assert.Equal(new[] { "28.1.49838.54368", "27.5.46862.53931" }, choice.SkippedBelowFloor);
+        Assert.Equal(
+            "[bc] skipping cached BC 28.1.49838.54368, 27.5.46862.53931: below the minimum BC 28.4.0.0 " +
+            "the project's app.json declares — using BC 28.4 instead.",
+            choice.FloorSkipLine());
+    }
+
+    /// <summary>Control: a floor the newest cached build meets changes nothing.</summary>
+    [Fact]
+    public void ChooseDefault_FloorMetByNewestCached_SelectsItAndSkipsNothing()
+    {
+        var choice = EngineVariants.ChooseDefault(Shipped,
+            new[] { "28.3.52162.54374", "28.1.49838.54368" }, floor: new Version(28, 1, 0, 0));
+
+        Assert.Equal("28.3.52162.54374", choice.Version);
+        Assert.Empty(choice.SkippedBelowFloor);
+        Assert.Null(choice.FloorSkipLine());
+    }
+
+    /// <summary>A cached build above the floor is preferred over provisioning, even when an older
+    /// cached build is below it.</summary>
+    [Fact]
+    public void ChooseDefault_CachedBuildAtFloorMinor_IsPreferredOverProvisioning()
+    {
+        var choice = EngineVariants.ChooseDefault(Shipped,
+            new[] { "28.3.52162.54374", "28.1.49838.54368" }, floor: new Version(28, 2, 0, 0));
+
+        Assert.Equal("28.3.52162.54374", choice.Version);
+        Assert.Empty(choice.SkippedBelowFloor);
+    }
+
+    /// <summary>Full versions are compared, not major.minor: a cached 28.4 build below a 28.4
+    /// build-level floor is skipped.</summary>
+    [Fact]
+    public void ChooseDefault_ComparesFullVersions_NotJustMajorMinor()
+    {
+        var choice = EngineVariants.ChooseDefault(Shipped,
+            new[] { "28.4.53241.54387" }, floor: new Version(28, 4, 60000, 0));
+
+        Assert.Equal(new[] { "28.4.53241.54387" }, choice.SkippedBelowFloor);
+        Assert.Equal("28.4", choice.Version);
+    }
+
+    [Fact]
+    public void ChooseDefault_NoShippedVariantMeetsFloor_ReportsFloorUnmet()
+    {
+        var choice = EngineVariants.ChooseDefault(Shipped,
+            new[] { "28.4.53241.54387" }, floor: new Version(28, 5, 0, 0));
+
+        Assert.Null(choice.Version);
+        Assert.True(choice.FloorUnmet);
+        Assert.Equal(new[] { "28.4.53241.54387" }, choice.SkippedBelowFloor);
+    }
+
+    /// <summary>A bare major with a floor inside it: the cached build below the floor is skipped,
+    /// the one above it chosen.</summary>
+    [Fact]
+    public void ChooseDefault_BareMajorWithFloorInsideIt_ChoosesTheCachedBuildAtOrAboveTheFloor()
+    {
+        var choice = EngineVariants.ChooseDefault(Shipped,
+            new[] { "28.3.52162.54374", "28.1.49838.54368", "27.5.46862.53931" }, major: 28,
+            floor: new Version(28, 2, 0, 0));
+
+        Assert.Equal("28.3.52162.54374", choice.Version);
+        Assert.Empty(choice.SkippedBelowFloor);
+
+        var lowOnly = EngineVariants.ChooseDefault(Shipped, new[] { "28.1.49838.54368" }, major: 28,
+            floor: new Version(28, 2, 0, 0));
+        Assert.Equal("28.4", lowOnly.Version);
+        Assert.Equal(new[] { "28.1.49838.54368" }, lowOnly.SkippedBelowFloor);
+    }
+
+    /// <summary>A bare major entirely below the floor reports FloorUnmet (Program.cs then falls back
+    /// to the unfloored choice and warns).</summary>
+    [Fact]
+    public void ChooseDefault_BareMajorBelowTheFloor_ReportsFloorUnmet()
+    {
+        var choice = EngineVariants.ChooseDefault(Shipped, new[] { "27.5.46862.53931" }, major: 27,
+            floor: new Version(28, 4, 0, 0));
+        Assert.Null(choice.Version);
+        Assert.True(choice.FloorUnmet);
+    }
+
+    /// <summary>No floor keeps #4557's behaviour, and never reports FloorUnmet.</summary>
+    [Fact]
+    public void ChooseDefault_NoFloor_KeepsNewestSupportedCachedAndNeverReportsFloorUnmet()
+    {
+        var choice = EngineVariants.ChooseDefault(Shipped, new[] { "27.5.46862.53931" });
+        Assert.Equal("27.5.46862.53931", choice.Version);
+        Assert.False(choice.FloorUnmet);
+    }
+
+    // ───────────────────────────── BcVersionFloor.Meets ─────────────────────────────
+
+    [Theory]
+    [InlineData("28.4", "28.4.0.0", true)]
+    [InlineData("28.4.53241.54387", "28.4.0.0", true)]
+    [InlineData("28.5", "28.4.0.0", true)]
+    [InlineData("29.0.1.1", "28.4.0.0", true)]
+    [InlineData("28", "28.4.0.0", true)]
+    [InlineData("28.3", "28.4.0.0", false)]
+    [InlineData("28.3.99999.99999", "28.4.0.0", false)]
+    [InlineData("27", "28.4.0.0", false)]
+    [InlineData("28.4.1.0", "28.4.2.0", false)]
+    [InlineData("28.4.2.0", "28.4.2.0", true)]
+    [InlineData("not-a-version", "28.4.0.0", true)]
+    public void Meets_ComparesTheComponentsTheInputHas(string input, string floor, bool expected)
+        => Assert.Equal(expected, BcVersionFloor.Meets(input, Version.Parse(floor)));
+
+    // ───────────────────────────── the floor reader ─────────────────────────────
+
+    /// <summary>The highest floor across every bundle in the run wins, not the first bundle's.</summary>
+    [Fact]
+    public void TryDeriveBcFloorFromProject_TakesTheHighestFloorAcrossBundles()
+    {
+        var work = TestScratch.FlatDir("al-runner-4590-floor-");
+        try
+        {
+            var a = WriteApp(Path.Combine(work, "a"), "27.0.0.0");
+            var b = WriteApp(Path.Combine(work, "b"), "28.2.0.0");
+            var c = WriteApp(Path.Combine(work, "c"), "28.1.0.0");
+
+            Assert.Equal(new Version(28, 2, 0, 0), ProgramSupport.TryDeriveBcFloorFromProject(new[] { a, b, c }));
+            Assert.Null(ProgramSupport.TryDeriveBcFloorFromProject(new[] { Path.Combine(work, "missing") }));
+        }
+        finally
+        {
+            if (Directory.Exists(work)) Directory.Delete(work, recursive: true);
+        }
+    }
+
+    // ───────────────────────────── subprocess: Program.cs wiring ─────────────────────────────
+
+    private static Version EngineBuild() => BcArtifacts.EngineBuiltVersion()
+        ?? throw new InvalidOperationException("EngineBuiltVersion() is null — rebuild AlRunner first.");
+
+    private static string MirrorBinDir()
+    {
+        var originalBinDir = Path.Combine(
+            RepoRoot, "AlRunner", "bin", TestBuildConfig.Configuration, TestBuildConfig.Framework);
+        var privateDir = Directory.CreateDirectory(TestScratch.FlatDir("al-runner-4590-mirror-")).FullName;
+        NclShadowRuntime.MirrorInstallDirectory(originalBinDir, privateDir);
+        return privateDir;
+    }
+
+    private static void AddPlaceholderVariant(string installDir, string version)
+    {
+        var dir = Path.Combine(installDir, EngineVariants.VariantsDirName, version);
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, EngineVariants.EntryAssemblyFileName), "placeholder");
+    }
+
+    private static string WriteApp(string dir, string platformFloor)
+    {
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
+            { "id": "{{Guid.NewGuid()}}", "name": "Repro4590", "publisher": "Repro", "version": "1.0.0.0",
+              "platform": "{{platformFloor}}", "idRanges": [ { "from": 50000, "to": 50099 } ] }
+            """);
+        File.WriteAllText(Path.Combine(dir, "Test.Codeunit.al"), """
+            codeunit 50000 "Repro 4590"
+            {
+                Subtype = Test;
+                [Test]
+                procedure Nothing()
+                begin
+                end;
+            }
+            """);
+        return dir;
+    }
+
+    private static (string Output, int Exit) Run(
+        string installDir, string artifactsRoot, string work, string platformFloor, params string[] extra)
+        => RunWithSubcommand(installDir, artifactsRoot, work, platformFloor, subcommand: null, extra);
+
+    private static (string Output, int Exit) RunWithSubcommand(
+        string installDir, string artifactsRoot, string work, string platformFloor, string? subcommand,
+        params string[] extra)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "dotnet",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WorkingDirectory = RepoRoot,
+        };
+        psi.ArgumentList.Add(Path.Combine(installDir, "al-runner.dll"));
+        if (subcommand != null) psi.ArgumentList.Add(subcommand);
+        psi.ArgumentList.Add("--no-auto-provision");
+        psi.ArgumentList.Add("--cache");
+        psi.ArgumentList.Add(Path.Combine(work, "cache"));
+        foreach (var a in extra) psi.ArgumentList.Add(a);
+        psi.ArgumentList.Add(WriteApp(Path.Combine(work, "app"), platformFloor));
+        psi.Environment[BcArtifacts.ArtifactsRootEnvVar] = artifactsRoot;
+        psi.Environment.Remove("AL_RUNNER_NCL_SHADOW_DONE");
+        psi.Environment.Remove("AL_RUNNER_REEXECED");
+        foreach (var proxy in new[] { "HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "ALL_PROXY", "all_proxy" })
+            psi.Environment[proxy] = "http://127.0.0.1:9";
+        psi.Environment.Remove("NO_PROXY");
+        psi.Environment.Remove("no_proxy");
+
+        var sb = new StringBuilder();
+        using var p = Process.Start(psi)!;
+        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
+        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
+        p.BeginOutputReadLine();
+        p.BeginErrorReadLine();
+        Assert.True(p.WaitForExit(SpawnTimeoutMs), $"al-runner did not exit within {SpawnTimeoutMs / 1000}s");
+        p.WaitForExit();
+        lock (sb) return (sb.ToString(), p.ExitCode);
+    }
+
+    private static void WithScratch(Action<string, string> body)
+    {
+        var installDir = MirrorBinDir();
+        var work = TestScratch.FlatDir("al-runner-4590-work-");
+        try { body(installDir, work); }
+        finally
+        {
+            Directory.Delete(installDir, recursive: true);
+            if (Directory.Exists(work)) Directory.Delete(work, recursive: true);
+        }
+    }
+
+    // A minor older than the engine's own, in the same major; null when the engine is an x.0 build.
+    private static string? OlderMinorBuild(Version build) =>
+        build.Minor > 0 ? $"{build.Major}.{build.Minor - 1}.1.1" : null;
+
+    /// <summary>
+    /// Multi-variant install, the issue's shape: a supported build below the floor is the only one
+    /// cached. The default skips it, says so, and targets the floor's minor instead of running
+    /// the older build.
+    /// </summary>
+    [SkippableFact]
+    public void NoBcVersion_OnlyCachedBuildIsBelowTheFloor_SkipsItAndTargetsANewerShippedMinor()
+    {
+        var build = EngineBuild();
+        var older = OlderMinorBuild(build);
+        Skip.If(older == null, $"engine {build} is an x.0 build; no older minor in its major to cache");
+        WithScratch((installDir, work) =>
+        {
+            AddPlaceholderVariant(installDir, build.ToString());
+            AddPlaceholderVariant(installDir, older!);
+            var artifactsRoot = Directory.CreateDirectory(Path.Combine(work, "artifacts", older!)).Parent!.FullName;
+            var floor = $"{build.Major}.{build.Minor}.0.0";
+
+            var (output, _) = Run(installDir, artifactsRoot, work, floor, "--verbose");
+
+            Assert.DoesNotContain($"selecting BC {older}", output);
+            Assert.Contains($"skipping cached BC {older}: below the minimum BC {floor}", output);
+            Assert.Contains($"matches version '{build.Major}.{build.Minor}'", output);
+        });
+    }
+
+    /// <summary>Multi-variant install, a floor above every shipped variant: refused, naming the
+    /// minimum and the supported versions.</summary>
+    [Fact]
+    public void NoBcVersion_FloorAboveEveryShippedVariant_RefusesNamingTheMinimum()
+    {
+        var build = EngineBuild();
+        WithScratch((installDir, work) =>
+        {
+            AddPlaceholderVariant(installDir, build.ToString());
+            var artifactsRoot = Directory.CreateDirectory(Path.Combine(work, "artifacts", build.ToString())).Parent!.FullName;
+            var floor = $"{build.Major}.{build.Minor + 1}.0.0";
+
+            var (output, exit) = Run(installDir, artifactsRoot, work, floor);
+
+            Assert.True(exit == 2, $"exit {exit}.\n{output}");
+            Assert.Contains($"declares a minimum of BC {floor}", output);
+            Assert.Contains($"supported BC versions: {build.Major}.{build.Minor})", output);
+        });
+    }
+
+    /// <summary>
+    /// An explicit --bc-version below the floor is warned about and still RUN (the owner's decision
+    /// on #4590). The requested build is cached, so the run gets past selection and the
+    /// post-selection floor backstop to the artifact-completeness check for that exact build.
+    /// </summary>
+    [Fact]
+    public void ExplicitBcVersionBelowTheFloor_WarnsAndRunsIt()
+    {
+        var build = EngineBuild();
+        WithScratch((installDir, work) =>
+        {
+            AddPlaceholderVariant(installDir, build.ToString());
+            var floor = $"{build.Major}.{build.Minor + 1}.0.0";
+            var requested = $"{build.Major}.{build.Minor}";
+            var requestedBuild = $"{requested}.1.1";
+            var artifactsRoot = Path.Combine(work, "artifacts");
+            Directory.CreateDirectory(Path.Combine(artifactsRoot, requestedBuild));
+            Directory.CreateDirectory(Path.Combine(artifactsRoot, $"{build.Major}.{build.Minor + 1}.1.1"));
+
+            var (output, _) = Run(installDir, artifactsRoot, work, floor, "--bc-version", requested);
+
+            Assert.Contains($"--bc-version {requested} is below the minimum BC {floor}", output);
+            Assert.DoesNotContain("declares a minimum of BC", output);
+            Assert.DoesNotContain($"is below the minimum BC {floor} the project's app.json", output);
+            Assert.Contains($"BC {requestedBuild} engine artifacts are incomplete", output);
+        });
+    }
+
+    /// <summary>
+    /// A bare-major --bc-version is narrowed by a floor inside that major: the cached build below
+    /// the floor is skipped and the floor's minor is targeted, exactly as the no-flags default does.
+    /// </summary>
+    [SkippableFact]
+    public void ExplicitBareMajor_FloorInsideTheMajor_NarrowsTheChoiceToTheFloor()
+    {
+        var build = EngineBuild();
+        var older = OlderMinorBuild(build);
+        Skip.If(older == null, $"engine {build} is an x.0 build; no older minor in its major to cache");
+        WithScratch((installDir, work) =>
+        {
+            AddPlaceholderVariant(installDir, build.ToString());
+            AddPlaceholderVariant(installDir, older!);
+            var artifactsRoot = Directory.CreateDirectory(Path.Combine(work, "artifacts", older!)).Parent!.FullName;
+            var floor = $"{build.Major}.{build.Minor}.0.0";
+
+            var (output, _) = Run(installDir, artifactsRoot, work, floor, "--bc-version", build.Major.ToString());
+
+            Assert.Contains($"skipping cached BC {older}: below the minimum BC {floor}", output);
+            Assert.Contains($"matches version '{build.Major}.{build.Minor}'", output);
+            Assert.DoesNotContain("is below the minimum BC", output);
+        });
+    }
+
+    /// <summary>
+    /// A bare major that cannot meet a floor inside it keeps #4557's choice (the major was asked for
+    /// by name) and warns, naming what was typed and what it resolved to. Not a refusal.
+    /// </summary>
+    [Fact]
+    public void ExplicitBareMajor_FloorTheMajorCannotMeet_KeepsTheChoiceAndWarns()
+    {
+        var build = EngineBuild();
+        WithScratch((installDir, work) =>
+        {
+            AddPlaceholderVariant(installDir, build.ToString());
+            var cachedBuild = $"{build.Major}.{build.Minor}.1.1";
+            var artifactsRoot = Directory.CreateDirectory(Path.Combine(work, "artifacts", cachedBuild)).Parent!.FullName;
+            var floor = $"{build.Major}.{build.Minor + 1}.0.0";
+
+            var (output, _) = Run(installDir, artifactsRoot, work, floor, "--bc-version", build.Major.ToString());
+
+            Assert.Contains(
+                $"--bc-version {build.Major} (resolved to BC {cachedBuild}) is below the minimum BC {floor}", output);
+            Assert.DoesNotContain("declares a minimum of BC", output);
+            Assert.DoesNotContain("ships no engine for BC", output);
+            Assert.Contains($"BC {cachedBuild} engine artifacts are incomplete", output);
+        });
+    }
+
+    /// <summary>Single-build (dev) install: a floor above the engine's own minor is refused.</summary>
+    [Fact]
+    public void SingleBuild_FloorAboveTheEngine_RefusesNamingTheMinimum()
+    {
+        var build = EngineBuild();
+        WithScratch((installDir, work) =>
+        {
+            var artifactsRoot = Directory.CreateDirectory(Path.Combine(work, "artifacts", build.ToString())).Parent!.FullName;
+            var floor = $"{build.Major}.{build.Minor + 1}.0.0";
+
+            var (output, exit) = Run(installDir, artifactsRoot, work, floor);
+
+            Assert.True(exit == 2, $"exit {exit}.\n{output}");
+            Assert.Contains($"declares a minimum of BC {floor}", output);
+            Assert.Contains($"supported BC versions: {build.Major}.{build.Minor})", output);
+        });
+    }
+
+    /// <summary>
+    /// Single-build install with only an older minor cached and no provisioning: the offline
+    /// fallback lands below the floor, and the selection is refused rather than run.
+    /// </summary>
+    [SkippableFact]
+    public void SingleBuild_OfflineFallbackLandsBelowTheFloor_IsRefused()
+    {
+        var build = EngineBuild();
+        var older = OlderMinorBuild(build);
+        Skip.If(older == null, $"engine {build} is an x.0 build; no older minor in its major to cache");
+        WithScratch((installDir, work) =>
+        {
+            var artifactsRoot = Directory.CreateDirectory(Path.Combine(work, "artifacts", older!)).Parent!.FullName;
+            var floor = $"{build.Major}.{build.Minor}.0.0";
+
+            var (output, exit) = Run(installDir, artifactsRoot, work, floor);
+
+            Assert.True(exit == 2, $"exit {exit}.\n{output}");
+            Assert.Contains($"selected BC {older} is below the minimum BC {floor}", output);
+        });
+    }
+
+    /// <summary>
+    /// `provision --platform-apps` with no --bc-version resolves its own default from the engine
+    /// build; a floor above it is refused before anything is fetched. The dead proxy keeps the run
+    /// offline either way, so the assertion is on the refusal, not on a failed download.
+    /// </summary>
+    [Fact]
+    public void ExplicitProvisionMode_DefaultTargetBelowTheFloor_IsRefused()
+    {
+        var build = EngineBuild();
+        WithScratch((installDir, work) =>
+        {
+            var artifactsRoot = Directory.CreateDirectory(Path.Combine(work, "artifacts")).FullName;
+            var floor = $"{build.Major}.{build.Minor + 1}.0.0";
+
+            var (output, exit) = RunWithSubcommand(installDir, artifactsRoot, work, floor, "provision", "--platform-apps");
+
+            Assert.True(exit == 2, $"exit {exit}.\n{output}");
+            Assert.Contains($"declares a minimum of BC {floor} (application/platform), above the default target BC {build}", output);
+            Assert.DoesNotContain("fetching Microsoft platform apps", output);
+        });
+    }
+}
