@@ -1,30 +1,12 @@
-// ScopeClassIdentity — gives each emitted method-scope CLASS the two facts BC's inline-scope
-// emit passes to ALMethodScope, and which BC's scope-class emit leaves out (#4666).
+// ScopeClassIdentity — gives each emitted method-scope class the IsTest flag and the method id
+// that BC's inline-scope emit (the service tier's default) passes to ALMethodScope and its
+// scope-class emit (what the runner compiles with) leaves out. BC's code-coverage recorder keys
+// the per-test tables 2000000288/2000000289 on both (#4666, corpus codeunit 60925); the
+// derivation is in docs/limitations.md#code-coverage-virtual-tables.
 //
-// The runner compiles with NavCA.EmitOptions.Default, which emits one nested
-// `X_Scope_<id> : NavMethodScope<T>` class per AL method. A service tier compiles with
-// EnableInlinedMethodCodeGeneration (default true on 27.0 and 28.4), which emits
-// `new ALMethodScope(this, name, flags, Method.Id)` instead. Only the inline form carries:
-//   - MethodScopeFlags.IsTest for a [Test] method (MethodCodeGenerator.GetMethodScopeFlags);
-//     the scope-class form's GetMethodScopeFlags override only ever adds
-//     IsOnPremiseCallerRequired / IsDebugDisallowed.
-//   - the AL method id, through IMethodIdProvider.MethodId (ALMethodScope implements it).
-// BC's code-coverage recorder reads both: SingleSessionCodeCoverageRecorder.ProcessStart
-// opens a per-test record only for a scope whose IsTest is set, and every per-test row and
-// every table-2000000288 row is keyed by IMethodIdProvider.MethodId (-1, the "no id" answer,
-// is skipped). So without them tables 2000000288 and 2000000289 read empty.
-//
-// This pass adds, to each scope class whose name carries a method id:
-//   - `IMethodIdProvider` with that id (the name is BC's own encoding of Method.Id:
-//     `_Scope_<id>` / `_Scope__<abs id>` for a negative one), and
-//   - for the scope class a [NavTest] method constructs, a GetMethodScopeFlags override that
-//     ORs IsTest into whatever the emitted class already answered.
-// It renames nothing and changes no existing signature, so the emitted assembly's surface
-// only grows (precompiled-dll-respect.md, "Our AL output"). It runs inside the compile
-// pipeline, before the DLL is finalised, so a cached DLL carries it.
-//
-// Not covered: a trigger's scope class is named `X_Scope` with no id, so its MethodId stays
-// the scope-class default (none). See docs/limitations.md#code-coverage-virtual-tables.
+// TRAP: only add here. The one rename (an emitted GetMethodScopeFlags override, moved under a
+// private name) leaves an override of the same signature in its place; never drop or re-sign a
+// member an emitted type declares (precompiled-dll-respect.md, "Our AL output").
 using System.Globalization;
 using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis;

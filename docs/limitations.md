@@ -1834,8 +1834,30 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   Not verified against a service tier: the `Line` text. BC replaces it with a "source not
   available" text when the covered app's `resourceExposurePolicy` does not include source in
   its symbols; which answer the runner gives depends on what its app group reports for the
-  object. And the per-test tables 2000000288 and 2000000289 read empty after recording across a
-  test start ([#4666](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4666)).
+  object.
+
+  **The per-test tables** 2000000288 "Code Coverage Test Lookup" and 2000000289 "Code Coverage
+  Tests Run" are served for tests compiled from source
+  ([#4666](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4666); corpus
+  codeunit 60925). BC fills them in `SingleSessionCodeCoverageRecorder.ProcessStart`, which opens
+  a per-test record only for a scope whose `IsTest` flag is set, and keys every row on
+  `IMethodIdProvider.MethodId` (a counter with `-1` is skipped). A service tier compiles with
+  `EnableInlinedMethodCodeGeneration` (default `true` on 27.0 and 28.4), whose
+  `new ALMethodScope(this, name, flags, Method.Id)` carries both; the runner compiles with
+  `EmitOptions.Default`, which emits one `X_Scope_<id>` class per method and never sets
+  `IsTest` (`MethodCodeGenerator.GetMethodScopeFlags` only reaches the inline form). So
+  `AlRunner/Rewriters/ScopeClassIdentity.cs` adds both to each emitted scope class during the
+  compile: `IMethodIdProvider` with the id BC encodes in the class name
+  (`_Scope_<id>`, `_Scope__<abs id>` when negative), and, for the class a `[NavTest]` method
+  constructs, a `GetMethodScopeFlags` override that ORs in `IsTest`. The same method id now
+  also fills the `Method ID` of the `Code Coverage` rows for procedures.
+
+  Two gaps remain. A trigger's scope class is named `X_Scope`, with no id, so its method id
+  stays unset and a trigger that runs inside a test has no 2000000288 row
+  ([#4682](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4682)). And a
+  2000000289 row's `Owning Application` reads the empty GUID, because
+  `NavApplicationObjectBase.AppId` is null for objects the runner compiled
+  ([#4676](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4676)).
 
   The runner's own `--coverage` flag is a separate route over the same statement-hit stream
   (`AlRunner/Infrastructure/AlCoverageReport.cs`) and needs none of this.
