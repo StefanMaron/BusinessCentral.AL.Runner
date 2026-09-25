@@ -38,6 +38,8 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **testpage:** link a part's new line to a header opened with OpenNew
+- **metadata:** dependency xmlport metadata must not trip MetaXmlPort's Format parse (5050, 9991)
 - **testpage:** a row the page's own AL saved is modified, not re-inserted
 - **guards:** stop pinning growing guard counts that two clean-merging PRs can drift
 - **testpage:** a new row raises OnAfterGetCurrRecord, and a row that trigger hands over is modified, not re-inserted
@@ -451,6 +453,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **expectations:** record permission enforcement as a known gap, pinned by corpus codeunit 60026
 - **docs:** follow the corpus 28.5 leg in the matrix-docs drift guard
 - **runtime:** stop per-record reflection, env reads and CWT re-writes on the materialisation hot path
 - **bc:** add BC 28.5 to CI and make it the default build target
