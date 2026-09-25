@@ -57,7 +57,13 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
-    private static readonly ConcurrentDictionary<int, string?> _depXmlPortMetadataXml = new();
+    /// <summary>
+    /// A projection attempt: the document, or the reason a DECLARED xmlport was refused.
+    /// Both null means no registered .app declares the id.
+    /// </summary>
+    private sealed record XmlPortProjection(string? Xml, string? Refusal);
+
+    private static readonly ConcurrentDictionary<int, XmlPortProjection> _depXmlPortMetadataXml = new();
 
     /// <summary>
     /// Runtime metadata XML for an xmlport declared by a precompiled dependency, or null
@@ -69,12 +75,20 @@ public static partial class RecordPatches
     /// <see cref="TryBuildDependencyReportMetadata"/>.</para>
     /// </summary>
     internal static string? TryBuildDependencyXmlPortMetadata(int xmlPortId)
-        => _depXmlPortMetadataXml.GetOrAdd(xmlPortId, BuildDependencyXmlPortMetadata);
+        => _depXmlPortMetadataXml.GetOrAdd(xmlPortId, BuildDependencyXmlPortMetadata).Xml;
 
-    private static string? BuildDependencyXmlPortMetadata(int xmlPortId)
+    /// <summary>
+    /// Why a dependency DECLARING <paramref name="xmlPortId"/> produced no document, or null
+    /// when it produced one or no dependency declares it. The loader's refusal must carry this
+    /// rather than "no loaded dependency .app declares it" (#4650).
+    /// </summary>
+    internal static string? DependencyXmlPortRefusal(int xmlPortId)
+        => _depXmlPortMetadataXml.GetOrAdd(xmlPortId, BuildDependencyXmlPortMetadata).Refusal;
+
+    private static XmlPortProjection BuildDependencyXmlPortMetadata(int xmlPortId)
     {
         var found = FindDependencyXmlPortSymbol(xmlPortId);
-        if (found == null) return null;
+        if (found == null) return new(null, null);
         var (appPath, port) = found.Value;
 
         var schema = TryReadXmlPortSchema(appPath, port);
@@ -82,14 +96,10 @@ public static partial class RecordPatches
         // claim that the port has no schema, which is worse than the loud refusal it would
         // replace.
         if (schema == null || schema.Count == 0)
-        {
-            Console.Error.WriteLine(
-                $"[RecordPatches] dependency xmlport metadata: XmlPort {xmlPortId} \"{port.Name}\" "
-                + $"declares no recoverable node schema in {Path.GetFileName(appPath)} "
-                + $"(ReferenceSourceFileName={port.ReferenceSourceFileName ?? "<none>"}); "
+            return Refuse(xmlPortId, port.Name,
+                $"XmlPort \"{port.Name}\" in {Path.GetFileName(appPath)} declares no recoverable "
+                + $"node schema (ReferenceSourceFileName={port.ReferenceSourceFileName ?? "<none>"}); "
                 + "refusing rather than handing back an empty document (#3797)");
-            return null;
-        }
 
         string xml;
         try
@@ -100,15 +110,20 @@ public static partial class RecordPatches
         {
             // Same refusal as a missing schema: the AL text is not what BC wrote, and dropping
             // the property would drop the port's sorting and filters (#4471).
-            Console.Error.WriteLine(
-                $"[RecordPatches] dependency xmlport metadata: XmlPort {xmlPortId} \"{port.Name}\" "
-                + $"refused: {ex.Message}");
-            return null;
+            return Refuse(xmlPortId, port.Name,
+                $"XmlPort \"{port.Name}\" in {Path.GetFileName(appPath)} was refused: {ex.Message}");
         }
         Console.Error.WriteLine(
             $"[RecordPatches] dependency xmlport metadata: synthesized XmlPort {xmlPortId} "
             + $"\"{port.Name}\" from {Path.GetFileName(appPath)} ({schema.Count} node(s))");
-        return xml;
+        return new(xml, null);
+    }
+
+    private static XmlPortProjection Refuse(int xmlPortId, string portName, string reason)
+    {
+        Console.Error.WriteLine(
+            $"[RecordPatches] dependency xmlport metadata: XmlPort {xmlPortId} \"{portName}\" refused: {reason}");
+        return new(null, reason);
     }
 
     /// <summary>
