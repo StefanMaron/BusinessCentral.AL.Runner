@@ -47,13 +47,13 @@ behind a preflight that can stop everything.**
 
 ## Why one agent at a time
 
-Measured on 2026-09-05, a coordinator ran nine agents in parallel for about ninety minutes.
+Measured on 2026-09-05, a coordinator ran many agents in parallel for a long session.
 Throughput was real, but every finding of lasting value came from *depth*, not parallelism:
-4,905 Base App members measured to pin an identifier-mangling rule to exactly seven names; the
+every Base App member measured to pin an identifier-mangling rule to a handful of names; the
 discovery that every Base App report's lifecycle triggers were silently empty; a cache-poisoning
 diagnosis narrowed to a derived tier whose key has no term for what it was derived from.
 
-In the same session at least four confident conclusions were wrong and were caught only because
+In the same session several confident conclusions were wrong and were caught only because
 a human pushed back or because something was re-measured. Parallelism multiplies that risk.
 Serial work with a review step does not.
 
@@ -67,28 +67,18 @@ returns, you start the next reviewer rather than a second implementer.
 
 **The default is one implementation agent and one reviewer.** Not a ratio to compute — a
 baseline to start from, changed only by the human at session start. One implementer produces at
-most one PR at a time and one reviewer clears roughly four an hour, so review cannot fall behind
-by construction, and the pile-up this section describes never begins.
+most one PR at a time and one reviewer clears PRs faster than one implementer writes them, so
+review cannot fall behind by construction, and the pile-up this section describes never begins.
 
-The measured throughput below is what to scale *by* when a human raises the concurrency, not a
-license to raise it. At six implementation agents you need roughly two reviewers to hold steady;
-work that out from the numbers rather than adding implementers because slots are free.
-
-When a coordinator does run several agents at once — the attended mode this skill's serial rule
-does not cover — the thing that breaks first is review, not implementation. Measured across one
-attended session on 2026-09-06:
-
-| agent | work | wall | rate |
-|---|---|---|---|
-| reviewer (runner PRs) | 6 PRs in one pass | 93 min | ~15.6 min/PR |
-| reviewer (corpus PRs) | 3 PRs in one pass | 64 min | ~21 min/PR |
-| implementation agent | 1 PR each | 35-85 min | ~1 PR/hour |
-
-So **one reviewer sustains roughly 4 PRs/hour, and six implementation agents produce 5-6.**
-The queue grows by arithmetic, not by anyone choosing badly. The balancing ratio is about
-**one reviewer per four implementation agents**, and a coordinator that spawns implementation
-agents whenever a slot frees will fall behind indefinitely without ever making an obvious
-mistake.
+Measured throughput is what to scale *by* when a human raises the concurrency, not a license to
+raise it. When a coordinator does run several agents at once — the attended mode this skill's
+serial rule does not cover — the thing that breaks first is review, not implementation: one
+attended session (2026-09-06; `docs/incidents/skills-and-agents.md`) measured one reviewer
+unable to keep up with six implementation agents. The queue grows by arithmetic, not by anyone
+choosing badly, and a coordinator that spawns implementation agents whenever a slot frees will
+fall behind indefinitely without ever making an obvious mistake. Derive the reviewer count from
+`tools/agent-cost.py <tasks-dir>` over your own session — review time varies with PR size, so no
+ratio is written here.
 
 **Count an open unreviewed ready PR against the concurrency budget, exactly like an unfinished
 implementation** (a draft is the claim of an implementation already counted). A coordinator running 6 implementation agents with 6 unreviewed PRs is
@@ -101,15 +91,14 @@ feels like overhead.
 **Review in batches of three or four, not one at a time and not six or more.** Both extremes
 were measured:
 
-- **Batches that are too large go stale.** A batch of six took 93 minutes; during it, three PRs
-  from the original brief merged and two of the remaining six had their head SHA move. Two of
-  six verdicts came back "no verdict on current head" — a third of the batch wasted. Review
-  takes ~15 min/PR and heads move every 30-60 min under load, so the batch has to finish inside
-  the window in which its subjects hold still.
+- **Batches that are too large go stale.** During one large batch, PRs from the original brief
+  merged and others had their head SHA move, so part of the verdicts came back "no verdict on
+  current head". Heads move often under load, so the batch has to finish inside the window in
+  which its subjects hold still.
 - **Batches of one lose the findings that matter most.** The single most valuable result in that
   session was cross-PR: two PRs bumped the same submodule pin to different revisions (a shape
   #3737 removed by dropping the pin), conflicting
-  three ways, and the reviewer worked out which had to merge first because its revision was an
+  with each other, and the reviewer worked out which had to merge first because its revision was an
   ancestor of the other. **A one-PR-at-a-time reviewer cannot see that**, and neither can the
   coordinator, who is not reading the diffs.
 
@@ -129,9 +118,6 @@ red. Re-read the head immediately before merging and pass `--match-head-commit`,
 refuses rather than silently taking something else. The SHA is the head in the verdict line
 (`.claude/agents/reviewer.md`, "The verdict line"); the arming list compares it.
 
-These numbers come from a single session and review time varies with PR size. Re-measure with
-`tools/agent-cost.py` before treating the ratio as fixed.
-
 ## Preflight — run this first, every time, and stop if it fails
 
 A fresh or drifted box does not announce that it is broken; it produces numbers that look fine.
@@ -143,8 +129,8 @@ results, 2 warnings under `--strict`, 3 it could not complete. `--json` for a bo
 `--reap` to remove worktrees whose PR is merged and whose tree is clean, `--with-corpus` to
 include step 1. **`--reap-carried` (implies `--reap`) also removes one whose unpushed
 commits touch only files byte-identical to its PR's merge commit** — preflight already
-measures that as the CARRIED verdict and used to report it without acting, which left 5
-worktrees and 0.8 GiB on a box that had just been reaped (#4419). Plain `--reap` still
+measures that as the CARRIED verdict and used to report it without acting, which left
+worktrees and disk behind on a box that had just been reaped (#4419). Plain `--reap` still
 never removes anything carrying unpushed commits, so an unattended loop's posture is
 unchanged unless it asks for the wider one.
 
@@ -157,7 +143,7 @@ PASSes; it earns its keep from a worktree, which is where `impl-agent.md` runs i
 
 The prose below stays as the specification and the reasoning; the script is how it actually
 gets run, because a check a busy coordinator can decline is not a check — one skipped step 5
-across an evening of ~20 agents and filled a 7.7 GB tmpfs, after which every shell on the box
+across an evening of agents and filled a tmpfs, after which every shell on the box
 failed without naming the cause.
 
 Two things about the verdicts it produces, because both change what "stop" means:
@@ -168,13 +154,13 @@ Two things about the verdicts it produces, because both change what "stop" means
   run `origin/main`'s copy. Nothing about the box was probed, so it is not a verdict about the
   box.
 - **The `checkout` check reports how far the tree it is measuring is behind `origin/main`**,
-  for both the checkout preflight is running from and the main checkout, and WARNs past 25
-  commits or a branch point 12 hours old. Anything read out of a checkout is as old as that
-  checkout: a coordinator once diagnosed a repository-wide CI breakage from a tree 40+ commits
+  for both the checkout preflight is running from and the main checkout, and WARNs past the
+  commit and age thresholds `tools/preflight.py` sets. Anything read out of a checkout is as old
+  as that checkout: a coordinator once diagnosed a repository-wide CI breakage from a tree far
   behind, in which a tool still carried a constant `origin/main` had already renamed, and
-  misdirected four agents before the tree was the suspect.
+  misdirected several agents before the tree was the suspect.
 - **A single network failure is not a verdict either.** The push probe retries a transport
-  failure and reports `1 of 3 attempts` as a WARN rather than failing the box; a genuine
+  failure and reports the attempt count as a WARN rather than failing the box; a genuine
   refusal — permission, authentication, no such repository — still FAILs on the first attempt
   and is never retried (#3076). The `github` check WARNs when the token has no `workflow`
   scope, which is not a reason to stop: it means pull requests touching `.github/workflows/`
@@ -190,7 +176,7 @@ Two things about the verdicts it produces, because both change what "stop" means
    success, and recording "whatever this box last saw" would ratify drift instead of catching it.
 
    Run it against the **shared cache the work will actually use**, not a private one. The failure
-   this catches is a cache left inconsistent by a killed run, which once cost 76% of passing
+   this catches is a cache left inconsistent by a killed run, which once cost most passing
    tests with no error and an unchanged exit code — a private cache is blind to exactly that.
 
    The verdict is the **numbers**, not the exit code. `preflight.py --with-corpus` enumerates
@@ -249,7 +235,7 @@ Two things about the verdicts it produces, because both change what "stop" means
    (`check-open-prs-before-claiming.md`).
 
    Note the slot is bookkeeping, not safety. The incident it is often credited with preventing —
-   `impl-69`, 82 worktrees, 10 GB — was caused by nothing ever *deleting* a worktree. Preflight's
+   `impl-69` and a disk full of worktrees — was caused by nothing ever *deleting* a worktree. Preflight's
    stale-worktree check is the actual fix for that.
 
    Use that identity in labels and branch names; worktrees add the issue number and scratch,
@@ -258,7 +244,7 @@ Two things about the verdicts it produces, because both change what "stop" means
    several accounts against one repository, without ever writing the same name.
 
    The existing `agent: impl-N` convention is the counter-example worth avoiding: a global
-   counter with no owner, which drifted to `impl-69` while leaving 82 worktrees and 10 GB of disk
+   counter with no owner, which drifted to `impl-69` while leaving its worktrees and their disk
    behind. Slots numbered *inside* an account namespace cannot drift that way — they are
    reclaimed by the next loop that starts, instead of incremented forever.
 
@@ -283,14 +269,14 @@ Two things about the verdicts it produces, because both change what "stop" means
    **Repair the graph, do not report it.** `graphify update` and `graphify query` both default
    to `graphify-out/graph.json` *relative to the current directory*, and two things follow:
 
-   - A **stale** graph is rebuilt, not classified. It costs about two seconds warm, and telling
-     a human to run a two-second command is asking a person to do a script's job — in an
+   - A **stale** graph is rebuilt, not classified. It costs seconds warm, and telling
+     a human to run a seconds-long command is asking a person to do a script's job — in an
      unattended loop there is no person to ask.
    - A **stray** `graphify-out/` outside `AlRunner/` is deleted. It is gitignored derived data,
-     and while it exists a query run from the repository root reads it instead. Measured: an
-     18-day-old root copy answered `No matching nodes found.` — exit 0 — for a symbol that
-     exists, while the correct graph returned 11 nodes. A rebuild under `AlRunner/` never
-     touches it, so the two diverge indefinitely; that is the 13-day-stale incident
+     and while it exists a query run from the repository root reads it instead. Measured: a
+     weeks-old root copy answered `No matching nodes found.` — exit 0 — for a symbol that
+     exists, while the correct graph found it. A rebuild under `AlRunner/` never
+     touches it, so the two diverge indefinitely; that is the stale-graph incident
      `docs/incidents/CLAUDE.md.md` records. Both repairs are reported rather than folded into a
      silent PASS.
 
@@ -319,8 +305,8 @@ implementation and its merge decisions on the smaller model without anything say
 
 The coordinator loop itself, and every agent it spawns — implementation, review, triage — run on
 Opus, at high reasoning effort where the harness exposes it. This work is diagnosis: today's
-findings came from decompiling BC to pin an identifier rule to seven names out of 4,905, and
-from separating a cascade of 47 failures into one defect. That is not throughput work, and the
+findings came from decompiling BC to pin an identifier rule to a handful of names out of every
+Base App member, and from separating a cascade of failures into one defect. That is not throughput work, and the
 cheaper model is a false economy when a wrong diagnosis becomes a filed issue nobody can trust.
 
 If you cannot confirm what the running model is, say so in the cycle's report rather than
@@ -339,8 +325,8 @@ What belongs in it:
 
 - **The machine** — total and available RAM, free disk, core count.
 - **What those imply** — the worker and job counts derived from them, so later cycles do not
-  re-derive numbers inconsistently. Roughly 1.1 GB per worker without test data and ~2.3 GB with
-  it, but derive from what you measured, not from those figures.
+  re-derive numbers inconsistently. Derive them from what you measured on this box, never from
+  a per-worker figure written down elsewhere.
 - **The identity** — the account, the label namespace and the slot claimed at startup.
 - **The baseline** — which bucket was run, the expected count and the count observed, with a
   timestamp. That is the record that says this box was healthy at a known moment.
@@ -442,11 +428,11 @@ a merge can turn `main` red, which outranks everything you were about to do.
    and the answer belongs in the PR body whichever way it comes out. Both have happened: a
    defect assumed precompiled-only also reproduced on a source-compiled table, and the corpus
    app declares a Base Application dependency, so a corpus test does reach the precompiled path
-   after all (issue #2518, corpus PR #165, merged green on all 8 legs); while table `2000000001`
+   after all (issue #2518, corpus PR #165, merged green on every required leg); while table `2000000001`
    really is out of reach, being `Scope = OnPrem` and in `SystemTables.InternalTables`, which
    `NavRecordRef.IsSystemTableAllowedForRecordRefUsage` refuses outright. Hold that second answer
    to what actually carries it: the service tier measured a **sibling id** — corpus PR #153 put
-   `2000000071` in front of one, all eight legs came back red, and the PR was withdrawn —
+   `2000000071` in front of one, every leg came back red, and the PR was withdrawn —
    and `2000000001` follows by **set membership in the same refused list**, not by its own
    measurement. Make the PR body say which of the two it has (issue #2774).
 
@@ -490,23 +476,19 @@ a merge can turn `main` red, which outranks everything you were about to do.
 
    **Why this replaced "take the highest-value one".** That instruction was already here and was
    not enough: value was a judgement made per issue, in the moment, recorded nowhere, so nothing
-   could tell afterwards whether it had been applied. Measured 2026-09-22 over the previous seven
-   days: **process/tooling work was 21-36% of merged PRs against a backlog that is 19% process**
-   — so the loop over-selected it by roughly **1.1x to 1.9x**.
+   could tell afterwards whether it had been applied. Measured 2026-09-22 (#4477): the loop had
+   been picking process/tooling work more often than its share of the backlog.
 
-   **The range is the honest form, and the reason is worth knowing.** "Process" has no label in
-   this repository, so every figure comes from a classifier someone wrote. Ten classifiers over
-   the same week spanned 16-43%; the 21-36% above is the subset that actually targets process
-   work, and the wider figures come from classifiers too loose or too narrow to mean it. The
-   **denominator** is the solid half: 19% reproduces exactly (27 of 145 open issues), because it
-   is checkable against the `area: project-process` and `runner-gap` labels.
-
-   Quote the range with the multiplier it implies, or re-derive with a stated classifier — a
-   single number here is a choice of regex wearing the clothes of a measurement (found in review
-   of #4477, where the author's own 44% did not reproduce). **And check the multiplier against
-   the BOTTOM of whatever range you quote**: an earlier revision of this paragraph widened the
-   range to 16-43% while keeping a "1.6x to 2.3x" derived from the old numerator, and 16% against
-   a 19% denominator is **0.84x — under-selection**, the opposite of the claim it decorated.
+   **If you re-measure that, quote a range and a stated classifier, never a single number.**
+   "Process" has no label in this repository, so every figure comes from a classifier someone
+   wrote, and different classifiers over the same week disagree widely; a single number is a
+   choice of regex wearing the clothes of a measurement (found in review of #4477, where the
+   author's own figure did not reproduce). The **denominator** is the solid half, because it is
+   checkable against the `area: project-process` and `runner-gap` labels. **And check the
+   multiplier against the BOTTOM of whatever range you quote**: an earlier revision of this
+   paragraph widened its range while keeping a multiplier derived from the old one, and the
+   bottom of the new range implied under-selection — the opposite of the claim it decorated.
+   The figures are in `docs/incidents/skills-and-agents.md`.
 
    Process issues are cheap to evaluate and cheap to close, so they win a selection contest that
    has no other criterion. A priority set by the triager and read at pick time is a criterion that
@@ -541,7 +523,7 @@ a merge can turn `main` red, which outranks everything you were about to do.
    proved by reasoning rather than by a service tier's verdict. The corpus CI adjudicates the
    claim, so a wrong guess costs a red leg and nothing worse.
 
-   Configuration matters as much as the run. In one measured no-test-data run, roughly 40% of
+   Configuration matters as much as the run. In one measured no-test-data run, a large share of
    all failures were missing setup data rather than defects — clustering that would have
    produced a stream of confident, wrong issues. Never file from a run whose configuration you
    cannot vouch for.
@@ -566,9 +548,9 @@ coordinator build the whole open-PR map once per cycle before dispatching.
 
    **The assignment alone is not enough.** A maintainer assigns issues to themselves to mean "I
    am thinking about this", and `branch-and-pr.md` uses a non-self assignee to mean "a human is
-   handling it" — the field is overloaded. On this repository the owner currently holds 22 open
-   issues that way. A loop running as that account and resuming on assignment alone would adopt
-   all of them on its first cycle. The label is what distinguishes "my loop took this" from "I
+   handling it" — the field is overloaded. On this repository the owner holds open issues that
+   way. A loop running as that account and resuming on assignment alone would adopt all of them
+   on its first cycle. The label is what distinguishes "my loop took this" from "I
    took this".
 2. **Unassigned issues.** Take the highest-value one and assign it to yourself.
 3. **Issues assigned to anyone else — leave them alone.** Someone is on it, whether that is a
@@ -669,23 +651,20 @@ two sources during preflight and record in the box profile which ones this machi
 
 **A missing limits source leaves the loop half-sighted, not blind.** Measure absolute tokens and
 cost with ccusage, ask the human for the cap percentage, and record any snapshot they give you
-so a burn rate can be derived. One sample for calibration, taken from a panel screenshot:
-35% → 37% of a session across 8 minutes at 9–12 concurrent agents, roughly 15 percentage points
-per hour. Where the limits source *is* present, measure the rate directly rather than
-extrapolating from that figure.
+so a burn rate can be derived from snapshots you took yourself. Where the limits source *is*
+present, measure the rate directly.
 
 Two ways to misread these numbers, both of which cost real time on 2026-09-05:
 
 - **ccusage's block `%` is not your cap.** It is measured against a *guessed* limit — the largest
   block ccusage has ever seen. A coordinator read it as "at the cap" and concluded there was no
-  headroom while the authoritative figure was 37%. Take absolute tokens and cost from ccusage;
+  headroom while the authoritative figure showed plenty left. Take absolute tokens and cost from ccusage;
   take the percentage from the limits source, or from the human.
 - **ccusage counts the whole machine.** It reads all local Claude Code data, so its totals cover
   every loop running on the box, not only yours.
 
-**Cost is almost entirely cache reads, so the lever is round trips, not agent count.** Of
-738,650,170 tokens in one measured day, 723,088,774 (97.9%) were cache reads and 8,761 were
-input. Cache reads scale with tool round-trips × context size, so fewer round trips per agent
+**Cost is almost entirely cache reads, so the lever is round trips, not agent count.** In one
+measured day nearly every token was a cache read and almost none were input. Cache reads scale with tool round-trips × context size, so fewer round trips per agent
 and tighter briefs cut cost far more than running fewer agents does — the same finding
 `CLAUDE.md`'s code-navigation section reaches about grep round-trips, and it applies here too.
 
@@ -720,7 +699,7 @@ Every agent-authored issue, comment and PR body carries a footer saying it was w
 agent acting on the account holder's behalf, naming the agent tag and cycle. Where the thread is
 asking the account holder for a judgement, say explicitly that the decision remains theirs.
 
-This is not optional and it is easy to forget: in the session this skill was written from, 14
+This is not optional and it is easy to forget: in the session this skill was written from,
 issues and a comment were filed under the owner's name with no such marker, including a reply in
 a thread where a contributor had specifically asked the owner to decide.
 
@@ -813,7 +792,7 @@ Hard limits, whatever the loop concludes:
 
 - Never push to `main`; always a PR.
 - **Never merge while a release run is in progress.** `publish.yml` pushes the release as a
-  fast-forward, so any merge during its ~40-minute run kills it.
+  fast-forward, so any merge during its run kills it.
 - Never force-push a branch you do not own, and never `--admin` past a failing check.
 - Never merge a PR authored by someone else.
 - Never re-run a **failed** CI job — it destroys the log permanently. Re-running a **cancelled**

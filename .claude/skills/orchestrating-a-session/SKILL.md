@@ -89,7 +89,7 @@ are cause A and these 10 are cause B, here is the evidence" is a complete answer
 Say so explicitly, or agents will force one fix over two causes to make the PR look bigger.
 
 **Agents do NOT wait for CI.** Their deliverable is "PR marked ready and pushed". Waiting costs an
-agent slot for 15-25 minutes watching a run it cannot influence, and you are watching CI
+agent slot for the length of a run it cannot influence, and you are watching CI
 anyway. `impl-agent.md`'s Step 5 says this; keep briefs consistent with it. A failure is never
 lost by returning early — resume the agent, or dispatch a fresh one with the failure in hand.
 
@@ -118,19 +118,16 @@ them; "these three are one fix, that one is not, here is why" is a complete answ
 
 **The default is one implementation agent and one reviewer.** Not a ratio to compute — a
 baseline to start from, changed only by the human at session start. One implementer produces at
-most one PR at a time and one reviewer clears roughly four an hour, so review cannot fall behind
-by construction, and the pile-up this section describes never begins.
+most one PR at a time and one reviewer clears PRs faster than one implementer writes them, so
+review cannot fall behind by construction, and the pile-up this section describes never begins.
 
-The measured throughput below is what to scale *by* when a human raises the concurrency, not a
-license to raise it. At six implementation agents you need roughly two reviewers to hold steady;
-work that out from the numbers rather than adding implementers because slots are free.
-
-Review is the step that stalls, and it stalls by arithmetic rather than by anyone deciding
-badly. Measured on 2026-09-06: a reviewer clears **6 PRs in 93 minutes (~15.6 min/PR)** and
-**3 corpus PRs in 64 minutes (~21 min/PR)**, so one reviewer sustains about **4 PRs/hour**.
-Implementation agents take 35-85 minutes and produce one PR each, so six of them produce
-**5-6 PRs/hour**. One reviewer cannot keep up with six implementation agents. Budget roughly
-**one reviewer per four implementation agents**.
+Measured throughput is what to scale *by* when a human raises the concurrency, not a license to
+raise it. Review is the step that stalls, and it stalls by arithmetic rather than by anyone
+deciding badly: one attended session measured one reviewer failing to keep up with six
+implementation agents (2026-09-06; `docs/incidents/skills-and-agents.md`). Size reviewers from
+`tools/agent-cost.py <tasks-dir>` over your own session — review time scales with PR size, so a
+ratio carried over from another session is a guess — rather than adding implementers because
+slots are free.
 
 **Treat an open unreviewed ready PR as unfinished work that counts against your concurrency
 budget** (a draft is the claim of an implementation you already count).
@@ -148,13 +145,12 @@ tools/review-claim.py --pr <N>     # 0 free, 1 claimed or already reviewed, 3 un
 
 Exit 1 prints the live claims and any verdict on the current head. Dispatching anyway is a fine
 decision — say in the brief that you know and what the second pass is for — but make it a
-decision. Measured across the 60 most recent PRs, **18 of 59 carried two or more verdicts on one
-head**, 17 of those 19 pairs under 15 minutes apart, which is inside a single review's own
-duration (#4284).
+decision. Duplicate verdicts on one head have mostly landed minutes apart, inside a single
+review's own duration (#4284).
 
-**Batch three or four PRs per reviewer.** Larger batches go stale: a batch of six ran 93
-minutes, during which three PRs from the brief merged and two heads moved, so a third of the
-verdicts came back "no verdict on current head". Smaller batches lose the cross-PR findings that
+**Batch three or four PRs per reviewer.** Larger batches go stale: during one larger batch,
+PRs from the brief merged and heads moved before the review finished, so part of the verdicts
+came back "no verdict on current head". Smaller batches lose the cross-PR findings that
 are the reason to batch at all - the most valuable result that day was spotting that two PRs
 bumped the same submodule pin to different revisions and working out which had to merge first
 (a shape #3737 removed: there is no pin).
@@ -182,8 +178,8 @@ condition, not the reviewer's judgement (#3961).
 **Arming at exit 2 is safe; it is not self-correcting. Re-read every armed PR's verdict on each
 sweep.** `--auto` holds a red PR rather than merging it, so nothing breaks — but nothing tells you
 either, and an armed PR that goes red merges the instant a fix pushes on top, against a verdict
-nobody gave the new head. Measured on #3978: armed at exit 2 with 0 failing, two BC legs reported
-`Failed: 2, Passed: 5506` twenty minutes later, and the coordinator found it only by sweeping.
+nobody gave the new head. Measured on #3978: armed at exit 2 with nothing failing, BC legs reported failures
+afterwards, and the coordinator found it only by sweeping.
 **Disarm before dispatching the repair**, then re-arm on a fresh verdict.
 
 **`tools/armed-prs.py` is that re-read, as one command with no arguments.** It lists the armed
@@ -191,8 +187,8 @@ set and reports only the PRs that are failing or whose verdict could not be read
 checks are still running is the ordinary armed state and stays quiet. Exit 0 nothing to do,
 1 something is failing, **3 a verdict could not be read** — which is not "fine", because nobody
 measured it. It reports and never disarms: the repair sequence above stays the coordinator's
-call. Timings that justify a tool over the sweep alone: two armed PRs sat red for **12 and 119
-minutes** on a night with nineteen armed at once (#4006).
+call. What justifies a tool over the sweep alone: armed PRs sat red unnoticed on a night with many
+armed at once (#4006).
 
 Arm **only** when all of these hold. Any one missing means report it to the coordinator instead:
 
@@ -200,7 +196,7 @@ Arm **only** when all of these hold. Any one missing means report it to the coor
   — every loop running under one account reports that account as the author, and an outside
   contributor's PR is never merged by us.
 - No release run is in progress (`publish.yml` pushes a fast-forward; a merge during its
-  ~40-minute run kills it).
+  run kills it).
 - `git merge-tree --write-tree --messages origin/<base> origin/<branch>` is clean.
 - **Every `Corpus-PR:` line in the body names a merged corpus PR**; a PR touching an AL-observable path with neither a `Corpus-PR:` nor a
   `Corpus-NA:` line is held (the linkage gate, `bc-behavior-tests-go-upstream.md`). The read is
@@ -241,7 +237,7 @@ Arm **only** when all of these hold. Any one missing means report it to the coor
 
   **Do not read the comment's last line.** That was the contract and the transport broke it: a
   reviewer without `gh` posts through `mcp__github__add_issue_comment`, which appends an
-  attribution footer below the body — 26 of 150 measured verdict comments end in that footer
+  attribution footer below the body, so measured verdict comments end in that footer
   rather than in their verdict (#4338). A positional read finds the footer, and then either
   skips the staleness check or reads a head that is not there. Both are silent.
 - **No commit is attributed to another real GitHub account.**
@@ -337,9 +333,9 @@ refusal — verified on `gh` 2.98.0, and its error propagates unaltered from the
 *measurement*: `cmd | tail` yields `tail`'s status, and `out=$(cmd); echo "$out"` yields
 `echo`'s, so both print the GraphQL error and then report 0 (`ci-verdicts.md` §0). That is why
 the re-read above is the check and the exit code is only corroboration: one of them was
-misreported for three days, and it was not the one GitHub sends. See #3341.
+misreported, and it was not the one GitHub sends. See #3341.
 
-Still read it: `gh pr merge` exits non-zero for real reasons too (`Pull request #N is not mergeable: ...`), and a loop that printed "armed" regardless of it once left four green PRs sitting unarmed. It is the second check, not the first.
+Still read it: `gh pr merge` exits non-zero for real reasons too (`Pull request #N is not mergeable: ...`), and a loop that printed "armed" regardless of it once left green PRs sitting unarmed. It is the second check, not the first.
 
 When it arms rather than merges, arming is still not merging, and it does not replace the merge
 bar — it is the bar expressed as a standing instruction to GitHub, so a PR lands the moment its
@@ -365,9 +361,6 @@ gh pr merge <N> --repo <owner>/<repo> --squash --delete-branch --auto --match-he
 gh pr view <N> --repo <owner>/<repo> --json state,autoMergeRequest   # re-read; this is the check
 ```
 
-One session's sample, and review time scales with PR size. Re-measure with `tools/agent-cost.py`
-rather than treating the ratio as settled.
-
 ## Triage
 
 Run the `triager` subagent at the **start** of a cycle, and again whenever the open-issue
@@ -386,13 +379,13 @@ Merge when **all of**:
 
 1. Every required context green **on the PR's current head SHA**. `gh pr checks` reports
    the newest *completed* run, which can predate the last push — confirm the SHA.
-   **Do not count legs.** Since #3141 a pull request runs three BC legs
-   (`.github/pr-bc-versions.txt`: 27.0, 27.5, 28.5), not the full list, so a bar phrased as "all 8
-   legs green" would refuse a legitimate PR or send you hunting for legs that do not exist.
+   **Do not count legs.** Since #3141 a pull request runs the legs in
+   `.github/pr-bc-versions.txt`, a subset of `.github/bc-versions.txt`, so a bar phrased as a
+   leg count would refuse a legitimate PR or send you hunting for legs that do not exist.
    The legs are not required contexts anyway — the aggregate `BC test matrix passed` is, and
-   it fails when any leg of whatever matrix ran fails. The other versions run on
-   `main` via `main-verdict-floor.yml`, not on the PR — on a 30-minute cadence and
-   again about ten minutes after a merge burst ends (#3679). `tools/ci-wait.py` prints that
+   it fails when any leg of whatever matrix ran fails. The rest of `.github/bc-versions.txt` runs
+   on `main` via `main-verdict-floor.yml`, not on the PR, on the schedule that workflow's header
+   states (#3679). `tools/ci-wait.py` prints that
    floor's newest verdict beside the PR's, so a red `main` a PR merely inherited is visible
    before you arm it.
 2. `git merge-tree --write-tree --messages origin/main origin/<branch>` is clean.
@@ -416,9 +409,9 @@ Step 2), with your own dispatch record as the identity list that step requires.
 
 **A FAILED verdict names what has reported so far.** While other required checks are
 still running the failing list can grow, and the tool says how many have not reported.
-Do not scope a diagnosis to those names until it has: reading "1 of 9 required checks
-failed" as "only BC 27.0 is affected" started a version-specific investigation of what
-turned out to be eight failing legs.
+Do not scope a diagnosis to those names until it has: reading an early single failing
+leg as "only that version is affected" started a version-specific investigation of what
+turned out to be a failure on every leg.
 
 **Never `gh run rerun` a failed job** — it destroys the log permanently. Read
 `--log-failed` first, then push a new commit. An **empty** `--log-failed` is a
@@ -462,7 +455,7 @@ gh api repos/StefanMaron/BusinessCentral.AL.Runner/rules/branches/main \
          |.parameters.required_status_checks[].context]'
 ```
 
-Before the split all twelve guards lived in
+Before the split all of those guards lived in
 `pr-check.yml` and none of them gated, so #3116, #3112 and #3095 each merged with one in a
 `FAILURE` state, and a red closing-reference or CI-skip tick stopped nothing. `pr-gate.yml`
 carries no `concurrency` block, deliberately — that is the same #2726 rule applied to a
@@ -495,8 +488,8 @@ that issue for an open PR closing it — the recipe is in `al-language-submodule
 corpus #350, whose pair #4141 even said in prose that the two were unlinked.
 
 **A push restarts the matrix, so a non-blocking finding waits for the gating leg.** A reviewer's
-"worth fixing eventually" item on a PR whose required BC legs are mid-flight costs ~15 minutes of
-matrix, and that cost is invisible while you are reading a trivial diff. Push it when the legs
+"worth fixing eventually" item on a PR whose required BC legs are mid-flight costs a whole matrix
+run, and that cost is invisible while you are reading a trivial diff. Push it when the legs
 have reported, not while they run — and never on a PR that is unblocking others, where the delay
 is multiplied by every PR behind it. Measured twice in one session (#3923, #3927), both times a
 comment-only change that was correct, verified, and still the wrong moment. **"Trivial" describes
@@ -509,22 +502,21 @@ the diff, never the schedule**, and the schedule is what is scarce near a merge.
 These exist because each was violated at real cost.
 
 - **Never conclude from a run that has not finished.** A partial local run once produced a
-  three-class failure list; the completed CI run found five failures in two further classes.
+  failure list that the completed CI run extended with further classes (#2364).
 - **Wall clock lies on a loaded box.** With several agents running, identical work measured
-  1.9s and 3.1s. Use instructions-retired (`perf stat`) for anything CPU-bound; it held to
-  ±0.1% across the same runs.
+  far apart. Use instructions-retired (`perf stat`) for anything CPU-bound; it held steady
+  across the same runs.
 - **A children-inclusive profile percentage is not a saving.** In a JIT-dominated process it
   measures what is *reachable* from a call site; deleting the caller moves the cost to the
   next one. Price a change by removing the work and re-measuring, not by reading a call tree.
 - **Never compare two configurations across a rebuild.** Rebuilding the runner invalidates
   the AL-output cache, and a cold run can report a different pass count for reasons unrelated
-  to your change — 873 vs 925 on the same code in one session. Set the variable through an
+  to your change, on the same code in one session. Set the variable through an
   override on ONE warm cache instead, and pass a private `--cache <dir>`.
 - **Include a control.** Convert three classes, leave two untouched, and show the untouched
   ones flat. That is what makes the deltas believable.
 - **Do not rank work by the bc-linux container comparison.** That tier patches BC's binaries
-  at startup, and filtering by it once hid the single largest cluster in the bucket — 102
-  tests, worth +93 when fixed.
+  at startup, and filtering by it once hid the single largest cluster in the bucket.
 
 ## The corpus must grow with the fixes
 
@@ -558,11 +550,11 @@ so explicitly.
 Brief implementers to test that claim up front and put the answer in the PR body whichever way
 it comes out; it has gone both ways. A defect assumed precompiled-only also reproduced on a
 source-compiled table, and the corpus app declares a Base Application dependency, so a corpus
-test reaches the precompiled path after all (issue #2518, corpus PR #165, merged green on all 8
-legs). Against that, table `2000000001` really is out of reach, sitting in
+test reaches the precompiled path after all (issue #2518, corpus PR #165, merged green on every
+required leg). Against that, table `2000000001` really is out of reach, sitting in
 `SystemTables.InternalTables`, which `NavRecordRef.IsSystemTableAllowedForRecordRefUsage`
 refuses outright — though note what carries it: a service tier measured the sibling id
-`2000000071` (corpus PR #153, all eight legs red, withdrawn), and `2000000001` follows by set
+`2000000071` (corpus PR #153, every leg red, withdrawn), and `2000000001` follows by set
 membership rather than by its own measurement (issue #2774).
 
 Watch for the shape where a fix closes a BC-behaviour issue with only a runner-local test.
@@ -615,7 +607,8 @@ Otherwise the next agent starts from the wrong premise — which has happened he
 
 - `tools/context-pack.py <Name>...` — definition + source + call sites, one round trip.
 - `tools/lsp-query.py callers|symbol <Name>` — exit 2 means the server failed, **not** "none".
-- `mcp__bc-decompiler__*` — BC's own code. Contexts `bc270` … `bc284` are pre-registered;
+- `mcp__bc-decompiler__*` — BC's own code. One context per version in `.github/bc-versions.txt`
+  (`28.4` → `bc284`) is pre-registered;
   `search_members` → `memberId` → `get_decompiled_source` / `find_callers`.
   `compare_symbols` diffs a method between BC versions, which is how a Cecil rewrite that
   stopped being reached gets caught.
@@ -623,8 +616,8 @@ Otherwise the next agent starts from the wrong premise — which has happened he
   it the `branch-ownership` check can only WARN (#3746). From this checkout it PASSes, having
   nothing to compare; it refuses from a worktree, so brief agents to run it there.
 - `tools/agent-cost.py <tasks-dir>` — where a session's agents actually spent their calls.
-  Measured once: 85% of Bash calls were shell read/search and the navigation tools were used
-  3 times in 3,237 calls. Re-measure rather than assuming it improved.
+  Measured once: most Bash calls were shell read/search and the navigation tools were barely
+  used. Re-measure rather than assuming it improved.
 
 ## The ready queue
 

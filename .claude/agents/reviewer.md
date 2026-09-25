@@ -39,14 +39,13 @@ tools/review-claim.py --pr <N> --post --agent-id <YOUR-ID>  # then claim it
 ```
 
 **Exit 1 is not a refusal.** It prints the live claims and the verdicts already on this head;
-read them and decide whether a second pass is worth its ~15 minutes. Sometimes it plainly is — a
+read them and decide whether a second pass is worth what it costs. Sometimes it plainly is — a
 FIX-FIRST the author has since addressed, or a merge-bar call worth a second opinion — and then
 say in your review that you knew and why. What exit 1 removes is spending the pass by accident.
 
-Measured on the 60 most recent PRs: **18 of 59 carried two or more verdicts on the identical
-head**, and **17 of those 19 pairs landed under 15 minutes apart** — the second reviewer started
-while the first was still running, which is why the claim goes up at the START of your pass and
-not with your verdict (#4284).
+Duplicate verdicts on an identical head have mostly landed minutes apart — the second reviewer
+started while the first was still running, which is why the claim goes up at the START of your
+pass and not with your verdict (#4284).
 
 **Exit 3 is not "free".** The comments could not be read, so nobody measured anything; say so
 rather than reviewing as though the PR were clear.
@@ -82,7 +81,7 @@ context; reading a shared file is never refused.
 implementation — delete the guard, invert the condition, return the default — rebuild, and see
 whether the test goes red. Asking instead of running has answered wrong twice here
 (`docs/incidents/tdd.md`): #3819's fixture *constructed* the relationship it was meant to prove,
-and #3882 shipped one proven guard beside one that left all 8 tests green when mutated out.
+and #3882 shipped one proven guard beside one that left every test green when mutated out.
 
 The PR should report both counts. **Re-run at least the mutation the PR's own claim rests on** —
 a reported number nobody reproduced is the same evidence as no number.
@@ -135,14 +134,14 @@ Check which corpus the run measured, from the `corpus: <sha> (<ref>)` line each 
 Performance and failure-count claims are where this repository has been wrong most often.
 
 - **A single sample is not a result.** Two claims here died on repeat: "Workstation GC is faster"
-  and a 47% regression that was contamination from concurrent runs.
-- **Never compare across a rebuild.** It invalidates the AL-output cache; one pass count moved
-  873 → 925 on unchanged code for that reason alone. The variable must be set through an
-  override on one warm cache.
-- **Wall clock lies on a loaded box.** Identical work measured 1.9 s and 3.1 s with agents
+  and a regression that was contamination from concurrent runs.
+- **Never compare across a rebuild.** It invalidates the AL-output cache; a pass count has moved
+  on unchanged code for that reason alone. The variable must be set through an override on one
+  warm cache.
+- **Wall clock lies on a loaded box.** Identical work has measured far apart with agents
   running. Use instructions-retired for anything CPU-bound.
 - **A partial run is not a verdict.** A local run read before it finished once produced a
-  three-class failure list; the completed run found five failures in two further classes.
+  failure list that the completed run extended with further classes (#2364).
 - Was a **control** included — something untouched, shown flat?
 
 ## 4. Can anything fail silently?
@@ -150,8 +149,8 @@ Performance and failure-count claims are where this repository has been wrong mo
 The repository's own worst defects are all this shape, so look for it specifically.
 
 - A `catch` that logs to a channel off by default and returns a **partial** result as if
-  complete. One such swallow dropped 90 of 96 table extensions and changed test results with no
-  error and an unchanged exit code.
+  complete. One such swallow dropped most of a dependency's table extensions and changed test
+  results with no error and an unchanged exit code.
 - A partial result written to a **cache**, which makes one transient failure permanent.
 - A hook or patch that returns a default instead of throwing. `.claude/rules/loud-failures.md`
   requires a typed `RunnerOutOfScopeException` naming the API and a reason — an
@@ -181,19 +180,19 @@ The repository's own worst defects are all this shape, so look for it specifical
 ## 6. Does it claim more than it did?
 
 Compare the PR's stated payoff against its evidence. A fix that removes one wall usually exposes
-the next one — a measured example: removing a 612-failure wall moved 464 of them onto a
-different wall and turned 127 green. That is a good result honestly stated; "fixes 612" would
-not have been.
+the next one — a measured example: removing one failure wall moved most of its failures onto a
+different wall and turned the rest green. That is a good result honestly stated; "fixes all of
+them" would not have been.
 
 Prefer a complete negative result over a speculative fix. "I could not reproduce it, here is
 what I ruled out" is a finished piece of work.
 
 ## 7. Does the prose live where it is read?
 
-Comment prose in `AlRunner/` is **46% of every non-blank line** — 54,520 comment lines against
-63,256 code lines across 295 files — and it grew roughly twice as fast as code over the last
-hundred files added. Reading code is the largest token cost in this repository, so this is a
-review finding, not a style preference.
+Comment prose in `AlRunner/` is a large share of every non-blank line, and it has been growing
+faster than code — `tools/comment-density.py`, run over `AlRunner/`, measures it now; do not quote a figure.
+Reading code is the largest token cost in this repository, so this is a review finding, not a
+style preference.
 
 **The review step is part of the mechanism rather than a check on it.** In one batch, reviews
 asked for the reasoning in a code comment to be corrected and for doc comments to be made more
@@ -215,12 +214,12 @@ reading, and where it does not get re-read on every navigation. This is the same
 Apply one question to the largest comment block the diff adds: **would it change what the next
 person types?** If yes it stays. If it only changes what they know, it belongs in `docs/` with a
 pointer, in the PR body, or nowhere. `impl-agent.md` carries the full disposition table; the
-trigger there is a block over ten lines, which is where 60% of the comment mass sits — in `///`
+trigger there is a block over ten lines, which is where most of the comment mass sits — in `///`
 doc comments as much as in `//` ones, so "put it in an XML doc comment" is not a remedy.
 
 State the number in one line whenever the diff touches `AlRunner/`: comment lines added against
-code lines added. It is not a threshold to pass — 23 of the last 26 commits touching `AlRunner/`
-added more comment than code, so a gate at 1:1 would fire on nearly everything and be ignored
+code lines added. It is not a threshold to pass — most recent commits touching `AlRunner/`
+add more comment than code, so a gate at 1:1 would fire on nearly everything and be ignored
 within a week. It is there so the trend is visible at the moment someone is creating it.
 
 ```bash
@@ -232,20 +231,11 @@ tools/comment-density.py diff --since <round-1-head>       # what THIS REVIEW ad
 to a SHA, and the base is the whole difficulty: `gh pr diff` and `git diff origin/main..HEAD`
 both attribute every commit `main` has gained since the branch point to the branch.
 
-Measured on #4347's own subject, PR #4336 (merge base `161a4d4a`, 2026-09-18), read on
-2026-09-19 at `origin/main` = `07787531`, **84 commits later**:
-
-| how the same branch is measured | result |
-|---|---|
-| three-dot against the merge base (truth) | `+19 comment / +9 code` |
-| two-dot against that `origin/main` | `+78 comment / +218 code` |
-
-**The ratio is a property of the distance, not of the branch**, so treat the second row as a
-reading taken at one moment and re-derive it rather than quoting it: walking `origin/main` back
-gives roughly 24x at 84 commits, 12x at 64 and 8x at 24. What does not move is the direction —
-the error grows with the distance, so it is smallest exactly when someone spot-checks it by hand
-and largest on the long-lived branches where the number is actually quoted. A day and a half of
-`main` was enough to produce the row above.
+On PR #4336 a two-dot read against a moved `origin/main` overstated both counts many times over
+against the three-dot truth (#4347). **The error is a property of the distance, not of the
+branch**: it grows with every commit `main` gains, so it is smallest exactly when someone
+spot-checks it by hand and largest on the long-lived branches where the number is actually
+quoted.
 
 The classifier is not what was wrong — the same `awk` one-liner this block used to carry agrees
 with the tool to the line when handed the correct base. Do not read this as "the old recipe
@@ -255,10 +245,9 @@ miscounted comments"; read it as "a ratio is a claim about a base, and the base 
 ### Say what your own asks cost in prose
 
 `--since` exists because the absolute figure blends the author's contribution with the review's.
-On #4336 the author arrived at `+10 comment / +9 code` and the PR left review at `+19 / +9` — a
-review-driven delta of **`+9 comment / +0 code`**, asked for by the reviewer that then reported
+On #4336 the whole of the review's delta was comment, asked for by the reviewer that then reported
 the ratio as rising. Every step there was correct: the comment genuinely over-claimed its scope,
-narrowing it was the right ask, and the narrowing honestly took nine lines.
+narrowing it was the right ask, and the narrowing honestly took several lines.
 
 So when you ask for a comment to be corrected, **say what you expect the correction to cost**,
 and prefer the cheaper shape where one exists. A claim whose *scope* is wrong is usually fixed by
@@ -327,8 +316,8 @@ nothing else. `tools/review-verdict.py` reads it and refuses anything it cannot 
 |---|---|
 | `Verdict: MERGE — head <40-char sha>` | the verdict |
 | `  Verdict: ...` (indented) | **not a verdict** — indentation is how markdown marks quoted content, so a quoted verdict must not read as one issued now |
-| `**Verdict:** ...` (bold) | **not a verdict** — measured over 150 real reviews, bold is never the only marker and does occur as prose (`**Verdict: this meets the merge bar.** ...`), so accepting it would refuse the real line beneath it |
-| `Verdict: CHANGES ...` | **malformed** — not one of the three decisions; 6 of 150 reviews wrote this and no arming step can act on it |
+| `**Verdict:** ...` (bold) | **not a verdict** — in real reviews bold is never the only marker and does occur as prose (`**Verdict: this meets the merge bar.** ...`), so accepting it would refuse the real line beneath it |
+| `Verdict: CHANGES ...` | **malformed** — not one of the three decisions; real reviews have written this and no arming step can act on it |
 | two `Verdict:` lines | **malformed** — the tool refuses rather than guessing which one you meant |
 
 Writing the word elsewhere is fine and does not collide: `### Verdict`, "Verdict at the end."
@@ -354,9 +343,8 @@ tools/review-verdict.py --pr <N> --repo <owner>/<repo> --field head
 **Deliberately not "the last line".** It used to be, and the transport breaks that: without
 `gh` — every web and remote session (`github-access.md`) — a reviewer posts through
 `mcp__github__add_issue_comment` and an attribution footer is appended **after** the body, so
-the last line is the footer and the verdict is invisible to a positional check. Measured over
-the 60 most recent pull requests: of 150 verdict-bearing comments, **26 have a footer below the
-verdict line**, and that footer accounts for every one of the 26 positional failures (#4338).
+the last line is the footer and the verdict is invisible to a positional check. Every positional
+failure measured was that footer (#4338).
 You cannot suppress it, so the contract does not depend on it.
 
 **Re-review of an unchanged diff.** With `<old>` the head in your previous verdict line and

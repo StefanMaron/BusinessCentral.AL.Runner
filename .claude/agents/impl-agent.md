@@ -259,7 +259,7 @@ General rule: `.claude/rules/local-test-scope.md`. Concretely:
 
 1. **The RED → GREEN test itself** — non-negotiable, it is the proof.
 2. **A FILTERED `AlRunner.Tests` run** over the surface you changed: `dotnet test AlRunner.Tests --filter FullyQualifiedName~<YourTestClass>`. Seconds to a couple of minutes, and where a runtime/compiler regression shows up first.
-3. **The one AL bundle your change plausibly affects**, if there is an obvious one. Not all 32.
+3. **The one AL bundle your change plausibly affects**, if there is an obvious one. Not all of them.
 
 The unfiltered suite is for CI; it spends most of its time in tests that spawn the runner as a subprocess, which the filter above skips.
 
@@ -288,16 +288,16 @@ The unfiltered suite is for CI; it spends most of its time in tests that spawn t
    file in one session, each costing a round trip: a
    bare `return;` reporting `Passed` having asserted nothing; a doc comment stranded from its
    member by an inserted method; a test class touching the parse statics from outside the serial
-   collection (#1696's four-of-five-legs flake); and a dangling `docs/` anchor. **None of them
+   collection (#1696's flake); and a dangling `docs/` anchor. **None of them
    was a defect in the feature** — all four were properties of the file that carried it.
 
    **Build first; do not pass `--no-build` here.** Several of these guards assert against the
    *current* tree — a ratchet count, a converted-site census, an artifact readiness probe — so a
    stale binary fails them for reasons that have nothing to do with your change and read exactly
-   like findings. Measured: three of them failed against a build 15 hours behind `main`, all
-   three spuriously.
+   like findings. Measured: several of them failed against a build hours behind `main`, all
+   spuriously.
 
-Then push. A pull request runs **three** BC legs — 27.0, 27.5 and 28.5, from `.github/pr-bc-versions.txt` — not the full list in `.github/bc-versions.txt`; that list runs on push to `main`, on `main-verdict-floor.yml`'s 30-minute cadence, and on the release path (#3141, #3200). Every leg runs the corpus, all of `runner-extras`, the xmlport isolation guard and server-mode. The full `AlRunner.Tests` suite runs only on the unit legs — the newest minor of each major, 27.5 and 28.5 — two legs of whichever matrix ran, not the whole matrix (#2674). All of it in parallel with you rather than in front of you.
+Then push. A pull request runs the BC legs listed in `.github/pr-bc-versions.txt` — a subset of `.github/bc-versions.txt`; the full list runs on push to `main`, on `main-verdict-floor.yml`'s schedule, and on the release path (#3141, #3200). Every leg runs the corpus, all of `runner-extras`, the xmlport isolation guard and server-mode. The full `AlRunner.Tests` suite runs only on the unit legs — the newest minor of each major in whichever version file the run read — not the whole matrix (#2674). All of it in parallel with you rather than in front of you.
 
 **Do not count legs to decide a PR is green.** The aggregate `BC test matrix passed` is what gates — renamed from the old aggregate by #3200, because a narrowed matrix under the old name asserted something the run had not measured — alongside the other required contexts. `tools/ci-wait.py` reads that list live from the branch ruleset on every call; read it from there, never out of a document, this one included (`.claude/rules/ci-verdicts.md`).
 
@@ -318,8 +318,7 @@ Hitting the cap without reproducing is a fact for the PR body, not a reason to g
 
 There is no `tests/bucket-*` tree and no single global ID range — that layout was retired at the v1→v2 cutover and now sits frozen under `tests/archive/`. Object IDs are namespaced **per app you add objects to**, declared in that app's own `app.json`:
 
-- `tests/al-language/tests/al-language/app.json` (main corpus app, read-only — you don't add objects here): `idRanges: [60000, 60999]`.
-- `tests/al-language/tests/al-language-internals-fixture/app.json`: a separate `idRanges: [61000, 61099]`.
+- `tests/al-language/tests/al-language/app.json` (main corpus app, read-only — you don't add objects here) and `tests/al-language/tests/al-language-internals-fixture/app.json` each declare their own, separate `idRanges`; read them from the file, not from here.
 - `tests/runner-extras/**/app.json` and any suite you create have their own ranges — check the specific `app.json` before picking an ID. An ID outside its own app's declared range fails to compile with `error AL0297`.
 
 Inside the right range, a **duplicate** ID collides with `error AL0264`. Grepping your own checkout only catches collisions against `main`, not IDs another agent has claimed on an in-flight branch — also check open PRs / other agents' branches for the same suite where feasible, and be prepared to renumber.
@@ -336,7 +335,7 @@ Full decision tree: `.claude/rules/bc-behavior-tests-go-upstream.md` plus the `a
 
 - **A test asserting plain BC behaviour belongs in the upstream corpus** (`StefanMaron/BusinessCentral.AL.Language.Tests`), not `tests/runner-extras/`, and must actually merge there — not be verified locally and left behind. **You do not need a local Docker/BC container:** the upstream repo's CI (`tests/al-language/.github/workflows/ci.yml`) boots a real BC service tier on Linux — a cloud and an OnPrem leg per BC version in its `ci.yml` matrix (not every minor in that span), of which the cloud legs the corpus ruleset names are the required contexts, via `StefanMaron/MsDyn365Bc.On.Linux` — on every PR, so opening that PR *is* the real-BC verification step. `gh pr create` against that repo has occasionally failed with a bare HTTP 422; fall back to `gh api repos/StefanMaron/BusinessCentral.AL.Language.Tests/pulls -f title=... -f head=... -f base=...`. **The corpus repo's default branch is `master`; this one's is `main`.** Omit `--base` and `gh pr create` picks it up correctly, but a hand-written `--base main` — or an API call assuming `main` — fails with the same bare 422 and does not say why; two agents lost time to that on 2026-09-05 (`al-language-submodule.md`).
 - **There is no pin to bump** (#3737). Put the `Corpus-PR:` line in your PR body and CI resolves the corpus at that pull request's branch head, so the matrix measures your corpus tests before they merge; once the corpus PR merges, the same line resolves `master`, which now carries them. Two traps: a body edited after your last push is not what the matrix read, so **push an empty commit after adding the line**, and the corpus SHA each leg prints is the evidence — the PR number is not, because its branch head moves. Locally, point `tools/corpus-checkout.py --corpus-pr <M>` at it and run against `tests/al-language/`.
-- **"The corpus cannot express this" is a claim you have to test, and the answer goes in the PR body either way.** It has come out both ways for real. Expressible after all: a defect assumed precompiled-only also reproduced on a source-compiled table, and the corpus app declares a Base Application dependency, so a corpus test does reach the precompiled path (issue #2518, corpus PR #165, merged green on 8 legs). Genuinely inexpressible: table `2000000001` sits in `SystemTables.InternalTables`, whose ids `NavRecordRef.IsSystemTableAllowedForRecordRefUsage` refuses outright, and is `Scope = OnPrem`. Note what carries that claim — the service tier measured a **sibling id**: corpus PR #153 put `2000000071` in front of one, all eight legs came back red, and the PR was withdrawn. `2000000001` follows by **set membership in the same refused list**, not by its own measurement. Say which of the two you have; "a guess wearing a schema" is the failure `ask-the-corpus-before-claiming-bc-behavior.md` exists to stop (issue #2774).
+- **"The corpus cannot express this" is a claim you have to test, and the answer goes in the PR body either way.** It has come out both ways for real. Expressible after all: a defect assumed precompiled-only also reproduced on a source-compiled table, and the corpus app declares a Base Application dependency, so a corpus test does reach the precompiled path (issue #2518, corpus PR #165, merged green on every required leg). Genuinely inexpressible: table `2000000001` sits in `SystemTables.InternalTables`, whose ids `NavRecordRef.IsSystemTableAllowedForRecordRefUsage` refuses outright, and is `Scope = OnPrem`. Note what carries that claim — the service tier measured a **sibling id**: corpus PR #153 put `2000000071` in front of one, every leg came back red, and the PR was withdrawn. `2000000001` follows by **set membership in the same refused list**, not by its own measurement. Say which of the two you have; "a guess wearing a schema" is the failure `ask-the-corpus-before-claiming-bc-behavior.md` exists to stop (issue #2774).
 - Report expectation-manifest drift (a known-gap entry left behind after its issue closed, a red `main` from manifest drift) with one comment naming the entry and what it now does, on the issue the entry's `Issue` field names, or on the issue you are working on when the entry has no `Issue` (`expect-oos`, `expect-divergence`); then continue your own task. The coordinator's merge pass owns the fix (`orchestrating-a-session`). Done when that comment exists.
 - If the runner genuinely can't implement the gap yet, add a `tests/expectations/known-gaps-<area>.json` entry per `docs/expectations.md` linking a GH issue that stays **open** after your PR merges — an entry pointing at the very issue your PR closes leaves the gap untracked the moment it merges. Open a *separate* follow-up issue if needed.
 
@@ -425,16 +424,7 @@ Full detail in `.claude/rules/` (`branch-and-pr.md`, `al-language-submodule.md`,
 
 ### Reading BC's own code: use the `bc-decompiler` MCP server
 
-Settling "what does BC actually do" means reading `Microsoft.Dynamics.Nav.Ncl.dll`. Do not grep a decompile dump — the `mcp__bc-decompiler__*` tools answer in well under a second, and answer questions grep cannot. Every cached BC version is already a registered context, so there is no path to look up:
-
-| alias | | alias | |
-|---|---|---|---|
-| `bc270` | 27.0 | `bc281` | 28.1 (current) |
-| `bc273` | 27.3 | `bc282` | 28.2 |
-| `bc275` | 27.5 | `bc283` | 28.3 |
-| `bc280` | 28.0 | `bc284` | 28.4 |
-
-One alias per version in `.github/bc-versions.txt`; `tools/preflight.py` expects exactly that set.
+Settling "what does BC actually do" means reading `Microsoft.Dynamics.Nav.Ncl.dll`. Do not grep a decompile dump — the `mcp__bc-decompiler__*` tools answer in one call, and answer questions grep cannot. Every cached BC version is already a registered context, so there is no path to look up: one alias per version in `.github/bc-versions.txt`, spelled `bc` + major + minor (`28.4` → `bc284`), and `tools/preflight.py` expects exactly that set.
 
 Always **find the id, then use it**:
 
@@ -444,11 +434,9 @@ get_decompiled_source(memberId: "<that id>")   -> the C# body
 find_callers(methodId: "<that id>")            -> call sites
 ```
 
-Measured on Ncl.dll (8,619 types, 43,135 methods): `search_members` 1.6s, `get_decompiled_source` **0.42s**, `find_callers` **0.11s**.
-
 **`find_callers` resolves through compiler-generated async state machines.** On `NavTestExecution.TestHandleForm` it returns `NavForm.<RunAsync>d__19` — the shape that has repeatedly bitten this repo, where a hook installs but never fires because the real caller is a state machine. Grep cannot find that.
 
-**`compare_symbols` diffs a method between two BC versions**, which is how you catch a Cecil rewrite that silently stopped being reached — a BC service update once rerouted callers past one of ours and cost 53 tests on the newer build only. Returns `signatureChanged`, `bodyChanged` and line counts in about half a second:
+**`compare_symbols` diffs a method between two BC versions**, which is how you catch a Cecil rewrite that silently stopped being reached — a BC service update once rerouted callers past one of ours and cost tests on the newer build only. Returns `signatureChanged`, `bodyChanged` and line counts:
 
 ```
 compare_symbols(leftContextAlias: "bc275", rightContextAlias: "bc284",

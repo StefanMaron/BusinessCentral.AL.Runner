@@ -168,16 +168,7 @@ Both live in `CLAUDE.md` under "Code navigation: use these before grepping" — 
 
 ## Reading BC's own code: use the `bc-decompiler` MCP server
 
-Settling "what does BC actually do" means reading `Microsoft.Dynamics.Nav.Ncl.dll`. Do not grep a decompile dump — the `mcp__bc-decompiler__*` tools answer in well under a second, and answer questions grep cannot. Every cached BC version is already a registered context, so there is no path to look up:
-
-| alias | | alias | |
-|---|---|---|---|
-| `bc270` | 27.0 | `bc281` | 28.1 (current) |
-| `bc273` | 27.3 | `bc282` | 28.2 |
-| `bc275` | 27.5 | `bc283` | 28.3 |
-| `bc280` | 28.0 | `bc284` | 28.4 |
-
-One alias per version in `.github/bc-versions.txt`; `tools/preflight.py` expects exactly that set.
+Settling "what does BC actually do" means reading `Microsoft.Dynamics.Nav.Ncl.dll`. Do not grep a decompile dump — the `mcp__bc-decompiler__*` tools answer in one call, and answer questions grep cannot. Every cached BC version is already a registered context, so there is no path to look up: one alias per version in `.github/bc-versions.txt`, spelled `bc` + major + minor (`28.4` → `bc284`), and `tools/preflight.py` expects exactly that set.
 
 Always **find the id, then use it**:
 
@@ -187,11 +178,9 @@ get_decompiled_source(memberId: "<that id>")   -> the C# body
 find_callers(methodId: "<that id>")            -> call sites
 ```
 
-Measured on Ncl.dll (8,619 types, 43,135 methods): `search_members` 1.6s, `get_decompiled_source` **0.42s**, `find_callers` **0.11s**.
-
 **`find_callers` resolves through compiler-generated async state machines.** On `NavTestExecution.TestHandleForm` it returns `NavForm.<RunAsync>d__19` — the shape that has repeatedly bitten this repo, where a hook installs but never fires because the real caller is a state machine. Grep cannot find that.
 
-**`compare_symbols` diffs a method between two BC versions**, which is how you catch a Cecil rewrite that silently stopped being reached — a BC service update once rerouted callers past one of ours and cost 53 tests on the newer build only. Returns `signatureChanged`, `bodyChanged` and line counts in about half a second:
+**`compare_symbols` diffs a method between two BC versions**, which is how you catch a Cecil rewrite that silently stopped being reached — a BC service update once rerouted callers past one of ours and cost tests on the newer build only. Returns `signatureChanged`, `bodyChanged` and line counts:
 
 ```
 compare_symbols(leftContextAlias: "bc275", rightContextAlias: "bc284",
