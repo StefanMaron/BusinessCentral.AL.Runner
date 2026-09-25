@@ -39,6 +39,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **reports:** run OnInitReport at report construction, so BC's own report engine runs it too
 - **testpage:** request-page Visible/Editable bound to a report global on a precompiled report
 - **report:** precompiled report FlowField columns calculate in the dataset
 - **report:** register request-page controls when precompiled AL runs the report
