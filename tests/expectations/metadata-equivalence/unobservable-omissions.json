@@ -20,12 +20,6 @@
       "issue": 3562
     },
     {
-      "member": "Page.Properties.AnalysisModeEnabled",
-      "statedBy": "expected",
-      "reason": "TRIAGED (#4400): the runner SHOULD state it, and the existing allowlist entry already calls it 'a defect and not a scope boundary'. Tracked on #4282, which is open and whose scope is exactly 'page properties SymbolReference.json states that EmitPageXml does not read'. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): BC states it on 94 of 235 pages — '1' on 93, '0' on page 8350, and only the 93 are unobservable because True is what BC's reader produces when the attribute is absent. NOT a plain symbol read, which is the part worth knowing before implementing: only page 8350 declares AnalysisModeEnabled in SymbolReference.json. For the other 93 BC computes it. The best rule found here is 'declared value, else 1 when PageType is List or Worksheet', which reproduces 234 of 235; the single residue is page 1998, whose symbol record states neither PageType nor APIVersion while BC's document states PageType='Card' APIVersion='beta' AnalysisModeEnabled='1'. So BC has an input the symbol file does not expose for that page, and the rule is a strong candidate rather than a proven one.",
-      "issue": 4282
-    },
-    {
       "member": "Enum.Enum.Access",
       "statedBy": "expected",
       "reason": "TRIAGED (#4400): the runner SHOULD state it — a direct read, the simplest of the 18. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): BC states @Access on 69 of 144 enum documents, Public 54 and Internal 15, and SymbolReference.json declares an Access property on exactly those 69 with exactly those values, 69 of 69 exact. NOT AL-observable: there is no enum metadata virtual table in the platform package at all (Table Metadata has an Access column; enums have no counterpart), so this is document-equivalence only. Tracked on #4279, the open issue for the enum and permission-set derivations' residue.",
@@ -85,14 +79,6 @@
       "member": "Page.Controls.DateFormula",
       "statedBy": "expected",
       "reason": "TRIAGED (#4400): SAYING LESS IS LEGITIMATE TODAY, as a bounded scope decision rather than a limit — the runner reconstructs only part of the page control tree, so it states nothing on controls it does not build. docs/metadata-equivalence.md#the-control-tree-is-a-cost-decision-not-an-unprovable-one settles the direction: no page entry claims a value is underivable, and the control tree is cost and scope 'with a proof path'. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): on the depth-1 controls BC emits, every @DateFormula occurrence in THIS declaration is the value BC's reader produces when the attribute is absent and the symbol file is silent, while every symbol-stated value is a non-default the ordinary value comparison already reports. So the fix here is not a derivation but 'build more of the control tree, then write the default' — which is why it is tracked on #4282 with the rest of the page-property work rather than filed as its own gap.",
-      "issue": 4282,
-      "versionContingent": true,
-      "Doc": "docs/metadata-equivalence.md#unobservable-omissions"
-    },
-    {
-      "member": "Page.Properties.IsPreview",
-      "statedBy": "expected",
-      "reason": "TRIAGED (#4400): the runner SHOULD state it, and the allowlist's sibling entry for this member has a factually wrong reason that #3802 is open to correct. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): BC states @IsPreview on 2 of 235 pages — page 332 as '1' and page 1998 as '0' — and only page 1998's is unobservable, because 0/False is what BC's reader produces when absent. Page 332 DECLARES IsPreview='1' in SymbolReference.json, so that one is a plain read; page 1998 declares neither IsPreview nor PageType while BC's document states PageType='Card' APIVersion='beta' IsPreview='0', the same page whose AnalysisModeEnabled has no symbol-derivable answer. So this entry's single occurrence is the SAME unexplained page, not a second phenomenon. Tracked on #4282. Kept versionContingent: 1 occurrence.",
       "issue": 4282,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#unobservable-omissions"

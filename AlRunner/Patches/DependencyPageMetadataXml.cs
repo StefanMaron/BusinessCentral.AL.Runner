@@ -212,6 +212,7 @@ public static partial class RecordPatches
                 // and per the note in MockTestPage the first new row then lands at line
                 // no. 0 and the second fails on a duplicate primary key.
                 if (page.AutoSplitKey) w.WriteAttributeString("AutoSplitKey", "1");
+                EmitSourceObjectIndirectPermissions(w, page);
             }
             // SourceTable and AutoSplitKey above only mean anything alongside a source table,
             // so a page without one gets the bare element the compiler itself emits — not
@@ -441,16 +442,11 @@ public static partial class RecordPatches
     /// InherentEntitlements/InherentPermissions   "X" -> "16"   (94/92)
     /// </code>
     ///
-    /// <para>WHAT IS DELIBERATELY NOT READ HERE, having been checked rather than assumed.
-    /// <c>AnalysisModeEnabled</c> and <c>OnAfterGetCurrentRecordEnabled</c> are NOT symbol
-    /// reads: cross-tabulated over the same 236 pages, the first tracks <c>PageType</c>
-    /// (List/Worksheet -> "1", every other type -> absent) on 94 pages whose symbol file
-    /// states nothing at all, and the second tracks trigger presence.
-    /// <c>IndirectPermissions</c> needs table NAME -> id resolution plus a permission-mask
-    /// encode; <c>CardFormID</c> needs page NAME -> id; <c>DataCaptionExpr</c> is BC's own
-    /// literal marker <c>"DataCaptionExprCode"</c> and carries none of the AL expression the
-    /// symbol file states. Each is a derivation, which is a different change from a read —
-    /// see the file header and issues #2460 / #3504.</para>
+    /// <para>The DERIVED properties are not in this list: <c>HelpLink</c>,
+    /// <c>DataCaptionExpr</c>, <c>AnalysisModeEnabled</c>, <c>CardFormID</c> and the no-PageType
+    /// <c>IsPreview</c> each have their own emitter below (#4282,
+    /// docs/dependency-page-properties.md). <c>OnAfterGetCurrentRecordEnabled</c> tracks trigger
+    /// presence and is still not written.</para>
     /// </summary>
     private static void EmitPagePropertiesXml(XmlWriter w, BcAppSymbolCache.PageSymbol page)
     {
@@ -474,7 +470,13 @@ public static partial class RecordPatches
         // be a different wrong answer rather than the missing one.
         if (!string.IsNullOrEmpty(page.DataCaptionExpression))
             w.WriteAttributeString("DataCaptionExpr", "DataCaptionExprCode");
+        // #4282. A page stating NO PageType is not the same document as one stating Card: BC
+        // writes IsPreview="0" and AnalysisModeEnabled="1" for it (below), measured on page 1998
+        // and on a compiled probe -- docs/dependency-page-properties.md#no-pagetype.
         if (page.IsPreview) w.WriteAttributeString("IsPreview", "1");
+        else if (!page.PageTypeStated) w.WriteAttributeString("IsPreview", "0");
+        EmitPageAnalysisModeEnabled(w, page);
+        EmitPageCardFormId(w, page);
 
         // BC's emitter writes these four as a MultiLanguage attribute, and its own
         // MultiLanguage parser reads "ENU=<text>" — the identical form EmitPartControlXml
@@ -524,6 +526,151 @@ public static partial class RecordPatches
             string.IsNullOrEmpty(page.ContextSensitiveHelpPage)
                 ? HelpLinkBase
                 : HelpLinkBase + page.ContextSensitiveHelpPage);
+    }
+
+    /// <summary>
+    /// <c>AnalysisModeEnabled</c>, which BC's emitter DERIVES for most pages (#4282).
+    ///
+    /// <para><b>Observably equivalent:</b> the stated value when the page states one, else
+    /// <c>"1"</c> for a <c>List</c>/<c>Worksheet</c> page or a page stating no <c>PageType</c> at
+    /// all, else nothing. That reproduces BC's attribute on all 235 pages of Business Foundation +
+    /// System Application at 28.1.49838.53910 (94 written) and on a compiled probe covering every
+    /// arm. See docs/dependency-page-properties.md#analysismodeenabled.</para>
+    ///
+    /// <para><b>Trap:</b> <c>PageType</c> on the symbol defaults to <c>"Card"</c>, so test
+    /// <c>PageTypeStated</c>, never the type: BC gives a Card-by-default page the attribute and a
+    /// page stating Card none.</para>
+    /// </summary>
+    private static void EmitPageAnalysisModeEnabled(XmlWriter w, BcAppSymbolCache.PageSymbol page)
+    {
+        var derived = !page.PageTypeStated
+            || string.Equals(page.PageType, "List", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(page.PageType, "Worksheet", StringComparison.OrdinalIgnoreCase);
+        if (page.AnalysisModeEnabled is { } stated)
+            w.WriteAttributeString("AnalysisModeEnabled", stated ? "1" : "0");
+        else if (derived)
+            w.WriteAttributeString("AnalysisModeEnabled", "1");
+    }
+
+    /// <summary>
+    /// <c>CardFormID</c>: the page's <c>CardPageId</c>, which the symbol file states as the target
+    /// page's NAME and BC writes as its resolved id (#4282).
+    ///
+    /// <para><b>Observably equivalent:</b> resolved through <see cref="PageIdsByName"/>, the same
+    /// inventory the Page Metadata virtual table resolves <c>CardPageId</c> against, so the two
+    /// cannot disagree. Measured: the 10 Business Foundation + System Application pages stating it
+    /// at 28.1.49838.53910 each resolve to exactly BC's id, and a compiled probe shows BC writes it
+    /// for a numeric <c>CardPageId</c> and on a non-List page too.</para>
+    ///
+    /// <para>An unresolvable name is OMITTED and SAID: a guessed id would open the wrong card,
+    /// and the absent attribute is what this wrote before.</para>
+    /// </summary>
+    private static void EmitPageCardFormId(XmlWriter w, BcAppSymbolCache.PageSymbol page)
+    {
+        var stated = page.CardPageName?.Trim();
+        if (string.IsNullOrEmpty(stated)) return;
+
+        var unquoted = stated.Length >= 2 && stated[0] == '"' && stated[^1] == '"' ? stated[1..^1] : stated;
+        if (!int.TryParse(unquoted, System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out var cardId)
+            && !PageIdsByName().TryGetValue(unquoted, out cardId))
+        {
+            Console.Error.WriteLine(
+                $"[RecordPatches] page {page.Id} \"{page.Name}\": CardPageId \"{stated}\" names no page "
+                + "the run knows — CardFormID omitted");
+            return;
+        }
+
+        w.WriteAttributeString("CardFormID", cardId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>
+    /// The <c>&lt;SourceObject IndirectPermissions&gt;</c> vector BC compiles a page's AL
+    /// <c>Permissions</c> property into (#4282): <c>"&lt;table id&gt;, &lt;mask&gt;, …, 0, 0"</c>
+    /// in declared order, each table NAME resolved to its id.
+    ///
+    /// <para><b>Observably equivalent:</b> matches BC's string exactly on all 84 pages of
+    /// Business Foundation + System Application at 28.1.49838.53910 that carry it, and on a
+    /// compiled probe. See docs/dependency-page-properties.md#indirectpermissions.</para>
+    ///
+    /// <para><b>Two traps.</b> The mask is the INDIRECT bits whatever the letter's case —
+    /// <c>RIMD</c> and <c>rimd</c> both give 480 — which is the opposite of
+    /// <see cref="EmitInherentMask"/>'s case rule, so do not route this through
+    /// <see cref="TryDecodePermissionMaskLettersCore"/>. And BC writes nothing for a page with
+    /// no <c>SourceTable</c> even when it states <c>Permissions</c> (2 of 86 pages), which is why
+    /// the caller sits inside the source-table branch.</para>
+    ///
+    /// <para>Any entry this cannot read or resolve withdraws the WHOLE attribute, loudly: a
+    /// partial vector would grant a different permission set than the page declares.</para>
+    /// </summary>
+    private static void EmitSourceObjectIndirectPermissions(XmlWriter w, BcAppSymbolCache.PageSymbol page)
+    {
+        if (string.IsNullOrWhiteSpace(page.Permissions)) return;
+        var vector = TryBuildIndirectPermissionsVector(page.Permissions, ResolveTableIdByName, out var unreadable);
+        if (vector is null)
+        {
+            Console.Error.WriteLine(
+                $"[RecordPatches] page {page.Id} \"{page.Name}\": Permissions entry {unreadable} "
+                + "could not be read — IndirectPermissions omitted, so the page reads as declaring none");
+            return;
+        }
+        w.WriteAttributeString("IndirectPermissions", vector);
+    }
+
+    /// <summary>
+    /// The parse behind <see cref="EmitSourceObjectIndirectPermissions"/>, with the table
+    /// resolver injected so it is testable without a registered app. Null, with the offending
+    /// entry in <paramref name="unreadable"/>, when any entry is not
+    /// <c>tabledata &lt;name|id&gt; = &lt;letters from RIMD&gt;</c> or names no known table.
+    /// </summary>
+    internal static string? TryBuildIndirectPermissionsVector(
+        string stated, Func<string, int> resolveTableId, out string? unreadable)
+    {
+        unreadable = null;
+        var parts = new List<string>();
+        foreach (var entry in SplitOutsideQuotes(stated, ','))
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(
+                entry.Trim(), @"^tabledata\s+(?<name>""[^""]*""|[^=\s]+)\s*=\s*(?<mask>[A-Za-z]+)$",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (!m.Success) { unreadable = $"'{entry.Trim()}'"; return null; }
+
+            var name = m.Groups["name"].Value.Trim('"');
+            var tableId = int.TryParse(name, System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out var literal)
+                ? literal : resolveTableId(name);
+            if (tableId <= 0) { unreadable = $"'{entry.Trim()}' (no table named '{name}')"; return null; }
+
+            var mask = 0;
+            foreach (var c in m.Groups["mask"].Value)
+            {
+                var bit = char.ToLowerInvariant(c) switch { 'r' => 32, 'i' => 64, 'm' => 128, 'd' => 256, _ => 0 };
+                if (bit == 0) { unreadable = $"'{entry.Trim()}' (letter '{c}')"; return null; }
+                mask |= bit;
+            }
+            parts.Add(tableId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            parts.Add(mask.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        if (parts.Count == 0) { unreadable = "'(empty)'"; return null; }
+        parts.Add("0");
+        parts.Add("0");
+        return string.Join(", ", parts);
+    }
+
+    private static IEnumerable<string> SplitOutsideQuotes(string text, char separator)
+    {
+        var start = 0;
+        var quoted = false;
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (text[i] == '"') quoted = !quoted;
+            else if (text[i] == separator && !quoted)
+            {
+                yield return text[start..i];
+                start = i + 1;
+            }
+        }
+        yield return text[start..];
     }
 
     /// <summary>
