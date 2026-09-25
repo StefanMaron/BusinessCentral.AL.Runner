@@ -588,3 +588,37 @@ transcripts on one box) were deleted outright rather than moved, because they go
 - **#3923.** `~ExtensionRuntimeDeltasTests` returned 8 of 9 tests; mutating the correctly-named
   method gave 7 of 9 red.
 - **PR #3947.** Returning `null` from the `bool?` reader reddened all three tests.
+
+## Moved out of the rule to fit the always-loaded budget (#4542)
+
+The rule keeps each trap in one or two sentences with its citation; these are the details it
+used to carry inline.
+
+- **#4314.** `tools/mutation-verdict.py` could not read the many summary shapes `tools/test_*.py`
+  guards print, so it answered `3 unmeasured` for every one of them, greens included — which
+  reads as "your mutation was not measured, try again". `--exit <rc>` is the fix.
+- **#4343.** Five identical `Failed: 2` runs after a clean `--restore`, all `--no-build`; one
+  rebuild gave 2/2 green. It is the one trap in the rule that fails toward a **red**, so
+  "distrust a surprising green" does not catch it. Two traps in the stamp check were found by
+  controls rather than by its refusal arms: the mutated code usually lives in a dependency, so a
+  rebuild leaves the named test assembly untouched; and a mutation in a `.py` guard, a rule or a
+  manifest has no rebuild that could clear it, so the check skips those.
+- **#4343, the boundary.** Deleting the repository-root stop from `mutation-verdict.py`'s stamp
+  lookup left all 89 assertions green while the identical stop in `apply-mutation.py` was pinned;
+  the unguarded walk read a foreign worktree's stamp and refused an honest run. The obvious fix —
+  stop walking — passes the new test too, which is why both directions are pinned.
+- **PR #3947, the replacement mutations.** Inverting the boolean preserves `null`, so the
+  absent-case test correctly stays green — proving it is pinned to `null` rather than riding
+  along. Making the reader read the wrong one of two properties produced
+  `Expected: [90502] / Actual: [90501]`, validating that the fixture's two ids differ; a fixture
+  repeating one id would have passed the author's `? null : null` mutation.
+- **#3900.** Mutating a call site by text substitution gave `exit 1` with 10 `error CS` lines and
+  no `Total:`, measured twice on one guard in one hour, by an agent and its coordinator
+  independently.
+- **#3948.** The premise mutation read `Failed: 18` on a box with BC artifacts but no
+  `tools/engine-test-bootstrap.sh` run, and meant `Failed: 0` once bootstrapped. Sub-millisecond
+  durations and `REFUSING TO SKIP` do not discriminate, because a mutation of the guard itself
+  produces both and is a genuine red.
+- **PR #4003.** Duplicating an `insertRow` call left all 4 tests green; an AL probe printed
+  `company count = 1`; a mutation seeding a distinct company gave `Failed: 1, Passed: 3`. The
+  provider's `Insert` return value moved and would have diagnosed it more cheaply than the probe.

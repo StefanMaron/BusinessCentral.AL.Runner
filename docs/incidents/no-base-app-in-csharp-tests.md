@@ -67,3 +67,12 @@ turned out to need the floor — each needed one specific thing the floor happen
 `MissingTestDataDiagnosisTests` replacement asserts **two different** empty tables are each
 explained with their own id, a stronger claim than one hardcoded id could make. In three out of
 three cases it was cheaper to supply the property than to load the floor.
+
+## Moved out of the rule to fit the always-loaded budget (#4542)
+
+- `Fixtures/SubscriberScanAudit`: `EventSubscriberScanEquivalenceTests` drives the runner with
+  `AL_RUNNER_SUBSCRIBER_SCAN_AUDIT=1` and asserts over thousands of real `[NavEventSubscriber]`
+  methods across Base Application and System Application; its own fixture pays the floor once per
+  CI leg rather than once per test class.
+- #2364's unfinished-run lesson: a partial local run named some classes, and CI, running to
+  completion on every leg, found failures in further classes.

@@ -11,188 +11,100 @@ Every feature, fix, or mock change requires a test. No exceptions.
 - Negative: invalid input → specific error (`asserterror` + `Assert.ExpectedError('...')`).
 
 **Tests must prove, not just pass.** Assert concrete values, never `Assert.IsTrue(true, ...)`
-or bare `asserterror` without an expected message.
+or bare `asserterror` without an expected message. A test that passes identically with and
+without the fix is noise.
 
 The only valid exception is a "no-op stub" test where the *entire* claim is "this does not
 crash" — name it `*_NoThrow` / `*_IsNoOp` so the limited claim is explicit.
 
 ## Run the mutation; do not just ask the question
 
-"Would this test still pass if the implementation did nothing?" is a question this rule used
-to leave you to answer by reasoning. **Execute it instead**, once per guard or behaviour you
-are claiming to prove:
+"Would this test still pass if the implementation did nothing?" — **execute it rather than
+reason about it**, once per guard or behaviour you claim to prove, and once **per closed
+issue** (`batch-sibling-issues-by-file.md`):
 
 1. **Mutate the implementation, not the test** — delete the guard, invert the condition, or
    return the default.
-2. **Confirm the mutation LANDED** — re-read the mutated region or diff it. A mutation that
-   silently no-ops leaves the test **green**, which reads as "my test is broken" when it means
-   "I changed nothing".
-
-   `tools/apply-mutation.py` does this for you. Three codes are measured answers — **0 applied,
-   1 not applied, 2 ambiguous** — because a mutator that detects zero matches but not two has the
-   same hole one step along; **3 refused** is the fourth, and means nothing was measured at all
-   (a live backup, an I/O failure, bad usage). Never read a 3 as either a caught mutation or a
-   stale anchor. Prefer it to `sed`:
+2. **Confirm the mutation LANDED** — re-read or diff the mutated region. A mutation that
+   silently no-ops leaves the test green, which reads as "my test is broken" when it means "I
+   changed nothing". `tools/apply-mutation.py` does this: **0 applied, 1 not applied,
+   2 ambiguous**, and **3 refused** — nothing measured at all; never read a 3 as a caught
+   mutation or a stale anchor. Prefer it to `sed`:
 
    ```bash
    tools/apply-mutation.py <file> --anchor-file a.txt --replacement-file b.txt   # exit 0 = applied
    tools/apply-mutation.py <file> --restore
    ```
 
-   **After a review-driven repair, re-confirm every mutation still ANCHORS.** A repair that
-   touches the line a mutation anchors on invalidates that mutation, and the invalidation is
-   green — so "all rows identical to the previous revision" is exactly what a row that stopped
-   applying produces (#4316, measured on PR #4308). The lines a reviewer sends you back to change
-   are by construction the interesting ones, which are the lines the mutations target.
+   **After a review-driven repair, re-confirm every mutation still anchors** — the lines a
+   reviewer sends you back to change are the lines mutations target, and a mutation that stopped
+   applying is green (#4316).
 
    Force a clean rebuild when you mutated a build input (`.csproj`, an MSBuild target, a
-   generator), since an incremental build may skip the compile entirely.
+   generator); an incremental build may skip the compile entirely.
 
-   **And rebuild after `--restore` too, because the mutation is still in the binary until you
-   do.** `--no-build` then re-measures the mutant, and the red that produces is deterministic,
-   narrow, on the *right* arm for the hypothesis, and survives running the class alone — every
-   property that normally ends an investigation (#4343, measured: repeated identical reds
-   after a clean restore; one rebuild cleared them). It is the one trap in this section that
-   fails toward a **red**, so "distrust a surprising green" does not catch it, and the repo's own
-   engine-bootstrap ordering recommends `--no-build` elsewhere. `tools/mutation-verdict.py`
-   refuses (exit 3) a run whose output directory predates the last `--restore`, so you do not
-   have to remember; a `--restore` that cannot record the stamp refuses rather than reporting
-   success. Two traps, both found by controls rather than by the refusal arms: the mutated code
-   usually lives in a **dependency**, so the rebuild leaves the named test assembly untouched —
-   judge the directory, never one assembly; and a mutation in a file no build reads (a `.py`
-   guard, a rule, a manifest) has **no rebuild that could clear it**, so the check must skip
-   those rather than refuse forever.
-
-   Same root as the `-p:` row below (a binary that no longer matches the source), opposite
-   direction: that one strands the mutation *out* of the build and reads green, this one strands
-   it *in* and reads red.
-3. **Rebuild and re-run. Confirm RED — and that the RED is the assertion, not the build.**
-   A mutation that breaks the compile also exits non-zero, and a run with compile errors prints
-   no `Total:` line at all. Check the error text says `Assert`, not `error CS`. Restore.
+   **Rebuild after `--restore` too** — otherwise `--no-build` re-measures the mutant, a red
+   convincing enough to end an investigation wrongly (#4343). `tools/mutation-verdict.py`
+   refuses (exit 3) a run whose output directory predates the last `--restore`.
+3. **Rebuild and re-run. Confirm RED — and that the RED is the assertion, not the build**
+   (`Assert` in the error text, not `error CS`; a compile failure prints no `Total:`). Restore.
 4. **Report both numbers in the PR body** — `Failed: 1, Passed: 7` → `Failed: 0, Passed: 8`.
    A mutation whose result nobody can see is the same as one nobody ran.
 
-Once **per closed issue**, matching the per-issue RED→GREEN that
-`batch-sibling-issues-by-file.md` already requires.
+**Citation:** #3819 and #3882 — both unproven guards found only by an executed mutation
+(`docs/incidents/tdd.md`).
 
-**Citation.** Two instances in one session, both caught only by an executed mutation
-(`docs/incidents/tdd.md`). #3819's fixture *constructed* the relationship it was meant to prove
-— `FakeExpression(id, name)` asserting `Name` holds the raw AL identifier, which it does not —
-so every test passed against a join that resolved nothing for any declaration. #3882 carried
-two guards at review time: mutating `DependencyLoader.LoadOne` went red;
-mutating `DependencyMetadataProducer.Ensure` left **every test green** — a gap found in review and
-fixed before merge, which is the outcome this step exists to produce.
+## The traps
 
-**Trap: a test that names the thing is not a test that drives it.** #3882's second guard had
-two references to `METADATA-EMIT-EXCLUDED` — one asserting the naming convention, one passing it
-as routing data. Both mention the stage; neither reaches the `throw`. A grep for the symbol
-finds them and reads as coverage, which is why the mutation is the check and the grep is not.
+**A test that names the thing is not a test that drives it.** A grep for the symbol finds
+assertions about a naming convention and reads as coverage; the mutation is the check (#3882).
 
-**Trap: one red proves something is covered, not WHICH thing.** A fix that feeds two
-observables owes a mutation per observable. #3917 fixed a derivation reaching both an equivalence
-projection and the AL-observable virtual table; reverting **only** the AL-observable half left
-**every test green**, because all the new test files reached the projection alone. Its own body
-argued the two-rendering point correctly and it still tested one — so awareness does not close
-this, and a single red that says "the fix is covered" is the shape to distrust (#3912).
+**One red proves something is covered, not WHICH thing.** A fix feeding two observables owes a
+mutation per observable (#3917: reverting only the AL-observable half left 252 tests green).
 
-**Trap: a mutation that breaks the build proves nothing, and it fails LOUDLY.** The landing
-check above catches the silent direction; this is the other one. Mutating a call site by text
-substitution produced `exit 1` with **`error CS`** lines and no `Total:` — a broken build
-wearing the shape of a caught regression. Measured twice on one guard in one hour (#3900), by an
-agent and its coordinator independently. Prefer mutating a **value** the assertion reads over
-editing code structure, and read the error text before believing a red.
+**A mutation that breaks the build proves nothing, and fails LOUDLY** — `exit 1`, `error CS`
+lines, no `Total:`. Prefer mutating a **value** the assertion reads over editing code
+structure (#3900).
 
-**Trap: a red from the engine-bootstrap guard prints `Total:` and reads as a caught regression.**
-On a box with BC artifacts but no `tools/engine-test-bootstrap.sh` run, every `bc-engine-serial`
-test fails before doing any work, so the missing-`Total:` tell above does not fire: #3948's
-premise mutation read as a row of failures and meant `Failed: 0` once bootstrapped. Sub-millisecond
-durations and the text `REFUSING TO SKIP` are not enough either, because a mutation of the guard
-itself produces both and is a genuine red. Pipe the run through `tools/mutation-verdict.py` before
-believing a red: exit 1 is a real one, 4 a build break, 5 the engine guard, 3 unmeasured (#3957;
-`docs/incidents/tdd.md`).
+**A red from the engine-bootstrap guard prints `Total:` and reads as a caught regression**
+(#3948). Pipe the run through `tools/mutation-verdict.py` before believing a red: exit 1 real,
+4 a build break, 5 the engine guard, 3 unmeasured (#3957).
 
-**A `tools/test_*.py` guard is a PROCESS, not a `dotnet test` suite, and needs `--exit`.** Those
-guards print many different summary shapes, so the tool cannot read them and answered `3
-unmeasured` for every one — including greens — which is indistinguishable from "your mutation was
-not measured, try again" (#4314). Pass the guard's exit code:
+**A `tools/test_*.py` guard is a process — pass its exit code:**
 
 ```bash
 python3 tools/test_no_racing_label_edit.py > g.txt 2>&1; rc=$?
 tools/mutation-verdict.py --exit $rc g.txt
 ```
 
-Trap: **exit 1 is ambiguous** — an unhandled Python exception exits 1 too, so a guard that
-crashed before judging anything looks exactly like one that caught your mutation. The tool
-downgrades a red whose log carries a traceback; do not hand-read that number instead.
+Exit 1 is ambiguous there — a Python traceback exits 1 too; the tool downgrades a red whose log
+carries one, so do not hand-read the number (#4314).
 
-**Trap: a failed mutation and a working guard look identical.** Measured twice in one session
-(#3895): a backslash edit that a heredoc collapsed, so the file never changed; and a
-`-p:` override whose build was incremental and skipped `CoreCompile`, reporting the clean
-number. A failed *search* returns nothing and looks like a finding; a failed *mutation* returns
-green and looks like the system working.
+**A failed mutation and a working guard look identical** — a heredoc that collapsed the edit,
+a `-p:` override whose incremental build skipped `CoreCompile` (#3895).
 
-**Trap: a mutation can LAND, EXECUTE, and still change nothing — because the system absorbs
-it.** The traps above are mutations that never reached the code. This one reaches it and runs,
-and the green is still not about your test. Measured in review of #4003: duplicating an
-`insertRow` call left every test passing, which reads as "the `Company.Count()` assertion proves
-nothing". An AL probe printed `company count = 1` — BC's provider `Insert` **refuses a
-duplicate primary key**, returning `false` rather than adding a row, so the second call was a
-genuine no-op *for the row count* and no second row ever existed. Note what that leaves: a
-rejected operation and an idempotent one are indistinguishable through `Count()` and quite
-different through the **return value**, which did move and would have diagnosed this more
-cheaply than the probe did. A mutation
-seeding a *distinct* company went red, and the test was sound all along.
+**A mutation can land, execute, and still change nothing, because the system absorbs it** —
+deduplicates, clamps, caches or refuses it (#4003: a duplicate-key `Insert` returned `false`).
+Confirm the mutation changed the **observable the assertion reads**, not merely the source.
 
-So step 2's landing check is necessary and not sufficient: confirm the mutation changed the
-**observable the assertion reads**, not merely the source. Prefer mutating a value the assertion
-consumes over duplicating or removing a call whose effect the system may deduplicate, clamp,
-cache or ignore.
+**A filter that matches nothing is a silent pass** — `No test matches the given testcase
+filter` exits 0. Quote the `Total:` line from every run; no `Total:` means unverified. **The
+harder half: one that matches the WRONG thing** — a filter missing a second class in the file,
+a mutation aimed at a method whose name is a prefix of the one the tests call (#3923). Count the
+tests you expected, and after a green mutation check the edited symbol is the one the test path
+calls.
 
-**Trap: a filter that matches nothing is a silent pass.** `dotnet test --filter
-"FullyQualifiedName~SomeTests"` prints `No test matches the given testcase filter` and **exits
-0**. Measured on #3882, where the filename and the four class names inside it differ. So quote
-the `Total:` line from every run, and treat a run with no `Total:` line as *unverified* rather
-than green — the exit code cannot tell you the difference.
+**Choose the mutation to test a property, not to produce a red.** One that reds everything
+proves coverage exists; one that reds exactly the right subset proves the tests discriminate
+(PR #3947). **Re-running the author's mutation is the weakest check a reviewer can make** — pick
+your own.
 
-**The harder half: a filter or a mutation target that matches the WRONG thing rather than
-nothing.** A zero is at least conspicuous; a plausible number is not. Both measured on #3923 in
-one pass: `~ExtensionRuntimeDeltasTests` returned **all but one** of the file's tests, because it declares a second
-class (`…BcReaderTests`) the filter excluded — and a mutation aimed at
-`TryBuildExtensionRuntimeDeltasXml` left every test green, because the tests call
-`TryBuildExtensionRuntimeDeltasXmlForApp`, whose name has the first as a **prefix**. Mutating the
-right one turned most of them red.
+**When one side of a two-sided boundary is pinned, ask whether the other is** — a reader and a
+writer sharing a rule usually get one test. Pin both directions: the walk stops at the boundary
+*and* still finds what is inside it (#4343).
 
-So: **count the tests you expected**, and after a mutation that leaves things green, check the
-symbol you edited is the one the test path calls before concluding the test is weak.
-
-**Trap: CI catches the opposite error, never this one.** A test that fails when it should pass
-is red within minutes; one that passes when it should fail is caught only if somebody looks,
-and until then it reads as coverage while protecting nothing.
-
-**Choose the mutation to test a property, not to produce a red.** A mutation that reds *everything*
-proves coverage exists; one that reds *exactly the right subset* proves the tests discriminate — and
-only the second is worth anything on a coverage PR. Measured on PR #3947, where a reviewer replaced
-both of the author's mutations and each replacement established something the original could not:
-returning `null` from a `bool?` reader reds every test, while **inverting** the boolean preserves
-`null`, so the absent-case test correctly stays GREEN — which is what proves that test is pinned to
-`null` rather than riding along. And `? null : null` on a reader reds its tests whatever the fixture
-holds, while making the reader **read the wrong one of two properties** produced
-`Expected: [90502] / Actual: [90501]`, validating that the fixture's two ids are actually distinct —
-a fixture with one id repeated would have passed the author's mutation and looked covered.
-
-**Corollary: re-running the author's mutation is the weakest check a reviewer can make.** It tests
-the same hypothesis by the same route. Pick your own.
-
-**And when one side of a two-sided boundary is pinned, ask immediately whether the other is.** A
-reader and a writer sharing a rule — a path convention, a name, a stop condition — usually get one
-test, and the asymmetry is invisible from either file alone. Measured (#4343): deleting the
-repository-root stop from `mutation-verdict.py`'s stamp lookup left **every assertion green**,
-while the identical stop in `apply-mutation.py` was pinned; the unguarded walk then read a foreign
-worktree's stamp and refused an honest run. Trap: the obvious fix — stop walking — passes the new
-test too, so pin **both** directions, that the walk stops at the boundary *and* still finds what is
-inside it.
-
-A required step, not a tool: no framework, no CI job. One rebuild.
+A required step, not a tool — one rebuild. CI catches a test that fails when it should pass,
+never one that passes when it should fail. Measurements: `docs/incidents/tdd.md`.
 
 ## Sister rules
 

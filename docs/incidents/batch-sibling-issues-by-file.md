@@ -74,3 +74,10 @@ because each needs a slightly different edit.
 
 Nobody writes ten proving tests to pad a PR, and an agent that *can* write ten has demonstrated
 the fold was genuine.
+
+## Moved out of the rule to fit the always-loaded budget (#4542)
+
+- #3676 moved the virtual-table if-chain into `RecordPatches.DataAccessDispatch.cs`, so the rest
+  of `RecordPatches.cs` stopped being part of that collision.
+- The cap section's origin: a guessed cap is what it replaced; the two non-arbitrary limits are a
+  proving test per closed issue and one coherent change a reviewer judges from the diff.

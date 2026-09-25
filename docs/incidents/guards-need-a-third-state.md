@@ -122,3 +122,28 @@ transcripts on one box) were deleted outright rather than moved, because they go
 
 - **#4147 / PR #4192.** The unfiltered bind printed `rows=29 passes=NULL`, and four corpus arms
   read `Actual:<0>`.
+
+## Moved out of the rule to fit the always-loaded budget (#4542)
+
+- **`TestArtifacts.SkipIfMissingIn`'s own comment**, which the rule used to quote: *"if the
+  workflow moves where it provisions artifacts, `Present` answers false for EVERY test, all of
+  them skip — visibly, with an accurate reason — and the leg is still GREEN."* A correct per-test
+  answer, and the run above it still asserts nothing.
+- **The origin of the three-way table (#3299, #3681, PR #3683).** Two gate scripts hardcoded a
+  submodule path tied to nothing in `.gitmodules`, so a rename or a typo made `SUBMODULE_PATH`
+  match nothing — reported as the success state, a green tick forever. Both scripts went with
+  the corpus pin at #3737; the shape they taught stays.
+- **`agent_self_freshness.py`'s split (#3296).** CI checks out with `fetch-depth 1`, so a local
+  `origin/main` ref never exists on any run while the remote answers fine; conflating that with
+  `unvouched` refused every CI run in the first version of the fix.
+- **The reflection bind (#4147, PR #4192).** `DataHelper.PassesFieldFilters` is a static
+  extension method; BC's decompiled body reads `item2.PassesFieldFilters(...)`. The null was
+  treated as optional, `Record.SetRange` narrowed nothing, `FindFirst` answered the page's first
+  row for every query — `passes=NULL`, corpus arms reading `Actual:<0>`. The pull toward the
+  wrong answer sounded like the absent-stays-a-pass constraint: "a missing narrowing step is
+  better than no table at all".
+- **The neighbour (#3856).** #3361 part 2's summary lost its `fail` key; the rule once recorded
+  it as unreachable because a `summary.get("pass") != want` comparison "fails loudly on a
+  `None`". The comparison is against `counted`, and on a summary truncated after `pass:` both
+  guards pass and `preflight.py` reported a reproduced baseline for a run that never said
+  whether anything failed. Three independent readers had credited the neighbour.

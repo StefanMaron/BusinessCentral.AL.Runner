@@ -57,3 +57,15 @@ actively in force.
 **The class was checked, not just the instance.** `git ls-files --others --exclude-standard
 .claude/` returned exactly one path — this file — so no other rule, skill, agent or hook was in
 the same state.
+
+## Moved out of the rule to fit the always-loaded budget (#4542)
+
+- **#4304.** Four agents across both types reported the missing `mcp__github__search_issues` in
+  one day, and each correctly declined to claim a search it had not run; nothing compared the
+  duty against the allowlist, so nothing went red.
+- **#4449.** On the box running the unattended loop, `.mcp.json` declares only `bc-decompiler`,
+  so `mcp__github__*` does not exist there and `ToolSearch` answers `No matching deferred tools
+  found`, while every "is it listed?" check passes.
+- The label case: `area: metadata-conversion` had been applied from the
+  `blocked-by: metadata-emitter` label, and #3568 was the same measurement programme as the
+  issue it was missing from.

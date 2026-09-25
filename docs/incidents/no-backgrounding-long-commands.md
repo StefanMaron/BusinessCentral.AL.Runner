@@ -31,3 +31,10 @@ In every documented stall this caused, what cost real work was an unpushed workt
 turn: an agent that had pushed lost a turn; an agent that had not lost the change. The harness
 shape has bitten too — an agent ran `gh run watch` in the foreground, the harness backgrounded it
 and promised a notification, and the agent ended its turn waiting for one that could never arrive.
+
+## Moved out of the rule to fit the always-loaded budget (#4542)
+
+- **#4288.** Every CI wait the harness auto-backgrounded had `run_in_background` unset, so a hook
+  gated on that flag refused none of them; the hook now reads the requested duration. The 600s
+  cap mechanism is stated once, in this rule; `ci-verdicts.md` §0 keeps only what the wrapper's
+  exit code does to a verdict.

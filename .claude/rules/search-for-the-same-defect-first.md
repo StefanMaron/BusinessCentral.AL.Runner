@@ -31,26 +31,16 @@ which every agent this rule binds must therefore be able to call:
 Requires-Tool: impl-agent mcp__github__search_issues
 Requires-Tool: reviewer mcp__github__search_issues
 
-Those two lines are checked by `.github/scripts/check_agent_mcp_tools.py`, which fails the build
-if a named agent's `tools:` allowlist cannot discharge the duty this rule imposes. Four agents
-across both types reported the gap in one day and each correctly declined to claim a search it
-had not run (#4304); nothing compared the duty against the allowlist, so nothing went red.
+`.github/scripts/check_agent_mcp_tools.py` checks those two lines against each agent's `tools:`
+allowlist, and fails the build if the allowlist cannot discharge this duty (#4304).
 
-**Being allowlisted is necessary and not sufficient, so use whichever instrument your session
-actually has.** An allowlist entry names a tool; it does not conjure the server that provides
-one, and when none does, the call resolves to nothing while every "is it listed?" check still
-passes (#4449). Measured on the box running the unattended loop: `.mcp.json` declares only
-`bc-decompiler`, so **`mcp__github__*` does not exist there at all** and `ToolSearch` for it
-answers `No matching deferred tools found`. `gh issue list --search` searches bodies and is the
-instrument in a CLI session; the MCP tool is the one for a web or remote session, which has no
-`gh`. Neither is a universal answer, and **an agent that cannot run either has not discharged
-this rule and says so** rather than reporting a search it did not run.
-
-That second layer is now measured rather than assumed: the same script reads `.mcp.json` and
-reports **exit 3 — could not be measured** when a `Requires-Tool:` target's server is configured
-nowhere. **It cannot fire on CI**, because `.mcp.json` is gitignored and therefore absent on
-every run there, and an absent file is a legitimate pass rather than a finding
-(`guards-need-a-third-state.md`). So it is a check for the box an agent is really running on:
+**Being allowlisted is necessary and not sufficient**: an allowlist entry does not conjure the
+server that provides the tool, and on a box whose `.mcp.json` declares no GitHub server the call
+resolves to nothing (#4449). Use whichever instrument your session actually has — `gh issue list
+--search` in a CLI session, the MCP tool in a web or remote one — and **an agent that can run
+neither has not discharged this rule and says so**. The same script reports exit 3 when a
+target's server is configured nowhere; it cannot fire on CI, where the gitignored `.mcp.json` is
+absent (a legitimate pass), so run it on the box the agent really uses:
 
 ```bash
 python3 .github/scripts/check_agent_mcp_tools.py --mcp-config /path/to/.mcp.json
@@ -62,13 +52,10 @@ outcomes are useful; a silent overlap is not.
 
 ## Why this is not covered by the labels
 
-A label is only as good as the sweep that applied it, and sweeps are built from whatever the
-sweeper happened to key on. Measured on this repository: `area: metadata-conversion` had been
-applied from the `blocked-by: metadata-emitter` label, so it inherited that label's blind spot
-and **three issues on the same route carried no area label at all** — #3568, #3590 and #3491,
-and #3568 was the same measurement programme as the issue it was missing
-from. Each would have been found by a *different* one of the four keys above, which is why the
-rule asks for three. Derivation: docs/incidents/search-for-the-same-defect-first.md.
+A label is only as good as the sweep that applied it: an area label derived from another label
+inherited its blind spot, and three issues on the same route carried none (#3568, #3590, #3491) —
+each findable by a *different* one of the four keys, which is why the rule asks for three.
+Derivation: docs/incidents/search-for-the-same-defect-first.md.
 
 So: **the labels are a starting point, never the answer to "has this been reported?"** Search the
 text.

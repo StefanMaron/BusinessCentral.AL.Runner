@@ -15,17 +15,16 @@ the assignee's login is theirs. The answer changes what the assignee is worth:
 | another loop on the **same** account | **nothing** — same login, so it cannot say *which* loop | read on — the open-PR check below is what resolves it |
 | a loop on a **different** account | **everything** — a real boundary, and it is authoritative | **stop**, per `branch-and-pr.md`'s assignee boundary; nothing below waives it |
 
-Measured 2026-09-22: remote `agent/fbk-*/…` branches and `agent: fbk-*` labels from a second
-agent-running account — so the cross-account case is real, not hypothetical.
+The cross-account case is real, not hypothetical: a second account's `agent/fbk-*/…` branches
+and `agent: fbk-*` labels are on the remote (#3275).
 
 **The branch prefix is the same discriminator, and it is the stronger one**: `agent/fbk-2/…`
 versus `agent/stma-auto-1/…` cannot be rewritten by another loop, where a label can.
 `orchestrating-a-session` already arms on it ("Check the **branch prefix**, never the author
 field") for this exact reason — one mechanism, two rules.
 
-**Trap: it is the ACCOUNT that discriminates, never whether the claimant looks like a bot.** A
-`fbk-*` label is an agent pool, a human maintainer is a person, and both are "not you"; the
-boundary is the login, and an agent may not waive it in either case.
+**Trap: it is the ACCOUNT that discriminates, never whether the claimant looks like a bot** —
+an agent pool and a human are both "not you", and an agent may not waive the boundary for either.
 
 ## The rest of this rule is the SAME-account case
 
@@ -75,18 +74,11 @@ gh pr list --repo StefanMaron/BusinessCentral.AL.Runner --state open --limit 100
 `closingIssuesReferences` is GitHub's own parse of the PR, so it reflects what will actually
 close on merge — not a grep of the body.
 
-**But the parse LAGS the PR's creation, so a fresh PR can read as claiming nothing.** Measured
-on PR #4119: created through the REST endpoint, `closingIssuesReferences` came back **empty**
-and resolved to `[4111]` only **seconds** later, with a correct closing declaration for
-that issue in the
-body throughout. Nothing reports the pending state — an empty array is what a PR closing no
-issue also returns.
-
-That matters here specifically, because this rule's whole purpose is deciding whether an issue
-is taken: an empty read on a PR opened seconds ago is **"not parsed yet"**, not "free", and
+**But the parse LAGS the PR's creation, so a fresh PR can read as claiming nothing** (PR #4119:
+empty, then the right issue seconds later). An empty array is also what a PR closing no issue
+returns, so an empty read on a PR opened seconds ago is **"not parsed yet"**, not "free" —
 treating it as free is how two agents claim one issue. On a zero result for an issue you are
-about to claim, confirm it a second way before believing it — the body carries the declaration
-immediately even when the parse has not caught up:
+about to claim, confirm it a second way — the body carries the declaration immediately:
 
 <!-- Recipe-pinned-by: tools/test_closing_ref_confirm_recipe.py -->
 ```bash
@@ -99,12 +91,7 @@ anywhere in the text, including a body that merely *documents* one. Even substit
 over-report, because a PR quoting this rule carries the keyword too — which is why the check is
 a **confirmation of a zero**, never a claim on its own. It fails safe in that role: over-reporting
 "taken" costs a second look, while the false *negative* it exists to catch costs two agents one
-issue. Measured while adding this
-section: the generic form answered `true` on a pull request whose only declaration was
-`Part of #4059`, because the body quoted this very recipe.
-
-Same shape as every other trap in this repository: the call succeeds, the answer is
-well-formed, and it is about a moment rather than about the question you asked.
+issue.
 
 **No `gh` in web/remote sessions** (`github-access.md`). There, list open PRs with
 `mcp__github__list_pull_requests` and read each one's linked issues; the rule is the same, the
@@ -127,10 +114,8 @@ a lock.
 
 ## The same question about REVIEW, where the three signals say nothing
 
-The signals above decide who is **implementing** an issue. None of them answers who is
-**reviewing** a pull request: `status: review-ready` means *ready for review* and is never
-rewritten while a review is in flight, so a PR reads identically whether nobody has looked at it
-or three agents already have.
+None of the signals above says who is **reviewing** a pull request: `status: review-ready` is
+never rewritten while a review is in flight.
 
 **Read the signal before dispatching a reviewer**, from the comment stream the verdict already
 lives in:
@@ -139,30 +124,24 @@ lives in:
 tools/review-claim.py --pr <N>     # 0 free, 1 claimed or already reviewed, 3 unreadable
 ```
 
-**And post a claim before you start reviewing**, because the duplication is concentrated in the
-window a completion-time signal cannot cover:
+**And post a claim before you start reviewing:**
 
 ```bash
 tools/review-claim.py --pr <N> --post --agent-id <YOUR-ID>
 ```
 
-Measured over recent pull requests on 2026-09-19, counting only repeats on the **identical
-head**, where nothing about the PR changed between the passes: **two or more verdicts on one head
-were common**, and **most such pairs landed closer together than one review takes**. So the second
-reviewer usually started while the first was still running — #4306 has two verdicts on
-`4cfe233e` minutes apart — and a `status: reviewed` label written when a review
-*finishes* would have been too late for nearly all of them (#4284).
+Repeat verdicts on an identical head were common, and most pairs landed closer together than
+one review takes — the second reviewer started while the first was still running, so a label
+written when a review *finishes* would have been too late (#4284; measurements in
+`docs/incidents/check-open-prs-before-claiming.md`).
 
-**Trap: this reports, it never blocks, and that is deliberate.** A second pass is sometimes
-right — a later pass on #4281 produced findings the earlier ones did not. What was missing is
-not a lock but a signal, so that spending a second review is a decision someone made rather than
-an accident. The tool has no flag to route around, because nothing is in the way.
+**Trap: this reports, it never blocks, and that is deliberate** — a second pass is sometimes
+right (#4281), so what was missing was a signal, not a lock.
 
-**Second trap: a claim is about a HEAD, and it expires.** A claim naming a superseded head, or
-one older than `tools/review-claim.py`'s `--max-age`, is reported and does not hold — a reviewer that died mid-pass must not
-lock a PR forever, which is the same judgement the abandoned-draft clause above makes. And exit 3
-is not exit 0: "nobody is reviewing this" and "I could not find out" send a coordinator to
-opposite actions.
+**Second trap: a claim is about a HEAD, and it expires** — one naming a superseded head, or older
+than `tools/review-claim.py`'s `--max-age`, does not hold, so a dead reviewer cannot lock a PR.
+And exit 3 is not exit 0: "nobody is reviewing" and "I could not find out" call for opposite
+actions.
 
 ## The claim signals, and what each is worth
 

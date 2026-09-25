@@ -41,32 +41,20 @@ one.
 
 ## When the Linux tier is the thing in doubt, ask Windows — do not reason about it
 
-**Dispatch the Windows nightly against the branch and let it adjudicate.** The ordering is the
-repository owner's standing instruction, and `.github/workflows/nightly-windows.yml`'s header
-has carried it since corpus issue #213:
+**Dispatch the Windows nightly against the branch and let it adjudicate.** The owner's standing
+instruction, in `.github/workflows/nightly-windows.yml`'s header since corpus issue #213:
 
 > **The corpus pins what the Windows pipeline says. `MsDyn365Bc.On.Linux` and AL Runner
 > follow it — never the reverse.**
 
 So: **a Windows failure is a real failure. A Linux-only failure is an image bug.**
 
-**On a corpus PR, label it:**
-
-```bash
-gh pr edit <N> --repo StefanMaron/BusinessCentral.AL.Language.Tests \
-  --add-label run-nightly-windows
-```
-
-A `pull_request` event reads the workflow **file** from the base branch and runs it against
-**your PR's merge commit**, so the label adjudicates your tests using `master`'s CI.
-`workflow_dispatch` takes both from the ref, so on a branch predating a fix to the nightly it
-re-runs the broken version and the failure looks like a tier fault. Dispatch only for a ref
-with no pull request:
-
-```bash
-gh workflow run 351779742 --repo StefanMaron/BusinessCentral.AL.Language.Tests \
-  --ref <branch> -f bc_version=28.4 -f artifact_type=sandbox -f country=w1
-```
+**On a corpus PR, add the `run-nightly-windows` label** — a `pull_request` event runs the
+workflow file from the base branch against your PR's merge commit, so it adjudicates with
+`master`'s CI. **Dispatch only for a ref with no pull request**: `workflow_dispatch` takes the
+workflow from the ref too, so a branch predating a fix to the nightly re-runs the broken version
+and the failure looks like a tier fault. Both commands: skill `reading-ci-runs`, § "Asking the
+Windows nightly".
 
 Four outcomes, and only the first two need anyone to do anything here:
 
@@ -80,54 +68,24 @@ Four outcomes, and only the first two need anyone to do anything here:
 A red corpus leg on a UI-adjacent surface looks like it needs analysis and usually needs a
 dispatch.
 
-**The fourth row is the one that bites** (corpus #288). A run that dies before executing a test
-still reports `conclusion: failure`, so read the log rather than the conclusion:
-
-```
-##[error]parsed 0 tests from the supplied XUnit files. That is not a green run -- it means the
-         tests never executed, or the result file never got written. Refusing to report a verdict.
-```
-
-**A `failure` with zero tests parsed is not Windows disagreeing with you; it is Windows not
-having been asked.** Do not re-dispatch to see whether it clears: two identical failures
-minutes apart are a deterministic fault, and another attempt spends an hour of the account's
-shared Actions queue reproducing it.
+**The fourth row is the one that bites** (corpus #288): a run that dies before executing a test
+still reports `conclusion: failure`, and its log says `parsed 0 tests from the supplied XUnit
+files`. **That is Windows not having been asked, not Windows disagreeing.** Do not re-dispatch
+to see whether it clears — two identical failures minutes apart are a deterministic fault, and
+each attempt spends the account's shared Actions queue.
 
 **And the conclusion lies in BOTH directions, so read the run's own summary, never
-`conclusion`.** A `success` conclusion can sit directly above real BC failures, and **two
-independent mechanisms put it there** — only the second explains the conclusion itself:
+`conclusion`.** A `success` can sit directly above real BC failures (run `34736501961`), for two
+intended reasons: the workflow is deliberately not a required context, and the test step never
+fails — `Run-TestsInBcContainer -returnTrueIfAllPassed` **returns `$false`** on failing tests and
+the call is piped to `| Out-Null`. The `catch` beside it covers exceptions only, so **do not go
+looking for a warning to detect swallowed failures — there is none** (derivation:
+`docs/incidents/ask-the-corpus-before-claiming-bc-behavior.md`). The summary block — headline
+counts, a row per failure, the exact BC build and artifact URL — is the verdict; `conclusion`
+only says whether the workflow completed.
 
-- the workflow is **deliberately not a required status context** (its header says so in
-  capitals), so a red never blocks a merge;
-- the test step **never fails in the first place**: `Run-TestsInBcContainer` is called with
-  `-returnTrueIfAllPassed`, so a failing test makes it **return `$false`** rather than throw —
-  and the call is piped to `| Out-Null`, which discards that return value. The job therefore
-  succeeds. There is a `catch` beside it, but it covers a genuine exception and **does not fire
-  on failing tests**: measured on run `34736501961`, whose summary reports failures and
-  whose log contains **no** `::warning::Run-TestsInBcContainer` line. Do not go looking for a
-  warning to detect swallowed failures — there is none.
-
-Both are intended. The header states the cost the design accepts: *"if the license drifts, it
-re-reports those as failures forever and everyone learns to ignore it."* Measured on run `34736501961`
-(corpus `6aaac721`): both jobs `success`, and its own summary reads, in this shape,
-
-<!-- Recipe-unpinned: quoted OUTPUT, not a command -- this block is the nightly's own summary text, reproduced so a reader recognises it; there is nothing here to execute -->
-```
-**<P> passed, <F> failed, 0 skipped, <T> total.**
-```
-
-with a non-zero failure count and the named failures underneath, among them the very claim the
-runner PR reading that run was trying to settle. Both directions were measured the same night — a `failure` that ran
-nothing (`Import-Module BcContainerHelper` finding no module, corpus #343) and this
-`success` over real failures.
-
-The summary block is the verdict: it prints the headline counts, a row per failure with the
-message measured on that run, and the exact BC build and artifact URL it used. `conclusion`
-tells you whether the workflow completed, which is a different question from what BC answered.
-
-**It adjudicates; it does not gate.** The nightly is slow and is deliberately not a
-required status context, so the corpus's own required legs remain the merge gate either way
-(`verify-execution-not-the-tick.md` § "Which legs were ever going to run it").
+**It adjudicates; it does not gate.** The corpus's own required legs remain the merge gate
+either way (`verify-execution-not-the-tick.md` § "Which legs were ever going to run it").
 
 **Do not adjust a corpus assertion to match the Linux tier, and never to match the runner.**
 The second is the more tempting error, because it turns a red leg green and looks like
@@ -167,15 +125,12 @@ surface into a measurement of the patch, and the green direction is the one nobo
 test asserting "nothing happens" records the patch as BC behaviour (#2986).
 
 Before resting a UI-side claim on a corpus result, read `src/StartupHook/StartupHook.cs` in
-`StefanMaron/MsDyn365Bc.On.Linux` for the surface you are asking about. The same applies off
-the UI: Windows identity (`ALDatabase.ALSid`, `WindowsPrincipal`), report rendering
-(`CustomReportingServiceClient`), encryption key resolution, Azure AD and service topology are
-all patched there. The list, with patch numbers, is in `docs/upstream-corpus-workflow.md` §
-"How to find out whether a surface you care about is patched" — and it is why "the bc-linux
-container passes it" is not by itself evidence of a runner gap when triaging Microsoft's test
-buckets (#2314). `docs/upstream-corpus-workflow.md` § "What the corpus tier can and cannot
-adjudicate" has the worked case, what remains out of reach, and the `SingleInstance`-probe
-technique for an observable a rollback would otherwise destroy.
+`StefanMaron/MsDyn365Bc.On.Linux` for that surface. Off the UI too: Windows identity, report
+rendering, encryption keys, Azure AD and service topology are patched — which is why "the
+bc-linux container passes it" is not by itself evidence of a runner gap (#2314). The list is in
+`docs/upstream-corpus-workflow.md` § "How to find out whether a surface you care about is
+patched"; § "What the corpus tier can and cannot adjudicate" has the worked case and the
+`SingleInstance`-probe technique.
 
 ## When no verdict is available
 
