@@ -888,6 +888,87 @@ public sealed class ExtensionRuntimeDeltasTests
         finally { Directory.Delete(dir, recursive: true); }
     }
 
+    /// <summary>
+    /// A member NESTED inside an added group renders ITS OWN stated properties, not its
+    /// parent's and not none (#4508). This is what <c>CollectDeclaredProperties</c>' recursion
+    /// is for; without it a nested member still renders (the name walk recurses separately) but
+    /// with no stated attributes at all.
+    ///
+    /// <para>Shape copied from Base Application 28.1.49838.53910's pageextension 9806
+    /// "Approval Job Queue Entry Card": an <c>addafter("Job &amp;Queue")</c> adding group
+    /// "Request Approval" (Kind 1) whose two actions sit under the group's own <c>Actions</c>
+    /// array, each with its own <c>Properties</c> bag. Nesting is the common case there, not an
+    /// edge: 183 of Base Application's 570 added pageextension members are nested, and they
+    /// state 479 of the properties this render reads.</para>
+    /// </summary>
+    [Fact]
+    public void A_member_nested_in_an_added_group_renders_its_own_stated_properties()
+    {
+        var dir = TestScratch.Dir("al-runner-extension-runtime-deltas-nested");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var appPath = WriteAppWith(dir, """
+                {
+                  "RuntimeVersion": "17.0",
+                  "PageExtensions": [
+                    {
+                      "Id": 88380912,
+                      "Name": "Nested Group Ext",
+                      "TargetObject": "ERD Target Page",
+                      "ActionChanges": [
+                        { "Anchor": "Job &Queue", "ChangeKind": 4,
+                          "Actions": [
+                            { "Kind": 1,
+                              "Actions": [
+                                { "Kind": 2, "Id": 640938021, "Name": "SendApprovalRequest",
+                                  "Properties": [ { "Name": "ApplicationArea", "Value": "#Basic,#Suite" },
+                                                  { "Name": "Caption", "Value": "Send A&pproval Request" },
+                                                  { "Name": "Image", "Value": "SendApprovalRequest" },
+                                                  { "Name": "ToolTip", "Value": "Request approval of the job queue entry." } ] },
+                                { "Kind": 2, "Id": 640938022, "Name": "CancelApprovalRequest",
+                                  "Properties": [ { "Name": "ApplicationArea", "Value": "#Basic,#Suite" },
+                                                  { "Name": "Caption", "Value": "Cancel Approval Re&quest" },
+                                                  { "Name": "Image", "Value": "CancelApprovalRequest" },
+                                                  { "Name": "ToolTip", "Value": "Cancel the approval request." } ] }
+                              ],
+                              "Properties": [ { "Name": "Caption", "Value": "Request Approval" },
+                                              { "Name": "Image", "Value": "SendApprovalRequest" } ],
+                              "Id": 640938020, "Name": "Request Approval" }
+                          ] }
+                      ]
+                    }
+                  ]
+                }
+                """);
+
+            var actions = Render(appPath, "Page", 88380912)!
+                .Root!.Elements($"{Ns}ActionAdd").Elements($"{Ns}Actions")
+                .ToDictionary(a => a.Attribute("ID")!.Value);
+            Assert.Equal(new[] { "640938020", "640938021", "640938022" }, actions.Keys.Order());
+
+            // The group keeps its own two values, and gains no ApplicationArea: that is stated
+            // only on its children, so a render leaking a child's bag upward shows here.
+            var group = actions["640938020"];
+            Assert.Equal("ENU=Request Approval", (string?)group.Attribute("CaptionML"));
+            Assert.Equal("SendApprovalRequest", (string?)group.Attribute("Image"));
+            Assert.Null(group.Attribute("ApplicationArea"));
+
+            // The nested action: every value distinct from the group's, so neither "no
+            // attributes" nor "the parent's attributes" satisfies it.
+            var cancel = actions["640938022"];
+            Assert.Equal("#Basic,#Suite", (string?)cancel.Attribute("ApplicationArea"));
+            Assert.Equal("ENU=Cancel Approval Re&quest", (string?)cancel.Attribute("CaptionML"));
+            Assert.Equal("CancelApprovalRequest", (string?)cancel.Attribute("Image"));
+            Assert.Equal("ENU=Cancel the approval request.", (string?)cancel.Attribute("ToolTipML"));
+
+            var send = actions["640938021"];
+            Assert.Equal("ENU=Send A&pproval Request", (string?)send.Attribute("CaptionML"));
+            Assert.Equal("ENU=Request approval of the job queue entry.", (string?)send.Attribute("ToolTipML"));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
     [Fact]
     public void Values_the_runner_cannot_derive_are_left_off_rather_than_defaulted()
         => WithApp(appPath =>
