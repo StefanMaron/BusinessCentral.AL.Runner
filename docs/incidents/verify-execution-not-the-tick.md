@@ -219,3 +219,60 @@ the sentence names is a `partial class` declared in more than one file, which is
 claim that does not go stale. Deleting it outright was the first cut, and it reddened
 `tools/test_agent_doc_guard_counts.py`, whose pinned guard count lives in
 `.claude/agents/impl-agent.md` (#4540's scope).
+
+## Moved out of the rule to fit the always-loaded budget (#4542)
+
+The rule keeps each mechanism in a sentence or two with its citation. The tables it used to
+carry:
+
+### The instrument, not the subject (2026-09-11, one agent, one task)
+
+| the instrument | what it returned | why it looked like an answer |
+|---|---|---|
+| a `\| tail` pipeline's `$?` | 0 | it is 0 whatever the tool returned (#3864) |
+| an exit-code claim about `ci-wait.py` | "exits 0 on a non-verdict" | never re-run directly; it exits 2 |
+| a log pattern for `PASS +<name>` | some of the codeunit's tests, not all | the `(known-gap)` column widened the gap the `+` had to span |
+
+All three were caught only because something else ran. The third is the sharpest: a partial
+count is exactly "that codeunit did not run", on a leg that was green; a second,
+differently-shaped query found them all.
+
+### The wrong subject (#3805 / corpus #325)
+
+| the measurement | what it read | what it should have read |
+|---|---|---|
+| "which object ids are free?" | the corpus checkout **inside the runner worktree**, resolved per run and older than `master` | the branch being pushed to |
+| "how many enum values omit `Ordinal`?" | the top-level `EnumTypes` array, which is **empty** | the `Namespaces` tree, where the enums live |
+| "are any ids duplicated?" | the id alone, repo-wide | `(object kind, id)`, scoped to one `app.json`'s `idRanges` |
+
+The first produced an id free in the tree measured and taken in the tree pushed to; the second an
+all-zeros table; the third dozens of duplicates that do not exist, because a codeunit and a
+table may share an id.
+
+The coordinator instance: told that a permission mask was case-sensitive on one codeunit, the
+coordinator "corrected" the scale to a much larger count of lowercase-bearing entries. Every one
+was on **Tables** — the scan walked every `Properties` bag without tracking which object kind
+owned it — and on codeunits, the issue's surface, there was a single such entry. The correction
+had already been relayed onto two sibling issues before the agent re-derived it.
+
+### The six travelling figures
+
+| the figure | what was wrong with it | how far it travelled |
+|---|---|---|
+| a count of orphaned registrations | an undercount, with one member name invented by expanding a brace shorthand | a PR body and several dispatch briefs (#3940) |
+| a count of rules | off by one | an issue body, a PR body, a commit message, then merged into `CLAUDE.md` as measured fact (#3972) |
+| an account of how that count arose | the method it named does not produce it; the real cause is unrecoverable | the correction's own issue and PR body |
+| a count of distinct binaries | an undercount — every hash differed | a PR body and a coordinator comment praising it for binary-identity discipline |
+| a count of codeunit ids | every per-chunk figure off | issue comments, a PR comment, a test-file header (#4090) |
+| the scratch-repository orderings behind a dot-count claim | the claim they supported does not reproduce at all | the shipped rule text on `main` (#4059) |
+
+The last two were the author of the re-derivation sentence failing to apply it. The binaries row
+errs toward caution, the safe direction for binary identity, but is still wrong: `CLAUDE.md`
+asks for the binaries measured, not a count of them. The codeunit-id row's wrong per-chunk
+figures gave a headline percentage within a rounding step of the true one, so nothing
+downstream looked wrong. The #4059 re-derivation was measured with both commits at `b6ce42df`.
+
+### The ruleset leg the branch never ran (#4593)
+
+`BC 28.5 / test` was a required context in the corpus ruleset before the corpus's `ci.yml`
+dispatched it, so a branch on the older `ci.yml` could not satisfy it.
