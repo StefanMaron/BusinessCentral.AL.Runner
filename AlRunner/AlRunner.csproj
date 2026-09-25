@@ -354,6 +354,13 @@
     </AssemblyAttribute>
   </ItemGroup>
 
+  <!-- #4547: the BC versions CI measures, read back by BcArtifacts.MeasuredBcMinors() so a
+       measured minor runs on this engine without the off-version warning. Absent file =
+       absent resource, which the reader treats as "unknown" and keeps warning. -->
+  <ItemGroup Condition="Exists('$(RepoRoot)/.github/bc-versions.txt')">
+    <EmbeddedResource Include="$(RepoRoot)/.github/bc-versions.txt" LogicalName="AlRunner.bc-versions.txt" />
+  </ItemGroup>
+
   <PropertyGroup>
     <!-- _BCVersion's dev-machine-fallback default is declared once in the repo-root
          Directory.Build.props (#2102) — see the comment there — not per-project, so it
