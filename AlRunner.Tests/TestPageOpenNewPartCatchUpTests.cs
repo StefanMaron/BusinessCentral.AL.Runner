@@ -112,9 +112,17 @@ public sealed class TestPageOpenNewPartCatchUpTests
         Assert.True(IndexOfCall(catchUp, "ReloadLinkedRow") >= 0,
             "CatchUpWithParentRow must reposition the part through ReloadLinkedRow, which enters its draft line.");
 
-        // Explicit navigation takes over: a First() on the part must not be undone by a later catch-up.
+        // Explicit navigation takes over: a Last() on the part must not be undone by a later
+        // catch-up. Corpus 60868 OpenNew_LinesInsertedInCode_LastThenWriteLandsOnTheLastLine
+        // drives MoveLast; this pins that every Move* stores FALSE, not merely that it stores.
         foreach (var move in new[] { "MoveFirst", "MoveLast", "MoveNext", "MovePrevious" })
-            Assert.True(IndexOfField(Method(part, move), OpCodes.Stfld, "_awaitingParentRow") >= 0,
-                $"LiveNavTestPart.{move} must clear _awaitingParentRow.");
+        {
+            var m = Method(part, move);
+            var store = IndexOfField(m, OpCodes.Stfld, "_awaitingParentRow");
+            Assert.True(store > 0, $"LiveNavTestPart.{move} must clear _awaitingParentRow.");
+            Assert.True(m.Body.Instructions[store - 1].OpCode == OpCodes.Ldc_I4_0,
+                $"LiveNavTestPart.{move} must store false into _awaitingParentRow, found "
+                + m.Body.Instructions[store - 1].OpCode + " before the store.");
+        }
     }
 }
