@@ -115,4 +115,10 @@
     </Reference>
   </ItemGroup>
 
+  <!-- #4536: one implementation of "which generator wrote this bundle", shared with the
+       generator that records it. -->
+  <ItemGroup>
+    <Compile Include="../tools/metadata-ground-truth/GeneratorFingerprint.cs"
+             Link="Linked/GeneratorFingerprint.cs" />
+  </ItemGroup>
 </Project>

@@ -151,4 +151,103 @@ public sealed class MetadataEquivalenceBundleGateTests
             try { Directory.Delete(empty, recursive: true); } catch { /* best effort */ }
         }
     }
+
+    // #4536. A bundle written by an older generator revision was measured as though it were
+    // current: every local System Application bundle predated #3796's id fix, so queries,
+    // xmlports and the report said Id = 0 and nine tests failed naming the runner.
+    private static string WriteManifest(string root, string app, string? generatorFingerprint)
+    {
+        var dir = Path.Combine(root, app);
+        Directory.CreateDirectory(dir);
+        var fp = generatorFingerprint is null ? "" : $"\"generatorFingerprint\": \"{generatorFingerprint}\",";
+        File.WriteAllText(Path.Combine(dir, "manifest.json"), $$"""
+            { "schema": 1,
+              "app": { "Id": "63ca2fa4-4f03-4f2b-a480-172fef340d3f", "Name": "{{app}}",
+                       "Publisher": "Microsoft", "Version": "1.0.0.0" },
+              "bcBuild": "1.0.0.0", {{fp}}
+              "census": {}, "objects": [] }
+            """);
+        return dir;
+    }
+
+    [Fact]
+    public void A_bundle_from_another_generator_revision_fails_rather_than_being_measured()
+    {
+        var root = TestScratch.FlatDir("al-runner-bundle-stale");
+        try
+        {
+            WriteManifest(root, "Current", "aaaa");
+            Assert.Equal(new[] { "aaaa" },
+                MetadataEquivalenceBundleGate.RequireBundles(root, "aaaa").Select(b => b.GeneratorFingerprint));
+
+            // Recorded, but by another revision.
+            var moved = Assert.Throws<MetadataGroundTruthStaleException>(
+                () => MetadataEquivalenceBundleGate.RequireBundles(root, "bbbb"));
+            Assert.Contains("gen-metadata-ground-truth.sh", moved.Message, StringComparison.Ordinal);
+            Assert.Contains("generator aaaa", moved.Message, StringComparison.Ordinal);
+
+            // Not recorded at all: every bundle written before #4536.
+            WriteManifest(root, "Legacy", null);
+            var legacy = Assert.Throws<MetadataGroundTruthStaleException>(
+                () => MetadataEquivalenceBundleGate.RequireBundles(root, "aaaa"));
+            Assert.Contains("1 ground-truth bundle(s)", legacy.Message, StringComparison.Ordinal);
+            Assert.Contains("generator <not recorded>", legacy.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    [Fact]
+    public void The_generator_fingerprint_follows_the_generator_source_and_nothing_else()
+    {
+        var source = MetadataEquivalencePaths.GeneratorSourceDir();
+        var copy = TestScratch.FlatDir("al-runner-generator-fingerprint");
+        try
+        {
+            Directory.CreateDirectory(copy);
+            foreach (var f in Directory.EnumerateFiles(source, "*", SearchOption.TopDirectoryOnly))
+                File.Copy(f, Path.Combine(copy, Path.GetFileName(f)));
+
+            var original = AlRunner.Tools.MetadataGroundTruth.GeneratorFingerprint.Compute(source);
+            Assert.Equal(original, AlRunner.Tools.MetadataGroundTruth.GeneratorFingerprint.Compute(copy));
+
+            File.WriteAllText(Path.Combine(copy, "notes.md"), "not generator source");
+            Assert.Equal(original, AlRunner.Tools.MetadataGroundTruth.GeneratorFingerprint.Compute(copy));
+
+            // Build output is not source: obj/ holds generated *.cs that change on every build.
+            Directory.CreateDirectory(Path.Combine(copy, "obj", "Release"));
+            File.WriteAllText(Path.Combine(copy, "obj", "Release", "Gen.AssemblyInfo.cs"), "// generated");
+            Directory.CreateDirectory(Path.Combine(copy, "bin"));
+            File.WriteAllText(Path.Combine(copy, "bin", "Stray.cs"), "// output");
+            Assert.Equal(original, AlRunner.Tools.MetadataGroundTruth.GeneratorFingerprint.Compute(copy));
+
+            // The SDK's default glob compiles **/*.cs, so a subdirectory source is generator input.
+            Directory.CreateDirectory(Path.Combine(copy, "Emit"));
+            var sub = Path.Combine(copy, "Emit", "Extra.cs");
+            File.WriteAllText(sub, "internal static class Extra { public static int K = 1; }");
+            var withSub = AlRunner.Tools.MetadataGroundTruth.GeneratorFingerprint.Compute(copy);
+            Assert.NotEqual(original, withSub);
+            File.WriteAllText(sub, "internal static class Extra { public static int K = 2; }");
+            var subEdited = AlRunner.Tools.MetadataGroundTruth.GeneratorFingerprint.Compute(copy);
+            Assert.NotEqual(withSub, subEdited);
+
+            // The csproj pins packages and stages shims; missing one emits zero objects.
+            File.AppendAllText(Path.Combine(copy, "MetadataGroundTruth.csproj"), "<!-- edited -->");
+            var csprojEdited = AlRunner.Tools.MetadataGroundTruth.GeneratorFingerprint.Compute(copy);
+            Assert.NotEqual(subEdited, csprojEdited);
+
+            File.AppendAllText(Path.Combine(copy, "Program.cs"), "// edited");
+            Assert.NotEqual(csprojEdited, AlRunner.Tools.MetadataGroundTruth.GeneratorFingerprint.Compute(copy));
+
+            File.Delete(Path.Combine(copy, "MetadataGroundTruth.csproj"));
+            Assert.Throws<DirectoryNotFoundException>(
+                () => AlRunner.Tools.MetadataGroundTruth.GeneratorFingerprint.Compute(copy));
+        }
+        finally
+        {
+            try { Directory.Delete(copy, recursive: true); } catch { /* best effort */ }
+        }
+    }
 }
