@@ -1,5 +1,8 @@
-// DependencyPageDerivedPropertiesTests — issue #4282: three page properties whose rule is NOT
+// DependencyPageDerivedPropertiesTests — issue #4282: page properties whose rule is NOT
 // "write it if the symbol file states it", which is the rule every scalar #3784 added follows.
+// The first pass (HelpLink, CaptionML, DataCaptionExpr) is described below; the second
+// (AnalysisModeEnabled, CardFormID, IndirectPermissions, the no-PageType IsPreview) is in
+// docs/dependency-page-properties.md, measured on four bundles and a compiled probe.
 //
 // THE DISTINCTION THIS FILE EXISTS FOR
 //   #4282 describes thirty allowlist entries as values "present, typed and unambiguous in the

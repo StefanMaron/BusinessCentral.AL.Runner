@@ -442,16 +442,11 @@ public static partial class RecordPatches
     /// InherentEntitlements/InherentPermissions   "X" -> "16"   (94/92)
     /// </code>
     ///
-    /// <para>WHAT IS DELIBERATELY NOT READ HERE, having been checked rather than assumed.
-    /// <c>AnalysisModeEnabled</c> and <c>OnAfterGetCurrentRecordEnabled</c> are NOT symbol
-    /// reads: cross-tabulated over the same 236 pages, the first tracks <c>PageType</c>
-    /// (List/Worksheet -> "1", every other type -> absent) on 94 pages whose symbol file
-    /// states nothing at all, and the second tracks trigger presence.
-    /// <c>IndirectPermissions</c> needs table NAME -> id resolution plus a permission-mask
-    /// encode; <c>CardFormID</c> needs page NAME -> id; <c>DataCaptionExpr</c> is BC's own
-    /// literal marker <c>"DataCaptionExprCode"</c> and carries none of the AL expression the
-    /// symbol file states. Each is a derivation, which is a different change from a read —
-    /// see the file header and issues #2460 / #3504.</para>
+    /// <para>The DERIVED properties are not in this list: <c>HelpLink</c>,
+    /// <c>DataCaptionExpr</c>, <c>AnalysisModeEnabled</c>, <c>CardFormID</c> and the no-PageType
+    /// <c>IsPreview</c> each have their own emitter below (#4282,
+    /// docs/dependency-page-properties.md). <c>OnAfterGetCurrentRecordEnabled</c> tracks trigger
+    /// presence and is still not written.</para>
     /// </summary>
     private static void EmitPagePropertiesXml(XmlWriter w, BcAppSymbolCache.PageSymbol page)
     {

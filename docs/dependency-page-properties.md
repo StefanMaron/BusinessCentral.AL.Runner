@@ -5,7 +5,7 @@ compiled inside a dependency `.app` (`AlRunner/Patches/DependencyPageMetadataXml
 records what BC's own metadata emitter writes for each page property, measured against the
 ground truth, so the emitter's per-property rule can be checked rather than assumed.
 
-**Every figure here is one BC build: `28.1.49838.53910`**, over the **235** `PageDefinition`
+**Unless a section names more builds, every figure here is one BC build: `28.1.49838.53910`**, over the **235** `PageDefinition`
 documents of Business Foundation (11) + System Application (224). Ground truth:
 `tools/gen-metadata-ground-truth.sh`, which writes
 `~/.local/share/al-runner/metadata-ground-truth/<build>/`. The symbol side is the
@@ -23,9 +23,9 @@ different questions, and the second is the specification.**
 | `Properties/@HelpLink` | 6 | **235** | derived: stated `HelpLink`, else base + `ContextSensitiveHelpPage`, else base | **implemented** |
 | `@CaptionML` (root) | 196 | 196 | write-iff-stated, `ENU=` + text | **implemented** |
 | `Properties/@DataCaptionExpr` | 32 | 32 | write-iff-stated, constant `DataCaptionExprCode` | **implemented** |
-| `Properties/@AnalysisModeEnabled` | 1 | 94 | derived, 93 of 94 from PageType; one unexplained | left, see below |
-| `Properties/@CardFormID` | 10 | 10 | write-iff-stated, but as a resolved page **id** | left, see below |
-| `SourceObject/@IndirectPermissions` | **0** | 84 | derived from `Permissions`; not a read at all | left, see below |
+| `Properties/@AnalysisModeEnabled` | 1 | 94 | derived: stated value, else `1` for List/Worksheet or no stated PageType | **implemented** |
+| `Properties/@CardFormID` | 10 | 10 | write-iff-stated, as the resolved page **id** | **implemented** |
+| `SourceObject/@IndirectPermissions` | **0** | 84 | derived from `Permissions`, only with a `SourceTable` | **implemented** |
 | `SourceObject/@ModifyAllowed` | 90 | 90 | write-iff-stated | already emitted (#2860) |
 | `SourceObject/@DelayedInsert` | 15 | 15 | write-iff-stated | already emitted (#2860) |
 | `SourceObject/@ShowFilter` | 26 | 26 | write-iff-stated | already emitted (#2860) |
@@ -76,28 +76,62 @@ They are also why a mutation dropping the `ENU=` prefix reds **194** rather than
 mutation that corrupts the *value* instead (`"ENU=Z" + Caption`) reds all **196**, which is the
 measurement establishing that the whole population is pinned.
 
+### No PageType
+
+A page whose AL states no `PageType` is **not** the same document as one stating `Card`, though
+BC emits `PageType="Card"` for both. For the unstated one BC's compiler also writes
+`AnalysisModeEnabled="1"`, `IsPreview="0"`, `APIVersion="beta"` and `DataAccessIntent="ReadWrite"`
+— with or without a source table. Page 1998 "Guided Experience Item Cleanup" is the only such
+page in the 235 (its AL declares no `PageType`; it is not an API page), which is why it looked like
+an outlier. Settled by compiling a probe app through `tools/metadata-ground-truth` with BC's own
+compiler at 28.1.49838.53910: pages 50101 (no PageType, source table) and 50109 (no PageType, no
+source table) both carry all four; a stated `PageType = Card` page carries none of them.
+
+The runner writes the first two, because the equivalence harness reads them (a missing
+`IsPreview="0"` was a declared unobservable omission). It does not write `APIVersion` or
+`DataAccessIntent`, which the harness does not compare for pages; neither was measured to matter.
+
+`BcAppSymbolCache.PageSymbol.PageType` folds absence into `"Card"`, so the emitter keys on
+`PageTypeStated`.
+
+### AnalysisModeEnabled
+
+The stated value when the page states one (`"0"` on page 8350); otherwise `"1"` for a `List` or
+`Worksheet` page or a page stating no `PageType`; otherwise nothing. Reproduces BC's attribute on
+every page of four bundles — 28.1.49838.53910 (94 of 235 written), 28.1.49838.54044 (94/235),
+27.5.46862.53931 (86/223), 28.4.53241.53989 (95/236) — with zero disagreements. The probe adds the
+arms the shipped apps do not show: a stated `AnalysisModeEnabled = false` on a List gives `"0"`,
+`ListPart` and `API` pages get none, and AL refuses the property on anything but List/Worksheet
+(`AL0167`).
+
+### CardFormID
+
+The symbol file states a page **name** (`Retention Policy Setup Card`), spelled `CardPageId` on 9
+pages and `CardPageID` on 1; BC writes the resolved **id** (`3901`). Resolved through the same
+page-name index the Page Metadata virtual table uses. All 10 resolve to BC's id on each of the four
+bundles above. The probe shows BC also writes it for a numeric `CardPageId` and on a `Document`
+page, so the emitter accepts both forms and does not key on PageType. An unresolvable name is
+omitted with a stderr line.
+
+### IndirectPermissions
+
+BC compiles the page's AL `Permissions` into `SourceObject/@IndirectPermissions`: the table id and
+a mask per entry, in declared order, then `0, 0` —
+`tabledata "Sent Email" = rd, tabledata "Email Message Attachment" = r` becomes
+`8889, 288, 8904, 32, 0, 0`. The mask is the **indirect** bits, `r=32 i=64 m=128 d=256`, and the
+letter's case does not matter: the probe's `RIMD` gives 480 and `Rm` gives 160. That is the
+opposite of the inherent-permission masks, where case decides direct against indirect, so the two
+must not share a decoder.
+
+Written only for a page with a `SourceTable`: 86 pages state `Permissions` and BC writes 84; the
+other two (2718, 7775) have no source table, and the probe's page 50108 confirms it. The rule
+reproduces BC's exact string on every page of the four bundles (84, 84, 82, 84 written). AL accepts
+only `tabledata` entries on a page (`AL0104` for `codeunit`), and the table names resolve through
+`ResolveTableIdByName`. An entry the runner cannot parse or resolve withdraws the whole attribute,
+with a stderr line.
+
 ## What is deliberately not implemented, and why
 
-- **`AnalysisModeEnabled` (1 stated, 94 written).** BC writes it for every page whose emitted
-  `PageType` is `List` or `Worksheet` — 93 of 93, with the value `1` unless the page states
-  otherwise (page 8350 states `0` and BC writes `0`). The 94th is page **1998 "Guided Experience
-  Item Cleanup"**, whose emitted `PageType` is `Card` and which BC still gives
-  `AnalysisModeEnabled="1"`. That page is also the only one of the 235 stating no `PageType` at
-  all. One unexplained page out of 94 is not a rule, and shipping the PageType rule would
-  manufacture a *missing* attribute on 1998.
-
-  **The lead for whoever takes it:** 1998 is also the only one of the 235 whose emitted
-  `<Properties>` carries `APIVersion` (`"beta"`). So "states no `PageType`", "is a `Card` BC
-  gives `AnalysisModeEnabled`" and "is the only API page" are one page, not three coincidences —
-  an API page is the shape to check before the PageType rule, not an outlier to wave through.
-- **`CardFormID` (10 stated, 10 written).** The sets match exactly, but the symbol file states a
-  page **name** (`Retention Policy Setup Card`) and BC writes the resolved page **id** (`3901`).
-  That is a cross-object name lookup, a different mechanism from every property above. Note also
-  that the symbol file spells the property two ways — `CardPageId` on 9 pages and `CardPageID` on
-  1 — which sum to BC's 10; a reader matching one spelling finds 9 and looks correct.
-- **`IndirectPermissions` (0 stated, 84 written).** The symbol file does not state this property
-  anywhere. 86 pages state `Permissions`, which BC resolves into the `SourceObject` vector, so
-  this is a derivation whose rule is unmeasured here — not the plain read the issue describes.
 - **`ActionContainers` / `ViewContainers`.** BC writes `ActionContainers` on all 235 pages
   (1,153 elements) while only 106 state an `Actions` array, and `ViewContainers` on 91 while 4
   state `Views`. Both are subtrees rather than scalars and neither is a plain read.
@@ -109,6 +143,13 @@ tools/gen-metadata-ground-truth.sh        # once per BC build
 dotnet test AlRunner.Tests/AlRunner.Tests.csproj -c Release --no-build \
   --settings engine.runsettings --filter "FullyQualifiedName~MetadataEquivalenceHarnessTests"
 ```
+
+The "probe" cited above is a hand-built `.app` — a zip holding a `NavxManifest.xml` (no
+dependencies, so only its own table and the platform's system tables resolve) and one `src/Probe.al` declaring a
+table and eleven pages, one per arm — run through
+`dotnet tools/metadata-ground-truth/bin/Release/net8.0/metadata-ground-truth.dll --app <probe.app> --out <dir> --artifacts <BC build>`.
+The tool compiles the source with BC's own compiler and writes the emitted `PageDefinition`
+documents, which is the same thing it does for Microsoft's apps.
 
 `Every_difference_is_declared_with_a_reason` prints each undeclared difference with its count
 and one example, which is how the "BC" column above was read back independently of the symbol

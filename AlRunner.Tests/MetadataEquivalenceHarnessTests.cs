@@ -793,11 +793,9 @@ public sealed class MetadataEquivalenceHarnessTests
     /// BC's own reader produces the same object either way, has to be declared — because the
     /// member-for-member comparison agrees on it and that agreement proves nothing.
     ///
-    /// <para>This is what makes a future writer-side fix provable. Measured on BC
-    /// 28.1.49838.53910: BC states PageProperties/@AnalysisModeEnabled on 94 of 235 pages and
-    /// the runner states it on none, and the object comparison reports ONE of them — page 8350,
-    /// the only page where BC says "0". A PageType-based derivation could therefore be wrong on
-    /// the other 93 and go harness-green.</para>
+    /// <para>This is what makes a writer-side fix provable. PageProperties/@AnalysisModeEnabled
+    /// was the case it was built for: the object comparison saw 1 of BC's 94, and it was this
+    /// gate that proved #4282's PageType-based derivation on the other 93.</para>
     /// </summary>
     [SkippableFact]
     public void Every_unobservable_omission_is_declared()
@@ -816,12 +814,12 @@ public sealed class MetadataEquivalenceHarnessTests
             "with a Doc pointer saying why its population moves with the BC build:" +
             Environment.NewLine + string.Join(Environment.NewLine, verdict.UnusedEntries));
 
-        // Non-vacuity. Not a floor anybody guessed: AnalysisModeEnabled is the difference this
-        // gate was built for, so if the walk stops reaching it the gate is measuring nothing
-        // and passing. Named rather than counted, because the COUNT moves with the BC build
-        // while the attribute's blindness is a property of its type having no Specified
-        // companion and a non-false absent-parse default.
-        Assert.Contains(all, o => o.Signature == "Properties.AnalysisModeEnabled");
+        // Non-vacuity: if the walk stops reaching a page's omissions the gate measures nothing
+        // and passes. Named rather than counted, because the COUNT moves with the BC build.
+        // AnalysisModeEnabled held this role until #4282 made the runner state it; a page
+        // control's Enabled is the declared, non-versionContingent omission that replaced it.
+        Assert.Contains(all, o => o.ObjectKey.StartsWith("Page ", StringComparison.Ordinal)
+                                  && o.Signature == "Controls.Enabled");
     }
 
     private static string UndeclaredOmissions(MetadataUnobservableVerdict verdict)
