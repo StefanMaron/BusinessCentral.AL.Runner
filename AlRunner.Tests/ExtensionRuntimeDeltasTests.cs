@@ -981,8 +981,8 @@ public sealed class ExtensionRuntimeDeltasTests
     // ControlGUID is a literal BC wrote rather than one this file computed: pageextension 2515's
     // action 1174679510 and pageextension 774's control 191117080. DECOY: the extended page is
     // declared with id 88380941, so a GUID built from the TARGET page's id instead of the
-    // extension's own is visibly wrong. A second control binds nothing (no SourceExpression),
-    // and a third states its own Importance.
+    // extension's own is visibly wrong. A second control states properties but binds nothing (no
+    // SourceExpression), and a third states its own Importance.
     internal const string EmitterDefaultsSymbolReference = """
         {
           "RuntimeVersion": "17.0",
@@ -1005,7 +1005,8 @@ public sealed class ExtensionRuntimeDeltasTests
                 { "Anchor": "Content", "ChangeKind": 2,
                   "Controls": [ { "Kind": 8, "Id": 191117080, "Name": "Bound",
                                   "Properties": [ { "Name": "SourceExpression", "Value": "Rec.Code" } ] },
-                                { "Kind": 0, "Id": 640938043, "Name": "Unbound Group" },
+                                { "Kind": 0, "Id": 640938043, "Name": "Unbound Group",
+                                  "Properties": [ { "Name": "Caption", "Value": "Unbound Group" } ] },
                                 { "Kind": 8, "Id": 640938044, "Name": "Stated Importance",
                                   "Properties": [ { "Name": "SourceExpression", "Value": "Rec.Code" },
                                                   { "Name": "Importance", "Value": "Promoted" } ] } ] }
