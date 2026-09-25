@@ -37,6 +37,29 @@ public sealed class ResolvedAssemblyVersionGuardTests
         => ResolvedAssemblyVersionGuard.EnsureSatisfies(
             Request("Some.Lib", requested), new Version(a, b, c, d), "/artifacts/Some.Lib.dll");
 
+    // Microsoft.Dynamics.* is stamped per BC build; the runner's own engine is built against one build
+    // and serves the selected build's copy across a major's minors (#1700), so only the major must match.
+    [Theory]
+    [InlineData("Microsoft.Dynamics.Nav.CodeAnalysis", "17.0.40.3339", 17, 0, 39, 53543)] // measured: 28.1.49838.53249
+    [InlineData("Microsoft.Dynamics.Nav.CodeAnalysis", "17.0.40.3339", 17, 0, 0, 0)]
+    public void DynamicsAssembly_OlderBuildOfTheSameMajor_IsServed(string name, string requested, int a, int b, int c, int d)
+        => ResolvedAssemblyVersionGuard.EnsureSatisfies(
+            Request(name, requested), new Version(a, b, c, d), "/artifacts/x.dll");
+
+    [Fact]
+    public void DynamicsAssembly_OlderMajor_IsRefused()
+    {
+        // measured: 27.x artifacts carry CodeAnalysis 16.4.40.3345, a 28-built engine requests 17.x
+        var ex = Assert.Throws<FileLoadException>(() => ResolvedAssemblyVersionGuard.EnsureSatisfies(
+            Request("Microsoft.Dynamics.Nav.CodeAnalysis", "17.0.40.3339"), new Version(16, 4, 40, 3345), "/a.dll"));
+        Assert.Contains("older than the requested 17.0.40.3339", ex.Message);
+    }
+
+    [Fact]
+    public void NonDynamicsAssembly_OlderBuildOfTheSameMajor_IsStillRefused()
+        => Assert.Throws<FileLoadException>(() => ResolvedAssemblyVersionGuard.EnsureSatisfies(
+            Request("Microsoft.Dynamics", "17.0.40.3339"), new Version(17, 0, 39, 0), "/a.dll"));
+
     [Fact]
     public void UnversionedRequest_IsServed()
         // measured: `Microsoft.BusinessCentral.SystemApp` arrives with no version at all

@@ -16,6 +16,17 @@ All three paths go through `ResolvedAssemblyVersionGuard` (#4569).
 with a `FileLoadException` naming both versions and the path when it is older. A request with
 no version is served.** This is the rule the default binder applies to the TPA list.
 
+**Exception: `Microsoft.Dynamics.*` needs only an equal major.** MS stamps those assemblies per
+BC build (`Microsoft.Dynamics.Nav.CodeAnalysis` is 17.0.39.53543 in 28.0.46665.53258 and
+28.1.49838.53249, 17.0.40.3339 in 28.1.49838.53910 through 28.4.53241.53989, 16.4.40.3345 in
+27.x), and one engine binary serves the selected build's copy across a major's minors
+(`AlRunner.csproj`, #1700). The runner's own `al-runner.dll` requests the CodeAnalysis version
+it was built against, so the plain rule refused an older build of the same minor and the runner
+exited 134 in `BcCompiler.SetTddMode` (reviewer measurement on PR #4585: 28.1.49838.53249 and
+28.0.46665.53258, both 4/4 before the guard). With the major rule both pass 4/4 on
+`tests/runner-extras/environment-type-default`. A different major (a 28-built engine on a 27.x
+artifact) is still refused.
+
 ### Why the handler has to check: the runtime does not
 
 Measured on .NET 8 (runner host), with a strong-named `VLib` built at 1.0.0.0 and 2.0.0.0 and an
@@ -67,8 +78,9 @@ The unversioned request is `Microsoft.BusinessCentral.SystemApp`; the lower one 
 `Microsoft.Extensions.Logging` requested at 8.0.0.0 and served 10.0.0.0. All from the
 service-tier file probe; neither run reached the `_byName` or cross-reference paths.
 
-So with a runner whose `bin` carries no service-tier DLL (#4545) the check refuses nothing a
-test run does today; it is the loud backstop for a caller compiled against a newer BC build
+Those runs used the engine's own build, so request and file were equal; the runner's own
+`Microsoft.Dynamics.*` references against an older build are the case the major rule above
+covers. With that rule the check refuses nothing a test run does today; it is the loud backstop for a caller compiled against a newer BC build
 than the selected one — a precompiled dependency `.app`, or a runner/engine minor mismatch.
 
 ### The message is on the inner exception

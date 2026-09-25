@@ -38,6 +38,10 @@ internal static class ResolvedAssemblyVersionGuard
     {
         var wanted = requested.Version;
         if (wanted == null || (served != null && served >= wanted)) return;
+        // Microsoft.Dynamics.* is version-stamped per BC build, and one engine binary serves the selected
+        // build's copy across a major's minors (AlRunner.csproj, #1700): only the major is a contract there.
+        if (served != null && served.Major == wanted.Major
+            && requested.Name?.StartsWith(DynamicsPrefix, StringComparison.Ordinal) == true) return;
         var message =
             $"Could not load '{requested.FullName}': the only candidate the runner's assembly resolver found is " +
             $"version {served?.ToString() ?? "<none>"} at '{(string.IsNullOrEmpty(path) ? "<in memory>" : path)}', " +
@@ -50,6 +54,8 @@ internal static class ResolvedAssemblyVersionGuard
             Console.Error.WriteLine("[assembly-resolver] " + message);
         throw new FileLoadException(message, requested.FullName);
     }
+
+    private const string DynamicsPrefix = "Microsoft.Dynamics.";
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _reported = new(StringComparer.Ordinal);
 }
