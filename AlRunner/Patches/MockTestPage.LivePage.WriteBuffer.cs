@@ -521,8 +521,20 @@ internal partial class LiveNavTestPage
     /// blank in the linked column, and the row a write starts on it carries the link's value
     /// early enough that the typed field's OnValidate already sees it.</para>
     /// </summary>
+    /// <summary>
+    /// A part opened under a parent with no row (OpenNew) never entered its draft line; before
+    /// a write, position it for the parent row it has now (#4576). Also run ahead of a
+    /// page-variable control's write, whose OnValidate reaches Rec just the same.
+    /// </summary>
+    internal void CatchUpPartWithParentRowForWrite()
+    {
+        if (!_onNewRowLine && !_pendingNewRow && !_pendingModify && this is LiveNavTestPart part)
+            part.CatchUpWithParentRow();
+    }
+
     internal void PromoteNewRowLineForWrite()
     {
+        CatchUpPartWithParentRowForWrite();
         if (!_onNewRowLine) return;
         // beforeCurrent: false — the draft line is the LAST row of the rowset, so the row it
         // becomes is inserted after the data, which is also what BC's own TestPageProxy asks

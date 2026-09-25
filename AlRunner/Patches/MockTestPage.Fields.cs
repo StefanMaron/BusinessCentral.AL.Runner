@@ -423,6 +423,10 @@ internal sealed class PageVariableTestField : ITestField
     // page counts a refusal whichever way the control that raised it is bound.
     private readonly TestFieldValidationErrors _validationErrors;
 
+    /// <summary>Run before a write; a live part uses it to position itself for its parent
+    /// row first (#4576). Null for a control that needs nothing.</summary>
+    internal Action? BeforeWrite { get; init; }
+
     public string Value
     {
         // An Option/Enum-bound control answers with its CAPTION, not the ordinal it stores —
@@ -459,13 +463,20 @@ internal sealed class PageVariableTestField : ITestField
         // restored: what a failed write leaves in a page GLOBAL is a separate claim no service
         // tier has measured, and inventing an answer for it is what
         // ask-the-corpus-before-claiming-bc-behavior.md forbids.
-        set => _validationErrors.RunRecordingRefusal(
+        set
+        {
+            BeforeWrite?.Invoke();
+            SetValueCore(value);
+        }
+    }
+
+    private void SetValueCore(string value)
+        => _validationErrors.RunRecordingRefusal(
             () => TestPageWriteBuffer.RunRestoringOnRefusal(_page.Record, () =>
             {
                 RunnerPageInstance.SetValue(_expression, ToBoundValue(value));
                 _page.RaiseOnValidate(_controlId);
             }), appendRefreshSuffix: false);
-    }
 
     public object? ObjectValue => LiveNavTestPage.Unwrap(RunnerPageInstance.GetValue(_expression));
 
