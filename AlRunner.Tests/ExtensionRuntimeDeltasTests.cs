@@ -749,11 +749,17 @@ public sealed class ExtensionRuntimeDeltasTests
                 {
                   "RuntimeVersion": "17.0",
                   "Tables": [
+                    { "Id": 88380923, "Name": "ERD Decoy Table",
+                      "Fields": [ { "Id": 91, "Name": "Base Field", "TypeDefinition": { "Name": "Boolean" } },
+                                  { "Id": 92, "Name": "Plain", "TypeDefinition": { "Name": "Boolean" } } ] },
                     { "Id": 88380920, "Name": "ERD Bound Table",
                       "Fields": [ { "Id": 1, "Name": "Code", "TypeDefinition": { "Name": "Code", "Length": 20 } },
-                                  { "Id": 37, "Name": "Base Field", "TypeDefinition": { "Name": "Boolean" } } ] }
+                                  { "Id": 37, "Name": "Base Field", "TypeDefinition": { "Name": "Boolean" } },
+                                  { "Id": 38, "Name": "Plain", "TypeDefinition": { "Name": "Boolean" } } ] }
                   ],
                   "TableExtensions": [
+                    { "Id": 88380924, "Name": "ERD Decoy Table Ext", "TargetObject": "ERD Decoy Table",
+                      "Fields": [ { "Id": 50914, "Name": "Ext Field", "TypeDefinition": { "Name": "Boolean" } } ] },
                     { "Id": 88380921, "Name": "ERD Bound Table Ext", "TargetObject": "ERD Bound Table",
                       "Fields": [ { "Id": 50913, "Name": "Ext Field", "TypeDefinition": { "Name": "Boolean" } } ] }
                   ],
@@ -776,7 +782,9 @@ public sealed class ExtensionRuntimeDeltasTests
                             { "Kind": 8, "Id": 640938016, "Name": "Global",
                               "Properties": [ { "Name": "SourceExpression", "Value": "SomeGlobal" } ] },
                             { "Kind": 8, "Id": 640938017, "Name": "Unknown",
-                              "Properties": [ { "Name": "SourceExpression", "Value": "Rec.\"No Such Field\"" } ] }
+                              "Properties": [ { "Name": "SourceExpression", "Value": "Rec.\"No Such Field\"" } ] },
+                            { "Kind": 8, "Id": 640938018, "Name": "Unquoted",
+                              "Properties": [ { "Name": "SourceExpression", "Value": "Rec.Plain" } ] }
                           ] }
                       ]
                     }
@@ -786,11 +794,12 @@ public sealed class ExtensionRuntimeDeltasTests
 
             var controls = Render(appPath, "Page", 88380911)!
                 .Root!.Elements($"{Ns}ControlAdd").Elements($"{Ns}Controls").ToArray();
-            Assert.Equal(4, controls.Length);
+            Assert.Equal(5, controls.Length);
             Assert.Equal("37", controls[0].Attribute("DataColumnName")?.Value);
             Assert.Equal("50913", controls[1].Attribute("DataColumnName")?.Value);
             Assert.Null(controls[2].Attribute("DataColumnName"));
             Assert.Null(controls[3].Attribute("DataColumnName"));
+            Assert.Equal("38", controls[4].Attribute("DataColumnName")?.Value);
         }
         finally { Directory.Delete(dir, recursive: true); }
     }
