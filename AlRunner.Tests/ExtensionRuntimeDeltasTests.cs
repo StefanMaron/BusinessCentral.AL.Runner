@@ -114,6 +114,9 @@ public sealed class ExtensionRuntimeDeltasTests
     /// <summary>The fixture package, exposed so the BC-reader arm can write the same one.</summary>
     internal static string WriteFixtureApp(string dir) => WriteApp(dir);
 
+    internal static string WriteFixtureAppWith(string dir, string symbolReferenceJson)
+        => WriteAppWith(dir, symbolReferenceJson);
+
     private static string WriteApp(string dir) => WriteAppWith(dir, SymbolReference);
 
     private static string WriteAppWith(string dir, string symbolReferenceJson)
@@ -888,6 +891,92 @@ public sealed class ExtensionRuntimeDeltasTests
         finally { Directory.Delete(dir, recursive: true); }
     }
 
+    // An actionref fixture with DECOYS for every lookup a wrong render could make. The first
+    // actionref promotes an action of the EXTENDED page (TargetId 640938039, declared nowhere
+    // here), and a plain action carrying the same NAME is declared first — so a render that
+    // resolved the id from the name answers 640938030. The second states no TargetId at all,
+    // and a CONTROL carries its TargetName, so a name join across both containers invents an id.
+    internal const int ActionRefExtId = 88380930;
+    internal const string ActionRefSymbolReference = """
+        {
+          "RuntimeVersion": "17.0",
+          "PageExtensions": [
+            {
+              "Id": 88380930,
+              "Name": "ActionRef Ext",
+              "TargetObject": "ERD Target Page",
+              "ActionChanges": [
+                { "Anchor": "Processing", "ChangeKind": 2,
+                  "Actions": [ { "Kind": 2, "Id": 640938030, "Name": "Promote Me",
+                                 "Properties": [ { "Name": "ApplicationArea", "Value": "#All" } ] } ] },
+                { "Anchor": "Promoted", "ChangeKind": 1,
+                  "Actions": [ { "Kind": 4, "TargetId": 640938039, "TargetName": "Promote Me",
+                                 "Id": 640938031, "Name": "Promote Me_Promoted" },
+                               { "Kind": 4, "TargetName": "Other",
+                                 "Id": 640938032, "Name": "Other_Promoted" } ] }
+              ],
+              "ControlChanges": [
+                { "Anchor": "Content", "ChangeKind": 2,
+                  "Controls": [ { "Kind": 8, "Id": 640938033, "Name": "Other" } ] }
+              ]
+            }
+          ]
+        }
+        """;
+
+    /// <summary>
+    /// An <c>actionref</c> renders as BC's <c>ActionRefDefinition</c>, carrying its stated
+    /// <c>TargetId</c> as <c>TargetID</c> and its stated <c>TargetName</c> verbatim — what BC
+    /// writes for pageextensions 2515 and 2516 on every captured build
+    /// (docs/metadata-equivalence.md#deltas-actionref). A plain action beside it stays an
+    /// <c>ActionDefinition</c> with its own stated attributes and no target.
+    /// </summary>
+    [Fact]
+    public void An_actionref_renders_as_ActionRefDefinition_with_its_stated_target()
+    {
+        var dir = TestScratch.Dir("al-runner-extension-runtime-deltas-actionref");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var appPath = WriteAppWith(dir, ActionRefSymbolReference);
+            var root = Render(appPath, "Page", ActionRefExtId)!.Root!;
+            var actions = root.Elements($"{Ns}ActionAdd").Elements($"{Ns}Actions").ToArray();
+            var control = root.Elements($"{Ns}ControlAdd").Elements($"{Ns}Controls").Single();
+            var xsi = XNamespace.Get("http://www.w3.org/2001/XMLSchema-instance");
+            Assert.Equal(3, actions.Length);
+
+            // The plain action: unchanged by the actionref beside it.
+            Assert.Equal("ActionDefinition", actions[0].Attribute(xsi + "type")!.Value);
+            Assert.Equal("#All", actions[0].Attribute("ApplicationArea")?.Value);
+            Assert.Null(actions[0].Attribute("TargetID"));
+            Assert.Null(actions[0].Attribute("TargetName"));
+
+            // The actionref: the STATED id, not the same-named action's 640938030.
+            Assert.Equal("ActionRefDefinition", actions[1].Attribute(xsi + "type")!.Value);
+            Assert.Equal("640938031", actions[1].Attribute("ID")!.Value);
+            Assert.Equal("Promote Me_Promoted", actions[1].Attribute("Name")!.Value);
+            Assert.Equal("640938039", actions[1].Attribute("TargetID")?.Value);
+            Assert.Equal("Promote Me", actions[1].Attribute("TargetName")?.Value);
+
+            // No stated TargetId: the name is still written, the id is left off rather than
+            // taken from the control that happens to carry the same name.
+            Assert.Equal("ActionRefDefinition", actions[2].Attribute(xsi + "type")!.Value);
+            Assert.Equal("Other", actions[2].Attribute("TargetName")?.Value);
+            Assert.Null(actions[2].Attribute("TargetID"));
+
+            // Nothing BC computes is invented on an actionref.
+            foreach (var absent in new[] { "ControlGUID", "SourceExtensionType", "HelpLink", "Visible" })
+            {
+                Assert.Null(actions[1].Attribute(absent));
+                Assert.Null(actions[2].Attribute(absent));
+            }
+
+            Assert.Equal("ControlDefinition", control.Attribute(xsi + "type")!.Value);
+            Assert.Null(control.Attribute("TargetName"));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
     [Fact]
     public void Values_the_runner_cannot_derive_are_left_off_rather_than_defaulted()
         => WithApp(appPath =>
@@ -1046,6 +1135,59 @@ public sealed class ExtensionRuntimeDeltasBcReaderTests
             // extension declares. A reader that ignored the document answers 0 here, which is
             // the MetaPageDefinition failure mode this harness exists to make unreachable.
             Assert.Equal(2, all.Cast<object>().Count());
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    [SkippableFact]
+    public void BCs_own_reader_builds_an_ActionRefDefinition_carrying_the_rendered_target()
+    {
+        // The type string is BC's discriminator: a misspelt one throws in FromXml, and a
+        // well-formed ActionDefinition would parse and silently lose TargetID/TargetName.
+        Skip.IfNot(_engine.Ready, _engine.SkipReason);
+
+        var appsDll = Path.Combine(
+            AlRunner.Infrastructure.BcArtifacts.ServiceTierDir, "Microsoft.Dynamics.Nav.Apps.dll");
+        Skip.IfNot(File.Exists(appsDll),
+            $"Microsoft.Dynamics.Nav.Apps.dll is not on this box ({appsDll}); "
+            + "the BC-side reader cannot be loaded, so this measures nothing.");
+
+        var dir = TestScratch.Dir("al-runner-extension-runtime-deltas-reader-actionref");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var appPath = ExtensionRuntimeDeltasTests.WriteFixtureAppWith(
+                dir, ExtensionRuntimeDeltasTests.ActionRefSymbolReference);
+            var xml = RecordPatches.TryBuildExtensionRuntimeDeltasXmlForApp(
+                appPath, "Page", ExtensionRuntimeDeltasTests.ActionRefExtId);
+            Assert.NotNull(xml);
+
+            var apps = Assembly.LoadFrom(appsDll);
+            var t = apps.GetType("Microsoft.Dynamics.Nav.Apps.MetadataDeltas.NavAppObjectMetadataRuntimeDeltas")!;
+            var fromXml = t.GetMethods(BindingFlags.Public | BindingFlags.Static)
+                .First(m => m.Name == "FromXml"
+                            && m.GetParameters() is { Length: 1 } p
+                            && p[0].ParameterType == typeof(XDocument));
+            var parsed = fromXml.Invoke(null, new object?[] { XDocument.Parse(xml!) })!;
+            var all = ((System.Collections.IEnumerable)parsed.GetType()
+                .GetProperty("AllDeltas", BindingFlags.Public | BindingFlags.Instance | BindingFlags.FlattenHierarchy)!
+                .GetValue(parsed)!).Cast<object>().ToArray();
+            Assert.Equal(4, all.Length);
+
+            // Most-derived first: ContentAddDelta`1 re-declares Context with a narrower type,
+            // so a flattened lookup is ambiguous.
+            static object? Get(object o, string name)
+            {
+                for (var type = o.GetType(); type is not null; type = type.BaseType)
+                    if (type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance
+                                               | BindingFlags.DeclaredOnly) is { } prop)
+                        return prop.GetValue(o);
+                return null;
+            }
+            var content = Get(Get(all[1], "Context")!, "Content")!;
+            Assert.Equal("ActionRefDefinition", content.GetType().Name);
+            Assert.Equal("640938039", Convert.ToString(Get(content, "TargetID"), System.Globalization.CultureInfo.InvariantCulture));
+            Assert.Equal("Promote Me", Get(content, "TargetName"));
         }
         finally { Directory.Delete(dir, recursive: true); }
     }
