@@ -632,6 +632,15 @@ internal static partial class ProgramSupport
         if (bcVersionArg == null)
         {
             var fromEngine = ResolveDefaultProvisionVersion(bundles, Log);
+            // #4590: the default target never goes below the app.json floor, here as on the run path.
+            if (fromEngine != null && TryDeriveBcFloorFromProject(bundles) is { } floor
+                && !AlRunner.Infrastructure.BcVersionFloor.Meets(fromEngine, floor))
+            {
+                Log($"the project's app.json declares a minimum of BC {floor} (application/platform), above " +
+                    $"the default target BC {fromEngine} (this binary's engine build). Pass --bc-version with a " +
+                    $"version at or above the minimum.");
+                return null;
+            }
             if (fromEngine != null)
                 return fromEngine;
         }

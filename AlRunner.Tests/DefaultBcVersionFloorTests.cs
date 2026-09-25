@@ -189,6 +189,11 @@ public sealed class DefaultBcVersionFloorTests
 
     private static (string Output, int Exit) Run(
         string installDir, string artifactsRoot, string work, string platformFloor, params string[] extra)
+        => RunWithSubcommand(installDir, artifactsRoot, work, platformFloor, subcommand: null, extra);
+
+    private static (string Output, int Exit) RunWithSubcommand(
+        string installDir, string artifactsRoot, string work, string platformFloor, string? subcommand,
+        params string[] extra)
     {
         var psi = new ProcessStartInfo
         {
@@ -200,6 +205,7 @@ public sealed class DefaultBcVersionFloorTests
             WorkingDirectory = RepoRoot,
         };
         psi.ArgumentList.Add(Path.Combine(installDir, "al-runner.dll"));
+        if (subcommand != null) psi.ArgumentList.Add(subcommand);
         psi.ArgumentList.Add("--no-auto-provision");
         psi.ArgumentList.Add("--cache");
         psi.ArgumentList.Add(Path.Combine(work, "cache"));
@@ -346,6 +352,28 @@ public sealed class DefaultBcVersionFloorTests
 
             Assert.True(exit == 2, $"exit {exit}.\n{output}");
             Assert.Contains($"selected BC {older} is below the minimum BC {floor}", output);
+        });
+    }
+
+    /// <summary>
+    /// `provision --platform-apps` with no --bc-version resolves its own default from the engine
+    /// build; a floor above it is refused before anything is fetched. The dead proxy keeps the run
+    /// offline either way, so the assertion is on the refusal, not on a failed download.
+    /// </summary>
+    [Fact]
+    public void ExplicitProvisionMode_DefaultTargetBelowTheFloor_IsRefused()
+    {
+        var build = EngineBuild();
+        WithScratch((installDir, work) =>
+        {
+            var artifactsRoot = Directory.CreateDirectory(Path.Combine(work, "artifacts")).FullName;
+            var floor = $"{build.Major}.{build.Minor + 1}.0.0";
+
+            var (output, exit) = RunWithSubcommand(installDir, artifactsRoot, work, floor, "provision", "--platform-apps");
+
+            Assert.True(exit == 2, $"exit {exit}.\n{output}");
+            Assert.Contains($"declares a minimum of BC {floor} (application/platform), above the default target BC {build}", output);
+            Assert.DoesNotContain("fetching Microsoft platform apps", output);
         });
     }
 }
