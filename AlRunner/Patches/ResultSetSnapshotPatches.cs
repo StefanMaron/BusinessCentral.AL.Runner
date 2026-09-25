@@ -13,7 +13,7 @@ namespace AlRunner.Patches;
 /// <para>Observably equivalent for a database-backed table: before any write reaches the
 /// provider, every open walk over it is read to the end into a buffer, so each walk yields
 /// exactly the rows, order and values it would have yielded had no write happened — what
-/// corpus codeunit 60919 "FSK Tests" pins for a three-row set (#4678). Reading only when a
+/// corpus codeunit 60367 "FSK Tests" pins for a three-row set (#4678). Reading only when a
 /// write arrives keeps a FindSet that is abandoned early O(rows read), as before.</para>
 ///
 /// <para>`temporary` records are untouched: that is BC's own provider serving BC's own

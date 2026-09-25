@@ -1,5 +1,5 @@
 // ResultSetSnapshotPatchesTests — the runner-side contract behind #4678. What BC does is pinned
-// upstream (corpus codeunit 60919 "FSK Tests"); these pin the mechanism that delivers it: a walk
+// upstream (corpus codeunit 60367 "FSK Tests"); these pin the mechanism that delivers it: a walk
 // over a database-backed provider yields the rows it would have yielded with no write, once
 // OnBeforeProviderWrite has run, and a `temporary` provider's walk stays BC's own live one.
 using System.Collections.Generic;
