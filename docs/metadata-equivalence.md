@@ -196,7 +196,7 @@ dropped" for the post-fix figures.
 
 `maxOccurrences` is unused in the current file. The mechanism is right for a difference whose
 count is bounded independently of the build; a count measured on one BC build and one set of apps
-is not that, because the unit legs run 27.5 and 28.4 while the current numbers were measured on
+is not that, because the unit legs run 27.5 and 28.5 while the current numbers were measured on
 28.1.
 
 <a id="three-symbol-properties-the-reader-dropped"></a>
@@ -612,7 +612,7 @@ entries record is that the work has not been done — never that it could not be
 
 This property is easy to miss and it is load-bearing for every kind #3782 adds. An agent
 generates the allowlist from the bundles on one machine — one BC build. CI then evaluates that
-same file on **three** BC versions per pull request (27.0, 27.5, 28.4) and **eight** on `main`.
+same file on **three** BC versions per pull request (27.0, 27.5, 28.5) and **eight** on `main`.
 
 A difference exists only if the object carrying it exists on that version **and** declares the
 property shape that produces it, and BC moves both between minors. So an entry can be correct on
@@ -1102,7 +1102,7 @@ The population stability that would have justified the blanket application is re
 sufficient. Measured across the four bundles on the authoring box — 27.5.46862.53931,
 28.1.49838.53910, 28.1.49838.54308 and 28.4.53241.54407 — both populations are **identical**:
 same 7 and 4 ids, same property values, same 9/20/22/40 node counts. The harness runs on
-unit-test legs only, which are exactly 27.5 and 28.4.
+unit-test legs only, which are exactly 27.5 and 28.5.
 
 <a id="what-the-query-and-xmlport-measurement-does-not-cover"></a>
 ### What this measurement does not cover

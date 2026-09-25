@@ -129,6 +129,13 @@ def canonical(versions) -> str:
     return " ".join(sorted(dict.fromkeys(versions), key=version_key))
 
 
+# The corpus's OWN cloud matrix -- a fourth legitimate set, distinct from ours since #4546
+# added 28.5 here before the corpus ran it. Docs quoting corpus runs name these legs.
+# Spelled out statically because pr-gate's tools-tests job has no corpus checkout;
+# check_corpus_version_claim holds it equal to the corpus ci.yml wherever one exists.
+CORPUS_LEGS = "27.0 27.3 27.5 28.0 28.1 28.2 28.3 28.4"
+
+
 # Version runs that are NOT a claim about a matrix, keyed by (file, the run's
 # canonical member set). Each needs a reason, and a dead entry fails
 # check_allowlist_has_no_dead_entries -- an allowlist nobody prunes is how the
@@ -179,6 +186,9 @@ NOT_A_MATRIX_CLAIM = [
     ("docs/testpage-write-buffer.md", "27.0 27.3 27.5",
      "the legs that raised \"The record that you tried to open is not available.\" on "
      "the same write sequence, corpus run 34328827788 -- the other measured half"),
+    ("docs/table-trigger-metadata.md", "27.0 27.5 28.4",
+     "the three Ncl.dll builds whose decompiled DefinedTriggers body was compared -- a "
+     "historical measurement of which binaries were read, not the matrix"),
     ("docs/runtime-packages.md", "27.5 28.1 28.4",
      "the three BC compilers that built the three genuine third-party runtime packages measured "
      "for #3537 -- a historical measurement of which builds were compared, not the matrix"),
@@ -195,7 +205,7 @@ def check_version_lists_in_docs() -> None:
     pr_v = canonical(prefixes("pr-bc-versions.txt"))
     dropped = canonical([p for p in prefixes("bc-versions.txt")
                          if p not in set(prefixes("pr-bc-versions.txt"))])
-    allowed = {all_v, pr_v, dropped}
+    allowed = {all_v, pr_v, dropped, CORPUS_LEGS}
     waived = {(f, v) for f, v, _ in NOT_A_MATRIX_CLAIM}
 
     offenders, seen = [], 0
@@ -217,7 +227,8 @@ def check_version_lists_in_docs() -> None:
                "   a reason.\n"
                f"     full matrix (.github/bc-versions.txt):     {all_v}\n"
                f"     pull request (.github/pr-bc-versions.txt): {pr_v}\n"
-               f"     a PR does not run:                         {dropped}")
+               f"     a PR does not run:                         {dropped}\n"
+               f"     the corpus's own legs (CORPUS_LEGS):       {CORPUS_LEGS}")
 
 
 def check_allowlist_has_no_dead_entries() -> None:
@@ -278,6 +289,11 @@ def check_corpus_version_claim() -> None:
     doc_text = read(doc)
     expected = canonical(corpus_versions)
     stated = [canonical(members_of(m.group(0))) for m in VERSION_RUN.finditer(doc_text)]
+
+    if expected != CORPUS_LEGS:
+        offenders.append(
+            f"CORPUS_LEGS in this file is {{{CORPUS_LEGS}}} but the corpus ci.yml dispatches "
+            f"{{{expected}}} -- update CORPUS_LEGS, which is what lets docs name the corpus legs.")
 
     if expected not in stated:
         offenders.append(

@@ -151,6 +151,19 @@ public sealed class PullRequestMatrixScopeTests
         Assert.Contains(NewestOf(all), Prefixes(PrVersionsFile));
     }
 
+    [Fact]
+    public void DevBuildDefault_TargetsThePrimaryPrefix()
+    {
+        // #4546: a bare `dotnet build` read a 28.1 default for months after 28.4 shipped,
+        // because nothing tied it to the version list. Only major.minor is pinned: the exact
+        // build is Microsoft's to withdraw (#2010), which must cost a local rebuild, not a red.
+        var props = ReadRepo("Directory.Build.props");
+        var m = Regex.Match(props, @"<_BCVersion Condition=""'\$\(_BCVersion\)' == ''"">(\d+\.\d+)\.\d+\.\d+</_BCVersion>");
+        Assert.True(m.Success, "Directory.Build.props must still declare the conditional _BCVersion default");
+
+        Assert.Equal(NewestOf(Prefixes(FullVersionsFile)), m.Groups[1].Value);
+    }
+
     // ---- how the shared matrix applies it ---------------------------------------------
 
     [Fact]

@@ -144,7 +144,7 @@
     read those DLLs directly silently exercised the wrong BC version on every CI leg.
   -->
   <PropertyGroup>
-    <_BCVersion Condition="'$(_BCVersion)' == ''">28.1.49838.53910</_BCVersion>
+    <_BCVersion Condition="'$(_BCVersion)' == ''">28.5.54151.55132</_BCVersion>
   </PropertyGroup>
 
   <!--

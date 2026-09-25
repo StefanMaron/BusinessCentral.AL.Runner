@@ -11,7 +11,8 @@
 # version-specific defects — two of which made the corpus run ZERO tests on BC 27
 # while still reporting a green leg. So the 27/28 boundary is what discriminates,
 # the minors inside a major are not, and the cheapest set that keeps every defect
-# the history contains is 27.0 + 27.5 + 28.4.
+# the history contains is 27.0 + 27.5 + 28.4. (When 28.5 shipped, #4546 moved the
+# newest-28 leg from 28.4 to 28.5: the rule is the newest of each major, not 28.4.)
 #
 # The five legs dropped here are not dropped from the project: test-matrix.yml runs
 # the full eight on every push to main and on a daily schedule, so a regression only
@@ -25,4 +26,4 @@
 #     runs on those legs and a 27-only C# regression is not hypothetical — run
 #     33337113550 on 2026-08-30 failed one on 27.0, 27.3 and 27.5 with every 28.x leg
 #     green.
-27.0 27.5 28.4
+27.0 27.5 28.5
