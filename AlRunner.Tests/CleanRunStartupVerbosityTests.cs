@@ -80,6 +80,11 @@ public sealed class CleanRunStartupVerbosityTests
     };
 
     private static (string Output, int Exit) Run(string alCacheDir, params string[] extraArgs)
+        => RunIn(RepoRoot, Fixture, alCacheDir, artifactsRoot: null, extraArgs);
+
+    private static (string Output, int Exit) RunIn(
+        string workingDirectory, string fixture, string alCacheDir, string? artifactsRoot,
+        params string[] extraArgs)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         // Deliberately NOT TestBuildConfig.BcVersionArg — the auto-selection lines this
@@ -87,7 +92,7 @@ public sealed class CleanRunStartupVerbosityTests
         // when neither --bc-version nor --artifact-path is given.
         foreach (var a in extraArgs) args.Append(' ').Append(a);
         args.Append($" --cache \"{alCacheDir}\"");
-        args.Append($" \"{Fixture}\"");
+        args.Append($" \"{fixture}\"");
 
         var psi = new ProcessStartInfo
         {
@@ -97,12 +102,14 @@ public sealed class CleanRunStartupVerbosityTests
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
-            WorkingDirectory = RepoRoot,
+            WorkingDirectory = workingDirectory,
         };
         // Deliberately isolated from whatever the ambient shell/session might have set —
         // this class is specifically about the CLI --verbose flag's effect, so nothing
         // may leak in from outside either test.
         psi.Environment.Remove("AL_RUNNER_VERBOSE");
+        if (artifactsRoot != null)
+            psi.Environment[AlRunner.Infrastructure.BcArtifacts.ArtifactsRootEnvVar] = artifactsRoot;
 
         var sb = new StringBuilder();
         using var p = Process.Start(psi)!;
@@ -242,6 +249,102 @@ public sealed class CleanRunStartupVerbosityTests
         {
             try { Directory.Delete(alCacheDir, recursive: true); } catch { }
         }
+    }
+
+    // ── #4561: runner-internal notes on a user app's default output ───────────────────────
+    //
+    // A user's app lives outside this repository, so neither its ancestors nor its working
+    // directory hold a tests/expectations manifest. Both are copied out here; from inside the
+    // repository the auto-probe finds the real manifest and the "loaded" branch runs instead.
+    // `--bc-version <major>.<minor>` makes provisioning resolve a prefix against the cache,
+    // the branch that printed "found cached BC ... verifying completeness".
+
+    private static string CopyFixtureOutOfTheRepository(string scratch)
+    {
+        var dest = Path.Combine(scratch, "app");
+        foreach (var file in Directory.GetFiles(Fixture, "*", SearchOption.AllDirectories))
+        {
+            var target = Path.Combine(dest, Path.GetRelativePath(Fixture, file));
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            File.Copy(file, target);
+        }
+        var cwd = Path.Combine(scratch, "cwd");
+        Directory.CreateDirectory(cwd);
+        return dest;
+    }
+
+    // An artifacts root holding only the engine's own build, linked to the real directory, so
+    // the prefix resolves to that build however many other patches this box has cached.
+    private static (string Root, string Prefix) EngineOnlyArtifactsRoot(string scratch)
+    {
+        var built = AlRunner.Infrastructure.BcArtifacts.EngineBuiltVersion();
+        Skip.If(built == null, "this build carries no engine build version, so no prefix to pass");
+        var real = AlRunner.Infrastructure.BcArtifacts.ArtifactDirFor(built!.ToString());
+        Skip.IfNot(Directory.Exists(real), $"the engine's own build is not cached at {real}");
+        var root = Path.Combine(scratch, "artifacts");
+        Directory.CreateDirectory(root);
+        Directory.CreateSymbolicLink(Path.Combine(root, built.ToString()), real);
+        return (root, $"{built.Major}.{built.Minor}");
+    }
+
+    private static (string Output, int Exit) RunUserAppOutsideTheRepo(params string[] extraArgs)
+    {
+        var scratch = NewCacheDir("user-app-outside-repo");
+        var app = CopyFixtureOutOfTheRepository(scratch);
+        var cache = Path.Combine(scratch, "cache");
+        try
+        {
+            Assert.Null(AlRunner.Infrastructure.ExpectationsDirectoryResolution.Resolve(
+                new[] { app }, Path.Combine(scratch, "cwd")));
+            var (artifactsRoot, prefix) = EngineOnlyArtifactsRoot(scratch);
+            var args = new List<string> { "--bc-version", prefix };
+            args.AddRange(extraArgs);
+            var (output, exit) = RunIn(Path.Combine(scratch, "cwd"), app, cache, artifactsRoot, args.ToArray());
+            Assert.True(exit == 0 && output.Contains("pass:        1"),
+                $"fixture must compile and pass cleanly:\n{output}");
+            return (output, exit);
+        }
+        finally
+        {
+            try { Directory.Delete(scratch, recursive: true); } catch { }
+        }
+    }
+
+    [SkippableFact]
+    public void DefaultRun_UserAppOutsideTheRepo_PrintsNoExpectationsOrFoundCachedLines()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (output, _) = RunUserAppOutsideTheRepo();
+
+        Assert.DoesNotContain("[expectations]", output);
+        Assert.DoesNotContain("found cached BC", output);
+        // Negative control: the run still says which BC ran.
+        Assert.Contains("[bc] selected BC ", output);
+    }
+
+    [SkippableFact]
+    public void VerboseRun_UserAppOutsideTheRepo_StillPrintsExpectationsAndFoundCachedLines()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (output, _) = RunUserAppOutsideTheRepo("--verbose");
+
+        Assert.Contains("[expectations] no tests/expectations manifest found", output);
+        Assert.Contains("[provision] found cached BC ", output);
+        // Deferred to the final generation, so the shadow re-exec does not print it twice (#4481).
+        Assert.Equal(1, output.Split("[provision] found cached BC ").Length - 1);
+    }
+
+    /// <summary>A caller who names an expectations directory asked about it, so the
+    /// "loaded" line prints at default verbosity.</summary>
+    [SkippableFact]
+    public void DefaultRun_WithExplicitExpectations_StillSaysWhatItLoaded()
+    {
+        TestArtifacts.SkipIfMissing();
+        var manifest = Path.Combine(RepoRoot, "tests", "expectations");
+        var (output, _) = RunUserAppOutsideTheRepo("--expectations", $"\"{manifest}\"");
+
+        Assert.Contains($"[expectations] loaded ", output);
+        Assert.Contains($" from {manifest}", output);
     }
 
     /// <summary>

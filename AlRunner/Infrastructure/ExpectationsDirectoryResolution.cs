@@ -59,6 +59,15 @@ public static class ExpectationsDirectoryResolution
     }
 
     /// <summary>
+    /// Whether the `[expectations] loaded/no manifest found` lines print (#4561). The manifest
+    /// is this repository's corpus mechanism, and the auto-probe walks the bundle's ancestors,
+    /// so a user app inside some checkout picks one up without asking: say so only when the
+    /// caller named an expectations flag, or under --verbose.
+    /// </summary>
+    public static bool ShouldAnnounce(bool verbose, bool expectationsDirGiven, bool requireMatch)
+        => verbose || expectationsDirGiven || requireMatch;
+
+    /// <summary>
     /// The stderr line printed when <see cref="Resolve"/> found nothing (#1984). With a null
     /// <paramref name="currentDirectory"/> (#3120) it names no cwd candidate and says why.
     /// </summary>

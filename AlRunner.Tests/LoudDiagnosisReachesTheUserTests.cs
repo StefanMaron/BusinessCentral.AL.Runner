@@ -114,7 +114,10 @@ public sealed class LoudDiagnosisReachesTheUserTests
             {
                 var text = lines[i];
                 if (text.TrimStart().StartsWith("//", StringComparison.Ordinal)) continue;
-                if (text.Contains("Console.Error.WriteLine(", StringComparison.Ordinal)) { start = i; break; }
+                // FailureOnlyNotes.Add carries the #3540 TableNo text since #4561: full text
+                // under --verbose, a footer line when a test failed.
+                if (text.Contains("Console.Error.WriteLine(", StringComparison.Ordinal)
+                    || text.Contains("FailureOnlyNotes.Add(", StringComparison.Ordinal)) { start = i; break; }
             }
             if (start >= 0) break;
         }
@@ -176,12 +179,9 @@ public sealed class LoudDiagnosisReachesTheUserTests
         // so this line is the only account of it. See docs/limitations.md#codeunit-metadata-subtype.
         { "AlRunner/Patches/RecordPatches.CodeunitMetadataVirtualTable.cs", "CodeUnit Metadata has NO ROW for codeunit" },
 
-        // #3540 — the sibling condition in the same file, and the only account of a column
-        // value the runner answers WRONG on purpose. A declared TableNo the resolver cannot
-        // turn into a table id makes that row answer TableNo = 0, which is also the truthful
-        // answer for a codeunit declaring no TableNo at all — so the read cannot tell the two
-        // apart and nothing else in the run records which one it was.
-        { "AlRunner/Patches/RecordPatches.CodeunitMetadataVirtualTable.cs", "could not be resolved to a table id" },
+        // #3540's TableNo warning left this list at #4561: the owner moved it to a one-line
+        // footer printed only when a test failed. DefaultOutputRunnerNotesTests pins that it
+        // still reaches a failing run's default output.
 
         // #3538 — the end-of-run counterpart of the CompanyInitializer line above. It fires
         // once, after the summary, and is the only thing that explains why a run whose every

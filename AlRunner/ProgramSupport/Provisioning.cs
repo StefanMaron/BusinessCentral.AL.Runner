@@ -708,13 +708,19 @@ internal static partial class ProgramSupport
                 var cachedDir = AlRunner.Infrastructure.BcArtifacts.SelectArtifactVersionDir(
                     AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, prefix);
                 full = Path.GetFileName(cachedDir);
-                // Not gated on `quiet`: unlike the two lines below, a re-exec'd child sees a
-                // DIFFERENT resolution outcome here than the parent did whenever the parent
-                // itself just downloaded (parent: "no cached ... resolving from the CDN",
-                // child: "found cached ... verifying completeness") — the two lines are not
-                // literal duplicates of each other, so suppressing either risks hiding a
-                // real state transition rather than a genuine repeat.
-                Console.Error.WriteLine($"[provision] found cached BC {full} for prefix '{prefix}' — verifying completeness.");
+                // #4561: "nothing changed" on a continuing run, so --verbose only and deferred
+                // to the final generation, like the `already complete` line below; the
+                // `provision` subcommand (deferredLines null) always reports it. The "no cached
+                // ... resolving from the CDN" branch stays loud: that one announces a download.
+                var foundCached = $"[provision] found cached BC {full} for prefix '{prefix}' — verifying completeness.";
+                if (deferredLines == null)
+                    Console.Error.WriteLine(foundCached);
+                else
+                    deferredLines.Add(() =>
+                    {
+                        if (AlRunner.Log.Verbose)
+                            Console.Error.WriteLine(foundCached);
+                    });
             }
             catch (InvalidOperationException)
             {
@@ -754,7 +760,12 @@ internal static partial class ProgramSupport
                             $"[provision] BC {fullForPrint} engine artifacts already complete at {serviceTierDirForPrint}.");
                 });
         }
-        else if (!AlRunner.Infrastructure.ProvisioningCheck.AutoProvision(full, serviceTierDir))
+        else if (!AlRunner.Infrastructure.ProvisioningCheck.AutoProvision(
+                     full, serviceTierDir,
+                     // #4564: the `provision` subcommand keeps its full report.
+                     wrapDownloadLog: deferredLines == null
+                         ? null
+                         : sink => AlRunner.Infrastructure.ProvisionProgressLog.Condense(sink, AlRunner.Log.Verbose)))
             return 1;
 
         if (provisionManifestApps)

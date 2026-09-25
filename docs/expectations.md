@@ -20,6 +20,11 @@ outside this repo behaves exactly as if the mechanism did not exist. Pass
 directory must exist). A malformed manifest aborts the invocation with exit
 code 2 before a single test runs.
 
+The `[expectations] loaded N entries from <dir>` and `[expectations] no tests/expectations
+manifest found` lines print only under `--verbose`, or when `--expectations` or
+`--expectations-require-match` was passed (#4561): the manifest is this repository's corpus
+mechanism, and a user app's default output should not mention it.
+
 ### `--expectations-require-match`: an entry that matches nothing (#3123)
 
 Drift is loud in both directions for a test the manifest **matched**: a test that

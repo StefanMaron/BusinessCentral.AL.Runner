@@ -117,7 +117,8 @@ public sealed class UnlinkedWorkingDirectoryTests
         SkipUnlessLinux();
         TestArtifacts.SkipIfMissing();
 
-        var (exit, output) = RunFromUnlinkedWorkingDirectory(new[] { FixtureDir, "--no-cache" });
+        // --verbose: the loaded-from line is behind it on a default run since #4561.
+        var (exit, output) = RunFromUnlinkedWorkingDirectory(new[] { FixtureDir, "--no-cache", "--verbose" });
 
         AssertNotAnUnhandledCrash(exit, output);
         Assert.Contains(
@@ -144,7 +145,8 @@ public sealed class UnlinkedWorkingDirectoryTests
         var bundle = CopyFixtureOutOfTheRepository("al-runner-unlinked-cwd-nomanifest");
         Assert.Null(ExpectationsDirectoryResolution.Resolve(new[] { bundle }, currentDirectory: null));
 
-        var (exit, output) = RunFromUnlinkedWorkingDirectory(new[] { bundle, "--no-cache" });
+        // --verbose: a user app's default run no longer mentions the manifest (#4561).
+        var (exit, output) = RunFromUnlinkedWorkingDirectory(new[] { bundle, "--no-cache", "--verbose" });
 
         AssertNotAnUnhandledCrash(exit, output);
         Assert.Contains("[expectations] no tests/expectations manifest found", output, StringComparison.Ordinal);

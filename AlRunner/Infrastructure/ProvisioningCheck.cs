@@ -2112,11 +2112,14 @@ public static class ProvisioningCheck
     /// <param name="downloader">Test seam: defaults to <see cref="ArtifactDownloader.ServiceTier"/>.
     /// Exceptions from it are caught here (contained, not propagated) so a network failure is
     /// reported the same way a non-zero exit code is, and still triggers the empty-dir cleanup.</param>
+    /// <param name="wrapDownloadLog">Wraps the log handed to the downloader only, never this
+    /// method's own start/failure/complete lines (#4564).</param>
     public static bool AutoProvision(
         string version,
         string serviceTierDir,
         Action<string>? log = null,
-        Func<string, string, Action<string>?, int>? downloader = null)
+        Func<string, string, Action<string>?, int>? downloader = null,
+        Func<Action<string>, Action<string>>? wrapDownloadLog = null)
     {
         var logf = log ?? Console.Error.WriteLine;
         var download = downloader ?? ArtifactDownloader.ServiceTier;
@@ -2124,7 +2127,7 @@ public static class ProvisioningCheck
         int rc;
         try
         {
-            rc = download(version, serviceTierDir, logf);
+            rc = download(version, serviceTierDir, wrapDownloadLog != null ? wrapDownloadLog(logf) : logf);
         }
         catch (Exception ex)
         {

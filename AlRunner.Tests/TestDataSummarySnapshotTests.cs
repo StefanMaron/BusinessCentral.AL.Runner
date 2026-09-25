@@ -163,8 +163,8 @@ public sealed class TestDataSummarySnapshotTests
         Assert.Equal(SkippedAmbiguous, s.TablesSkippedAmbiguous);
 
         // And the sentence the user actually reads carries those same numbers.
-        Assert.Contains("loaded 40 row(s) in 1 table(s)", s.Describe());
-        Assert.Contains("2 refused (unsupported value types or unknown columns)", s.Describe());
-        Assert.Contains("1 refused by the backup reader", s.Describe());
+        Assert.Contains("loaded 40 row(s) in 1 table(s)", s.DescribeDetail());
+        Assert.Contains("2 refused (unsupported value types or unknown columns)", s.DescribeDetail());
+        Assert.Contains("1 refused by the backup reader", s.DescribeDetail());
     }
 }
