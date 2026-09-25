@@ -230,6 +230,32 @@ public sealed class CleanRunStartupVerbosityTests
         }
     }
 
+    /// <summary>
+    /// #4599: `--server`'s banner does not name the BC build, so at default verbosity the
+    /// `[bc] selected BC <build> (<path>)` line is a server client's only record of it.
+    /// </summary>
+    [SkippableFact]
+    public async Task ServerMode_DefaultVerbosity_StillPrintsSelectedBcLineWithArtifactPath()
+    {
+        TestArtifacts.SkipIfMissing();
+        var alCacheDir = NewCacheDir();
+        try
+        {
+            await using var server = await CliServer.StartAsync(
+                new[] { "--cache", alCacheDir },
+                extraEnv: new Dictionary<string, string> { ["AL_RUNNER_VERBOSE"] = "0" });
+            // The banner is queued after the `[bc] selected BC` line, so waiting on it makes
+            // an absent line a real absence rather than a drain race.
+            var stderr = await server.StdErrSinceAsync(0, "server mode (JSON-RPC");
+            Assert.Matches(new Regex(@"^\[bc\] selected BC (?<bc>\d+\.\d+\.\d+\.\d+) \(\S*\k<bc>\)\r?$",
+                RegexOptions.Multiline), stderr);
+        }
+        finally
+        {
+            try { Directory.Delete(alCacheDir, recursive: true); } catch { }
+        }
+    }
+
     /// <summary>--verbose counterpart: the warm run's HIT line must still be reachable.</summary>
     [SkippableFact]
     public void VerboseRun_PrintsCacheHitLineOnAWarmRun()

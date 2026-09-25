@@ -523,8 +523,8 @@ internal static partial class ProgramSupport
         w.WriteLine("                          \"al-runner <ver> · BC <build> · N app(s)\" header —");
         w.WriteLine("                          read that instead of assuming which default applies. A");
         w.WriteLine("                          prefix matches the highest version with that prefix.");
-        w.WriteLine("                          Missing artifacts are");
-        w.WriteLine("                          auto-provisioned by default (see --no-auto-provision);");
+        w.WriteLine("                          Missing artifacts are auto-provisioned by default (see");
+        w.WriteLine("                          --no-auto-provision);");
         w.WriteLine("                          an unavailable/refused version still fails loud.");
         w.WriteLine("                          Mutually exclusive with --artifact-path.");
         w.WriteLine("  --artifact-path DIR     Use an explicit BC artifact root (the dir containing");

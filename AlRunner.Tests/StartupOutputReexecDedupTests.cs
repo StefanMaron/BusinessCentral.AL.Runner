@@ -104,9 +104,7 @@ public sealed class StartupOutputReexecDedupTests
     /// parent — under --verbose (see BuildPsiCore's comment: issue #2239 moved
     /// `[provision]`/`[reexec]` behind --verbose, reversing part of #2038's decision —
     /// a clean run's default output no longer needs its own process topology to read
-    /// its test results). `[bc] selected BC` and the banner stay visible at default
-    /// verbosity too either way, so this class's blanket --verbose does not mask a
-    /// regression in either of those two.
+    /// its test results).
     ///
     /// Unlike its two siblings below, this test does not need Ncl.dll's presence/absence
     /// pinned to a specific value — either a genuine re-exec (trio suppressed once,

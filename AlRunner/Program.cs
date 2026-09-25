@@ -1101,7 +1101,7 @@ if (bcVersionArg == null && artifactPathArg == null)
             //
             // Issue #2239: this is the "which artifact was selected and why" reasoning a
             // clean run does not need to see — the outcome is already named once, later,
-            // by the unconditional `[bc] selected BC ...` line. Gated on --verbose like
+            // by the run header. Gated on --verbose like
             // its siblings below rather than printed unconditionally.
             if (AlRunner.Log.Verbose)
                 Console.Error.WriteLine($"[bc] no --bc-version given — selecting BC {bcVersionArg}, the newest " +
@@ -1229,8 +1229,8 @@ if (bcVersionArg == null && artifactPathArg == null)
             {
                 case "cached-exact":
                     // Issue #2239: normal-path reasoning, no risk — the outcome is
-                    // already named once, unconditionally, by the `[bc] selected BC
-                    // ...` line further down. Gated behind --verbose like its sibling
+                    // already named once, by the run header further down. Gated
+                    // behind --verbose like its sibling
                     // above (the shipped-variants branch's own auto-select line).
                     deferredStartupLines.Add(() =>
                     {
