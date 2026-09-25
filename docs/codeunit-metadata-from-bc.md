@@ -229,7 +229,8 @@ own corpus test, and is deliberately not part of #3606.
 signature) is the `<Methods>` subtree of a `<CodeUnit>` document. The runner derives it for
 every codeunit whose attributed methods it can state completely — publishers from the symbol
 file, subscribers from the app's own assembly — and omits it otherwise (#3788; #3963
-established why the symbol file alone cannot). What is still withheld is #4601.
+established why the symbol file alone cannot). What is still withheld — a subscriber with a `var`
+Text/Code parameter — is #4601.
 
 ### BC emits the ATTRIBUTED methods, not the methods
 
@@ -344,14 +345,20 @@ target the platform codeunits 2000000008/2000000010 and are `public`. BC does no
 12 of 12 are absent from the 28.1 documents, and all 140 emitted subscribers are `private`. A
 method matching only one of those two properties refuses.
 
+A by-value `Text`/`Code` parameter, an `Interface` parameter, and a `local` method carrying
+`[InherentPermissions]` are read from the method body and the attribute: see
+[what the method body states](#what-the-method-body-states).
+
 **The whole codeunit is withheld, and nothing is guessed,** when:
 
-- a subscriber parameter is `Text`/`Code`. BC writes `Length`, and the length lives in the
-  body (`ModifyLength(N)`), not in the signature;
-- a parameter is an `Interface`. BC writes `IsVar="True"` for a `var` one, and the signature
-  cannot show that;
-- a `local` method carries `[InherentPermissions]`. BC emits it and no symbol file states it.
-  This check also covers subscriber-free codeunits, which the first landing trusted;
+- a subscriber parameter is a `var` `Text`/`Code`. BC writes `Length` for a declared length
+  (codeunit 55's `var Translation: Text[1024]`) and none for an unbounded one (codeunit 58), and
+  the method stores a `var` parameter as-is, so nothing in the assembly says which;
+- a Text/Code or Interface parameter is copied in a shape the IL reader does not recognise, or
+  the method has no async state machine to read;
+- a `local` `[InherentPermissions]` method's attribute carries a value not measured against
+  BC's documents (an object type other than `TableData`, a non-zero scope), or is also a
+  subscriber;
 - a publisher or method cannot be placed at a unique source position.
 
 Measured against BC's own documents with `CodeunitSubscriberMethodTableTests`: every emitted
@@ -363,8 +370,40 @@ subtree matches exactly (ids, order, all seven subscriber attributes, every para
 | 28.1.49838.53910 | 145 | 64 of 77 | 15 | 35 (174) |
 | 28.4.53241.54407 | 146 | 65 of 78 | 15 | 35 (175) |
 
-The remaining 15 are #4601: 9 with a `Text`/`Code` subscriber parameter, 2 with an
-`Interface` parameter, and 4 with a local `InherentPermissions` method.
+That table is the state #3788 left. #4601 then derived 10 of those 15; the 5 left are the
+`var` Text/Code case below.
+
+<a id="what-the-method-body-states"></a>
+### What the method body states
+
+Every AL method compiles to an async state machine whose `MoveNext` first copies each parameter
+into its `ALMethodScope`. How it copies one says two things the C# signature does not
+(`RecordPatches.CodeunitParameterTransfer.cs` reads it from the IL):
+
+| AL parameter | the copy | BC writes |
+|---|---|---|
+| `Text[240]` by value | `p.ModifyLength(240)` | `Length="240"` |
+| `Text` by value (unbounded) | `p.ModifyLength(0)` | no `Length` |
+| `Interface` by value | `p.ALByValue(scope)` | `IsVar="False"` |
+| `var Interface` | stored as-is | `IsVar="True"`, `RuntimeType="NavInterfaceHandle"` |
+| `var Text[1024]` / `var Text` | stored as-is, both | `Length="1024"` / none — **not derivable** |
+
+The unbounded row is the one that makes the rule exact rather than a heuristic: an unbounded
+Text is copied through `ModifyLength(0)` too, so a by-value Text with no `ModifyLength` at all is
+a shape the reader refuses rather than reads as unbounded.
+
+A `local` method's `[InherentPermissions]` is compiled as `InherentPermissions(params uint[])`
+holding `{objectType, objectId, mask, scope}`. The mask is already BC's
+`InherentPermissionPermissionValue` (128, 480, 32 on the seven local elements), object type 0
+is written `TableData` and scope 0 is written 0. Those are the only values the shipped apps
+carry, so any other refuses rather than guessing a spelling.
+
+Measured at 28.1.49838.53910 with `CodeunitSubscriberMethodTableTests`: 140 of 145 codeunits
+now emit a subtree, every one exactly BC's, and the 5 withheld are 55, 58, 59, 4300 and 9702 —
+11 methods — each with a subscriber taking a `var` Text parameter. That expected set, read off
+BC's own documents, is the same on 27.5.46862.53931, 28.1.49838.54044, 28.4.53241.53989 and
+28.5.54151.55132. The runner's side was run on 28.1.49838.53910 and on 28.5.54151.55132
+(`Ncl.dll` `01c732f1`), where 141 of 146 emit and the same 5 are withheld.
 
 ### The `InherentPermissions` method attribute
 

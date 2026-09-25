@@ -162,22 +162,90 @@ public sealed class CodeunitSubscriberMethodTableTests
     }
 
     /// <summary>
-    /// Refusals keep the honest absence. Codeunit 1482 has a subscriber with a <c>Text[240]</c>
-    /// parameter, whose Length the signature does not carry (codeunit 58's are all Text too); Business Foundation codeunit 306 has
-    /// a <c>local</c> [InherentPermissions] method the symbol file does not state.
+    /// Refusals keep the honest absence. Codeunits 55 and 58 have a subscriber with a <c>var</c>
+    /// Text parameter: BC writes <c>Length</c> for 55's <c>var Translation: Text[1024]</c> and none
+    /// for 58's unbounded ones, and neither the signature nor the method's parameter copy says
+    /// which, because a <c>var</c> parameter is stored without a <c>ModifyLength</c> (#4601).
     /// </summary>
     [SkippableFact]
     public void A_subtree_the_runner_cannot_state_exactly_is_withheld()
     {
         var codeunits = RegisteredCodeunits();
-        foreach (var id in new[] { 1482, 58, 306 })
+        foreach (var id in new[] { 55, 58 })
         {
-            if (codeunits.All(c => c.Id != id)) continue;
+            Assert.Contains(codeunits, c => c.Id == id);
             var doc = RunnerDocument(id);
             Assert.NotNull(doc);
             Assert.Null(MethodsOf(doc!));
         }
-        Assert.Contains(codeunits, c => c.Id == 1482);
+    }
+
+    /// <summary>
+    /// The three shapes #4601 recorded as underivable, each now emitted exactly as BC writes it:
+    /// 1482's by-value <c>Text[240]</c> writes <c>Length="240"</c> beside an unbounded Text that
+    /// writes none (the length is the <c>ModifyLength(N)</c> the method copies it through, 0 when
+    /// unbounded); 3920 and 8903's <c>var</c> Interface writes <c>IsVar="True"</c> (stored as-is,
+    /// where a by-value one goes through <c>ALByValue</c>); and the <c>local</c>
+    /// <c>[InherentPermissions]</c> methods of 306, 307, 309 and 8705, which no symbol file states,
+    /// are read off the attribute's four values.
+    /// </summary>
+    [SkippableTheory]
+    [InlineData(1482)]
+    [InlineData(1565)]
+    [InlineData(3920)]
+    [InlineData(8903)]
+    [InlineData(306)]
+    [InlineData(309)]
+    [InlineData(8705)]
+    public void A_shape_the_method_body_states_is_emitted_exactly(int id)
+    {
+        var cu = RegisteredCodeunits().FirstOrDefault(c => c.Id == id);
+        Assert.NotNull(cu);
+        var bc = MethodsOf(Load(cu!.BcDocumentPath));
+        Assert.NotNull(bc);
+        var mine = RunnerDocument(id) is { } doc ? MethodsOf(doc) : null;
+        Assert.True(mine is not null, $"codeunit {id}: the runner withheld its <Methods> subtree: "
+            + RecordPatches.CodeunitMethodTableRefusalForTests(
+                MetadataEquivalenceHarness.FindAppPackage(cu.Bundle)!, id, null));
+        Assert.Equal(Canonical(bc!), Canonical(mine!));
+    }
+
+    /// <summary>
+    /// The population claim over EVERY codeunit, subscriber or not: each emitted subtree is BC's
+    /// exactly, and each one withheld is withheld for the one reason left — a subscriber with a
+    /// <c>var</c> Text/Code parameter, whose declared length nothing in the assembly states.
+    /// </summary>
+    [SkippableFact]
+    public void Every_emitted_subtree_is_BCs_and_every_withheld_one_has_a_var_text_subscriber()
+    {
+        int withMethods = 0, emitted = 0;
+        var inexact = new List<string>();
+        var unexplained = new List<string>();
+        foreach (var cu in RegisteredCodeunits())
+        {
+            var bc = MethodsOf(Load(cu.BcDocumentPath));
+            if (bc is null) continue;
+            withMethods++;
+            var mine = RunnerDocument(cu.Id) is { } doc ? MethodsOf(doc) : null;
+            if (mine is not null)
+            {
+                emitted++;
+                if (Canonical(mine) != Canonical(bc))
+                    inexact.Add($"{cu.Bundle.AppName} codeunit {cu.Id}:\n  BC     {Canonical(bc)}\n  runner {Canonical(mine)}");
+                continue;
+            }
+            var explained = bc.ChildNodes.OfType<XmlElement>().Any(m =>
+                m.GetElementsByTagName("EventSubscriberAttribute", MetaNs).Count > 0
+                && m.GetElementsByTagName("Parameter", MetaNs).OfType<XmlElement>().Any(p =>
+                    p.GetAttribute("RuntimeType") is "ByRef<NavText>" or "ByRef<NavCode>"));
+            if (!explained) unexplained.Add($"{cu.Bundle.AppName} codeunit {cu.Id}");
+        }
+
+        _output.WriteLine($"codeunits with <Methods>={withMethods} emitted={emitted} inexact={inexact.Count} unexplained={unexplained.Count}");
+        Assert.True(withMethods > 0, "no ground-truth codeunit carries <Methods> — nothing was measured");
+        Assert.True(inexact.Count == 0, $"{inexact.Count} of {emitted} emitted subtrees differ from BC's:\n" + string.Join("\n", inexact.Take(5)));
+        Assert.True(unexplained.Count == 0,
+            $"{unexplained.Count} codeunit(s) withheld without a var Text/Code subscriber parameter: " + string.Join(", ", unexplained));
     }
 
     /// <summary>
