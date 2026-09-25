@@ -251,7 +251,32 @@ internal sealed partial class RunnerPageInstance
         }
 
         BcRuntime.NavCodeunit_RunCodeunit(Microsoft.Dynamics.Nav.Types.DataError.ThrowError, target.ObjectId, record);
+
+        // The client re-reads the host's row once the action returns, so a Modify the codeunit
+        // made to its copy shows on the TestPage; position and filters stay the host's own.
+        // Corpus codeunit 60606 (#4589).
+        if (_record != null)
+            RereadHostRowAfterAction();
     }
+
+    // Through a fresh record, not _record.Find('='): on the page's own record Find('=') answers
+    // true and leaves the loaded values in place (measured: 'Bravo' after the codeunit wrote
+    // 'Written'). TransferFields replaces the values only, so the host keeps its filters and key.
+    // A row the codeunit deleted is not found, and the buffer stays as it was.
+#pragma warning disable CS0618 // sync-over-async is how this class drives every other NavRecord call
+    private void RereadHostRowAfterAction()
+    {
+        var fresh = TestPageFactory.TryBuildBlankRecord(_owner, _record!.TableID, _record.IsTemporary, out var why)
+            ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                $"TestPage action RunObject = Codeunit on page {_pageId}",
+                $"not-yet-implemented — the runner could not build a record of the host's table "
+                + $"{_record.TableID} to re-read the host's row after the codeunit ran ({why})");
+        if (_record.IsTemporary) fresh.ALCopy(_record, true);
+        fresh.ALSetPosition(_record.ALGetPosition(useCaptions: false));
+        if (fresh.ALFind(Microsoft.Dynamics.Nav.Types.DataError.TrapError, "="))
+            _record.ALTransferFields(fresh);
+    }
+#pragma warning restore CS0618
 
     /// <summary>
     /// Open <paramref name="pageId"/> through BC's own <c>NavForm.RunAsync</c> /
