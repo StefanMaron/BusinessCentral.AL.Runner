@@ -63,6 +63,13 @@ public sealed class TestPageNewRowAfterGetCurrRecordTests : IDisposable
                 field(3; Templated; Boolean) { }
             }
             keys { key(PK; "No.") { Clustered = true; } }
+
+            trigger OnInsert()
+            var
+                Log: Record "Nrc Log";
+            begin
+                Log.Bump('ONINSERT');
+            end;
         }
 
         table 62851 "Nrc Log"
@@ -133,7 +140,7 @@ public sealed class TestPageNewRowAfterGetCurrRecordTests : IDisposable
                 NewMode := false;
                 Row."No." := 'T1';
                 Row.Templated := true;
-                Row.Insert();
+                Row.Insert(true);
                 Rec.Copy(Row);
             end;
         }
@@ -158,11 +165,14 @@ public sealed class TestPageNewRowAfterGetCurrRecordTests : IDisposable
                 Card.Close();
             end;
 
-            // The trigger handed the page an existing row: typing modifies it, no second insert.
+            // The trigger handed the page an existing row: typing modifies it, and the table's
+            // OnInsert does not run a second time for it (a Customer's OnInsert creates its
+            // Contact Business Relation, #2394).
             [Test]
             procedure RowHandedOverByTheTrigger_IsModifiedNotInsertedAgain()
             var
                 Row: Record "Nrc Row";
+                Log: Record "Nrc Log";
                 Card: TestPage "Nrc Card";
             begin
                 Reset();
@@ -174,6 +184,9 @@ public sealed class TestPageNewRowAfterGetCurrRecordTests : IDisposable
                 Row.Get('T1');
                 if Row.Name <> 'typed' then
                     Error('Name on T1 was <%1>, expected <typed>', Row.Name);
+                Log.Get('ONINSERT');
+                if Log.Hits <> 1 then
+                    Error('table OnInsert ran %1 time(s), expected 1', Log.Hits);
             end;
 
             local procedure Reset()
