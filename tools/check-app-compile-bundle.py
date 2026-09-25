@@ -21,7 +21,16 @@ Exit codes: 0 all three hold; 1 at least one does not (each printed); 3 could no
 a missing or unreadable manifest.json/expected.json, or one missing a field it must carry.
 """
 import json
+import os
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import agent_stdio as _stdio
+except Exception:  # pragma: no cover - a copy detached from its sibling module
+    _stdio = None
+if _stdio is not None:
+    _stdio.enable_utf8_stdio()
 
 
 def load(path, what):
