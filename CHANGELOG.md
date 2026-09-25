@@ -37,6 +37,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **report-layout-list:** carry ObsoleteState and Excel sheet configuration for precompiled dependency layouts
 - **metadata:** EmitPageXml reads page properties SymbolReference.json states
 - **metadata:** extension-runtime-delta render reads the remaining stated member attributes
 - **cli:** one wording for the cross-major note — the variants-shipped branch stops hand-rolling its own
