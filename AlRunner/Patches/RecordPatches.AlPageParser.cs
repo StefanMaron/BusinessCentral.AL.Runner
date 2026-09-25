@@ -356,62 +356,33 @@ public static partial class RecordPatches
     }
 
     /// <summary>
-    /// Resolve an object NAME that is known to be a PAGE only if nothing else of that name
-    /// exists — for a <c>RunObject</c> a precompiled .app states as a bare name with no object
-    /// type beside it (#2931).
+    /// Every object a <c>RunObject</c> NAME can refer to — for a precompiled .app, whose
+    /// SymbolReference.json states the target as a bare name with no object type (#2931, #4582).
     ///
-    /// <para>Returns the page id, and the OTHER object kinds the same name resolves to. The
-    /// second half is not defensive: measured on Base Application 28.1, <b>73 names are shared
-    /// between a page and a report / codeunit / xmlport / query</b> — "Chart of Accounts",
-    /// "Blanket Sales Order", "Account Schedule" and 70 more each name both a page and a
-    /// report. Treating "resolves to a page" as "is a page" would open a page for an action
-    /// whose AL says <c>RunObject = Report "Chart of Accounts"</c>: a silent wrong answer, and
-    /// exactly what <c>loud-failures.md</c> exists to prevent. The caller refuses an ambiguous
-    /// name by name instead.</para>
+    /// <para>Only the five kinds AL's grammar allows after <c>RunObject</c> are answered, as
+    /// normalised kind names (<c>page</c>, <c>codeunit</c>, <c>report</c>, <c>xmlport</c>,
+    /// <c>query</c>), one entry per distinct (kind, id). A caller treats exactly one entry as
+    /// the target and more than one as ambiguous: Base Application shares hundreds of action
+    /// target names between a page and a report or query, and picking one would be a silent
+    /// wrong answer (<c>loud-failures.md</c>).</para>
     ///
-    /// <para>The page half uses the same index as Table Metadata's LookupPageId /
-    /// DrillDownPageId and Page Metadata's CardPageId, so a name resolvable there resolves the
-    /// same way here.</para>
+    /// <para>Exact case-insensitive match, NOT the space-stripping NamesEqual used for
+    /// SourceTable/BaseName elsewhere in this file: stripping spaces would manufacture ambiguity
+    /// between two different objects, and deciding ambiguity is this method's whole job.</para>
     /// </summary>
-    internal static (int PageId, IReadOnlyList<string> OtherKinds) ResolveObjectNameAsPage(string? name)
+    internal static IReadOnlyList<(string Kind, int Id)> ResolveRunObjectName(string? name)
     {
-        if (string.IsNullOrWhiteSpace(name)) return (0, Array.Empty<string>());
+        var found = new List<(string Kind, int Id)>();
+        if (string.IsNullOrWhiteSpace(name)) return found;
 
-        var pageId = 0;
-        var otherKinds = new List<string>();
         foreach (var (kind, id, objectName, _, _) in EnumerateKnownAlObjects())
         {
-            // Exact (case-insensitive) match, NOT the space-stripping NamesEqual used for
-            // SourceTable/BaseName elsewhere in this file: that one exists because AL writes
-            // a table reference with and without quotes, and stripping spaces there is safe.
-            // Here it would manufacture ambiguity — "Purchase Statistics" and a hypothetical
-            // "PurchaseStatistics" are different objects — and this method's whole job is to
-            // decide whether a name is ambiguous. Same comparison BuildObjectIndexes uses.
             if (id <= 0 || !string.Equals(objectName, name, StringComparison.OrdinalIgnoreCase)) continue;
             var normalised = NormalizeObjectTypeName(kind);
-            switch (normalised)
-            {
-                case "page":
-                    if (pageId == 0) pageId = id;
-                    break;
-                // An EXTENSION is not a RunObject target — `RunObject = Page X` never names a
-                // pageextension — so those must not count as an ambiguity that blocks a page
-                // that resolves cleanly. Same for a table or an enum, which the AL grammar does
-                // not allow after RunObject at all.
-                case "pageextension":
-                case "reportextension":
-                case "queryextension":
-                case "tableextension":
-                case "enumextension":
-                case "table":
-                case "enum":
-                    break;
-                default:
-                    if (!otherKinds.Contains(normalised)) otherKinds.Add(normalised);
-                    break;
-            }
+            if (normalised is not ("page" or "codeunit" or "report" or "xmlport" or "query")) continue;
+            if (!found.Contains((normalised, id))) found.Add((normalised, id));
         }
-        return (pageId, otherKinds);
+        return found;
     }
 
     /// <summary>
