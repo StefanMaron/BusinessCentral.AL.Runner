@@ -85,30 +85,51 @@ internal static class RecordShapeFingerprint
         // makes the walk terminate and keeps the description independent of traversal order.
         if (!seen.Add(type)) return;
 
-        sb.Append(type.FullName).Append('{');
-        // Sorted by name, because reflection does NOT guarantee member order — the runtime is
-        // free to return properties in metadata order, which can change with an unrelated edit
-        // to the source file. An unsorted walk would produce a fingerprint that changes when
-        // nothing about the shape did, which is the mirror of the defect this fixes.
-        foreach (var p in type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                              .OrderBy(p => p.Name, StringComparer.Ordinal))
-        {
+        sb.Append(type.FullName);
+        // OwnProperties drops a BCL base's members, so its NAME (with type arguments) and what it
+        // contains must enter here instead, or `class X : Dictionary<K, Leaf>` hides Leaf (review
+        // of PR #4586). Absent for an object/ValueType base, so no existing payload key moves.
+        var bclBase = BclBase(type);
+        if (bclBase is not null) sb.Append(':').Append(TypeName(bclBase));
+        sb.Append('{');
+        var properties = OwnProperties(type);
+        var fields = OwnFields(type);
+        foreach (var p in properties)
             sb.Append(p.Name).Append(':').Append(TypeName(p.PropertyType)).Append(';');
-        }
-        foreach (var f in type.GetFields(BindingFlags.Public | BindingFlags.Instance)
-                              .OrderBy(f => f.Name, StringComparer.Ordinal))
-        {
+        foreach (var f in fields)
             sb.Append(f.Name).Append(':').Append(TypeName(f.FieldType)).Append(';');
-        }
         sb.Append('}');
 
-        foreach (var p in type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                              .OrderBy(p => p.Name, StringComparer.Ordinal))
-            Walk(p.PropertyType, sb, seen);
-        foreach (var f in type.GetFields(BindingFlags.Public | BindingFlags.Instance)
-                              .OrderBy(f => f.Name, StringComparer.Ordinal))
-            Walk(f.FieldType, sb, seen);
+        foreach (var p in properties) Walk(p.PropertyType, sb, seen);
+        foreach (var f in fields) Walk(f.FieldType, sb, seen);
+        if (bclBase is not null) Walk(bclBase, sb, seen);
     }
+
+    // The nearest non-own ancestor, unless it is object/ValueType (every record and struct has one).
+    private static Type? BclBase(Type type)
+    {
+        var b = type.BaseType;
+        while (b is not null && IsOwnType(b)) b = b.BaseType;
+        return b is null || b == typeof(object) || b == typeof(ValueType) ? null : b;
+    }
+
+    // Sorted by name, because reflection does NOT guarantee member order — the runtime is free to
+    // return members in metadata order, which can change with an unrelated edit to the source
+    // file, and an unsorted walk would move the fingerprint when nothing about the shape did.
+    //
+    // Filtered on the member's DECLARING type, not on the holder's: an own type deriving from a
+    // BCL base (`class X : List<T>`) would otherwise record the base's inherited Capacity/Count/
+    // indexer and tie the key to the SDK (#4516). Not BindingFlags.DeclaredOnly — that would also
+    // drop members inherited from an OWN base record, which are ours and must stay in the key.
+    private static PropertyInfo[] OwnProperties(Type type) =>
+        type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(p => p.DeclaringType is { } d && IsOwnType(d))
+            .OrderBy(p => p.Name, StringComparer.Ordinal).ToArray();
+
+    private static FieldInfo[] OwnFields(Type type) =>
+        type.GetFields(BindingFlags.Public | BindingFlags.Instance)
+            .Where(f => f.DeclaringType is { } d && IsOwnType(d))
+            .OrderBy(f => f.Name, StringComparer.Ordinal).ToArray();
 
     /// <summary>
     /// The name recorded for a member's type. Generic arguments are spelled out, so
