@@ -12,7 +12,8 @@ namespace AlRunner.Infrastructure;
 ///
 /// The rule is the binder's own TPA rule: serve when the file's version is at least the
 /// requested one. A higher file version is normal and stays served — every full BC artifact
-/// directory carries a few hundred such references.
+/// directory carries a few hundred such references. Microsoft.Dynamics.* is exempt: it is the
+/// selected BC build's platform and is served to callers built against any build.
 /// </summary>
 internal static class ResolvedAssemblyVersionGuard
 {
@@ -38,10 +39,10 @@ internal static class ResolvedAssemblyVersionGuard
     {
         var wanted = requested.Version;
         if (wanted == null || (served != null && served >= wanted)) return;
-        // Microsoft.Dynamics.* is version-stamped per BC build, and one engine binary serves the selected
-        // build's copy across a major's minors (AlRunner.csproj, #1700): only the major is a contract there.
-        if (served != null && served.Major == wanted.Major
-            && requested.Name?.StartsWith(DynamicsPrefix, StringComparison.Ordinal) == true) return;
+        // Microsoft.Dynamics.* is the BC platform, and the runner serves the SELECTED build's copy to every
+        // caller whatever build it was compiled against — including across majors: precompiled dependency
+        // apps built on 28.x reference Ncl 28.0.0.0 and run on the 27.x legs against 27.0.0.0. Never refuse it.
+        if (served != null && requested.Name?.StartsWith(DynamicsPrefix, StringComparison.Ordinal) == true) return;
         var message =
             $"Could not load '{requested.FullName}': the only candidate the runner's assembly resolver found is " +
             $"version {served?.ToString() ?? "<none>"} at '{(string.IsNullOrEmpty(path) ? "<in memory>" : path)}', " +

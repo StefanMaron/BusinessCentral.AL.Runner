@@ -32,6 +32,7 @@ public sealed class LogHyphenatedTagContractTests
     {
         // --- Loud: a failure, a refusal, or a result the user asked for. Must print by default.
         new("AlRunner/Infrastructure/AlNavNameReflection.cs", "al-locals", Kind.Loud),
+        new("AlRunner/Infrastructure/ResolvedAssemblyVersionGuard.cs", "assembly-resolver", Kind.Loud),
         new("AlRunner/Infrastructure/InProcessAppPackager.cs", "bc-floor", Kind.Loud),
         new("AlRunner/Program.cs", "count-baseline", Kind.Loud),
         new("AlRunner/Program.cs", "count-out", Kind.Loud),

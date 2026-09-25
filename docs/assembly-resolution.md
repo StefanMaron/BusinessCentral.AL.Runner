@@ -16,7 +16,7 @@ All three paths go through `ResolvedAssemblyVersionGuard` (#4569).
 with a `FileLoadException` naming both versions and the path when it is older. A request with
 no version is served.** This is the rule the default binder applies to the TPA list.
 
-**Exception: `Microsoft.Dynamics.*` needs only an equal major.** MS stamps those assemblies per
+**Exception: `Microsoft.Dynamics.*` is never refused on its version.** MS stamps those assemblies per
 BC build (`Microsoft.Dynamics.Nav.CodeAnalysis` is 17.0.39.53543 in 28.0.46665.53258 and
 28.1.49838.53249, 17.0.40.3339 in 28.1.49838.53910 through 28.4.53241.53989, 16.4.40.3345 in
 27.x), and one engine binary serves the selected build's copy across a major's minors
@@ -24,8 +24,17 @@ BC build (`Microsoft.Dynamics.Nav.CodeAnalysis` is 17.0.39.53543 in 28.0.46665.5
 it was built against, so the plain rule refused an older build of the same minor and the runner
 exited 134 in `BcCompiler.SetTddMode` (reviewer measurement on PR #4585: 28.1.49838.53249 and
 28.0.46665.53258, both 4/4 before the guard). With the major rule both pass 4/4 on
-`tests/runner-extras/environment-type-default`. A different major (a 28-built engine on a 27.x
-artifact) is still refused.
+`tests/runner-extras/environment-type-default`.
+
+An equal-major rule was not enough either: it refused a different major, and that bind works.
+The precompiled dependency apps under `tests/runner-extras/` (`precompiled-tableext-keys`,
+`query-dataitem-filter-precompiled-dep`, `testpage-precompiled-*`, ...) reference
+`Microsoft.Dynamics.Nav.Ncl, Version=28.0.0.0` and are served 27.0.0.0 on the 27.x legs. On
+PR #4585's run 36124578301 the equal-major rule refused that load on BC 27.0.38460.55036 and
+27.5.46862.55139 and failed 25 tests in nine codeunits (61101, 65201, 65281, 65701, 65841,
+65871, 65921, 65922, 65941) that pass on `main`. The runner serves the selected build's platform
+to every caller whatever build it was compiled against, so the whole `Microsoft.Dynamics.*`
+prefix is exempt from the check.
 
 ### Why the handler has to check: the runtime does not
 
@@ -79,9 +88,9 @@ The unversioned request is `Microsoft.BusinessCentral.SystemApp`; the lower one 
 service-tier file probe; neither run reached the `_byName` or cross-reference paths.
 
 Those runs used the engine's own build, so request and file were equal; the runner's own
-`Microsoft.Dynamics.*` references against an older build are the case the major rule above
-covers. With that rule the check refuses nothing a test run does today; it is the loud backstop for a caller compiled against a newer BC build
-than the selected one — a precompiled dependency `.app`, or a runner/engine minor mismatch.
+`Microsoft.Dynamics.*` references against an older build are exempt (above). What the check
+still refuses is a non-`Microsoft.Dynamics.*` assembly from the artifact directory's closure
+(Azure SDK, `Microsoft.Identity.*`, `Microsoft.Extensions.*`, ...) older than a caller requested.
 
 ### The message is on the inner exception
 

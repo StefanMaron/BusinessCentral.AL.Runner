@@ -37,23 +37,19 @@ public sealed class ResolvedAssemblyVersionGuardTests
         => ResolvedAssemblyVersionGuard.EnsureSatisfies(
             Request("Some.Lib", requested), new Version(a, b, c, d), "/artifacts/Some.Lib.dll");
 
-    // Microsoft.Dynamics.* is stamped per BC build; the runner's own engine is built against one build
-    // and serves the selected build's copy across a major's minors (#1700), so only the major must match.
+    // Microsoft.Dynamics.* is the BC platform: the runner serves the SELECTED build's copy to every
+    // caller, whatever build the caller was compiled against, so its version is never a refusal.
     [Theory]
     [InlineData("Microsoft.Dynamics.Nav.CodeAnalysis", "17.0.40.3339", 17, 0, 39, 53543)] // measured: 28.1.49838.53249
     [InlineData("Microsoft.Dynamics.Nav.CodeAnalysis", "17.0.40.3339", 17, 0, 0, 0)]
-    public void DynamicsAssembly_OlderBuildOfTheSameMajor_IsServed(string name, string requested, int a, int b, int c, int d)
+    // measured on CI run 36124578301 (BC 27.0.38460.55036 and 27.5.46862.55139): runner-extras'
+    // precompiled dependency apps reference Ncl 28.0.0.0 and are served 27.0.0.0; refusing it failed
+    // 25 tests in nine codeunits (65701, 65871, ...) that pass on main.
+    [InlineData("Microsoft.Dynamics.Nav.Ncl", "28.0.0.0", 27, 0, 0, 0)]
+    [InlineData("Microsoft.Dynamics.Nav.Types", "28.0.0.0", 27, 0, 0, 0)]
+    public void DynamicsAssembly_OlderBuild_IsServed(string name, string requested, int a, int b, int c, int d)
         => ResolvedAssemblyVersionGuard.EnsureSatisfies(
             Request(name, requested), new Version(a, b, c, d), "/artifacts/x.dll");
-
-    [Fact]
-    public void DynamicsAssembly_OlderMajor_IsRefused()
-    {
-        // measured: 27.x artifacts carry CodeAnalysis 16.4.40.3345, a 28-built engine requests 17.x
-        var ex = Assert.Throws<FileLoadException>(() => ResolvedAssemblyVersionGuard.EnsureSatisfies(
-            Request("Microsoft.Dynamics.Nav.CodeAnalysis", "17.0.40.3339"), new Version(16, 4, 40, 3345), "/a.dll"));
-        Assert.Contains("older than the requested 17.0.40.3339", ex.Message);
-    }
 
     [Fact]
     public void NonDynamicsAssembly_OlderBuildOfTheSameMajor_IsStillRefused()
@@ -79,9 +75,10 @@ public sealed class ResolvedAssemblyVersionGuardTests
         Assert.Contains($"older than the requested {higher}", ex.Message);
     }
 
-    // End to end through the handler DependencyLoader installs. Microsoft.Dynamics.Nav.Service.Dev
-    // is the developer endpoint: nothing in-process loads it, so the request reaches the handler.
-    private const string UnloadedArtifactAssembly = "Microsoft.Dynamics.Nav.Service.Dev";
+    // End to end through the handler DependencyLoader installs. Both assemblies ship in every artifact
+    // directory and nothing in-process loads them, so each request reaches the handler.
+    private const string UnloadedArtifactAssembly = "Azure.Messaging.ServiceBus";
+    private const string UnloadedDynamicsAssembly = "Microsoft.Dynamics.Nav.Service.Dev";
 
     [SkippableFact]
     public void ServiceTierHandler_RefusesAnArtifactFileOlderThanTheRequest()
@@ -91,8 +88,7 @@ public sealed class ResolvedAssemblyVersionGuardTests
             a => a.GetName().Name == UnloadedArtifactAssembly);
 
         var requested = new Version(fileVersion.Major + 1, 0, 0, 0);
-        var request = new AssemblyName(
-            $"{UnloadedArtifactAssembly}, Version={requested}, Culture=neutral, PublicKeyToken=31bf3856ad364e35");
+        var request = new AssemblyName($"{UnloadedArtifactAssembly}, Version={requested}");
 
         // The runtime wraps a handler's exception in its own generic 0x80131621 FileLoadException,
         // so the diagnosis is the inner one.
@@ -112,6 +108,16 @@ public sealed class ResolvedAssemblyVersionGuardTests
         var (probe, _) = ArtifactProbe("Microsoft.Dynamics.Nav.Service.SOAP");
         var asm = Assembly.Load(new AssemblyName(
             "Microsoft.Dynamics.Nav.Service.SOAP, Version=0.0.0.1, Culture=neutral, PublicKeyToken=31bf3856ad364e35"));
+        Assert.Equal(Path.GetFullPath(probe), Path.GetFullPath(asm.Location));
+    }
+
+    [SkippableFact]
+    public void ServiceTierHandler_ServesADynamicsArtifactFileOfAnOlderMajorThanTheRequest()
+    {
+        // The shape of a precompiled dependency built on a newer BC major than the one selected.
+        var (probe, fileVersion) = ArtifactProbe(UnloadedDynamicsAssembly);
+        var asm = Assembly.Load(new AssemblyName(
+            $"{UnloadedDynamicsAssembly}, Version={fileVersion.Major + 1}.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35"));
         Assert.Equal(Path.GetFullPath(probe), Path.GetFullPath(asm.Location));
     }
 
