@@ -189,6 +189,18 @@ internal sealed class RequestPageTestPage : MockITestPage
     }
 
     /// <summary>
+    /// An action the request page declares (#2457). Real BC does not expose one to a
+    /// [RequestPageHandler]: invoking it raises "The action with ID = &lt;id&gt; is not found on the
+    /// page." and its OnAction does not run. Corpus codeunit 60399 "Test Report ReqPage Action"
+    /// measured that on the Windows nightly (run 36190164367) and on every Linux cloud leg.
+    ///
+    /// Null is how BC's NavTestPageBase.GetAction is told an action is absent — it raises
+    /// NavTestActionNotFoundException itself, so the message is BC's own. The base mock's
+    /// MockITestAction, whose Invoke is empty, turned that refusal into a silent no-op.
+    /// </summary>
+    public override ITestAction GetAction(int id) => null!;
+
+    /// <summary>
     /// The request page wrapped as a <see cref="RunnerPageInstance"/>. <c>Adopt</c>, never
     /// <c>TryCreate</c>: the form is already live — NavReportSync constructed it and BC's
     /// RunModal ran its metadata load — so re-initialising it would register every source
