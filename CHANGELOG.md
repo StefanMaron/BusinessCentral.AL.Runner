@@ -38,6 +38,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **metadata:** derive by-value Text/Code length, var Interface and local InherentPermissions methods
 - **metadata:** derive the codeunit method table for codeunits with event subscribers
 - **provisioning:** default BC version selection honours the app.json application/platform floor
 - **loader:** refuse a service-tier file that does not satisfy the requested assembly version
@@ -344,6 +345,7 @@ All notable changes to this project are documented here. Format based on
 - **integer-vt:** judge a half-open range against the base window, not the envelope-widened span
 
 ### Documentation
+- **rules:** move derivations out of the remaining large rules
 - **claude-md:** move reference material and derivations out of CLAUDE.md
 - **agents:** delete figures that go stale on their own from skills and agent definitions
 - **rules:** cut ci-verdicts.md to claim, citation and trap; recipes move to a reading-ci-runs skill
