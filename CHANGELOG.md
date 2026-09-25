@@ -38,6 +38,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **loader:** refuse a service-tier file that does not satisfy the requested assembly version
 - **output:** move runner-internal notes behind --verbose, one line per download set, shorter [test-data] lines
 - **deps:** rank a runnable dependency copy above a symbols-only one, and stop advising provisioning that cannot help
 - **process:** dispatcher-side guard against an inherited foreign worktree cwd
