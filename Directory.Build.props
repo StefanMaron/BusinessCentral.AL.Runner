@@ -133,7 +133,10 @@
     stale the next time Microsoft withdraws this exact build (#2010: that is what broke the
     v2.4.0 release, back when this value doubled as the release default) — that is expected
     and low-stakes now, costing a local rebuild against a fresh -p:_BCVersion, never a
-    broken release. Bump opportunistically when noticed; nothing gates on it.
+    broken release. Its MAJOR.MINOR must equal the newest prefix in .github/bc-versions.txt
+    (PullRequestMatrixScopeTests.DevBuildDefault_TargetsThePrimaryPrefix, #4546): adding a
+    new minor to the matrix means bumping this in the same PR. The build number is not
+    pinned, so a withdrawn build never turns CI red.
 
     Condition="'$(_BCVersion)' == ''" so a caller's -p:_BCVersion (a global property) still
     wins here exactly as it did in each project before consolidation, AND reaches every
@@ -144,7 +147,7 @@
     read those DLLs directly silently exercised the wrong BC version on every CI leg.
   -->
   <PropertyGroup>
-    <_BCVersion Condition="'$(_BCVersion)' == ''">28.1.49838.53910</_BCVersion>
+    <_BCVersion Condition="'$(_BCVersion)' == ''">28.5.54151.55132</_BCVersion>
   </PropertyGroup>
 
   <!--
