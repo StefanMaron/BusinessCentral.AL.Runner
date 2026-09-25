@@ -2067,11 +2067,8 @@ public static partial class NavReportSync
     /// trigger virtuals and <c>quitCalledOnReportTrigger</c> (NavReport in production).</summary>
     internal static void RunOnInitReportAtConstruction(object navReport, Type navReportBase)
     {
-        lock (_onInitReportRan)
-        {
-            if (_onInitReportRan.TryGetValue(navReport, out _)) return;
-            _onInitReportRan.Add(navReport, navReport);
-        }
+        // TryAdd is the atomic claim: exactly one caller per instance gets true.
+        if (!_onInitReportRan.TryAdd(navReport, navReport)) return;
         try
         {
             RunLifecycleTrigger(navReport, navReportBase, "OnInitReport");
