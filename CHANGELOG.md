@@ -434,6 +434,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **bc:** add BC 28.5 to CI and make it the default build target
 - **compile:** compile a third-party-shaped package fixture on every BC leg, judged on errors, objects and tables
 - **app-package:** make PartFor's None branch reach the implementation, drop a dead loop, restore the Features figure
 - **hygiene:** drive the assignees-unreadable refusal arm, which 62 checks never reached
