@@ -36,8 +36,8 @@ allowed and forbidden.
 | `--cache DIR` | ✓ | ✓ | AL-output cache. |
 | `--isolation MODE` / `--test-isolation MODE` | `--test-isolation` only | both work | v2 accepts the v1 name. `method` accepted as alias for `test` (v1's `--test-isolation method` reset state before every `[Test]` procedure — that is v2's `test` mode, not `codeunit`; see #1647). |
 | `--verbose` | ✓ | ✓ | Same. |
-| `--show-pass` | ✓ | accepted (no-op) | v2 prints PASS lines by default. |
-| `--failures-only` / `--quiet` | (no flag — was default) | ✓ | New v2 opt-out to suppress PASS lines. |
+| `--show-pass` | ✓ | ✓ | Prints PASS lines, which are off by default again since #4563. |
+| `--failures-only` / `--quiet` | (no flag — was default) | ✓ | Suppresses PASS lines even under `--verbose`. |
 | `--strict` | ✓ | accepted (no-op) | Same exit-code convention (0 / 1 / 2 / 3), but strict exit is now v2's default — matching v1. `--no-strict-exit` opts back into always-exit-0 for tooling that only wants to parse the JSON output. |
 | `--test PATTERN` / `--filter PATTERN` | ✗ (v1 had `--run PROCEDURE`, an exact single-procedure selector, alongside positional `<sourceDir> <testDir>`) | ✓ | Not a straight rename — a deliberate redesign. `--test`/`--filter PATTERN` is a case-insensitive **substring** match against `Codeunit.Method`, not `--run`'s exact match; a broad pattern can match more than one test. Functionally this covers "run one test," but automation built against v1's `--run` that relies on exact-match semantics should pick a PATTERN specific enough to match exactly one method. See #1648. |
 | `--test-timeout SECONDS` | ✓ (built the failure message `"Test exceeded {N}s timeout."`) | ✓ | Restored in v2 (previously hardcoded to 60s with no CLI override — see #1648). Also settable via the `AL_RUNNER_TEST_TIMEOUT_SEC` env var; the CLI flag takes precedence. Failure-message text is v1-compatible (`"Test exceeded {N}s timeout."`), so external tooling matching on that text (e.g. LethAL) keeps working unchanged. |

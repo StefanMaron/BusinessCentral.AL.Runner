@@ -43,7 +43,8 @@ al-runner [OPTIONS] <bundle-dir>...
 | `--output-junit PATH` | Write a JUnit XML report, grouped by codeunit. |
 | `--output-json` | Per-test JSON on stdout instead of the normal text output. |
 | `--coverage` | Statement-level coverage using Business Central's own instrumentation. Writes Cobertura XML. |
-| `--failures-only`, `--quiet` | Print only failures. |
+| `--show-pass` | Also print a PASS line for every passing test. Off by default; `--verbose` turns it on too. |
+| `--failures-only`, `--quiet` | Never print PASS lines, even under `--verbose`. |
 | `--verbose` | Show internal diagnostic logs. |
 | `--no-strict-exit` | Always exit 0, so a caller can parse the output without the step failing. |
 
