@@ -1,12 +1,10 @@
-// ActionRunObjectCodeunitHostRereadTests — issue #4589.
+// ActionRunObjectCodeunitSharedRecTests — issue #4589.
 //
 // RUNNER-MECHANISM test. The BC claim (a RunObject codeunit's Modify shows on the host TestPage,
-// and the codeunit moving its Rec does not move the host) is corpus codeunit 60606, adjudicated
-// on the corpus's service-tier legs. This pins the runner's own wiring for it:
-// RunnerPageInstance.RunTargetCodeunit hands the codeunit a COPY of the host row, then
-// RereadHostRowAfterAction re-reads the row into the host's buffer through a fresh record.
-// Removing the TransferFields leaves the host on 'Bravo'; handing the codeunit the live record
-// moves the host to 'Echo'. Each arm below goes red for exactly one of those.
+// and the codeunit moving its Rec moves the host) is corpus codeunit 60606, adjudicated on the
+// corpus's service-tier legs. This pins the runner's own wiring for it:
+// RunnerPageInstance.RunTargetCodeunit hands the codeunit the host's own record. Handing it a
+// copy leaves the host on 'Bravo' in both the WRITE and the MOVE arm.
 //
 // The fixture declares no "application", per .claude/rules/no-base-app-in-csharp-tests.md.
 
@@ -16,7 +14,7 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-public sealed class ActionRunObjectCodeunitHostRereadTests : IDisposable
+public sealed class ActionRunObjectCodeunitSharedRecTests : IDisposable
 {
     private static readonly string RepoRoot = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
@@ -24,9 +22,9 @@ public sealed class ActionRunObjectCodeunitHostRereadTests : IDisposable
 
     private readonly string _root;
 
-    public ActionRunObjectCodeunitHostRereadTests()
+    public ActionRunObjectCodeunitSharedRecTests()
     {
-        _root = TestScratch.Dir("al-runner-runobject-codeunit-reread-4589");
+        _root = TestScratch.Dir("al-runner-runobject-codeunit-sharedrec-4589");
         Directory.CreateDirectory(_root);
         WriteBundle();
     }
@@ -37,7 +35,7 @@ public sealed class ActionRunObjectCodeunitHostRereadTests : IDisposable
     }
 
     [SkippableFact]
-    public void RunObjectCodeunit_WriteShowsOnHost_AndMovingItsRecLeavesTheHostAlone()
+    public void RunObjectCodeunit_WriteShowsOnHost_AndMovingItsRecMovesTheHost()
     {
         TestArtifacts.SkipIfMissing();
         var pkg = TestArtifacts.PlatformAppsDir();
@@ -57,7 +55,7 @@ public sealed class ActionRunObjectCodeunitHostRereadTests : IDisposable
         File.WriteAllText(Path.Combine(_root, "app.json"), """
             {
               "id": "5f0b3c2e-8a41-4d7e-b6c9-2e4589a1c0d7",
-              "name": "RunObject Codeunit Host Reread Fixture",
+              "name": "RunObject Codeunit Shared Rec Fixture",
               "publisher": "AL Runner Tests",
               "version": "1.0.0.0",
               "dependencies": [],
@@ -160,7 +158,7 @@ public sealed class ActionRunObjectCodeunitHostRereadTests : IDisposable
                         Error('%1: expected <%2>, got <%3>', What, Expected, Actual);
                 end;
 
-                // Fails with <Bravo> when RereadHostRowAfterAction does not copy the row back.
+                // Fails with <Bravo> when the codeunit is handed a copy of the host's record.
                 [Test]
                 procedure WriteByTheCodeunitShowsOnTheHost()
                 var
@@ -175,9 +173,9 @@ public sealed class ActionRunObjectCodeunitHostRereadTests : IDisposable
                     Check('Written', Host.Descr.Value(), 'host value after the codeunit wrote');
                 end;
 
-                // Fails with <Charlie> when the codeunit is handed the host's live record.
+                // Fails with <Bravo> when the codeunit is handed a copy of the host's record.
                 [Test]
-                procedure MoveByTheCodeunitLeavesTheHostOnItsRow()
+                procedure MoveByTheCodeunitMovesTheHost()
                 var
                     Host: TestPage "ROCR Host";
                 begin
@@ -186,7 +184,7 @@ public sealed class ActionRunObjectCodeunitHostRereadTests : IDisposable
                     Host.First();
                     Host.Next();
                     Host.RunTarget.Invoke();
-                    Check('Bravo', Host.Descr.Value(), 'host row after the codeunit moved its Rec');
+                    Check('Charlie', Host.Descr.Value(), 'host row after the codeunit moved its Rec');
                 end;
 
                 // Control: a codeunit that does nothing leaves the host exactly as it was.
