@@ -216,7 +216,8 @@ internal partial class LiveNavTestPage
     // collide with a control id, and it rejected small, perfectly valid field numbers as
     // "not a control" (Pageworks SetFilter(3, …) on PageworksPartial).
     //
-    // Both read and write filter group 0 whatever group Rec was left in — see TestFilterUserGroup.
+    // SetFilter writes filter group 0 whatever group Rec was left in; GetFilter reads the first
+    // group that filters the field — see TestFilterUserGroup.
     public override void SetFilter(int fieldNo, string filterValue)
     {
         var record = RequireRecord("SetFilter()");
@@ -258,8 +259,13 @@ internal partial class LiveNavTestPage
     public override string GetFilter(int fieldNo)
     {
         var record = RequireRecord("GetFilter()");
-        return TestFilterUserGroup.Run(() => record.ALFilterGroup, g => record.ALFilterGroup = g,
-            () => record.ALGetFilter(fieldNo));
+        var group = TestFilterUserGroup.FirstGroupFiltering(
+            record.GetCurrentFilters().Select(g => (g.FilterGroupNo,
+                (g.Filters ?? Array.Empty<NavFilter>()).Select(f => f.FilterField))),
+            fieldNo);
+        if (group is null) return string.Empty;
+        return TestFilterUserGroup.RunIn(group.Value, () => record.ALFilterGroup,
+            g => record.ALFilterGroup = g, () => record.ALGetFilter(fieldNo));
     }
 
     // ── ITestFilter: the key and the direction the page walks (#3316) ─────────────
@@ -369,22 +375,33 @@ internal partial class LiveNavTestPage
 }
 
 /// <summary>
-/// Runs a TestFilter read or write in filter group 0 — the page's user filters — and restores
-/// whatever group the record was in, even when the body throws. A page whose OnOpenPage ends in
-/// FilterGroup(2) (GenJnlManagement.OpenJnlBatch) must not route the test's filter into group 2,
-/// where it would AND with the group-0 filter it should replace. Observably equivalent to BC:
-/// corpus codeunit 60919 (#4677) pins both that it replaces a group-0 filter and that it leaves
-/// a group-2 filter in force.
+/// The filter groups behind a TestPage's <c>Filter</c>. SetFilter writes group 0, the user
+/// filters, whatever group OnOpenPage left active; GetFilter answers the first group, in the
+/// record's own group order, that filters the field — BC's TestFilterProxy.GetFilter reads
+/// NavFilterHelper.GetValueFilter, which returns the first match over NavRecord.GetCurrentFilters.
+/// Observably equivalent: corpus 60919, #4677.
 /// </summary>
 internal static class TestFilterUserGroup
 {
     internal const int UserFilterGroup = 0;
 
     internal static T Run<T>(Func<int> getGroup, Action<int> setGroup, Func<T> body)
+        => RunIn(UserFilterGroup, getGroup, setGroup, body);
+
+    /// <summary>Runs <paramref name="body"/> in <paramref name="group"/>, restoring the caller's group even when it throws.</summary>
+    internal static T RunIn<T>(int group, Func<int> getGroup, Action<int> setGroup, Func<T> body)
     {
         var saved = getGroup();
-        setGroup(UserFilterGroup);
+        setGroup(group);
         try { return body(); }
         finally { setGroup(saved); }
+    }
+
+    /// <summary>The first group, in the order given, holding a filter on <paramref name="fieldNo"/>; null when none does.</summary>
+    internal static int? FirstGroupFiltering(IEnumerable<(int Group, IEnumerable<int> Fields)> groupsInOrder, int fieldNo)
+    {
+        foreach (var (group, fields) in groupsInOrder)
+            if (fields.Contains(fieldNo)) return group;
+        return null;
     }
 }
