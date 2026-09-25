@@ -427,7 +427,7 @@ public static partial class RecordPatches
 
             // (node sequence, table id) per tableelement, in declaration order — the
             // request page's filter controls and expressions are keyed by that sequence.
-            var tableElements = new List<(int Sequence, int TableId)>();
+            var tableElements = new List<(int Sequence, int TableId, string ReqFilterFields)>();
             // enclosing[d] = the innermost open node at indentation d: its emitted ID (what a
             // bound child's ParentID resolves to) and the table id it binds, if it is a
             // tableelement (what a bound child's field name resolves against). Carried
@@ -453,7 +453,7 @@ public static partial class RecordPatches
 
                 if (tableId > 0)
                 {
-                    tableElements.Add((sequence[i], tableId));
+                    tableElements.Add((sequence[i], tableId, XmlPortNodeFieldList(n, "RequestFilterFields", tableId)));
                     tableByNodeName[n.Name] = tableId;
                 }
 
@@ -496,7 +496,7 @@ public static partial class RecordPatches
     /// <c>PageDefinition</c> must be the FIRST child of <c>&lt;RequestPage&gt;</c>.</para>
     /// </summary>
     private static void WriteXmlPortRequestPageXml(
-        XmlWriter w, BcAppSymbolCache.XmlPortSymbol port, List<(int Sequence, int TableId)> tableElements)
+        XmlWriter w, BcAppSymbolCache.XmlPortSymbol port, List<(int Sequence, int TableId, string ReqFilterFields)> tableElements)
     {
         w.WriteStartElement("RequestPage");
         w.WriteStartElement("PageDefinition", MetaObjectsNamespace);
@@ -527,7 +527,7 @@ public static partial class RecordPatches
             w.WriteStartElement("Controls", MetaObjectsNamespace);
             w.WriteAttributeString("xsi", "type", XsiNamespace, "ControlGroupDefinition");
             w.WriteAttributeString("ID", "1");
-            foreach (var (sequence, tableId) in tableElements)
+            foreach (var (sequence, tableId, reqFilterFields) in tableElements)
             {
                 w.WriteStartElement("Controls", MetaObjectsNamespace);
                 w.WriteAttributeString("xsi", "type", XsiNamespace, "FilterControlDefinition");
@@ -535,6 +535,10 @@ public static partial class RecordPatches
                     "ID", (sequence + 1).ToString(CultureInfo.InvariantCulture));
                 w.WriteAttributeString("DataColumnName", XmlPortDataItemViewName(port.Id, sequence));
                 w.WriteAttributeString("FilterTableID", tableId.ToString(CultureInfo.InvariantCulture));
+                // BC states the tableelement's filter fields here too, and omits the attribute
+                // when the AL states none (#4602).
+                if (reqFilterFields.Length > 0)
+                    w.WriteAttributeString("ReqFilterFields", reqFilterFields);
                 w.WriteStartElement("FieldVariable", MetaObjectsNamespace);
                 w.WriteAttributeString("Datatype", "Binary");
                 w.WriteEndElement();
@@ -549,7 +553,7 @@ public static partial class RecordPatches
         // MetadataProvider.LoadExpressionRelationTables iterates Expressions with no null
         // check.
         w.WriteStartElement("Expressions", MetaObjectsNamespace);
-        foreach (var (sequence, _) in tableElements)
+        foreach (var (sequence, _, _) in tableElements)
         {
             var name = XmlPortDataItemViewName(port.Id, sequence);
             w.WriteStartElement("Expression", MetaObjectsNamespace);
@@ -642,7 +646,7 @@ public static partial class RecordPatches
             w.WriteElementString("AutoReplace", XmlPortNodeBool(n, "AutoReplace", false));
             w.WriteElementString("AutoSave", XmlPortNodeBool(n, "AutoSave", true));
             w.WriteElementString("AutoUpdate", XmlPortNodeBool(n, "AutoUpdate", false));
-            w.WriteElementString("CalcFields", n.Properties.TryGetValue("CalcFields", out var cf) ? cf : "");
+            w.WriteElementString("CalcFields", XmlPortNodeFieldList(n, "CalcFields", tableId));
             w.WriteElementString("LinkFields",
                 n.Properties.TryGetValue("LinkFields", out var lf) && !string.IsNullOrWhiteSpace(lf)
                     ? XmlPortCanonicalLinkFields(lf, tableId, linkTableId, n.Name) : "");
@@ -679,7 +683,8 @@ public static partial class RecordPatches
 
         if (isTable)
         {
-            w.WriteElementString("ReqFilterFields", n.Properties.TryGetValue("ReqFilterFields", out var rff) ? rff : "");
+            // AL states RequestFilterFields; BC's element is ReqFilterFields (#4602).
+            w.WriteElementString("ReqFilterFields", XmlPortNodeFieldList(n, "RequestFilterFields", tableId));
             w.WriteElementString("SourceTableView",
                 n.Properties.TryGetValue("SourceTableView", out var stv) && !string.IsNullOrWhiteSpace(stv)
                     ? XmlPortCanonicalTableView(stv, tableId, n.Name) : "");
@@ -727,6 +732,11 @@ public static partial class RecordPatches
         if (stated == null) return defaultValue ? "1" : "0";
         return BcAppSymbolCache.SymbolBoolValue(stated) ? "1" : "0";
     }
+
+    /// <summary>A tableelement field-list property in BC's <c>Field&lt;n&gt;</c> form; empty when unstated.</summary>
+    private static string XmlPortNodeFieldList(XmlPortSchemaNode n, string property, int tableId)
+        => n.Properties.TryGetValue(property, out var v) && !string.IsNullOrWhiteSpace(v)
+            ? XmlPortCanonicalFieldList(v, tableId, property, n.Name) : "";
 
     private static string XmlPortNodeBool(XmlPortSchemaNode n, string name, bool defaultValue)
     {

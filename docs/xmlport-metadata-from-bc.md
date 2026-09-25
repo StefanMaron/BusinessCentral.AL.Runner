@@ -234,6 +234,38 @@ from their `src/` on 28.1.49838.53910). Whether each name and Option member then
 depends on the table metadata the runner holds; that is measured end to end only for System
 Application, by `MetadataEquivalenceHarnessTests`.
 
+<a id="calcfields-and-reqfilterfields"></a>
+
+## `CalcFields` and `RequestFilterFields` are field-id lists (#4602)
+
+Both are written as `Field<n>` ids, comma-separated with no spaces, in the order the AL states
+them, resolved against the tableelement's own `SourceTable`. Measured with
+`tools/metadata-ground-truth` on BC 28.1.49838.53910; `AlRunner.Tests/XmlPortFieldListEncodingTests.cs`
+pins the same strings.
+
+| AL | BC |
+|---|---|
+| `CalcFields = "Line Sum", "Line Count", "Has Lines"` | `<CalcFields>Field12,Field11,Field13</CalcFields>` |
+| `RequestFilterFields = Kind, "Amount (LCY)", Name, "Date Filter"` | `<ReqFilterFields>Field2,Field5,Field7,Field20</ReqFilterFields>` |
+| neither stated | `<CalcFields />`, `<ReqFilterFields />` |
+
+**The AL property is `RequestFilterFields`; `ReqFilterFields` is only the metadata name.** The
+runner used to read the metadata name off the AL, so the list was always empty. An xmlport that
+spells it `ReqFilterFields` in AL passes declaration checks and then makes BC's own emitter throw
+a `NullReferenceException` in `SymbolExtensions.ShouldBeEmitted`, so no shipped package carries
+that spelling.
+
+BC also states the list on the request page's `FilterControlDefinition` for that tableelement,
+as a `ReqFilterFields` attribute, and omits the attribute when the AL states none. The runner
+writes both from the same encoder.
+
+An entry that is not a plain field name, or a name that does not resolve on the table, refuses
+the document the same way an unencodable `SourceTableView` does.
+
+Base Application on 28.1.49838.53910 states `CalcFields` once (`CALTestResults`) and
+`RequestFilterFields = "No."` three times (`ExportContact`, `ExportItemData`,
+`MfgExportItemData`); System Application's four xmlports state neither.
+
 <a id="request-page"></a>
 
 ## The `<RequestPage>` subtree is not optional
