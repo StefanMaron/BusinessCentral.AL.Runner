@@ -99,15 +99,28 @@ a port declaring nothing, which is what the synthesizer writes in that case.
 | `DefaultFieldsValidation` | symbol file | `1` |
 | `InlineSchema` / `UseDefaultNamespace` / `UseLax` | symbol file | `0` |
 | `TransactionType` | symbol file | `UpdateNoLocks` |
-| `FormatEvaluate` | — | `C/SIDE Format/Evaluate` |
+| `FormatEvaluate` | symbol file | `C/SIDE Format/Evaluate` |
+| `TextEncoding` | symbol file | omitted — BC's reader then takes `MS-DOS`, AL's default |
 | `XmlVersionNo` | — | `1.0` |
 | `DefaultNamespace` | symbol file | `urn:microsoft-dynamics-nav/xmlports/x<id>` |
 
 Two spelling traps, both measured:
 
-- **`Encoding` is spelled differently on each side.** AL and the symbol file write `UTF8` /
-  `UTF16`; BC's document writes `UTF-8` / `UTF-16`. Issue #3797 measured the runner answering
-  `UTF16` where BC answered `UTF-8` on three System Application xmlports.
+- **Enum properties are spelled differently on each side.** The symbol file states the AL
+  member; BC's document carries that member's *metadata name*, from the compiler's
+  `EnumPropertyMemberInfo` table (CodeAnalysis `ObjectParser`, 28.1.49838.54424):
+
+  | property | AL member -> document |
+  |---|---|
+  | `Format` | `VariableText` -> `Variable Text`, `FixedText` -> `Fixed Text` |
+  | `Encoding` | `UTF8` -> `UTF-8`, `UTF16` -> `UTF-16`, `ISO88592` -> `ISO-8859-2` |
+  | `TextEncoding` | `MSDOS` -> `MS-DOS`, `UTF8` -> `UTF-8`, `UTF16` -> `UTF-16` |
+  | `FormatEvaluate` | `Legacy` -> `C/SIDE Format/Evaluate`, `Xml` -> `XML Format/Evaluate` |
+
+  `MetaXmlPort`'s constructor accepts only the document spelling and throws a bare
+  `ArgumentException` naming the property otherwise — Base Application xmlports 5050 and 9991
+  (`Format = VariableText`) failed that way (#4604). A member the table does not know refuses
+  rather than being written through. #3797 measured the `Encoding` half.
 - **Booleans are `"1"`, never `"true"`.** Microsoft's packages write the digit, so a reader
   matching only the word answers false for every xmlport that declares the property — the measured
   shape of #3790 on the codeunit side. `BcAppSymbolCache.SymbolBoolValue` accepts both.

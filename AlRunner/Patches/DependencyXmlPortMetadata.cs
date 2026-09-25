@@ -368,7 +368,7 @@ public static partial class RecordPatches
             // assumed; docs/xmlport-metadata-from-bc.md#object-properties is the table.
             w.WriteElementString("DefaultFieldsValidation", XmlPortBool(port, "DefaultFieldsValidation", true));
             w.WriteElementString("FileName", XmlPortProperty(port, "FileName") ?? "");
-            w.WriteElementString("FormatEvaluate", "C/SIDE Format/Evaluate");
+            w.WriteElementString("FormatEvaluate", XmlPortEnumValue(port, "FormatEvaluate"));
             // The four VARIABLE-TEXT format separators. BC's emitter states all four
             // unconditionally and AL states none of them — measured on System Application's
             // four xmlports (9001, 9862, 9863, 9864) on 28.1.49838.53910, where every one
@@ -418,12 +418,12 @@ public static partial class RecordPatches
             // xmlport that declares them, and the three #3797 measured the runner answering
             // wrongly (Both / UTF16 for Export / UTF8). Written from the symbol file, at AL's
             // documented default otherwise.
-            w.WriteElementString("Direction", XmlPortProperty(port, "Direction") ?? "Both");
-            w.WriteElementString("Format", XmlPortProperty(port, "Format") ?? "Xml");
-            // The symbol file spells it UTF8/UTF16; BC's document spells it UTF-8/UTF-16.
-            w.WriteElementString("Encoding", XmlPortEncoding(XmlPortProperty(port, "Encoding")));
-            if (XmlPortProperty(port, "TextEncoding") is { Length: > 0 } textEncoding)
-                w.WriteElementString("TextEncoding", textEncoding);
+            w.WriteElementString("Direction", XmlPortEnumValue(port, "Direction"));
+            w.WriteElementString("Format", XmlPortEnumValue(port, "Format"));
+            w.WriteElementString("Encoding", XmlPortEnumValue(port, "Encoding"));
+            // Unstated, BC's reader defaults to MS-DOS, which is AL's default too.
+            if (XmlPortProperty(port, "TextEncoding") is { Length: > 0 })
+                w.WriteElementString("TextEncoding", XmlPortEnumValue(port, "TextEncoding"));
 
             // (node sequence, table id) per tableelement, in declaration order — the
             // request page's filter controls and expressions are keyed by that sequence.
@@ -736,18 +736,44 @@ public static partial class RecordPatches
     }
 
     /// <summary>
-    /// The <c>Encoding</c> spelling BC's document uses. The symbol file and AL both write
-    /// <c>UTF8</c> / <c>UTF16</c>; BC's emitted document writes <c>UTF-8</c> / <c>UTF-16</c>
-    /// (#3797 measured the pair on three System Application xmlports). BC's default for an
-    /// xmlport stating none is UTF-16, measured on probe port 61602.
+    /// The metadata name BC's document carries for an xmlport enum property: the symbol file
+    /// states the AL member (<c>VariableText</c>, <c>UTF8</c>, <c>MSDOS</c>), and BC's compiler
+    /// writes each member's metadata name instead (CodeAnalysis <c>ObjectParser</c>'s
+    /// <c>EnumPropertyMemberInfo</c> table, 28.1.49838.54424). MetaXmlPort's constructor
+    /// accepts only those names and throws a bare <c>ArgumentException("Format")</c> otherwise
+    /// (#4604). A member this table does not know refuses, rather than handing BC a value its
+    /// reader rejects.
     /// </summary>
-    private static string XmlPortEncoding(string? stated)
+    private static string XmlPortEnumValue(BcAppSymbolCache.XmlPortSymbol port, string property)
     {
-        if (string.IsNullOrEmpty(stated)) return "UTF-16";
-        var t = stated!.Trim();
-        if (t.Equals("UTF8", StringComparison.OrdinalIgnoreCase)) return "UTF-8";
-        if (t.Equals("UTF16", StringComparison.OrdinalIgnoreCase)) return "UTF-16";
-        return t;
+        var (defaultName, members) = XmlPortEnumMetadataNames[property];
+        var stated = XmlPortProperty(port, property)?.Trim();
+        if (string.IsNullOrEmpty(stated)) return defaultName;
+        if (members.TryGetValue(stated!, out var name)) return name;
+        throw NotEncodable(property, port.Name, stated!);
+    }
+
+    // property -> (the metadata name BC writes when AL states nothing, AL member -> metadata name)
+    private static readonly Dictionary<string, (string Default, Dictionary<string, string> Members)>
+        XmlPortEnumMetadataNames = new()
+        {
+            ["Direction"] = ("Both", XmlPortEnumMembers(
+                ("Import", "Import"), ("Export", "Export"), ("Both", "Both"))),
+            ["Format"] = ("Xml", XmlPortEnumMembers(
+                ("Xml", "Xml"), ("VariableText", "Variable Text"), ("FixedText", "Fixed Text"))),
+            ["Encoding"] = ("UTF-16", XmlPortEnumMembers(
+                ("UTF8", "UTF-8"), ("UTF16", "UTF-16"), ("ISO88592", "ISO-8859-2"))),
+            ["TextEncoding"] = ("MS-DOS", XmlPortEnumMembers(
+                ("MSDOS", "MS-DOS"), ("UTF8", "UTF-8"), ("UTF16", "UTF-16"), ("WINDOWS", "WINDOWS"))),
+            ["FormatEvaluate"] = ("C/SIDE Format/Evaluate", XmlPortEnumMembers(
+                ("Legacy", "C/SIDE Format/Evaluate"), ("Xml", "XML Format/Evaluate"))),
+        };
+
+    private static Dictionary<string, string> XmlPortEnumMembers(params (string Al, string Metadata)[] members)
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (al, metadata) in members) { map[al] = metadata; map[metadata] = metadata; }
+        return map;
     }
 
     /// <summary>
