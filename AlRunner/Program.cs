@@ -1067,6 +1067,9 @@ if (artifactPathArg != null)
 // BcArtifacts.ExplicitEngineMinorMismatchWarning) does not double-warn a case the
 // auto-select branch already covers with its own, richer message.
 bool bcVersionAutoSelected = false;
+// #4590: app.json application/platform versions are a floor. The default never selects below it;
+// an explicit --bc-version below it runs with a warning (see BcVersionFloor).
+var projectBcFloor = TryDeriveBcFloorFromProject(bundles);
 if (bcVersionArg == null && artifactPathArg == null)
 {
     // #2027 BEHAVIOUR CHANGE: when this install ships per-BC-minor engine variants
@@ -1098,8 +1101,16 @@ if (bcVersionArg == null && artifactPathArg == null)
             // #4557: the newest cached version a shipped variant RUNS, else the newest shipped
             // minor as a prefix for provisioning — never a newer CDN minor with no engine.
             var choice = AlRunner.Infrastructure.EngineVariants.ChooseDefault(
-                shippedVariantsForDefault, ProgramSupport.CachedArtifactVersionNames());
+                shippedVariantsForDefault, ProgramSupport.CachedArtifactVersionNames(), floor: projectBcFloor);
+            if (choice.FloorUnmet)
+            {
+                Console.Error.WriteLine(AlRunner.Infrastructure.BcVersionFloor.DescribeUnmet(projectBcFloor!,
+                    AlRunner.Infrastructure.EngineVariants.DescribeSupportedMinors(shippedVariantsForDefault)));
+                return 2;
+            }
             bcVersionArg = choice.Version;
+            if (choice.FloorSkipLine() is { } floorSkipLine && ProgramSupport.IsFirstGeneration())
+                Console.Error.WriteLine(floorSkipLine);
             // Immediate, not deferred: it explains the selection failure that can follow in this
             // generation. Printed by the first generation only — every re-exec'd child reads the
             // same cache and would repeat it.
@@ -1171,6 +1182,13 @@ if (bcVersionArg == null && artifactPathArg == null)
         bool artifactsRootResolvable;
         try { _ = AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir; artifactsRootResolvable = true; }
         catch (InvalidOperationException) { artifactsRootResolvable = false; }
+        if (engineVersion != null && projectBcFloor != null
+            && !AlRunner.Infrastructure.BcVersionFloor.Meets($"{engineVersion.Major}.{engineVersion.Minor}", projectBcFloor))
+        {
+            Console.Error.WriteLine(AlRunner.Infrastructure.BcVersionFloor.DescribeUnmet(projectBcFloor,
+                $"{engineVersion.Major}.{engineVersion.Minor}"));
+            return 2;
+        }
         if (engineVersion != null && engineMajor != null && artifactsRootResolvable)
         {
             bcVersionAutoSelected = true;
@@ -1337,13 +1355,20 @@ if (!bcVersionAutoSelected && bcVersionArg != null && artifactPathArg == null)
     {
         if (int.TryParse(bcVersionArg.Trim(), out var bareMajor))
         {
+            // #4590: a floor inside the requested major narrows the choice; one the major cannot
+            // meet is ignored here and warned about below, since the major was asked for by name.
+            var cachedNames = ProgramSupport.CachedArtifactVersionNames();
             var choice = AlRunner.Infrastructure.EngineVariants.ChooseDefault(
-                explicitVariants, ProgramSupport.CachedArtifactVersionNames(), bareMajor);
+                explicitVariants, cachedNames, bareMajor, floor: projectBcFloor);
+            if (choice.FloorUnmet)
+                choice = AlRunner.Infrastructure.EngineVariants.ChooseDefault(explicitVariants, cachedNames, bareMajor);
             if (choice.Version != null)
             {
                 bcVersionArg = choice.Version;
                 if (choice.SkipLine(explicitVariants) is { } skipLine && ProgramSupport.IsFirstGeneration())
                     Console.Error.WriteLine(skipLine);
+                if (choice.FloorSkipLine() is { } floorSkipLine && ProgramSupport.IsFirstGeneration())
+                    Console.Error.WriteLine(floorSkipLine);
             }
             else if (!provisionSubcommand)
             {
@@ -1362,6 +1387,12 @@ if (!bcVersionAutoSelected && bcVersionArg != null && artifactPathArg == null)
         }
     }
 }
+// #4590: an explicit selection below the app.json floor runs, but not silently. Printed before
+// provisioning and selection so it is visible even when either fails.
+if (!bcVersionAutoSelected && bcVersionArg != null && projectBcFloor != null
+    && !AlRunner.Infrastructure.BcVersionFloor.Meets(bcVersionArg, projectBcFloor)
+    && ProgramSupport.IsFirstGeneration())
+    Console.Error.WriteLine(AlRunner.Infrastructure.BcVersionFloor.DescribeExplicitBelow(bcVersionArg, projectBcFloor));
 // ── Provisioning (on by default since issue #2024; opt out with --no-auto-provision):
 // `provision` subcommand or autoProvision (default true). Resolves the target version,
 // downloads the engine service-tier closure if it's missing/incomplete, then (subcommand)
@@ -1400,6 +1431,15 @@ var shippedVariants = AlRunner.Infrastructure.EngineVariants.Discover(AppContext
 try
 {
     AlRunner.Infrastructure.BcArtifacts.SelectVersion(bcVersionArg, artifactPathArg);
+    // #4590 backstop: whatever route the default took (an offline fallback, a CDN build of the
+    // floor's minor that is still below a build-level floor), it never runs below the floor.
+    if (bcVersionAutoSelected && projectBcFloor != null
+        && AlRunner.Infrastructure.BcArtifacts.SelectedVersion < projectBcFloor)
+        throw new InvalidOperationException(
+            $"the selected BC {AlRunner.Infrastructure.BcArtifacts.SelectedVersion} is below the minimum BC " +
+            $"{projectBcFloor} the project's app.json declares (application/platform), and no version at or " +
+            $"above it is available. Provision one (al-runner provision --bc-version " +
+            $"{projectBcFloor.Major}.{projectBcFloor.Minor}), or pass --bc-version to run an older BC deliberately.");
     // Consistency guard: a single-build runner refuses a BC major it was not built for.
     // --precompile applies the same guard (SiblingCompile.RunPrecompile).
     AlRunner.Infrastructure.BcArtifacts.VerifyEngineConsistency(shippedVariants.Count);

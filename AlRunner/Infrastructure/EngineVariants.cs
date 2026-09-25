@@ -146,6 +146,23 @@ public static class EngineVariants
     /// versions it passed over because no shipped variant runs them.</summary>
     public sealed record DefaultChoice(string? Version, IReadOnlyList<string> SkippedUnsupported)
     {
+        /// <summary>Cached versions passed over because they are below the app.json floor (#4590).</summary>
+        public IReadOnlyList<string> SkippedBelowFloor { get; init; } = Array.Empty<string>();
+
+        /// <summary>The floor the choice honoured; null when none was given.</summary>
+        public Version? Floor { get; init; }
+
+        /// <summary>True when variants are shipped in scope but none meets <see cref="Floor"/>;
+        /// <see cref="Version"/> is then null and the caller must refuse (#4590).</summary>
+        public bool FloorUnmet { get; init; }
+
+        /// <summary>The one "[bc] skipping cached BC ... below ... minimum" line; null when
+        /// nothing was skipped for the floor or no version was chosen.</summary>
+        public string? FloorSkipLine() =>
+            SkippedBelowFloor.Count == 0 || Version == null || Floor == null ? null :
+            $"[bc] skipping cached BC {string.Join(", ", SkippedBelowFloor)}: below the minimum BC {Floor} " +
+            $"the project's app.json declares — using BC {Version} instead.";
+
         /// <summary>The one "[bc] skipping cached BC ..." line naming what was passed over; null
         /// when nothing was skipped or no version was chosen.</summary>
         public string? SkipLine(IReadOnlyList<Variant> variants) =>
@@ -160,14 +177,17 @@ public static class EngineVariants
     /// provisioning step resolves against the CDN, so it can only ever fetch a minor this install
     /// has an engine for. Restricted to <paramref name="major"/> when given (a bare-major
     /// <c>--bc-version</c>). <c>Version</c> is null when no variant is shipped (for that major).
+    /// A <paramref name="floor"/> (#4590) excludes cached builds below it and shipped minors that
+    /// cannot meet it; none left sets <c>FloorUnmet</c>.
     /// Trap: the CDN publishes a minor before a release ships its variant, so "newest on the CDN"
     /// and "newest cached" are both unsafe defaults — each left a fresh box exiting 2 forever.
     /// </summary>
     public static DefaultChoice ChooseDefault(
-        IReadOnlyList<Variant> variants, IEnumerable<string> cachedVersionNames, int? major = null)
+        IReadOnlyList<Variant> variants, IEnumerable<string> cachedVersionNames, int? major = null,
+        Version? floor = null)
     {
         var inScope = variants.Where(v => major == null || v.BuildVersion.Major == major).ToList();
-        if (inScope.Count == 0) return new DefaultChoice(null, Array.Empty<string>());
+        if (inScope.Count == 0) return new DefaultChoice(null, Array.Empty<string>()) { Floor = floor };
 
         var cached = cachedVersionNames
             .Select(n => (Name: n, Ver: Version.TryParse(n, out var v) ? v : null))
@@ -175,16 +195,24 @@ public static class EngineVariants
             .OrderByDescending(t => t.Ver)
             .ToList();
 
+        // #4590: app.json versions are a floor — a cached build below it is never the default.
         var skipped = new List<string>();
+        var belowFloor = new List<string>();
         foreach (var (name, ver) in cached)
         {
+            if (floor != null && ver! < floor) { belowFloor.Add(name); continue; }
             if (SelectBestMatch(inScope, ver!) != null)
-                return new DefaultChoice(name, skipped);
+                return new DefaultChoice(name, skipped) { SkippedBelowFloor = belowFloor, Floor = floor };
             skipped.Add(name);
         }
 
-        var newest = inScope.Max(v => v.BuildVersion)!;
-        return new DefaultChoice($"{newest.Major}.{newest.Minor}", skipped);
+        var provisionable = inScope
+            .Where(v => floor == null || BcVersionFloor.Meets($"{v.BuildVersion.Major}.{v.BuildVersion.Minor}", floor))
+            .ToList();
+        if (provisionable.Count == 0)
+            return new DefaultChoice(null, skipped) { SkippedBelowFloor = belowFloor, Floor = floor, FloorUnmet = true };
+        var newest = provisionable.Max(v => v.BuildVersion)!;
+        return new DefaultChoice($"{newest.Major}.{newest.Minor}", skipped) { SkippedBelowFloor = belowFloor, Floor = floor };
     }
 
     /// <summary>
