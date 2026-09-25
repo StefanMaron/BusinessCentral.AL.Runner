@@ -378,6 +378,12 @@ public static partial class BcRuntime
     {
         if (!disposing) return;
 
+        // BC disposes a local TestPage when its procedure returns, and that teardown flushes the
+        // row the page is still holding — raising if the table refuses it (corpus 60045 "IPF
+        // Tests", DelayedCard_DuplicateKey_OK_RaisesWhenThePageGoesOutOfScope; #4624). The scope
+        // bookkeeping below must still run, so the error is rethrown only after it.
+        var testPageTeardownError = DisposeLocalTestPages(self);
+
         _navMethodScopeDepth = Math.Max(0, _navMethodScopeDepth - 1);
 
         // Restore CurrentMethodScope to the scope's parent (captured at ctor entry in parentScope).
@@ -396,6 +402,43 @@ public static partial class BcRuntime
         UnbindLocalManualSubscriptions(self);
 
         DetachTreeHandlerFromParent(self);
+
+        testPageTeardownError?.Throw();
+    }
+
+    /// <summary>
+    /// Dispose each TestPage declared as a local of this scope — a NavTestPageHandle direct tree child, as
+    /// <see cref="UnbindLocalManualSubscriptions"/> finds local codeunits. Only TestPage handles
+    /// are touched, so the no-cascade rule above still holds for every other value.
+    /// Returns the first teardown error for the caller to rethrow.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static System.Runtime.ExceptionServices.ExceptionDispatchInfo? DisposeLocalTestPages(object? self)
+    {
+        if (self == null) return null;
+        if (_fTreeObjTree == null || _fTreeHandlerFirstChildBase == null ||
+            _fTreeHandlerNextSiblingBase == null || _fTreeHandlerHostObject == null)
+            return null;
+
+        var handler = _fTreeObjTree.GetValue(self);
+        if (handler == null) return null;
+
+        var pages = new List<Microsoft.Dynamics.Nav.Runtime.NavTestPageHandle>();
+        for (var child = _fTreeHandlerFirstChildBase.GetValue(handler); child != null;
+             child = _fTreeHandlerNextSiblingBase.GetValue(child))
+        {
+            if (_fTreeHandlerHostObject.GetValue(child) is Microsoft.Dynamics.Nav.Runtime.NavTestPageHandle page
+                && page.HasTarget)
+                pages.Add(page);
+        }
+
+        System.Runtime.ExceptionServices.ExceptionDispatchInfo? first = null;
+        foreach (var page in pages)
+        {
+            try { ((IDisposable)page).Dispose(); }
+            catch (Exception ex) { first ??= System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex); }
+        }
+        return first;
     }
 
     /// <summary>
