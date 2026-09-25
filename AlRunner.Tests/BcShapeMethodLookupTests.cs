@@ -309,9 +309,14 @@ public sealed class BcShapeMethodLookupTests
     //
     // NOTE for whoever lands the next conversion: this counter and
     // BcInternalsNullForgivingGuardTests' `converted` move in OPPOSITE directions on the same
-    // change — this one counts what REMAINS (falls), that one counts what has been CONVERTED
-    // (rises, 87 -> 88 for this same site). #3581 updated one and missed the other, so check
-    // both.
+    // change — this one counts what REMAINS (falls by one), that one counts what has been
+    // CONVERTED (rises by one). #3581 updated one and missed the other, so check both.
+    //
+    // No example values here on purpose (#3720). This note carried "87 -> 88" as the
+    // converted pair; #3686 moved it to 89, #3704 to 90, and it reads 116 today — a stale
+    // number inside the warning about stale numbers, which is the joke and also the reason
+    // the fix is to state the DIRECTION and let the reader look the counters up. Both are
+    // asserted constants, so a wrong value here can never fail CI and will go stale again.
     //
     // 71 -> 70 by #3927, which DELETED rather than converted: the seven orphaned NavDataTransfer
     // `Hook(...)` registrations went, taking the name-only `navDataTransferType.GetMethod(name, ...)`
