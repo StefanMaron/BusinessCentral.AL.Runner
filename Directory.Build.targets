@@ -74,6 +74,26 @@
     future unwanted dependency that doesn't match any name here still fails the build.
   -->
   <Target Name="StripBcAppClosureFromCopyLocal" AfterTargets="ResolveAssemblyReferences">
+    <!-- The name list below is a deny-list, and it missed ~45 closure DLLs with no BC-ish
+         prefix (Microsoft.Bcl.AsyncInterfaces, OpenTelemetry.*, Microsoft.Extensions.*, ...).
+         Two builds of ONE minor can ship different versions of those (28.1.49838.53910 has
+         AsyncInterfaces 10.0.0.2, .54424 has 10.0.0.5), so each leak pinned the binary to one
+         BUILD (#3977, #4527). The rule is therefore by ORIGIN: anything RAR copied out of the
+         service-tier dir stays out of bin, whatever its name. NuGet-sourced copies (Roslyn,
+         Cecil, System.Text.Json) resolve from the package cache and are untouched.
+         Guarded by VersionAgnosticClosureTests.NoServiceTierSourcedReference_IsCopiedIntoAppBaseDir. -->
+    <PropertyGroup Condition="'$(ServiceTierPath)' != ''">
+      <_BcStripServiceTierDir>$([System.IO.Path]::GetFullPath('$(ServiceTierPath)'))</_BcStripServiceTierDir>
+      <_BcStripServiceTierDir>$([MSBuild]::EnsureTrailingSlash('$(_BcStripServiceTierDir)'))</_BcStripServiceTierDir>
+      <_BcStripServiceTierDir>$(_BcStripServiceTierDir.Replace('\','/'))</_BcStripServiceTierDir>
+    </PropertyGroup>
+    <ItemGroup>
+      <!-- AlRunner.Tests keeps its bin copy of Ncl.dll on purpose (see the Ncl rule below). -->
+      <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)"
+        Condition="'$(_BcStripServiceTierDir)' != ''
+                   AND $([System.String]::Copy('%(FullPath)').Replace('\','/').StartsWith('$(_BcStripServiceTierDir)'))
+                   AND ('$(MSBuildProjectName)' == 'AlRunner' OR '%(Filename)' != 'Microsoft.Dynamics.Nav.Ncl')" />
+    </ItemGroup>
     <ItemGroup>
       <!-- Universal (every project): the closure minus Ncl.dll itself. Unchanged by the
            Ncl packaging fix below — AlRunner.Tests never needed Types/Common/Language/

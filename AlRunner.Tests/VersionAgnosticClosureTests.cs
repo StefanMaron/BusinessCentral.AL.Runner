@@ -63,6 +63,61 @@ public sealed class VersionAgnosticClosureTests
             "so the DependencyLoader ALC resolver serves the selected version from the artifact dir.");
     }
 
+    // The name list above is a sample; this is the property itself. A deps.json library of type
+    // "reference" is one RAR copied from a HintPath closure — here, the BC service-tier dir — as
+    // opposed to a NuGet "package" or a "project". Any such file sitting in bin shadows the
+    // SELECTED artifact's copy, and two builds of one minor differ (Microsoft.Bcl.AsyncInterfaces
+    // 10.0.0.2 in 28.1.49838.53910, 10.0.0.5 in 28.1.49838.54424): #3977, #4527.
+    // Ncl.dll is the one deliberate exception, in this test project only (Directory.Build.targets).
+    [Fact]
+    public void NoServiceTierSourcedReference_IsCopiedIntoAppBaseDir()
+    {
+        var baseDir = AppContext.BaseDirectory;
+        var depsFiles = Directory.GetFiles(baseDir, "*.deps.json");
+        Assert.NotEmpty(depsFiles); // no manifest means nothing below was measured
+
+        // Across every manifest in bin: al-runner.deps.json travels with the project reference
+        // and lists BC's Newtonsoft.Json as a reference, while the file there is the test SDK's.
+        var runtimeFilesByType = new Dictionary<string, List<string>>();
+        var referenceLibraries = 0;
+        foreach (var depsFile in depsFiles)
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(depsFile));
+            var libraries = doc.RootElement.GetProperty("libraries");
+            foreach (var target in doc.RootElement.GetProperty("targets").EnumerateObject())
+            foreach (var lib in target.Value.EnumerateObject())
+            {
+                if (!libraries.TryGetProperty(lib.Name, out var meta)) continue;
+                var type = meta.GetProperty("type").GetString() ?? "";
+                if (type == "reference") referenceLibraries++;
+                if (!lib.Value.TryGetProperty("runtime", out var runtime)) continue;
+                if (!runtimeFilesByType.TryGetValue(type, out var files))
+                    runtimeFilesByType[type] = files = new List<string>();
+                files.AddRange(runtime.EnumerateObject().Select(f => Path.GetFileName(f.Name)));
+            }
+        }
+
+        // A file a NuGet package also provides is that package's copy (the test SDK's
+        // Newtonsoft.Json, the runner's own System.Text.Json), not the service tier's.
+        var packageFiles = runtimeFilesByType.GetValueOrDefault("package") ?? new List<string>();
+        var leaked = new List<string>();
+        foreach (var name in runtimeFilesByType.GetValueOrDefault("reference") ?? new List<string>())
+        {
+            // al-runner.dll is the project under test; the test manifest lists it as a reference.
+            if (name is "Microsoft.Dynamics.Nav.Ncl.dll" or "al-runner.dll") continue;
+            if (packageFiles.Contains(name, StringComparer.OrdinalIgnoreCase)) continue;
+            if (File.Exists(Path.Combine(baseDir, name))) leaked.Add(name);
+        }
+
+        // The manifest must actually list the BC closure, or an empty `leaked` proves nothing.
+        Assert.True(referenceLibraries > 0,
+            $"no 'reference' libraries in {string.Join(", ", depsFiles)} — the BC closure was not measured");
+        Assert.True(leaked.Count == 0,
+            $"service-tier-sourced DLLs are CopyLocal'd into '{baseDir}': [{string.Join(", ", leaked.Distinct().OrderBy(n => n))}]. " +
+            "Each pins the runner to the exact BC build it was compiled against. " +
+            "Directory.Build.targets 'StripBcAppClosureFromCopyLocal' must remove every file RAR copied out of $(ServiceTierPath).");
+    }
+
     [SkippableFact]
     public void Resolver_ServesBcAppClosure_FromSelectedArtifactDir_WhenArtifactsPresent()
     {
