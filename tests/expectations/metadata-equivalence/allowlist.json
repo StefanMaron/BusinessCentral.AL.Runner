@@ -1075,7 +1075,7 @@
     },
     {
       "member": "ActionDefinition.HelpLink",
-      "reason": "BC COMPUTES this and the render does not (#3926). BC's emitter writes HelpLink from the app's contextSensitiveHelpUrl compilation option and the pageextension's ContextSensitiveHelpPage (CodeAnalysis PageBaseMetadataEmitter.WriteContextSpecificHelpUrlPropertyIfNeeded), and not on every member: 774's three RunObject actions carry none on all four captured builds while every other member carries https://learn.microsoft.com/dynamics365/business-central/. So it is neither a constant nor read from anything this render holds. What invalidates this entry is reading those two inputs and the rule that skips 774's actions (docs/metadata-equivalence.md#deltas-emitter-defaults).",
+      "reason": "BC COMPUTES this and the render does not (#3926). BC's emitter writes HelpLink from the app's contextSensitiveHelpUrl compilation option and the pageextension's ContextSensitiveHelpPage (CodeAnalysis PageBaseMetadataEmitter.WriteContextSpecificHelpUrlPropertyIfNeeded), on every member WriteAction/WriteControl emits: https://learn.microsoft.com/dynamics365/business-central/ on all four captured builds. 774's three members without it are AL views, which BC emits through WriteViewAction and this render does not produce (docs/metadata-equivalence.md#deltas-action-defaults). The URL comes from the .app manifest, which this render does not read. What invalidates this entry is reading those two inputs (docs/metadata-equivalence.md#deltas-emitter-defaults).",
       "issue": 3926,
       "Doc": "docs/metadata-equivalence.md#deltas-emitter-defaults"
     },
@@ -1177,7 +1177,7 @@
     },
     {
       "member": "ActionRefDefinition.HelpLink",
-      "reason": "BC COMPUTES this and the render does not (#3926). BC's emitter writes HelpLink from the app's contextSensitiveHelpUrl compilation option and the pageextension's ContextSensitiveHelpPage (CodeAnalysis PageBaseMetadataEmitter.WriteContextSpecificHelpUrlPropertyIfNeeded), and not on every member: 774's three RunObject actions carry none on all four captured builds while every other member carries https://learn.microsoft.com/dynamics365/business-central/. So it is neither a constant nor read from anything this render holds. What invalidates this entry is reading those two inputs and the rule that skips 774's actions (docs/metadata-equivalence.md#deltas-emitter-defaults).",
+      "reason": "BC COMPUTES this and the render does not (#3926). BC's emitter writes HelpLink from the app's contextSensitiveHelpUrl compilation option and the pageextension's ContextSensitiveHelpPage (CodeAnalysis PageBaseMetadataEmitter.WriteContextSpecificHelpUrlPropertyIfNeeded), on every member WriteAction/WriteControl emits: https://learn.microsoft.com/dynamics365/business-central/ on all four captured builds. 774's three members without it are AL views, which BC emits through WriteViewAction and this render does not produce (docs/metadata-equivalence.md#deltas-action-defaults). The URL comes from the .app manifest, which this render does not read. What invalidates this entry is reading those two inputs (docs/metadata-equivalence.md#deltas-emitter-defaults).",
       "issue": 3926,
       "Doc": "docs/metadata-equivalence.md#deltas-emitter-defaults"
     },
@@ -1219,7 +1219,7 @@
     },
     {
       "member": "ControlDefinition.HelpLink",
-      "reason": "BC COMPUTES this and the render does not (#3926). BC's emitter writes HelpLink from the app's contextSensitiveHelpUrl compilation option and the pageextension's ContextSensitiveHelpPage (CodeAnalysis PageBaseMetadataEmitter.WriteContextSpecificHelpUrlPropertyIfNeeded), and not on every member: 774's three RunObject actions carry none on all four captured builds while every other member carries https://learn.microsoft.com/dynamics365/business-central/. So it is neither a constant nor read from anything this render holds. What invalidates this entry is reading those two inputs and the rule that skips 774's actions (docs/metadata-equivalence.md#deltas-emitter-defaults).",
+      "reason": "BC COMPUTES this and the render does not (#3926). BC's emitter writes HelpLink from the app's contextSensitiveHelpUrl compilation option and the pageextension's ContextSensitiveHelpPage (CodeAnalysis PageBaseMetadataEmitter.WriteContextSpecificHelpUrlPropertyIfNeeded), on every member WriteAction/WriteControl emits: https://learn.microsoft.com/dynamics365/business-central/ on all four captured builds. 774's three members without it are AL views, which BC emits through WriteViewAction and this render does not produce (docs/metadata-equivalence.md#deltas-action-defaults). The URL comes from the .app manifest, which this render does not read. What invalidates this entry is reading those two inputs (docs/metadata-equivalence.md#deltas-emitter-defaults).",
       "issue": 3926,
       "Doc": "docs/metadata-equivalence.md#deltas-emitter-defaults"
     },
