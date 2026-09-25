@@ -853,13 +853,6 @@ public static partial class RecordPatches
     /// list), and <c>ForceLoadBcDlls</c> would already have thrown on
     /// <c>Microsoft.Dynamics.Nav.Common</c> from the same directory before this runs. So an
     /// absent SystemApp is a failed LOOKUP — BC's layout moved — not a bundle without one.</para>
-    ///
-    /// <para><b>The outer catch was the live half.</b> <see cref="AddBcAppPath"/> raises
-    /// <c>BcAppSymbolReadException</c> precisely so a .app whose symbols could not be read is
-    /// never left registered and Program.cs can exit 1 (#2712). Catching it here converted that
-    /// deliberate refusal back into a silent success one frame above where it was raised, and the
-    /// stderr line that replaced it starts with a bracketed component tag, which Log's
-    /// default-verbosity filter drops.</para>
     /// </summary>
     private static string RegisterSystemAppPackageCore(
         Assembly? asm, Action<string> register, Action eagerParse)
