@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **coverage:** implement code-coverage recording for CODECOVERAGELOG(TRUE)
 - **cli:** --test-data-company accepts a case-insensitive name prefix
 - **metadata:** emit PagePropertiesChange, so a pageextension's deltas pair against BC from index 0
 - **compile:** one package-manifest compile path with a part-naming diagnostic
