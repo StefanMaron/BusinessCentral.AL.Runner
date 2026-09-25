@@ -502,6 +502,18 @@ public static partial class NavReportSync
     /// for DataItemIterator.SetTableView) so this reuses real BC filtering logic.
     /// </summary>
     public static void SyncStaticRun(int reportId, bool requestWindow, bool systemPrinter, object? record)
+        => SyncStaticRunCore(reportId, requestWindow, record);
+
+    /// <summary>
+    /// The static <c>Run(int)</c> / <c>RunModal(int)</c> overloads, which carry no
+    /// <c>RequestWindow</c>. BC passes <c>requestWindow: null</c> for them
+    /// (<c>RunAsync(session, id)</c> → <c>RunReportAsync(session, id, null, …)</c>, Ncl
+    /// 28.1.49838.53910), so the report keeps the <c>UseRequestPage</c> it declares (#4665).
+    /// </summary>
+    public static void SyncStaticRunKeepRequestWindow(int reportId)
+        => SyncStaticRunCore(reportId, null, null);
+
+    private static void SyncStaticRunCore(int reportId, bool? requestWindow, object? record)
     {
         var meta = GetNclMetaReportById(reportId);
         if (meta == null)
@@ -513,15 +525,15 @@ public static partial class NavReportSync
         var instance = CreateReportInstance(meta, parent!, skipRestoreSavedReportSettings: true);
 
         // BC's NavReport.RunReportAsync: `if (requestWindow.HasValue) UseRequestForm =
-        // requestWindow.Value;`. The static overloads always pass a value (the Cecil rewrite
-        // fills BC's own default, true, for the overloads that omit it), so the caller's
-        // `Report.Run(id, false, …)` is what decides whether a request page opens at all.
+        // requestWindow.Value;`. Only the one-argument overloads pass null (#4665); for the
+        // rest the caller's `Report.Run(id, false, …)` decides whether a request page opens.
         // Ignoring it made `RequestWindow = false` open one anyway once #2436 taught Run()
         // to open request pages — which is an "Unhandled UI" error for a test that, quite
         // reasonably, declared no [RequestPageHandler] because it asked for no request page.
         var pUseRequestForm = FindProperty(instance.GetType(), "UseRequestForm");
-        if (pUseRequestForm != null && pUseRequestForm.CanWrite && pUseRequestForm.PropertyType == typeof(bool))
-            pUseRequestForm.SetValue(instance, requestWindow);
+        if (requestWindow.HasValue
+            && pUseRequestForm != null && pUseRequestForm.CanWrite && pUseRequestForm.PropertyType == typeof(bool))
+            pUseRequestForm.SetValue(instance, requestWindow.Value);
 
         if (record != null)
         {
@@ -812,14 +824,16 @@ public static partial class NavReportSync
         return Convert.ToInt32(p.GetValue(meta));
     }
 
-    // Runs the full lifecycle (OnInitReport → OnPreReport → DataItems →
-    // OnPostReport → layout). Catches NavControlException (Skip/Quit/etc.)
+    // Runs the rest of the lifecycle (OnPreReport → DataItems → OnPostReport → layout);
+    // OnInitReport ran at construction. Catches NavControlException (Skip/Quit/etc.)
     // as control-flow termination, not error.
     private static bool TryRunOrControlFlow(object navReport, Type navReportBase)
     {
         try
         {
-            RunLifecycleTrigger(navReport, navReportBase, "OnInitReport");
+            // OnInitReport already ran when the report was constructed (see
+            // RunOnInitReportAtConstruction); only its Quit survives to here, as BC's own flag.
+            if (ReadQuitCalledOnReportTrigger(navReport)) return true;
             ApplyCallerTableViewBeforePreReport(navReport);
 
             // The request page, and what the test's [RequestPageHandler] does with it —
@@ -2009,6 +2023,93 @@ public static partial class NavReportSync
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
             throw; // unreachable
         }
+
+        RunOnInitReportAtConstruction(instance);
+    }
+
+    private static readonly ConditionalWeakTable<object, object> _onInitReportRan = new();
+    private static FieldInfo? _quitCalledOnReportTriggerField;
+
+    /// <summary>
+    /// The report's <c>OnInitReport</c>, run where BC runs it: while the report is being
+    /// constructed. BC raises it from <c>NavReport.EndInitializationAsync</c>, which the
+    /// generated constructor reaches through <c>InitializeComponent</c> → <c>EndInitialization</c>
+    /// (decompiled Ncl 28.1.49838.53910); the runner's Cecil rewrite blanks that
+    /// <c>EndInitialization</c>, so every construction route runs it here instead —
+    /// <c>NavReportHandle.CreateTarget</c> (an AL report variable's first use) and
+    /// <c>NCLMetaReport.CreateObjectInstance</c> (BC's own <c>REPORT.Run</c> from precompiled
+    /// code, and the runner's by-id seams). Firing it from <c>Report.Run</c> instead, as this
+    /// used to, missed BC's own engine path entirely (#4656) and ran after any setter the
+    /// caller had already applied, overwriting it.
+    ///
+    /// Observably equivalent: BC catches a control statement here and records only whether it
+    /// was <c>Quit</c>, in <c>quitCalledOnReportTrigger</c>, which its
+    /// <c>RunReportInternalCoreAsync</c> reads before the request page; any other exception
+    /// leaves the constructor. Mirrored exactly, into BC's own field, so BC's engine path
+    /// honours it unchanged. Runs AFTER FinalizeDataItemLoading, which BC runs after
+    /// construction; the only state that step writes is the data-item links and
+    /// <c>TableViewIsSet</c>, neither of which a report can set from its own OnInitReport.
+    /// Corpus: see the PR for #4656.
+    /// </summary>
+    internal static void RunOnInitReportAtConstruction(object navReport)
+    {
+        lock (_onInitReportRan)
+        {
+            if (_onInitReportRan.TryGetValue(navReport, out _)) return;
+            _onInitReportRan.Add(navReport, navReport);
+        }
+        Type? navReportBase = navReport.GetType();
+        while (navReportBase != null && navReportBase.Name != "NavReport")
+            navReportBase = navReportBase.BaseType;
+        if (navReportBase == null)
+            throw new AlRunner.Infrastructure.BcShapeGapException(
+                "NavReport.EndInitialization", "NavReport",
+                "base type not found on " + navReport.GetType().FullName + ", so OnInitReport cannot be run");
+        try
+        {
+            RunLifecycleTrigger(navReport, navReportBase, "OnInitReport");
+        }
+        catch (Exception ex) when (IsNavControlException(ex))
+        {
+            QuitCalledOnReportTriggerField(navReportBase).SetValue(navReport, IsQuitControlStatement(ex));
+        }
+    }
+
+    private static bool ReadQuitCalledOnReportTrigger(object navReport)
+    {
+        Type? navReportBase = navReport.GetType();
+        while (navReportBase != null && navReportBase.Name != "NavReport")
+            navReportBase = navReportBase.BaseType;
+        return navReportBase != null
+            && QuitCalledOnReportTriggerField(navReportBase).GetValue(navReport) is true;
+    }
+
+    private static FieldInfo QuitCalledOnReportTriggerField(Type navReportBase)
+    {
+        var f = _quitCalledOnReportTriggerField ??= navReportBase.GetField("quitCalledOnReportTrigger",
+            BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+        if (f == null || f.FieldType != typeof(bool))
+            throw new AlRunner.Infrastructure.BcShapeGapException(
+                "NavReport.EndInitialization", "NavReport.quitCalledOnReportTrigger",
+                "bool field not found, so a CurrReport.Quit() in OnInitReport cannot stop the report");
+        return f;
+    }
+
+    /// <summary>BC's <c>ex.ControlStatement == NavControlStatement.Quit</c>, read by name
+    /// off the innermost NavControlException.</summary>
+    private static bool IsQuitControlStatement(Exception ex)
+    {
+        for (var e = ex; e != null; e = e.InnerException)
+        {
+            if (e.GetType().Name != "NavControlException") continue;
+            var p = e.GetType().GetProperty("ControlStatement",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                ?? throw new AlRunner.Infrastructure.BcShapeGapException(
+                    "NavReport.EndInitialization", "NavControlException.ControlStatement",
+                    "property not found, so whether OnInitReport called Quit cannot be decided");
+            return p.GetValue(e)?.ToString() == "Quit";
+        }
+        return false;
     }
 
     private static PropertyInfo? _appObjBaseSessionProp;
