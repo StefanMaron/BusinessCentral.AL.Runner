@@ -38,6 +38,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **testpage:** a new row raises OnAfterGetCurrRecord, and a row that trigger hands over is modified, not re-inserted
 - **metadata:** emit the constant defaults BC writes for unstated delta members
 - **metadata:** derive by-value Text/Code length, var Interface and local InherentPermissions methods
 - **metadata:** derive the codeunit method table for codeunits with event subscribers
