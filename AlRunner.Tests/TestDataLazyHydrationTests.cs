@@ -115,7 +115,7 @@ public sealed class TestDataLazyLoadPolicyTests : IDisposable
         + "done\n"
         + "echo \"$cmd|$table|$top|$merge\" >> \"$log\"\n"
         + "case \"$cmd\" in\n"
-        + "  companies) echo 'CRONUS' ;;\n"
+        + $"  companies) if [ -f '{logPath}.companies' ]; then cat '{logPath}.companies'; else echo 'CRONUS'; fi ;;\n"
         + $"  tables) printf '%s\\n' '   7 Table\tCRONUS\tTouched\t{TouchedTableId} \"Touched\" (Fake App)' "
             + $"'   9 Table\tCRONUS\tUntouched\t{UntouchedTableId} \"Untouched\" (Fake App)' "
             + "'   3 Table\tCRONUS\tTouched$ext\t-' ;;\n"
@@ -426,6 +426,104 @@ public sealed class TestDataLazyLoadPolicyTests : IDisposable
         // not offer still returns before the tally, on every thread.
         noteWrittenOff!(NotInTheBackupTableId, "not in the plan");
         Assert.Equal(Threads * PerThread, TestDataProvisioner.DeferredLoadsWrittenOff);
+    }
+
+    // ───────────────── #4553: the install-baseline key names the RESOLVED company ──
+
+    private void ArmWith(string typed, string? pick = null)
+    {
+        TestDataOptions.ResetForTests();
+        TestDataProvisioner.ResetForTests();
+        TestDataOptions.Enabled = true;
+        TestDataOptions.ExplicitBackupPath = _backup;
+        TestDataOptions.CompanyOverride = typed;
+        if (pick != null)
+            TestDataProvisioner.CompanyPromptSource =
+                () => new CompanyPrompt(new StringReader(pick + "\n"), TextWriter.Null);
+        TestDataProvisioner.Arm();
+    }
+
+    [Fact]
+    public void CacheIdentity_APrefixAndTheFullName_GiveTheSameKey()
+    {
+        ArmWith("cron");
+        var byPrefix = TestDataOptions.CacheIdentity();
+        Assert.Equal("CRONUS", TestDataProvisioner.ArmedBackup?.Company);
+
+        ArmWith("CRONUS");
+        var byName = TestDataOptions.CacheIdentity();
+
+        Assert.StartsWith("td", byPrefix, StringComparison.Ordinal);
+        Assert.Equal(byName, byPrefix);
+    }
+
+    [Fact]
+    public void CacheIdentity_TwoPicksOfOnePrefix_GiveDifferentKeys()
+    {
+        File.WriteAllText(_log + ".companies", "CRONUS A\nCRONUS B\n");
+
+        ArmWith("cr", pick: "1");
+        Assert.Equal("CRONUS A", TestDataProvisioner.ArmedBackup?.Company);
+        var first = TestDataOptions.CacheIdentity();
+
+        ArmWith("cr", pick: "2");
+        Assert.Equal("CRONUS B", TestDataProvisioner.ArmedBackup?.Company);
+        var second = TestDataOptions.CacheIdentity();
+
+        Assert.NotEqual(first, second);
+    }
+
+    /// <summary>Arm() runs once per app group; a prefix is asked about once per run, so every
+    /// group hydrates the company the user picked.</summary>
+    [Fact]
+    public void AnAmbiguousPrefix_IsAskedOnce_AcrossAppGroups()
+    {
+        File.WriteAllText(_log + ".companies", "CRONUS A\nCRONUS B\n");
+        var asked = 0;
+        TestDataProvisioner.ResetForTests();
+        TestDataProvisioner.CompanyPromptSource = () =>
+        {
+            asked++;
+            return new CompanyPrompt(new StringReader(asked == 1 ? "2\n" : "1\n"), TextWriter.Null);
+        };
+        TestDataOptions.ResetForTests();
+        TestDataOptions.Enabled = true;
+        TestDataOptions.ExplicitBackupPath = _backup;
+        TestDataOptions.CompanyOverride = "cr";
+        TestDataProvisioner.Arm();
+
+        // A second app group: a different symbol set re-plans.
+        var app2 = Path.Combine(_dir.FullName, "Fake_App2_1_0_0_0.app");
+        File.WriteAllBytes(app2, new byte[8]);
+        BcCompiler.SetResolvedDeps(
+            new[]
+            {
+                (new AppManifest("Fake", "App2", new Version(1, 0, 0, 0), Guid.NewGuid(),
+                    Array.Empty<DependencyRef>()), app2),
+            },
+            new[] { _dir.FullName });
+        TestDataProvisioner.Arm();
+
+        Assert.Equal(1, asked);
+        Assert.Equal("CRONUS B", TestDataProvisioner.ArmedBackup?.Company);
+        Assert.Equal(2, ReaderInvocations().Count(l => l.StartsWith("tables|", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void AResumeChild_IsHandedTheResolvedCompany_NotThePrefix()
+    {
+        File.WriteAllText(_log + ".companies", "CRONUS A\nCRONUS B\n");
+        var args = new[] { "--test-data", "--test-data-company", "cr", "bundle" };
+
+        ArmWith("cr", pick: "2");
+
+        Assert.Equal(new[] { "--test-data", "--test-data-company", "CRONUS B", "bundle" },
+            TestDataOptions.WithResolvedCompany(args));
+        Assert.Equal("CRONUS B", AbortResume.BuildChildArgs(
+            TestDataOptions.WithResolvedCompany(args), Array.Empty<string>(), 1)[2]);
+
+        TestDataOptions.ResetForTests();
+        Assert.Equal(args, TestDataOptions.WithResolvedCompany(args));
     }
 }
 

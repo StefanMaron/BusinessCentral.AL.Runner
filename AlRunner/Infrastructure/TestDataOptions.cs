@@ -77,12 +77,53 @@ internal static class TestDataOptions
 
     private static string? _cachedIdentity;
 
+    private sealed record ResolvedCompanyRecord(string Backup, long Length, long WriteTicks, string? Typed, string Company);
+    private static ResolvedCompanyRecord? _resolved;
+
+    /// <summary>The company <see cref="CompanyOverride"/> resolved to against this backup, or
+    /// null before it has been resolved. A prefix is resolved once per run, so every app group
+    /// and the install-baseline key see the same company (#4553).</summary>
+    internal static string? ResolvedCompanyFor(string backup)
+    {
+        var r = _resolved;
+        if (r == null || r.Backup != backup || r.Typed != CompanyOverride) return null;
+        var (length, ticks) = FileStamp(backup);
+        return r.Length == length && r.WriteTicks == ticks ? r.Company : null;
+    }
+
+    internal static void RecordResolvedCompany(string backup, string company)
+    {
+        var (length, ticks) = FileStamp(backup);
+        _resolved = new ResolvedCompanyRecord(backup, length, ticks, CompanyOverride, company);
+        _cachedIdentity = null;
+    }
+
+    /// <summary>A child process (abort-resume) must hydrate the company this process chose, not
+    /// re-resolve the typed prefix: on a terminal it would ask again and could get another answer.</summary>
+    internal static IReadOnlyList<string> WithResolvedCompany(IReadOnlyList<string> args)
+    {
+        var r = _resolved;
+        if (r == null) return args;
+        var result = args.ToList();
+        for (var i = 0; i + 1 < result.Count; i++)
+            if (result[i] == "--test-data-company" && result[i + 1] == r.Typed)
+                result[i + 1] = r.Company;
+        return result;
+    }
+
+    private static (long Length, long WriteTicks) FileStamp(string path)
+    {
+        var info = new FileInfo(path);
+        return info.Exists ? (info.Length, info.LastWriteTimeUtc.Ticks) : (-1, -1);
+    }
+
     internal static void ResetForTests()
     {
         Enabled = false;
         ExplicitBackupPath = null;
         CompanyOverride = null;
         _cachedIdentity = null;
+        _resolved = null;
         // NOT TestDataNormalization: each option class resets its own statics, and the classes
         // that mutate them run in PARALLEL under xunit. Resetting the normalization flag from
         // here made TestDataProvisioningTests' Dispose clear a flag
@@ -173,8 +214,17 @@ internal static class TestDataOptions
     internal static string CacheIdentity()
     {
         if (!Enabled) return "";
-        return _cachedIdentity ??= BuildCacheIdentity(
-            ResolveBackupPath(), CompanyOverride, BackupReaderTool.ExtractorIdentity(),
+        if (_cachedIdentity != null) return _cachedIdentity;
+        // The RESOLVED company, not the typed text: one prefix can resolve to different
+        // companies (an interactive pick), and a typed prefix and the full name to one (#4553).
+        var backup = ResolveBackupPath();
+        var company = ResolvedCompanyFor(backup);
+        if (company == null && CompanyOverride != null)
+            throw new InvalidOperationException(
+                $"--test-data-company '{CompanyOverride}' has not been resolved against '{backup}' yet; "
+                + "the install-baseline key must be computed after TestDataProvisioner.Arm() (#4553).");
+        return _cachedIdentity = BuildCacheIdentity(
+            backup, company, BackupReaderTool.ExtractorIdentity(),
             TestDataNormalization.CacheIdentity());
     }
 

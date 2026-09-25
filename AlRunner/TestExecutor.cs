@@ -497,7 +497,6 @@ public sealed class TestExecutor
         // exactly matching the order the uncached path always ran in.
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-dep-company-baseline"))
         {
-            var depKey = CurrentInstallBaselineCacheKey();
             // #2262: arm UNCONDITIONALLY, before the cache is consulted. Under the eager
             // policy this lived in the MISS branch, which was fine because a cached snapshot
             // already carried every hydrated row. On-demand loading makes that wrong: a
@@ -505,6 +504,8 @@ public sealed class TestExecutor
             // run that takes a HIT still needs the loader installed or every OTHER table
             // silently stays empty. Arm() reads no rows and is idempotent per symbol set.
             TestDataProvisioner.Arm();
+            // After Arm: the key carries the company Arm resolved, not the typed prefix (#4553).
+            var depKey = CurrentInstallBaselineCacheKey();
             // No baseline is authoritative until this block ends. Leaving the PREVIOUS app
             // group's snapshot registered would let a load fired during this group's
             // dependency install triggers append rows to a snapshot cached under a different

@@ -409,6 +409,7 @@ internal static class TestDataProvisioner
         // play, and routing it through Interlocked would imply a concurrency it does not have.
         _deferredLoadsWrittenOff = 0;
         _tableOutcome.Clear();
+        CompanyPromptSource = CompanyPrompt.FromConsole;
         RecordPatches.TestDataOnDemandLoader = null;
         RecordPatches.TestDataDeferredLoadNotifier = null;
         RecordPatches.TestDataDeferredLoadWriteOffNotifier = null;
@@ -888,10 +889,20 @@ internal static class TestDataProvisioner
         throw new TestDataUnavailableException(ambiguous);
     }
 
+    /// <summary>Where an ambiguous prefix is asked about; a seam so tests can answer it.</summary>
+    internal static Func<CompanyPrompt?> CompanyPromptSource = CompanyPrompt.FromConsole;
+
     private static string ResolveCompany(string backup)
-        => ResolveCompany(
+    {
+        // Once per run: Arm() runs per app group, and a second prompt could pick another company.
+        var known = TestDataOptions.ResolvedCompanyFor(backup);
+        if (known != null) return known;
+        var company = ResolveCompany(
             BackupCatalog.ParseCompanies(BackupReaderTool.Run(new[] { "companies", backup })),
-            TestDataOptions.CompanyOverride, backup);
+            TestDataOptions.CompanyOverride, backup, CompanyPromptSource(), Console.Error);
+        TestDataOptions.RecordResolvedCompany(backup, company);
+        return company;
+    }
 
     /// <summary>
     /// The .app packages the reader is told the database's schema comes from: exactly the
