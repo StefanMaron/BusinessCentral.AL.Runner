@@ -37,6 +37,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **metadata:** extension-runtime-delta render reads the remaining stated member attributes
 - **cli:** one wording for the cross-major note — the variants-shipped branch stops hand-rolling its own
 - **expectations:** delete six allowlist entries the versionContingent flag was hiding
 - **expectations:** drop object-scoping claims the allowlist schema cannot make, and the derivations its Doc pointers already hold
@@ -422,6 +423,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **compile:** compile a third-party-shaped package fixture on every BC leg, judged on errors, objects and tables
 - **app-package:** make PartFor's None branch reach the implementation, drop a dead loop, restore the Features figure
 - **hygiene:** drive the assignees-unreadable refusal arm, which 62 checks never reached
 - **guards:** close ten claim-signal bypasses, and keep a corpus so a narrowing cannot lose one
