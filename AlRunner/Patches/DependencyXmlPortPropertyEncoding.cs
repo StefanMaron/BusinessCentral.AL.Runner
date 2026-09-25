@@ -1,6 +1,6 @@
-// DependencyXmlPortPropertyEncoding — the three xmlport properties BC's emitter does NOT copy
-// through as AL text: a tableelement's SourceTableView and LinkFields, and the object's
-// Permissions (#4471). BC writes each in its own canonical form, field NAMES replaced by
+// DependencyXmlPortPropertyEncoding — the xmlport properties BC's emitter does NOT copy
+// through as AL text: a tableelement's SourceTableView, LinkFields, CalcFields and
+// RequestFilterFields, and the object's Permissions (#4471, #4602). BC writes each in its own canonical form, field NAMES replaced by
 // Field<n> ids and values re-encoded; the grammar below is exactly the set of shapes measured
 // against BC's own emitted documents, and docs/xmlport-metadata-from-bc.md#table-views-link-fields-and-permissions
 // has the measurement table.
@@ -99,6 +99,27 @@ public static partial class RecordPatches
                 + $"=FIELD(Field{right.FieldId.ToString(CultureInfo.InvariantCulture)})");
         }
         if (entries.Count == 0) throw NotEncodable("LinkFields", nodeName, alText);
+        return string.Join(",", entries);
+    }
+
+    private static readonly Regex XmlPortFieldName = new(
+        @"^\s*(""[^""]+""|[A-Za-z_][A-Za-z0-9_]*)\s*$", RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// <c>CalcFields</c> / <c>RequestFilterFields</c>: <c>"Line Sum", "Line Count"</c> ->
+    /// <c>Field12,Field11</c>, in the AL's order, resolved against <paramref name="tableId"/>.
+    /// Anything but a plain field name refuses.
+    /// </summary>
+    internal static string XmlPortCanonicalFieldList(string alText, int tableId, string property, string nodeName)
+    {
+        var entries = new List<string>();
+        foreach (var entry in XmlPortSplitTopLevel(alText, ','))
+        {
+            if (!XmlPortFieldName.IsMatch(entry)) throw NotEncodable(property, nodeName, entry.Trim());
+            entries.Add("Field" + XmlPortField(tableId, entry, property, nodeName).FieldId
+                .ToString(CultureInfo.InvariantCulture));
+        }
+        if (entries.Count == 0) throw NotEncodable(property, nodeName, alText);
         return string.Join(",", entries);
     }
 
