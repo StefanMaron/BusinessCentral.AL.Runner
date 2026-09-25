@@ -32,20 +32,26 @@ all, as a `MissingMethodException` or `TypeLoadException` away from the load.
 ### Why only an OLDER file is refused
 
 A request for a lower version than the file is normal and must keep working. Static count over
-every `AssemblyReference` in each full artifact directory whose target file is in the same
+every `AssemblyReference` in each full artifact directory provisioned on the measuring box (the 26.0.30643.48845 and 28.0.46665.48948 directories carry only the engine DLLs and have no edge either way) whose target file is in the same
 directory and not in the runner's TPA/bin (the requests that can reach the handler):
 
 | builds | equal | requested lower than file | requested higher than file |
 |---|---|---|---|
-| 27.0.38460.53934 and the other 27.x builds with a full directory | 2009 | 206 | 210 |
-| 28.1.49838.53910, 28.3.52162.53954, 28.4.53241.53955 | 1694 | 271 | 205 |
+| 26.0.30643.50520 | 1982 | 199 | 224 |
+| 27.0.38460.53260, 27.0.38460.53338, 27.0.38460.53934, 27.3.44313.53267, 27.5.46862.53242, 27.5.46862.53716, 27.5.46862.53775, 27.5.46862.53931 | 2009 | 206 | 210 |
+| 27.5.46862.48827 | 2569 | 200 | 210 |
+| 28.0.46665.53240, 28.0.46665.53258, 28.1.49838.53220, 28.1.49838.53249, 28.2.50931.52786, 28.2.50931.53496, 28.2.50931.53737 | 1956 | 201 | 211 |
+| 28.1.49838.50794 | 1961 | 199 | 211 |
+| 28.1.49838.53910, 28.1.49838.53953, 28.1.49838.53997, 28.3.52162.53954, 28.4.53241.53955, 28.4.53241.53989 | 1694 | 271 | 205 |
+| 28.1.49838.54044, 28.1.49838.54169 | 1695 | 272 | 205 |
 | 28.1.49838.54424, 28.4.53241.54407, 28.5.54151.55132 | 1697 | 273 | 205 |
 
-Every "higher" edge lies in the service tier's hosting stack that BC itself resolves from the
-ASP.NET Core shared framework, not from its own directory: `Microsoft.AspNetCore.*` (files
-2.1.3.0 / 2.3.0.0 / 2.3.6.0, requested 3.1–8.0), `Microsoft.Net.Http.Headers`,
-`System.Management.Automation` (file 3.0.0.0, requested 7.4.0.0) and three
-`Microsoft.Extensions.*` 8.0.0.0 files requested at 8.0.0.1/8.0.0.2.
+Every "higher" edge is in the service tier's web-hosting stack: `Microsoft.AspNetCore.*` (files
+2.1.3.0 / 2.3.0.0 / 2.3.6.0, requested 3.1-8.0), `Microsoft.Net.Http.Headers` (2.3.0.0),
+`System.Management.Automation` (file 3.0.0.0, requested 7.4.0.0),
+`System.Net.WebSockets.WebSocketProtocol` (one build) and three `Microsoft.Extensions.*` files at
+8.0.0.0 requested at 8.0.0.1 / 8.0.0.2. Refusing the lower-request direction would break a few
+hundred edges per build; refusing the higher direction touches only these.
 
 ### Does a runner process ever hit a shortfall?
 
