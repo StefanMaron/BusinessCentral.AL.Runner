@@ -679,6 +679,123 @@ public sealed class ExtensionRuntimeDeltasTests
     }
 
     /// <summary>
+    /// A STATED <c>RunPageMode</c> is written verbatim, and an unstated one is left off.
+    /// Measured: every stated value in the four captured builds (5 members, all <c>View</c>)
+    /// is what BC writes; the three unstated members get <c>Edit</c> from BC by a rule nobody
+    /// has measured, so writing anything there would be a guess
+    /// (docs/metadata-equivalence.md#deltas-stated-member-attributes). The fixture states
+    /// <c>Edit</c>, not the measured <c>View</c>, so a render hardcoding the common value fails.
+    /// </summary>
+    [Fact]
+    public void A_stated_RunPageMode_is_rendered_verbatim_and_an_unstated_one_is_left_off()
+    {
+        var dir = TestScratch.Dir("al-runner-extension-runtime-deltas-runpagemode");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var appPath = WriteAppWith(dir, """
+                {
+                  "RuntimeVersion": "17.0",
+                  "PageExtensions": [
+                    {
+                      "Id": 88380910,
+                      "Name": "RunPageMode Ext",
+                      "TargetObject": "ERD Target Page",
+                      "ActionChanges": [
+                        { "Anchor": "Processing", "ChangeKind": 2,
+                          "Actions": [
+                            { "Kind": 2, "Id": 640938012, "Name": "Stated Mode",
+                              "Properties": [ { "Name": "RunObject", "Value": "Some Page" },
+                                              { "Name": "RunPageMode", "Value": "Edit" } ] },
+                            { "Kind": 2, "Id": 640938013, "Name": "No Mode",
+                              "Properties": [ { "Name": "Image", "Value": "Sparkle" } ] }
+                          ] }
+                      ]
+                    }
+                  ]
+                }
+                """);
+
+            var actions = Render(appPath, "Page", 88380910)!
+                .Root!.Elements($"{Ns}ActionAdd").Elements($"{Ns}Actions").ToArray();
+            Assert.Equal(2, actions.Length);
+            Assert.Equal("Edit", actions[0].Attribute("RunPageMode")?.Value);
+            Assert.Null(actions[1].Attribute("RunPageMode"));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    /// <summary>
+    /// A control bound to a field of the extended page's SourceTable renders BC's
+    /// <c>DataColumnName</c> — the FIELD ID, as text — joined from three stated facts in the
+    /// same symbol file: the control's <c>SourceExpression</c> (<c>Rec."User Plans"</c>), the
+    /// target page's <c>SourceTable</c>, and that table's fields including a tableextension's.
+    /// Measured 16/16 against BC on four builds (pageextension 774's four controls).
+    ///
+    /// <para>The fixture resolves one control through the BASE table and one through a
+    /// TABLEEXTENSION, gives both ids that differ from every other number in the file, and
+    /// adds two controls that must stay unresolved: a <c>SourceExpression</c> that is not a
+    /// <c>Rec.</c> field (a global variable), and a <c>Rec.</c> name the table does not have.
+    /// Writing the name, or a 0, there would be a wrong value from a right input.</para>
+    /// </summary>
+    [Fact]
+    public void A_control_bound_to_a_source_table_field_renders_its_field_id_as_DataColumnName()
+    {
+        var dir = TestScratch.Dir("al-runner-extension-runtime-deltas-datacolumn");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var appPath = WriteAppWith(dir, """
+                {
+                  "RuntimeVersion": "17.0",
+                  "Tables": [
+                    { "Id": 88380920, "Name": "ERD Bound Table",
+                      "Fields": [ { "Id": 1, "Name": "Code", "TypeDefinition": { "Name": "Code", "Length": 20 } },
+                                  { "Id": 37, "Name": "Base Field", "TypeDefinition": { "Name": "Boolean" } } ] }
+                  ],
+                  "TableExtensions": [
+                    { "Id": 88380921, "Name": "ERD Bound Table Ext", "TargetObject": "ERD Bound Table",
+                      "Fields": [ { "Id": 50913, "Name": "Ext Field", "TypeDefinition": { "Name": "Boolean" } } ] }
+                  ],
+                  "Pages": [
+                    { "Id": 88380922, "Name": "ERD Bound Page",
+                      "Properties": [ { "Name": "SourceTable", "Value": "88380920" } ] }
+                  ],
+                  "PageExtensions": [
+                    {
+                      "Id": 88380911,
+                      "Name": "DataColumn Ext",
+                      "TargetObject": "ERD Bound Page",
+                      "ControlChanges": [
+                        { "Anchor": "Content", "ChangeKind": 2,
+                          "Controls": [
+                            { "Kind": 8, "Id": 640938014, "Name": "Base",
+                              "Properties": [ { "Name": "SourceExpression", "Value": "Rec.\"Base Field\"" } ] },
+                            { "Kind": 8, "Id": 640938015, "Name": "Ext",
+                              "Properties": [ { "Name": "SourceExpression", "Value": "Rec.\"Ext Field\"" } ] },
+                            { "Kind": 8, "Id": 640938016, "Name": "Global",
+                              "Properties": [ { "Name": "SourceExpression", "Value": "SomeGlobal" } ] },
+                            { "Kind": 8, "Id": 640938017, "Name": "Unknown",
+                              "Properties": [ { "Name": "SourceExpression", "Value": "Rec.\"No Such Field\"" } ] }
+                          ] }
+                      ]
+                    }
+                  ]
+                }
+                """);
+
+            var controls = Render(appPath, "Page", 88380911)!
+                .Root!.Elements($"{Ns}ControlAdd").Elements($"{Ns}Controls").ToArray();
+            Assert.Equal(4, controls.Length);
+            Assert.Equal("37", controls[0].Attribute("DataColumnName")?.Value);
+            Assert.Equal("50913", controls[1].Attribute("DataColumnName")?.Value);
+            Assert.Null(controls[2].Attribute("DataColumnName"));
+            Assert.Null(controls[3].Attribute("DataColumnName"));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    /// <summary>
     /// The 27.5 shape: an extension whose FIRST change adds a plain action carrying the stated
     /// properties and whose SECOND adds an <c>actionref</c> that states none. Both members render,
     /// and the properties land on the FIRST — which is the member that declares them.

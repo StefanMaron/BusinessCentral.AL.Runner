@@ -68,7 +68,7 @@ public static partial class RecordPatches
         // tableextension and a pageextension on one id two questions rather than one.
         return objectType switch
         {
-            "Page" => TryRenderPageExtensionDeltas(symbols, extensionId),
+            "Page" => TryRenderPageExtensionDeltas(symbols, appPath, extensionId),
             "Table" => TryRenderTableExtensionDeltas(appPath, extensionId),
             // Every other object type: the runner tracks no extension declarations for it, so
             // "no such extension" is the honest answer rather than an empty document.
@@ -77,12 +77,14 @@ public static partial class RecordPatches
     }
 
     private static string? TryRenderPageExtensionDeltas(
-        BcAppSymbolCache.AppSymbols symbols, int extensionId)
+        BcAppSymbolCache.AppSymbols symbols, string appPath, int extensionId)
     {
         var ext = symbols.PageExtensions?.FirstOrDefault(e => e.Id == extensionId);
         if (ext is null) return null;
 
         var doc = NewDeltasDocument(ext.Id, ext.Name, out var root);
+        // Built lazily: only a pageextension that adds a Rec-bound control needs the join.
+        Dictionary<string, int>? sourceTableFieldIds = null;
 
         // FIRST, and only when the extension states object-level properties: BC opens the
         // document with <PagePropertiesChange>, and the equivalence differ pairs AllDeltas
@@ -183,6 +185,13 @@ public static partial class RecordPatches
             member.SetAttribute("ID", memberId.ToString(CultureInfo.InvariantCulture));
             member.SetAttribute("Name", memberName);
             SetStatedMemberAttributes(member, origin.DeclaredProperties);
+            if (!origin.IsAction
+                && TryBoundRecFieldName(origin.DeclaredProperties) is { } boundField)
+            {
+                sourceTableFieldIds ??= SourceTableFieldIdsByName(symbols, appPath, ext.TargetObjectName);
+                if (sourceTableFieldIds.TryGetValue(boundField, out var fieldId))
+                    member.SetAttribute("DataColumnName", fieldId.ToString(CultureInfo.InvariantCulture));
+            }
             wrapper.AppendChild(member);
             root.AppendChild(wrapper);
         }
@@ -226,9 +235,12 @@ public static partial class RecordPatches
     /// The symbol file states a bare object NAME (<c>RunObject: "AppSource Product List"</c>) and
     /// BC states the RESOLVED type and id (<c>Page</c>, <c>2515</c>) — a different fact, needing
     /// the page inventory this layer does not have, for the reason
-    /// <see cref="BcAppSymbolCache.ActionRunObjectSymbol"/>'s own summary gives. <c>RunPageMode</c>
-    /// is out for a second reason: BC writes <c>Edit</c> on two members whose symbol entry states
-    /// nothing, so its default rule is unmeasured here.</para>
+    /// <see cref="BcAppSymbolCache.ActionRunObjectSymbol"/>'s own summary gives.</para>
+    ///
+    /// <para><c>RunPageMode</c> is read ONLY when stated: every stated value in the four captured
+    /// builds is what BC writes (5 of 5). An unstated one is left off, because BC writes
+    /// <c>Edit</c> on the three trigger actions stating nothing and that default rule is
+    /// unmeasured.</para>
     /// </summary>
     private static void SetStatedMemberAttributes(
         XmlElement member, Dictionary<string, string>? declared)
@@ -241,6 +253,7 @@ public static partial class RecordPatches
         Ml("ToolTip", "ToolTipML");
         BooleanLiteral("Visible", "Visible");
         BooleanLiteral("Enabled", "Enabled");
+        Pass("RunPageMode", "RunPageMode");
 
         void Pass(string stated, string attribute)
         {
@@ -273,6 +286,48 @@ public static partial class RecordPatches
 
         string? Stated(string name)
             => declared.TryGetValue(name, out var v) && !string.IsNullOrWhiteSpace(v) ? v : null;
+    }
+
+    /// <summary>
+    /// The field name a control's stated <c>SourceExpression</c> binds on <c>Rec</c> —
+    /// <c>Rec."User Plans"</c> or <c>Rec.Plans</c> — or null for anything else (a global, an
+    /// expression, another record variable), which then gets no <c>DataColumnName</c>.
+    /// </summary>
+    private static string? TryBoundRecFieldName(Dictionary<string, string>? declared)
+    {
+        if (declared is null || !declared.TryGetValue("SourceExpression", out var se)) return null;
+        var m = System.Text.RegularExpressions.Regex.Match(
+            se.Trim(), "^Rec\\.(?:\"(?<q>[^\"]+)\"|(?<b>[A-Za-z_][A-Za-z0-9_]*))$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!m.Success) return null;
+        return m.Groups["q"].Success ? m.Groups["q"].Value : m.Groups["b"].Value;
+    }
+
+    /// <summary>
+    /// Field ids by name for the SourceTable of the page named <paramref name="targetPageName"/>,
+    /// base fields plus every tableextension's, all read from the SAME .app as the
+    /// pageextension. BC's <c>DataColumnName</c> is that field id as text — measured 16 of 16
+    /// on four builds (docs/metadata-equivalence.md#deltas-stated-member-attributes).
+    ///
+    /// <para>Deliberately same-app only: a target page or table declared in another app answers
+    /// an empty map, so the attribute is left off rather than resolved against an inventory
+    /// this render has not been measured against.</para>
+    /// </summary>
+    private static Dictionary<string, int> SourceTableFieldIdsByName(
+        BcAppSymbolCache.AppSymbols symbols, string appPath, string targetPageName)
+    {
+        var result = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var page = symbols.Pages?.FirstOrDefault(p =>
+            string.Equals(p.Name, targetPageName, StringComparison.OrdinalIgnoreCase));
+        if (page is null || page.SourceTableId <= 0) return result;
+        var table = symbols.Tables?.FirstOrDefault(t => t.TableId == page.SourceTableId);
+        if (table is null) return result;
+
+        foreach (var f in table.Fields) result.TryAdd(f.FieldName, f.FieldId);
+        foreach (var te in BcAppSymbolCache.GetTableExtensions(appPath))
+            if (string.Equals(te.TargetTableName, table.TableName, StringComparison.OrdinalIgnoreCase))
+                foreach (var f in te.Fields) result.TryAdd(f.FieldName, f.FieldId);
+        return result;
     }
 
     private static string? TryRenderTableExtensionDeltas(string appPath, int extensionId)
