@@ -766,7 +766,8 @@ internal static partial class BcAppSymbolCache
         string? TableNo = null, bool SingleInstance = false, string? Subtype = null,
         string? TargetObjectName = null, string? ALNamespace = null,
         string? InherentEntitlements = null, string? InherentPermissions = null,
-        List<CodeunitMethodSymbol>? AttributedMethods = null);
+        List<CodeunitMethodSymbol>? AttributedMethods = null,
+        string? EventSubscriberInstance = null);
 
     /// <summary>
     /// One method BC's <c>ObjectMetadataEmitter</c> writes as a <c>&lt;Method&gt;</c>, as
@@ -1365,6 +1366,8 @@ internal static partial class BcAppSymbolCache
                     // answers as 16 and 512 (#3788).
                     objProps.TryGetValue("InherentEntitlements", out var cuEntitlements);
                     objProps.TryGetValue("InherentPermissions", out var cuPermissions);
+                    // Stated only where AL declares it; the consumer applies BC's default (#4605).
+                    objProps.TryGetValue("EventSubscriberInstance", out var cuSubscriberInstance);
                     objects.TryAdd((kind, objId), new ObjectSymbol(kind, objId, objName, objCaption,
                         // Left as written; StripModuleQualifier is the consumer's job, the same
                         // split the query/report data-item RelatedTable reads already make.
@@ -1380,7 +1383,9 @@ internal static partial class BcAppSymbolCache
                         ALNamespace: alNamespace,
                         InherentEntitlements: string.IsNullOrWhiteSpace(cuEntitlements) ? null : cuEntitlements.Trim(),
                         InherentPermissions: string.IsNullOrWhiteSpace(cuPermissions) ? null : cuPermissions.Trim(),
-                        AttributedMethods: ReadAttributedMethods(el)));
+                        AttributedMethods: ReadAttributedMethods(el),
+                        EventSubscriberInstance: string.IsNullOrWhiteSpace(cuSubscriberInstance)
+                            ? null : cuSubscriberInstance.Trim()));
                     continue;
                 }
                 objects.TryAdd((kind, objId), new ObjectSymbol(kind, objId, objName, objCaption,

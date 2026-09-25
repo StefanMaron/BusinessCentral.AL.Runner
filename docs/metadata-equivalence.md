@@ -763,7 +763,8 @@ carries, the same values `CodeUnit Metadata` (2000000137) answers from — into 
 shape, and BC's own `MetaCodeunit(XmlNode)` constructor parses both sides. One type against
 itself.
 
-**Only the five derived attributes are written**, and a value the runner does not derive is
+**Only the derived attributes are written** (five when this landed; the list is in
+`RecordPatches.CodeunitMetadataEquivalence.cs`'s header), and a value the runner does not derive is
 left off rather than defaulted, so BC's constructor applies its own default and the reported
 difference is a true statement about what the runner does not know.
 `MetadataEquivalenceCodeunitOracleTests` asserts both halves: that BC's constructor really
@@ -1818,6 +1819,10 @@ the runner's document omits it. The largest are `Codeunit.CodeUnit.MetadataVersi
 the runner emit those attributes, so they stopped being omissions — 4 signatures × 13
 occurrences = the 52 difference. Removed rather than flagged `versionContingent`, which exempts
 an entry from the staleness guard and would have left a phantom inventory of a closed gap.
+
+**`Codeunit.CodeUnit.EventSubscriberInstance` went out at #4605** the same way. The projection
+now writes the declared value, else `StaticAutomatic` — BC's emitter never omits the attribute —
+and on BC 28.5.54151.55132's two bundles the entry matched nothing and no codeunit disagreed.
 
 Nine entries carry `versionContingent`, and the threshold is stated rather than felt: **fewer than
 10 of the 1,286 compared objects carry it on the measured build**, a population one BC version's
