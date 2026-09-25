@@ -180,3 +180,24 @@ transcripts on one box) were deleted outright rather than moved, because they go
 - **#1883 / #3960.** The claim's timeline records two `labeled` events at `20:05:42Z` and zero
   `unlabeled`.
 - **#4294.** The two loops tripped the past-tense closing-keyword trap within four hours.
+
+## Moved out of the rule to fit the always-loaded budget (#4542)
+
+- **The two scope re-homings.** #4253 closed #4249 deferring to *"#4249's own follow-up"*
+  (re-homed as #4255), and #4256 closed #4255 deferring to *"#4255's part 2"* while its own
+  landed doc comment said it did not close the question (re-homed as #4292) — twice in two days,
+  the second time to the issue filed about the first.
+- **Cue phrase against destination (#4293).** Over a range of merged PRs a cue-phrase check
+  flagged mostly the ordinary "what I did not fold" paragraph, where the destination key flagged
+  only real deferrals.
+- **A tracker (#4489)** is a set of related items rather than one unit of work, which is why
+  `Closes` on one item shuts the whole record.
+- **The past-tense mention (#4294).** Two loops tripped it, in exactly the paragraph
+  `batch-sibling-issues-by-file.md` point 5 and `search-for-the-same-defect-first.md` require;
+  the agent documenting it hit it twice through markdown. The gate's message now names the
+  rewrite. The separator matches at most one punctuation mark, which is why a word defeats it.
+- **`PR_HEAD_REF`.** `Closes #123` on `agent/x/issue-4294` exits 0 with the variable unset and 1
+  with it set.
+- **`Part of` mid-sentence (#3934).** `Part of #1883 - the NavDataTransfer cluster` is accepted;
+  `This is part of #1883` is reported as malformed, quoting the line. The gate and
+  `part_of_references.sh` accept the same shape.

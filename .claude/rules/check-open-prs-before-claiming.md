@@ -15,8 +15,8 @@ the assignee's login is theirs. The answer changes what the assignee is worth:
 | another loop on the **same** account | **nothing** — same login, so it cannot say *which* loop | read on — the open-PR check below is what resolves it |
 | a loop on a **different** account | **everything** — a real boundary, and it is authoritative | **stop**, per `branch-and-pr.md`'s assignee boundary; nothing below waives it |
 
-Measured 2026-09-22: remote `agent/fbk-*/…` branches and `agent: fbk-*` labels from a second
-agent-running account — so the cross-account case is real, not hypothetical.
+The cross-account case is real, not hypothetical: a second account's `agent/fbk-*/…` branches
+and `agent: fbk-*` labels are on the remote (#3275).
 
 **The branch prefix is the same discriminator, and it is the stronger one**: `agent/fbk-2/…`
 versus `agent/stma-auto-1/…` cannot be rewritten by another loop, where a label can.
@@ -75,18 +75,11 @@ gh pr list --repo StefanMaron/BusinessCentral.AL.Runner --state open --limit 100
 `closingIssuesReferences` is GitHub's own parse of the PR, so it reflects what will actually
 close on merge — not a grep of the body.
 
-**But the parse LAGS the PR's creation, so a fresh PR can read as claiming nothing.** Measured
-on PR #4119: created through the REST endpoint, `closingIssuesReferences` came back **empty**
-and resolved to `[4111]` only **seconds** later, with a correct closing declaration for
-that issue in the
-body throughout. Nothing reports the pending state — an empty array is what a PR closing no
-issue also returns.
-
-That matters here specifically, because this rule's whole purpose is deciding whether an issue
-is taken: an empty read on a PR opened seconds ago is **"not parsed yet"**, not "free", and
+**But the parse LAGS the PR's creation, so a fresh PR can read as claiming nothing** (PR #4119:
+empty, then the right issue seconds later). An empty array is also what a PR closing no issue
+returns, so an empty read on a PR opened seconds ago is **"not parsed yet"**, not "free" —
 treating it as free is how two agents claim one issue. On a zero result for an issue you are
-about to claim, confirm it a second way before believing it — the body carries the declaration
-immediately even when the parse has not caught up:
+about to claim, confirm it a second way — the body carries the declaration immediately:
 
 <!-- Recipe-pinned-by: tools/test_closing_ref_confirm_recipe.py -->
 ```bash
@@ -99,12 +92,7 @@ anywhere in the text, including a body that merely *documents* one. Even substit
 over-report, because a PR quoting this rule carries the keyword too — which is why the check is
 a **confirmation of a zero**, never a claim on its own. It fails safe in that role: over-reporting
 "taken" costs a second look, while the false *negative* it exists to catch costs two agents one
-issue. Measured while adding this
-section: the generic form answered `true` on a pull request whose only declaration was
-`Part of #4059`, because the body quoted this very recipe.
-
-Same shape as every other trap in this repository: the call succeeds, the answer is
-well-formed, and it is about a moment rather than about the question you asked.
+issue.
 
 **No `gh` in web/remote sessions** (`github-access.md`). There, list open PRs with
 `mcp__github__list_pull_requests` and read each one's linked issues; the rule is the same, the
@@ -146,12 +134,10 @@ window a completion-time signal cannot cover:
 tools/review-claim.py --pr <N> --post --agent-id <YOUR-ID>
 ```
 
-Measured over recent pull requests on 2026-09-19, counting only repeats on the **identical
-head**, where nothing about the PR changed between the passes: **two or more verdicts on one head
-were common**, and **most such pairs landed closer together than one review takes**. So the second
-reviewer usually started while the first was still running — #4306 has two verdicts on
-`4cfe233e` minutes apart — and a `status: reviewed` label written when a review
-*finishes* would have been too late for nearly all of them (#4284).
+Repeat verdicts on an identical head were common, and most pairs landed closer together than
+one review takes — the second reviewer started while the first was still running, so a label
+written when a review *finishes* would have been too late (#4284; measurements in
+`docs/incidents/check-open-prs-before-claiming.md`).
 
 **Trap: this reports, it never blocks, and that is deliberate.** A second pass is sometimes
 right — a later pass on #4281 produced findings the earlier ones did not. What was missing is

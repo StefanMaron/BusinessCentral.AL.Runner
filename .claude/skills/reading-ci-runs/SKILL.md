@@ -1,6 +1,6 @@
 ---
 name: reading-ci-runs
-description: Recipes for reading a GitHub Actions run by hand when tools/ci-wait.py does not answer the question — which run produced a check, whether a commit has a real failure under a cancellation, how deep the Actions queue is, which harness scripts a corpus job ran, and which corpus codeunits a failing leg names. The rules they serve live in .claude/rules/ci-verdicts.md; load this when you are about to type one of these queries.
+description: Recipes for reading a GitHub Actions run by hand when tools/ci-wait.py does not answer the question — which run produced a check, whether a commit has a real failure under a cancellation, how deep the Actions queue is, which harness scripts a corpus job ran, which corpus codeunits a failing leg names, and how to ask the Windows nightly to adjudicate a corpus PR. The rules they serve live in .claude/rules/ci-verdicts.md; load this when you are about to type one of these queries.
 ---
 
 # Reading a CI run by hand
@@ -109,3 +109,35 @@ A job whose `started_at` precedes the commit cannot have checked it out; one tha
 it almost certainly did, with an honest ambiguity window of a few tens of seconds. Getting this
 backwards argues for reverting a fix that was never in the run (`MsDyn365Bc.On.Linux#61`;
 `docs/incidents/ci-verdicts.md`).
+
+## Asking the Windows nightly
+
+The rule is `.claude/rules/ask-the-corpus-before-claiming-bc-behavior.md` § "When the Linux tier
+is the thing in doubt, ask Windows". On a corpus PR, label it — the `pull_request` event
+adjudicates with `master`'s workflow file against your merge commit:
+
+```bash
+gh pr edit <N> --repo StefanMaron/BusinessCentral.AL.Language.Tests \
+  --add-label run-nightly-windows
+```
+
+Only for a ref with no pull request, dispatch it — this takes the workflow file from the ref:
+
+```bash
+gh workflow run 351779742 --repo StefanMaron/BusinessCentral.AL.Language.Tests \
+  --ref <branch> -f bc_version=28.4 -f artifact_type=sandbox -f country=w1
+```
+
+A run that never executed a test logs this, and is no verdict:
+
+```
+##[error]parsed 0 tests from the supplied XUnit files. That is not a green run -- it means the
+         tests never executed, or the result file never got written. Refusing to report a verdict.
+```
+
+A run that did execute prints its summary in this shape — the verdict, whatever `conclusion`
+says:
+
+```
+**<P> passed, <F> failed, 0 skipped, <T> total.**
+```
