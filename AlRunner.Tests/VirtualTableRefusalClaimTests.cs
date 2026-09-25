@@ -478,7 +478,12 @@ public sealed class VirtualTableRefusalClaimTests
         // why they refuse instead of defaulting. Counted by this test's own site counter, and
         // 84 was READ OUT of its failure message ("Expected: 80, Actual: 84") rather than
         // chosen -- then re-proved by perturbing it to 83 and requiring a RED.
-        Assert.Equal(84, total);
+        //
+        // 84 -> 85 (#4045): one REAL refusal site in RecordPatches.ReportLayoutListVirtualTable.cs
+        // — a layout whose ExcelLayoutMultipleDataSheets value is not a boolean refuses rather
+        // than defaulting the Report Layout List column to false. 85 was READ OUT of this test's
+        // own failure message ("Expected: 84, Actual: 85") after rebasing onto main.
+        Assert.Equal(85, total);
     }
 
     // A refusal SITE is a *call* to a `*ShapeGap(` factory, not only a `throw` of one (#4058).
