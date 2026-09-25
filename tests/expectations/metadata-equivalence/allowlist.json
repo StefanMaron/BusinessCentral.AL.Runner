@@ -702,8 +702,8 @@
     },
     {
       "member": "PageDefinition.#actionContainersField.<presence>",
-      "reason": "Page actions. SymbolReference.json carries an Actions array on 106 of the 235 pages measured, with their properties, so this is a datum the runner has and does not read. Reclassified from a scope boundary to a gap: EmitPageXml emits no <ActionContainers> element at all, and the values are present, typed and unambiguous in the symbol file the runner already parses for this page. Tracked on #3784. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
-      "issue": 4282
+      "reason": "Page actions. BC's <ActionContainers> tree is mostly SYNTHESIZED by the compiler rather than stated in SymbolReference.json: measured on BC 28.1.49838.53910, 991 of 1,152 containers, 2,544 of 2,598 action groups and 89 of 196 actionrefs have no counterpart in the symbol file -- stub action areas, promoted categories and the legacy Promoted rewrite. EmitPageXml emits no <ActionContainers> element at all, and rendering it from the symbol file would mean re-implementing that synthesis by hand. BC already applies it to a reference package (ReferencePageTypeSymbol, PageObjectMembers.AddStubActionAreas), so the open question is whether to reuse it, which is an architecture decision. Tracked on #4673. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
+      "issue": 4673
     },
     {
       "member": "PageDefinition.#expressionsField.<presence>",
@@ -719,8 +719,8 @@
     },
     {
       "member": "PageDefinition.#viewContainersField.<presence>",
-      "reason": "Page views. SymbolReference.json carries a Views array on 4 of the 235 pages measured, so this is a datum the runner has and does not read. Reclassified from a scope boundary to a gap: EmitPageXml emits no <ViewContainers> element at all, and the values are present, typed and unambiguous in the symbol file the runner already parses for this page. Tracked on #3784. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
-      "issue": 4282
+      "reason": "Page views. EmitPageXml emits no <ViewContainers> element at all. It is not a plain read either: on BC 28.1.49838.53910 BC writes <ViewContainers> on 91 pages across both ground-truth bundles while SymbolReference.json states a Views array on 4, so most of the element is synthesized by the compiler, which writes it through the same emitter as the action tree (WriteViewActions / WriteViewDefinitions, gated on PageType.IsViewSupported()). Tracked on #4673 with the action tree. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
+      "issue": 4673
     },
     {
       "member": "PageDefinition.ALNamespace",
@@ -730,8 +730,8 @@
     },
     {
       "member": "PageDefinition.ActionContainers.<presence>",
-      "reason": "Page actions. SymbolReference.json carries an Actions array on 106 of the 235 pages measured, with their properties, so this is a datum the runner has and does not read. Reclassified from a scope boundary to a gap: EmitPageXml emits no <ActionContainers> element at all, and the values are present, typed and unambiguous in the symbol file the runner already parses for this page. Tracked on #3784. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
-      "issue": 4282
+      "reason": "Page actions. BC's <ActionContainers> tree is mostly SYNTHESIZED by the compiler rather than stated in SymbolReference.json: measured on BC 28.1.49838.53910, 991 of 1,152 containers, 2,544 of 2,598 action groups and 89 of 196 actionrefs have no counterpart in the symbol file -- stub action areas, promoted categories and the legacy Promoted rewrite. EmitPageXml emits no <ActionContainers> element at all, and rendering it from the symbol file would mean re-implementing that synthesis by hand. BC already applies it to a reference package (ReferencePageTypeSymbol, PageObjectMembers.AddStubActionAreas), so the open question is whether to reuse it, which is an architecture decision. Tracked on #4673. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
+      "issue": 4673
     },
     {
       "member": "PageDefinition.CaptionTranslationKey",
@@ -747,8 +747,8 @@
     },
     {
       "member": "PageDefinition.Microsoft.Dynamics.Nav.Types.Metadata.IMetaPageDefinition.ActionContainers.<presence>",
-      "reason": "Page actions. SymbolReference.json carries an Actions array on 106 of the 235 pages measured, with their properties, so this is a datum the runner has and does not read. Reclassified from a scope boundary to a gap: EmitPageXml emits no <ActionContainers> element at all, and the values are present, typed and unambiguous in the symbol file the runner already parses for this page. Tracked on #3784. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
-      "issue": 4282
+      "reason": "Page actions. BC's <ActionContainers> tree is mostly SYNTHESIZED by the compiler rather than stated in SymbolReference.json: measured on BC 28.1.49838.53910, 991 of 1,152 containers, 2,544 of 2,598 action groups and 89 of 196 actionrefs have no counterpart in the symbol file -- stub action areas, promoted categories and the legacy Promoted rewrite. EmitPageXml emits no <ActionContainers> element at all, and rendering it from the symbol file would mean re-implementing that synthesis by hand. BC already applies it to a reference package (ReferencePageTypeSymbol, PageObjectMembers.AddStubActionAreas), so the open question is whether to reuse it, which is an architecture decision. Tracked on #4673. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
+      "issue": 4673
     },
     {
       "member": "PageDefinition.Microsoft.Dynamics.Nav.Types.Metadata.IMetaPageDefinition.Expressions.<presence>",
@@ -764,8 +764,8 @@
     },
     {
       "member": "PageDefinition.Microsoft.Dynamics.Nav.Types.Metadata.IMetaPageDefinition.ViewContainers.<presence>",
-      "reason": "Page views. SymbolReference.json carries a Views array on 4 of the 235 pages measured, so this is a datum the runner has and does not read. Reclassified from a scope boundary to a gap: EmitPageXml emits no <ViewContainers> element at all, and the values are present, typed and unambiguous in the symbol file the runner already parses for this page. Tracked on #3784. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
-      "issue": 4282
+      "reason": "Page views. EmitPageXml emits no <ViewContainers> element at all. It is not a plain read either: on BC 28.1.49838.53910 BC writes <ViewContainers> on 91 pages across both ground-truth bundles while SymbolReference.json states a Views array on 4, so most of the element is synthesized by the compiler, which writes it through the same emitter as the action tree (WriteViewActions / WriteViewDefinitions, gated on PageType.IsViewSupported()). Tracked on #4673 with the action tree. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
+      "issue": 4673
     },
     {
       "member": "PageDefinition.Triggers.<presence>",
@@ -775,8 +775,8 @@
     },
     {
       "member": "PageDefinition.ViewContainers.<presence>",
-      "reason": "Page views. SymbolReference.json carries a Views array on 4 of the 235 pages measured, so this is a datum the runner has and does not read. Reclassified from a scope boundary to a gap: EmitPageXml emits no <ViewContainers> element at all, and the values are present, typed and unambiguous in the symbol file the runner already parses for this page. Tracked on #3784. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
-      "issue": 4282
+      "reason": "Page views. EmitPageXml emits no <ViewContainers> element at all. It is not a plain read either: on BC 28.1.49838.53910 BC writes <ViewContainers> on 91 pages across both ground-truth bundles while SymbolReference.json states a Views array on 4, so most of the element is synthesized by the compiler, which writes it through the same emitter as the action tree (WriteViewActions / WriteViewDefinitions, gated on PageType.IsViewSupported()). Tracked on #4673 with the action tree. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
+      "issue": 4673
     },
     {
       "member": "PageProperties.#aPIVersionField",

@@ -1911,7 +1911,7 @@ issue that the triage closes would be untracked the moment it merged.
 |---|---:|---|
 | **the runner should state it** | 12 | BC's value is derivable from what the runner already reads, and omitting it is a gap |
 | **saying less is legitimate today** | 5 | a bounded scope decision with a proof path, not a limit — the page control tree |
-| **needs a measurement this bundle cannot give** | 1 | `Report.Properties.PromotedActionCategoriesML`, whose whole population is one object |
+| **needs a measurement this bundle cannot give** | 1 | `Report.Properties.PromotedActionCategoriesML`, whose whole population is one object — since settled by a compiled probe and written (docs/report-metadata-from-bc.md#request-page-promoted-action-categories) |
 
 Two follow-ups were filed from it, both for gaps no open issue covered:
 
@@ -1925,6 +1925,13 @@ Two follow-ups were filed from it, both for gaps no open issue covered:
 
 The rest point at **#4605** (codeunit `EventSubscriberInstance`), **#3797** (xmlport derivation), **#4279**
 (enum/permission-set residue) and **#4282** (page properties `EmitPageXml` does not read).
+
+**#4282's two `Page.Controls.*` entries turned out to be the pairing artifact, not a missing
+derivation.** `Page.Controls.MultiLine` and `Page.Controls.DateFormula` fire at exactly the
+(page, control index) positions where `Page.Controls.Enabled` fires: BC writes both attributes
+only on field controls, the runner builds none, and positional pairing sets a runner part against
+a BC field. They now cite #3824 with `Enabled`. The page-level action and view trees are on
+#4673.
 
 **One page resists derivation and is named rather than smoothed over.** Page 1998's symbol
 record states neither `PageType` nor `APIVersion`, while BC's document states

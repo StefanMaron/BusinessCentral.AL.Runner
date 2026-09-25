@@ -34,8 +34,8 @@
     {
       "member": "Page.Controls.MultiLine",
       "statedBy": "expected",
-      "reason": "TRIAGED (#4400): SAYING LESS IS LEGITIMATE TODAY, as a bounded scope decision rather than a limit — the runner reconstructs only part of the page control tree, so it states nothing on controls it does not build. docs/metadata-equivalence.md#the-control-tree-is-a-cost-decision-not-an-unprovable-one settles the direction: no page entry claims a value is underivable, and the control tree is cost and scope 'with a proof path'. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): on the depth-1 controls BC emits, every @MultiLine occurrence in THIS declaration is the value BC's reader produces when the attribute is absent and the symbol file is silent, while every symbol-stated value is a non-default the ordinary value comparison already reports. So the fix here is not a derivation but 'build more of the control tree, then write the default' — which is why it is tracked on #4282 with the rest of the page-property work rather than filed as its own gap.",
-      "issue": 4282,
+      "reason": "A PAIRING artifact, the same one Page.Controls.Enabled records from the other side. BC writes @MultiLine only on field controls (ControlDefinition), and the runner builds no field controls: it flattens every subpage part into one ContentArea container. This comparison pairs /Content/Containers[0]/Controls[i] by POSITION, so where BC's i-th control is a field and the runner's is a part, BC states @MultiLine='0' and the runner states nothing -- and '0' is what BC's reader produces for an absent attribute. Measured on BC 28.1.49838.53910 (#4282): 6 occurrences, on pages 1927, 1992 (x2), 4326, 4336 and 9983, every one at a position where Page.Controls.Enabled also fires (the same six). Not a derivation to add: it disappears when the runner reconstructs the containment hierarchy of <Content>, tracked on #3824.",
+      "issue": 3824,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#unobservable-omissions"
     },
@@ -66,16 +66,8 @@
     {
       "member": "Page.Controls.DateFormula",
       "statedBy": "expected",
-      "reason": "TRIAGED (#4400): SAYING LESS IS LEGITIMATE TODAY, as a bounded scope decision rather than a limit — the runner reconstructs only part of the page control tree, so it states nothing on controls it does not build. docs/metadata-equivalence.md#the-control-tree-is-a-cost-decision-not-an-unprovable-one settles the direction: no page entry claims a value is underivable, and the control tree is cost and scope 'with a proof path'. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): on the depth-1 controls BC emits, every @DateFormula occurrence in THIS declaration is the value BC's reader produces when the attribute is absent and the symbol file is silent, while every symbol-stated value is a non-default the ordinary value comparison already reports. So the fix here is not a derivation but 'build more of the control tree, then write the default' — which is why it is tracked on #4282 with the rest of the page-property work rather than filed as its own gap.",
-      "issue": 4282,
-      "versionContingent": true,
-      "Doc": "docs/metadata-equivalence.md#unobservable-omissions"
-    },
-    {
-      "member": "Report.Properties.PromotedActionCategoriesML",
-      "statedBy": "expected",
-      "reason": "TRIAGED (#4400): CANNOT DECIDE WITHOUT A MEASUREMENT THIS BUNDLE CANNOT PROVIDE, and the measurement is named rather than guessed. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): the entire population is one occurrence on one object — Report 9810, the ONLY report in either bundle — where BC writes PromotedActionCategoriesML='' on the request page's <Properties>. Its symbol record states a RequestPage with an EMPTY Properties array, so nothing distinguishes 'BC emits empty-string for every report request page' from 'BC emits it only when something about this report is true'. One object cannot separate those, and the second is what decides whether omitting is wrong. WHAT WOULD SETTLE IT: ground-truth bundles for an app with several reports — Base Application has hundreds — asking whether the attribute appears on all request pages or a subset. Until then this stays declared rather than fixed, because a writer-side change would go harness-green either way, which is the exact blindness #4357 added this third state to expose. Tracked on #4282 as the page-properties issue the request page's <Properties> element belongs to. Kept versionContingent: 1 occurrence, and a bundle with no reports removes the population entirely.",
-      "issue": 4282,
+      "reason": "A PAIRING artifact, the same one Page.Controls.Enabled records from the other side. BC writes @DateFormula only on field controls (ControlDefinition), and the runner builds no field controls: it flattens every subpage part into one ContentArea container. This comparison pairs /Content/Containers[0]/Controls[i] by POSITION, so where BC's i-th control is a field and the runner's is a part, BC states @DateFormula='0' and the runner states nothing -- and '0' is what BC's reader produces for an absent attribute. Measured on BC 28.1.49838.53910 (#4282): 1 occurrence, page 1992 Controls[1], every one at a position where Page.Controls.Enabled also fires (one of the same six). Not a derivation to add: it disappears when the runner reconstructs the containment hierarchy of <Content>, tracked on #3824.",
+      "issue": 3824,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#unobservable-omissions"
     },
