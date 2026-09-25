@@ -85,7 +85,13 @@ internal static class RecordShapeFingerprint
         // makes the walk terminate and keeps the description independent of traversal order.
         if (!seen.Add(type)) return;
 
-        sb.Append(type.FullName).Append('{');
+        sb.Append(type.FullName);
+        // OwnProperties drops a BCL base's members, so its NAME (with type arguments) and what it
+        // contains must enter here instead, or `class X : Dictionary<K, Leaf>` hides Leaf (review
+        // of PR #4586). Absent for an object/ValueType base, so no existing payload key moves.
+        var bclBase = BclBase(type);
+        if (bclBase is not null) sb.Append(':').Append(TypeName(bclBase));
+        sb.Append('{');
         var properties = OwnProperties(type);
         var fields = OwnFields(type);
         foreach (var p in properties)
@@ -96,6 +102,15 @@ internal static class RecordShapeFingerprint
 
         foreach (var p in properties) Walk(p.PropertyType, sb, seen);
         foreach (var f in fields) Walk(f.FieldType, sb, seen);
+        if (bclBase is not null) Walk(bclBase, sb, seen);
+    }
+
+    // The nearest non-own ancestor, unless it is object/ValueType (every record and struct has one).
+    private static Type? BclBase(Type type)
+    {
+        var b = type.BaseType;
+        while (b is not null && IsOwnType(b)) b = b.BaseType;
+        return b is null || b == typeof(object) || b == typeof(ValueType) ? null : b;
     }
 
     // Sorted by name, because reflection does NOT guarantee member order — the runtime is free to

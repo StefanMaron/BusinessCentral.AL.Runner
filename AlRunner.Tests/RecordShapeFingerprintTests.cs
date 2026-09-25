@@ -229,8 +229,8 @@ public class RecordShapeFingerprintTests
         Assert.DoesNotContain("Capacity:", description);
         Assert.DoesNotContain("Count:", description);
         Assert.DoesNotContain("Item:", description);
-        // Stated positively too: the owned type is recorded, with no members of its own.
-        Assert.Contains("+OwnedList{}", description);
+        // Stated positively too: the owned type is recorded with its base's name, no members of its own.
+        Assert.Contains("+OwnedList:System.Collections.Generic.List`1<AlRunner.Tests.RecordShapeFingerprintTests+Leaf>{}", description);
     }
 
     // A non-collection BCL base leaks the same way (Exception.Message, .HResult, ...).
@@ -259,5 +259,55 @@ public class RecordShapeFingerprintTests
 
         Assert.Contains("BaseId:System.Int32", description);
         Assert.Contains("Name:System.String", description);
+    }
+
+    // Review of PR #4586: filtering on the declaring type must not cut the only path from an owned
+    // collection subclass to its element type. The three variants differ only inside their
+    // enclosing class, so the descriptions are compared with that prefix normalised away -- a
+    // pass cannot come from a differing type name.
+    private static class MapV1
+    {
+        public sealed record ProbeLeaf(int ProbeLeafId);
+        public sealed class OwnedMap : Dictionary<string, ProbeLeaf> { }
+        public sealed record MapRoot(OwnedMap Entries);
+    }
+
+    private static class MapV2
+    {
+        public sealed record ProbeLeaf(int ProbeLeafId, string? Added);
+        public sealed class OwnedMap : Dictionary<string, ProbeLeaf> { }
+        public sealed record MapRoot(OwnedMap Entries);
+    }
+
+    private static class MapV3
+    {
+        public sealed record ProbeLeaf(int ProbeLeafId);
+        public sealed class OwnedMap : Dictionary<int, ProbeLeaf> { }
+        public sealed record MapRoot(OwnedMap Entries);
+    }
+
+    private static string Normalised(Type root) =>
+        RecordShapeFingerprint.Describe(root).Replace(root.DeclaringType!.Name + "+", "V+");
+
+    [Fact]
+    public void AnOwnedCollectionSubclass_KeepsItsElementTypeInTheDescription()
+    {
+        var description = RecordShapeFingerprint.Describe(typeof(MapV1.MapRoot));
+
+        Assert.Contains("ProbeLeafId:System.Int32", description);
+        Assert.DoesNotContain("Count:", description);
+        Assert.DoesNotContain("Comparer:", description);
+    }
+
+    [Fact]
+    public void AnOwnedCollectionSubclass_LeafMemberChange_ChangesTheDescription()
+    {
+        Assert.NotEqual(Normalised(typeof(MapV1.MapRoot)), Normalised(typeof(MapV2.MapRoot)));
+    }
+
+    [Fact]
+    public void AnOwnedCollectionSubclass_BaseTypeArgumentChange_ChangesTheDescription()
+    {
+        Assert.NotEqual(Normalised(typeof(MapV1.MapRoot)), Normalised(typeof(MapV3.MapRoot)));
     }
 }
