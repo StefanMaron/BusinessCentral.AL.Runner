@@ -26,7 +26,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from label_hygiene_harness import invoke, missing_tools, run_block  # noqa: E402
+from label_hygiene_harness import flag_values, invoke, missing_tools, run_block  # noqa: E402
 
 failures: list[str] = []
 passes = 0
@@ -144,6 +144,49 @@ rc, out, calls = release("Part of #42", foreign)
 check("an issue carrying ANOTHER loop's agent label is left untouched -- "
       "preservation comes first",
       rc == 0 and not [c for c in calls if c.startswith("issue edit")], f"{calls} {out}")
+
+# #4525: the loop's identity comes from the BRANCH PREFIX as well as the PR's
+# labels. Nothing requires an agent: label on the PR -- impl-agent.md labels the
+# ISSUE -- so a PR without one read the issue's own claim as another loop's and
+# left it claimed, green (PR #4524 -> #3926).
+own_claim = {"state": "OPEN",
+             "labels": [{"name": "status: in-progress"}, {"name": "agent: fbk-2"}]}
+rc, out, calls = release("Part of #42", own_claim, pr_labels=[])
+edits = [c for c in calls if c.startswith("issue edit")]
+check("a PR carrying NO agent: label still releases an issue claimed by the "
+      "identity its branch prefix names (#4525)",
+      rc == 0 and len(edits) == 1, f"rc={rc} {calls} {out}")
+edit = edits[0] if edits else ""
+check("...dropping that identity's agent label",
+      flag_values(edit, "remove-label").count("agent: fbk-2") == 1, edit)
+check("...and putting it back on the ready queue",
+      flag_values(edit, "add-label") == ["status: ready"], edit)
+check("...and records the decision as a release, not a foreign label",
+      "label-hygiene decision: released" in out and "foreign=none" in out, out)
+check("...naming the identity the branch prefix supplied",
+      "branch_agent=agent: fbk-2" in out, out)
+
+rc, out, calls = release("Part of #42", foreign, pr_labels=[])
+check("the branch prefix does not widen 'mine' past its own identity: another "
+      "loop's label is still foreign with no PR label either",
+      rc == 0 and not [c for c in calls if c.startswith("issue edit")]
+      and "foreign=agent: fbk-1" in out, f"{calls} {out}")
+
+prefix_of = {"state": "OPEN",
+             "labels": [{"name": "status: in-progress"}, {"name": "agent: fbk-20"}]}
+rc, out, calls = release("Part of #42", prefix_of, pr_labels=[])
+check("an identity the branch's is merely a PREFIX of is foreign "
+      "(agent/fbk-2/... vs agent: fbk-20)",
+      rc == 0 and not [c for c in calls if c.startswith("issue edit")]
+      and "foreign=agent: fbk-20" in out, f"{calls} {out}")
+
+both = {"state": "OPEN",
+        "labels": [{"name": "status: in-progress"}, {"name": "agent: fbk-2"},
+                   {"name": "agent: fbk-1"}]}
+rc, out, calls = release("Part of #42", both, pr_labels=[])
+check("own label beside a foreign one: preserved, and only the foreign one is "
+      "named", rc == 0 and not [c for c in calls if c.startswith("issue edit")]
+      and "foreign=agent: fbk-1 " in out, f"{calls} {out}")
 
 rc, out, calls = release("Part of #42", {"state": "OPEN", "labels": []})
 edits = [c for c in calls if c.startswith("issue edit")]
