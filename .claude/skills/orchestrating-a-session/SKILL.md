@@ -377,10 +377,10 @@ Merge when **all of**:
 1. Every required context green **on the PR's current head SHA**. `gh pr checks` reports
    the newest *completed* run, which can predate the last push — confirm the SHA.
    **Do not count legs.** Since #3141 a pull request runs three BC legs
-   (`.github/pr-bc-versions.txt`: 27.0, 27.5, 28.5), not eight, so a bar phrased as "all 8
+   (`.github/pr-bc-versions.txt`: 27.0, 27.5, 28.5), not the full list, so a bar phrased as "all 8
    legs green" would refuse a legitimate PR or send you hunting for legs that do not exist.
    The legs are not required contexts anyway — the aggregate `BC test matrix passed` is, and
-   it fails when any leg of whatever matrix ran fails. The other five versions run on
+   it fails when any leg of whatever matrix ran fails. The other versions run on
    `main` via `main-verdict-floor.yml`, not on the PR — on a 30-minute cadence and
    again about ten minutes after a merge burst ends (#3679). `tools/ci-wait.py` prints that
    floor's newest verdict beside the PR's, so a red `main` a PR merely inherited is visible

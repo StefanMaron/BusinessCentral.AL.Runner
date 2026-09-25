@@ -14,8 +14,8 @@
 # the history contains is 27.0 + 27.5 + 28.4. (When 28.5 shipped, #4546 moved the
 # newest-28 leg from 28.4 to 28.5: the rule is the newest of each major, not 28.4.)
 #
-# The five legs dropped here are not dropped from the project: test-matrix.yml runs
-# the full eight on every push to main and on a daily schedule, so a regression only
+# The legs dropped here are not dropped from the project: test-matrix.yml runs
+# the full list on every push to main and on a daily schedule, so a regression only
 # 28.2 can see is caught within the schedule interval rather than never.
 #
 # Two invariants bc-tests.yml enforces, and AlRunner.Tests/PullRequestMatrixScopeTests.cs
