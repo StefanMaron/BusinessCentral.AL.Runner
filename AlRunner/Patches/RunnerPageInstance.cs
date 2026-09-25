@@ -878,7 +878,41 @@ internal sealed partial class RunnerPageInstance
                 _ => null,
             };
 
+        if (IsRequestPage)
+            return PropertyOf(RequestPageControl(controlId, propertyName), propertyName);
+
         return RecordPatches.TryGetDependencyControlDeclaredProperty(_pageId, controlId, propertyName);
+    }
+
+    private bool IsRequestPage => _form is NavForm { IsRequestPage: true };
+
+    private static string? PropertyOf(BcAppSymbolCache.RequestPageControlSymbol node, string propertyName)
+        => propertyName switch
+        {
+            "Editable" => node.EditableExpr,
+            "Visible" => node.VisibleExpr,
+            "Enabled" => node.EnabledExpr,
+            _ => null,
+        };
+
+    /// <summary>
+    /// A precompiled report's request-page control, read from the symbol file because its
+    /// MasterPage carries none of the report's own controls (#4661). A request page is keyed by
+    /// its REPORT id, so the page-symbol index must not be asked: it would answer for an
+    /// unrelated page sharing the number. Refuses when the symbol file does not state the
+    /// control, because "declares none" answers true and that is exactly the silent wrong answer
+    /// this replaced.
+    /// </summary>
+    private BcAppSymbolCache.RequestPageControlSymbol RequestPageControl(int controlId, string propertyName)
+    {
+        var controls = RecordPatches.TryGetDependencyRequestPageControls(_pageId);
+        foreach (var node in controls ?? (IReadOnlyList<BcAppSymbolCache.RequestPageControlSymbol>)Array.Empty<BcAppSymbolCache.RequestPageControlSymbol>())
+            if (node.Id == controlId) return node;
+
+        throw TestPageShapeGap.ControlProperty(
+            $"TestRequestPage {propertyName} on report {_pageId} element {controlId}",
+            "the request page's metadata has no definition for this control and no loaded "
+            + "dependency's symbol file states it, so what the report declares for the property is unknown");
     }
 
     /// <summary>Editable for a data-bound control, combined with the page's own state.</summary>
@@ -913,6 +947,11 @@ internal sealed partial class RunnerPageInstance
 
         if (_form is not NavForm form) return true;
 
+        // A precompiled report's request page: the enclosing groups are in the symbol file, not
+        // in MetadataHelper, whose walk would end at once and answer visible (#4661).
+        if (IsRequestPage && ControlDefinition(controlId) == null)
+            return RequestPageGroupsVisible(controlId);
+
         var helper = form.MetadataHelper;
         var currentId = controlId;
         while (true)
@@ -941,6 +980,20 @@ internal sealed partial class RunnerPageInstance
 
             currentId = group.ID;
         }
+    }
+
+    private bool RequestPageGroupsVisible(int controlId)
+    {
+        var parentId = RequestPageControl(controlId, "Visible").ParentId;
+        while (parentId != 0)
+        {
+            var group = RequestPageControl(parentId, "Visible");
+            // LIVE, as for a group on an ordinary page (ControlVisible above).
+            if (!EvaluateProperty(group.VisibleExpr, "Visible", group.Id, PageElementKind.Group, atOpen: false))
+                return false;
+            parentId = group.ParentId;
+        }
+        return true;
     }
 
     /// <summary>
@@ -1487,8 +1540,11 @@ internal sealed partial class RunnerPageInstance
         _bindingsByName ??= BuildBindingsByName(_sourceExpressions);
         if (_bindingsByName.TryGetValue(name, out var byName)) return byName;
 
-        // The compiler-mangled spelling, looked UP rather than derived — see the remarks.
-        return _sourceExpressions[$"p{_pageId}p{_pageId}{name}"];
+        // The compiler-mangled spelling, looked UP rather than derived — see the remarks. A
+        // request page's client-expression globals belong to its report, so the compiler
+        // spells them p{id}r{id}{name} (Report296.RequestPage registers p296r296VATDateEnabled).
+        return _sourceExpressions[$"p{_pageId}p{_pageId}{name}"]
+               ?? (IsRequestPage ? _sourceExpressions[$"p{_pageId}r{_pageId}{name}"] : null);
     }
 
     private Dictionary<string, object>? _bindingsByName;
