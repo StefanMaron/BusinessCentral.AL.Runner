@@ -83,12 +83,17 @@ public static class ScopeClassIdentity
                         testScopeClasses.Add(id.Identifier.ValueText);
             }
 
-            var updated = node.ReplaceNodes(
-                node.Members.OfType<ClassDeclarationSyntax>(),
-                (original, _) => (SyntaxNode?)Visit(original) is ClassDeclarationSyntax nested
-                    ? AddIdentity(nested, testScopeClasses.Contains(original.Identifier.ValueText))
-                    : original);
-            return updated;
+            var replacements = new Dictionary<ClassDeclarationSyntax, ClassDeclarationSyntax>();
+            foreach (var original in node.Members.OfType<ClassDeclarationSyntax>())
+            {
+                var nested = (ClassDeclarationSyntax)VisitClassDeclaration(original)!;
+                var withIdentity = AddIdentity(nested, testScopeClasses.Contains(original.Identifier.ValueText));
+                if (!ReferenceEquals(withIdentity, original))
+                    replacements[original] = withIdentity;
+            }
+            return replacements.Count == 0
+                ? node
+                : node.ReplaceNodes(replacements.Keys, (original, _) => replacements[original]);
         }
 
         private static ClassDeclarationSyntax AddIdentity(ClassDeclarationSyntax cls, bool isTestScope)
