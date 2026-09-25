@@ -179,4 +179,18 @@ public sealed class CodeunitSubscriberMethodTableTests
         }
         Assert.Contains(codeunits, c => c.Id == 1482);
     }
+
+    /// <summary>
+    /// The two skip flags are distinct bits. Every shipped subscriber sets both or neither, so the
+    /// population test above cannot catch them being swapped; this can.
+    /// </summary>
+    [Fact]
+    public void The_two_skip_flags_are_read_from_their_own_bits()
+    {
+        var license = (int)Microsoft.Dynamics.Nav.Types.EventSubscriberCallOptions.SkipOnMissingLicense;
+        var permission = (int)Microsoft.Dynamics.Nav.Types.EventSubscriberCallOptions.SkipOnMissingPermission;
+        Assert.Equal((true, false), RecordPatches.DecodeSubscriberCallOptions(license));
+        Assert.Equal((false, true), RecordPatches.DecodeSubscriberCallOptions(permission));
+        Assert.Equal((false, false), RecordPatches.DecodeSubscriberCallOptions(0));
+    }
 }

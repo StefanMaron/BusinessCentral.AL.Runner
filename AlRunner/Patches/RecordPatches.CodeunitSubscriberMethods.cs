@@ -259,9 +259,9 @@ public static partial class RecordPatches
     // "CodeUnit", so the enum name is not the answer).
     private static readonly Dictionary<int, string> SubscriberSenderTypeNames = new()
     {
-        [1] = "Table",      // ObjectType.Table
-        [5] = "Codeunit",   // ObjectType.CodeUnit
-        [8] = "Page",       // ObjectType.Page
+        [(int)Microsoft.Dynamics.Nav.Types.ObjectType.Table] = "Table",
+        [(int)Microsoft.Dynamics.Nav.Types.ObjectType.CodeUnit] = "Codeunit",
+        [(int)Microsoft.Dynamics.Nav.Types.ObjectType.Page] = "Page",
     };
 
     private static BcAppSymbolCache.EventSubscriberSymbol? DeriveSubscriber(
@@ -279,7 +279,7 @@ public static partial class RecordPatches
 
         var isPublic = (method.Attributes & System.Reflection.MethodAttributes.MemberAccessMask)
                        == System.Reflection.MethodAttributes.Public;
-        var targetsTrigger = senderType == 5 && senderId is UpgradeTriggerCodeunitId or InstallTriggerCodeunitId;
+        var targetsTrigger = senderType == (int)Microsoft.Dynamics.Nav.Types.ObjectType.CodeUnit && senderId is UpgradeTriggerCodeunitId or InstallTriggerCodeunitId;
         if (isPublic && targetsTrigger) { isTrigger = true; why = ""; return null; }
         if (isPublic || targetsTrigger)
         {
@@ -307,9 +307,19 @@ public static partial class RecordPatches
         }
 
         why = "";
+        var (skipLicense, skipPermission) = DecodeSubscriberCallOptions(options);
         return new BcAppSymbolCache.EventSubscriberSymbol(
-            senderTypeName, senderId, eventName, elementName, elementId,
-            (options & 1) != 0, (options & 2) != 0);
+            senderTypeName, senderId, eventName, elementName, elementId, skipLicense, skipPermission);
+    }
+
+    /// <summary>The two flags BC writes, read with BC's own enum so the bit values are not
+    /// restated here. Every shipped subscriber sets both or neither, so only a direct test can
+    /// tell them apart.</summary>
+    internal static (bool SkipOnMissingLicense, bool SkipOnMissingPermission) DecodeSubscriberCallOptions(int options)
+    {
+        var flags = (Microsoft.Dynamics.Nav.Types.EventSubscriberCallOptions)options;
+        return (flags.HasFlag(Microsoft.Dynamics.Nav.Types.EventSubscriberCallOptions.SkipOnMissingLicense),
+                flags.HasFlag(Microsoft.Dynamics.Nav.Types.EventSubscriberCallOptions.SkipOnMissingPermission));
     }
 
     // The RuntimeTypes a subscriber parameter may carry and be rendered: those whose C# spelling
