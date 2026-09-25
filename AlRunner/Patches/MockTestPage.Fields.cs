@@ -239,7 +239,12 @@ internal sealed class LiveNavTestField : ITestField
     private string[]? OptionCaptions()
         => _page != null && _controlId != 0 ? _page.TryGetOptionCaptions(_controlId, CurrentOption()) : null;
 
-    public string Name => Caption;
+    // Name keeps the static chain; only Caption() reads CaptionClass (#4638).
+    public string Name => StaticCaption;
+
+    public string Caption
+        => (_page != null && _controlId != 0 ? _page.TryGetControlCaptionClass(_controlId) : null)
+           ?? StaticCaption;
 
     // TestPage field Caption() (#1777). BC's own precedence, control-declared wins over the
     // source field's Caption, which wins over the field's bare name:
@@ -249,7 +254,7 @@ internal sealed class LiveNavTestField : ITestField
     //      — read straight from the parse-time metadata, bypassing NCLMetaField.FieldCaption
     //      (JmpHooked to always answer the field NAME; see TryGetParsedFieldCaption).
     //   3. the field's technical name, BC's own fallback when neither is declared.
-    public string Caption
+    private string StaticCaption
         => (_page != null && _controlId != 0 ? _page.TryGetControlCaption(_controlId) : null)
            ?? TryGetMetaFieldCaption()
            ?? TryGetMetaFieldName()
@@ -539,8 +544,10 @@ internal sealed class PageVariableTestField : ITestField
             _ => ALCompiler.ToNavValue(value),
         };
 
-    public string Name => Caption;
-    public string Caption => _expression.GetType()
+    // Name keeps the bound variable's name; only Caption() reads CaptionClass (#4638).
+    public string Name => VariableName;
+    public string Caption => _page.TryGetControlCaptionClass(_controlId) ?? VariableName;
+    private string VariableName => _expression.GetType()
         .GetProperty("Name", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
         ?.GetValue(_expression) as string ?? string.Empty;
 
