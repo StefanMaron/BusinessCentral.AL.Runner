@@ -69,10 +69,26 @@ public sealed class VersionAgnosticClosureTests
     // SELECTED artifact's copy, and two builds of one minor differ (Microsoft.Bcl.AsyncInterfaces
     // 10.0.0.2 in 28.1.49838.53910, 10.0.0.5 in 28.1.49838.54424): #3977, #4527.
     // Ncl.dll is the one deliberate exception, in this test project only (Directory.Build.targets).
+    // The runner's own bin is checked too: it is what ships in the nupkg, and the strip rule
+    // already conditions on the project name, so the two outputs can disagree.
     [Fact]
     public void NoServiceTierSourcedReference_IsCopiedIntoAppBaseDir()
     {
         var baseDir = AppContext.BaseDirectory;
+        AssertNoServiceTierLeaks(baseDir, exemptNcl: true);
+
+        // AlRunner.Tests/bin/<config>/<tfm>/ -> AlRunner/bin/<config>/<tfm>/
+        var tfmDir = new DirectoryInfo(Path.TrimEndingDirectorySeparator(baseDir));
+        var configDir = tfmDir.Parent!;
+        var repoRoot = configDir.Parent!.Parent!.Parent!.FullName;
+        var runnerBin = Path.Combine(repoRoot, "AlRunner", "bin", configDir.Name, tfmDir.Name);
+        Assert.True(File.Exists(Path.Combine(runnerBin, "al-runner.deps.json")),
+            $"runner output '{runnerBin}' has no al-runner.deps.json — the runner's own bin was not measured");
+        AssertNoServiceTierLeaks(runnerBin, exemptNcl: false);
+    }
+
+    private static void AssertNoServiceTierLeaks(string baseDir, bool exemptNcl)
+    {
         var depsFiles = Directory.GetFiles(baseDir, "*.deps.json");
         Assert.NotEmpty(depsFiles); // no manifest means nothing below was measured
 
@@ -104,7 +120,8 @@ public sealed class VersionAgnosticClosureTests
         foreach (var name in runtimeFilesByType.GetValueOrDefault("reference") ?? new List<string>())
         {
             // al-runner.dll is the project under test; the test manifest lists it as a reference.
-            if (name is "Microsoft.Dynamics.Nav.Ncl.dll" or "al-runner.dll") continue;
+            if (name == "al-runner.dll") continue;
+            if (exemptNcl && name == "Microsoft.Dynamics.Nav.Ncl.dll") continue;
             if (packageFiles.Contains(name, StringComparer.OrdinalIgnoreCase)) continue;
             if (File.Exists(Path.Combine(baseDir, name))) leaked.Add(name);
         }
