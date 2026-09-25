@@ -681,7 +681,7 @@ public static partial class RecordPatches
         if (Regex.IsMatch(expr, @"\w\(")) return 0;
 
         if (!_parsedTables.TryGetValue(tableId, out var table)) return 0;
-        foreach (var f in table.Fields)
+        foreach (var f in GetAllFieldsIncludingExtensions(table))
             if (string.Equals(f.FieldName, expr, StringComparison.OrdinalIgnoreCase))
                 return f.FieldId;
         return 0;

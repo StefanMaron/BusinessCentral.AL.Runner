@@ -259,7 +259,7 @@ public static partial class RecordPatches
     {
         var name = XmlPortUnquoteIdentifier(alName.Trim());
         if (tableId > 0 && _parsedTables.TryGetValue(tableId, out var table))
-            foreach (var f in table.Fields)
+            foreach (var f in GetAllFieldsIncludingExtensions(table))
                 if (string.Equals(f.FieldName, name, StringComparison.OrdinalIgnoreCase))
                     return f;
         throw NotEncodable(property, nodeName,

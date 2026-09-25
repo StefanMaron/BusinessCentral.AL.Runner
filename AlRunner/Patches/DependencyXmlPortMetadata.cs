@@ -450,6 +450,8 @@ public static partial class RecordPatches
             var enclosing = new List<(string NodeId, int TableId)>();
             // tableelement AL name -> its table, for resolving a later node's LinkTable.
             var tableByNodeName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            // tableelement AL name as looked up -> as declared, for a bound node's SourceField.
+            var tableNodeNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var sequence = XmlPortNodeSequences(schema);
             for (int i = 0; i < schema.Count; i++)
             {
@@ -464,12 +466,13 @@ public static partial class RecordPatches
                     : 0;
                 int linkTableId = n.Properties.TryGetValue("LinkTable", out var linkTable)
                     && tableByNodeName.TryGetValue(LastNameSegment(linkTable), out var linked) ? linked : 0;
-                WriteXmlPortNode(w, n, nodeId, parent.Item1, tableId, parent.Item2, linkTableId);
+                WriteXmlPortNode(w, n, nodeId, parent.Item1, tableId, parent.Item2, linkTableId, tableNodeNames);
 
                 if (tableId > 0)
                 {
                     tableElements.Add((sequence[i], tableId, XmlPortNodeFieldList(n, "RequestFilterFields", tableId)));
                     tableByNodeName[n.Name] = tableId;
+                    tableNodeNames[n.Name] = n.Name;
                 }
 
                 if (n.Indentation < enclosing.Count)
@@ -607,7 +610,8 @@ public static partial class RecordPatches
     /// </summary>
     private static void WriteXmlPortNode(
         XmlWriter w, XmlPortSchemaNode n, string nodeId, string? parentId,
-        int tableId, int enclosingTableId, int linkTableId)
+        int tableId, int enclosingTableId, int linkTableId,
+        IReadOnlyDictionary<string, string>? tableNodeNames = null)
     {
         bool isAttribute = n.Kind is XmlPortNodeKind.TextAttribute or XmlPortNodeKind.FieldAttribute;
         bool isBound = n.Kind is XmlPortNodeKind.FieldElement or XmlPortNodeKind.FieldAttribute;
@@ -634,7 +638,7 @@ public static partial class RecordPatches
         {
             // BC writes `Record::Field`, which is the AL `Record.Field` with the dot replaced
             // and any quoting removed — measured as `Header::No.` for `Header."No."`.
-            if (XmlPortSourceFieldReference(n.Source!) is { } sourceField)
+            if (XmlPortSourceFieldReference(n.Source!, tableNodeNames) is { } sourceField)
                 w.WriteElementString("SourceField", sourceField);
         }
 
@@ -805,8 +809,13 @@ public static partial class RecordPatches
     /// <c>Header."No."</c> -> <c>Header::No.</c>, the spelling BC's emitter writes for a bound
     /// node's SourceField. Returns null for a reference this reader cannot split, so the
     /// element is omitted rather than written with a mangled value.
+    ///
+    /// <para>The record half is spelled as its tableelement DECLARES it: BC wrote
+    /// <c>item::No.</c> for <c>Item."No."</c> under <c>tableelement(item; Item)</c> (Base
+    /// Application xmlport 99000751, BC 28.5.54151.55132; #4651).</para>
     /// </summary>
-    private static string? XmlPortSourceFieldReference(string source)
+    private static string? XmlPortSourceFieldReference(
+        string source, IReadOnlyDictionary<string, string>? tableNodeNames = null)
     {
         var expr = source.Trim();
         if (expr.Length == 0) return null;
@@ -822,6 +831,7 @@ public static partial class RecordPatches
                 var rec = Unquote(expr.Substring(0, i).Trim());
                 var fld = Unquote(expr.Substring(i + 1).Trim());
                 if (rec.Length == 0 || fld.Length == 0) return null;
+                if (tableNodeNames != null && tableNodeNames.TryGetValue(rec, out var declared)) rec = declared;
                 return rec + "::" + fld;
             }
         }
@@ -847,9 +857,11 @@ public static partial class RecordPatches
         var fieldName = reference.Substring(sep + 2);
 
         if (!_parsedTables.TryGetValue(enclosingTableId, out var table)) return null;
-        foreach (var f in table.Fields)
+        // Including tableextension fields: BC folds a same-app extension's fields into the
+        // base table, so 99000751's `Item."Routing No."` (tableextension 99000750) is typed.
+        foreach (var f in GetAllFieldsIncludingExtensions(table))
             if (string.Equals(f.FieldName, fieldName, StringComparison.OrdinalIgnoreCase))
-                return XmlPortDataTypeName(f.TypeName);
+                return XmlPortFieldDataType(f);
         return null;
     }
 
@@ -870,6 +882,18 @@ public static partial class RecordPatches
     /// needs no change here, the same reasoning as
     /// <see cref="CanonicalNavTypeName"/>, which this delegates to.</para>
     /// </summary>
+    /// <summary>
+    /// An Enum field is <c>Option</c>: BC wrote <c>Option</c> for <c>Item."Costing Method"</c>
+    /// (<c>Enum "Costing Method"</c>) in xmlport 99000751 on BC 28.5.54151.55132 (#4651).
+    /// </summary>
+    private static string? XmlPortFieldDataType(ParsedField f)
+    {
+        if (f.EnumTypeId > 0 || f.EnumTypeName != null
+            || (f.TypeName ?? "").TrimStart().StartsWith("Enum", StringComparison.OrdinalIgnoreCase))
+            return "Option";
+        return XmlPortDataTypeName(f.TypeName);
+    }
+
     private static string? XmlPortDataTypeName(string? declaredTypeName)
     {
         if (string.IsNullOrWhiteSpace(declaredTypeName)) return null;
