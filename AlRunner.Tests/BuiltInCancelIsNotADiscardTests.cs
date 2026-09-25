@@ -44,11 +44,13 @@ public sealed class BuiltInCancelIsNotADiscardTests
     // flag is still an offender, and by SIGNATURE rather than name so the exemption covers the
     // parameterless flush alone. Trap: a bare-name key licenses every OVERLOAD of that name, and
     // `FlushPendingNewRow(bool)` clearing without writing is a discard the guard would then miss.
+    // FlushPendingNewRow's RefusedInsert argument only decides what a row the TABLE refuses
+    // does (#4624); Invoke() passes KeepPending or Raise, never Discard.
     // Both pairs are asserted to be OCCUPIED below: an exemption whose store has gone is a
     // licence left lying around for a future discard to be written under.
     private static readonly (string Signature, string Field)[] FlushMayClearItsOwnFlag =
     {
-        ("FlushPendingNewRow()", "_pendingNewRow"),
+        ("FlushPendingNewRow(RefusedInsert)", "_pendingNewRow"),
         ("FlushPendingModify()", "_pendingModify"),
     };
 
