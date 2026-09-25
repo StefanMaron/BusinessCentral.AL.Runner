@@ -32,7 +32,10 @@ internal partial class LiveNavTestPage
     public override bool MoveFirst()
     {
         var record = RequireRecord("MoveFirst()");
-        FlushParts(); FlushRow();
+        // A refused insert raises nothing here and shows no error, so the Close() after it raises
+        // (corpus 60045 DelayedList_DuplicateKey_First_CloseRaisesTheInsertError, #4624).
+        FlushParts();
+        if (FlushRow(RefusedInsert.Defer)) return false;
 
         // Whether the cursor was ALREADY on the draft line, read before LeaveNewRowLine clears
         // it. A First() over a rowset that is still empty does not move anywhere: the draft line
@@ -95,7 +98,11 @@ internal partial class LiveNavTestPage
     public override bool MoveLast()
     {
         var record = RequireRecord("MoveLast()");
-        FlushParts(); FlushRow(); LeaveNewRowLine();
+        // A refused insert stays the current row with its error recorded (corpus 60045
+        // DelayedList_DuplicateKey_Last, #4624), and Last() lands on no data row.
+        FlushParts();
+        if (FlushRow(RefusedInsert.Record)) return false;
+        LeaveNewRowLine();
         var found = _page?.RaiseOnFindRecord("+")
                     ?? record.ALFindLastAsync(DataError.TrapError).GetAwaiter().GetResult();
         if (!found) EnterNewRowLine(record);
@@ -109,7 +116,10 @@ internal partial class LiveNavTestPage
     public override bool MoveNext()
     {
         var record = RequireRecord("MoveNext()");
-        FlushParts(); FlushRow();
+        // A refused insert stays the current row with its error recorded (corpus 60045
+        // DelayedList_DuplicateKey_Next, #4624).
+        FlushParts();
+        if (FlushRow(RefusedInsert.Record)) return false;
 
         // Already parked on the new-row line: it is the LAST row of the rowset, so this is
         // where the walk ends. Restore the cursor to the data row it came from first, so a
@@ -124,7 +134,10 @@ internal partial class LiveNavTestPage
     public override bool MovePrevious()
     {
         var record = RequireRecord("MovePrevious()");
-        FlushParts(); FlushRow();
+        // As MoveFirst: a refused insert is deferred to the Close() after it (corpus 60045
+        // DelayedList_DuplicateKey_Previous_CloseRaisesTheInsertError, #4624).
+        FlushParts();
+        if (FlushRow(RefusedInsert.Defer)) return false;
 
         // Stepping back off the new-row line lands on the last data row — the row the cursor
         // was on when it walked onto the blank line. It is restored rather than re-sought

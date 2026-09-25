@@ -43,6 +43,14 @@ internal sealed class LiveNavTestField : ITestField
     public LiveNavTestField(NavRecord record, int fieldNo, RunnerPageInstance? page, int controlId,
         Action? onEdited, Action? onBeforeEdit, Action<int>? onActivate,
         TestPageValidationErrors? pageValidationErrors)
+        : this(record, fieldNo, page, controlId, onEdited, onBeforeEdit, onActivate,
+               new TestFieldValidationErrors(pageValidationErrors)) { }
+
+    // The page hands in the control's ledger so it can record a failure the page attributes to
+    // this control (a refused row insert) without building the field.
+    public LiveNavTestField(NavRecord record, int fieldNo, RunnerPageInstance? page, int controlId,
+        Action? onEdited, Action? onBeforeEdit, Action<int>? onActivate,
+        TestFieldValidationErrors ownValidationErrors)
     {
         _record = record;
         _fieldNo = fieldNo;
@@ -51,7 +59,7 @@ internal sealed class LiveNavTestField : ITestField
         _onEdited = onEdited;
         _onBeforeEdit = onBeforeEdit;
         _onActivate = onActivate;
-        _validationErrors = new TestFieldValidationErrors(pageValidationErrors);
+        _validationErrors = ownValidationErrors;
     }
 
     // The refusals this control has recorded, read back by ValidationErrorCount /
