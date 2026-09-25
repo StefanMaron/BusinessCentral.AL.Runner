@@ -199,6 +199,11 @@ public sealed class PhaseLogIntegrationTests : IDisposable
 
         // Exactly one process record; exactly one record per bundle, in argument order.
         Assert.Single(processRows);
+        // #2218: a one-shot run walks each bundle root's package directories once. The first
+        // assertion keeps the second from passing on a run that never searched at all.
+        Assert.True(processRows[0].GetProperty("package_dir_walks").GetInt32() > 0,
+            $"no .alpackages/.deps-bin walk recorded — package_dir_walks is not wired: {processRows[0]}");
+        Assert.Equal(0, processRows[0].GetProperty("package_dir_repeat_walks").GetInt32());
         Assert.Equal(2, bundleRows.Count);
         Assert.Equal(new[] { 1, 2 }, bundleRows.Select(r => r.GetProperty("bundle_index").GetInt32()));
         Assert.All(bundleRows, r => Assert.Equal(2, r.GetProperty("bundles_in_process").GetInt32()));

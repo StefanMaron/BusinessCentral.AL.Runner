@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.IO.Enumeration;
 
 namespace AlRunner.Infrastructure;
@@ -81,6 +82,13 @@ namespace AlRunner.Infrastructure;
 /// <para>Ordinal, not culture-aware or case-insensitive: the point is an order that does not
 /// move between machines or locales. Cost is a single sort of the materialised result — on
 /// this repository's 94,740-directory checkout, milliseconds against a 787 ms walk.</para>
+///
+/// <para><b>Package-directory searches are memoized per run (issue #2218).</b> Inside a
+/// <see cref="BeginRunMemo"/> scope, a recursive search for one of
+/// <see cref="MemoizedPatterns"/> walks each root once; outside any scope every call walks.
+/// The scope is one run: a one-shot invocation, one <c>--watch</c> cycle, one <c>--server</c>
+/// request — never the process, because those directories are user-owned and can appear
+/// between cycles. See docs/startup-cost.md#package-directory-discovery-memo.</para>
 /// </summary>
 public static class SafeDirectoryScan
 {
@@ -113,6 +121,24 @@ public static class SafeDirectoryScan
         string root, string searchPattern, out IReadOnlyList<string> inaccessible,
         SearchOption searchOption = SearchOption.AllDirectories)
     {
+        var memo = CurrentMemo.Value;
+        if (memo is { IsDisposed: false } && searchOption == SearchOption.AllDirectories
+            && MemoizedPatterns.Contains(searchPattern))
+        {
+            var (found, denied) = memo.GetOrWalk(root, searchPattern);
+            inaccessible = new List<string>(denied);
+            return new List<string>(found);
+        }
+        return WalkDirectories(root, searchPattern, out inaccessible, searchOption);
+    }
+
+    private static IReadOnlyList<string> WalkDirectories(
+        string root, string searchPattern, out IReadOnlyList<string> inaccessible,
+        SearchOption searchOption)
+    {
+        if (PhaseLog.Enabled && searchOption == SearchOption.AllDirectories
+            && MemoizedPatterns.Contains(searchPattern))
+            ProcessWalks.AddOrUpdate(MemoKey(root, searchPattern), 1, (_, n) => n + 1);
         var hits = new List<string>();
         var denied = new List<string>();
         Walk(root, searchPattern, hits, denied, matchFiles: false,
@@ -121,6 +147,93 @@ public static class SafeDirectoryScan
         hits.Sort(StringComparer.Ordinal);
         return hits;
     }
+
+    /// <summary>
+    /// The directory names whose recursive searches a <see cref="BeginRunMemo"/> scope
+    /// memoizes. Only names the runner never creates during a run belong here: a directory
+    /// the run itself writes would be missed by a later search in the same scope.
+    /// </summary>
+    internal static readonly IReadOnlySet<string> MemoizedPatterns =
+        new HashSet<string>(StringComparer.Ordinal) { ".alpackages", ".deps-bin" };
+
+    private static readonly AsyncLocal<RunMemo?> CurrentMemo = new();
+
+    /// <summary>
+    /// Opens a memo scope for the current execution flow (and the tasks it starts). Disposing
+    /// it restores whatever scope was current before, so a server request cannot leak its
+    /// memo into the next one.
+    /// </summary>
+    public static RunMemo BeginRunMemo()
+    {
+        var memo = new RunMemo(CurrentMemo.Value);
+        CurrentMemo.Value = memo;
+        return memo;
+    }
+
+    /// <summary>One run's memo of package-directory searches, keyed by root and pattern.</summary>
+    public sealed class RunMemo : IDisposable
+    {
+        private readonly RunMemo? _previous;
+        private readonly ConcurrentDictionary<string, Lazy<(string[] Found, string[] Denied)>> _entries =
+            new(StringComparer.Ordinal);
+        private int _calls;
+        private int _walks;
+        private volatile bool _disposed;
+
+        internal RunMemo(RunMemo? previous) => _previous = previous;
+
+        /// <summary>Searches answered inside this scope, walked or not.</summary>
+        public int Calls => Volatile.Read(ref _calls);
+
+        /// <summary>Searches that actually walked a tree inside this scope.</summary>
+        public int Walks => Volatile.Read(ref _walks);
+
+        internal (string[] Found, string[] Denied) GetOrWalk(string root, string pattern)
+        {
+            Interlocked.Increment(ref _calls);
+            return _entries.GetOrAdd(MemoKey(root, pattern), _ =>
+                new Lazy<(string[], string[])>(() =>
+                {
+                    Interlocked.Increment(ref _walks);
+                    var found = WalkDirectories(root, pattern, out var denied, SearchOption.AllDirectories);
+                    return (found.ToArray(), denied.ToArray());
+                })).Value;
+        }
+
+        /// <summary>
+        /// True once the run has ended. A flow that captured this memo before then (a task
+        /// started inside the run) walks instead of answering from a finished run.
+        /// </summary>
+        public bool IsDisposed => _disposed;
+
+        public void Dispose()
+        {
+            _disposed = true;
+            if (ReferenceEquals(CurrentMemo.Value, this)) CurrentMemo.Value = _previous;
+        }
+    }
+
+    // The root as spelled, because the hits are spelled from it; a relative root also
+    // carries the working directory it was resolved against.
+    private static string MemoKey(string root, string pattern)
+    {
+        root ??= "";
+        var anchored = Path.IsPathRooted(root) ? root : root + "\0" + Directory.GetCurrentDirectory();
+        return pattern + "\0" + anchored;
+    }
+
+    // Process-wide count of real walks per (root, pattern), kept only under AL_RUNNER_PHASE_LOG
+    // so the process row can report how many were repeats.
+    private static readonly ConcurrentDictionary<string, int> ProcessWalks = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Real walks of a memoized pattern that repeated a (root, pattern) this process had already
+    /// walked. Zero for a one-shot run; recorded only while the phase log is enabled.
+    /// </summary>
+    internal static int RepeatedPackageDirWalks => ProcessWalks.Values.Sum(n => n - 1);
+
+    /// <summary>Real walks of a memoized pattern this process performed (phase log only).</summary>
+    internal static int PackageDirWalks => ProcessWalks.Values.Sum();
 
     /// <summary>
     /// Every file at or below <paramref name="root"/> matching <paramref name="searchPattern"/>,

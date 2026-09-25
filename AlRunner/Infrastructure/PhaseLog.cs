@@ -109,6 +109,13 @@ public sealed class PhaseLogRecord
     /// </summary>
     public bool ServerGc { get; set; }
 
+    /// <summary>
+    /// Recursive <c>.alpackages</c>/<c>.deps-bin</c> walks this process performed, and how many
+    /// of them re-walked a root already walked (issue #2218). Process rows only.
+    /// </summary>
+    public int PackageDirWalks { get; set; }
+    public int PackageDirRepeatWalks { get; set; }
+
     // ── Bundle-row and app-row only. Named slices of the row's turn that are NOT
     // already reported elsewhere on it — for a bundle row, the block #1828 exists to
     // attribute (work outside every app group); for an app row, the block #1861
@@ -156,6 +163,8 @@ public sealed class PhaseLogRecord
             Num(sb, "peak_rss_bytes", PeakRssBytes);
             Num(sb, "exit_code", ExitCode);
             Bool(sb, "server_gc", ServerGc);
+            Num(sb, "package_dir_walks", PackageDirWalks);
+            Num(sb, "package_dir_repeat_walks", PackageDirRepeatWalks);
         }
         // Bundle and app rows only, and only when something was measured: a process
         // row's once-per-process costs already have their own named fields, and an
@@ -522,6 +531,8 @@ public static class PhaseLog
             row.ExitCode = Environment.ExitCode;
             row.PeakRssBytes = PeakRssBytes();
             row.ServerGc = System.Runtime.GCSettings.IsServerGC;
+            row.PackageDirWalks = SafeDirectoryScan.PackageDirWalks;
+            row.PackageDirRepeatWalks = SafeDirectoryScan.RepeatedPackageDirWalks;
             // Measured from OS process start, so it includes host startup and the
             // full-opt JIT that <TieredCompilation>false</TieredCompilation> forces —
             // exactly the residual #1825 wants to size.

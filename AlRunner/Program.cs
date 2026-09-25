@@ -1862,6 +1862,9 @@ AlRunner.Infrastructure.PhaseLog.SetBundles(bundles);
 // instead of hitting either remediation the "[provision-gap]" message promises. Fold the
 // bundles' own .alpackages into the dirs the gate scans (recomputed via PlatformCheckDirs
 // below so it picks up anything --auto-provision adds to packageCacheDirs afterward).
+// #2218: one walk per package-directory root for this run. Renewed per --watch cycle and
+// per --server request; closed before either mode goes resident.
+var runScanMemo = AlRunner.Infrastructure.SafeDirectoryScan.BeginRunMemo();
 var bundleAlpackagesDirs = AlRunner.Infrastructure.ProvisioningCheck.CollectBundleAlpackagesDirs(
     bundles, out var inaccessibleBundleDirs);
 // Issue #2206: an unreadable subdirectory used to abort this scan with an unhandled
@@ -2528,7 +2531,10 @@ void InvalidateMovedWorkspacePackages(IReadOnlyDictionary<Guid, string> implAppP
 // in-process, resetting bundle-derived caches between requests so an edited
 // same-identity bundle is picked up. Never returns to the bundle loop below.
 if (serverMode)
+{
+    runScanMemo.Dispose();
     return RunServerLoop(serverStdin!, serverStdout!);
+}
 
 // ── --dap: start a Debug Adapter Protocol session and stay resident until the
 // client disconnects or the debuggee run finishes (issue #1642). Never returns to
@@ -2694,6 +2700,13 @@ AlRunner.Patches.NumberSequencePatches.ResetForNewExecution();
 // stays warm across cycles — that is what makes a watch re-run fast.
 if (watchMode)
     BcRuntime.ResetForNewBundleReload();
+
+// #2218: a user can add an .alpackages between cycles, so each cycle after the first walks afresh.
+if (watchMode && watchCycleIndex > 0)
+{
+    runScanMemo.Dispose();
+    runScanMemo = AlRunner.Infrastructure.SafeDirectoryScan.BeginRunMemo();
+}
 
 results.Clear();
 watchFullRebuildReasons.Clear();
@@ -5223,6 +5236,8 @@ return strictExitCode ? computedExitCode : 0;
         BcRuntime.ResetForNewBundleReload();
         // #4096: each request narrows references from its own workspace's app.json files.
         BcCompiler.ResetDeclaredReferences();
+        // #2218: package-directory walks are memoized for this request only.
+        using var requestScanMemo = AlRunner.Infrastructure.SafeDirectoryScan.BeginRunMemo();
 
         // #2136, same defect as the CLI's positional arguments one call site over: a
         // `sourcePaths` array naming the same directory twice ran it twice and returned
