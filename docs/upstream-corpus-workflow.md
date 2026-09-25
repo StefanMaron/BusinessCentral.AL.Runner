@@ -31,8 +31,8 @@ corpus.
 
 The corpus repo's own CI is also a real service tier, and is the stronger
 check of the two. `.github/workflows/ci.yml` there boots a real BC sandbox on
-Linux (via `StefanMaron/MsDyn365Bc.On.Linux`) and runs the suite on **eight BC
-versions — 27.0, 27.3, 27.5, 28.0, 28.1, 28.2, 28.3 and 28.4**,
+Linux (via `StefanMaron/MsDyn365Bc.On.Linux`) and runs the suite on **BC
+27.0, 27.3, 27.5, 28.0, 28.1, 28.2, 28.3, 28.4 and 28.5**,
 `fail-fast: false`. Not every minor in that span: 27.1, 27.2 and 27.4 are not
 run. Two legs per version, because the cloud app and the OnPrem app are built
 and run separately on each; the **required status contexts are the cloud legs
