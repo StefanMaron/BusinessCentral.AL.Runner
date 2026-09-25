@@ -22,14 +22,11 @@
 //   is no property TEXT left to fail to parse. So the AL route needs a precompiled dependency
 //   AND a live BC page-action invoke.
 //
-//   That end-to-end route is blocked on this machine by an unrelated defect, filed as #3977:
-//   every runner-extras suite that invokes a page action -- including the merged, CI-gated
-//   tests/runner-extras/testpage-promoted-actionref -- dies in BC's own
-//   Codeunit2000000002.OnInvokeAsync with "Could not load file or assembly
-//   'Microsoft.Bcl.AsyncInterfaces, Version=10.0.0.5'", because the dependency resolver probes
-//   the service-tier directory by NAME and the provisioned artifacts carry 10.0.0.2. Both
-//   failures surface through GetLastErrorText(), so an AL asserterror cannot tell this guard's
-//   refusal from that FileLoadException -- the AL test would have been unfalsifiable here.
+//   That end-to-end route was blocked locally by #3977: a page-action invoke died with
+//   "Could not load file or assembly 'Microsoft.Bcl.AsyncInterfaces, Version=10.0.0.5'"
+//   whenever the selected BC build differed from the one the runner was built against, and
+//   that failure surfaces through GetLastErrorText() exactly like this guard's refusal. #3977
+//   is fixed (the build-time copy no longer ships in bin), so the AL route is now reachable.
 //
 //   Pinning the method directly is the established answer to exactly this shape: see
 //   RecordPatchesGetPageControlFieldMapDependencyTests, whose header records the same decision
@@ -39,9 +36,8 @@
 //   shipped unverified: the fixtures (a hand-built SymbolReference.json carrying the unreadable
 //   entry, plus a Tier-1 .deps-bin DLL) compiled and loaded, and both tests reached real runner
 //   behaviour, but #3977 made the refusal arm unfalsifiable on this machine -- it could not be
-//   distinguished from the FileLoadException. The PR body records the recipe so it can be
-//   rebuilt once #3977 is fixed; shipping a test whose RED nobody has seen is what tdd.md's
-//   mutation step exists to prevent.
+//   distinguished from the FileLoadException. That PR's body records the recipe for
+//   rebuilding it now that #3977 is fixed.
 //
 // NOT A CLAIM ABOUT BC
 //   Nothing here asserts what Business Central does. The subject is how this runner reads

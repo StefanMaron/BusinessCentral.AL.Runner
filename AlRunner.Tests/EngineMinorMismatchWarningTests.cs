@@ -54,10 +54,9 @@ public class EngineMinorMismatchWarningTests
     [Fact]
     public void DescribeExplicitEngineMinorMismatch_SameMinor_DifferentPatchBuild_TreatedAsTolerated()
     {
-        // Patch-level skew within one minor (28.1.49838.53910 vs 28.1.49838.50794) is the
-        // SAME tolerance VerifyEngineConsistency already applies for Major-only comparison —
-        // this extends it one level deeper (Major.Minor) without narrowing what was already
-        // accepted.
+        // Build-level skew within one minor stays silent. That is safe only while bin carries no
+        // service-tier assembly (#3977, #4527); VersionAgnosticClosureTests
+        // .NoServiceTierSourcedReference_IsCopiedIntoAppBaseDir is what keeps this Null honest.
         var built = new Version("28.1.49838.50794");
         var selected = new Version("28.1.49838.53910");
 

@@ -653,7 +653,11 @@ public static class BcArtifacts
     {
         if (builtVersion == null) return null; // older/unstamped binary — nothing to compare
         if (builtVersion.Major == selectedVersion.Major && builtVersion.Minor == selectedVersion.Minor)
-            return null; // matched minor, or patch-level skew within it — tolerated, same as VerifyEngineConsistency
+            // Build-level skew within the minor is tolerated because bin carries no service-tier
+            // assembly to disagree with the selected build: Directory.Build.targets strips them by
+            // origin, pinned by VersionAgnosticClosureTests (#3977, #4527 — a leaked AsyncInterfaces
+            // made 28.1.49838.54424 fail against an engine built for .53910, silently).
+            return null;
 
         return $"[bc] warning: this binary's engine was built for BC {builtVersion} but BC {selectedVersion} was " +
             $"explicitly selected (--bc-version/--artifact-path) — different minor is a KNOWN-DEGRADED " +
