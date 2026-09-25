@@ -162,10 +162,10 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
         return quote ? "'" + value.Replace("'", "''") + "'" : value;
     }
 
-    public override bool MoveFirst() { ApplyLink(); return base.MoveFirst(); }
-    public override bool MoveLast() { ApplyLink(); return base.MoveLast(); }
-    public override bool MoveNext() { ApplyLink(); return base.MoveNext(); }
-    public override bool MovePrevious() { ApplyLink(); return base.MovePrevious(); }
+    public override bool MoveFirst() { _awaitingParentRow = false; ApplyLink(); return base.MoveFirst(); }
+    public override bool MoveLast() { _awaitingParentRow = false; ApplyLink(); return base.MoveLast(); }
+    public override bool MoveNext() { _awaitingParentRow = false; ApplyLink(); return base.MoveNext(); }
+    public override bool MovePrevious() { _awaitingParentRow = false; ApplyLink(); return base.MovePrevious(); }
 
     /// <summary>True when this part carries a FIELD SubPageLink — i.e. its rowset depends on
     /// the PARENT's current row. This is the signal <see cref="LiveNavTestPage.Loaded"/> uses
@@ -210,6 +210,22 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
     // has never been positioned. Read at the top of ReloadLinkedRow to tell a re-entry for the
     // SAME parent row from a genuine parent move — see the comment there (#3029).
     private string? _lastReloadedForParentPosition;
+
+    // True while the last reload found the parent with no row (a host opened with OpenNew),
+    // so no draft line was entered, and nothing has positioned the part since (#4576).
+    private bool _awaitingParentRow;
+
+    /// <summary>
+    /// A write is about to reach a part that was last reloaded while its parent had no row.
+    /// If the parent has one now — the header was inserted, or its key typed — position the
+    /// part for it first, so the write lands on a draft line started through the link instead
+    /// of an unlinked Init() buffer. Issue #4576; corpus codeunit 60868 "ONPL Tests".
+    /// </summary>
+    internal void CatchUpWithParentRow()
+    {
+        if (!_awaitingParentRow || _parentRecord == null || !HasCurrentRow(_parentRecord)) return;
+        ReloadLinkedRow();
+    }
 
     /// <summary>
     /// Position this part on the row matching its SubPageLink and, if one exists, run its
@@ -297,6 +313,7 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
         // the host HAS a row — enters the draft line properly. Suppressing the whole method here
         // would lose the part's OnAfterGetRecord for a part that does have rows.
         var parentHasNoRow = _parentRecord != null && !HasCurrentRow(_parentRecord);
+        _awaitingParentRow = parentHasNoRow;
 
         // A genuine parent move ends whatever the part was showing, draft line included. A
         // re-entry for the same row must NOT, or the draft line's started record is discarded
