@@ -38,6 +38,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **metadata:** write BC's always-emitted action defaults on extension-delta actions
 - **metadata-conversion:** write the part-control properties BC writes on every InfopartPageDefinition
 - **testpage:** resolve a precompiled page action's RunObject name to a codeunit, report, xmlport or query
 - **testpage:** link a part's new line to a header opened with OpenNew
@@ -455,6 +456,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **startup:** walk each .alpackages root once per invocation
 - **expectations:** record permission enforcement as a known gap, pinned by corpus codeunit 60026
 - **docs:** follow the corpus 28.5 leg in the matrix-docs drift guard
 - **runtime:** stop per-record reflection, env reads and CWT re-writes on the materialisation hot path
