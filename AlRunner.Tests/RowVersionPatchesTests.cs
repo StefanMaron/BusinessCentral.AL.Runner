@@ -47,7 +47,8 @@ public sealed class RowVersionPatchesTests
         {
             "_pMetaTable", "_pTimestampField", "_pFieldIndex", "_pItem", "_mCreate",
             "_pSystemIdField", "_pSystemIdProp", "_pReadOnlyBuffer", "_pReadOnlyBufferSystemId",
-            "_pTableCaptionSafe", "_fPrimaryTree", "_mCreateUniqueConstraint",
+            "_pTableCaptionSafe", "_fPrimaryTree", "_mCreateUniqueConstraint", "_pStoredItem",
+            "_pendingInsertStampIndex",
         })
         {
             var f = t.GetField(name, BindingFlags.NonPublic | BindingFlags.Static)
@@ -214,19 +215,82 @@ public sealed class RowVersionPatchesTests
 
     // ── Positive path still stamps once every member resolves ─────────────────────
 
+    // #4642: the Insert stamp lands on the STORED row, from the CloneBlobs prepend that only an
+    // accepted insert reaches — never on the inserting buffer ahead of the provider's verdict.
+
+    private sealed class FakeStoredSlots
+    {
+        private readonly object?[] _slots;
+        public FakeStoredSlots(int slotCount) => _slots = new object?[slotCount];
+        public object? this[int index]
+        {
+            get => _slots[index];
+            set => _slots[index] = value;
+        }
+    }
+
     [Fact]
-    public void OnBeforeInsert_AllMembersResolve_StampsRowVersionIntoTimestampSlot()
+    public void OnBeforeInsert_AllMembersResolve_LeavesInsertingBufferUnstamped()
     {
         ResetReflectionCache();
         var provider = MarkDatabaseBackedProvider();
-        const int timestampSlot = 0;
-        var metaTable = new FakeMetaTable(new FakeMetaField(timestampSlot));
-        var buffer = new FakeBuffer(metaTable, slotCount: 1);
+        var buffer = new FakeBuffer(new FakeMetaTable(new FakeMetaField(0)), slotCount: 1);
 
         RowVersionPatches.OnBeforeInsert(provider, CompanyToken, buffer);
 
-        var stamped = Assert.IsType<Microsoft.Dynamics.Nav.Runtime.NavBigInteger>(buffer[timestampSlot]);
+        // A refused insert never reaches OnInsertStored, so whatever is here is what AL sees.
+        Assert.Null(buffer[0]);
+    }
+
+    [Fact]
+    public void OnInsertStored_AfterDatabaseBackedInsert_StampsStoredRowTimestampSlot()
+    {
+        ResetReflectionCache();
+        var provider = MarkDatabaseBackedProvider();
+        const int timestampSlot = 1;
+        var buffer = new FakeBuffer(new FakeMetaTable(new FakeMetaField(timestampSlot)), slotCount: 2);
+        var stored = new FakeStoredSlots(2);
+
+        RowVersionPatches.OnBeforeInsert(provider, CompanyToken, buffer);
+        RowVersionPatches.OnInsertStored(stored);
+
+        var stamped = Assert.IsType<NavBigInteger>(stored[timestampSlot]);
         Assert.False(stamped.IsZeroOrEmpty);
+        Assert.Null(stored[0]);
+        Assert.Null(buffer[timestampSlot]);
+    }
+
+    [Fact]
+    public void OnInsertStored_LatchIsConsumed_SecondRowOfNoInsertStaysUnstamped()
+    {
+        ResetReflectionCache();
+        var provider = MarkDatabaseBackedProvider();
+        var buffer = new FakeBuffer(new FakeMetaTable(new FakeMetaField(0)), slotCount: 1);
+        var first = new FakeStoredSlots(1);
+        var second = new FakeStoredSlots(1);
+
+        RowVersionPatches.OnBeforeInsert(provider, CompanyToken, buffer);
+        RowVersionPatches.OnInsertStored(first);
+        RowVersionPatches.OnInsertStored(second);
+
+        Assert.IsType<NavBigInteger>(first[0]);
+        Assert.Null(second[0]);
+    }
+
+    [Fact]
+    public void OnBeforeInsert_RefusedDatabaseInsertThenTemporaryInsert_TemporaryRowStaysUnstamped()
+    {
+        ResetReflectionCache();
+        var dbProvider = MarkDatabaseBackedProvider();
+        var tempProvider = new object(); // never marked => temporary
+        var buffer = new FakeBuffer(new FakeMetaTable(new FakeMetaField(0)), slotCount: 1);
+        var tempRow = new FakeStoredSlots(1);
+
+        RowVersionPatches.OnBeforeInsert(dbProvider, CompanyToken, buffer); // refused: no OnInsertStored
+        RowVersionPatches.OnBeforeInsert(tempProvider, CompanyToken, buffer);
+        RowVersionPatches.OnInsertStored(tempRow);
+
+        Assert.Null(tempRow[0]);
     }
 
     // ── Guard clauses stay quiet: nothing to stamp, no reflection even attempted ──

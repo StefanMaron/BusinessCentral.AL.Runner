@@ -927,7 +927,8 @@ public static partial class NclCecilRewrite
                 // did, so NavRecord.HasBeenInserted (== "timestamp field is non-zero") was
                 // false for every stored row and NavForm.SaveRecordAsync always chose
                 // Insert — CurrPage.SaveRecord() in a field OnValidate dup-keyed on rows
-                // reached via GoToRecord. Stamp the record buffer before Insert/Modify run;
+                // reached via GoToRecord. Stamp the record buffer before Modify runs, and
+                // the stored row once Insert has accepted it (#4642);
                 // the guard inside the helper keeps `temporary` records at timestamp 0,
                 // exactly like real BC. See Patches/RowVersionPatches.cs for the audit.
                 var rowVersion = typeof(AlRunner.Patches.RowVersionPatches);
@@ -937,6 +938,13 @@ public static partial class NclCecilRewrite
                         "Int32", "MutableRecordBuffer", "InsertOptions", "ReadOnlyRecordBuffer&"),
                     H(rowVersion, "OnBeforeInsert"),
                     argSlots: 3); // this, companyToken, recordBuffer
+
+                // #4642: an Insert's stamp lands here, on the accepted path only — CloneBlobs
+                // runs after primaryTree.Add succeeded, so a refused insert is never stamped.
+                PrependStaticCall(nclMod,
+                    ByParams(Rt + "TempTableRecordBuffer", "CloneBlobs", "MutableRecordBuffer"),
+                    H(rowVersion, "OnInsertStored"),
+                    argSlots: 1); // `this` — the freshly stored row
 
                 PrependStaticCall(nclMod,
                     ByParams(Rt + "TempTableDataProvider", "Modify",

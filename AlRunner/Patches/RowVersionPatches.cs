@@ -32,15 +32,18 @@
 //
 // ── Mechanics ────────────────────────────────────────────────────────────────
 //
-// Two Cecil prepends (NclCecilRewrite), same pattern as BlobStoreIsolationPatches:
-// TempTableDataProvider.Insert and .Modify each get the stamp before their body
-// runs. The stamp writes the MutableRecordBuffer's own timestamp slot — the same
-// `this[MetaTable.<SystemField>.FieldIndex] = value` idiom the buffer itself uses
-// for SystemCreatedAt/SystemModifiedAt — so BOTH copies see it: Insert stores
-// recordBuffer.ToArray() (stamp travels into the store) and the inserting record
-// keeps its buffer (stamp answers the record's own HasBeenInserted immediately,
-// mirroring SQL returning the new rowversion to the writer). Reads serve the stored
-// buffer, so a record that Get()s the row afterwards carries the rowversion too.
+// Cecil prepends (NclCecilRewrite), same pattern as BlobStoreIsolationPatches.
+// Modify: the prepend on TempTableDataProvider.Modify writes the MutableRecordBuffer's
+// own timestamp slot, which ModifyAllTrees copies into the stored row.
+// Insert (#4642): the stamp lands only on an insert the provider ACCEPTS. The prepend
+// on TempTableDataProvider.Insert resolves the slot and latches it; the prepend on
+// TempTableRecordBuffer.CloneBlobs — reached only after primaryTree.Add succeeded —
+// writes the stored row. The inserting record then receives it through Insert's
+// output buffer (DataAccess.InsertAsync rebuilds the record from it on success), so a
+// refused insert (InsertResult.RecordAlreadyExists, or a unique-index throw) leaves
+// the record's timestamp at 0, as SQL does. Corpus 60247 pins both directions.
+// Reads serve the stored buffer, so a record that Get()s the row afterwards carries
+// the rowversion too.
 // There is no timestamp-based optimistic-concurrency compare anywhere on the
 // runner's modify path (checked: TempTableDataProvider.Modify compares nothing, and
 // Ncl contains no record-changed check for this provider), so a record holding an
@@ -154,7 +157,31 @@ public static partial class RowVersionPatches
         // BEFORE BC's own Insert body runs. Must run before Stamp() — the rowversion
         // stamp is pointless work for an insert that is about to be refused.
         CheckNoDuplicateSystemId(provider, recordBuffer);
-        Stamp(provider, recordBuffer);
+        // Always overwrite: a latch left by a refused insert must not stamp the next one.
+        _pendingInsertStampIndex = ResolveStampIndex(provider, recordBuffer);
+    }
+
+    // Timestamp slot of the insert in flight on this thread, or null when it is not stamped.
+    // Sound only because CloneBlobs has ONE call site, inside TempTableDataProvider.Insert
+    // after primaryTree.Add succeeded (docs/blob-store-isolation.md#the-cloneblobs-call-count)
+    // — re-check that count if a BC version changes shape.
+    [ThreadStatic] private static int? _pendingInsertStampIndex;
+    private static PropertyInfo? _pStoredItem; // TempTableRecordBuffer.this[int]
+
+    /// <summary>Cecil prepend on TempTableRecordBuffer.CloneBlobs — (this = the stored row).
+    /// Stamps the row an accepted Insert just stored (#4642).</summary>
+    public static void OnInsertStored(object? storedRow)
+    {
+        var index = _pendingInsertStampIndex;
+        _pendingInsertStampIndex = null;
+        if (index is not int slot || storedRow == null) return;
+        var rowType = storedRow.GetType();
+        _pStoredItem ??= rowType.GetProperty("Item",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException(
+                $"[RowVersionPatches] {rowType.Name}.Item indexer not found — " +
+                "rowversion stamping cannot resolve its reflection target");
+        _pStoredItem.SetValue(storedRow, NextRowVersion(), new object[] { slot });
     }
 
     /// <summary>Cecil prepend on TempTableDataProvider.Modify — same first three arg slots.</summary>
@@ -169,10 +196,29 @@ public static partial class RowVersionPatches
 
     private static void Stamp(object? provider, object? recordBuffer)
     {
-        if (recordBuffer == null || !BlobStoreIsolationPatches.IsDatabaseBacked(provider)) return;
+        if (ResolveStampIndex(provider, recordBuffer) is not int index) return;
+        _pItem!.SetValue(recordBuffer, NextRowVersion(), new object[] { index });
+    }
+
+    private static object NextRowVersion()
+    {
+        _mCreate ??= typeof(Microsoft.Dynamics.Nav.Runtime.NavBigInteger).GetMethod(
+            "Create", BindingFlags.Public | BindingFlags.Static, binder: null,
+            new[] { typeof(long) }, modifiers: null)
+            ?? throw new InvalidOperationException(
+                "[RowVersionPatches] NavBigInteger.Create(long) method not found — " +
+                "rowversion stamping cannot resolve its reflection target");
+        return _mCreate.Invoke(null, new object[] { System.Threading.Interlocked.Increment(ref _rowVersion) })!;
+    }
+
+    /// <summary>The record buffer's timestamp slot when this write is to be stamped, else null.
+    /// Resolves (and throws on a missing member) exactly as the stamp itself used to.</summary>
+    private static int? ResolveStampIndex(object? provider, object? recordBuffer)
+    {
+        if (recordBuffer == null || !BlobStoreIsolationPatches.IsDatabaseBacked(provider)) return null;
         // #4123: a --test-data replay carries the backup's own rowversion; stamping over it
         // loses the value AND the restored rows' relative order. See SuppressRowVersionStamp.
-        if (_suppressRowVersionStamp) return;
+        if (_suppressRowVersionStamp) return null;
 
         // No try/catch here — a failed lookup throws straight out of this method and
         // out of the Cecil-prepended TempTableDataProvider.Insert/Modify call it runs
@@ -200,7 +246,7 @@ public static partial class RowVersionPatches
         // is the ONE legitimate quiet return: the property above resolved and ran
         // fine, and truthfully answered "no timestamp field" — it is a real BC
         // answer, not a reflection failure, and must stay a quiet no-op.
-        if (tsField == null) return;
+        if (tsField == null) return null;
 
         _pFieldIndex ??= tsField.GetType().GetProperty("FieldIndex",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
@@ -209,20 +255,11 @@ public static partial class RowVersionPatches
                 "rowversion stamping cannot resolve its reflection target");
         var index = (int)_pFieldIndex.GetValue(tsField)!;
 
-        _mCreate ??= typeof(Microsoft.Dynamics.Nav.Runtime.NavBigInteger).GetMethod(
-            "Create", BindingFlags.Public | BindingFlags.Static, binder: null,
-            new[] { typeof(long) }, modifiers: null)
-            ?? throw new InvalidOperationException(
-                "[RowVersionPatches] NavBigInteger.Create(long) method not found — " +
-                "rowversion stamping cannot resolve its reflection target");
         _pItem ??= bufferType.GetProperty("Item",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
             ?? throw new InvalidOperationException(
                 $"[RowVersionPatches] {bufferType.Name}.Item indexer not found — " +
                 "rowversion stamping cannot resolve its reflection target");
-
-        _pItem.SetValue(recordBuffer,
-            _mCreate.Invoke(null, new object[] { System.Threading.Interlocked.Increment(ref _rowVersion) }),
-            new object[] { index });
+        return index;
     }
 }
