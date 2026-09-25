@@ -86,7 +86,8 @@ internal partial class LiveNavTestPage
         // alreadyStarted: the draft line being promoted already ran this exact step when the
         // cursor landed on it, so running it again would raise the page's OnNewRecord a second
         // time for one row AND re-blank the buffer, discarding what that trigger wrote (#3029).
-        if (!alreadyStarted && !(_page?.TryNewRecord(!beforeCurrent) ?? false))
+        var pageStartedRow = !alreadyStarted && (_page?.TryNewRecord(!beforeCurrent) ?? false);
+        if (!alreadyStarted && !pageStartedRow)
         {
             // Record-only mode: no page to ask, so no filters and no trigger to run either.
             // Non-null: guaranteed by the RequireRecord guard at the top of this method.
@@ -99,6 +100,41 @@ internal partial class LiveNavTestPage
         }
 
         _pendingNewRow = true;
+
+        // The new row is now the page's current row, so BC runs OnAfterGetCurrRecord for it
+        // (corpus codeunit 60927 "ONG Tests", #2394). Top-level pages only: a part's New() is
+        // unmeasured. See docs/testpage-write-buffer.md#the-new-row-becomes-current.
+        if (pageStartedRow && this is not LiveNavTestPart)
+            NewRowBecameCurrent();
+    }
+
+    private void NewRowBecameCurrent()
+    {
+        // Measured BEFORE the trigger: a new row whose starting key (usually blank) already
+        // matches a stored row is still a new row, and must stay a pending insert.
+        var existedBefore = !_record!.IsTemporary && RowExistsInTable(_record);
+        _page!.RaiseOnAfterGetCurrRecord();
+        // AfterGetCurrRecordAsync's own tail.
+        _record.OldRecord.ALAssign(_record);
+        // The trigger handed the page a row that exists only now (Customer Card: insert from
+        // template, Rec.Copy, CurrPage.Update). The client re-reads that row, so it is no
+        // longer an unsaved new row: the next write is a Modify, not a second Insert.
+        if (!existedBefore && !_record.IsTemporary && RowExistsInTable(_record))
+            _pendingNewRow = false;
+    }
+
+    private static bool RowExistsInTable(NavRecord record)
+    {
+        var primaryKey = record.MetaTable?.PrimaryKey;
+        var session = record.ParentSession;
+        if (primaryKey == null || session == null) return false;
+        var keyValues = new NavValue[primaryKey.KeyFieldCount];
+        for (var i = 0; i < keyValues.Length; i++)
+            keyValues[i] = record.GetFieldValue(primaryKey.KeyFieldsList[i].FieldNo);
+        using var probe = new NavRecord(session, record.TableID, SecurityFiltering.Ignored);
+#pragma warning disable CS0618 // sync-over-async, as elsewhere in the runner's patches
+        return probe.ALGet(DataError.TrapError, keyValues);
+#pragma warning restore CS0618
     }
 
     /// <summary>

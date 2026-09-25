@@ -220,6 +220,38 @@ test per rule, and removing any one rule reds only its test.
 - BC skips activating the control that already has focus per TestPage *session*
   (`session.FocusedControl`); the runner skips it per page.
 
+## The new row becomes current
+
+A page that starts a new row with `OpenNew()` or `New()` runs its `OnAfterGetCurrRecord` for
+that row, after `OnNewRecord` and before anything is typed (issue #2394).
+
+**Why it matters.** Base Application's Customer, Vendor and Item cards do their template work
+there: `OnNewRecord` only sets `NewMode`, and `OnAfterGetCurrRecord` calls
+`CreateCustomerFromTemplate()` (insert from the template, `Rec.Copy`, `CurrPage.Update()`).
+Without it the flag stayed armed until the first `SetValue` realised a `CurrPage.Update`, the
+template insert then ran on a page that had already inserted its own row, and the save that
+followed tried to rename one into the other — `Callback functions are not allowed` on the
+rename confirmation, or before that a Contact Business Relation collision.
+
+**What measured it.** Corpus codeunit 60927 "ONG Tests"
+(StefanMaron/BusinessCentral.AL.Language.Tests#400): after `OpenNew()` alone the flag-driven
+template step has run exactly once; typing afterwards edits that row rather than inserting
+another; an existing row runs `OnAfterGetCurrRecord` but not the template step; and `New()` on
+an open card behaves like `OpenNew()`.
+
+**How the runner does it.** `LiveNavTestPage.InsertEmptyRow` calls `NewRowBecameCurrent` once
+the page's own `NavForm.NewRecord` has run: `OnAfterGetCurrRecord` alone (a new row fetched
+nothing, so there is no `OnAfterGetRecord`), then `AfterGetCurrRecordAsync`'s tail,
+`OldRecord.ALAssign(SourceTable)`. If the trigger left the page on a row that exists in the
+table now and did not before the trigger ran, the pending insert is dropped, so the next write is
+a `Modify`. The before-check matters: a stored row whose key equals the new row's starting key
+(usually blank) is not a row the trigger handed over, and the new row stays an insert (corpus
+60927 `OpenNew_WhenABlankKeyedRowIsStored_StillInsertsTheNewRow`).
+`AlRunner.Tests/TestPageNewRowAfterGetCurrRecordTests.cs` pins both halves.
+
+**Not modelled.** A part's `New()` and its draft line do not raise it; no corpus test measures
+the part case.
+
 ## Sister documents
 
 - `.claude/rules/ask-the-corpus-before-claiming-bc-behavior.md` — why the tier's eight legs
