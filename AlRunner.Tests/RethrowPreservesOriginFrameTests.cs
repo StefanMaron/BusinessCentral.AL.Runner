@@ -34,7 +34,18 @@ public class RethrowPreservesOriginFrameTests
 {
     // Two frames below the reflection Invoke boundary, both NoInlining so their presence in
     // the stack trace is evidence about the rethrow and not about the JIT's inlining mood.
-    private sealed class FakeReportInstance
+    // Named NavReport because construction now ends by running OnInitReport, which binds the
+    // trigger and BC's quitCalledOnReportTrigger on the type of that name (#4656).
+    private class NavReport
+    {
+#pragma warning disable CS0414, CS0169
+        private bool quitCalledOnReportTrigger;
+#pragma warning restore CS0414, CS0169
+        public int InitReportHits;
+        protected virtual void OnInitReport() => InitReportHits++;
+    }
+
+    private sealed class FakeReportInstance : NavReport
     {
         public bool Finalized;
         public bool ShouldThrow = true;
@@ -96,6 +107,7 @@ public class RethrowPreservesOriginFrameTests
         NavReportSync.CompleteReportConstruction(instance, parent: null, reportId: 0);
 
         Assert.True(instance.Finalized);
+        Assert.Equal(1, instance.InitReportHits);
     }
 
     // `throw <identifier-or-member-access>;` — deliberately not matching `throw new ...`
