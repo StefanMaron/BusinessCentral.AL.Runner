@@ -1868,7 +1868,8 @@ entries stated by `expected` matched nothing and were deleted. Writing them also
 **pairing** artifact stated by `actual`: the runner flattens parts into one ContentArea container
 and this comparison pairs `Containers[0]/Controls[i]` by position, so on six pages a runner part
 is paired with a BC field control that states no `Enabled`. That entry is the first in this file
-stated by the runner's side; its reason names the six pages.
+stated by the runner's side; its reason names the six pages, and it is owned by #3824, the
+containment-hierarchy gap that flattening the parts is an instance of.
 
 <a id="unobservable-the-triage"></a>
 ### The triage, and what each verdict means (#4400)

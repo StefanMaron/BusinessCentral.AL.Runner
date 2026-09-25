@@ -36,6 +36,7 @@ public class DependencyPagePartPropertiesTests
               "Name": "PPX Host With Area",
               "Properties": [
                 { "Name": "PageType", "Value": "Card" },
+                { "Name": "Caption", "Value": "Host; caption" },
                 { "Name": "ApplicationArea", "Value": "#Basic,#Suite" },
                 { "Name": "AboutTitle", "Value": "Host page title" },
                 { "Name": "AboutText", "Value": "Host; page text" }
@@ -95,7 +96,10 @@ public class DependencyPagePartPropertiesTests
             {
               "Id": 88128002,
               "Name": "PPX Host Without Area",
-              "Properties": [ { "Name": "PageType", "Value": "Card" } ],
+              "Properties": [
+                { "Name": "PageType", "Value": "Card" },
+                { "Name": "Caption", "Value": "\"Quoted\" start" }
+              ],
               "Controls": [
                 {
                   "Kind": 6,
@@ -226,5 +230,19 @@ public class DependencyPagePartPropertiesTests
         var props = Element(HostWithAreaId, "m:Properties");
         Assert.Equal("ENU=\"Host; page text\"", Attr(props, "AboutTextML"));
         Assert.Equal("ENU=Host page title", Attr(props, "AboutTitleML"));
+    }
+
+    // The page ROOT CaptionML is the one quoting site BC reads into CaptionMLString, the
+    // page-caption path. A ';' anywhere, or a leading '"', changes what BC's own parser returns.
+    [Theory]
+    [InlineData(HostWithAreaId, "ENU=\"Host; caption\"", "Host; caption")]
+    [InlineData(HostWithoutAreaId, "ENU=\"\"\"Quoted\"\" start\"", "\"Quoted\" start")]
+    public void RootCaptionML_ParsesBackThroughBcsMultiLanguageToTheFullCaption(int hostId, string written, string caption)
+    {
+        var root = Element(hostId, ".");
+        var captionMl = Attr(root, "CaptionML");
+        Assert.Equal(written, captionMl);
+        var parsed = Microsoft.Dynamics.Nav.Types.Metadata.MultiLanguage.Parse(captionMl!);
+        Assert.Equal(caption, parsed.GetText(1033));
     }
 }

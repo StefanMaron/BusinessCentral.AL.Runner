@@ -28,8 +28,8 @@
     {
       "member": "Page.Controls.Enabled",
       "statedBy": "actual",
-      "reason": "A PAIRING artifact, not a derivation difference. The runner writes Enabled='true' on every subpage part, as BC does (#4282, docs/dependency-page-properties.md#part-controls), but it flattens every part into one ContentArea container while BC keeps each where the AL declared it -- inside groups, and FactBox parts in their own FactBoxArea container. This comparison pairs /Content/Containers[0]/Controls[i] by POSITION, so on a page whose first container starts with field controls the runner's i-th part is paired with BC's i-th FIELD, which states no Enabled. Measured on BC 28.1.49838.53910: 6 occurrences, exactly the pages 1927, 1992 (x2), 4326, 4336 and 9983, each a runner part against a BC ControlDefinition. It disappears when the runner reconstructs the control tree, which is the page-property work tracked on #4282.",
-      "issue": 4282
+      "reason": "A PAIRING artifact, not a derivation difference. The runner writes Enabled='true' on every subpage part, as BC does (#4282, docs/dependency-page-properties.md#part-controls), but it flattens every part into one ContentArea container while BC keeps each where the AL declared it -- inside groups, and FactBox parts in their own FactBoxArea container. This comparison pairs /Content/Containers[0]/Controls[i] by POSITION, so on a page whose first container starts with field controls the runner's i-th part is paired with BC's i-th FIELD, which states no Enabled. Measured on BC 28.1.49838.53910: 6 occurrences, exactly the pages 1927, 1992 (x2), 4326, 4336 and 9983, each a runner part against a BC ControlDefinition. It disappears when the runner reconstructs the containment hierarchy of <Content> -- which group or area encloses each control -- tracked on #3824.",
+      "issue": 3824
     },
     {
       "member": "Page.Controls.MultiLine",
