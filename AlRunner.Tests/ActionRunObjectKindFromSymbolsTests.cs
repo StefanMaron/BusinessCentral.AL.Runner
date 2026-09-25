@@ -195,8 +195,9 @@ public class ActionRunObjectKindFromSymbolsTests
         {
             var ex = Assert.Throws<RunnerOutOfScopeException>(() => Resolve(RunSharedAction));
             Assert.Contains("'AROK Shared'", ex.Message);
-            Assert.Contains("page", ex.Message);
-            Assert.Contains("codeunit", ex.Message);
+            // Both candidates, by kind AND id, so the developer can see what collided.
+            Assert.Contains("Page 88245803", ex.Message);
+            Assert.Contains("Codeunit 88245811", ex.Message);
             Assert.Contains("#4622", ex.Message);
         });
 
@@ -207,6 +208,8 @@ public class ActionRunObjectKindFromSymbolsTests
         {
             var ex = Assert.Throws<RunnerOutOfScopeException>(() => Resolve(RunTwoCodeunitsAction));
             Assert.Contains("'AROK Twin'", ex.Message);
+            Assert.Contains("Codeunit 88245812", ex.Message);
+            Assert.Contains("Codeunit 88245813", ex.Message);
             Assert.Contains("#4622", ex.Message);
         });
 

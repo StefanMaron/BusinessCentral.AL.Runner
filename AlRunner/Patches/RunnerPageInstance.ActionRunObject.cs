@@ -749,18 +749,7 @@ internal sealed partial class RunnerPageInstance
             return new ActionRunTarget(
                 MetaTypes.RunObjectType.Page, 0, spec.ObjectName, spec.RunPageOnRec, NoLinks);
 
-        var (kind, objectId) = candidates[0];
-        var runObjectType = kind switch
-        {
-            "page" => MetaTypes.RunObjectType.Page,
-            "codeunit" => MetaTypes.RunObjectType.Codeunit,
-            "report" => MetaTypes.RunObjectType.Report,
-            "xmlport" => MetaTypes.RunObjectType.XMLport,
-            "query" => MetaTypes.RunObjectType.Query,
-            _ => throw new InvalidOperationException(
-                $"ResolveRunObjectName answered kind '{kind}', which is not a RunObject kind"),
-        };
-
+        var (runObjectType, objectId) = candidates[0];
         return new ActionRunTarget(
             runObjectType,
             objectId,

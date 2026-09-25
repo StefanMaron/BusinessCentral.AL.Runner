@@ -359,9 +359,8 @@ public static partial class RecordPatches
     /// Every object a <c>RunObject</c> NAME can refer to — for a precompiled .app, whose
     /// SymbolReference.json states the target as a bare name with no object type (#2931, #4582).
     ///
-    /// <para>Only the five kinds AL's grammar allows after <c>RunObject</c> are answered, as
-    /// normalised kind names (<c>page</c>, <c>codeunit</c>, <c>report</c>, <c>xmlport</c>,
-    /// <c>query</c>), one entry per distinct (kind, id). A caller treats exactly one entry as
+    /// <para>Only the five kinds AL's grammar allows after <c>RunObject</c> are answered, one
+    /// entry per distinct (kind, id). A caller treats exactly one entry as
     /// the target and more than one as ambiguous: Base Application shares hundreds of action
     /// target names between a page and a report or query, and picking one would be a silent
     /// wrong answer (<c>loud-failures.md</c>).</para>
@@ -370,17 +369,26 @@ public static partial class RecordPatches
     /// SourceTable/BaseName elsewhere in this file: stripping spaces would manufacture ambiguity
     /// between two different objects, and deciding ambiguity is this method's whole job.</para>
     /// </summary>
-    internal static IReadOnlyList<(string Kind, int Id)> ResolveRunObjectName(string? name)
+    internal static IReadOnlyList<(Microsoft.Dynamics.Nav.Types.Metadata.RunObjectType Kind, int Id)> ResolveRunObjectName(string? name)
     {
-        var found = new List<(string Kind, int Id)>();
+        var found = new List<(Microsoft.Dynamics.Nav.Types.Metadata.RunObjectType Kind, int Id)>();
         if (string.IsNullOrWhiteSpace(name)) return found;
 
         foreach (var (kind, id, objectName, _, _) in EnumerateKnownAlObjects())
         {
             if (id <= 0 || !string.Equals(objectName, name, StringComparison.OrdinalIgnoreCase)) continue;
-            var normalised = NormalizeObjectTypeName(kind);
-            if (normalised is not ("page" or "codeunit" or "report" or "xmlport" or "query")) continue;
-            if (!found.Contains((normalised, id))) found.Add((normalised, id));
+            Microsoft.Dynamics.Nav.Types.Metadata.RunObjectType runObjectType;
+            switch (NormalizeObjectTypeName(kind))
+            {
+                case "page": runObjectType = Microsoft.Dynamics.Nav.Types.Metadata.RunObjectType.Page; break;
+                case "codeunit": runObjectType = Microsoft.Dynamics.Nav.Types.Metadata.RunObjectType.Codeunit; break;
+                case "report": runObjectType = Microsoft.Dynamics.Nav.Types.Metadata.RunObjectType.Report; break;
+                case "xmlport": runObjectType = Microsoft.Dynamics.Nav.Types.Metadata.RunObjectType.XMLport; break;
+                case "query": runObjectType = Microsoft.Dynamics.Nav.Types.Metadata.RunObjectType.Query; break;
+                // Extensions, tables, enums, permission sets: never a RunObject target.
+                default: continue;
+            }
+            if (!found.Contains((runObjectType, id))) found.Add((runObjectType, id));
         }
         return found;
     }
