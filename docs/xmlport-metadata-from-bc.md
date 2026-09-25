@@ -173,6 +173,54 @@ and kills the whole document over one node. Measured on fixture xmlport 61602 wh
 A type the live enum does not know makes the element **omitted**, never written as raw text: an
 unparseable value costs the whole document, an absent one costs a single node its declared type.
 
+<a id="table-views-link-fields-and-permissions"></a>
+
+## `SourceTableView`, `LinkFields` and `Permissions` are re-encoded, not copied (#4471)
+
+BC's emitter writes these three in its own canonical form. Field **names** become `Field<n>`
+ids, keywords are upper-cased, and values are re-encoded. The runner used to pass the AL text
+through, which was 40 differences on System Application's four xmlports.
+
+`LinkFields` resolves its two halves against **different** tables: the left against the
+tableelement's own `SourceTable`, the right against the table of the node `LinkTable` names.
+`"Hdr Kind" = field(Kind)` is `Field4=FIELD(Field2)`.
+
+Every row below is BC's own output (`tools/metadata-ground-truth`, BC 28.1.49838.53910)
+compiling probe xmlports against tables with known field ids. The probe sources are in the
+#4471 pull request body, and `AlRunner.Tests/XmlPortCanonicalPropertyEncodingTests.cs` pins the
+same strings.
+
+| AL | BC |
+|---|---|
+| `sorting(Kind, "Amount (LCY)") order(descending)` | `SORTING(Field2,Field5) ORDER(1)` |
+| `order(ascending)` | `ORDER(0)` (written only when stated) |
+| `where(Kind = const(B))` on an Option `A,B,C` | `WHERE(Field2=0(1))` |
+| `Flag = const(true)` / `const(false)` | `Field9=0(1)` / `Field7=0(0)` |
+| `Name = const('x y')`, `"No." = const('A-1')` | `Field7=0(x y)`, `Field1=0(A-1)` |
+| `D = const(20240131D)`, `I = const(3)` | `Field4=0(20240131D)`, `Field6=0(3)` |
+| `"Amount (LCY)" = filter(> 10)`, `I = filter(1 .. 5)` | `Field5=1(>10)`, `Field6=1(1..5)` |
+| `Kind = filter(A \| "C D")`, `Kind = filter(<> B)` | `Field2=1(0\|2)`, `Field2=1(<>1)` |
+| `Name = filter('a*\|b')`, `Txt = filter('<>''x''')`, `Txt = filter('')` | `1(a*\|b)`, `1(<>'x')`, `1('')` |
+| `"Doc No." = field("No."), "Hdr Kind" = field(Kind)` | `Field1=FIELD(Field1),Field4=FIELD(Field2)` |
+| `tabledata "XP Hdr" = RIMD, tabledata "XP Ln" = Rm` | `TableData XP Hdr=rimd,TableData XP Ln=rm` |
+
+An xmlport's `Permissions` accepts only `tabledata` entries; `codeunit "X" = X` is `AL0104`.
+
+**Anything outside the table refuses the document.** That covers a field name that does not
+resolve, an Enum value (the table carries no enum ordinals), a fractional Decimal, a bare word
+on a Text/Code field, and a filter on a Boolean or Date. BC wrote `const(1.5)` as `0(1,5)` on an
+`en_DK` box, so its Decimal encoding may depend on the culture. `BuildDependencyXmlPortMetadata`
+logs the reason and returns null, the same refusal as a missing schema (below). Writing the AL
+text would state a view BC never wrote. Dropping the property would lose the sorting and
+filters, because `NavXmlPort.ApplyNodeSourceTableViewAndRequestFormFilters` passes the string to
+`ALSetView`.
+
+Coverage, by syntax only: every `SourceTableView`, `LinkFields` and `Permissions` value in
+Base Application's 40 xmlports and System Application's 4 is a shape from the table (surveyed
+from their `src/` on 28.1.49838.53910). Whether each name and Option member then resolves
+depends on the table metadata the runner holds; that is measured end to end only for System
+Application, by `MetadataEquivalenceHarnessTests`.
+
 <a id="request-page"></a>
 
 ## The `<RequestPage>` subtree is not optional

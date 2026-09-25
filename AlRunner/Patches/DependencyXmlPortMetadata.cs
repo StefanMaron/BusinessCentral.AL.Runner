@@ -91,7 +91,20 @@ public static partial class RecordPatches
             return null;
         }
 
-        var xml = EmitXmlPortXml(port, schema);
+        string xml;
+        try
+        {
+            xml = EmitXmlPortXml(port, schema);
+        }
+        catch (XmlPortPropertyNotEncodableException ex)
+        {
+            // Same refusal as a missing schema: the AL text is not what BC wrote, and dropping
+            // the property would drop the port's sorting and filters (#4471).
+            Console.Error.WriteLine(
+                $"[RecordPatches] dependency xmlport metadata: XmlPort {xmlPortId} \"{port.Name}\" "
+                + $"refused: {ex.Message}");
+            return null;
+        }
         Console.Error.WriteLine(
             $"[RecordPatches] dependency xmlport metadata: synthesized XmlPort {xmlPortId} "
             + $"\"{port.Name}\" from {Path.GetFileName(appPath)} ({schema.Count} node(s))");
@@ -389,7 +402,7 @@ public static partial class RecordPatches
             // so an unconditional empty one would claim an empty permission set where BC
             // claims nothing.
             if (XmlPortProperty(port, "Permissions") is { Length: > 0 } permissions)
-                w.WriteElementString("Permissions", permissions);
+                w.WriteElementString("Permissions", XmlPortCanonicalPermissions(permissions, port.Name));
 
             if (XmlPortProperty(port, "Caption") is { Length: > 0 } caption)
             {
@@ -420,6 +433,8 @@ public static partial class RecordPatches
             // tableelement (what a bound child's field name resolves against). Carried
             // together because a bound node needs both and they come from the same ancestor.
             var enclosing = new List<(string NodeId, int TableId)>();
+            // tableelement AL name -> its table, for resolving a later node's LinkTable.
+            var tableByNodeName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             var sequence = XmlPortNodeSequences(schema);
             for (int i = 0; i < schema.Count; i++)
             {
@@ -432,9 +447,15 @@ public static partial class RecordPatches
                 int tableId = n.Kind == XmlPortNodeKind.TableElement
                     ? ResolveTableIdByName(LastNameSegment(n.Source))
                     : 0;
-                WriteXmlPortNode(w, n, nodeId, parent.Item1, tableId, parent.Item2);
+                int linkTableId = n.Properties.TryGetValue("LinkTable", out var linkTable)
+                    && tableByNodeName.TryGetValue(LastNameSegment(linkTable), out var linked) ? linked : 0;
+                WriteXmlPortNode(w, n, nodeId, parent.Item1, tableId, parent.Item2, linkTableId);
 
-                if (tableId > 0) tableElements.Add((sequence[i], tableId));
+                if (tableId > 0)
+                {
+                    tableElements.Add((sequence[i], tableId));
+                    tableByNodeName[n.Name] = tableId;
+                }
 
                 if (n.Indentation < enclosing.Count)
                     enclosing.RemoveRange(n.Indentation, enclosing.Count - n.Indentation);
@@ -567,7 +588,7 @@ public static partial class RecordPatches
     /// </summary>
     private static void WriteXmlPortNode(
         XmlWriter w, XmlPortSchemaNode n, string nodeId, string? parentId,
-        int tableId, int enclosingTableId)
+        int tableId, int enclosingTableId, int linkTableId)
     {
         bool isAttribute = n.Kind is XmlPortNodeKind.TextAttribute or XmlPortNodeKind.FieldAttribute;
         bool isBound = n.Kind is XmlPortNodeKind.FieldElement or XmlPortNodeKind.FieldAttribute;
@@ -622,7 +643,9 @@ public static partial class RecordPatches
             w.WriteElementString("AutoSave", XmlPortNodeBool(n, "AutoSave", true));
             w.WriteElementString("AutoUpdate", XmlPortNodeBool(n, "AutoUpdate", false));
             w.WriteElementString("CalcFields", n.Properties.TryGetValue("CalcFields", out var cf) ? cf : "");
-            w.WriteElementString("LinkFields", n.Properties.TryGetValue("LinkFields", out var lf) ? lf : "");
+            w.WriteElementString("LinkFields",
+                n.Properties.TryGetValue("LinkFields", out var lf) && !string.IsNullOrWhiteSpace(lf)
+                    ? XmlPortCanonicalLinkFields(lf, tableId, linkTableId, n.Name) : "");
             // LinkTable names the ANCESTOR TABLEELEMENT this one links to, by its AL node name,
             // which BC writes through UNQUOTED — measured on XmlPort 9001, whose document
             // states LinkTable=Security Group for the AL's `LinkTable = "Security Group"`.
@@ -657,7 +680,9 @@ public static partial class RecordPatches
         if (isTable)
         {
             w.WriteElementString("ReqFilterFields", n.Properties.TryGetValue("ReqFilterFields", out var rff) ? rff : "");
-            w.WriteElementString("SourceTableView", n.Properties.TryGetValue("SourceTableView", out var stv) ? stv : "");
+            w.WriteElementString("SourceTableView",
+                n.Properties.TryGetValue("SourceTableView", out var stv) && !string.IsNullOrWhiteSpace(stv)
+                    ? XmlPortCanonicalTableView(stv, tableId, n.Name) : "");
             // AL spells this property UseTemporary and BC's document element is Temporary —
             // different names for one value, which is why reading "Temporary" off the AL
             // properties answered the default on every node. Measured on XmlPort 9864, where

@@ -666,15 +666,15 @@ public class DependencyXmlPortMetadataTests
 
     /// <summary>
     /// <c>Permissions</c> is written only when the object declares it, because BC omits the
-    /// element entirely otherwise — 1 of System Application's 4 xmlports states it. The VALUE
-    /// is still BC's canonical form away from the symbol file's AL text, which is #4471.
+    /// element entirely otherwise — 1 of System Application's 4 xmlports states it. The value is
+    /// BC's canonical form, as XmlPort 9001's ground-truth document states it (#4471).
     /// </summary>
     [Fact]
     public void Permissions_IsWrittenWhenDeclared_AndOmittedOtherwise()
     {
         var stated = EmitExportPort(
             properties: new Dictionary<string, string> { ["Permissions"] = "tabledata \"Security Group\" = r" });
-        Assert.Equal("tabledata \"Security Group\" = r",
+        Assert.Equal("TableData Security Group=r",
             stated.SelectSingleNode("/XmlPort/Permissions")?.InnerText);
 
         Assert.Null(EmitExportPort().SelectSingleNode("/XmlPort/Permissions"));

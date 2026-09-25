@@ -169,9 +169,10 @@ public static partial class RecordPatches
     {
         var text = PropertyTextFrom(value)?.Trim();
         if (string.IsNullOrEmpty(text)) return null;
-        if (text.Length >= 2 && text[0] == '\'' && text[^1] == '\'') text = text[1..^1];
-        text = text.Replace("''", "'");
-        return string.IsNullOrEmpty(text) ? null : text;
+        // Unescape only a value that IS one literal: `filter('<>''x''')` is not a literal, and
+        // collapsing its '' changed the filter it states (#4471).
+        if (AlStringLiteralContent(text) is not { } literal) return text;
+        return literal.Length == 0 ? null : literal;
     }
 
     /// <summary>
