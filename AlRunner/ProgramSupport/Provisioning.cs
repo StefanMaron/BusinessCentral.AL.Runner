@@ -228,6 +228,12 @@ internal static partial class ProgramSupport
         }
     }
 
+    // False in a shadow/re-exec child, which re-reads the same cache and would repeat a line the
+    // first generation already printed.
+    internal static bool IsFirstGeneration() =>
+        Environment.GetEnvironmentVariable("AL_RUNNER_NCL_SHADOW_DONE") != "1"
+        && Environment.GetEnvironmentVariable("AL_RUNNER_REEXECED") != "1";
+
     // Names of the version directories in the artifacts cache; empty when the cache does not
     // exist yet. Throws only when the artifacts root itself cannot be resolved ($HOME missing).
     internal static IReadOnlyList<string> CachedArtifactVersionNames()

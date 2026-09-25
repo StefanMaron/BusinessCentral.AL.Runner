@@ -1099,14 +1099,8 @@ if (bcVersionArg == null && artifactPathArg == null)
             // Immediate, not deferred: it explains the selection failure that can follow in this
             // generation. Printed by the first generation only — every re-exec'd child reads the
             // same cache and would repeat it.
-            if (choice.SkippedUnsupported.Count > 0
-                && Environment.GetEnvironmentVariable("AL_RUNNER_NCL_SHADOW_DONE") != "1"
-                && Environment.GetEnvironmentVariable("AL_RUNNER_REEXECED") != "1")
-                Console.Error.WriteLine(
-                    $"[bc] skipping cached BC {string.Join(", ", choice.SkippedUnsupported)}: this " +
-                    $"install ships no engine for it (supported: " +
-                    $"{AlRunner.Infrastructure.EngineVariants.DescribeSupportedMinors(shippedVariantsForDefault)}) " +
-                    $"— using BC {bcVersionArg} instead.");
+            if (choice.SkipLine(shippedVariantsForDefault) is { } skipLine && ProgramSupport.IsFirstGeneration())
+                Console.Error.WriteLine(skipLine);
             // #2097 considered — but rejected — deferring this line and the mismatch
             // warning just below: unlike the "cached-exact"/"cached-minor" branches of
             // the OTHER (no-variants-shipped) half of this if/else, this branch's own
@@ -1330,7 +1324,8 @@ if (bcVersionArg == null && artifactPathArg == null)
 }
 // #4557: an explicit --bc-version on a multi-variant install. A bare major maps onto the newest
 // cached/shipped minor of that major a variant runs; a minor no variant runs refuses here,
-// before provisioning downloads it. The `provision` subcommand may still fetch any minor.
+// before provisioning downloads it. `provision` may still fetch any explicit minor; its bare major
+// is remapped like a run's, so it fetches a minor this install can run.
 if (!bcVersionAutoSelected && bcVersionArg != null && artifactPathArg == null)
 {
     var explicitVariants = AlRunner.Infrastructure.EngineVariants.Discover(AppContext.BaseDirectory);
@@ -1341,7 +1336,11 @@ if (!bcVersionAutoSelected && bcVersionArg != null && artifactPathArg == null)
             var choice = AlRunner.Infrastructure.EngineVariants.ChooseDefault(
                 explicitVariants, ProgramSupport.CachedArtifactVersionNames(), bareMajor);
             if (choice.Version != null)
+            {
                 bcVersionArg = choice.Version;
+                if (choice.SkipLine(explicitVariants) is { } skipLine && ProgramSupport.IsFirstGeneration())
+                    Console.Error.WriteLine(skipLine);
+            }
             else if (!provisionSubcommand)
             {
                 Console.Error.WriteLine($"BC version selection failed: this install ships no engine for BC " +

@@ -153,6 +153,10 @@ public sealed class DefaultBcVersionSupportedVariantTests
     }
 
     private static (string Output, int Exit) Run(string installDir, string artifactsRoot, string work, params string[] extra)
+        => RunWithSubcommand(installDir, artifactsRoot, work, subcommand: null, extra);
+
+    private static (string Output, int Exit) RunWithSubcommand(
+        string installDir, string artifactsRoot, string work, string? subcommand, params string[] extra)
     {
         var psi = new ProcessStartInfo
         {
@@ -164,6 +168,7 @@ public sealed class DefaultBcVersionSupportedVariantTests
             WorkingDirectory = RepoRoot,
         };
         psi.ArgumentList.Add(Path.Combine(installDir, "al-runner.dll"));
+        if (subcommand != null) psi.ArgumentList.Add(subcommand);
         psi.ArgumentList.Add("--no-auto-provision");
         psi.ArgumentList.Add("--cache");
         psi.ArgumentList.Add(Path.Combine(work, "cache"));
@@ -172,6 +177,11 @@ public sealed class DefaultBcVersionSupportedVariantTests
         psi.Environment[BcArtifacts.ArtifactsRootEnvVar] = artifactsRoot;
         psi.Environment.Remove("AL_RUNNER_NCL_SHADOW_DONE");
         psi.Environment.Remove("AL_RUNNER_REEXECED");
+        // A dead proxy: any request `provision` makes fails at once instead of reaching the CDN.
+        foreach (var proxy in new[] { "HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "ALL_PROXY", "all_proxy" })
+            psi.Environment[proxy] = "http://127.0.0.1:9";
+        psi.Environment.Remove("NO_PROXY");
+        psi.Environment.Remove("no_proxy");
 
         var sb = new StringBuilder();
         using var p = Process.Start(psi)!;
@@ -264,6 +274,67 @@ public sealed class DefaultBcVersionSupportedVariantTests
             Assert.True(exit == 2, $"exit {exit}.\n{output}");
             Assert.Contains($"ships no engine for BC {requested}", output);
             Assert.Contains($"Supported BC versions: {build.Major}.{build.Minor}.", output);
+        }
+        finally
+        {
+            Directory.Delete(installDir, recursive: true);
+            if (Directory.Exists(work)) Directory.Delete(work, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// A bare-major --bc-version on the issue's cache (only a newer, unsupported minor cached) is
+    /// remapped to the newest shipped minor of that major, and the skipped build is named — rather
+    /// than selecting the cached unsupported build and refusing it.
+    /// </summary>
+    [Fact]
+    public void ExplicitBareMajor_OnlyUnsupportedNewerMinorCached_RemapsToShippedMinorAndNamesTheSkip()
+    {
+        var build = EngineBuild();
+        var installDir = MirrorBinDir();
+        var work = TestScratch.FlatDir("al-runner-4557-work-");
+        try
+        {
+            AddPlaceholderVariant(installDir, build.ToString());
+            var unsupported = $"{build.Major}.{build.Minor + 1}.1.1";
+            var artifactsRoot = Directory.CreateDirectory(Path.Combine(work, "artifacts", unsupported)).Parent!.FullName;
+
+            var (output, exit) = Run(installDir, artifactsRoot, work, "--bc-version", build.Major.ToString());
+
+            Assert.True(exit == 2, $"exit {exit}.\n{output}");
+            Assert.DoesNotContain("no shipped engine variant supports", output);
+            Assert.Contains($"matches version '{build.Major}.{build.Minor}'", output);
+            Assert.Contains($"skipping cached BC {unsupported}", output);
+            Assert.Contains($"using BC {build.Major}.{build.Minor} instead", output);
+        }
+        finally
+        {
+            Directory.Delete(installDir, recursive: true);
+            if (Directory.Exists(work)) Directory.Delete(work, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// `provision` is exempt from the unsupported-minor refusal: it reaches provisioning for the
+    /// named minor. Minor 99 is one no CDN publishes, and a dead proxy keeps the run offline, so
+    /// the only thing measured is that the refusal did not fire first.
+    /// </summary>
+    [Fact]
+    public void Provision_ExplicitUnsupportedMinor_IsNotRefusedBeforeProvisioning()
+    {
+        var build = EngineBuild();
+        var installDir = MirrorBinDir();
+        var work = TestScratch.FlatDir("al-runner-4557-work-");
+        try
+        {
+            AddPlaceholderVariant(installDir, build.ToString());
+            var artifactsRoot = Directory.CreateDirectory(Path.Combine(work, "artifacts")).FullName;
+            var requested = $"{build.Major}.99";
+
+            var (output, _) = RunWithSubcommand(installDir, artifactsRoot, work, "provision", "--bc-version", requested);
+
+            Assert.DoesNotContain("ships no engine for BC", output);
+            Assert.Contains($"[provision] no cached BC {requested}.x", output);
         }
         finally
         {

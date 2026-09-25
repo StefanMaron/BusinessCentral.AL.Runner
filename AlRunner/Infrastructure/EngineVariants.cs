@@ -144,7 +144,15 @@ public static class EngineVariants
 
     /// <summary>What a no-flags (or bare-major) selection should target, and which cached
     /// versions it passed over because no shipped variant runs them.</summary>
-    public sealed record DefaultChoice(string? Version, IReadOnlyList<string> SkippedUnsupported);
+    public sealed record DefaultChoice(string? Version, IReadOnlyList<string> SkippedUnsupported)
+    {
+        /// <summary>The one "[bc] skipping cached BC ..." line naming what was passed over; null
+        /// when nothing was skipped or no version was chosen.</summary>
+        public string? SkipLine(IReadOnlyList<Variant> variants) =>
+            SkippedUnsupported.Count == 0 || Version == null ? null :
+            $"[bc] skipping cached BC {string.Join(", ", SkippedUnsupported)}: this install ships no " +
+            $"engine for it (supported: {DescribeSupportedMinors(variants)}) — using BC {Version} instead.";
+    }
 
     /// <summary>
     /// The default BC version for a multi-variant install (#4557): the newest cached version a
