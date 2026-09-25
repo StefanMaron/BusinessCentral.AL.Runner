@@ -952,6 +952,28 @@ public static partial class NclCecilRewrite
                     H(rowVersion, "OnBeforeModify"),
                     argSlots: 3); // this, companyToken, recordBuffer
 
+                // ── Open Find walks read to the end before any write (issue #4678) ──
+                // A write re-shapes the AVL tree a lazy Find walk is still on, and Next()
+                // then skips rows. Every write entry point drains the provider's open walks
+                // first; a write path added here later without this prepend reopens #4678.
+                // See Patches/ResultSetSnapshotPatches.cs.
+                var snapshot = typeof(AlRunner.Patches.ResultSetSnapshotPatches);
+                foreach (var (name, ps) in new (string, string[])[]
+                {
+                    ("Insert", new[] { "Int32", "MutableRecordBuffer", "InsertOptions", "ReadOnlyRecordBuffer&" }),
+                    ("Modify", new[] { "Int32", "MutableRecordBuffer", "Boolean", "ReadOnlyRecordBuffer&" }),
+                    ("Delete", new[] { "Int32", "MutableRecordBuffer", "Boolean" }),
+                    ("ModifyAll", new[] { "Int32", "NCLMetaTable", "FiltersAndMarks", "SecurityFiltering", "FieldDictionary`1" }),
+                    ("DeleteAll", new[] { "Int32", "NCLMetaTable", "FiltersAndMarks", "SecurityFiltering" }),
+                    ("Copy", new[] { "NavDataTransferOperation", "Int32", "NavDataTransfer" }),
+                })
+                {
+                    PrependStaticCall(nclMod,
+                        ByParams(Rt + "TempTableDataProvider", name, ps),
+                        H(snapshot, "OnBeforeProviderWrite"),
+                        argSlots: 1); // `this` — the provider about to change
+                }
+
                 // ── Rename store-aliasing boundary for `temporary` records (issue #1765) ──
                 // A temporary record's BLOB committed with Modify() is LOST across a
                 // subsequent Rename() on real BC (corpus 60944, green on BC 27.5/28.3) —

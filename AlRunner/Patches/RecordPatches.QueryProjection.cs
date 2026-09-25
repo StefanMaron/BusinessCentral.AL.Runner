@@ -132,7 +132,7 @@ public static partial class RecordPatches
         EnsureQueryProjectionReflection(self);
         var execRequest = TranslateQueryFilters(request, out var havingFilters, out var flowFam);
         var raw = (IEnumerable<ReadOnlyRecordBuffer>)_mTtdpFindImpl!.Invoke(self, new[] { execRequest })!;
-        raw = ApplyFirstOnly(request, raw);
+        raw = ApplyFirstOnly(request, raw, self);
         return ProjectIfQuery(request, raw, havingFilters, flowFam);
     }
 
@@ -145,7 +145,7 @@ public static partial class RecordPatches
         EnsureQueryProjectionReflection(self);
         var execRequest = TranslateQueryFilters(request, out var havingFilters, out var flowFam);
         var raw = (IEnumerable<ReadOnlyRecordBuffer>)_mTtdpFindByPositionImpl!.Invoke(self, new[] { execRequest })!;
-        raw = ApplyFirstOnly(request, raw);
+        raw = ApplyFirstOnly(request, raw, self);
         return ProjectIfQuery(request, raw, havingFilters, flowFam);
     }
 
@@ -1115,12 +1115,13 @@ public static partial class RecordPatches
         object? GetOrNull(string n) => t.GetProperty(n, BindingFlags.Public | BindingFlags.Instance)?.GetValue(request);
     }
 
-    private static IEnumerable<ReadOnlyRecordBuffer> ApplyFirstOnly(object request, IEnumerable<ReadOnlyRecordBuffer> rows)
+    private static IEnumerable<ReadOnlyRecordBuffer> ApplyFirstOnly(object request, IEnumerable<ReadOnlyRecordBuffer> rows, object provider)
     {
         // Original Find/FindFromPosition return enumerable.Take(1) when FindType == FirstOnly.
+        // Any other walk must not see writes made while it is open (#4678).
         var findType = _pReqFindType!.GetValue(request);
         var firstOnly = findType != null && Convert.ToInt32(findType) == FirstOnlyOrdinal();
-        return firstOnly ? rows.Take(1) : rows;
+        return firstOnly ? rows.Take(1) : ResultSetSnapshotPatches.Wrap(provider, rows);
     }
 
     private static int _firstOnlyOrdinal = -1;
