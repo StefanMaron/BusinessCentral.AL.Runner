@@ -1547,6 +1547,17 @@ public static partial class NclCecilRewrite
                 BindingFlags.Public | BindingFlags.Static)
                 ?? throw new InvalidOperationException(
                     "[Cecil] ALDatabasePatches.NoteBcEndTransaction not found");
+            // The World pair also carries BC's write-transaction refusal and its release (#2184).
+            var noteBeginWorldHelper = typeof(AlRunner.Patches.ALDatabasePatches).GetMethod(
+                nameof(AlRunner.Patches.ALDatabasePatches.NoteBcBeginTransactionWorld),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] ALDatabasePatches.NoteBcBeginTransactionWorld not found");
+            var noteEndWorldHelper = typeof(AlRunner.Patches.ALDatabasePatches).GetMethod(
+                nameof(AlRunner.Patches.ALDatabasePatches.NoteBcEndTransactionWorld),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] ALDatabasePatches.NoteBcEndTransactionWorld not found");
 
             // (method name, parameter count, helper) — the two pairs, matched on the exact
             // one-line forwarder shape so a renamed or re-signatured Ncl member fails the
@@ -1555,8 +1566,8 @@ public static partial class NclCecilRewrite
             {
                 ("BeginTransaction", 1, noteBeginHelper),
                 ("EndTransaction", 2, noteEndHelper),
-                ("BeginTransactionWorldAndTransaction", 1, noteBeginHelper),
-                ("EndTransactionWorldAndTransaction", 2, noteEndHelper),
+                ("BeginTransactionWorldAndTransaction", 1, noteBeginWorldHelper),
+                ("EndTransactionWorldAndTransaction", 2, noteEndWorldHelper),
             };
 
             foreach (var (name, paramCount, helper) in depthTargets)

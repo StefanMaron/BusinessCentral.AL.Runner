@@ -655,6 +655,40 @@ public static class ALDatabasePatches
     /// only question here is whether one is still open.</summary>
     public static void NoteBcEndTransaction() => ExitRunTransaction();
 
+    /// <summary>BC's own <c>SessionTransactionExtensions.BeginTransactionWorldAndTransaction</c>,
+    /// Cecil-prepended (#2184): the write-transaction refusal BC's body reaches through
+    /// <c>TransactionManager.BeginTransactionWorld</c>, then the depth note above.
+    ///
+    /// <para>Observably equivalent: BC's callers the runner does not replace are
+    /// <c>NavXmlPort.Import(DataError)</c>'s TrapError branch (AL's <c>Ok := ...Import(...)</c>)
+    /// and <c>NavEventScope.CallEventSubscriberOnALIsolatedEventAsync</c>, which skips the world
+    /// whenever <c>HasWriteTransaction()</c> — rewritten to the same flag — answers true, so the
+    /// refusal cannot fire there. Corpus 60041 "Test XmlPort Import Write Tx" pins both import
+    /// spellings: the static form's wrapper turns the refusal into <c>false</c>, the instance
+    /// form raises it.</para>
+    ///
+    /// <para>Trap: the refusal must come BEFORE the depth increment. BC calls this outside the
+    /// <c>try</c> whose <c>finally</c> runs the matching End, so a throw after the increment
+    /// would leak one level of depth into every later <c>TransactionModel::None</c> check.</para>
+    /// </summary>
+    public static void NoteBcBeginTransactionWorld()
+    {
+        ThrowIfWriteTransactionStarted();
+        EnterRunTransaction();
+    }
+
+    /// <summary>The other half, prepended to BC's <c>EndTransactionWorldAndTransaction</c>.
+    /// The world's entry refused any pending caller write, so once it ends the caller holds
+    /// none, committed or not: BC's world owned its own logical transaction and ends it here.
+    /// Without clearing the flag, rows the import wrote would refuse the next value-consuming
+    /// call (corpus 60041 <c>GuardedImport_LeavingImportedRows_DoesNotBlockTheNextGuardedImport</c>;
+    /// the Codeunit.Run shape is #2332).</summary>
+    public static void NoteBcEndTransactionWorld()
+    {
+        ExitRunTransaction();
+        System.Threading.Volatile.Write(ref _inWriteTransaction, false);
+    }
+
     /// <summary>The transaction <c>Codeunit.Run</c> begins around the run codeunit — BC's
     /// BeginTransaction on the statement-form branch, BeginTransactionWorldAndTransaction on
     /// the guarded one. Bracketed for BOTH forms because both make a write legal inside the
