@@ -3,6 +3,9 @@
 "PR opened" is not the deliverable; "PR merged" is. Fix CI failures and address review
 comments yourself — don't wait for someone else to notice a PR is red.
 
+The by-hand queries this rule sends you to live in the `reading-ci-runs` skill; the incidents
+behind each trap are in `docs/incidents/ci-verdicts.md`.
+
 ## 0. Read the verdict; never block on CI
 
 Push the branch, open the pull request, carry on. `tools/ci-wait.py <PR> --timeout 0` is the
@@ -12,161 +15,106 @@ read — one pass, one answer, about a second:
 tools/ci-wait.py 2379 --timeout 0     # reads the verdict now; does not block
 ```
 
-**`--timeout 0` means a single pass** and says so in its own `--help`; a negative value is
-refused by `argparse` rather than behaving like zero, and `--timeout 1` still means "wait up to
-a second" (#3351). Never hand-roll `gh run view` plus `sleep` — one call replaces the loop.
+**`--timeout 0` means a single pass**; a negative value is refused, and `--timeout 1` still
+means "wait up to a second" (#3351). Never hand-roll `gh run view` plus `sleep`.
 
 **Who reads it, and when.** An implementation agent marks its PR ready and hands back; it never
-waits and never merges (`.claude/agents/impl-agent.md`). The coordinator lists open PRs once
-per cycle (`orchestrating-a-session`, one listing per sweep) and reads the verdict of each PR it
-considers arming then, and nothing is lost by reading late:
-`gh pr merge --auto` lands a reviewed PR the moment its checks go green with nobody present.
+waits and never merges (`.claude/agents/impl-agent.md`). The coordinator reads the verdict of
+each PR it considers arming once per sweep (`orchestrating-a-session`); nothing is lost by
+reading late, because `gh pr merge --auto` lands a reviewed PR the moment its checks go green.
 
-**Read the tool's exit code, not a pipeline's.** Every row of the table below is worthless if
-`$?` came from the last command in a pipe: `tools/ci-wait.py <N> --timeout 0 | tail -25` leaves
-`$?` as **`tail`'s** status, which is 0 whatever the verdict was — so a FAILED or a
-still-running PR reads as green, and the printed text saying otherwise is the only thing left
-that is true. Redirect to a file and check `$?`, or use `${PIPESTATUS[0]}`. Measured twice on
-2026-09-11: an agent reported this tool "exits 0 on a non-verdict" from a piped read (it exits
-2, and did), and the coordinator made the same mistake reading a `| tail` earlier the same
-night. It is the same class as the trap below — an answer that could not have come out any
-other way.
+**Read the tool's exit code, not a pipeline's.** `tools/ci-wait.py <N> --timeout 0 | tail -25`
+leaves `$?` as **`tail`'s** status, 0 whatever the verdict was, so a FAILED or still-running PR
+reads as green. Redirect to a file and check `$?`, or use `${PIPESTATUS[0]}` (#3864).
 
-**A completion notification's "exit code" is the WRAPPER's, and you do not choose whether a
-wait gets one.** The harness moves any foreground `Bash` call to the background at a hard
-**600s** cap, which the call's own `timeout` field does not raise — calls declaring a longer
-timeout still reported `within its 600s timeout` (#4288). The task notification then reports the shell wrapper's
-status, so `ci-wait.py` exiting **2** ("STILL RUNNING … This is NOT a verdict") arrives as
-`completed (exit code 0)`. Measured on PR #4286 (#4288): the reviewer asked for the foreground,
-got backgrounded anyway, and the `0` it was handed was the compound command's last element.
-**Read the tool's own printed verdict out of the output file; never the notification's number.**
-Trap: this is not the backgrounding rule's territory — `run_in_background` was unset on
-**every** auto-backgrounded CI wait measured in #4288, so the flag says nothing about whether it
-happened. `.claude/hooks/refuse-stash-and-ci-waits.py` now refuses on the **requested duration**
-for that reason.
+**A completion notification's "exit code" is the WRAPPER's.** The harness moves any foreground
+`Bash` call to the background at a hard **600s** cap that the call's own `timeout` does not
+raise, and the notification then reports the shell wrapper's status — so `ci-wait.py` exiting
+**2** arrives as `completed (exit code 0)` (#4288). **Read the tool's own printed verdict out of
+the output file; never the notification's number.** Trap: `run_in_background` was unset on
+every such call, so the flag says nothing; `.claude/hooks/refuse-stash-and-ci-waits.py`
+refuses on the **requested duration** instead.
 
-**And when you report a surprising exit code, say how you captured it.** Reading directly
-protects you; it does nothing for a wrong number already written down. #3341 reported `rc=0`
-beside a GraphQL failure, which is impossible directly (`rc=1`) and exact under `| tail` — that
-artifact sat in the issue body as an apparently-measured fact, and it was
-load-bearing: it is what made the reporter conclude the exit code was unreliable **in both
-directions**, a stronger and different claim than the true one. Anyone reading that issue
-inherited a wrong belief about the instrument, sourced to a real transcript. A number nobody can
-attribute to a capture method is not a measurement, and the reader cannot tell.
+**When you report a surprising exit code, say how you captured it.** A number nobody can
+attribute to a capture method is not a measurement: #3341's `rc=0` was exact under `| tail` and
+impossible directly, and it led its reader to a wrong belief about the instrument.
 
-**Trap: an answer that could not have come out any other way is not evidence.** Under the
-pre-#3351 zero-timeout path a green PR, a red PR and a PR with no checks all printed `STILL
-RUNNING`, and its only tell was the empty parentheses of `STILL RUNNING after 0s ()`, where the
-progress detail belongs. Check a new invocation against a PR whose state you already know.
+**Trap: an answer that could not have come out any other way is not evidence.** Before #3351 a
+zero timeout printed `STILL RUNNING` for green, red and check-less PRs alike. Check a new
+invocation against a PR whose state you already know.
 
 | exit | meaning |
 |---|---|
 | 0 | every required check passed **on the current head** — safe to report green |
-| 1 | a required check failed; **the failing log is already printed**. The list is what has reported SO FAR — while other required checks are still running it can still grow, and the verdict says how many have not reported. Do not scope a diagnosis to those names until every check has reported. |
+| 1 | a required check failed; **the failing log is already printed**. The list is what has reported SO FAR — do not scope a diagnosis to those names until every check has reported. |
 | 2 | timed out while still running — **not a verdict**, call again |
-| 3 | could not determine (auth, network, no checks) — **or** the running copy of `ci-wait.py` is itself behind `origin/main` (#3020) — **or** the required-context set could not be established without narrowing it (#3002) |
-| 4 | **blocked, not failing** — every check passed but the merge is still refused and nothing else says why. Two causes: a *required* context is `cancelled` on this commit (#2726) — the one case where `gh run rerun` can be correct, but only after checking that no check run on this commit concluded `failure` before the cancellation (section 3); or a *required* context produced **no check run at all** and every workflow run for the commit has finished (#2807), a trigger/`paths:` filter question rather than a re-run. Never reach for `--admin` for any of these. **A third cause is invisible to every check-reading tool, this one included**: the `main` ruleset sets `require_extra_approval_for_unattributed_changes`, so a PR carrying a commit attributed to **another real GitHub account** is `BLOCKED` until a human approves, with every check green and `mergeable: MERGEABLE` (#3942). It is not a check, so nothing here can see it — **`tools/pr-attribution.py <N>` is that read**, run before arming rather than discovered at merge time: exit 0 nothing to approve, 1 an approval will be required, 3 the authors could not be established, which is not an all-clear. It wraps `gh pr view <N> --json commits --jq '[.commits[].authors[]|{login,name}]|unique'`. **Read the `login`, and ignore an empty one and `claude`**: this loop's own commits carry `{login:"", name:"Test"}` and `{login:"claude"}`, and those never block — measured on #3943, CLEAN with both. What blocked #3927 was a third entry resolving to a real account. A check keyed on "any login that is not the pushing identity" false-positives on every PR this loop writes. **And the `login` field is not in every shape**: the REST `/pulls/<N>/commits` listing and the GitHub MCP `get_commits` method report `commit.author = {name, email, date}` and no login at all, so a classifier handed one of those cannot tell a real account from an unresolvable one — that is the tool's exit 3, never a pass. Never self-approve to clear it; that rule exists to put a human in front of exactly this. |
+| 3 | could not determine (auth, network, no checks) — **or** the running copy of `ci-wait.py` is behind `origin/main` (#3020) — **or** the required-context set could not be established without narrowing it (#3002) |
+| 4 | **blocked, not failing** — every check passed but the merge is still refused. Either a *required* context is `cancelled` (#2726) — the one case where `gh run rerun` can be right, after section 3's check — or a *required* context produced **no check run at all** once every run finished (#2807), a trigger/`paths:` question rather than a re-run. A third cause is the attribution block below. Never reach for `--admin`. |
 
-**Exit 2 is the ordinary answer here, not a failure**, and never a green: the checks have not
-reported, so move on and read again later.
+**The third exit-4 cause, which no check-reading tool can see, this one included**: the `main` ruleset's
+`require_extra_approval_for_unattributed_changes` holds a PR carrying a commit attributed to
+**another real GitHub account** at `BLOCKED` with every check green (#3942). Run
+`tools/pr-attribution.py <N>` before arming: exit 0 nothing to approve, 1 an approval will be
+required, 3 the authors could not be established — not an all-clear. Read the `login`, and
+ignore an empty one and `claude`: this loop's own commits carry those and never block, so "any
+login that is not the pushing identity" false-positives on every PR. The REST commit listing and
+the MCP `get_commits` method carry **no login at all**, which is exit 3, never a pass. Never
+self-approve to clear it.
+
+**Exit 2 is the ordinary answer, not a failure**, and never a green: move on and read again later.
 
 **A `main-verdict-floor.yml` run whose conclusion is `success` may have measured nothing.** Its
-`verdict-needed` job skips `floor-matrix` when the SHA already has a conclusive matrix run, so the
-*workflow* succeeds while the job that would answer the question never ran — deliberate debounce,
-not a fault. Measured on `c028bf3f`: run `34656743829` FAILED, and the later run `34658754607`
-reported `success` with `floor-matrix: skipped`. Reading the second as "main
-recovered" would invert the truth on identical code. **Check the `floor-matrix` job's own result
-before reading a floor run as a verdict** — `gh api repos/<o>/<r>/actions/runs/<id>/jobs --jq
-'.jobs[]|"\(.name): \(.conclusion)"'` — and treat `skipped` as "no new measurement", never as green.
-
-**It is not one stale run: the skips continue for as long as the SHA sits there.** The debounce
-keys on the SHA already having a conclusive run, and a red `main` that nobody has fixed keeps
-that SHA, so every subsequent scheduled floor run reports `success` with `floor-matrix: skipped`.
-Measured on `917bbbf2`: **a long streak of consecutive `success` runs**, every one of them
-skipped, while the conclusive run for that SHA was the `failure` beneath them. A workflow listing
-filtered to that workflow shows a row of greens on a `main` that has been red the whole
-time, so the length of the green streak is not evidence of anything — the run that measured the
-SHA is.
+`verdict-needed` job skips `floor-matrix` when the SHA already has a conclusive run — deliberate
+debounce — so the workflow succeeds while nothing ran. **Check the `floor-matrix` job's own
+result** and treat `skipped` as "no new measurement", never as green. The skips continue for as
+long as a red SHA sits on `main`, so a long streak of green floor runs is not evidence of
+anything; the run that measured the SHA is.
 
 **Beside every verdict it prints one line about `main` itself** — `main floor: RED on 8b6885f4
-(main-verdict-floor.yml, 1h ago, 6 commits behind main)` (#3679, #4111), so a PR branched during
-a red window is visible as inheriting a failure it did not cause. It is a report: it never
-changes the exit code, and a read that did not happen prints `unavailable`, never a verdict.
-
-**Read the distance, not only the age** (#4111): the age says when the verdict was taken, the
-distance says what it still covers. A correct green about a `main` several merges back is still
-not a verdict about the commit under suspicion — measured live at filing, a `GREEN on d50d41fd`
-that no longer covered `main`'s head. Three spellings, and the third is deliberately not either of the
-first two: `on main's current head`, `N commits behind main`, and `distance unknown: <why>` when
-the comparison could not be read. The count comes from GitHub's compare API rather than a local
-`git rev-list`, because a stale worktree under-reports — the direction that makes a stale verdict
-look current.
+(main-verdict-floor.yml, 1h ago, 6 commits behind main)` (#3679, #4111) — so a PR branched
+during a red window is visible as inheriting a failure. It is a report, never an exit code, and
+an unread one prints `unavailable`. **Read the distance, not only the age**: a green about a
+`main` several merges back is not a verdict about the commit under suspicion. The count comes
+from GitHub's compare API, because a stale worktree's `git rev-list` under-reports.
 
 **And one line per corpus PR the body cites** — `corpus PR #226: NOT-MERGEABLE (head 321ac71a)`
-(#3674), from `.github/scripts/corpus_pr_state.py`, the same module `pr-gate.yml`'s
-`A cited corpus PR must be able to merge` job runs. Same contract as the floor line: a report,
-never an exit code, `unavailable` on a read that did not happen and `UNREADABLE` on a malformed
-declaration. **That gate is a status check, so it evaluates on push, `edited` and `labeled` and
-not when the corpus PR moves** — and corpus-first merging makes that systematic rather than
-rare: the corpus PR merges *after* the runner PR's last push, so the stored `failure` outlives
-its cause on every BC-behaviour fix. It is deliberately not in the branch ruleset (it reads
-`api.github.com`), and the arming list in `orchestrating-a-session` is what holds out for
-`MERGED`.
+(#3674), from `.github/scripts/corpus_pr_state.py`, which `pr-gate.yml`'s `A cited corpus PR
+must be able to merge` job also runs. Same contract: a report, `unavailable` on a failed read,
+`UNREADABLE` on a malformed declaration. **That gate evaluates on push, `edited` and `labeled`,
+not when the corpus PR moves**, and corpus-first merging makes its stored `failure` outlive its
+cause on every BC-behaviour fix. It is not in the ruleset (it reads `api.github.com`); the
+arming list in `orchestrating-a-session` holds out for `MERGED`.
 
 **Not in the ruleset does not mean harmless: a stale red DOES refuse the merge** (#4206). A
-failing *non-required* check makes `mergeStateStatus` read `UNSTABLE`, which
-`enablePullRequestAutoMerge` refuses with `Pull request is in unstable status` — so nothing
-merges that should not, and nothing merges that should. Every instrument reads green while it
-happens: `ci-wait.py` exits 0 because no *required* context is red, and prints
-`corpus PR #N: MERGED` from its own fresh read in the same breath. Measured three times in one
-session — #4135/#348, #4202/#368, and #4203/#371, where the stored `failure` outlived the corpus
-merge until an unrelated body edit happened to re-run the gate.
+failing *non-required* check makes `mergeStateStatus` read `UNSTABLE`, which auto-merge refuses,
+while `ci-wait.py` exits 0 and prints `corpus PR #N: MERGED`. So `ci-wait.py` prints
+`corpus gate: STALE` when the stored conclusion disagrees with the corpus PR now, `UNKNOWN` when
+either could not be read. `tools/armed-prs.py --refire-stale-corpus-gate` clears it by toggling a
+label rather than pushing, which would restart the matrix and re-arm against an unreviewed head.
+**Only `STALE` is re-fired** — an `UNKNOWN` gate was never established as stale.
 
-So `ci-wait.py` prints a third line when the gate's *stored* conclusion disagrees with what the
-corpus PR says *now* — `corpus gate: STALE`, with `UNKNOWN` when the corpus PR or the rollup
-could not be read, and nothing at all when they agree. `tools/armed-prs.py` reports a STALE gate
-even on an exit-0 verdict, and `--refire-stale-corpus-gate` clears it by toggling a label rather
-than pushing a commit, which would restart the BC matrix and re-arm auto-merge against an
-unreviewed head. **Only `STALE` is re-fired**: an `UNKNOWN` gate was never established as stale,
-and acting on it would clear a gate on a measurement nobody made.
+`ci-wait.py` reads the required contexts from the **live branch ruleset** on each invocation,
+falling back loudly to its built-in list; `check_required_contexts.py` fails CI when the two
+drift (#2785). A ruleset answer *narrower* than the built-in list is exit 3, because a partial
+read and a deliberate removal look alike and the smaller set produces a false green (#3002).
+**Read the `N/N ruleset context(s)` figure on a green**: one accounting for fewer contexts than
+the live ruleset requires is the signal (#3002, #3165).
 
-`ci-wait.py` reads the required contexts from the **live branch ruleset** on each invocation
-(`GET /repos/{owner}/{repo}/rules/branches/main`, which reports only *active* rulesets),
-falling back to its built-in list and saying so loudly; `check_required_contexts.py` fails CI
-when the built-in lists and the live ruleset drift apart (#2785). A ruleset answer *narrower*
-than the built-in list returns exit 3 rather than a verdict, because a partial read and a
-deliberate removal are indistinguishable from here and the smaller set is the one that produces
-a false green (#3002).
-
-**Read the `N/N ruleset context(s)` figure on a green**, against the live ruleset rather than
-any number written down: a green accounting for fewer contexts than the ruleset requires is the
-signal, whatever N is (#3002, #3165).
-
-Where several runs of one workflow exist on one commit — normal for `require-tests.yml`, which
-has no `concurrency` block and triggers on `labeled`/`unlabeled` — the verdict comes from the
-**newest workflow run**, not the highest check-run id, because a check run's id is allocated
-when its *job starts* and id order inverts once two runs overlap (#2748).
-
-The tool enforces the two rules agents keep getting wrong: checks are matched against the PR's
-**current head SHA**, so a newer completed run for an older push is never reported as this
-push's result; and on failure it fetches `--log-failed` for you, so there is never a reason to
-reach for `gh run rerun`, which destroys the log permanently.
+Where several runs of one workflow exist on one commit (normal for `require-tests.yml`), the
+verdict comes from the **newest workflow run**, not the highest check-run id — ids are allocated
+when a job starts, so their order inverts once runs overlap (#2748). The tool matches checks to
+the PR's **current head SHA**, and fetches `--log-failed` for you on failure, so there is never
+a reason to reach for `gh run rerun`.
 
 ### Run it from a tree you have fetched — the tool being right says nothing about your copy
 
-`git fetch origin main` in your worktree before you trust any tool in `tools/`. You invoke
-`tools/ci-wait.py` by relative path, so you run **your worktree's** copy, and a worktree is
-created once and never fast-forwarded again (#3020).
-
-`ci-wait.py`, `pr-body.py` and `preflight.py` refuse rather than answer when `origin/main` has
-moved their own file since your checkout branched (`tools/agent_self_freshness.py`; #3164) —
-exit 3 for `ci-wait.py`, refuse-to-write for `pr-body.py`, and **exit 3 for `preflight.py` both
-when its running copy is stale and when nothing vouches for it** (#3164). There is no flag to
-switch the check off. A branch that legitimately *edits* one of them is not stale and is not
-refused: what makes a copy stale is `origin/main` moving the file since the branch point.
-
-**Expect refusals in a burst right after such a merge, not as an outage** — the fix is
-`git fetch origin main` in each worktree, never a revert.
+`git fetch origin main` in your worktree before you trust any tool in `tools/`: you run **your
+worktree's** copy, and a worktree is never fast-forwarded (#3020). `ci-wait.py`, `pr-body.py`
+and `preflight.py` refuse when `origin/main` has moved their own file since your branch point
+(`tools/agent_self_freshness.py`; #3164) — exit 3, refuse-to-write, and exit 3 (also when
+nothing vouches for the copy) respectively. No flag switches it off; a branch that *edits* one
+of them is not stale. **Expect refusals in a burst right after such a merge** — the fix is a
+fetch in each worktree, never a revert.
 
 Two things the guard cannot do:
 
@@ -179,64 +127,28 @@ Two things the guard cannot do:
   done
   python3 "$d/tools/ci-wait.py" <PR> --timeout 0
   ```
-  **Extract all three files** (#3295, #3658): a lone copy cannot import its sibling guard and
-  now exits 3 rather than judging the PR with the safety check skipped, and without
-  `agent_stdio.py` the copy prints through the console codec, so on a cp1252 box one
-  non-cp1252 character in a failing-log tail raises `UnicodeEncodeError` and exits **1** — this
-  tool's "a required check failed" code — a two-file copy says so in a `note:` line on stderr.
-  The two loud `unknown` freshness notes a `/tmp` directory produces are fine *there only*,
-  because you extracted the files from `origin/main` yourself; elsewhere an `unknown` that fails
-  open is the defect #3296 fixed.
-- **It cannot turn a network failure into a verdict.** `refs/remotes/origin/main` is shared by
-  every worktree, so the check costs no network, and one `git ls-remote` confirms that shared
-  ref against the remote. An unreachable remote is a loud note and the local check stands,
-  never a refusal.
+  **Extract all three files** (#3295, #3658): without the freshness helper the copy exits 3,
+  and without `agent_stdio.py` a non-cp1252 character in a failing-log tail can crash it with
+  exit **1**, this tool's "a required check failed". The `unknown` freshness notes a `/tmp`
+  copy prints are fine *there only*; elsewhere an `unknown` that fails open is the defect #3296
+  fixed.
+- **It cannot turn a network failure into a verdict.** An unreachable remote is a loud note and
+  the local check against the shared `origin/main` ref stands, never a refusal.
 
 ### A cancelled run's leftovers sit in the same rollup as the live run, and `gh pr checks` hides which is which
 
-Two traps, and `gh pr checks` corroborates neither: a cancelled run's aggregate job can conclude
-`failure` because it runs `if: always()` over killed `needs` (#3010), and `gh pr checks` prints
-one row per context name without saying which run produced it, so a leftover from a cancelled
-run can be the row you see and is then indistinguishable from a live failure (#3016).
-Superseded runs are the common case here, not an edge case (#3003).
+A cancelled run's aggregate job can conclude `failure` because it runs `if: always()` over
+killed `needs` (#3010), and `gh pr checks` prints one row per context without saying which run
+produced it (#3016). Superseded runs are the common case here (#3003). **The reliable check is
+the run, not the rollup** — `gh run view <run-id> --json headSha,conclusion,status`, or every
+run for the commit (`reading-ci-runs`). A `cancelled` conclusion on an older `headSha`, or on a
+run a newer one replaced, is **not this push's verdict**. `ci-wait.py` applies this itself since
+#3002; you need it only when reading a run by hand.
 
-**The reliable check is the run, not the rollup:**
-
-```bash
-gh run view <run-id> --json headSha,conclusion,status
-# and, for the whole commit:
-gh api "repos/StefanMaron/BusinessCentral.AL.Runner/actions/runs?head_sha=<FULL-SHA>&per_page=100" \
-  --jq '.workflow_runs[] | "\(.id) \(.name) \(.status) \(.conclusion)"'
-```
-
-A `cancelled` conclusion — on an older `headSha`, or on a run of the same workflow that a newer
-run has replaced — is **not this push's verdict**, whatever its individual jobs say. Two runs of
-one workflow on one SHA is normal (#2726).
-
-**Counting the returned page is not counting the queue.** `?per_page=100` caps the array at
-100, so `[.workflow_runs[]] | length` — or a `group_by` over it — answers *"what is on the page I
-fetched"*. The response carries the real figure:
-
-```bash
-gh api "repos/<o>/<r>/actions/runs?per_page=1&status=queued" --jq '.total_count'
-```
-
-Measured during #4110: a paged read, repeated across three separate comments, reported a
-fraction of what `total_count` said, and the paged number *moved* between reads — as the mix on
-page one turned over, not as the queue changed. A falling paged count read as "it is draining"
-was page turnover, and it was published as recovery.
-
-**The tell is a count that brushes its own page size.** Anything near 100 from a `per_page=100`
-query is a paging artefact until `total_count` says otherwise. The SHA-filtered recipes above are
-safe from this — one commit never has 100 runs — but a status- or repo-wide count is not.
-
-`head_sha` needs the **full** 40-character SHA. An abbreviated one returns `"workflow_runs": []`
-— a false negative that reads exactly like "no runs for this commit".
-
-`tools/ci-wait.py` applies all of this itself since #3002: a conclusion from a cancelled run is
-reclassified as a cancellation, and a name whose newest check run belongs to a run being
-replaced by one still in flight gets no verdict in either direction. You still need the recipe
-above when reading a run by hand.
+**Counting the returned page is not counting the queue.** `?per_page=100` caps the array, so
+counting it answers "what is on the page I fetched"; ask for `.total_count` (#4110). The tell is
+a count brushing its own page size. **`head_sha` needs the full 40-character SHA** — an
+abbreviated one returns `"workflow_runs": []`, which reads exactly like "no runs".
 
 ## 1. Check for merge conflicts first
 
@@ -247,35 +159,26 @@ gh pr view <N> --json mergeStateStatus --repo <owner>/<repo>
 `DIRTY` / `CONFLICTING` → rebase on the base branch, resolve, force-push with
 `--force-with-lease`, re-check until it reads `BLOCKED` or `CLEAN`.
 
-**CI will not run on a PR with conflicts.** Check this before investigating any CI problem —
-"no checks reported" almost always means merge conflicts, not a CI outage. `CLEAN` covers only
-*textual* conflicts: it says nothing about whether CI ran on your current head, and nothing
-about a semantic break because `main` moved underneath you.
+**CI will not run on a PR with conflicts** — "no checks reported" almost always means conflicts,
+not an outage. `CLEAN` covers only *textual* conflicts: not whether CI ran on your head, and not
+a semantic break from `main` moving underneath you.
 
 ## 2. A verdict is about one commit, not one PR
 
-**Verify every verdict against the PR's current head SHA**: confirm the check's commit matches
-local `HEAD`, because a row can belong to an older push or to a superseded run, and a mismatch
-means "not yet reported", never "green". Which run produced a row is the trap section 0 covers —
-`gh pr checks` does not say. Report a PR with checks still running as exactly that, which is a
-fine place to leave one (section 0).
+**Verify every verdict against the PR's current head SHA**: a row can belong to an older push
+or a superseded run, and a mismatch means "not yet reported", never "green". Report a PR with
+checks still running as exactly that.
 
-**Which contexts gate.** Two come from the big workflows: **`BC test matrix passed`**
-(`.github/workflows/test-matrix.yml`) and **`Tests updated`**
-(`.github/workflows/require-tests.yml`, not `pr-check.yml`; #2726). The matrix legs report as
-`bc-tests / BC <ver> (required)` — that `(required)` is part of the job's name and does NOT
-make the leg a required context, which is why a single-leg diagnostic run cannot clear the gate
-and a red leg still blocks through the aggregate.
-
-The rest come from **`.github/workflows/pr-gate.yml`**, one context per job — most of which
-gate, but not all: the ones listed as `PENDING_REQUIRED_CONTEXTS` in
-`check_required_contexts.py` are deliberately out of the ruleset, because promoting one early
-makes `ci-wait.py` answer exit 3 for everybody (#3002). Everything in `pr-check.yml` is
-advisory and cannot block a merge (#3165). **A check that talks to a third-party API stays
-advisory on purpose** — `Required-context list must match the live branch ruleset` reaches
-`api.github.com`, and a required check that can go red on an outage blocks every merge in the
-repository for something no author can fix. So a red tick is not by itself proof the merge is
-blocked — ask the ruleset:
+**Which contexts gate.** **`BC test matrix passed`** (`.github/workflows/test-matrix.yml`),
+**`Tests updated`** (`.github/workflows/require-tests.yml`; #2726), and one context per job in
+**`.github/workflows/pr-gate.yml`** — except the `PENDING_REQUIRED_CONTEXTS` in
+`check_required_contexts.py`, deliberately out of the ruleset because promoting one early makes
+`ci-wait.py` answer exit 3 for everybody (#3002). The legs report as `bc-tests / BC <ver>
+(required)`; that `(required)` is part of the job name, not a required context, so a single-leg
+run cannot clear the gate. Everything in `pr-check.yml` is advisory (#3165), and **a check that
+talks to a third-party API stays advisory on purpose** — a required check that goes red on an
+outage blocks every merge for something no author can fix. So a red tick is not by itself proof
+the merge is blocked — ask the ruleset:
 
 <!-- Recipe-unpinned: reads the live branch ruleset from api.github.com; check_required_contexts.py is the executable half -->
 ```bash
@@ -284,54 +187,26 @@ gh api repos/StefanMaron/BusinessCentral.AL.Runner/rules/branches/main \
          |.parameters.required_status_checks[].context]'
 ```
 
-Do not read the exact list out of this file. `check_required_contexts.py` fails CI when that
-answer and the hardcoded lists disagree, except for `PENDING_REQUIRED_CONTEXTS` names, which it
-tolerates in either state while a by-hand ruleset edit catches up with a merged pull request.
+Do not read the exact list out of this file; `check_required_contexts.py` fails CI when that
+answer and the hardcoded lists disagree, tolerating `PENDING_REQUIRED_CONTEXTS` names in either
+state.
 
-**A pull request runs only the legs in `.github/pr-bc-versions.txt`, not the full list in
-`.github/bc-versions.txt`** (#3141). `main` runs the full list on every push, on
-`main-verdict-floor.yml`'s schedule and again shortly after a merge burst ends (#3003, #3679 —
-that workflow's own header states both triggers), and on the release path. So a green pull
-request has not been measured on any version the second file lists and the first does not —
-dispatch `bc-leg-rerun.yml` for one of those against your branch — and section 5's leg-set
-evidence is thin on a PR, where few legs give few distinguishable failing sets; prefer the
-dispatch or an empty commit.
+**A pull request runs only the legs in `.github/pr-bc-versions.txt`**; `main` runs the full
+`.github/bc-versions.txt` on every push, on `main-verdict-floor.yml`'s triggers, and on the
+release path (#3141, #3003, #3679). So a green PR has not been measured on the versions only the
+second file lists — dispatch `bc-leg-rerun.yml` for one of those — and section 5's leg-set
+evidence is thin on a PR.
 
-**A pull request whose every changed path ends in `.md` runs no legs at all** (#2890):
-`test-matrix.yml`'s `changes` job measures the diff through `pr_changed_files.sh`, `bc-tests` is
-skipped, and `BC test matrix passed` reports success with a step log saying the matrix was not
-run. The decision comes from the diff, never from the `docs-only` label. The guards that read
-`.md` files do not depend on the matrix: `tools/test_doc_pointers.py` (#3425) and
-`tools/test_matrix_docs_drift.py` (#3426) gate a docs-only PR under the required
-`tools/ unit tests` context.
+**A pull request whose every changed path ends in `.md` runs no legs at all** (#2890): the
+`changes` job measures the diff, `bc-tests` is skipped, and `BC test matrix passed` reports
+success. The decision comes from the diff, never from the `docs-only` label. The doc guards
+(`tools/test_doc_pointers.py`, `tools/test_matrix_docs_drift.py`) gate a docs-only PR under the
+required `tools/ unit tests` context.
 
-### In the corpus, "which harness code ran" has two dials, and the obvious one is wrong
-
-When a corpus failure is traced to a change in `StefanMaron/MsDyn365Bc.On.Linux`, the run's
-`referenced_workflows` is the wrong dial for a **script** fix — and nearly every harness fix
-that matters here is one. The corpus calls
-`MsDyn365Bc.On.Linux/.github/workflows/bc-test-from-source.yml@master`, and that reusable
-workflow checks the harness out again for its scripts at `ref: ${{ inputs.bc_linux_ref }}`,
-default `master`, which the corpus does not pass:
-
-| dial | what it controls | resolved when |
-|---|---|---|
-| `referenced_workflows` SHA | the **workflow YAML** — job graph, steps, inputs | at dispatch |
-| `bc_linux_ref` (default `master`) | the **scripts** — `run-tests-hybrid.py`, `run-tests-altool.py`, `run-tests.sh`, `publish-app.sh` | when the job's checkout step runs |
-
-The two usually agree, because both track `master`; the gap between them is the account-wide
-queue backlog, seconds on a quiet queue and hours on a busy one. So compare the **job's** start
-time against the harness commit's timestamp:
-
-```bash
-gh api repos/StefanMaron/BusinessCentral.AL.Language.Tests/actions/runs/<id>/jobs \
-  --jq '.jobs[] | select(.name|test("/ test")) | "\(.name) started=\(.started_at)"'
-gh api repos/StefanMaron/MsDyn365Bc.On.Linux/commits/<sha> --jq .commit.committer.date
-```
-
-A job whose `started_at` precedes the commit cannot have checked it out; one that started after
-it almost certainly did, with an honest ambiguity window of a few tens of seconds. Getting this
-backwards argues for reverting a fix that was never in the run (`MsDyn365Bc.On.Linux#61`).
+**Tracing a corpus failure to a `MsDyn365Bc.On.Linux` change:** the run's `referenced_workflows`
+SHA says which workflow YAML ran, not which harness scripts — those are checked out again when
+the job starts. Compare the job's `started_at` with the harness commit's timestamp
+(`reading-ci-runs`, "which harness code ran").
 
 ## 3. Never re-run a failed job — not even to gather evidence
 
@@ -343,27 +218,18 @@ run of the same commit" has the routes.
 
 ### A job log prints the `run:` block AS SOURCE, so grepping finds the script
 
-Before any stdout, an Actions log echoes the step's script. Every line of it is a match for
-anything the script mentions — a loop's `echo`, a `::warning::` it *might* emit, a command it
-*might* run — so `grep -c` counts intent, not execution.
-
-The tell is the **`[36;1m` colour escape** wrapping the echoed source (visible only with
-`--allow-escape-sequences`, which you need anyway):
+Before any stdout, an Actions log echoes the step's script, so `grep -c` for anything the script
+mentions — a loop's `echo`, a `::warning::` it *might* emit — counts intent, not execution.
+Measured three times in one session, each a plausible count meaning the opposite
+(`docs/incidents/ci-verdicts.md`). The tell is the **`[36;1m` colour escape** wrapping the echoed
+source (visible only with `--allow-escape-sequences`):
 
 ```
 [36;1m  echo "main moved while pushing; recomputing (attempt $attempt of 5)"[0m
 ```
 
-Measured three times in one session, on three unrelated questions:
-
-| the grep | what it seemed to show | what was true |
-|---|---|---|
-| `attempt N of 5` in a retry loop | one iteration ran | **zero** ran — the loop aborted before the first |
-| `::warning::Run-TestsInBcContainer` | the failure was caught and downgraded | the `catch` **never fired**; a discarded return value was the cause |
-| a `verdict-needed` guard's own text | the guard had evaluated | the block was echoed, not run |
-
-Each reading was plausible and each one had a count behind it. **Filter the escape out, or match
-on output the script cannot contain** — a timestamped result line, a summary, an `##[error]`:
+**Filter the escape out, or match on output the script cannot contain** — a timestamped result
+line, a summary, an `##[error]`:
 
 <!-- Recipe-pinned-by: tools/test_log_source_echo_filter_recipe.py -->
 ```bash
@@ -373,44 +239,27 @@ gh api repos/<o>/<r>/actions/jobs/<id>/logs --allow-escape-sequences \
 
 ### An empty log fetch is a refusal, not an empty log
 
-Both recipes print **nothing at all** for some jobs, and neither says "refused" where a caller
-reading stdout will see it — the same family as the `grep -E` and `rg --hidden` traps in
-`CLAUDE.md`. They fail on **different** jobs, so neither is a fallback for the other:
+Both fetch forms print **nothing at all** for some jobs, on **different** jobs, so neither is a
+fallback for the other — when one comes back empty, try the other before concluding anything
+(#3305; the recipe is in `reading-ci-runs`):
 
 | recipe | empty when | how it looks |
 |---|---|---|
-| `gh run view --log-failed` | the job has no step whose conclusion is `failure` — a `cancelled` job, or one whose failing step was cancelled | **exit 0**, zero bytes: indistinguishable from success on an empty log |
-| `gh api .../jobs/<id>/logs` | the log carries terminal escape sequences, which BC logs do routinely | exit 1, zero bytes on **stdout**, the reason only on stderr |
+| `gh run view --log-failed` | no step concluded `failure` — a `cancelled` job, or one whose failing step was cancelled | **exit 0**, zero bytes |
+| `gh api .../jobs/<id>/logs` | the log carries terminal escape sequences, which BC logs do routinely | exit 1, zero bytes on stdout, reason on stderr |
 
-So when one comes back empty, try the other before concluding anything (#3305):
-
-```bash
-gh api repos/<owner>/<repo>/actions/runs/<run-id>/jobs \
-  --jq '.jobs[]|select(.conclusion=="failure" or .conclusion=="cancelled")|"\(.id) \(.name)"'
-gh api repos/<owner>/<repo>/actions/jobs/<job-id>/logs --allow-escape-sequences
-```
-
-**`--allow-escape-sequences` is not optional on the API form**, and its refusal wears two faces:
-unredirected it exits 1 with `the response contains terminal escape sequences` on stderr, while
-redirected (`> leg.log`) it prints that message to the console, writes **zero bytes** to the file
-and **exits 0** — so a `$(...)` capture or a saved log reads as "no matches" with no error at all.
-Treat an empty body as *unavailable*, never as a zero. `tools/ci-wait.py` tries both fetch forms
-on exit 1 and, when both come back empty, says both were refused rather than that the job has no
-log (#3309).
+**`--allow-escape-sequences` is not optional on the API form**, and redirected (`> leg.log`) its
+refusal writes **zero bytes** and **exits 0**, so a capture reads as "no matches". Treat an empty
+body as *unavailable*, never as a zero. `ci-wait.py` tries both and says when both were refused
+(#3309).
 
 ### "Cancelled" does not mean "no log to lose"
 
-A check run can conclude `failure` **on its merits** and have its parent workflow run cancelled
-afterwards, so the log is real and `gh run rerun` overwrites it (#3142). Before re-running a
-cancelled required context, ask whether anything on that commit failed on its merits:
-
-```bash
-gh api "repos/StefanMaron/BusinessCentral.AL.Runner/commits/<FULL-SHA>/check-runs?per_page=100" \
-  --jq '.check_runs[] | select(.conclusion=="failure") | "\(.name) \(.id)"'
-```
-
-Nothing failing → re-run the cancelled run; that is the #2726 case. Something failing → read and
-save its log first, or get the second run by a route in section 5.
+A check run can conclude `failure` **on its merits** and have its parent run cancelled
+afterwards, so the log is real and a re-run overwrites it (#3142). Before re-running a cancelled
+required context, list the commit's check runs that concluded `failure` (`reading-ci-runs`).
+Nothing failing → re-run the cancelled run (the #2726 case). Something failing → save its log
+first, or get the second run by a route in section 5.
 
 ## 4. Diagnose from the log, not from a theory
 
@@ -426,10 +275,9 @@ Require one of:
   not the commit) — see below for how to get the second run without `gh run rerun`;
 - an existing issue describing that exact failure.
 
-**"Same code" means the same tree, not the same commit SHA.** An empty commit
-(`git commit --allow-empty`) changes no tree content, so its run is a legitimate second data
-point; two commits with different trees are not the same code however closely related they look
-(corpus PR 2639). Confirm the trees match before comparing across commits:
+**"Same code" means the same tree, not the same commit SHA.** An empty commit is a legitimate
+second data point; two commits with different trees are not the same code however related they
+look (corpus PR 2639). Confirm the trees match:
 
 ```bash
 a=$(git rev-parse --verify -q "<sha1>^{tree}") &&
@@ -439,94 +287,58 @@ b=$(git rev-parse --verify -q "<sha2>^{tree}") &&
 <!-- Recipe-unpinned: takes two commit SHAs of real runs; the comparison itself is git rev-parse equality with nothing to get subtly wrong -->
 
 **`--verify -q` is not optional, and the plain form fails in BOTH directions.** Without it,
-`git rev-parse` on a SHA this clone does not have **echoes the argument back on stdout** and
-exits 128, so the `[ ]` compares two echoed strings and the `fatal:` goes to stderr where a
-capture never sees it. Measured: the same unknown SHA twice prints **`same tree` for a commit
-git has never heard of**; and in a shallow clone, two commits with byte-identical trees print
-*nothing* when one SHA is unfetched — the false negative, which is this section's actual use
-case, since it judges flakes across CI run SHAs on branches you have not fetched.
+`git rev-parse` on a SHA this clone lacks **echoes the argument back** and the `fatal:` goes to
+stderr, so two unknown SHAs print **`same tree`**; and in a shallow clone an unfetched SHA prints
+nothing for byte-identical trees — the false negative, on exactly the unfetched CI SHAs this
+check is for (PR #4140).
 
 ### A red you inherited from the corpus is not a flake — count it per codeunit
 
-The commonest "is this red mine?" here is neither a flake nor your defect: the corpus is
-resolved per run, so a corpus PR merging ahead of the runner PR its tests need reddens every
-PR in flight, deterministically, until that runner PR lands. Measured repeatedly on #3922 —
-one window held `main` red for hours and blocked several PRs.
-
-None of §5's three tests applies, because it is not load-dependent: it reproduces on every
-run, and a re-run destroys the log while proving nothing. `tools/ci-wait.py` prints the answer
-beside the failing log it already fetched:
-
-```
---- failing corpus codeunits (#3922: is this red mine?) ---
-  Codeunit60285  x2  <- open runner PR #3996 fixes this
-  Codeunit60976  x6  <- open runner PR #3985 fixes this
-```
-
-Every failing codeunit matched to an open runner PR ⇒ inherited; rebase once they land.
+The corpus is resolved per run, so a corpus PR merging ahead of the runner PR its tests need
+reddens every PR in flight, deterministically, until that runner PR lands (#3922). None of the
+three tests above applies — it reproduces every run, and a re-run destroys the log while proving
+nothing. `tools/ci-wait.py` prints the failing codeunits beside the failing log, each matched to
+the open runner PR that fixes it. Every one matched ⇒ inherited; rebase once they land.
 **Anything unmatched is possibly the PR's own**, whatever the others say.
 
 **Match per codeunit; never on the total.** The inherited total shrinks as each foreign pair
-lands (#3922), so "this total means inherited" goes wrong as soon as one pair merges, and it
-fails toward the dangerous side: a later, smaller total reads as "fewer than inherited, so
-something here is mine". By hand, when you have a log rather than
-a PR number:
-
-```bash
-command grep -E "^\S+Z *FAIL " <leg.log> | command grep -oE "Codeunit[0-9]+" | sort | uniq -c
-```
-
-**A docs-only PR going green beside a red BC-leg PR points at the corpus** — docs-only PRs run
-no legs, so they flow through the window untouched.
+lands, so a later, smaller total reads as "fewer than inherited, so something here is mine" —
+the dangerous direction. The by-hand count from a log is in `reading-ci-runs`. **A docs-only PR
+going green beside a red BC-leg PR points at the corpus** — docs-only PRs run no legs.
 
 ### The same red, one phase later: the fix has MERGED and your branch predates it
 
-The section above covers a failing codeunit matched to an **open** runner PR — the fix has not
-landed, so you wait. This is the next phase of the same mechanism: **the fix has merged, and your
-branch does not contain it.** Waiting then achieves nothing, and a re-run reproduces the failure
-forever because it measures the same old code against the same new corpus.
-
-It does not change what an **unmatched** codeunit means — that warning stands exactly as above.
-What it adds is that a match against a *merged* runner PR is still a match, and its remedy is a
-rebase rather than a wait:
+A match against a *merged* runner PR is still a match, and its remedy is a **rebase**, not a
+wait: a re-run measures the same old code against the same new corpus forever. It does not
+change what an **unmatched** codeunit means.
 
 ```bash
 git merge-base --is-ancestor <that-PR's-merge-commit> <pr-head>   # false => rebase
 ```
 
-Measured on #4092: corpus PR #336 and runner PR #4035 merged **seconds apart** — the pair
-landing in one step, as `bc-behavior-tests-go-upstream.md` step 5 asks — and the open PRs created
-before the pair went red on codeunit 60974 regardless. So the exposed population is
-each PR **already in flight** when a pair lands, not the gap between the two merges; a
-zero-length window bounds nothing.
+The exposed population is every PR **already in flight** when a pair lands — even a pair merged
+seconds apart, as `bc-behavior-tests-go-upstream.md` step 5 asks, reddens them (#4092).
 
-Then confirm the rebase preserved what a reviewer already read, so a standing verdict still
-applies. `git patch-id --stable` over `git diff origin/main...HEAD` is the cheap first check —
-but **`patch-id` hashes hunk context, so a changed id means "look", not "the content moved".**
-Resolve a difference by diffing the two diffs' added and removed lines; equal there is equal.
-Measured in the #4092 rebase sweep: the one id that changed belonged to a diff whose added and
-removed lines did not differ **at all**.
-
-**A bulk rebase hides a real defect.** In that sweep, two of the red PRs were red for their
-own reasons, and only the per-codeunit read separated them from the inherited ones. Rebasing everything red would have shipped both.
+Then confirm the rebase preserved what a reviewer read. `git patch-id --stable` over
+`git diff origin/main...HEAD` is the cheap first check — but **`patch-id` hashes hunk context, so
+a changed id means "look", not "the content moved"**; resolve it by diffing the two diffs' added
+and removed lines. **A bulk rebase hides a real defect**: in #4092's sweep two red PRs were red
+for their own reasons, and only the per-codeunit read separated them.
 
 ### Getting a second run of the same commit without `gh run rerun`
 
-Both options create a brand-new, separate workflow run and leave the original run and its log
-untouched.
+Both options create a brand-new run and leave the original run and its log untouched.
 
-**Preferred — dispatch the one leg**, one leg instead of the full matrix, against the ref that already
-carries the verdict:
+**Preferred — dispatch the one leg**, against the ref that already carries the verdict:
 
 ```bash
 gh workflow run bc-leg-rerun.yml --repo StefanMaron/BusinessCentral.AL.Runner \
   --ref <branch> -f bc-version=28.4
 ```
 
-`bc-version` is a prefix from `.github/bc-versions.txt`; an unknown one fails the run rather
-than resolving to an empty matrix. The leg does exactly the work that leg does on a normal run
-— `required` and `unit-tests` are still computed from the full version list — and since #3141
-it is also the only way to run a version that `.github/pr-bc-versions.txt` omits against a branch.
+`bc-version` is a prefix from `.github/bc-versions.txt`; an unknown one fails the run. The leg
+does exactly the work it does on a normal run, and since #3141 it is the only way to run a
+version `.github/pr-bc-versions.txt` omits against a branch.
 
 In the AL-language corpus, `.github/workflows/ci.yml` (`bc_version` input):
 
@@ -536,15 +348,14 @@ gh workflow run ci.yml --repo StefanMaron/BusinessCentral.AL.Language.Tests \
 ```
 
 **A single-leg dispatch cannot satisfy this repository's required check**, by construction:
-`BC test matrix passed` is declared in `test-matrix.yml` and `bc-leg-rerun.yml` does not contain
-that job, so there is no conclusion for it to report; `AlRunner.Tests/BcLegRerunWorkflowTests.cs`
-holds that property. Treat the result as evidence for a human, never as a cleared gate.
+`bc-leg-rerun.yml` does not contain the `BC test matrix passed` job
+(`AlRunner.Tests/BcLegRerunWorkflowTests.cs` holds that). Treat the result as evidence for a
+human, never as a cleared gate.
 
 **The corpus has no equivalent guarantee** — there the `BC <ver> / test` legs ARE the required
-contexts (`verify-execution-not-the-tick.md` § "Which legs were ever going to run it" says
-which), so a dispatched leg reports a check run with the gating name. Never dispatch
-a corpus leg expecting it to turn a PR green, and check `gh pr checks --required` rather than
-assuming either way (corpus PR #144).
+contexts (`verify-execution-not-the-tick.md` § "Which legs were ever going to run it"), so a
+dispatched leg reports a check run with the gating name. Never dispatch a corpus leg expecting
+it to turn a PR green, and check `gh pr checks --required` rather than assuming (corpus PR #144).
 
 #### Read a corpus run's `event` before its leg set — a dispatch has ONE leg
 
@@ -576,30 +387,19 @@ fewer means you are holding a dispatch, which is a second opinion under this sec
 **Validate `$head` before interpolating it — the two ways it can be wrong fail in opposite
 directions.** An **abbreviated** SHA returns an empty list that reads as "no runs"; an **empty**
 one drops the filter entirely and returns the repository's whole run history, well-formed and
-attached to no commit you asked about (measured 2026-09-23: `head_sha=` answers the whole
-history's `total_count`, `head_sha=84a63b26` answers `0`). The second is the dangerous one, and a
-check for an empty *result* cannot catch it — which is why the `grep -E` above refuses rather
-than letting an unset variable through (#3389's sixth mechanism).
+attached to no commit you asked about. The second is the dangerous one, and a check for an empty
+*result* cannot catch it — which is why the `grep -E` above refuses rather than letting an unset
+variable through (#3389's sixth mechanism).
 
-**`gh pr checks` can answer this, but its default output does not** — the four columns it
-prints are name, state, duration and link, so the discriminator is absent unless you ask for
-it by name with `--json name,event,link`. The field is there; nothing tells a reader the
-question exists, which is why the error is cheap to make and invisible afterwards.
+**`gh pr checks` can answer this, but its default output does not** — it prints name, state,
+duration and link, so the discriminator is absent unless you ask for it by name with
+`--json name,event,link`. Two review agents reached opposite wrong verdicts off one head this
+way (#3389; corpus PR #254 in `docs/incidents/ci-verdicts.md`).
 
-Measured on corpus PR #254, head `84a63b26…`: run `34118581202` (`workflow_dispatch`) carries
-one cloud leg, run `34117863109` (`pull_request`) carries them all. Two review agents reached
-opposite wrong verdicts off one head (#3389); the derivation is in
-`docs/incidents/ci-verdicts.md`.
-
-**Fallback, when a workflow has no per-leg dispatch** — push an empty commit:
-
-```bash
-git commit --allow-empty -m "chore: re-run CI to check a leg-set flake (no content change)"
-git push
-```
-
-Same tree, so still "the same code", but it spends a full-matrix run in a queue shared across
-the whole account. Prefer the dispatch.
+**Fallback, when a workflow has no per-leg dispatch** — push an empty commit
+(`git commit --allow-empty -m "chore: re-run CI to check a leg-set flake (no content change)"`,
+then `git push`). Same tree, so still "the same code", but it spends a full-matrix run in a
+queue shared across the whole account. Prefer the dispatch.
 
 ### What neither of these is
 
@@ -610,19 +410,12 @@ flake and go fix it. **Nobody bypasses a red required check**, and re-rolling CI
 failure will not recur is not sanctioned by any mechanism; Actions concurrency is scoped per
 account, so each attempt spends the whole account's shared queue (corpus PR #145).
 
-### Deliberately not in `tools/ci-wait.py`
-
-`ci-wait.py` answers "has this PR's required check reported a verdict on its current head", a
-different question from "get me an independent second run of this exact commit". Automating the
-dispatch would be a new, narrowly-scoped tool, not an addition to it.
-
 ## Sister rules
 
 - `no-backgrounding-long-commands.md` — how to wait on anything long-running
 - `branch-and-pr.md` — branch naming, `Closes #N`, the assignee boundary
 - `verify-execution-not-the-tick.md` — the corpus-side companion: a green leg does not
   prove the tests you added executed, and the check for that false-zeros
-- `guards-need-a-third-state.md` — why exit 3 exists at all, and the four other guards
-  that did or do resolve "could not tell" toward success
+- `guards-need-a-third-state.md` — why exit 3 exists at all
 
 History: docs/incidents/ci-verdicts.md
