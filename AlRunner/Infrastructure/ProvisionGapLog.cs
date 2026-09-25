@@ -18,10 +18,11 @@
 //   bottom of the run concludes their AL is broken. It is not; their package cache is
 //   unprovisioned, and the runner said so, 2,600 lines earlier.
 //
-// A COLLECTOR, NOT A REPLACEMENT
-//   Report still writes to stderr exactly as before (.claude/rules/loud-failures.md — nothing
-//   here gets quieter) and only ALSO records. The summary is a second, findable statement of
-//   the same thing, not a relocation of the first.
+// PRINTED ONCE, AT THE END (#4560)
+//   Every gap reaches the "Action needed" block right before the Result line, once per app —
+//   printing each at discovery too repeated it per dependency edge (17 blocks for 7 apps).
+//   --verbose still prints it at discovery. Nothing is dropped: every bucket, including one
+//   that failed to compile or execute, carries its gaps to that block.
 namespace AlRunner.Infrastructure;
 
 internal static class ProvisionGapLog
@@ -39,10 +40,13 @@ internal static class ProvisionGapLog
         lock (_lock) _gaps = new List<string>();
     }
 
-    /// <summary>Report one gap: loud on stderr (unchanged), and recorded for the summary.</summary>
+    /// <summary>
+    /// Report one gap: recorded for the run's closing "Action needed" block, which prints it
+    /// once per app (#4560). Written at discovery only under --verbose.
+    /// </summary>
     internal static void Report(string message)
     {
-        Console.Error.WriteLine(message);
+        if (Log.Verbose) Console.Error.WriteLine(message);
         lock (_lock) _gaps.Add(message);
     }
 

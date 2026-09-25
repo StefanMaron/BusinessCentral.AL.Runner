@@ -1056,6 +1056,7 @@ jobs:
               tests/runner-extras/metatable-cache-null-second \
               --package-cache "$HOME/.al-runner/platform-apps" \
               --package-cache "$HOME/.al-runner/test-apps" \
+              --show-pass \
               --strict > metatable-cache-null.log 2>&1 || rc=$?
           command grep -E '^(PASS|FAIL|ERROR) |→ [0-9]+P/' metatable-cache-null.log || true
           if [ "$rc" -ne 0 ]; then
@@ -1107,6 +1108,7 @@ jobs:
               tests/runner-extras/rnce-second \
               --package-cache "$HOME/.al-runner/platform-apps" \
               --package-cache "$HOME/.al-runner/test-apps" \
+              --show-pass \
               --strict > rnce.log 2>&1 || rc=$?
           command grep -E '^(PASS|FAIL|ERROR) |→ [0-9]+P/' rnce.log || true
           if [ "$rc" -ne 0 ]; then
@@ -1174,6 +1176,7 @@ jobs:
               tests/runner-extras/app-group-visibility-b \
               --package-cache "$HOME/.al-runner/platform-apps" \
               --package-cache "$HOME/.al-runner/test-apps" \
+              --show-pass \
               --strict > app-group-visibility-cb.log 2>&1 || rc=$?
           command grep -E '^(PASS|FAIL|ERROR) |→ [0-9]+P/' app-group-visibility-cb.log || true
           if [ "$rc" -ne 0 ]; then
@@ -1371,7 +1374,8 @@ jobs:
               exit 1
               ;;
           esac
-          if ! grep -Eq '^  pass:[[:space:]]+[1-9][0-9]*$' smoke.log; then
+          # The runner's counts line (Reporter.PrintSummary, #4562): `Tests: N   passed P   failed F ...`.
+          if ! grep -Eq '^Tests: [0-9]+ +passed [1-9][0-9]* ' smoke.log; then
             echo "::error::smoke output did not include a passing-test summary line"
             exit 1
           fi

@@ -385,11 +385,9 @@ internal static class ParallelFanOut
         Console.WriteLine("=================================================================");
         Console.WriteLine($"al-runner — aggregate across {shards.Count} worker process(es)");
         Console.WriteLine("=================================================================");
-        Console.WriteLine($"Tests:         {tests} total");
-        Console.WriteLine($"  pass:        {tests - failures - errors - skipped}");
-        Console.WriteLine($"  fail:        {failures}");
-        Console.WriteLine($"  error:       {errors}");
-        Console.WriteLine($"  skipped:     {skipped}");
+        // The same counts line Reporter.PrintSummary prints (#4562), so one reader serves both.
+        Console.WriteLine($"Tests: {tests}   passed {tests - failures - errors - skipped}   "
+            + $"failed {failures}   errors {errors}   skipped {skipped}");
         if (notRun > 0)
             Console.WriteLine($"  NOT RUN:     {notRun} bundle(s) — COMPILE FAIL or EXEC FAIL in a " +
                                "shard above, excluded from the totals; see that shard's output for which one");

@@ -136,7 +136,7 @@ public sealed class DeferredPlatformAppsProvisioningTests
             var (output, exit) = RunIsolated(bundle, scratch);
 
             Assert.True(exit == 0, $"expected a green run without the platform apps. exit={exit}\n{output}");
-            Assert.Contains("pass:        1", output);
+            Assert.Contains("passed 1 ", output);
             Assert.Contains(DeferredGreenNote, output);
             Assert.DoesNotContain(RefusalText, output);
         });

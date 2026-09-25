@@ -56,7 +56,7 @@ public class RunSeedTests
         var unseeded = RunRunner($"\"{bundle}\"");
 
         // Seeded run reports its seed on the console and in JUnit.
-        Assert.Contains($"seed: {seed}", full.Output);
+        Assert.Contains($"Seed:  {seed}", full.Output);   // the summary's seed line (#4562)
         Assert.Contains($"<property name=\"seed\" value=\"{seed}\"", File.ReadAllText(junit));
 
         // Each plain test starts on exactly its derived sequence.
@@ -80,8 +80,8 @@ public class RunSeedTests
         Assert.Contains($"Codeunit{CodeunitId}.D_RandomizeNoSeed called Randomize() without a seed", full.Output);
 
         // No --seed: a generated seed is printed, and it is the one the tests used.
-        var printed = Regex.Match(unseeded.Output, @"^seed: (-?\d+)\r?$", RegexOptions.Multiline);
-        Assert.True(printed.Success, "no `seed: N` line without --seed:\n" + unseeded.Output);
+        var printed = Regex.Match(unseeded.Output, @"^Seed:\s+(-?\d+)\b", RegexOptions.Multiline);
+        Assert.True(printed.Success, "no `Seed:  N` line without --seed:\n" + unseeded.Output);
         var generated = int.Parse(printed.Groups[1].Value);
         Assert.NotEqual(seed, generated);
         Assert.Equal(Expected(RunSeed.Derive(generated, CodeunitId, "A_Plain")), Values(unseeded.Output, "A_Plain"));
@@ -99,7 +99,7 @@ public class RunSeedTests
         const int otherId = 62503;
         var r = RunRunner($"--jobs 2 \"{WriteFixture()}\" \"{WriteFixture(otherId)}\"");
 
-        var seeds = Regex.Matches(r.Output, @"^seed: (-?\d+)\r?$", RegexOptions.Multiline)
+        var seeds = Regex.Matches(r.Output, @"^Seed:\s+(-?\d+)\b", RegexOptions.Multiline)
             .Select(m => int.Parse(m.Groups[1].Value)).ToList();
         Assert.True(seeds.Count == 2, $"expected one seed line per worker, got {seeds.Count}:\n{r.Output}");
         Assert.Single(seeds.Distinct());

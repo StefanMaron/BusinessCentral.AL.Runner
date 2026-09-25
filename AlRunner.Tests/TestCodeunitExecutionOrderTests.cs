@@ -205,7 +205,7 @@ public sealed class TestCodeunitExecutionOrderTests : IDisposable
                 "62295.AlphaDeclaredSecond", "62295.ZetaDeclaredFirst",
             },
             ran.OrderBy(x => x, StringComparer.Ordinal).ToArray());
-        Assert.Contains("pass:        6", output);
+        Assert.Contains("passed 6 ", output);
     }
 
     /// <summary>

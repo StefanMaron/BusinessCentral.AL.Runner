@@ -1,0 +1,24 @@
+{
+  "id": "4f5e62a1-7c3b-4d8e-9a45-1b2c3d4e4562",
+  "name": "Runner Tests Fixture - Run Summary",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "One passing and one failing test, for the default run output (#4559).",
+  "description": "Pins what a default run prints for one app with one pass and one fail: the failure entry, one counts line, the seed with a replay command, and the Result line (#4562, #4563, #4566).",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "idRanges": [
+    {
+      "from": 50150,
+      "to": 50159
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

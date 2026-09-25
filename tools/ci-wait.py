@@ -755,6 +755,10 @@ def print_corpus_pr_states(pr: str, checks=_UNSET) -> None:
 # to one major returns zero for the other, in the shape of a result
 # (verify-execution-not-the-tick.md, trap 1).
 _FAIL_LINE = re.compile(r"^\S+Z\s+FAIL\s+(Codeunit(\d+)\.\S+)")
+# The runner's own failure entry since #4566 leads with the codeunit's NAME and keeps the id in
+# the parenthesis: `FAIL  "Probe Customer Test".CustomerNameFails (Codeunit50150, 194 ms)`.
+# Without this second shape every red runner leg would read as "no corpus FAIL lines".
+_FAIL_LINE_NAMED = re.compile(r'^\S+Z\s+FAIL\s+"[^"]*"\.(\S+)\s+\(Codeunit(\d+)[,)]')
 
 
 def failing_codeunits(log: str) -> dict[str, int] | None:
@@ -774,9 +778,12 @@ def failing_codeunits(log: str) -> dict[str, int] | None:
     seen: dict[str, set[str]] = {}
     for line in log.split("\n"):
         m = _FAIL_LINE.match(line.strip())
-        if not m:
+        if m:
+            seen.setdefault(m.group(2), set()).add(m.group(1))
             continue
-        seen.setdefault(m.group(2), set()).add(m.group(1))
+        n = _FAIL_LINE_NAMED.match(line.strip())
+        if n:
+            seen.setdefault(n.group(2), set()).add(f"Codeunit{n.group(2)}.{n.group(1)}")
     return {cu: len(names) for cu, names in seen.items()}
 
 

@@ -189,10 +189,10 @@ public sealed class CoverageTests : IDisposable
             $"--coverage-out \"{Path.Combine(_scratch, "cobertura.xml")}\"");
 
         Assert.Equal(offExit, onExit);
-        Assert.Contains("pass:        1", offOutput);
-        Assert.Contains("fail:        1", offOutput);
-        Assert.Contains("pass:        1", onOutput);
-        Assert.Contains("fail:        1", onOutput);
+        Assert.Contains("passed 1 ", offOutput);
+        Assert.Contains("failed 1 ", offOutput);
+        Assert.Contains("passed 1 ", onOutput);
+        Assert.Contains("failed 1 ", onOutput);
     }
 
     /// <summary>

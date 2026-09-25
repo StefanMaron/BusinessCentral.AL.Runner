@@ -225,7 +225,7 @@ public class WatchBurstSwitchTests
             var cycle1 = Segment(0, m1);
             Assert.Contains("PASS", cycle1);
             Assert.Contains(TestName, cycle1);
-            Assert.DoesNotContain("FAIL  Codeunit", cycle1);
+            Assert.Empty(RunnerFailureLines.All(cycle1));
 
             // The burst switch: seven writes (F0..F5, then Sum LAST) with gaps well below
             // the 250ms default quiet window, spread over ~900ms total — the same shape as

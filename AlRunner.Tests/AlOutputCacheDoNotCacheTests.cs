@@ -112,8 +112,8 @@ public sealed class AlOutputCacheDoNotCacheTests : IDisposable
         var run = RunBundle(bundle, pkgDir, cacheDir);
 
         Assert.Equal(0, run.ExitCode);
-        Assert.Contains("pass:        2", run.Output);
-        Assert.Contains("fail:        0", run.Output);
+        Assert.Contains("passed 2 ", run.Output);
+        Assert.Contains("failed 0 ", run.Output);
 
         var written = Directory.GetFiles(cacheDir, "*.dll");
         Assert.True(written.Length == 0,
@@ -161,7 +161,7 @@ public sealed class AlOutputCacheDoNotCacheTests : IDisposable
         Assert.Equal(0, warm.ExitCode);
         Assert.Contains("[cache] HIT", warm.Output);
         Assert.DoesNotContain("[cache] MISS", warm.Output);
-        Assert.Contains("pass:        2", warm.Output);
+        Assert.Contains("passed 2 ", warm.Output);
     }
 
     // ── arm 3: the poisoning is gone ──────────────────────────────────────────────────────

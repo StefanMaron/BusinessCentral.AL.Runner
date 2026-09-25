@@ -34,7 +34,7 @@ public sealed class PartialCompanyInitAcceptanceEscalationTests
         Assert.True(run.Exit == 1,
             $"a failing test earns exit 1; accepting the abort must not lower it to 0. "
             + $"exit={run.Exit}\n{run.Output}");
-        Assert.Contains("fail:        1", run.Output);
+        Assert.Contains("failed 1 ", run.Output);
         // Accepted, therefore recorded — the acceptance is not a silencer.
         Assert.Contains("Company initialization: INCOMPLETE", run.Output);
         Assert.Contains($"[accepted: {AcceptedBecause}]", run.Output);

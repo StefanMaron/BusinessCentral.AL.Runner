@@ -34,22 +34,11 @@ JUNIT = """<?xml version="1.0" encoding="utf-8"?>
 </testsuites>
 """
 
-CLEAN_LOG = """al-runner — test run summary
-=================================================================
-Buckets:       1 total
-  ran:         1
-  compile-fail:0
-  exec-fail:   0
-Tests:         9496 total
-  pass:        2373
-  fail:        7000
-  error:       120
-  skipped:     3
-Time:
-  AL emit:     412.0s
-  C# compile:  88.1s
-  test run:    3821.4s
-  total:       4321.5s
+CLEAN_LOG = """
+Tests: 9496   passed 2373   failed 7000   errors 120   skipped 3        Time: 4321.5 s (wall 4400.2 s)
+Seed:  12345   replay one failure: al-runner --seed 12345 --test Codeunit134000.B Tests-ERM
+
+Result: FAILED, exit code 1 (at least one test failed or errored)
 """
 
 META = {"bucket": "Tests-ERM", "bc_version": "28.4.53241.54318", "test_data": True, "reader": "v0.1.1"}
@@ -69,8 +58,10 @@ class ScanLogTests(unittest.TestCase):
     def test_a_clean_log_has_no_caveats_and_keeps_the_summary_block(self):
         scan = mbs.scan_log(CLEAN_LOG)
         self.assertEqual(scan["caveats"], [])
-        self.assertIn("Tests:         9496 total", scan["summary_block"])
-        self.assertIn("  total:       4321.5s", scan["summary_block"])
+        self.assertIn("Tests: 9496   passed 2373   failed 7000   errors 120", scan["summary_block"])
+        self.assertIn("Time: 4321.5 s", scan["summary_block"])
+        # The block ends at the blank line: the Result line is not part of it.
+        self.assertNotIn("Result:", scan["summary_block"])
 
     def test_lost_bundles_resumes_and_not_run_lines_are_caveats(self):
         # The per-bundle header is written the way Reporter.PrintPerTest actually writes it —

@@ -93,8 +93,8 @@ public sealed class CrossMajorNoteTests
 
         Assert.Equal(0, exit);
         Assert.Contains("PASS  Codeunit60950.CrossMajorNote_MismatchedDeclaredMajor_StillRunsAndPasses", stdout);
-        Assert.Contains("pass:        1", stdout);
-        Assert.Contains("fail:        0", stdout);
+        Assert.Contains("passed 1 ", stdout);
+        Assert.Contains("failed 0 ", stdout);
 
         // Nothing about the mismatch at all — neither the retired alarming wording nor the
         // new note. A condition with no measured divergence risk does not belong in an

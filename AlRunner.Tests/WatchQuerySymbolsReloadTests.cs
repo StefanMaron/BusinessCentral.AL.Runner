@@ -174,7 +174,7 @@ public class WatchQuerySymbolsReloadTests
                     // Asserted rather than assumed: a cycle in which the test did not run at all
                     // would satisfy a DoesNotContain("FAIL") check trivially.
                     Assert.Contains(TestLabel, window);
-                    Assert.DoesNotContain($"FAIL  {TestLabel}", window);
+                    Assert.False(RunnerFailureLines.Failed(window, 70623, TestName), window);
                     Assert.Contains($"PASS  {TestLabel}", window);
                 });
             }

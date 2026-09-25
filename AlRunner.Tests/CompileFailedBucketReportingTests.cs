@@ -147,8 +147,8 @@ public sealed class CompileFailedBucketReportingTests
     {
         var output = Summarise(CleanBucket(), CompileFailedBucket());
 
-        Assert.Contains("Tests:         1 total", output, StringComparison.Ordinal);
-        Assert.Contains("  pass:        1", output, StringComparison.Ordinal);
-        Assert.Contains("  fail:        0", output, StringComparison.Ordinal);
+        Assert.Contains("Tests: 1 ", output, StringComparison.Ordinal);
+        Assert.Contains("passed 1 ", output, StringComparison.Ordinal);
+        Assert.Contains("failed 0 ", output, StringComparison.Ordinal);
     }
 }

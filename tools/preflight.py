@@ -2867,8 +2867,13 @@ CORPUS_APP_ENUMERATOR = "scripts/corpus-app-dirs.py"
 # (`— COMPILE FAIL`, `— EXEC FAIL`, `— SUITE ERRORS (n)`). The `=== ` with a
 # trailing space is what keeps the summary block's row of `=` out of it.
 _CORPUS_BUCKET = re.compile(r"^=== (?P<name>[^=].*?) ===$")
-_CORPUS_TOTAL = re.compile(r"^Tests:\s+(\d+) total\s*$")
-_CORPUS_FIELD = re.compile(r"^ {2}(pass|fail|error|skipped):\s+(\d+)\s*$")
+# The runner's ONE counts line (#4562): `Tests: 2   passed 1   failed 1   errors 0`, an optional
+# `   skipped N`, then the time. Each field is read on its own, so a line that lost `failed` or
+# `errors` yields a summary WITHOUT that key -- the third state check_corpus refuses (#3361) --
+# rather than failing to match and reading as "no summary".
+_CORPUS_COUNTS = re.compile(r"^Tests: (\d+)\s")
+_CORPUS_COUNT_FIELD = re.compile(r"\b(passed|failed|errors|skipped) (\d+)\b")
+_CORPUS_FIELD_KEY = {"passed": "pass", "failed": "fail", "errors": "error", "skipped": "skipped"}
 
 
 @dataclass
@@ -2935,15 +2940,13 @@ def parse_corpus_run(text: str, parser=None) -> CorpusRun:
                 current = name
                 sections.setdefault(name, [])
             continue
-        if line.startswith("===="):        # the summary block's separator
-            current = None
-        mt = _CORPUS_TOTAL.match(line.rstrip())
+        mt = _CORPUS_COUNTS.match(line)
         if mt:
+            current = None                 # the summary starts here; no bundle owns it
             summary = {"total": int(mt.group(1))}
-            continue
-        mf = _CORPUS_FIELD.match(line.rstrip())
-        if mf and summary is not None:
-            summary[mf.group(1)] = int(mf.group(2))
+            counts_part = line.split("Time:", 1)[0]
+            for key, value in _CORPUS_COUNT_FIELD.findall(counts_part):
+                summary[_CORPUS_FIELD_KEY[key]] = int(value)
             continue
         if current is not None:
             sections[current].append(line)

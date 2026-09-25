@@ -232,10 +232,20 @@ public static class Reporter
         public bool IsEmpty => Tests == 0 && Pass == 0 && Fail == 0 && Error == 0;
     }
 
+    /// <summary>
+    /// What the summary needs beyond the buckets (#4562). <see cref="Seed"/> null prints no seed
+    /// line; <see cref="ReplayTarget"/> is the bundle argument(s) the replay command names.
+    /// </summary>
+    public sealed record SummaryOptions(bool Verbose = false, int? Seed = null, string? ReplayTarget = null);
+
     public static void PrintSummary(IReadOnlyList<BucketResult> buckets, TextWriter w)
-        => PrintSummary(buckets, w, default);
+        => PrintSummary(buckets, w, default, new SummaryOptions(Verbose: Log.Verbose));
 
     public static void PrintSummary(IReadOnlyList<BucketResult> buckets, TextWriter w, CarriedTotals carried)
+        => PrintSummary(buckets, w, carried, new SummaryOptions(Verbose: Log.Verbose));
+
+    public static void PrintSummary(IReadOnlyList<BucketResult> buckets, TextWriter w, CarriedTotals carried,
+        SummaryOptions options)
     {
         int totalTests = 0, pass = 0, fail = 0, err = 0, skipped = 0;
         int passOos = 0, passKnownGap = 0, passDivergence = 0;
@@ -283,32 +293,19 @@ public static class Reporter
                 else err++;
             }
         }
-        w.WriteLine();
-        w.WriteLine("=================================================================");
-        w.WriteLine("al-runner — test run summary");
-        w.WriteLine("=================================================================");
-        w.WriteLine($"Buckets:       {buckets.Count} total");
-        w.WriteLine($"  ran:         {buckets.Count - compileFailed - execFailed}");
-        w.WriteLine($"  compile-fail:{compileFailed}");
-        w.WriteLine($"  exec-fail:   {execFailed}");
-        // Deliberately NOT folded into `compile-fail`: these buckets really did run and their
-        // surviving results are real, so calling them compile failures would misstate the run
-        // in the other direction. Omitted entirely when there is nothing to say, so a clean
-        // run's summary is byte-identical to before.
-        if (partialBuckets.Count > 0)
-            w.WriteLine($"  partial:     {partialBuckets.Count}  (ran, but {lostSuites} suite(s) "
-                + "did not — see \"Suite errors\" below)");
         if (!carried.IsEmpty)
         {
-            // Named rather than folded in silently: these tests ran in an EARLIER process of this
-            // same run, before a watchdog abort forced a resume. A reader who cannot see that
-            // cannot tell this total from a single clean run's.
-            w.WriteLine($"  (carried from earlier attempt(s): {carried.Tests} tests, "
-                + $"{carried.Pass} pass, {carried.Fail} fail, {carried.Error} error)");
             totalTests += carried.Tests; pass += carried.Pass; fail += carried.Fail; err += carried.Error;
         }
-        w.WriteLine($"Tests:         {totalTests} total");
-        w.WriteLine($"  pass:        {pass}");
+        var wall = DateTime.Now - System.Diagnostics.Process.GetCurrentProcess().StartTime;
+        w.WriteLine();
+        // #4562: ONE counts line, machine-read (tools/preflight.py, bc-tests.yml's smoke step,
+        // AlRunner.Tests). Every count is followed by at least one space, so `passed 1 ` never
+        // matches `passed 10`. Reshape it only together with those readers.
+        // Invariant($): #2968 — ambient-culture formatting printed `7,5 s` on a comma-decimal LANG.
+        w.WriteLine(Invariant($"Tests: {totalTests}   passed {pass}   failed {fail}   errors {err}")
+            + (skipped > 0 ? Invariant($"   skipped {skipped}") : "")
+            + Invariant($"        Time: {(emit + comp + run).TotalSeconds:F1} s (wall {wall.TotalSeconds:F1} s)"));
         // Manifest reclassifications (docs/expectations.md) are surfaced DISTINCTLY so
         // a green run that got there via quarantined tests does not read as an
         // unqualified green. Zero-count lines are omitted: no manifest, no noise.
@@ -318,10 +315,11 @@ public static class Reporter
             w.WriteLine($"    pass-known-gap:  {passKnownGap}");
         if (passDivergence > 0)
             w.WriteLine($"    pass-divergence: {passDivergence}");
-        w.WriteLine($"  fail:        {fail}");
-        w.WriteLine($"  error:       {err}");
-        if (skipped > 0)
-            w.WriteLine($"  skipped:     {skipped}");
+        if (!carried.IsEmpty)
+            // Named rather than folded in silently: these tests ran in an EARLIER process of this
+            // same run, before a watchdog abort forced a resume (#2280).
+            w.WriteLine($"  (carried from earlier attempt(s): {carried.Tests} tests, "
+                + $"{carried.Pass} pass, {carried.Fail} fail, {carried.Error} error)");
         // #2880: the single number the incident log did not have. `fail: 7` sitting next to
         // `partial: 1` leaves the reader to work out whether the 7 have anything to do with the
         // 1 — and the answer, that time, was "all of them". Printed only when there is something
@@ -336,27 +334,31 @@ public static class Reporter
             w.WriteLine("               fail — so treat them as UNVERIFIED: fix the suite "
                 + "errors below and re-run first.");
         }
-        w.WriteLine($"Time:");
-        // Invariant($) throughout the numeric output below: #2968. An interpolated `:F1` or
-        // `:N0` formats with the AMBIENT culture, so a developer on a comma-decimal LANG read
-        // `total: 7,5s` while CI read `7.5s` — and the summary is machine-read (asserted
-        // literally in AlRunner.Tests, and the source of --output-json and the JUnit report).
-        w.WriteLine(Invariant($"  AL emit:     {emit.TotalSeconds:F1}s"));
-        w.WriteLine(Invariant($"  C# compile:  {comp.TotalSeconds:F1}s"));
-        w.WriteLine(Invariant($"  test run:    {run.TotalSeconds:F1}s"));
-        w.WriteLine(Invariant($"  total:       {(emit + comp + run).TotalSeconds:F1}s"));
-        // #1936: `total:` above is only emit+compile+run — it does NOT include the
-        // per-process fixed costs paid before any of those phases start (BC runtime
-        // patch application, dependency/package-cache indexing, install-seed-dep
-        // company baseline, etc. — see COMMON.md's boot-overhead profile). A warm run
-        // of a single-test fixture can report "total: 6.3s" while the process actually
-        // took ~23s wall clock, which reads as a lie to anyone timing the CLI from the
-        // outside. `wall:` is the real process wall-clock — OS process start time to
-        // this print — so the two numbers together show both "how long the phases we
-        // measure took" and "how long the process actually took", instead of only the
-        // former pretending to be the latter.
-        var wall = DateTime.Now - System.Diagnostics.Process.GetCurrentProcess().StartTime;
-        w.WriteLine(Invariant($"  wall:        {wall.TotalSeconds:F1}s"));
+        // #4562: per-app rows only when an app did not run in full — otherwise they repeat the
+        // counts line. Always under --verbose.
+        if (options.Verbose || compileFailed > 0 || execFailed > 0 || partialBuckets.Count > 0)
+        {
+            w.WriteLine($"Apps:          {buckets.Count} total");
+            w.WriteLine($"  ran:         {buckets.Count - compileFailed - execFailed}");
+            w.WriteLine($"  compile-fail:{compileFailed}");
+            w.WriteLine($"  exec-fail:   {execFailed}");
+            // Deliberately NOT folded into `compile-fail`: these apps really did run and their
+            // surviving results are real (#2762).
+            if (partialBuckets.Count > 0)
+                w.WriteLine($"  partial:     {partialBuckets.Count}  (ran, but {lostSuites} suite(s) "
+                    + "did not — see \"Suite errors\" below)");
+        }
+        // #4562: the phase split behind --verbose — it reads `0.0s` on every cache hit.
+        // `wall:` (#1936) is the process wall clock, so it covers boot costs `total:` does not.
+        if (options.Verbose)
+        {
+            w.WriteLine("Time breakdown:");
+            w.WriteLine(Invariant($"  AL emit:     {emit.TotalSeconds:F1}s"));
+            w.WriteLine(Invariant($"  C# compile:  {comp.TotalSeconds:F1}s"));
+            w.WriteLine(Invariant($"  test run:    {run.TotalSeconds:F1}s"));
+            w.WriteLine(Invariant($"  total:       {(emit + comp + run).TotalSeconds:F1}s"));
+            w.WriteLine(Invariant($"  wall:        {wall.TotalSeconds:F1}s"));
+        }
         // #2262: --test-data loads a table on first touch, so its outcome is only complete
         // once the run is. Under the eager policy this line was printed by the provisioner
         // itself, before any test ran; there is no such moment any more. Absent the flag
@@ -392,7 +394,7 @@ public static class Reporter
         if (partialBuckets.Count > 0)
         {
             w.WriteLine("-----------------------------------------------------------------");
-            w.WriteLine($"Suite errors: {lostSuites} — in {partialBuckets.Count} bucket(s) that "
+            w.WriteLine($"Suite errors: {lostSuites} — in {partialBuckets.Count} app(s) that "
                 + "otherwise ran. Every test these suites declare is MISSING from the counts "
                 + "above, so this run covers less than it discovered.");
             foreach (var b in partialBuckets)
@@ -418,7 +420,7 @@ public static class Reporter
         if (failedBuckets.Count > 0)
         {
             w.WriteLine("-----------------------------------------------------------------");
-            w.WriteLine($"Compile failures: {failedBuckets.Count} bucket(s) did not compile, so "
+            w.WriteLine($"Compile failures: {failedBuckets.Count} app(s) did not compile, so "
                 + "NONE of the tests they declare appear in the counts above — this run covers "
                 + "less than it discovered.");
             foreach (var b in failedBuckets)
@@ -448,7 +450,7 @@ public static class Reporter
         if (deadBuckets.Count > 0)
         {
             w.WriteLine("-----------------------------------------------------------------");
-            w.WriteLine($"Execution failures: {deadBuckets.Count} bucket(s) compiled and loaded and "
+            w.WriteLine($"Execution failures: {deadBuckets.Count} app(s) compiled and loaded and "
                 + "then failed to run, so NONE of the tests they declare appear in the counts above "
                 + "— this run covers less than it discovered. The AL itself built cleanly.");
             foreach (var b in deadBuckets)
@@ -479,35 +481,98 @@ public static class Reporter
             w.WriteLine("  → setup rows the codeunit had not reached are missing, so a failure "
                 + "reading one is caused by this, not by the AL under test.");
         }
-        var gaps = buckets
-            .SelectMany(b => b.ProvisionGaps ?? Array.Empty<string>())
-            .Distinct(StringComparer.Ordinal)
-            .ToList();
-        if (gaps.Count > 0)
+        // #4562: the seed belongs to the result — with a replay command when a test failed.
+        // docs/run-seed.md documents this line; keep the value on stdout.
+        if (options.Seed is int seed)
         {
-            w.WriteLine("-----------------------------------------------------------------");
-            // Counts them and gets out of the way. Two sources feed this and their consequences
-            // differ — an unservable dependency really does fail every call into it, while a
-            // symbol-only platform app falls back to service-tier DLL dispatch and often works.
-            // A heading asserting either one is wrong for the other half, and each block already
-            // carries its own consequence and its own fix command.
-            w.WriteLine($"Provisioning gaps: {gaps.Count} — the package cache could not fully serve this run.");
-            foreach (var g in gaps) w.WriteLine(g);
+            var firstFailing = buckets.Where(b => b.Stage == BucketStage.Ran)
+                .SelectMany(b => b.Tests)
+                .FirstOrDefault(t => t.Outcome is TestOutcome.Fail or TestOutcome.Error);
+            w.WriteLine(firstFailing == null
+                ? $"Seed:  {seed}"
+                : $"Seed:  {seed}   replay one failure: al-runner --seed {seed} --test "
+                    + $"{firstFailing.Codeunit}.{firstFailing.Method} {options.ReplayTarget ?? "<app>"}");
         }
-        w.WriteLine("=================================================================");
     }
 
-    // V1-style per-test output. By default prints only FAIL and ERROR entries (PASS is too
-    // noisy at thousands of tests). `showPass=true` adds PASS lines for parity with V1's
-    // `PASS  Codeunit.Method (Nms)` format.
+    /// <summary>
+    /// Everything the package cache could not serve, ONCE per app, as the last block before the
+    /// Result line (#4560). Nothing is printed at discovery (except under --verbose), so this is
+    /// the only place a default run names a gap. The entries are the discovery messages
+    /// verbatim — their wording is DependencyResolver's / ProvisionGapLog's, not this method's.
+    /// </summary>
+    public static void PrintActionNeeded(IReadOnlyList<BucketResult> buckets, TextWriter w)
+    {
+        var entries = ActionNeededEntries(buckets);
+        if (entries.Count == 0) return;
+        w.WriteLine();
+        w.WriteLine($"Action needed ({entries.Count}):");
+        foreach (var e in entries)
+            foreach (var line in e.Replace("\r\n", "\n").Split('\n'))
+                w.WriteLine("  " + line);
+    }
+
+    /// <summary>
+    /// The gaps across all buckets, one per app. The app is read from the message's leading
+    /// <c>[dep] Publisher/Name vX.Y.Z.W</c>; a message that does not start that way is keyed on
+    /// its whole text, so an unrecognised shape is repeated rather than dropped.
+    /// </summary>
+    internal static IReadOnlyList<string> ActionNeededEntries(IReadOnlyList<BucketResult> buckets)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var result = new List<string>();
+        foreach (var g in buckets.SelectMany(b => b.ProvisionGaps ?? Array.Empty<string>()))
+        {
+            var m = GapAppKey.Match(g);
+            var key = m.Success ? "app:" + m.Groups["app"].Value : "text:" + g;
+            if (seen.Add(key)) result.Add(g);
+        }
+        return result;
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex GapAppKey = new(
+        @"^\[dep\] (?:note: )?(?<app>\S[^\r\n]*? v\d+(?:\.\d+)*)\b",
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// The run's last line (#4562): the verdict and what the exit code means, in the same
+    /// words as `--help`'s exit-code table.
+    /// </summary>
+    public static string ResultLine(int exitCode, int? forcedFrom = null)
+    {
+        if (forcedFrom is int real && real != exitCode)
+            return $"Result: {(real == 0 ? "PASSED" : "FAILED")}, exit code {exitCode} "
+                + $"(--no-strict-exit; the run's own code is {real}: {ExitCodeMeaning(real)})";
+        return $"Result: {(exitCode == 0 ? "PASSED" : "FAILED")}, exit code {exitCode} ({ExitCodeMeaning(exitCode)})";
+    }
+
+    internal static string ExitCodeMeaning(int exitCode) => exitCode switch
+    {
+        0 => "all tests passed",
+        1 => "at least one test failed or errored",
+        2 => "the run is not clean: an app could not execute, an output file could not be written, "
+             + "or company initialization did not complete — see above",
+        3 => "an app could not compile",
+        4 => "--count-baseline: a suite's test count did not match its baseline",
+        5 => "an expectations entry matched no test",
+        6 => "--test selected no test",
+        _ => "see al-runner --help",
+    };
+
+    // Per-test output. FAIL and ERROR entries always; PASS lines only when `showPass`
+    // (--show-pass or --verbose, #4563). PASS keeps V1's `PASS  Codeunit.Method (Nms)` shape,
+    // which bc-tests.yml greps as `^PASS +<Codeunit.Method>( |$)`.
     public static void PrintPerTest(IReadOnlyList<BucketResult> buckets, TextWriter w, bool showPass)
     {
+        // #4562: one app's `=== <app> ===` header only repeats the summary; kept when PASS lines
+        // are listed, because tools/preflight.py counts PASS lines per header.
+        var headers = buckets.Count > 1 || showPass;
         foreach (var b in buckets)
         {
             if (b.Stage == BucketStage.CompileFailed)
             {
                 w.WriteLine();
-                w.WriteLine($"=== {Path.GetFileName(b.BucketPath)} — COMPILE FAIL ===");
+                w.WriteLine($"=== {BundleLabel(b.BucketPath)} — COMPILE FAIL ===");
                 foreach (var e in b.CompileErrors.Take(20)) w.WriteLine($"  {e}");
                 if (b.CompileErrors.Count > 20)
                     w.WriteLine($"  ... and {b.CompileErrors.Count - 20} more compile errors");
@@ -516,7 +581,7 @@ public static class Reporter
             if (b.Stage == BucketStage.ExecuteFailed)
             {
                 w.WriteLine();
-                w.WriteLine($"=== {Path.GetFileName(b.BucketPath)} — EXEC FAIL ===");
+                w.WriteLine($"=== {BundleLabel(b.BucketPath)} — EXEC FAIL ===");
                 if (b.ProcessError != null) w.WriteLine($"  {b.ProcessError}");
                 // #2779: an in-process bundle that failed at RUN time has no ProcessError — its
                 // diagnosis is in the suite-error list, the same list the COMPILE FAIL branch
@@ -535,7 +600,7 @@ public static class Reporter
             if (b.CompileErrors.Count > 0)
             {
                 w.WriteLine();
-                w.WriteLine($"=== {Path.GetFileName(b.BucketPath)} — SUITE ERRORS ({b.CompileErrors.Count}) ===");
+                w.WriteLine($"=== {BundleLabel(b.BucketPath)} — SUITE ERRORS ({b.CompileErrors.Count}) ===");
                 foreach (var e in b.CompileErrors.Take(20)) w.WriteLine($"  {e}");
                 if (b.CompileErrors.Count > 20)
                     w.WriteLine($"  ... and {b.CompileErrors.Count - 20} more suite errors");
@@ -558,7 +623,7 @@ public static class Reporter
             var visible = b.Tests.Where(t => showPass || t.Outcome != TestOutcome.Pass).ToList();
             if (visible.Count == 0) continue;
             w.WriteLine();
-            w.WriteLine($"=== {Path.GetFileName(b.BucketPath)} ===");
+            if (headers) w.WriteLine($"=== {BundleLabel(b.BucketPath)} ===");
             foreach (var t in visible)
             {
                 var label = t.Outcome switch
@@ -577,11 +642,13 @@ public static class Reporter
                 // consumer matches on the leading label and the `=== <bundle> ===` header, so a
                 // suffix is additive where a reformat would silently change what they count.
                 var suspectSuffix = IsSuspect(b, t) ? "  " + SuspectMarker(b) : "";
-                w.WriteLine($"{label} {t.Codeunit}.{t.Method} ({ms}ms){suspectSuffix}");
+                w.WriteLine(t.Outcome is TestOutcome.Fail or TestOutcome.Error
+                    ? $"{label} {FailureHeading(t, ms)}{suspectSuffix}"
+                    : $"{label} {t.Codeunit}.{t.Method} ({ms}ms){suspectSuffix}");
                 if (t.Outcome != TestOutcome.Pass)
                 {
                     if (!string.IsNullOrEmpty(t.Message))
-                        w.WriteLine($"      {t.Message}");
+                        w.WriteLine($"      {ConsoleMessage(t.Message)}");
                     // #2240: printed AFTER BC's own message and BEFORE the AL stack, so the
                     // failure still reads as BC reported it and the explanation sits next to it
                     // rather than in place of it. Absent evidence there is no line at all, which
@@ -603,6 +670,44 @@ public static class Reporter
             }
         }
     }
+
+    /// <summary>
+    /// The label a bundle is printed under: its directory name, with a trailing separator
+    /// removed first — <c>Path.GetFileName("appB/")</c> is empty, which printed <c>===  ===</c>
+    /// (#4562). The full path stays in --output-json and --out.
+    /// </summary>
+    internal static string BundleLabel(string bucketPath)
+    {
+        var trimmed = Path.TrimEndingDirectorySeparator(bucketPath);
+        var name = Path.GetFileName(trimmed);
+        return string.IsNullOrEmpty(name) ? trimmed : name;
+    }
+
+    /// <summary>
+    /// A failure entry's heading (#4566): the codeunit's AL name first, and its CodeunitN id in
+    /// the parenthesis, because --test / --exclude-test take the id. tools/ci-wait.py reads the
+    /// id out of this line — change both together.
+    /// </summary>
+    internal static string FailureHeading(TestResult t, long ms)
+    {
+        var name = t.CodeunitDisplayName;
+        return string.IsNullOrEmpty(name) || name == t.Codeunit
+            ? $"{t.Codeunit}.{t.Method} ({ms} ms)"
+            : $"\"{name}\".{t.Method} ({t.Codeunit}, {ms} ms)";
+    }
+
+    private const string DialogExceptionPrefix = "NavNCLDialogException: ";
+
+    /// <summary>
+    /// The failure message as the console shows it (#4566). <c>NavNCLDialogException</c> is BC's
+    /// type for an AL <c>Error()</c> or a failed assertion, so its name is dropped; every other
+    /// type name stays, because it points at a runner or provisioning problem. --output-json,
+    /// --out and JUnit carry <see cref="TestResult.Message"/> unchanged.
+    /// </summary>
+    internal static string ConsoleMessage(string message)
+        => message.StartsWith(DialogExceptionPrefix, StringComparison.Ordinal)
+            ? message[DialogExceptionPrefix.Length..]
+            : message;
 
     // Failure-classification summary — groups all failing tests by ClassifyTest output and
     // ranks descending by count. This is the "where to attack next" view: each line is a

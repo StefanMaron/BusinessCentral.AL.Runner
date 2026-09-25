@@ -185,9 +185,9 @@ public sealed class EmitExclusionLoudnessTests
         Assert.Contains("Broken_NeverRuns", output, StringComparison.Ordinal);
 
         // The counts, not just the lines: a number that cannot be reached by discarding a test.
-        Assert.Contains("Tests:         2 total", output, StringComparison.Ordinal);
-        Assert.Contains("  pass:        1", output, StringComparison.Ordinal);
-        Assert.Contains("  skipped:     1", output, StringComparison.Ordinal);
+        Assert.Contains("Tests: 2 ", output, StringComparison.Ordinal);
+        Assert.Contains("passed 1 ", output, StringComparison.Ordinal);
+        Assert.Contains("skipped 1 ", output, StringComparison.Ordinal);
         Assert.Contains("partial:     1", output, StringComparison.Ordinal);
 
         // Still a failure. Running the survivors is not a licence to call the run clean.
@@ -218,13 +218,13 @@ public sealed class EmitExclusionLoudnessTests
         {
             var (cold, coldExit) = RunRunnerOn(FixturePath, cacheDir: cache);
             Assert.Equal(3, coldExit);
-            Assert.Contains("  skipped:     1", cold, StringComparison.Ordinal);
+            Assert.Contains("skipped 1 ", cold, StringComparison.Ordinal);
 
             var (warm, warmExit) = RunRunnerOn(FixturePath, cacheDir: cache);
             Assert.Equal(3, warmExit);
             Assert.Contains("EMIT-EXCLUDED", warm, StringComparison.Ordinal);
-            Assert.Contains("  skipped:     1", warm, StringComparison.Ordinal);
-            Assert.Contains("  pass:        1", warm, StringComparison.Ordinal);
+            Assert.Contains("skipped 1 ", warm, StringComparison.Ordinal);
+            Assert.Contains("passed 1 ", warm, StringComparison.Ordinal);
         }
         finally
         {
@@ -259,7 +259,7 @@ public sealed class EmitExclusionLoudnessTests
         Assert.Contains("HealthyTests.Codeunit.al", output, StringComparison.Ordinal);
 
         // Refused means refused: no survivor ran, so no test result of any kind appears.
-        Assert.Contains("Tests:         0 total", output, StringComparison.Ordinal);
+        Assert.Contains("Tests: 0 ", output, StringComparison.Ordinal);
         Assert.DoesNotContain("ExclRef_ReachesTheDroppedCodeunitById (", output, StringComparison.Ordinal);
     }
 

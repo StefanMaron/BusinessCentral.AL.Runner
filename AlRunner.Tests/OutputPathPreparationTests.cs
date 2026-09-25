@@ -277,8 +277,8 @@ public sealed class OutputPathPreparationTests
             Assert.DoesNotContain("Unhandled exception", stderr);
             Assert.DoesNotContain("DirectoryNotFoundException", stderr);
             // Nothing ran: the summary banner the runner always prints is absent.
-            Assert.DoesNotContain("test run summary", stdout);
             Assert.DoesNotContain("Tests:", stdout);
+            Assert.DoesNotContain("Result:", stdout);
         }
         finally { Directory.Delete(root, recursive: true); }
     }

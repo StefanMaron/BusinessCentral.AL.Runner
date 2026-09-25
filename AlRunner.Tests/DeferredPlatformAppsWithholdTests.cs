@@ -323,7 +323,7 @@ public sealed class DeferredPlatformAppsWithholdTests
                 + $"--- output ---\n{r.Output}");
             Assert.Equal(0, r.DepAssembliesLoaded);
             Assert.True(r.Exit == 0, $"the run must still pass. exit={r.Exit}\n{r.Output}");
-            Assert.Contains("pass:        1", r.Output);
+            Assert.Contains("passed 1 ", r.Output);
         });
     }
 
@@ -352,7 +352,7 @@ public sealed class DeferredPlatformAppsWithholdTests
                 + "skipping it for every bundle would break exactly this one (#2223).\n"
                 + $"--- output ---\n{r.Output}");
             Assert.True(r.Exit == 0, $"the run must still pass. exit={r.Exit}\n{r.Output}");
-            Assert.Contains("pass:        1", r.Output);
+            Assert.Contains("passed 1 ", r.Output);
         });
     }
 

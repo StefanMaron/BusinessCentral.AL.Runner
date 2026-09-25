@@ -123,10 +123,10 @@ public sealed class CollateralFailureReportingTests
 
         // The real counts are untouched — a marker that changed the totals would be a second
         // wrong number, not a fix.
-        Assert.Contains("Tests:         3 total", summary, StringComparison.Ordinal);
-        Assert.Contains("pass:        1", summary, StringComparison.Ordinal);
-        Assert.Contains("fail:        1", summary, StringComparison.Ordinal);
-        Assert.Contains("error:       1", summary, StringComparison.Ordinal);
+        Assert.Contains("Tests: 3 ", summary, StringComparison.Ordinal);
+        Assert.Contains("passed 1 ", summary, StringComparison.Ordinal);
+        Assert.Contains("failed 1 ", summary, StringComparison.Ordinal);
+        Assert.Contains("errors 1 ", summary, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -141,8 +141,8 @@ public sealed class CollateralFailureReportingTests
 
         Assert.DoesNotContain("suspect:", summary, StringComparison.Ordinal);
         Assert.DoesNotContain("UNVERIFIED", summary, StringComparison.Ordinal);
-        Assert.Contains("fail:        1", summary, StringComparison.Ordinal);
-        Assert.Contains("error:       1", summary, StringComparison.Ordinal);
+        Assert.Contains("failed 1 ", summary, StringComparison.Ordinal);
+        Assert.Contains("errors 1 ", summary, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -157,8 +157,8 @@ public sealed class CollateralFailureReportingTests
                                 CleanBucketWithFailures("/intact"));
 
         Assert.Contains("suspect:     2", summary, StringComparison.Ordinal);
-        Assert.Contains("fail:        2", summary, StringComparison.Ordinal);
-        Assert.Contains("error:       2", summary, StringComparison.Ordinal);
+        Assert.Contains("failed 2 ", summary, StringComparison.Ordinal);
+        Assert.Contains("errors 2 ", summary, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -569,8 +569,8 @@ public sealed class CollateralFailureReportingTests
 
         // 1 fail + 1 error in the bucket, but the error is the named cause.
         Assert.Contains("suspect:     1", summary, StringComparison.Ordinal);
-        Assert.Contains("fail:        1", summary, StringComparison.Ordinal);
-        Assert.Contains("error:       1", summary, StringComparison.Ordinal);
+        Assert.Contains("failed 1 ", summary, StringComparison.Ordinal);
+        Assert.Contains("errors 1 ", summary, StringComparison.Ordinal);
     }
 
     /// <summary>

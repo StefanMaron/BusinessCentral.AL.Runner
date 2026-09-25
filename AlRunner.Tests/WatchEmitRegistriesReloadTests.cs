@@ -133,7 +133,7 @@ public class WatchEmitRegistriesReloadTests
                     // Contains first: a cycle in which the test did not run would satisfy the
                     // DoesNotContain("FAIL") check trivially.
                     Assert.Contains(t, window);
-                    Assert.DoesNotContain($"FAIL  {t}", window);
+                    Assert.False(RunnerFailureLines.Failed(window, 71845, t["Codeunit71845.".Length..]), window);
                     Assert.Contains($"PASS  {t}", window);
                 }
             }

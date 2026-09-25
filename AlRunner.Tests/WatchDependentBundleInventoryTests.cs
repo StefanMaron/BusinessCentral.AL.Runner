@@ -145,7 +145,7 @@ public class WatchDependentBundleInventoryTests
                 "ReportDataItems_DependencyAReport_IsListed",
                 "QueryMetadata_DependencyAQuery_IsListed",
             })
-                Assert.False(cycle.Contains($"FAIL  Codeunit62622.{crossDependencyTest}", StringComparison.Ordinal),
+                Assert.False(RunnerFailureLines.Failed(cycle, 62622, crossDependencyTest),
                     $"{label}: {crossDependencyTest} failed — the dependent bundle could not see its "
                     + "dependency's object. That is #2684: the per-bundle "
                     + "BcRuntime.ResetForNewBundleReload() erased the earlier bundle's registrations "
@@ -153,7 +153,7 @@ public class WatchDependentBundleInventoryTests
 
             // The edge the fix introduced, asserted by name for the same reason: C's OWN query,
             // lost from cycle 2 on when a negative memo taken during A's run outlived that run.
-            Assert.False(cycle.Contains("FAIL  Codeunit62622.QueryMetadata_OwnQuery_IsListed", StringComparison.Ordinal),
+            Assert.False(RunnerFailureLines.Failed(cycle, 62622, "QueryMetadata_OwnQuery_IsListed"),
                 $"{label}: the executing bundle's OWN query is missing from Query Metadata. A "
                 + "negative FindQueryType answer memoized during an EARLIER bundle's run in this "
                 + "cycle was served to this bundle — RecordPatches.ResetNegativeQueryMemosForNewBundle() "
@@ -161,8 +161,8 @@ public class WatchDependentBundleInventoryTests
 
             // The bar: a --watch cycle must answer as the equivalent one-shot CLI run does, which
             // for this fixture is 54/54.
-            Assert.Contains("pass:        54", cycle, StringComparison.Ordinal);
-            Assert.Contains("fail:        0", cycle, StringComparison.Ordinal);
+            Assert.Contains("passed 54 ", cycle, StringComparison.Ordinal);
+            Assert.Contains("failed 0 ", cycle, StringComparison.Ordinal);
         }
 
         try

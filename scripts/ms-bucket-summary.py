@@ -88,7 +88,8 @@ def known_blocker(log_text):
     return None
 
 
-SUMMARY_START = "al-runner — test run summary"
+# The runner's summary starts at its counts line (#4562): `Tests: N   passed P   failed F ...`.
+SUMMARY_START = re.compile(r"^Tests: \d+\s")
 
 RC_MEANING = {
     0: "all tests passed",
@@ -117,7 +118,7 @@ def scan_log(log_text):
     caveats = [l.rstrip() for l in lines if any(p.search(l) for p in CAVEAT_PATTERNS)]
     summary_block = ""
     for i, line in enumerate(lines):
-        if line.startswith(SUMMARY_START):
+        if SUMMARY_START.match(line):
             block = []
             for l in lines[i:]:
                 if block and not l.strip():

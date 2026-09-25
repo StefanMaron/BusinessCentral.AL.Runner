@@ -143,7 +143,7 @@ public sealed class MaskedTriggerErrorDiagnosisTests
 
             // BC's own message is still what the failure REPORTS. The fix adds; it does not
             // replace.
-            Assert.Contains("NavNCLDialogException: The TestPage is not open.",
+            Assert.Contains("\n      The TestPage is not open.",
                 masked, StringComparison.Ordinal);
 
             // And the cause the runner had been discarding is now beside it, named with the
@@ -173,7 +173,7 @@ public sealed class MaskedTriggerErrorDiagnosisTests
             // converted exception carries the AL table id that #2240's diagnosis needs. Both
             // explanations must be there: the converted cause, AND the empty table behind it.
             var setup = BlockFor(stdout, "MaskedSetupRecordError_CarriesBothExplanations");
-            Assert.Contains("NavNCLDialogException: The TestPage is not open.",
+            Assert.Contains("\n      The TestPage is not open.",
                 setup, StringComparison.Ordinal);
             Assert.Contains("[testpage]", setup, StringComparison.Ordinal);
             Assert.Contains("NavCSideRecordNotFoundException: The MTD Setup does not exist.",

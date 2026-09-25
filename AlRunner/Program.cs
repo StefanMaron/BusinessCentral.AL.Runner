@@ -200,10 +200,13 @@ if (serverMode && dapMode)
 // Reads AL_RUNNER_VERBOSE env var by default; --verbose flag overrides below.
 AlRunner.Log.Install();
 
-// Per-test output mode. Default (V1 parity): print PASS and FAIL lines.
-// Inverted by --failures-only or AL_RUNNER_FAILURES_ONLY=1 for large-corpus runs
-// where the PASS list is too noisy. --show-pass retained as a no-op for back-compat.
-bool showPass = Environment.GetEnvironmentVariable("AL_RUNNER_FAILURES_ONLY") != "1";
+// Per-test output mode (#4563): FAIL/ERROR entries always; PASS lines only with --show-pass,
+// AL_RUNNER_SHOW_PASS=1 or --verbose. --failures-only / --quiet / AL_RUNNER_FAILURES_ONLY=1 turn
+// them off even under --verbose. null = not chosen, so --verbose decides once parsing is done.
+bool? showPassChoice =
+    Environment.GetEnvironmentVariable("AL_RUNNER_FAILURES_ONLY") == "1" ? false
+    : Environment.GetEnvironmentVariable("AL_RUNNER_SHOW_PASS") == "1" ? true
+    : null;
 
 // AL_RUNNER_TRACE_NRE=1 — log every first-chance NullReferenceException with its
 // full stack trace before it gets swallowed by AL `asserterror` / test machinery.
@@ -583,8 +586,8 @@ for (int i = 0; i < args.Length; i++)
         continue;
     }
     if (args[i] == "--verbose") { AlRunner.Log.Verbose = true; continue; }
-    if (args[i] == "--show-pass") { showPass = true; continue; }   // no-op (default in v2); kept for v1 back-compat
-    if (args[i] == "--failures-only" || args[i] == "--quiet") { showPass = false; continue; }
+    if (args[i] == "--show-pass") { showPassChoice = true; continue; }
+    if (args[i] == "--failures-only" || args[i] == "--quiet") { showPassChoice = false; continue; }
     if (args[i] == "--strict") { strictExitCode = true; continue; }  // no-op: default since the v2 cut
     if (args[i] == "--no-strict-exit") { strictExitCode = false; continue; }
     if ((args[i] == "--test" || args[i] == "--filter") && i + 1 < args.Length) { testFilter = args[++i]; continue; }
@@ -2861,9 +2864,11 @@ foreach (var bundle in bundles)
                 // Always-on, unlike the above: a dependency no loader tier can implement is a
                 // certain object-ID-0 failure later, and #1689 is precisely the report that
                 // nothing named it. One line per app, and only for a shape that cannot work.
+                // #4560: collected, and printed ONCE in the run's closing "Action needed" block
+                // (Reporter.PrintActionNeeded). At discovery only under --verbose.
                 foreach (var u in resolver.UnservableDependencies)
                 {
-                    Console.Error.WriteLine(u);
+                    if (AlRunner.Log.Verbose) Console.Error.WriteLine(u);
                     bundleProvisionGaps.Add(u);
                 }
                 // Also always-on, and for the same reason, but a weaker claim than the list
@@ -2873,7 +2878,7 @@ foreach (var bundle in bundles)
                 // same way, because the failure it precedes names nothing (#3719).
                 foreach (var g in resolver.ProvisioningGaps)
                 {
-                    Console.Error.WriteLine(g);
+                    if (AlRunner.Log.Verbose) Console.Error.WriteLine(g);
                     bundleProvisionGaps.Add(g);
                 }
                 // Compiler sees only non-workspace dirs in its .app scanner; the
@@ -3016,8 +3021,12 @@ foreach (var bundle in bundles)
     List<string> suites;
     using (AlRunner.Infrastructure.PhaseLog.Stage("enumerate-suites"))
         suites = EnumerateSuites(bundleAbs).ToList();
-    if (suites.Count == 0) { Console.WriteLine($"[{i2}/{bundles.Count}] {rel} ... SKIP (no suites)"); continue; }
-    Console.WriteLine($"[{i2}/{bundles.Count}] {rel} — {suites.Count} suites");
+    if (suites.Count == 0) { Console.WriteLine($"[{i2}/{bundles.Count}] {Reporter.BundleLabel(rel)} ... SKIP (no suites)"); continue; }
+    // #4562: one app's progress line repeats the summary. Per-app lines print for more than one
+    // app, or when PASS lines are listed (--show-pass / --verbose) — the same rule as the
+    // `=== <app> ===` header in Reporter.PrintPerTest.
+    if (bundles.Count > 1 || (showPassChoice ?? AlRunner.Log.Verbose))
+        Console.WriteLine($"[{i2}/{bundles.Count}] {Reporter.BundleLabel(rel)} — {suites.Count} suites");
 
     // Pre-register every src dir for RecordPatches at the bundle level. Batched via
     // AddSourceDirs (#1833) so the NCLMetadata cache pass runs ONCE for the whole suite
@@ -4300,9 +4309,12 @@ foreach (var bundle in bundles)
             // descriptions only reached the reader in the summary, minutes and thousands of
             // lines later. BundleProgressLine appends them here, capped, and says how many it
             // capped; the summary still prints the full list.
+            // #4562: with one app the counts repeat the summary, so only its suite errors print
+            // (per-app lines rule: see the `[i/N]` line above).
             foreach (var line in AlRunner.Infrastructure.BundleProgressLine.Render(
                          sP, sF, sE, bundleTests.Count, bundleErrors,
-                         bundleEmit + bundleComp + bundleRun))
+                         bundleEmit + bundleComp + bundleRun)
+                         .Skip(bundles.Count > 1 || (showPassChoice ?? AlRunner.Log.Verbose) ? 0 : 1))
                 Console.WriteLine(line);
     }
     // Deliberately still gated on an EMPTY bundle. A non-Ran stage suppresses the bucket's
@@ -4434,10 +4446,11 @@ else
 {
     // Non-interactive fallback: the existing plain line output. The WatchTests
     // integration test asserts on these exact markers — do not change them.
-    Reporter.PrintPerTest(results, Console.Out, showPass);
+    Reporter.PrintPerTest(results, Console.Out, showPassChoice ?? AlRunner.Log.Verbose);
     Reporter.PrintSummary(results, Console.Out);
     // #4561: the one-shot flush is never reached from --watch; once per cycle.
     AlRunner.Infrastructure.FailureOnlyNotes.FlushAfter(Console.Error, results.SelectMany(b => b.Tests));
+    Reporter.PrintActionNeeded(results, Console.Out);
     // The marker is printed from inside onArmed, which WatchSource invokes only
     // AFTER every FileSystemWatcher is live (#1822) — so it can never be a promise
     // the process has not yet kept. Flush before blocking: when stdout is a
@@ -4852,8 +4865,9 @@ bool anyTestFailedOrErrored = false;
 // Set when the --output-json document is owed to stdout, printed after the output writes
 // below have had their say on computedExitCode. See the branch that sets it.
 bool printJsonOutput = false;
-// #2502: the value that reproduces this run's Random() sequences. stdout is the JSON document in --output-json mode.
-(outputJson ? Console.Error : Console.Out).WriteLine($"seed: {AlRunner.Infrastructure.RunSeed.Value}");
+// #2502: the value that reproduces this run's Random() sequences. stdout is the JSON document in
+// --output-json mode, so it goes to stderr there; otherwise the summary prints it (#4562).
+if (outputJson) Console.Error.WriteLine($"seed: {AlRunner.Infrastructure.RunSeed.Value}");
 if (outputJson && willResume)
 {
     // The final attempt prints the whole run. If Rerun then fails to START that attempt it
@@ -4874,10 +4888,16 @@ else if (outputJson)
 }
 else
 {
-    Reporter.PrintPerTest(results, Console.Out, showPass);
+    Reporter.PrintPerTest(results, Console.Out, showPassChoice ?? AlRunner.Log.Verbose);
     if (printClassification)
         Reporter.PrintFailureClassification(results, Console.Out);
-    Reporter.PrintSummary(results, Console.Out, ProgramSupport.CarriedFromEarlierAttempts(mergeCountsFiles));
+    Reporter.PrintSummary(results, Console.Out, ProgramSupport.CarriedFromEarlierAttempts(mergeCountsFiles),
+        new Reporter.SummaryOptions(AlRunner.Log.Verbose, AlRunner.Infrastructure.RunSeed.Value,
+            string.Join(" ", bundles.Select(b =>
+            {
+                var shown = AlRunner.Infrastructure.WorkingDirectory.DisplayPath(b, AlRunner.Infrastructure.WorkingDirectory.TryGet());
+                return shown.Contains(' ') ? $"\"{shown}\"" : shown;
+            }))));
 }
 
 // #2280: one hung codeunit must not take the whole run down. TestExecutor abandons the rest of
@@ -5155,6 +5175,16 @@ if (printJsonOutput)
     // instead. See the redirect right after arg parsing for why.
     if (outputJsonStdout != null) Console.SetOut(outputJsonStdout);
     Console.WriteLine(json);
+}
+
+// #4560 / #4562: what the user must do, once per app, then the verdict — the last two things
+// a default run prints, so a reader scrolling to the bottom finds both.
+if (!outputJson && !willResume)
+{
+    Reporter.PrintActionNeeded(allResults, Console.Out);
+    Console.WriteLine();
+    Console.WriteLine(Reporter.ResultLine(strictExitCode ? computedExitCode : 0,
+        strictExitCode ? null : computedExitCode));
 }
 
 // Exit non-zero if anything failed — the default since the v2 cut, matching main/v1.

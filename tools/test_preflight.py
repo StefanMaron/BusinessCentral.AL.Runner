@@ -1932,12 +1932,13 @@ def corpus_repo():
     return tempfile.mkdtemp(prefix="preflight-corpus-")
 
 
-# Verbatim shape of a real run, captured from
+# Shape of a real run: the PASS lines as captured from
 #   dotnet run --project AlRunner -c Release -- tests/runner-extras/object-system-table \
 #     --package-cache ... --show-pass
-# on 2026-09-07. The labels, the two spaces after PASS, the `(45ms)` suffix and
-# every summary line below are that output, not an idea of it -- a fixture shaped
-# to satisfy the parser would test the author rather than the runner (#3311).
+# on 2026-09-07 (two spaces after PASS, the `(45ms)` suffix), and the summary as
+# Reporter.PrintSummary prints it since #4562 -- AlRunner.Tests/RunSummaryOutputTests.cs
+# pins that same counts line from a live run, so this fixture and the runner cannot drift
+# apart silently (#3311).
 def corpus_output(counts, *, fail=0, error=0, skipped=0, oos=0, known_gap=0,
                   reported_pass=None, summary=True, suite_errors=(), compile_fail=(),
                   drop_fields=()):
@@ -1967,30 +1968,28 @@ def corpus_output(counts, *, fail=0, error=0, skipped=0, oos=0, known_gap=0,
         return "\n".join(lines) + "\n"
     total = sum(counts.values()) + fail + error + skipped
     shown = sum(counts.values()) if reported_pass is None else reported_pass
-    lines += ["", "=" * 65, "al-runner — test run summary", "=" * 65,
-              f"Buckets:       {len(counts)} total",
-              f"  ran:         {len(counts)}",
-              "  compile-fail:%d" % len(compile_fail),
-              "  exec-fail:   0",
-              f"Tests:         {total} total",
-              f"  pass:        {shown}"]
+    # The counts line as Reporter.PrintSummary prints it since #4562.
+    counts_line = f"Tests: {total}   passed {shown}"
+    # `drop_fields` omits a FIELD from the counts line, which is how a key goes
+    # missing for real: parse_corpus_run adds a key only when its field appears, so
+    # a line truncated or reshaped yields {"total", "pass"} with no `fail` (#3361).
+    if "fail" not in drop_fields:
+        counts_line += f"   failed {fail}"
+    if "error" not in drop_fields:
+        counts_line += f"   errors {error}"
+    if skipped:
+        counts_line += f"   skipped {skipped}"
+    lines += ["", counts_line + "        Time: 4.0 s (wall 6.3 s)"]
     if oos:
         lines.append(f"    pass-oos:        {oos}")
     if known_gap:
         lines.append(f"    pass-known-gap:  {known_gap}")
-    # `drop_fields` omits a summary LINE, which is how a key goes missing for
-    # real: parse_corpus_run seeds the dict from `Tests: N total` and adds a key
-    # only when its line appears, so a summary block truncated or reshaped by a
-    # BC-version change yields {"total", "pass"} with no `fail` at all (#3361).
-    if "fail" not in drop_fields:
-        lines.append(f"  fail:        {fail}")
-    if "error" not in drop_fields:
-        lines.append(f"  error:       {error}")
-    if skipped:
-        lines.append(f"  skipped:     {skipped}")
-    lines += ["Time:", "  AL emit:     2.1s", "  C# compile:  1.7s",
-              "  test run:    0.2s", "  total:       4.0s", "  wall:        6.3s",
-              "=" * 65]
+    if compile_fail:
+        lines += [f"Apps:          {len(counts) + len(compile_fail)} total",
+                  f"  ran:         {len(counts)}",
+                  "  compile-fail:%d" % len(compile_fail),
+                  "  exec-fail:   0"]
+    lines += ["Seed:  12345", "", "Result: PASSED, exit code 0 (all tests passed)"]
     return "\n".join(lines) + "\n"
 
 

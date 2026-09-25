@@ -356,11 +356,12 @@ public sealed class DependencyEmitExclusionEndToEndTests
             // The cause, at default verbosity.
             Assert.Contains("AL0185", output, StringComparison.Ordinal);
 
-            // Reported in the SUMMARY too, not only at the point of discovery: this run
-            // continues, so on a real run the discovery line scrolls thousands of lines above
-            // the part anyone reads (#2587). This is the assertion that would fail if the
-            // report were downgraded to a bare stderr write.
-            Assert.Contains("Provisioning gaps:", output, StringComparison.Ordinal);
+            // Reported at the END, where a reader of a long log finds it (#2587) — and, since
+            // #4560, ONLY there at default verbosity: one copy in the closing "Action needed"
+            // block, not a second one at discovery.
+            Assert.Contains("Action needed (", output, StringComparison.Ordinal);
+            var copies = output.Split("1 of this dependency's 2 object(s)").Length - 1;
+            Assert.True(copies == 1, $"expected the gap once, at the end; saw {copies}:\n{output}");
 
             // Negative direction: the SURVIVING object must not be named as dropped. A guard
             // that reports everything is as useless as one that reports nothing.
@@ -418,7 +419,7 @@ public sealed class DependencyEmitExclusionEndToEndTests
             Assert.Contains("EMIT-EXCLUDED", second.Output, StringComparison.Ordinal);
             Assert.Contains("DEX Dep Broken", second.Output, StringComparison.Ordinal);
             Assert.Contains("1 of this dependency's 2 object(s)", second.Output, StringComparison.Ordinal);
-            Assert.Contains("Provisioning gaps:", second.Output, StringComparison.Ordinal);
+            Assert.Contains("Action needed (", second.Output, StringComparison.Ordinal);
 
             // ...and that the second run really took the CACHED route rather than recompiling,
             // which would make it a second cold run wearing a warm label. This marker is added

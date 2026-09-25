@@ -101,9 +101,10 @@ public sealed class OutputIsLocaleInvariantTests : IDisposable
     public void SummaryTimings_UseADotDecimal_OnACommaDecimalMachine()
     {
         var w = new StringWriter();
-        Reporter.PrintSummary(new[] { RanBucket() }, w);
+        Reporter.PrintSummary(new[] { RanBucket() }, w, default, new Reporter.SummaryOptions(Verbose: true));
         var output = w.ToString();
 
+        Assert.Contains("Time: 7.5 s", output, StringComparison.Ordinal);   // the default counts line
         Assert.Contains("AL emit:     1.5s", output, StringComparison.Ordinal);
         Assert.Contains("C# compile:  2.5s", output, StringComparison.Ordinal);
         Assert.Contains("test run:    3.5s", output, StringComparison.Ordinal);
@@ -133,7 +134,7 @@ public sealed class OutputIsLocaleInvariantTests : IDisposable
         string Render()
         {
             var w = new StringWriter();
-            Reporter.PrintSummary(new[] { RanBucket() }, w);
+            Reporter.PrintSummary(new[] { RanBucket() }, w, default, new Reporter.SummaryOptions(Verbose: true));
             Reporter.PrintFailureClassification(new[] { BucketWithFailures(3) }, w, topN: 10);
             return StripWallClock(w.ToString());
         }
@@ -154,7 +155,8 @@ public sealed class OutputIsLocaleInvariantTests : IDisposable
 
     /// <summary>`wall:` is elapsed process time and differs between two renders by construction.</summary>
     private static string StripWallClock(string s) => string.Join('\n',
-        s.Split('\n').Where(l => !l.TrimStart().StartsWith("wall:", StringComparison.Ordinal)));
+        s.Split('\n').Where(l => !l.TrimStart().StartsWith("wall:", StringComparison.Ordinal))
+            .Select(l => System.Text.RegularExpressions.Regex.Replace(l, @"\(wall [\d.]+ s\)", "(wall)")));
 
     private static BucketResult RanBucket() => new(
         "/tmp/bundle", BucketStage.Ran, Array.Empty<string>(), null,

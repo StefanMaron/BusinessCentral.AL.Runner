@@ -47,23 +47,17 @@ public sealed class SummaryWallClockTests
         var (output, exit) = Run($"{TestBuildConfig.BcVersionArg} \"{Fixture}\"");
         Assert.Equal(0, exit);
 
-        var totalMatch = Regex.Match(output, @"total:\s+([\d.]+)s");
-        Assert.True(totalMatch.Success, $"expected a 'total:' line in output:\n{output}");
-        var total = double.Parse(totalMatch.Groups[1].Value);
-
-        var wallMatch = Regex.Match(output, @"wall:\s+([\d.]+)s");
-        Assert.True(wallMatch.Success, $"expected a 'wall:' line in output:\n{output}");
-        var wall = double.Parse(wallMatch.Groups[1].Value);
+        // #4562: both numbers now share the counts line, `Time: <total> s (wall <wall> s)`.
+        var timeMatch = Regex.Match(output, @"Time: ([\d.]+) s \(wall ([\d.]+) s\)");
+        Assert.True(timeMatch.Success, $"expected a 'Time: N s (wall N s)' line in output:\n{output}");
+        var total = double.Parse(timeMatch.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+        var wall = double.Parse(timeMatch.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture);
 
         Assert.True(wall > 0, $"expected wall: > 0, got {wall}");
         Assert.True(wall >= total,
             $"expected wall: ({wall}) >= total: ({total}) — wall clock covers strictly " +
             $"more than the emit+compile+run phases total: sums.\n{output}");
 
-        // wall: must appear directly after total: (same block, same formatting style),
-        // not floating somewhere unrelated in the output.
-        Assert.True(wallMatch.Index > totalMatch.Index,
-            "expected 'wall:' to appear after 'total:' in the summary block");
     }
 
     /// <summary>

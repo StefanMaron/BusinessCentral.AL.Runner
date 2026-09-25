@@ -117,12 +117,12 @@ public sealed class FailedTestRollbackBoundaryTests
             // reporters below would pass vacuously — there would be no failed test whose writes
             // could leak.
             Assert.True(
-                stdout.Contains("FAIL  Codeunit70302.ExpectedToFail_01_WriterInsertsARowThenFails"),
+                RunnerFailureLines.Failed(stdout, 70302, "ExpectedToFail_01_WriterInsertsARowThenFails"),
                 $"the fixture's first EXPECTED failure must still fail.\nstdout:\n{stdout}\nstderr:\n{stderr}");
             Assert.Contains("FTR-EXPECTED-TO-FAIL-01", stdout);
             Assert.True(
-                stdout.Contains(
-                    "FAIL  Codeunit70302.ExpectedToFail_03_WriterInsertsARowThenFailsForAnUnrelatedReason"),
+                RunnerFailureLines.Failed(
+                    stdout, 70302, "ExpectedToFail_03_WriterInsertsARowThenFailsForAnUnrelatedReason"),
                 $"the fixture's second EXPECTED failure must still fail.\nstdout:\n{stdout}\nstderr:\n{stderr}");
             Assert.Contains("FTR-EXPECTED-TO-FAIL-03", stdout);
 
@@ -142,10 +142,12 @@ public sealed class FailedTestRollbackBoundaryTests
             // Exactly two failures, both by the EXPECTED-TO-FAIL name. Guards against a fix
             // that unwinds too much and takes the reporters down with it, or a fixture edit
             // that adds an unexpected failure under a name this test does not recognize.
-            var failCount = stdout.Split("FAIL  Codeunit70302.").Length - 1;
+            var fixtureFailures = RunnerFailureLines.All(stdout)
+                .Where(l => l.Contains("Codeunit70302", StringComparison.Ordinal)).ToList();
+            var failCount = fixtureFailures.Count;
             Assert.True(failCount == 2,
                 $"expected exactly the 2 EXPECTED failures, saw {failCount}.\nstdout:\n{stdout}");
-            var expectedFailCount = stdout.Split("FAIL  Codeunit70302.ExpectedToFail_").Length - 1;
+            var expectedFailCount = fixtureFailures.Count(l => l.Contains(".ExpectedToFail_", StringComparison.Ordinal));
             Assert.True(expectedFailCount == 2,
                 "every FAIL in this fixture must carry the ExpectedToFail_ name, so CI output "
                 + $"never shows an unmarked failure here. saw {expectedFailCount} marked of "

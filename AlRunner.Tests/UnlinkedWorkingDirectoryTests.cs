@@ -125,7 +125,7 @@ public sealed class UnlinkedWorkingDirectoryTests
             $"[expectations] loaded ", output, StringComparison.Ordinal);
         Assert.Contains(
             $" from {Path.Combine(RepoRoot, "tests", "expectations")}", output, StringComparison.Ordinal);
-        Assert.True(exit == 0 && output.Contains("pass:        1", StringComparison.Ordinal),
+        Assert.True(exit == 0 && output.Contains("passed 1 ", StringComparison.Ordinal),
             $"the run must complete from an unlinked working directory:\n{output}");
         // The bundle label falls back to the absolute path.
         Assert.Contains($"[1/1] {FixtureDir} ", output, StringComparison.Ordinal);
@@ -151,7 +151,7 @@ public sealed class UnlinkedWorkingDirectoryTests
         AssertNotAnUnhandledCrash(exit, output);
         Assert.Contains("[expectations] no tests/expectations manifest found", output, StringComparison.Ordinal);
         Assert.Contains("the working directory could not be read, so it was not probed", output, StringComparison.Ordinal);
-        Assert.True(exit == 0 && output.Contains("pass:        1", StringComparison.Ordinal),
+        Assert.True(exit == 0 && output.Contains("passed 1 ", StringComparison.Ordinal),
             $"the run must complete from an unlinked working directory:\n{output}");
     }
 
@@ -175,7 +175,7 @@ public sealed class UnlinkedWorkingDirectoryTests
             new[] { bundle, "--no-cache", "--coverage", "--coverage-out", coverageOut });
 
         AssertNotAnUnhandledCrash(exit, output);
-        Assert.True(exit == 0 && output.Contains("pass:        1", StringComparison.Ordinal),
+        Assert.True(exit == 0 && output.Contains("passed 1 ", StringComparison.Ordinal),
             $"the run must complete from an unlinked working directory:\n{output}");
         Assert.True(File.Exists(coverageOut), $"coverage report must be written:\n{output}");
         var xml = File.ReadAllText(coverageOut);

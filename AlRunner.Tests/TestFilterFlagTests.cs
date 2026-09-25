@@ -270,7 +270,7 @@ public sealed class TestFilterFlagTests : IDisposable
         Assert.Equal(6, exit);
         Assert.DoesNotContain("Codeunit62142.AlphaCheck", output);
         Assert.DoesNotContain("Codeunit62143.BetaCheck", output);
-        Assert.Contains("Tests:         0 total", output);
+        Assert.Contains("Tests: 0 ", output);
         Assert.Contains("--test 'NoSuchTestExists' selected no test in this run", output);
         Assert.DoesNotContain("interior '*'", output);
     }
@@ -291,7 +291,7 @@ public sealed class TestFilterFlagTests : IDisposable
         Assert.True(exit == 0, output);
         Assert.DoesNotContain("PASS  Codeunit62142.AlphaCheck", output);
         Assert.DoesNotContain("Codeunit62143.BetaCheck", output);
-        Assert.Contains("Tests:         0 total", output);
+        Assert.Contains("Tests: 0 ", output);
         Assert.DoesNotContain("selected no test", output);
     }
 

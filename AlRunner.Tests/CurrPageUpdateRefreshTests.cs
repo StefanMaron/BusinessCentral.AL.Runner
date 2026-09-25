@@ -57,13 +57,13 @@ public sealed class CurrPageUpdateRefreshTests : IDisposable
         // Each arm is a [Test] procedure asserting inside AL, so a green run IS the claim.
         // The exit code alone would not distinguish "passed" from "discovered nothing", hence
         // the explicit pass/fail counts below.
-        Assert.True(output.Contains("pass:        5"),
+        Assert.True(output.Contains("passed 5 "),
             $"expected all five arms to pass; exit={exit}\n{output}");
-        Assert.DoesNotContain("fail:        1", output);
-        Assert.DoesNotContain("fail:        2", output);
-        Assert.DoesNotContain("fail:        3", output);
-        Assert.DoesNotContain("fail:        4", output);
-        Assert.DoesNotContain("fail:        5", output);
+        Assert.DoesNotContain("failed 1 ", output);
+        Assert.DoesNotContain("failed 2 ", output);
+        Assert.DoesNotContain("failed 3 ", output);
+        Assert.DoesNotContain("failed 4 ", output);
+        Assert.DoesNotContain("failed 5 ", output);
     }
 
     private void WriteBundle()
