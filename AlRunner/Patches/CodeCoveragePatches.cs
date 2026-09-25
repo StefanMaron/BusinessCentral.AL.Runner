@@ -190,8 +190,18 @@ public static class CodeCoveragePatches
     private static string? _mapKey;
     private static AlSourceLocationMap? _map;
 
-    /// <summary>The source map over every directory this run parsed as AL, rebuilt only when that
-    /// set changes (a --server reload registers new directories).</summary>
+    /// <summary>The source map over every directory this run parsed as AL. Dropped by
+    /// <see cref="RecordPatches.ResetForReload"/>: a --watch/--server reload re-registers the SAME
+    /// directories with edited files, so the directory set alone cannot tell the map is stale.</summary>
+    internal static void ResetSourceMapForReload()
+    {
+        lock (_mapLock)
+        {
+            _map = null;
+            _mapKey = null;
+        }
+    }
+
     private static AlSourceLocationMap CompiledSourceMap()
     {
         var dirs = RecordPatches.RegisteredSourceDirs();

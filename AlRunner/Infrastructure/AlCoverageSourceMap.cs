@@ -51,8 +51,10 @@ public sealed class AlSourceLocationMap : IReadOnlyDictionary<(string Label, int
     private readonly Dictionary<(string Label, int Id), ObjectTextSpan> _texts = new();
 
     /// <summary>Where one object's BC source text lives in its file: the file preamble's line
-    /// count, and the object's first and last line (0-based, inclusive).</summary>
-    internal readonly record struct ObjectTextSpan(string AbsolutePath, int PreambleLines, int StartLine, int EndLine);
+    /// count, and the object's first and last line (0-based, inclusive). Length and LastWriteUtc
+    /// are the file's stamp when it was parsed; the spans are only valid for that text.</summary>
+    internal readonly record struct ObjectTextSpan(string AbsolutePath, int PreambleLines, int StartLine, int EndLine,
+        long Length, DateTime LastWriteUtc);
     private readonly List<SourceScanFailure> _scanFailures = new();
 
     /// <summary>A map with no objects; never mutated.</summary>
@@ -93,6 +95,13 @@ public sealed class AlSourceLocationMap : IReadOnlyDictionary<(string Label, int
     public IReadOnlyList<string>? ObjectSourceLines(string label, int id)
     {
         if (!_texts.TryGetValue((label, id), out var t)) return null;
+        // A file edited since the parse keeps the old spans: a line added above the object passes
+        // the bounds check below and shifts every row silently, so the stamp decides (#4572 review).
+        var info = new FileInfo(t.AbsolutePath);
+        if (!info.Exists || info.Length != t.Length || info.LastWriteTimeUtc != t.LastWriteUtc)
+            throw new InvalidOperationException(
+                $"[coverage] {t.AbsolutePath}: {label} {id} was parsed from a {t.Length}-byte file written "
+                + $"{t.LastWriteUtc:O}; the file changed after the run parsed it, so its line spans no longer apply.");
         var fileLines = new List<string>();
         using (var reader = new StreamReader(t.AbsolutePath, System.Text.Encoding.UTF8))
         {
@@ -333,12 +342,16 @@ public static class AlCoverageSourceMap
                 var path = relativeTo != null
                     ? Path.GetRelativePath(relativeTo, file).Replace('\\', '/')
                     : AbsolutePathOf(file);
+                // Stamped BEFORE the parse: an edit landing mid-parse then reads as a change, never
+                // as the parsed text.
+                var stamp = new FileInfo(file);
+                var (stampLength, stampWrite) = stamp.Exists ? (stamp.Length, stamp.LastWriteTimeUtc) : (-1L, default(DateTime));
                 var parsed = ParseObjects(file, symbols, out var readFailure);
                 foreach (var o in parsed)
                 {
                     map.Add(o.Label, o.Id, path, o.LineOffset);
                     map.AddText(o.Label, o.Id, new AlSourceLocationMap.ObjectTextSpan(
-                        AbsolutePathOf(file), o.PreambleLines, o.StartLine, o.EndLine));
+                        AbsolutePathOf(file), o.PreambleLines, o.StartLine, o.EndLine, stampLength, stampWrite));
                 }
                 if (readFailure != null)
                     map.AddScanFailure(file, readFailure, SourceScanFailureKind.File);
