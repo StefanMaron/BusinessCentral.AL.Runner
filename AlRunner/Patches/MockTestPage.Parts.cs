@@ -307,6 +307,7 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
                     ?? record.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult();
         Loaded(found);
         if (!found && !parentHasNoRow) EnterNewRowLine(record);
+        if (found) MarkUnpositioned();
     }
 
     public override bool FindRowFromTableFieldValues(int[] fieldNos, object[] values, bool forward)

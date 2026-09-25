@@ -32,6 +32,7 @@ internal partial class LiveNavTestPage
     public override bool MoveFirst()
     {
         var record = RequireRecord("MoveFirst()");
+        _unpositionedAt = null;
         FlushParts(); FlushRow();
 
         // Whether the cursor was ALREADY on the draft line, read before LeaveNewRowLine clears
@@ -95,6 +96,7 @@ internal partial class LiveNavTestPage
     public override bool MoveLast()
     {
         var record = RequireRecord("MoveLast()");
+        _unpositionedAt = null;
         FlushParts(); FlushRow(); LeaveNewRowLine();
         var found = _page?.RaiseOnFindRecord("+")
                     ?? record.ALFindLastAsync(DataError.TrapError).GetAwaiter().GetResult();
@@ -109,6 +111,14 @@ internal partial class LiveNavTestPage
     public override bool MoveNext()
     {
         var record = RequireRecord("MoveNext()");
+
+        // A part nothing has navigated yet: the first Next() lands ON the row it already reads.
+        if (_unpositionedAt is { } shown)
+        {
+            _unpositionedAt = null;
+            if (!_onNewRowLine && shown == record.ALGetPosition(useCaptions: false)) return MoveFirst();
+        }
+
         FlushParts(); FlushRow();
 
         // Already parked on the new-row line: it is the LAST row of the rowset, so this is
@@ -124,6 +134,7 @@ internal partial class LiveNavTestPage
     public override bool MovePrevious()
     {
         var record = RequireRecord("MovePrevious()");
+        _unpositionedAt = null;
         FlushParts(); FlushRow();
 
         // Stepping back off the new-row line lands on the last data row — the row the cursor
@@ -160,6 +171,18 @@ internal partial class LiveNavTestPage
     /// buffer above all — answers here with rows the record has never held, so stepping the
     /// record directly walks a different set from the one the page shows.
     /// </summary>
+    // Set when a part's row is loaded for it (at open, or when its host moves) rather than
+    // reached by a navigation of its own: the position of the first row it then reads. BC's
+    // repeater viewport is still at offset -1 then, so MoveBy(1) lands on index 0 — the row
+    // already shown (Microsoft.Dynamics.Framework.UI RepeaterViewportControl; corpus codeunit
+    // 60229 "OKP Part Next Tests", #4623). Any other cursor move clears it; comparing the
+    // position keeps a New() row or a write that moved the record from matching.
+    private string? _unpositionedAt;
+
+    /// <summary>The row just loaded was not reached by this page's own navigation.</summary>
+    protected void MarkUnpositioned()
+        => _unpositionedAt = Record is { } record && !_onNewRowLine ? record.ALGetPosition(useCaptions: false) : null;
+
     private int StepRow(NavRecord record, int steps)
         => _page?.RaiseOnNextRecord(steps)
            ?? record.ALNextAsync(steps).GetAwaiter().GetResult();

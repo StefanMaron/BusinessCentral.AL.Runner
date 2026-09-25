@@ -61,6 +61,7 @@ internal partial class LiveNavTestPage
         // Jumping to a bookmark is a cursor move like any other, so it steps off the blank
         // line first — otherwise the flag would survive onto a real row and the NEXT
         // MoveNext() would end the walk early.
+        _unpositionedAt = null;
         LeaveNewRowLine();
         RequireRecord("GoToBookmark()").ALSetPosition(position);
         return Loaded(true);
@@ -108,6 +109,7 @@ internal partial class LiveNavTestPage
     private bool FindRowFromFieldValues(int[] fieldNos, object[] values, bool forward, bool startFromCurrentRow)
     {
         if (fieldNos.Length != values.Length) return false;
+        _unpositionedAt = null;
 
         var record = RequireRecord("locating a row");
 
