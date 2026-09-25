@@ -1344,6 +1344,8 @@ if (bcVersionArg == null && artifactPathArg == null)
         }
     }
 }
+// What the user typed, for the below-floor warning after a bare major is remapped (#4590).
+var requestedBcVersionArg = bcVersionArg;
 // #4557: an explicit --bc-version on a multi-variant install. A bare major maps onto the newest
 // cached/shipped minor of that major a variant runs; a minor no variant runs refuses here,
 // before provisioning downloads it. `provision` may still fetch any explicit minor; its bare major
@@ -1392,7 +1394,9 @@ if (!bcVersionAutoSelected && bcVersionArg != null && artifactPathArg == null)
 if (!bcVersionAutoSelected && bcVersionArg != null && projectBcFloor != null
     && !AlRunner.Infrastructure.BcVersionFloor.Meets(bcVersionArg, projectBcFloor)
     && ProgramSupport.IsFirstGeneration())
-    Console.Error.WriteLine(AlRunner.Infrastructure.BcVersionFloor.DescribeExplicitBelow(bcVersionArg, projectBcFloor));
+    Console.Error.WriteLine(AlRunner.Infrastructure.BcVersionFloor.DescribeExplicitBelow(
+        requestedBcVersionArg == bcVersionArg ? bcVersionArg : $"{requestedBcVersionArg} (resolved to BC {bcVersionArg})",
+        projectBcFloor));
 // ── Provisioning (on by default since issue #2024; opt out with --no-auto-provision):
 // `provision` subcommand or autoProvision (default true). Resolves the target version,
 // downloads the engine service-tier closure if it's missing/incomplete, then (subcommand)

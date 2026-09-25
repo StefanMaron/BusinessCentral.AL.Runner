@@ -98,6 +98,35 @@ public sealed class DefaultBcVersionFloorTests
         Assert.Equal(new[] { "28.4.53241.54387" }, choice.SkippedBelowFloor);
     }
 
+    /// <summary>A bare major with a floor inside it: the cached build below the floor is skipped,
+    /// the one above it chosen.</summary>
+    [Fact]
+    public void ChooseDefault_BareMajorWithFloorInsideIt_ChoosesTheCachedBuildAtOrAboveTheFloor()
+    {
+        var choice = EngineVariants.ChooseDefault(Shipped,
+            new[] { "28.3.52162.54374", "28.1.49838.54368", "27.5.46862.53931" }, major: 28,
+            floor: new Version(28, 2, 0, 0));
+
+        Assert.Equal("28.3.52162.54374", choice.Version);
+        Assert.Empty(choice.SkippedBelowFloor);
+
+        var lowOnly = EngineVariants.ChooseDefault(Shipped, new[] { "28.1.49838.54368" }, major: 28,
+            floor: new Version(28, 2, 0, 0));
+        Assert.Equal("28.4", lowOnly.Version);
+        Assert.Equal(new[] { "28.1.49838.54368" }, lowOnly.SkippedBelowFloor);
+    }
+
+    /// <summary>A bare major entirely below the floor reports FloorUnmet (Program.cs then falls back
+    /// to the unfloored choice and warns).</summary>
+    [Fact]
+    public void ChooseDefault_BareMajorBelowTheFloor_ReportsFloorUnmet()
+    {
+        var choice = EngineVariants.ChooseDefault(Shipped, new[] { "27.5.46862.53931" }, major: 27,
+            floor: new Version(28, 4, 0, 0));
+        Assert.Null(choice.Version);
+        Assert.True(choice.FloorUnmet);
+    }
+
     /// <summary>No floor keeps #4557's behaviour, and never reports FloorUnmet.</summary>
     [Fact]
     public void ChooseDefault_NoFloor_KeepsNewestSupportedCachedAndNeverReportsFloorUnmet()
@@ -292,7 +321,11 @@ public sealed class DefaultBcVersionFloorTests
         });
     }
 
-    /// <summary>An explicit --bc-version below the floor is warned about and still honoured.</summary>
+    /// <summary>
+    /// An explicit --bc-version below the floor is warned about and still RUN (the owner's decision
+    /// on #4590). The requested build is cached, so the run gets past selection and the
+    /// post-selection floor backstop to the artifact-completeness check for that exact build.
+    /// </summary>
     [Fact]
     public void ExplicitBcVersionBelowTheFloor_WarnsAndRunsIt()
     {
@@ -300,18 +333,69 @@ public sealed class DefaultBcVersionFloorTests
         WithScratch((installDir, work) =>
         {
             AddPlaceholderVariant(installDir, build.ToString());
-            // Only the floor's minor is cached, so reaching selection for the requested minor
-            // proves the request was honoured rather than redirected to the floor.
             var floor = $"{build.Major}.{build.Minor + 1}.0.0";
-            var artifactsRoot = Directory.CreateDirectory(
-                Path.Combine(work, "artifacts", $"{build.Major}.{build.Minor + 1}.1.1")).Parent!.FullName;
             var requested = $"{build.Major}.{build.Minor}";
+            var requestedBuild = $"{requested}.1.1";
+            var artifactsRoot = Path.Combine(work, "artifacts");
+            Directory.CreateDirectory(Path.Combine(artifactsRoot, requestedBuild));
+            Directory.CreateDirectory(Path.Combine(artifactsRoot, $"{build.Major}.{build.Minor + 1}.1.1"));
 
             var (output, _) = Run(installDir, artifactsRoot, work, floor, "--bc-version", requested);
 
             Assert.Contains($"--bc-version {requested} is below the minimum BC {floor}", output);
             Assert.DoesNotContain("declares a minimum of BC", output);
-            Assert.Contains($"matches version '{requested}'", output);
+            Assert.DoesNotContain($"is below the minimum BC {floor} the project's app.json", output);
+            Assert.Contains($"BC {requestedBuild} engine artifacts are incomplete", output);
+        });
+    }
+
+    /// <summary>
+    /// A bare-major --bc-version is narrowed by a floor inside that major: the cached build below
+    /// the floor is skipped and the floor's minor is targeted, exactly as the no-flags default does.
+    /// </summary>
+    [SkippableFact]
+    public void ExplicitBareMajor_FloorInsideTheMajor_NarrowsTheChoiceToTheFloor()
+    {
+        var build = EngineBuild();
+        var older = OlderMinorBuild(build);
+        Skip.If(older == null, $"engine {build} is an x.0 build; no older minor in its major to cache");
+        WithScratch((installDir, work) =>
+        {
+            AddPlaceholderVariant(installDir, build.ToString());
+            AddPlaceholderVariant(installDir, older!);
+            var artifactsRoot = Directory.CreateDirectory(Path.Combine(work, "artifacts", older!)).Parent!.FullName;
+            var floor = $"{build.Major}.{build.Minor}.0.0";
+
+            var (output, _) = Run(installDir, artifactsRoot, work, floor, "--bc-version", build.Major.ToString());
+
+            Assert.Contains($"skipping cached BC {older}: below the minimum BC {floor}", output);
+            Assert.Contains($"matches version '{build.Major}.{build.Minor}'", output);
+            Assert.DoesNotContain("is below the minimum BC", output);
+        });
+    }
+
+    /// <summary>
+    /// A bare major that cannot meet a floor inside it keeps #4557's choice (the major was asked for
+    /// by name) and warns, naming what was typed and what it resolved to. Not a refusal.
+    /// </summary>
+    [Fact]
+    public void ExplicitBareMajor_FloorTheMajorCannotMeet_KeepsTheChoiceAndWarns()
+    {
+        var build = EngineBuild();
+        WithScratch((installDir, work) =>
+        {
+            AddPlaceholderVariant(installDir, build.ToString());
+            var cachedBuild = $"{build.Major}.{build.Minor}.1.1";
+            var artifactsRoot = Directory.CreateDirectory(Path.Combine(work, "artifacts", cachedBuild)).Parent!.FullName;
+            var floor = $"{build.Major}.{build.Minor + 1}.0.0";
+
+            var (output, _) = Run(installDir, artifactsRoot, work, floor, "--bc-version", build.Major.ToString());
+
+            Assert.Contains(
+                $"--bc-version {build.Major} (resolved to BC {cachedBuild}) is below the minimum BC {floor}", output);
+            Assert.DoesNotContain("declares a minimum of BC", output);
+            Assert.DoesNotContain("ships no engine for BC", output);
+            Assert.Contains($"BC {cachedBuild} engine artifacts are incomplete", output);
         });
     }
 
