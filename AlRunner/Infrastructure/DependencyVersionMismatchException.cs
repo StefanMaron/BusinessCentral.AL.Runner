@@ -101,9 +101,23 @@ public sealed class DependencyVersionMismatchException : Exception, IDependencyP
         lines.Add("");
         lines.Add("  Resolve it:");
         lines.Add("");
-        lines.Add($"  Obtain a build of {DepPublisher}/{DepName} at or above v{DepMinVersion} and");
+        lines.Add($"  Obtain a build of this app at or above v{DepMinVersion} and");
         lines.Add("  add it to your --package-cache <dir> (usually your project's .alpackages).");
+        var bcRelease = MicrosoftBcRelease();
+        if (bcRelease != null)
+        {
+            lines.Add($"  Microsoft apps are versioned with Business Central, so v{DepMinVersion} comes with");
+            lines.Add($"  BC {bcRelease}: running on it (--bc-version {bcRelease}) provides this app.");
+        }
 
         return string.Join(Environment.NewLine, lines);
+    }
+
+    /// <summary>"28.4" for a Microsoft dependency whose minimum is 28.4.x.x, else null.</summary>
+    private string? MicrosoftBcRelease()
+    {
+        if (!string.Equals(DepPublisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) return null;
+        if (!Version.TryParse(DepMinVersion, out var v) || v.Major <= 0) return null;
+        return $"{v.Major}.{v.Minor}";
     }
 }
