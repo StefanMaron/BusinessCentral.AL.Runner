@@ -833,6 +833,13 @@ public sealed class TestExecutor
             // first gets a newly-instantiated one (see inside the loop below).
             var isFirstMethod = true;
 
+            // #4694: the test codeunit's own OnRun, run before its first executed [Test] — once on
+            // the shared instance, or per test under Test isolation, where every test already gets
+            // a fresh instance and a fresh database. See docs/limitations.md#test-codeunit-onrun.
+            var onRunTrigger = ResolveDeclaredTestCodeunitOnRun(t);
+            var onRunDone = false;
+            TestResult? onRunFailure = null;
+
             var loopSw = System.Diagnostics.Stopwatch.StartNew();
             var orderedMethods = OrderTestMethodsBySourceDeclaration(t);
 
@@ -934,7 +941,22 @@ public sealed class TestExecutor
                     }
 
                     stageSw.Restart();
-                    var raw = RunOne(t.Name, m, testInstance, displayName);
+                    var baselineRestored = false;
+                    if (onRunTrigger != null && (perTestInstance || !onRunDone))
+                    {
+                        // Under Test isolation RunOne would restore the install baseline over
+                        // what OnRun just committed, so the restore happens here, before OnRun.
+                        if (Isolation == TestIsolation.Test)
+                        {
+                            AlRunner.Patches.RecordPatches.RestoreInstallBaseline();
+                            baselineRestored = true;
+                        }
+                        onRunDone = true;
+                        onRunFailure = RunTestCodeunitOnRun(t.Name, onRunTrigger, testInstance, displayName);
+                    }
+                    var raw = onRunFailure != null
+                        ? onRunFailure with { Method = m.Name }
+                        : RunOne(t.Name, m, testInstance, displayName, baselineRestored);
                     methodsMs += stageSw.ElapsedMilliseconds;
                     var result = Expectations != null
                         ? ApplyExpectation(raw, displayName, entry)
@@ -1544,7 +1566,75 @@ public sealed class TestExecutor
         return ctor.Invoke(new object[] { BcRuntime.RootTreeStub! });
     }
 
-    private TestResult RunOne(string codeunit, MethodInfo m, object instance, string displayName)
+    /// <summary>
+    /// The OnRun trigger <paramref name="t"/> itself declares, or null. BC runs a test codeunit's
+    /// OnRun only when the codeunit declares one (<c>onRunMethod.DeclaringType == GetType()</c> in
+    /// <c>NavTestCodeunit.DoRunAsync</c>); the inherited empty base is never invoked.
+    /// </summary>
+    internal static MethodInfo? ResolveDeclaredTestCodeunitOnRun(Type t)
+    {
+        var trigger = BcRuntime.ResolveOnRunTrigger(t);
+        return trigger != null && trigger.DeclaringType == t ? trigger : null;
+    }
+
+    /// <summary>
+    /// BC's <c>NavTestCodeunit.DoRunAsync</c> OnRun step: run the trigger on the test codeunit's
+    /// instance, commit on success, roll back on failure. Returns null on success; otherwise the
+    /// result every remaining test method of the codeunit reports, because BC then runs none of
+    /// them. The caller stamps each test's own method name onto it.
+    /// </summary>
+    private TestResult? RunTestCodeunitOnRun(string codeunit, MethodInfo trigger, object instance, string displayName)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        AlRunner.Patches.RecordPatches.MarkCommitPoint();
+        AlRunner.Infrastructure.AlCallStackCapture.Clear();
+        AlRunner.Infrastructure.RunSeed.BeginTest(codeunit, "OnRun");
+        // BC: BeforeTestRunAsync(onRunMethod, null) -> EnterTestMethod(onRunMethod, null).
+        BcRuntime.EnterTestExecutionScope(instance, trigger);
+        var committed = false;
+        var timedOut = false;
+        try
+        {
+            var args = trigger.GetParameters().Length == 1 ? new object?[] { null } : null;
+            var timeout = TestTimeout();
+            var invokeResult = InvokeWithTimeout(
+                () => BcRuntime.AwaitIfTask(trigger.Invoke(instance, args)), timeout);
+            if (!invokeResult.Completed)
+            {
+                timedOut = true;
+                return new TestResult(codeunit, "OnRun", TestOutcome.Error,
+                    $"The test codeunit's OnRun trigger exceeded the {(int)timeout.TotalSeconds}s timeout, so none of its test methods ran.",
+                    null, sw.Elapsed, AlRunner.Infrastructure.AlCallStackCapture.CaptureCurrent(), displayName,
+                    InsideTestProc: false, TimedOut: true);
+            }
+            invokeResult.Exception?.Throw();
+            committed = true;
+            return null;
+        }
+        catch (Exception ex)
+        {
+            var inner = Unwrap(ex);
+            return new TestResult(codeunit, "OnRun", TestOutcome.Error,
+                $"The test codeunit's OnRun trigger failed, so none of its test methods ran (as in BC): {inner.GetType().Name}: {inner.Message}",
+                inner.ToString(), sw.Elapsed, AlRunner.Infrastructure.AlCallStackCapture.GetCaptured(inner), displayName,
+                inner, InsideTestProc: false,
+                Diagnosis: AlRunner.Infrastructure.FailureDiagnosis.Explain(inner));
+        }
+        finally
+        {
+            if (!timedOut)
+            {
+                // BC: activeSession.Commit() after OnRun, activeSession.Rollback() when it threw.
+                if (committed) AlRunner.Patches.RecordPatches.MarkCommitPoint();
+                else AlRunner.Patches.RecordPatches.RollbackToCommitPoint(BcRuntime.SkeletonSession);
+                AlRunner.Patches.ALDatabasePatches.EndWriteTransactionAtTestBoundary();
+            }
+            BcRuntime.LeaveTestExecutionScope();
+        }
+    }
+
+    private TestResult RunOne(string codeunit, MethodInfo m, object instance, string displayName,
+                              bool baselineAlreadyRestored = false)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var timedOut = false;
@@ -1563,7 +1653,7 @@ public sealed class TestExecutor
         // TestIsolationRollbackScope (60897). The measurement that suggested otherwise
         // was taken through a harness invoking tests one at a time, which cannot tell
         // "the platform rolled back" apart from "the harness opened a new transaction".
-        if (Isolation == TestIsolation.Test)
+        if (Isolation == TestIsolation.Test && !baselineAlreadyRestored)
         {
             AlRunner.Patches.RecordPatches.RestoreInstallBaseline();
         }
