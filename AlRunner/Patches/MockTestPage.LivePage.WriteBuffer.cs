@@ -66,7 +66,9 @@ internal partial class LiveNavTestPage
         // — the NEXT draft line owes its own new-record step (#3029).
         _newRowLineRecordStarted = false;
 
-        FlushPendingNewRow();   // starting a second row persists the first
+        // Starting a second row persists the first; a refused insert is dropped without an
+        // error, as BC's List New() does (corpus 60045 "IPF Tests", DelayedList_DuplicateKey_New).
+        FlushPendingNewRow(RefusedInsert.Discard);
 
         // The rows around the insert decide the new row's AutoSplitKey number, and the row
         // the cursor sits on is about to be wiped by NewRecord's ALInit — so the position is
@@ -180,7 +182,15 @@ internal partial class LiveNavTestPage
         return !record.CompareAllNormalFields(record.OldRecord, null);
     }
 
-    internal void FlushPendingNewRow()
+    /// <summary>
+    /// What a flush does when the table refuses the started row's insert (a duplicate key).
+    /// BC answers differently per TestPage route; corpus 60045 "IPF Tests" measured each one
+    /// (#4624): insert on focus and Close() raise, OK() raises nothing and leaves the row for
+    /// the page's teardown to raise, and New() and the cursor moves drop the row silently.
+    /// </summary>
+    internal enum RefusedInsert { Raise, KeepPending, Discard }
+
+    internal void FlushPendingNewRow(RefusedInsert onRefused = RefusedInsert.Raise)
     {
         if (!_pendingNewRow) return;
         _pendingNewRow = false;
@@ -193,11 +203,18 @@ internal partial class LiveNavTestPage
         // THIS New()'s cursor, and leaving it armed would offer them to the next insert, which
         // may be on another row or another part entirely.
         if (!RowValuesChangedSinceLoad()) { _insertPositionCaptured = false; return; }
-        InsertPendingRow();
+        if (InsertPendingRow(onRefused != RefusedInsert.Raise) == InsertOutcome.Refused
+            && onRefused == RefusedInsert.KeepPending)
+            _pendingNewRow = true;
     }
 
-    /// <summary>Write the started row, in BC's order. False when OnInsertRecord vetoed it.</summary>
-    private bool InsertPendingRow()
+    private enum InsertOutcome { Inserted, Vetoed, Refused }
+
+    /// <summary>
+    /// Write the started row, in BC's order. <paramref name="trapRefusal"/> turns a refused insert
+    /// into <see cref="InsertOutcome.Refused"/> instead of raising it; see <see cref="RefusedInsert"/>.
+    /// </summary>
+    private InsertOutcome InsertPendingRow(bool trapRefusal = false)
     {
         // #3586: BC's NavForm.InsertAsync(belowXRec) opens Session.BeginTransaction() and
         // closes it with Session.EndTransaction(commit) in a finally, around exactly the three
@@ -228,24 +245,26 @@ internal partial class LiveNavTestPage
             // is a veto — a page can refuse the insert outright. Running it and discarding the
             // answer would be worse than not running it: the row lands anyway, but now it also
             // carries whatever the trigger wrote on its way to saying no.
-            if (_page != null && !_page.RaiseOnInsertRecord(false)) return false;
+            if (_page != null && !_page.RaiseOnInsertRecord(false)) return InsertOutcome.Vetoed;
             // runApplicationTrigger: true. Inserting a row from a page runs the table's OnInsert, the
             // same as Rec.Insert(true) — that trigger is where a table assigns its number series,
             // stamps its own derived fields, and enforces what it will not accept. Passing false
             // wrote a row the table had never agreed to.
             // Non-null: _pendingNewRow is only ever set true by InsertEmptyRow, which refuses by
             // name first when the page has no record — see RequireRecord there.
-            // ThrowError, as NavForm.SaveRecordAsync's insert: a refused insert (a duplicate key)
-            // raises at the TestPage call that flushed the row — corpus 60045 "IPF Tests", #4624.
-            // TrapError dropped the row and every value typed into it silently (it hid #4577).
-            _record!.ALInsertAsync(DataError.ThrowError, true, false).GetAwaiter().GetResult();
+            // TrapError only where BC measured silence (RefusedInsert); TrapError still raises an
+            // OnInsert trigger's own error, so only the table's refusal of the row is trapped.
+            // Everywhere else ThrowError, as NavForm.SaveRecordAsync's insert — corpus 60045, #4624.
+            var inserted = _record!.ALInsertAsync(trapRefusal ? DataError.TrapError : DataError.ThrowError, true, false)
+                .GetAwaiter().GetResult();
+            if (!inserted) return InsertOutcome.Refused;
             // The row is now the page's own row, so it is also its own before-image — BC's
             // NavForm.InsertAsync does exactly this, under exactly this guard
             // (`if (SourceTable.HasBeenInserted) OldRecord.ALAssign(SourceTable)`). Without it the
             // next write on the same page instance would compare against, and report as xRec, the
             // blank row New() started (issue #3440).
             if (_record!.HasBeenInserted) SnapshotBeforeImage();
-            return true;
+            return InsertOutcome.Inserted;
         }
         finally
         {
@@ -676,7 +695,7 @@ internal partial class LiveNavTestPage
         _pendingNewRow = false;
         if (NewRowAlreadyInsertedByThePage()) { ContinueAsAnEditOfTheSavedRow(); return; }
         // A vetoed insert leaves the row a started draft, as the client's does.
-        if (!InsertPendingRow()) _pendingNewRow = true;
+        if (InsertPendingRow() == InsertOutcome.Vetoed) _pendingNewRow = true;
     }
 
     /// <summary>
@@ -893,7 +912,11 @@ internal partial class LiveNavTestPage
 
     // Order matters at every flush point: an in-progress new row is finished by an Insert, an
     // edited existing row by a Modify, and only one of the two is ever pending.
-    private void FlushRow() { FlushPendingNewRow(); FlushPendingModify(); }
+    private void FlushRow(RefusedInsert onRefused = RefusedInsert.Raise)
+    {
+        FlushPendingNewRow(onRefused);
+        FlushPendingModify();
+    }
 
     /// <summary>
     /// Persist whatever row the page is in the middle of editing — BC's NavForm.SaveRecord,

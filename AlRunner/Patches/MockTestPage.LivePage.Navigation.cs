@@ -32,7 +32,7 @@ internal partial class LiveNavTestPage
     public override bool MoveFirst()
     {
         var record = RequireRecord("MoveFirst()");
-        FlushParts(); FlushRow();
+        FlushParts(); FlushRow(RefusedInsert.Discard);
 
         // Whether the cursor was ALREADY on the draft line, read before LeaveNewRowLine clears
         // it. A First() over a rowset that is still empty does not move anywhere: the draft line
@@ -95,7 +95,7 @@ internal partial class LiveNavTestPage
     public override bool MoveLast()
     {
         var record = RequireRecord("MoveLast()");
-        FlushParts(); FlushRow(); LeaveNewRowLine();
+        FlushParts(); FlushRow(RefusedInsert.Discard); LeaveNewRowLine();
         var found = _page?.RaiseOnFindRecord("+")
                     ?? record.ALFindLastAsync(DataError.TrapError).GetAwaiter().GetResult();
         if (!found) EnterNewRowLine(record);
@@ -109,7 +109,7 @@ internal partial class LiveNavTestPage
     public override bool MoveNext()
     {
         var record = RequireRecord("MoveNext()");
-        FlushParts(); FlushRow();
+        FlushParts(); FlushRow(RefusedInsert.Discard);
 
         // Already parked on the new-row line: it is the LAST row of the rowset, so this is
         // where the walk ends. Restore the cursor to the data row it came from first, so a
@@ -124,7 +124,7 @@ internal partial class LiveNavTestPage
     public override bool MovePrevious()
     {
         var record = RequireRecord("MovePrevious()");
-        FlushParts(); FlushRow();
+        FlushParts(); FlushRow(RefusedInsert.Discard);
 
         // Stepping back off the new-row line lands on the last data row — the row the cursor
         // was on when it walked onto the blank line. It is restored rather than re-sought

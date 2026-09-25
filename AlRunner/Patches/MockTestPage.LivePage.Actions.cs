@@ -391,7 +391,8 @@ internal partial class LiveNavTestPage
                 // (StefanMaron/BusinessCentral.AL.Language.Tests#354); issue #4146.
                 if (_result is FormResult.OK)
                     _page.FlushParts();
-                _page.FlushRow();
+                // OK leaves a row the table refuses for the teardown to raise (corpus 60045).
+                _page.FlushRow(_result is FormResult.OK ? RefusedInsert.KeepPending : RefusedInsert.Raise);
             }
 
             // On BC this invoke IS the close attempt -- see AttemptHandlerDrivenClose.
