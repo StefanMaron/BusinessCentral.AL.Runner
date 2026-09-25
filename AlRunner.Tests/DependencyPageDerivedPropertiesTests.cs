@@ -237,6 +237,187 @@ public class DependencyPageDerivedPropertiesTests
         }
     }
 
+    // ── The three derivations of the second pass: AnalysisModeEnabled, CardFormID and
+    //    IndirectPermissions. Rules and measurements: docs/dependency-page-properties.md.
+
+    private const int NoPageTypePageId = 88782010;
+    private const int ListPageId = 88782011;
+    private const int WorksheetPageId = 88782012;
+    private const int StatedCardPageId = 88782013;
+    private const int ListPartPageId = 88782014;
+    private const int ListStatedOffPageId = 88782015;
+    private const int NumericCardListPageId = 88782016;
+    private const int UnresolvedCardListPageId = 88782017;
+    private const int PermissionsPageId = 88782018;
+    private const int PermissionsNoSourcePageId = 88782019;
+    private const int UnreadablePermissionsPageId = 88782020;
+    private const int PermTableId = 88782050;
+
+    private const string DerivationSymbolReference = """
+        {
+          "RuntimeVersion": "15.1",
+          "Tables": [
+            { "Id": 88782050, "Name": "P4282 Perm Table",
+              "Fields": [ { "Id": 1, "Name": "Code", "TypeDefinition": { "Name": "Code" } } ] }
+          ],
+          "Pages": [
+            { "Id": 88782010, "Name": "P4282 No PageType",
+              "Properties": [ { "Name": "SourceTable", "Value": "700" } ] },
+            { "Id": 88782011, "Name": "P4282 List",
+              "Properties": [ { "Name": "PageType", "Value": "List" }, { "Name": "SourceTable", "Value": "700" },
+                              { "Name": "CardPageId", "Value": "P4282 Stated Card" } ] },
+            { "Id": 88782012, "Name": "P4282 Worksheet",
+              "Properties": [ { "Name": "PageType", "Value": "Worksheet" }, { "Name": "SourceTable", "Value": "700" } ] },
+            { "Id": 88782013, "Name": "P4282 Stated Card",
+              "Properties": [ { "Name": "PageType", "Value": "Card" }, { "Name": "SourceTable", "Value": "700" } ] },
+            { "Id": 88782014, "Name": "P4282 ListPart",
+              "Properties": [ { "Name": "PageType", "Value": "ListPart" }, { "Name": "SourceTable", "Value": "700" } ] },
+            { "Id": 88782015, "Name": "P4282 List Stated Off",
+              "Properties": [ { "Name": "PageType", "Value": "List" }, { "Name": "SourceTable", "Value": "700" },
+                              { "Name": "AnalysisModeEnabled", "Value": "0" } ] },
+            { "Id": 88782016, "Name": "P4282 Numeric Card List",
+              "Properties": [ { "Name": "PageType", "Value": "List" }, { "Name": "SourceTable", "Value": "700" },
+                              { "Name": "CardPageID", "Value": "88782013" } ] },
+            { "Id": 88782017, "Name": "P4282 Unresolved Card List",
+              "Properties": [ { "Name": "PageType", "Value": "List" }, { "Name": "SourceTable", "Value": "700" },
+                              { "Name": "CardPageId", "Value": "P4282 No Such Card" } ] },
+            { "Id": 88782018, "Name": "P4282 Permissions",
+              "Properties": [ { "Name": "PageType", "Value": "Card" }, { "Name": "SourceTable", "Value": "700" },
+                              { "Name": "Permissions", "Value": "tabledata \"P4282 Perm Table\" = rd,\n                  tabledata 700 = RIMD" } ] },
+            { "Id": 88782019, "Name": "P4282 Permissions No Source",
+              "Properties": [ { "Name": "PageType", "Value": "Card" },
+                              { "Name": "Permissions", "Value": "tabledata 700 = r" } ] },
+            { "Id": 88782020, "Name": "P4282 Unreadable Permissions",
+              "Properties": [ { "Name": "PageType", "Value": "Card" }, { "Name": "SourceTable", "Value": "700" },
+                              { "Name": "Permissions", "Value": "tabledata 700 = r, tabledata \"P4282 No Such Table\" = r" } ] }
+          ]
+        }
+        """;
+
+    /// <summary>
+    /// <c>AnalysisModeEnabled</c> is DERIVED: <c>"1"</c> for List, Worksheet and a page stating
+    /// no <c>PageType</c>; the stated value when stated; absent otherwise. Every arm has its own
+    /// expected answer, so neither "write iff stated" nor "write 1 for List" passes.
+    ///
+    /// <para>The no-PageType arm is the one BC's own apps show only once (page 1998) and the
+    /// runner's symbol folds into <c>"Card"</c>, so it is asserted against a stated Card that
+    /// must stay attribute-free. It also carries <c>IsPreview="0"</c>, which a stated Card does
+    /// not.</para>
+    /// </summary>
+    [Fact]
+    public void AnalysisModeEnabled_IsDerivedFromPageType_AndAStatedValueWins()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-page-derived-4282");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, DerivationSymbolReference));
+
+            Assert.Equal("1", ReadProperties(ListPageId).GetAttribute("AnalysisModeEnabled"));
+            Assert.Equal("1", ReadProperties(WorksheetPageId).GetAttribute("AnalysisModeEnabled"));
+            Assert.Equal("1", ReadProperties(NoPageTypePageId).GetAttribute("AnalysisModeEnabled"));
+            Assert.Equal("0", ReadProperties(ListStatedOffPageId).GetAttribute("AnalysisModeEnabled"));
+
+            Assert.False(ReadProperties(StatedCardPageId).HasAttribute("AnalysisModeEnabled"));
+            Assert.False(ReadProperties(ListPartPageId).HasAttribute("AnalysisModeEnabled"));
+
+            // The unstated PageType is still emitted as Card, as BC does.
+            Assert.Equal("Card", ReadProperties(NoPageTypePageId).GetAttribute("PageType"));
+            Assert.Equal("0", ReadProperties(NoPageTypePageId).GetAttribute("IsPreview"));
+            Assert.False(ReadProperties(StatedCardPageId).HasAttribute("IsPreview"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// <c>CardFormID</c> carries the RESOLVED id of the page <c>CardPageId</c> names — both the
+    /// name form every Microsoft page uses and the numeric form — and nothing when the name
+    /// resolves to no page, or when none is stated.
+    /// </summary>
+    [Fact]
+    public void CardFormId_IsTheResolvedIdOfTheNamedCardPage()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-page-derived-4282");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, DerivationSymbolReference));
+
+            Assert.Equal(StatedCardPageId.ToString(), ReadProperties(ListPageId).GetAttribute("CardFormID"));
+            Assert.Equal(StatedCardPageId.ToString(), ReadProperties(NumericCardListPageId).GetAttribute("CardFormID"));
+
+            Assert.False(ReadProperties(UnresolvedCardListPageId).HasAttribute("CardFormID"));
+            Assert.False(ReadProperties(WorksheetPageId).HasAttribute("CardFormID"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// A page's AL <c>Permissions</c> becomes <c>SourceObject/@IndirectPermissions</c>: table ids
+    /// and INDIRECT masks in declared order, terminated by <c>0, 0</c>. <c>rd</c> is 288 and
+    /// <c>RIMD</c> is 480 — upper case gives the indirect bits too, as BC's compiler does.
+    ///
+    /// <para>Two negatives: no <c>SourceTable</c> means no attribute even with
+    /// <c>Permissions</c> stated, and one unresolvable table withdraws the whole vector rather
+    /// than writing the entries it could read.</para>
+    /// </summary>
+    [Fact]
+    public void IndirectPermissions_IsTheResolvedVector_OnlyForASourceTablePage()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-page-derived-4282");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, DerivationSymbolReference));
+
+            Assert.Equal(
+                $"{PermTableId}, 288, 700, 480, 0, 0",
+                ReadSourceObject(PermissionsPageId).GetAttribute("IndirectPermissions"));
+
+            Assert.False(ReadSourceObject(PermissionsNoSourcePageId).HasAttribute("IndirectPermissions"));
+            Assert.False(ReadSourceObject(UnreadablePermissionsPageId).HasAttribute("IndirectPermissions"));
+            Assert.False(ReadSourceObject(StatedCardPageId).HasAttribute("IndirectPermissions"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("tabledata \"A, B\" = r", "10, 32, 0, 0")]
+    [InlineData("tabledata Plain = imd", "11, 448, 0, 0")]
+    [InlineData("TableData \"A, B\" = Rm,\n   tabledata 42 = D", "10, 160, 42, 256, 0, 0")]
+    public void IndirectPermissionsVector_ParsesQuotedNamesCaseAndIds(string stated, string expected)
+    {
+        int Resolve(string name) => name switch { "A, B" => 10, "Plain" => 11, _ => -1 };
+        Assert.Equal(expected, RecordPatches.TryBuildIndirectPermissionsVector(stated, Resolve, out var unreadable));
+        Assert.Null(unreadable);
+    }
+
+    [Theory]
+    [InlineData("tabledata Plain = rx")]
+    [InlineData("codeunit Plain = X")]
+    [InlineData("tabledata Missing = r")]
+    public void IndirectPermissionsVector_RefusesWhatItCannotRead(string stated)
+    {
+        int Resolve(string name) => name == "Plain" ? 11 : -1;
+        Assert.Null(RecordPatches.TryBuildIndirectPermissionsVector(stated, Resolve, out var unreadable));
+        Assert.NotNull(unreadable);
+    }
+
+    private static XmlElement ReadSourceObject(int pageId)
+    {
+        var props = ReadProperties(pageId);
+        return (XmlElement)props.GetElementsByTagName("SourceObject", "urn:schemas-microsoft-com:dynamics:NAV:MetaObjects")[0]!;
+    }
+
     private static XmlElement ReadRoot(int pageId)
     {
         var xml = RecordPatches.TryBuildDependencyPageMetadata(pageId);

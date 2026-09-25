@@ -334,7 +334,16 @@ internal static partial class BcAppSymbolCache
         // `Rec."Related Table Caption"`. Carried verbatim and deliberately not parsed: BC's
         // emitter does not write this text at all, only a fixed marker that the page HAS one.
         // See RecordPatches.EmitPagePropertiesXml (#4282).
-        string? DataCaptionExpression = null);
+        string? DataCaptionExpression = null,
+        // #4282. Whether the symbol file STATES PageType at all -- PageType above folds absence
+        // into AL's "Card", and BC's emitter tells the two apart (EmitPageXml). Defaults to true
+        // so a symbol built without it keeps the pre-#4282 document.
+        bool PageTypeStated = true,
+        // #4282. AL's AnalysisModeEnabled as stated, null when not stated; and AL's Permissions
+        // property verbatim (e.g. tabledata "Sent Email" = rd), resolved to BC's
+        // IndirectPermissions vector by RecordPatches.EmitSourceObjectIndirectPermissions.
+        bool? AnalysisModeEnabled = null,
+        string? Permissions = null);
 
     /// <summary>
     /// The <c>Enabled</c> / <c>Visible</c> one action DECLARES, exactly as the compiler wrote
@@ -1624,6 +1633,8 @@ internal static partial class BcAppSymbolCache
         props.TryGetValue("InherentPermissions", out var inherentPermissions);
         props.TryGetValue("ContextSensitiveHelpPage", out var contextSensitiveHelpPage);
         props.TryGetValue("DataCaptionExpression", out var dataCaptionExpression);
+        props.TryGetValue("Permissions", out var permissions);
+        var analysisModeEnabled = SymbolBoolOrNull(props, "AnalysisModeEnabled", ref unreadableBooleans);
 
         static string? OrNullIfBlank(string? v) => string.IsNullOrWhiteSpace(v) ? null : v;
 
@@ -1650,7 +1661,10 @@ internal static partial class BcAppSymbolCache
             // rule, free to drift.
             ReadAttributedMethods(page),
             OrNullIfBlank(contextSensitiveHelpPage),
-            OrNullIfBlank(dataCaptionExpression));
+            OrNullIfBlank(dataCaptionExpression),
+            PageTypeStated: !string.IsNullOrWhiteSpace(pageType),
+            AnalysisModeEnabled: analysisModeEnabled,
+            Permissions: OrNullIfBlank(permissions));
     }
 
     /// <summary>

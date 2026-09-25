@@ -831,18 +831,6 @@
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
     },
     {
-      "member": "PageProperties.#analysisModeEnabledField",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.AnalysisModeEnabled, declared in this file with the measurement. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
-      "issue": 4282,
-      "versionContingent": true,
-      "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
-    },
-    {
-      "member": "PageProperties.#cardFormIDField",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.CardFormID, declared in this file with the measurement.",
-      "issue": 4282
-    },
-    {
       "member": "PageProperties.#controlGUIDField",
       "reason": "A deterministic ENCODING of the page id and the control id, not an opaque designer token. Verified exactly on this harness's own ground truth: 5,001 of 5,001 control GUIDs across both apps on BC 28.1.49838.53910 (and 5,035 of 5,035 on 28.4.53241.54407) are reproduced character-for-character by   {<pageId:08x>-<ctlId & 0xFFFF:04x>-0000-0c<(ctlId >> 24) & 0xFF:02x>-<(ctlId >> 16) & 0xFF:02x>00836bd2d2} -- e.g. page 257 control 791368264 gives {00000101-5248-0000-0c2f-2b00836bd2d2}. Both inputs are in SymbolReference.json, so this is computable rather than unavailable. It is declared here because the runner emits no control tree for these ids to belong to (see the Controls entries), and it becomes a gap to close the moment it does -- NOT because the value cannot be derived.",
       "outOfScope": true,
@@ -891,23 +879,6 @@
       "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
     },
     {
-      "member": "PageProperties.AnalysisModeEnabled",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 1 page declares AnalysisModeEnabled; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
-      "issue": 4282,
-      "versionContingent": true,
-      "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
-    },
-    {
-      "member": "PageProperties.CardFormID",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured over Business Foundation + System Application at BC 28.1.49838.53910, 10 pages declare it across TWO spellings -- CardPageId on 9 and CardPageID on 1 -- and BC's emitter writes CardFormID on exactly those 10; the runner never writes it. The corrected count and the two-spelling trap are #4282's (a reader matching one spelling finds 9 and looks correct). Note the value needs resolving: the symbol file states a page NAME and BC writes the page ID, so this is not the plain copy the rest of the sentence implies. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 4282
-    },
-    {
-      "member": "PageProperties.CardFormIDSpecified",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.CardFormID, declared in this file with the measurement.",
-      "issue": 4282
-    },
-    {
       "member": "PageProperties.ControlGUID",
       "reason": "A deterministic ENCODING of the page id and the control id, not an opaque designer token. Verified exactly on this harness's own ground truth: 5,001 of 5,001 control GUIDs across both apps on BC 28.1.49838.53910 (and 5,035 of 5,035 on 28.4.53241.54407) are reproduced character-for-character by   {<pageId:08x>-<ctlId & 0xFFFF:04x>-0000-0c<(ctlId >> 24) & 0xFF:02x>-<(ctlId >> 16) & 0xFF:02x>00836bd2d2} -- e.g. page 257 control 791368264 gives {00000101-5248-0000-0c2f-2b00836bd2d2}. Both inputs are in SymbolReference.json, so this is computable rather than unavailable. It is declared here because the runner emits no control tree for these ids to belong to (see the Controls entries), and it becomes a gap to close the moment it does -- NOT because the value cannot be derived.",
       "outOfScope": true,
@@ -948,16 +919,6 @@
       "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
-    },
-    {
-      "member": "SourceObjectDefinition.#indirectPermissionsField",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies SourceObjectDefinition.IndirectPermissions, declared in this file with the measurement.",
-      "issue": 4282
-    },
-    {
-      "member": "SourceObjectDefinition.IndirectPermissions",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 86 pages declare a Permissions property, which BC resolves into the SourceObject's IndirectPermissions vector; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 4282
     },
     {
       "member": "MetaRuntimeInfo.Methods.<presence>",
