@@ -227,7 +227,7 @@ public sealed class CliDocumentationTests
             "TROUBLESHOOTING",     // failure signature -> meaning
             "does not have a member with that ID",  // the ID-0 signature specifically
             "symbols-only",        // the distinction that makes "it compiled" not mean "it can run"
-            "HIGHEST VERSION",     // how the winning package is actually chosen
+            "an R2R DLL wins first",  // how the winning package is actually chosen (#4556)
             "[dep]",               // the mechanical check that replaces hand-auditing .app files
             "Do NOT infer it from the app under test",  // --bc-version is not the app's version
         })
