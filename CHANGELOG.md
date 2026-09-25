@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **test-data:** route tables/companies through the serve-mode reader
 - **coverage:** serve Code Coverage (2000000049) line rows from the compiled AL source
 - **coverage:** implement code-coverage recording for CODECOVERAGELOG(TRUE)
 - **cli:** --test-data-company accepts a case-insensitive name prefix
