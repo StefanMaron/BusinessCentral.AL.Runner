@@ -237,9 +237,8 @@ internal partial class LiveNavTestPage
             for (var i = 0; i < primaryKey.KeyFieldCount && target == null; i++)
                 foreach (var id in controls)
                     if (_controlIdToFieldNo.TryGetValue(id, out var fieldNo)
-                        && fieldNo == primaryKey.KeyFieldsList[i].FieldNo
-                        && GetField(id) is LiveNavTestField field)
-                    { target = field.ValidationErrors; break; }
+                        && fieldNo == primaryKey.KeyFieldsList[i].FieldNo)
+                    { target = FieldLedger(id); break; }
 
         if (target != null) target.RecordOutsideAnOperation(message);
         else _validationErrors.Record(message);

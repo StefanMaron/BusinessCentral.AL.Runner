@@ -1,8 +1,8 @@
 // TestPageFailedInsertRaisesTests — issue #4624. What a refused page insert (a duplicate key)
-// does on each TestPage route, per LiveNavTestPage.RefusedInsert: insert on focus and Close()
-// raise at the call; OK() raises nothing and the procedure's teardown raises
-// (BcRuntime.FlushLocalTestPagesNewRows); New() and Next() on a DelayedInsert List drop the row
-// without an error. The BC behaviour is adjudicated upstream by corpus codeunit 60045 "IPF Tests".
+// does on each TestPage route, per LiveNavTestPage.RefusedInsert: insert on focus, Close() and
+// Previous() raise at the call; OK() raises nothing, then or at scope exit; New() and Next() on a
+// DelayedInsert List record one validation error on the key control and keep the cursor on the
+// refused line. The BC behaviour is adjudicated upstream by corpus codeunit 60045 "IPF Tests".
 using System.Diagnostics;
 using System.Text;
 using Xunit;
@@ -167,28 +167,41 @@ public sealed class TestPageFailedInsertRaisesTests : IDisposable
                 Check('Close|already exists');
             end;
 
-            // OK() raises nothing; the error surfaces when DriveDelayedCardViaOK returns.
+            // OK() raises nothing, and neither does the page going out of scope.
             [Test]
-            procedure DelayedOK_DuplicateKey_RaisesAtTeardown()
+            procedure DelayedOK_DuplicateKey_RaisesNothing()
+            var
+                Row: Record "Fir Row";
             begin
                 Seed();
-                asserterror DriveDelayedCardViaOK();
-                Check('completed|already exists');
+                DriveDelayedCardViaOK();
+                Row.Get('DUP');
+                CheckList(StrSubstNo('%1;rows=%2;dup=%3', Step, Row.Count(), Row.Description),
+                    'completed;rows=1;dup=orig');
             end;
 
-            // New() and Next() leaving a List line drop it without an error.
+            // New() and Next() leaving a List line record the error on the key control and stay.
             [Test]
-            procedure DelayedListNew_DuplicateKey_DropsTheLine()
+            procedure DelayedListNew_DuplicateKey_RecordsOnTheKeyControl()
             begin
                 Seed();
-                CheckList(DriveDelayedList(true), 'cur=;rows=1;dup=orig');
+                CheckList(DriveDelayedList(true), 'cur=DUP;noErr=1;descErr=0;rows=1;dup=orig');
             end;
 
             [Test]
-            procedure DelayedListNext_DuplicateKey_DropsTheLine()
+            procedure DelayedListNext_DuplicateKey_RecordsOnTheKeyControl()
             begin
                 Seed();
-                CheckList(DriveDelayedList(false), 'cur=;rows=1;dup=orig');
+                CheckList(DriveDelayedList(false), 'cur=DUP;noErr=1;descErr=0;rows=1;dup=orig');
+            end;
+
+            // Previous() leaving the line raises the insert error.
+            [Test]
+            procedure DelayedListPrevious_DuplicateKey_Raises()
+            begin
+                Seed();
+                asserterror DriveDelayedListPrevious();
+                Check('Previous|already exists');
             end;
 
             local procedure CheckList(Actual: Text; Expected: Text)
@@ -256,10 +269,28 @@ public sealed class TestPageFailedInsertRaisesTests : IDisposable
                     Rows.New()
                 else
                     Rows.Next();
-                Cur := Rows."No.".Value();
+                Cur := StrSubstNo('cur=%1;noErr=%2;descErr=%3', Rows."No.".Value(),
+                    Rows."No.".ValidationErrorCount(), Rows.Description.ValidationErrorCount());
                 Rows.Close();
                 Row.Get('DUP');
-                exit(StrSubstNo('cur=%1;rows=%2;dup=%3', Cur, Row.Count(), Row.Description));
+                exit(StrSubstNo('%1;rows=%2;dup=%3', Cur, Row.Count(), Row.Description));
+            end;
+
+            local procedure DriveDelayedListPrevious()
+            var
+                Rows: TestPage "Fir Delayed List";
+            begin
+                Rows.OpenNew();
+                Step := 'No.';
+                Rows."No.".SetValue('DUP');
+                Step := 'Description';
+                Rows.Description.SetValue('typed');
+                Step := 'Previous';
+                Rows.Previous();
+                Step := 'Close';
+                Rows.Close();
+                Step := 'completed';
+                Error('NO-ERROR-RAISED');
             end;
 
             local procedure DriveDelayedCard(No: Code[20])
@@ -303,7 +334,7 @@ public sealed class TestPageFailedInsertRaisesTests : IDisposable
     }
 
     [SkippableFact]
-    public void AFailedPageInsert_RaisesOrDropsPerRoute()
+    public void AFailedPageInsert_RaisesOrRecordsPerRoute()
     {
         TestArtifacts.SkipIfMissing();
 
@@ -316,9 +347,10 @@ public sealed class TestPageFailedInsertRaisesTests : IDisposable
                      "InsertOnFocus_DuplicateKey_RaisesAtTheWrite",
                      "DelayedClose_DuplicateKey_RaisesAtClose",
                      "DelayedClose_FreeKey_WritesTheRow",
-                     "DelayedOK_DuplicateKey_RaisesAtTeardown",
-                     "DelayedListNew_DuplicateKey_DropsTheLine",
-                     "DelayedListNext_DuplicateKey_DropsTheLine",
+                     "DelayedOK_DuplicateKey_RaisesNothing",
+                     "DelayedListNew_DuplicateKey_RecordsOnTheKeyControl",
+                     "DelayedListNext_DuplicateKey_RecordsOnTheKeyControl",
+                     "DelayedListPrevious_DuplicateKey_Raises",
                  })
             Assert.Contains("PASS  Codeunit62873." + name, output);
         Assert.DoesNotContain("FAIL", output);

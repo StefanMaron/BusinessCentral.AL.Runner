@@ -12,6 +12,16 @@ using Microsoft.Dynamics.Nav.Types.Exceptions;
 namespace AlRunner;
 internal partial class LiveNavTestPage
 {
+    // Per control id, like _fields; the field reads its ledger from here (see RecordInsertFailure).
+    private readonly Dictionary<int, TestFieldValidationErrors> _fieldLedgers = new();
+
+    private TestFieldValidationErrors FieldLedger(int controlId)
+    {
+        if (!_fieldLedgers.TryGetValue(controlId, out var ledger))
+            _fieldLedgers[controlId] = ledger = new TestFieldValidationErrors(_validationErrors);
+        return ledger;
+    }
+
     public override ITestField GetField(int id)
     {
         if (_tornDown) throw MakeTestPageNotOpenException();
@@ -52,7 +62,7 @@ internal partial class LiveNavTestPage
             if (!_fields.TryGetValue(id, out var field))
                 _fields[id] = field =
                     new LiveNavTestField(_record!, tableFieldNo, _page, id,
-                        MarkEdited, PromoteNewRowLineForWrite, ActivateControl, _validationErrors);
+                        MarkEdited, PromoteNewRowLineForWrite, ActivateControl, FieldLedger(id));
             return field;
         }
 
