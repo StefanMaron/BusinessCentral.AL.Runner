@@ -19,6 +19,7 @@ public static partial class RecordPatches
         IReadOnlyDictionary<string, List<long>> ScopeSpansByName,
         IReadOnlyList<(long Span, BcAppSymbolCache.CodeunitMethodSymbol Method)> Subscribers,
         IReadOnlySet<int> InherentMethodIds,
+        IReadOnlyDictionary<int, (long Span, BcAppSymbolCache.CodeunitMethodSymbol? Method, string Why)> AssemblyInherentMethods,
         IReadOnlyList<string> PublisherNames,
         string? Refusal);
 
@@ -27,15 +28,12 @@ public static partial class RecordPatches
 
     /// <summary>
     /// The method table for one precompiled codeunit and whether it is COMPLETE: every attributed
-    /// method the assembly declares is in it — subscribers derived here, publishers and
-    /// <c>InherentPermissions</c> methods from the symbol file — and, when subscribers had to be
-    /// merged in, every method was placed in source order. Anything else answers the symbol
-    /// file's list with <c>false</c>, which keeps the honest absence.
+    /// method the assembly declares is in it — subscribers and <c>local</c>
+    /// <c>InherentPermissions</c> methods derived here, publishers and the other
+    /// <c>InherentPermissions</c> methods from the symbol file — and, when any had to be merged
+    /// in, every method was placed in source order. Anything else answers the symbol file's list
+    /// with <c>false</c>, which keeps the honest absence.
     /// </summary>
-    /// <remarks>The completeness check applies to a subscriber-free codeunit too: a
-    /// <c>local</c> method carrying <c>[InherentPermissions]</c> is emitted by BC and stated by
-    /// no symbol file (Business Foundation 306/307/309, System Application 8705), so "no
-    /// subscriber" alone never proved the symbol file's list complete.</remarks>
     private static (List<BcAppSymbolCache.CodeunitMethodSymbol>? Methods, bool Complete) ResolveCodeunitMethodTable(
         string appPath, int codeunitId, List<BcAppSymbolCache.CodeunitMethodSymbol>? symbolMethods)
     {
@@ -63,11 +61,19 @@ public static partial class RecordPatches
         if (!all.TryGetValue(codeunitId, out var facts)) { why = "no Codeunit type for this id in the app's assemblies"; return false; }
         if (facts.Refusal is not null) { why = facts.Refusal; return false; }
 
+        // An InherentPermissions method the symbol file does not state is a local one (306, 307,
+        // 309, 8705); it is read off the assembly, or the codeunit is withheld.
         var symbolIds = (symbolMethods ?? []).Select(m => m.Id).ToHashSet();
-        var missingInherent = facts.InherentMethodIds.Where(id => !symbolIds.Contains(id)).ToList();
-        if (missingInherent.Count > 0)
+        var derivedInherent = new List<(long Span, BcAppSymbolCache.CodeunitMethodSymbol Method)>();
+        foreach (var id in facts.InherentMethodIds.Where(id => !symbolIds.Contains(id)))
         {
-            why = $"InherentPermissions-attributed method(s) {string.Join(", ", missingInherent)} are not in the symbol file (local)";
+            if (facts.AssemblyInherentMethods.TryGetValue(id, out var local) && local.Method is not null)
+            {
+                derivedInherent.Add((local.Span, local.Method));
+                continue;
+            }
+            why = $"InherentPermissions method {id} is not in the symbol file (local) and cannot be derived: "
+                  + (local.Why is { Length: > 0 } reason ? reason : "no derivation recorded");
             return false;
         }
         var symbolNames = (symbolMethods ?? []).Select(m => m.Name).ToList();
@@ -78,8 +84,8 @@ public static partial class RecordPatches
             return false;
         }
 
-        // No subscriber: the symbol file's own order is BC's (70/70), so nothing needs placing.
-        if (facts.Subscribers.Count == 0)
+        // Nothing derived: the symbol file's own order is BC's (70/70), so nothing needs placing.
+        if (facts.Subscribers.Count == 0 && derivedInherent.Count == 0)
         {
             merged = symbolMethods;
             why = "";
@@ -87,6 +93,7 @@ public static partial class RecordPatches
         }
 
         var placed = new List<(long Span, BcAppSymbolCache.CodeunitMethodSymbol Method)>(facts.Subscribers);
+        placed.AddRange(derivedInherent);
         foreach (var method in symbolMethods ?? [])
         {
             // A method with a body carries [MethodId]; a publisher has none and is found through
@@ -159,19 +166,22 @@ public static partial class RecordPatches
                 // One codeunit in two chunks: which one BC compiled from is not knowable here.
                 result[id] = new CodeunitAssemblyFacts(
                     new Dictionary<int, long>(), new Dictionary<string, List<long>>(), [],
-                    new HashSet<int>(), [], "the codeunit type occurs in more than one assembly");
+                    new HashSet<int>(), new Dictionary<int, (long, BcAppSymbolCache.CodeunitMethodSymbol?, string)>(),
+                    [], "the codeunit type occurs in more than one assembly");
                 continue;
             }
-            result[id] = ReadCodeunitFacts(md, type);
+            result[id] = ReadCodeunitFacts(md, pe, type);
         }
     }
 
-    private static CodeunitAssemblyFacts ReadCodeunitFacts(MetadataReader md, TypeDefinition type)
+    private static CodeunitAssemblyFacts ReadCodeunitFacts(MetadataReader md,
+        System.Reflection.PortableExecutable.PEReader pe, TypeDefinition type)
     {
         var spanByMethodId = new Dictionary<int, long>();
         var scopeSpans = new Dictionary<string, List<long>>(StringComparer.Ordinal);
         var subscribers = new List<(long, BcAppSymbolCache.CodeunitMethodSymbol)>();
         var inherentMethodIds = new HashSet<int>();
+        var assemblyInherent = new Dictionary<int, (long, BcAppSymbolCache.CodeunitMethodSymbol?, string)>();
         var publisherNames = new List<string>();
         string? refusal = null;
 
@@ -198,7 +208,7 @@ public static partial class RecordPatches
             var method = md.GetMethodDefinition(methodHandle);
             int? methodId = null; string? name = null; long? span = null;
             CustomAttributeValue<object>? subscriber = null;
-            bool inherent = false;
+            CustomAttributeValue<object>? inherent = null;
             foreach (var h in method.GetCustomAttributes())
             {
                 var ca = md.GetCustomAttribute(h);
@@ -208,13 +218,20 @@ public static partial class RecordPatches
                     case "NavNameAttribute": name = ca.DecodeValue(AttributeArgumentTypes.Instance).FixedArguments[0].Value as string; break;
                     case "SignatureSpanAttribute": span = ca.DecodeValue(AttributeArgumentTypes.Instance).FixedArguments[0].Value as long?; break;
                     case "NavEventSubscriberAttribute": subscriber = ca.DecodeValue(AttributeArgumentTypes.Instance); break;
-                    case "InherentPermissionsAttribute": inherent = true; break;
+                    case "InherentPermissionsAttribute": inherent = ca.DecodeValue(AttributeArgumentTypes.Instance); break;
                     case "NavEventAttribute": publisherNames.Add(md.GetString(method.Name)); break;
                 }
             }
-            if (inherent)
+            if (inherent is { } inherentValue)
             {
-                if (methodId is { } inheritId) inherentMethodIds.Add(inheritId);
+                if (methodId is { } inheritId)
+                {
+                    inherentMethodIds.Add(inheritId);
+                    // Derived for every one, used only for those the symbol file does not state, so
+                    // a public method's shape that cannot be derived here never withholds anything.
+                    assemblyInherent[inheritId] = DeriveAssemblyInherentMethod(
+                        md, pe, type, method, inheritId, name, span, inherentValue, subscriber is not null);
+                }
                 else refusal ??= $"InherentPermissions-attributed method '{md.GetString(method.Name)}' carries no MethodId";
             }
             if (methodId is { } mid && span is { } s && !spanByMethodId.TryAdd(mid, s))
@@ -232,12 +249,13 @@ public static partial class RecordPatches
             if (derived is null) { refusal ??= $"subscriber {methodId} '{name}': {why}"; continue; }
             subscribers.Add((span.Value, new BcAppSymbolCache.CodeunitMethodSymbol(
                 methodId.Value, name, "EventSubscriberAttribute", "EventSubscriber",
-                Parameters: DeriveSubscriberParameters(md, method, out var paramWhy),
+                Parameters: DeriveAssemblyParameters(md, pe, type, method, out var paramWhy),
                 Subscriber: derived)));
             if (subscribers[^1].Item2.Parameters is null) refusal ??= $"subscriber {methodId} '{name}': {paramWhy}";
         }
 
-        return new CodeunitAssemblyFacts(spanByMethodId, scopeSpans, subscribers, inherentMethodIds, publisherNames, refusal);
+        return new CodeunitAssemblyFacts(spanByMethodId, scopeSpans, subscribers, inherentMethodIds,
+            assemblyInherent, publisherNames, refusal);
     }
 
     // The two platform codeunits whose "events" are an install or upgrade codeunit's triggers.
@@ -315,16 +333,14 @@ public static partial class RecordPatches
                 flags.HasFlag(Microsoft.Dynamics.Nav.Types.EventSubscriberCallOptions.SkipOnMissingPermission));
     }
 
-    // The RuntimeTypes a subscriber parameter may carry and be rendered: those whose C# spelling
-    // matched BC's document on every subscriber of the measured bundles. NavText and NavCode are
-    // absent deliberately: BC writes Length="N" for a declared length, and the signature does not
-    // carry it (it lives in the body as ModifyLength(N)), so it cannot be stated. NavInterfaceHandle
-    // is absent because BC writes IsVar="True" for a `var` interface with nothing in the signature
-    // saying so.
+    // The RuntimeTypes an assembly-derived parameter may carry and be rendered from the signature
+    // alone: those whose C# spelling matched BC's document on every derived method of the measured
+    // bundles. NavText, NavCode and NavInterfaceHandle are handled apart, from the method's
+    // parameter copy (TransferredParameter); a `var` Text/Code states no length anywhere and refuses.
     private static readonly HashSet<string> SubscriberParameterTypes = new(StringComparer.Ordinal)
     {
         "bool", "int", "Decimal18", "System.Guid", "INavRecordHandle", "NavCodeunitHandle",
-        "NavRecordRef", "NavModuleInfo", "NavJsonObject", "NavOption",
+        "NavRecordRef", "NavModuleInfo", "NavJsonObject", "NavOption", "NavDate",
     };
 
     // Generic containers render their arguments without a length (#4084's third decision), so
@@ -334,9 +350,12 @@ public static partial class RecordPatches
         "NavText", "NavCode", "int", "bool",
     };
 
-    private static List<BcAppSymbolCache.MethodParameterSymbol>? DeriveSubscriberParameters(
-        MetadataReader md, MethodDefinition method, out string why)
+    private static List<BcAppSymbolCache.MethodParameterSymbol>? DeriveAssemblyParameters(
+        MetadataReader md, System.Reflection.PortableExecutable.PEReader pe, TypeDefinition owner,
+        MethodDefinition method, out string why)
     {
+        Dictionary<string, ParameterTransfer>? transfers = null;
+        why = "";
         var signature = method.DecodeSignature(RuntimeTypeNames.Instance, null);
         var parameters = method.GetParameters().Select(md.GetParameter)
             .Where(p => p.SequenceNumber > 0).OrderBy(p => p.SequenceNumber).ToList();
@@ -352,7 +371,20 @@ public static partial class RecordPatches
             var runtimeType = signature.ParameterTypes[i];
             var byRef = runtimeType.StartsWith("ByRef<", StringComparison.Ordinal);
             var inner = byRef ? runtimeType["ByRef<".Length..^1] : runtimeType;
-            if (!IsRenderableSubscriberType(inner))
+            var parameterName = md.GetString(parameters[i].Name);
+            int? length = null;
+            bool? transferIsVar = null;
+            if (inner is "NavText" or "NavCode" or "NavInterfaceHandle")
+            {
+                transfers ??= ReadParameterTransfers(md, pe, owner, method, out why);
+                if (transfers is null) return null;
+                if (!TransferredParameter(inner, byRef, transfers.GetValueOrDefault(parameterName), out length, out transferIsVar, out why))
+                {
+                    why = $"parameter '{parameterName}' ({runtimeType}): {why}";
+                    return null;
+                }
+            }
+            else if (!IsRenderableSubscriberType(inner))
             {
                 why = $"parameter type '{runtimeType}' is not one the derivation can state exactly";
                 return null;
@@ -382,13 +414,89 @@ public static partial class RecordPatches
                 }
             }
 
-            var isVar = byRef || attributes.Contains("[NavByReferenceAttribute]");
+            var isVar = transferIsVar ?? (byRef || attributes.Contains("[NavByReferenceAttribute]"));
             result.Add(new BcAppSymbolCache.MethodParameterSymbol(
-                md.GetString(parameters[i].Name), runtimeType, string.Join(",", attributes), isVar, null));
+                parameterName, runtimeType, string.Join(",", attributes), isVar, length));
         }
 
         why = "";
         return result;
+    }
+
+    /// <summary>
+    /// A Text/Code or Interface parameter, stated from how the method copies it into its scope
+    /// (#4601): a by-value Text/Code through <c>ModifyLength(N)</c> — BC writes <c>Length="N"</c>,
+    /// and none for 0, the unbounded form (1482's <c>Text[240]</c> beside a <c>Text</c>) — and an
+    /// Interface through <c>ALByValue</c> when by value, as-is when <c>var</c>, which BC writes as
+    /// <c>IsVar="True"</c> on a plain <c>NavInterfaceHandle</c> (3920, 8903). A <c>var</c>
+    /// Text/Code is copied as-is whatever its declared length, so nothing states the
+    /// <c>Length</c> BC writes for one (55's <c>Text[1024]</c>) and it refuses. Observably
+    /// equivalent on every derived parameter of the ground-truth bundles:
+    /// <c>CodeunitSubscriberMethodTableTests</c>, docs/codeunit-metadata-from-bc.md#what-the-method-body-states.
+    /// </summary>
+    internal static bool TransferredParameter(string inner, bool byRef, ParameterTransfer? transfer,
+        out int? length, out bool? isVar, out string why)
+    {
+        length = null;
+        isVar = null;
+        why = "";
+        switch (inner, byRef, transfer?.Kind)
+        {
+            case ("NavText" or "NavCode", true, _):
+                why = "a var Text/Code is copied without its declared length, so its Length cannot be stated";
+                return false;
+            case ("NavText" or "NavCode", false, ParameterTransferKind.ModifyLength) when transfer!.Value.Length >= 0:
+                length = transfer.Value.Length == 0 ? null : transfer.Value.Length;
+                return true;
+            case ("NavInterfaceHandle", false, ParameterTransferKind.ByValue):
+                isVar = false;
+                return true;
+            case ("NavInterfaceHandle", false, ParameterTransferKind.Direct):
+                isVar = true;
+                return true;
+            default:
+                why = transfer is null
+                    ? "the method never copies it into its scope in a shape the reader knows"
+                    : $"copied by {transfer.Value.Kind}, which does not state it for this type";
+                return false;
+        }
+    }
+
+    // The two InherentPermissions values the attribute's uint[] {type, id, mask, scope} carries and
+    // BC's documents have been measured against: type 0 is written TableData (all 24 shipped
+    // elements), scope 0 is written 0. Any other value refuses rather than guessing a spelling.
+    private static (long, BcAppSymbolCache.CodeunitMethodSymbol?, string) DeriveAssemblyInherentMethod(
+        MetadataReader md, System.Reflection.PortableExecutable.PEReader pe, TypeDefinition owner,
+        MethodDefinition method, int methodId, string? name, long? span,
+        CustomAttributeValue<object> value, bool isSubscriber)
+    {
+        if (isSubscriber) return (0, null, "the method is also a subscriber; which element BC writes for both is not measured");
+        if (name is null || span is null) return (0, null, "the method carries no NavName or SignatureSpan");
+        var inherent = DecodeAssemblyInherentPermission(value, out var why);
+        if (inherent is null) return (0, null, why);
+        var parameters = DeriveAssemblyParameters(md, pe, owner, method, out why);
+        if (parameters is null) return (0, null, why);
+        return (span.Value, new BcAppSymbolCache.CodeunitMethodSymbol(
+            methodId, name, "InherentPermissionsMethodAttribute", "InherentPermissions",
+            InherentPermission: inherent, Parameters: parameters), "");
+    }
+
+    internal static BcAppSymbolCache.InherentPermissionSymbol? DecodeAssemblyInherentPermission(
+        CustomAttributeValue<object> value, out string why)
+    {
+        if (value.FixedArguments is not [{ Value: System.Collections.Immutable.ImmutableArray<CustomAttributeTypedArgument<object>> items }]
+            || items.Length != 4 || items.Any(a => a.Value is not uint))
+        {
+            why = "an [InherentPermissions] argument shape other than four uints";
+            return null;
+        }
+        var (type, id, mask, scope) = ((uint)items[0].Value!, (uint)items[1].Value!, (uint)items[2].Value!, (uint)items[3].Value!);
+        if (type != 0) { why = $"object type {type} has no spelling measured against BC's documents"; return null; }
+        if (scope != 0) { why = $"scope {scope} has not been measured against BC's documents"; return null; }
+        if (mask == 0 || mask > int.MaxValue) { why = $"permission mask {mask} is not one BC writes"; return null; }
+        why = "";
+        return new BcAppSymbolCache.InherentPermissionSymbol(
+            "TableData", id.ToString(System.Globalization.CultureInfo.InvariantCulture), (int)mask, 0);
     }
 
     private static bool IsRenderableSubscriberType(string type)
