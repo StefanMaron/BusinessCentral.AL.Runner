@@ -25,26 +25,18 @@ still before you write the test.
 
 ## Why same-file and not same-subsystem
 
-Splitting fixes that touch one file manufactures a rebase treadmill: two PRs editing one loop
-need a forced merge order (#3197, #3180), and every virtual-table PR conflicts at the same
-if-chain, which #3676 moved to `RecordPatches.DataAccessDispatch.cs` so the rest of
-`RecordPatches.cs` stopped being part of that collision.
-
-**Same file, not same subsystem, and not "the identical edit fixes both".** A subsystem spans
-dozens of files and folds into an unreviewable PR that conflicts with everything; the narrower
-test splits fixes that land in one file merely because each needs a slightly different edit,
-which is where splitting is most wasteful.
+Splitting fixes that touch one file manufactures a rebase treadmill — forced merge orders
+(#3197, #3180) and every virtual-table PR conflicting at one if-chain (#3676). **Same file, not
+same subsystem, and not "the identical edit fixes both"**: a subsystem folds into an
+unreviewable PR that conflicts with everything, and the narrower test splits exactly where
+splitting is most wasteful.
 
 ## There is no cap, and adding one needs data
 
-**The right number is a property of how finely the issues were filed, not a constant** — ten
-issues that all land in one file are one PR, not ten. The two limits that are not arbitrary are
-already in the rule: a proving test per closed issue (point 3), and one coherent change (point
-4), which a reviewer judges from the diff.
-
-**Watch three signals, and add a cap only from what they measure**: reviewers unable to hold an
-arriving PR, the conflict rate on large PRs, and **the rebase rate on them**. A cap derived from
-those numbers is legitimate; a guessed one is what this section replaced.
+**The right number is a property of how finely the issues were filed** — ten issues landing in
+one file are one PR. The non-arbitrary limits are points 3 and 4. Add a cap only from measured
+signals: reviewers unable to hold an arriving PR, the conflict rate on large PRs, and **the
+rebase rate on them** — never a guessed one.
 
 ## This is still one PR — reconciling with `branch-and-pr.md`
 

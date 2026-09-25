@@ -47,8 +47,7 @@ Placeholder hooks must throw `RunnerOutOfScopeException` with reason `"not-yet-i
 NOT silently return a default, so the developer notices and can either:
 1. Implement it (a real in-memory backend or a faithful replacement), or
 2. Open a runner-gap issue and add a `known-gaps-<area>.json` entry in `tests/expectations/`
-   linking it (`docs/expectations.md`). `tests/excluded/` was the pre-cutover mechanism; it now
-   lives frozen under `tests/archive/excluded/` and is not wired into CI.
+   linking it (`docs/expectations.md`).
 
 ## Audit obligation
 
@@ -77,21 +76,12 @@ measurement is in docs/incidents/loud-failures.md).
 3. **The trap, if there is one** — the thing a later editor would get wrong. "Re-check the call
    count if a BC version changes shape" is worth its line; the scan that produced the count is not.
 
-**Spell out a member list long enough to miscount, and never truncate one.** A comment reading
-`DataTransfer.{AddFieldValue,AddConstantValue,AddSourceFilter,AddJoin,` — running past a line
-break mid-list — generated wrong expansions in both directions: the PR body citing it, and its
-coordinator, read out a member list **one short**, including a phantom `AddSourceValue`, while the real
-member `AddSourceFilter` sat in the very line being misread (#3927). Both
-errors look entirely plausible downstream, so nothing catches them. The danger needs **both**
-properties — enough members to lose count, and truncation hiding where the list ends: measured
-over `AlRunner/**/*.cs` at the time, only that one brace-shorthand comment had both, so short
-complete forms like `{get,set}` and `{TKey,TValue}` are fine and clearer than the expansion.
+**Spell out a member list long enough to miscount, and never truncate one** — a brace list
+running past a line break was read back one short, with a phantom member, by both the PR citing
+it and its coordinator (#3927). Short complete forms like `{get,set}` are fine.
 
-**And a symbol search does not find prose describing what a symbol did.** Deleting a member and
-grepping its name to zero verifies symbol references only: `RunnerPageInstance` cited "BcRuntime's
-DataTransfer-out-of-context message", naming no symbol, and survived a sweep that correctly
-reported no references left (#3927). When you delete something a comment may *describe*, search
-for the behaviour's words too, not only its identifier.
+**A symbol search does not find prose describing what a symbol did.** When you delete something a
+comment may *describe*, search for the behaviour's words too, not only its identifier (#3927).
 
 **What belongs elsewhere**, with the pointer left behind:
 
@@ -108,15 +98,9 @@ the shortened claim and the `docs/` section disagree, the `docs/` section is the
 test, because it is the copy a drift test can check.
 
 **Why the citation must be right even when the claim is: a reviewer can only check the
-account, never the result.** A correct finding reached by a method you have misdescribed is not
-merely at risk of being disbelieved — it is *indistinguishable* from a wrong one, because the
-account is all a checker has to work with. Measured twice on 2026-09-11 (#3399): an agent
-produced the correct answer in round one and could not defend it for three rounds, having
-described the wrong mechanism; and the coordinator's own correction to it was wrong for the
-same reason. Both were settled by re-running the scan, never by argument. So state the method
-you actually used, and when a disagreement persists, re-measure rather than restate — a
-disagreement kept attached to something measurable converges, and one that is not becomes two
-positions.
+account, never the result.** A correct finding reached by a misdescribed method is
+indistinguishable from a wrong one (#3399). State the method you actually used, and when a
+disagreement persists, re-measure rather than restate.
 
 **Leave the pointer, and pin a load-bearing claim with a drift test.** Prose moved out of the
 code can stop matching it with nothing failing; the pointer is what lets a reader who finds

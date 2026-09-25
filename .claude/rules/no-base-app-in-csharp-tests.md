@@ -21,11 +21,9 @@ Legitimate, and they stay:
 
 - `PlaceholderFloorProvisioningTests` — the placeholder `1.0.0.0` application floor IS its
   subject; remove it and nothing is being tested.
-- `Fixtures/SubscriberScanAudit` — `EventSubscriberScanEquivalenceTests` drives the runner with
-  `AL_RUNNER_SUBSCRIBER_SCAN_AUDIT=1` and asserts over thousands of real `[NavEventSubscriber]` methods
-  across Base Application + System Application, a count with nothing to count without the
-  platform closure loaded. It has its own fixture so the floor is paid once per CI leg rather
-  than once per test class.
+- `Fixtures/SubscriberScanAudit` — `EventSubscriberScanEquivalenceTests` asserts over the real
+  Base + System Application event subscribers, which do not exist without the platform closure;
+  its own fixture pays the floor once per CI leg.
 
 **A class that looks like it needs the floor needs one property of it**, not the floor: work
 out which property and supply it (#2364). Two that have come up, with what replaced the floor —
@@ -41,9 +39,8 @@ is the violation a class-only list missed (#2364).
 ## Do not conclude a failure set from a run that has not finished
 
 **The bar for adding to either allowlist is a completed run showing the class or fixture fails
-without the floor**, never a reading of what the test looks like it needs: a partial local run
-named some classes and CI, running to completion on every leg, found failures in further
-classes (#2364).
+without the floor**, never a reading of what the test looks like it needs — a partial local run
+missed classes CI found (#2364).
 
 ## Sister rules
 

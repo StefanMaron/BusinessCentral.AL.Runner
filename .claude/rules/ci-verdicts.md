@@ -27,13 +27,11 @@ reading late, because `gh pr merge --auto` lands a reviewed PR the moment its ch
 leaves `$?` as **`tail`'s** status, 0 whatever the verdict was, so a FAILED or still-running PR
 reads as green. Redirect to a file and check `$?`, or use `${PIPESTATUS[0]}` (#3864).
 
-**A completion notification's "exit code" is the WRAPPER's.** The harness moves any foreground
-`Bash` call to the background at a hard **600s** cap that the call's own `timeout` does not
-raise, and the notification then reports the shell wrapper's status — so `ci-wait.py` exiting
-**2** arrives as `completed (exit code 0)` (#4288). **Read the tool's own printed verdict out of
-the output file; never the notification's number.** Trap: `run_in_background` was unset on
-every such call, so the flag says nothing; `.claude/hooks/refuse-stash-and-ci-waits.py`
-refuses on the **requested duration** instead.
+**A completion notification's "exit code" is the WRAPPER's.** A foreground call past the
+harness's 600s cap is backgrounded whatever you asked for (`no-backgrounding-long-commands.md`
+owns that mechanism and the hook refusing it), and the notification reports the shell wrapper's
+status — so `ci-wait.py` exiting **2** arrives as `completed (exit code 0)` (#4288). **Read the
+tool's own printed verdict out of the output file; never the notification's number.**
 
 **When you report a surprising exit code, say how you captured it.** A number nobody can
 attribute to a capture method is not a measurement: #3341's `rc=0` was exact under `| tail` and
@@ -54,12 +52,10 @@ invocation against a PR whose state you already know.
 **The third exit-4 cause, which no check-reading tool can see, this one included**: the `main` ruleset's
 `require_extra_approval_for_unattributed_changes` holds a PR carrying a commit attributed to
 **another real GitHub account** at `BLOCKED` with every check green (#3942). Run
-`tools/pr-attribution.py <N>` before arming: exit 0 nothing to approve, 1 an approval will be
-required, 3 the authors could not be established — not an all-clear. Read the `login`, and
-ignore an empty one and `claude`: this loop's own commits carry those and never block, so "any
-login that is not the pushing identity" false-positives on every PR. The REST commit listing and
-the MCP `get_commits` method carry **no login at all**, which is exit 3, never a pass. Never
-self-approve to clear it.
+`tools/pr-attribution.py <N>` before arming: 0 nothing to approve, 1 an approval will be
+required, 3 authors unknown — not an all-clear. It ignores an empty `login` and `claude` (this
+loop's own commits), and the REST/MCP commit listings carry **no login at all**, which is exit 3,
+never a pass. Never self-approve to clear it.
 
 **Exit 2 is the ordinary answer, not a failure**, and never a green: move on and read again later.
 
@@ -70,28 +66,23 @@ result** and treat `skipped` as "no new measurement", never as green. The skips 
 long as a red SHA sits on `main`, so a long streak of green floor runs is not evidence of
 anything; the run that measured the SHA is.
 
-**Beside every verdict it prints one line about `main` itself** — `main floor: RED on 8b6885f4
-(main-verdict-floor.yml, 1h ago, 6 commits behind main)` (#3679, #4111) — so a PR branched
-during a red window is visible as inheriting a failure. It is a report, never an exit code, and
-an unread one prints `unavailable`. **Read the distance, not only the age**: a green about a
-`main` several merges back is not a verdict about the commit under suspicion. The count comes
-from GitHub's compare API, because a stale worktree's `git rev-list` under-reports.
+**Beside every verdict it prints report lines that never change the exit code**, and print
+`unavailable` when the read did not happen:
 
-**And one line per corpus PR the body cites** — `corpus PR #226: NOT-MERGEABLE (head 321ac71a)`
-(#3674), from `.github/scripts/corpus_pr_state.py`, which `pr-gate.yml`'s `A cited corpus PR
-must be able to merge` job also runs. Same contract: a report, `unavailable` on a failed read,
-`UNREADABLE` on a malformed declaration. **That gate evaluates on push, `edited` and `labeled`,
-not when the corpus PR moves**, and corpus-first merging makes its stored `failure` outlive its
-cause on every BC-behaviour fix. It is not in the ruleset (it reads `api.github.com`); the
-arming list in `orchestrating-a-session` holds out for `MERGED`.
-
-**Not in the ruleset does not mean harmless: a stale red DOES refuse the merge** (#4206). A
-failing *non-required* check makes `mergeStateStatus` read `UNSTABLE`, which auto-merge refuses,
-while `ci-wait.py` exits 0 and prints `corpus PR #N: MERGED`. So `ci-wait.py` prints
-`corpus gate: STALE` when the stored conclusion disagrees with the corpus PR now, `UNKNOWN` when
-either could not be read. `tools/armed-prs.py --refire-stale-corpus-gate` clears it by toggling a
-label rather than pushing, which would restart the matrix and re-arm against an unreviewed head.
-**Only `STALE` is re-fired** — an `UNKNOWN` gate was never established as stale.
+- **`main floor: <state> on <sha> (…, N commits behind main)`** (#3679, #4111) — a PR branched in
+  a red window inherits a failure it did not cause. **Read the distance, not only the age**: a
+  green about a `main` several merges back is not a verdict about the commit under suspicion.
+- **`corpus PR #N: <state>`**, one per corpus PR the body cites (#3674), from
+  `.github/scripts/corpus_pr_state.py` — the same module `pr-gate.yml`'s `A cited corpus PR must
+  be able to merge` job runs. **That gate evaluates on push, `edited` and `labeled`, not when the
+  corpus PR moves**, so with corpus-first merging its stored `failure` outlives its cause. It is
+  not in the ruleset, **but a stale red still refuses the merge** (#4206): a failing non-required
+  check reads `UNSTABLE`, which auto-merge refuses, while `ci-wait.py` exits 0.
+- **`corpus gate: STALE`** when the stored conclusion disagrees with the corpus PR now (`UNKNOWN`
+  when either could not be read). `tools/armed-prs.py --refire-stale-corpus-gate` clears it by
+  toggling a label, never by pushing (which would restart the matrix and re-arm against an
+  unreviewed head). **Only `STALE` is re-fired** — an `UNKNOWN` gate was never established as
+  stale. The arming list in `orchestrating-a-session` holds out for `MERGED`.
 
 `ci-wait.py` reads the required contexts from the **live branch ruleset** on each invocation,
 falling back loudly to its built-in list; `check_required_contexts.py` fails CI when the two
@@ -203,9 +194,8 @@ success. The decision comes from the diff, never from the `docs-only` label. The
 (`tools/test_doc_pointers.py`, `tools/test_matrix_docs_drift.py`) gate a docs-only PR under the
 required `tools/ unit tests` context.
 
-**Tracing a corpus failure to a `MsDyn365Bc.On.Linux` change:** the run's `referenced_workflows`
-SHA says which workflow YAML ran, not which harness scripts — those are checked out again when
-the job starts. Compare the job's `started_at` with the harness commit's timestamp
+**Tracing a corpus failure to a `MsDyn365Bc.On.Linux` change:** `referenced_workflows` names the
+workflow YAML, not the harness scripts — compare the job's `started_at` with the harness commit
 (`reading-ci-runs`, "which harness code ran").
 
 ## 3. Never re-run a failed job — not even to gather evidence

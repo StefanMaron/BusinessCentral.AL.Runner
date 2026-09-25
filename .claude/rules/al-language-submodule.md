@@ -49,10 +49,8 @@ Before merging a corpus PR, ask whether an open runner PR needs to land with it.
 runner PR cites this one" does not answer that question**, and it is the check that feels like
 it does.
 
-A runner PR that declares `Corpus-NA:` is paired with a corpus PR and names it nowhere, so a
-search keyed on `Corpus-PR:` returns nothing for a pair that exists. That is not a rare shape:
-`Corpus-NA:` is what an author writes when they believe no corpus test can pin the behaviour,
-which is exactly the belief a later corpus PR overturns by writing one.
+A runner PR declaring `Corpus-NA:` names its corpus PR nowhere — and `Corpus-NA:` is exactly
+the belief a later corpus PR overturns by writing a test.
 
 Read the **corpus PR's own body** for the runner issue it was written for, then check that
 issue for an open PR closing it:
@@ -66,11 +64,8 @@ gh pr list --repo StefanMaron/BusinessCentral.AL.Runner --state open --limit 100
   --jq '.[]|select(.closingIssuesReferences[]?.number == <N>)|.number'
 ```
 
-Measured (#4168): corpus PR #350 was merged on a clean citation search while runner PR #4141 —
-whose target issue is the one #350's own body names — sat open. Those tests happened to pass
-against the unfixed runner, so nothing broke; the citation search was still blind to the pair,
-which is the property that matters. The three codeunits on #4167 are the same mistake where the
-tests did depend on the unlanded fix.
+Measured on #4168 (corpus PR #350 merged while its pair sat open) and #4167 (the same mistake
+where the tests did depend on the unlanded fix).
 
 ## The corpus default branch is `master`, not `main`
 
@@ -88,14 +83,12 @@ origin/master origin/<branch>` for a conflict check in the corpus, `origin/main`
   `Assert.IsNumber` excludes a type and that causes failures, the bug is that the runner
   classifies that type differently from real BC; fix the classification.
 - **A corpus commit is measured here on the next run that resolves `master`** — the next push
-  to `main`, or the next floor run that is not debounced away (`main-verdict-floor.yml` keys a
-  conclusive verdict on the *runner* SHA, which no longer implies a corpus). So an upstream PR
-  merged with red runner-side consequences shows up as a red `main` here, not as a pin nobody
-  moved: the corpus PR and the runner fix that needs it belong to one merge step, in that order.
-- **The test count is compared in CI, not committed** (#3675). `tests/expectations/count-baseline/`
-  no longer declares the corpus suites; each leg counts what it ran and compares against the
-  last count a `main` run recorded, naming both corpus SHAs on a drop. Growth is allowed and
-  recorded — an upstream PR adding tests arrives here on its own.
+  to `main`, or the next floor run not debounced away (the floor keys on the *runner* SHA). An
+  upstream PR with red runner-side consequences shows up as a red `main`: the corpus PR and the
+  runner fix it needs belong to one merge step, in that order.
+- **The test count is compared in CI, not committed** (#3675): each leg compares what it ran
+  against the last count a `main` run recorded, naming both corpus SHAs on a drop; growth is
+  allowed.
 
 ## Out-of-scope tests use the expectations manifest
 
@@ -112,17 +105,13 @@ fails with "add an entry". With a moving corpus that drift can arrive without an
 pushing anything, which is a red `main` to fix rather than a mystery.
 
 **A corpus merge that reds `main` is answered on the next coordinator sweep — with a fix, or
-with an `expect-fail-known-gap` entry linking an open issue. Never by waiting.** That is the
-pin's cost, paid where it belongs: the pin used to hold a red corpus commit outside the
-repository until someone chose to take it, and nothing chooses now. So for each corpus test
-newly failing, either land the runner fix, or add an entry naming the issue that tracks it —
-searching the open queue first and filing a runner-gap issue only when none exists
-(`file-issues-for-gaps.md`). Two things to get right, both learned the first time this fired
-(#3737, corpus PR #273 → failures on `Codeunit60559.RunObjectNaming*`, tracked by #2943):
-name the **methods**, not `Method: "*"`, unless every test in the codeunit fails — some of that
-codeunit's tests passed, and a wildcard would have claimed those as failures and drifted the
-other way; and read the failing set from a leg that **finished**, because a leg that died in its
-unit tests never ran the corpus at all and reports no failures rather than none.
+with an `expect-fail-known-gap` entry linking an open issue. Never by waiting**: nothing holds a
+red corpus commit outside the repository any more. Search the open queue first and file a
+runner-gap issue only when none exists (`file-issues-for-gaps.md`). Two things to get right
+(#3737, corpus PR #273, #2943): name the **methods**, not `Method: "*"`, unless every test in
+the codeunit fails — a wildcard claims the passing ones as failures and drifts the other way;
+and read the failing set from a leg that **finished** — a leg that died in its unit tests never
+ran the corpus and reports no failures rather than none.
 
 ## Which tests belong here at all
 

@@ -186,3 +186,9 @@ pass all eight.
 
 Same shape as the `--force` arm earlier on the same PR: keying a check on one spelling rather than
 on the property. Twice on one pull request is the reason the arms here are table-driven.
+
+## Moved out of the rule to fit the always-loaded budget (#4542)
+
+- The generic body pattern answered `true` on a pull request whose only declaration was
+  `Part of #4059`, because the body quoted the recipe itself — the reason the rule insists on
+  substituting the real issue number.

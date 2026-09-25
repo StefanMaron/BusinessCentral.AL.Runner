@@ -65,3 +65,23 @@ transcripts on one box) were deleted outright rather than moved, because they go
 
 - **#3927.** The PR body and its coordinator read the truncated `DataTransfer.{...}` list as
   **seven** members including a phantom `AddSourceValue`; there were **eight**.
+
+## Moved out of the rule to fit the always-loaded budget (#4542)
+
+- **The truncated member list (#3927).** A comment reading
+  `DataTransfer.{AddFieldValue,AddConstantValue,AddSourceFilter,AddJoin,` — running past a line
+  break mid-list — was read back by the PR body citing it and by its coordinator as a list one
+  short, including a phantom `AddSourceValue`, while the real `AddSourceFilter` sat in the line
+  being misread. The danger needs both properties, enough members to lose count and truncation
+  hiding the end; measured over `AlRunner/**/*.cs` at the time, only that one brace-shorthand
+  comment had both.
+- **The prose a symbol search misses (#3927).** `RunnerPageInstance` cited "BcRuntime's
+  DataTransfer-out-of-context message", naming no symbol, and survived a sweep that correctly
+  reported no references left.
+- **The account, not the result (#3399).** An agent produced the correct answer in round one and
+  could not defend it for three rounds, having described the wrong mechanism; the coordinator's
+  correction was wrong for the same reason. Both were settled by re-running the scan. A
+  disagreement kept attached to something measurable converges; one that is not becomes two
+  positions.
+- **`tests/excluded/`** was the pre-cutover mechanism for a not-yet-implemented surface; it lives
+  frozen under `tests/archive/excluded/` and is not wired into CI.

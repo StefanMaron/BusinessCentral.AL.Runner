@@ -30,64 +30,40 @@ infrastructure, the framework wrappers, the skeleton state they read from — is
 
 ## Our AL output is meant to be cacheable
 
-A first-class capability requirement: **AL code we compile must produce DLLs that can be
-cached on disk and reused on subsequent runs the same way MS's precompiled DLLs are.** Once
-our compile pipeline finalises a DLL it joins the precompiled load chain like any MS or ISV
-DLL, and the rules above apply to it too. Cecil/Roslyn rewrites must happen **inside the
-compile pipeline** (before the DLL is written), never as a load-time pass against an
-already-cached artifact, otherwise the cache and the runtime behaviour diverge.
-
-Consequence: if a test failure points at our own AL output, the fix is either (a) in the
-runtime engine the output calls into, or (b) in the compile pipeline that produced it — never
-in the cached DLL itself.
+**AL code we compile must produce DLLs that can be cached and reused like MS's precompiled
+DLLs**, and once finalised one joins the load chain under the rules above. Cecil/Roslyn rewrites
+happen **inside the compile pipeline**, never as a load-time pass over a cached artifact, or the
+cache and the runtime diverge. So a failure in our own AL output is fixed in the runtime engine
+it calls or in the compile pipeline — never in the cached DLL.
 
 ## Reuse before you re-implement — check whether Microsoft already ships it, or already holds it
 
 **The best code is no code written at all.** "Fix" means **the outcome is correct**, not that we
-wrote the thing producing it. Code we do not write cannot rot, cannot drift as BC moves, and
-needs no test — so reusing something Microsoft already ships beats writing our own by default: a
-component from MS is right by construction, ours is right only as long as we keep it right
-across every BC version, forever.
+wrote the thing producing it: a component Microsoft ships is right by construction, ours only as
+long as we keep it right across every BC version.
 
 So **before adding a shim to the "New types we add" row, establish that Microsoft does not
 already ship that component in the artifacts.** That row permits new types; it is not a licence
 to re-implement one that is sitting on disk.
 
 `RunnerPageInstance` is the instance that produced this section: a large shim re-implementing
-`LogicalControl.Editable` -> `CommonDominatingValueHelper.CalculateValue`, while
-`Microsoft.Dynamics.Nav.Client.TestPageClient.dll` ships in every artifact directory (verified
-27.0, 27.5, 28.1, 28.4). It is not a wire proxy: `TestServiceConnection.CallServer<T>(f) => f()`
-calls directly and `ServiceUrl` is a deliberately fake `"localhost/bla"`.
+page-control state while `Microsoft.Dynamics.Nav.Client.TestPageClient.dll` ships in the
+artifacts and calls straight through rather than over a wire.
 
 **The trap is how it happened, because it looks like nobody's mistake.** A strong-name
-`Assembly.Load` failed and was **swallowed**; a shim filled the gap; the shim's own comments
-then recorded the DLL as "not present in the runner" — false, and thereafter every reader had a
-documented reason not to look again. A silent failure became a workaround, the workaround became
-an assumption, the assumption got written down as fact.
-
-**So when a load fails, the failure is the finding.** Do not let it become a shim without
-recording why the load failed, in terms a later reader can re-test.
+`Assembly.Load` failed and was **swallowed**; a shim filled the gap; the shim's comments then
+recorded the DLL as "not present" — and every later reader had a documented reason not to look
+again. **So when a load fails, the failure is the finding.** Record why, in terms a later
+reader can re-test, before any shim.
 
 ### The same question about DATA, not just components
 
-A shipped component is the obvious form. The sharper one: **before building machinery to
-reconstruct a value, check whether the running process already holds it.** One diagnostic print
-answers it.
-
-See #3825 for the instance. The issue recorded a page's `Name`/`SourceExpression` pair as
-*unrecoverable* for a precompiled page, and the agreed answer was to compile the shipped `.app`'s
-AL source with BC's own compiler — measured as costly in both time and memory for Base Application. The
-pair was in `NavForm.SourceExpressions` all along, populated by the `.app`'s own IL, present at
-the moment of the failing lookup. The missing piece was a **join**, not the data.
-
-**The trap is that the reconstruction route can be entirely correct and still be the wrong
-answer.** Base Application does compile, the measurements were sound, and the capability was
-worth having for other issues — none of which is evidence that the value was unavailable. A
-route that works is not proof that no cheaper one exists.
-
-**Check the runtime first, and record what you found either way**: a `dictCount=` print beside
-the failing lookup is cheaper than any reconstruction, and its absence is what let
-*unrecoverable* stand unchallenged in an issue body.
+**Before building machinery to reconstruct a value, check whether the running process already
+holds it** — one diagnostic print answers it. #3825 recorded a page's `Name`/`SourceExpression`
+pair as *unrecoverable* and planned to compile Base Application's source to get it; the pair was
+in `NavForm.SourceExpressions` all along, and the missing piece was a **join**. **The trap: the
+reconstruction route can be entirely correct and still be the wrong answer** — a route that
+works is not proof that no cheaper one exists. Record what the runtime held either way.
 
 History: docs/incidents/precompiled-dll-respect.md
 

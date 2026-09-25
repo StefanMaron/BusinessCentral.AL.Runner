@@ -31,16 +31,10 @@ Committing early is the preferred answer to all of these.
 ## `origin/main` is a LOCAL ref with a remote-looking name
 
 `git reset --soft origin/main` resets to whatever your **local** `origin/main` says. If `main`
-has moved since your last fetch, every intervening merge is captured in your commit as a
-**deletion**, and a force-push offers that as the PR's diff. Measured (#3907): a docs-only
-branch whose only intended change was a few lines in one markdown file committed another PR's
-entire contribution staged for deletion, and was force-pushed before anyone noticed.
-
-**The trap is that every ordinary guard is SILENT on this class.** `--force-with-lease` covers
-someone else's push to your branch, not your branch's content; `git status --porcelain` is clean
-because the deletions are committed; and the same-tree check (`ci-verdicts.md` §5) passes.
-`git merge-tree --write-tree` also keeps the other PR's files, so the damage is a wrong *diff*
-rather than a merge that reverts anything.
+has moved since your last fetch, every intervening merge is committed as a **deletion**, and a
+force-push offers that as the PR's diff (#3907: another PR's entire contribution, force-pushed
+before anyone noticed). **Every ordinary guard is SILENT on this class** — `--force-with-lease`,
+`git status --porcelain`, the same-tree check (`ci-verdicts.md` §5) and `git merge-tree` all pass.
 
 <!-- Recipe-pinned-by: tools/test_stale_origin_main_diff_recipe.py -->
 **`git diff --stat origin/main...HEAD` does NOT catch it — use two dots.** Three-dot diffs
@@ -48,12 +42,9 @@ against the **merge base**, and a soft reset moves the merge base back with it, 
 content reads as insertions and the command prints a clean `1 file changed`: three-dot
 `1 file changed, 1 insertion(+)`; two-dot `2 files changed, 1 insertion(+), 50 deletions(-)`.
 
-**Only one ordering of three discriminates, so reproduce that one.** Where the branch was
-built, what `reset --soft` targeted and what `origin/main` held at read time are three
-independent choices; `tools/test_stale_origin_main_diff_recipe.py` executes all eight and
-**six show the two forms agreeing**. The numbers above are the ordering where they differ
-(branch built before the other PR, reset to the stale ref, `origin/main` fresh at read).
-A run that picked an ordering without checking would have reported either form fine.
+**Only one ordering discriminates, so reproduce that one** — branch built before the other PR,
+reset to the stale ref, `origin/main` fresh at read. Most orderings show the two forms agreeing
+(`tools/test_stale_origin_main_diff_recipe.py` executes them all).
 
 So: **`git fetch origin main` immediately before any command naming `origin/main` as a base** —
 `reset`, `rebase`, `merge-tree`, `diff` — and read **`git diff --stat origin/main..HEAD`**, two

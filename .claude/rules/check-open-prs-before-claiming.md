@@ -23,9 +23,8 @@ versus `agent/stma-auto-1/…` cannot be rewritten by another loop, where a labe
 `orchestrating-a-session` already arms on it ("Check the **branch prefix**, never the author
 field") for this exact reason — one mechanism, two rules.
 
-**Trap: it is the ACCOUNT that discriminates, never whether the claimant looks like a bot.** A
-`fbk-*` label is an agent pool, a human maintainer is a person, and both are "not you"; the
-boundary is the login, and an agent may not waive it in either case.
+**Trap: it is the ACCOUNT that discriminates, never whether the claimant looks like a bot** —
+an agent pool and a human are both "not you", and an agent may not waive the boundary for either.
 
 ## The rest of this rule is the SAME-account case
 
@@ -115,10 +114,8 @@ a lock.
 
 ## The same question about REVIEW, where the three signals say nothing
 
-The signals above decide who is **implementing** an issue. None of them answers who is
-**reviewing** a pull request: `status: review-ready` means *ready for review* and is never
-rewritten while a review is in flight, so a PR reads identically whether nobody has looked at it
-or three agents already have.
+None of the signals above says who is **reviewing** a pull request: `status: review-ready` is
+never rewritten while a review is in flight.
 
 **Read the signal before dispatching a reviewer**, from the comment stream the verdict already
 lives in:
@@ -127,8 +124,7 @@ lives in:
 tools/review-claim.py --pr <N>     # 0 free, 1 claimed or already reviewed, 3 unreadable
 ```
 
-**And post a claim before you start reviewing**, because the duplication is concentrated in the
-window a completion-time signal cannot cover:
+**And post a claim before you start reviewing:**
 
 ```bash
 tools/review-claim.py --pr <N> --post --agent-id <YOUR-ID>
@@ -139,16 +135,13 @@ one review takes — the second reviewer started while the first was still runni
 written when a review *finishes* would have been too late (#4284; measurements in
 `docs/incidents/check-open-prs-before-claiming.md`).
 
-**Trap: this reports, it never blocks, and that is deliberate.** A second pass is sometimes
-right — a later pass on #4281 produced findings the earlier ones did not. What was missing is
-not a lock but a signal, so that spending a second review is a decision someone made rather than
-an accident. The tool has no flag to route around, because nothing is in the way.
+**Trap: this reports, it never blocks, and that is deliberate** — a second pass is sometimes
+right (#4281), so what was missing was a signal, not a lock.
 
-**Second trap: a claim is about a HEAD, and it expires.** A claim naming a superseded head, or
-one older than `tools/review-claim.py`'s `--max-age`, is reported and does not hold — a reviewer that died mid-pass must not
-lock a PR forever, which is the same judgement the abandoned-draft clause above makes. And exit 3
-is not exit 0: "nobody is reviewing this" and "I could not find out" send a coordinator to
-opposite actions.
+**Second trap: a claim is about a HEAD, and it expires** — one naming a superseded head, or older
+than `tools/review-claim.py`'s `--max-age`, does not hold, so a dead reviewer cannot lock a PR.
+And exit 3 is not exit 0: "nobody is reviewing" and "I could not find out" call for opposite
+actions.
 
 ## The claim signals, and what each is worth
 

@@ -36,10 +36,8 @@ call) lives in the `al-runner-workflow` skill — reference material, not a rule
 
 ## Things `gh` gives you that the MCP tools do not
 
-- **`mergeable_state` is not a conflict check.** A PR's `base.sha` records the base
-  at *creation* time and never moves, so a merged PR can still read as based on an
-  old commit. To decide whether a branch conflicts with current `main`, ask git, not
-  the API:
+- **`mergeable_state` is not a conflict check** — `base.sha` records the base at
+  *creation* and never moves. Ask git:
   ```bash
   git fetch origin main <branch>
   git merge-tree --write-tree --messages origin/main origin/<branch> >/dev/null \
@@ -47,20 +45,16 @@ call) lives in the `al-runner-workflow` skill — reference material, not a rule
   ```
 - **Merge state comes from the PR's own merge record, not from branch ancestry.** This
   repository squash-merges (`branch-and-pr.md`, "This repo squash-merges"), so a merged
-  branch's head commit is **never** an ancestor of `main` — the squash creates a new commit
-  with the same tree and a different history. `git merge-base --is-ancestor <branch-head>
-  origin/main` therefore exits non-zero for a PR that merged perfectly, and it reads as "not
-  in main yet" (#3383). Ask the PR instead:
+  branch's head is **never** an ancestor of `main`, and `git merge-base --is-ancestor
+  <branch-head> origin/main` reads a perfect merge as "not in main yet" (#3383). Ask the PR:
   ```bash
   gh pr view <N> --repo StefanMaron/BusinessCentral.AL.Runner \
     --json state,mergedAt,mergeCommit \
     --jq '"state=\(.state) mergedAt=\(.mergedAt) mergeCommit=\(.mergeCommit.oid // "-")"'
   ```
-  `state=MERGED` with a non-null `mergedAt` is the answer. If you want git to confirm it,
-  test the **merge commit**, never the branch head:
-  `git merge-base --is-ancestor <mergeCommit.oid> origin/main`. (Without `gh`, the
-  REST pull-request object the MCP tools return carries the same answer as `merged`,
-  `merged_at` and `merge_commit_sha`.)
+  `state=MERGED` with a non-null `mergedAt` is the answer; to confirm with git, test the
+  **merge commit**, never the branch head. (Via MCP: `merged`, `merged_at`,
+  `merge_commit_sha`.)
 
 ## Sister rules
 

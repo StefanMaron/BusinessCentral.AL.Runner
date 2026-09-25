@@ -42,10 +42,7 @@ Step 3 is the one that is never optional. Full detail, including escape hatches:
    corpus legs those are, and which of them ever run your tests).
 
    **An unattended loop that is both author and coordinator may merge its own corpus PR**
-   (owner waiver, 2026-09-24, standing rather than per-PR). The separation exists so a second
-   pair of eyes sees a corpus change; in a single-agent loop there is no second pair, and
-   holding the PR open buys nothing — #397 sat green and `CLEAN` with
-   nobody to merge it. **The bar it replaces is not weaker, and is not optional**: every
+   (owner waiver, 2026-09-24, standing; #397 sat green with nobody to merge it). **The bar it replaces is not weaker, and is not optional**: every
    required cloud leg green, the per-test PASS lines read out of the gating run's log by
    name (a leg can be green having never run your codeunit), the head re-read immediately
    before merging, and `--match-head-commit <sha>` passed so the merge refuses rather than
@@ -60,10 +57,9 @@ Step 3 is the one that is never optional. Full detail, including escape hatches:
    to bump (#3737). Until it merges, cite it with a `Corpus-PR:` line and CI resolves the
    corpus at your corpus PR's branch head, so the runner PR is measured against exactly the
    tests it is being written for.
-5. **Then merge the runner change here.** The order is the merge bar, not a formality: a PR
-   asserting BC behaviour merges after the corpus PR it cites (`orchestrating-a-session`), whose
-   arming list holds out for `MERGED` from that same script — CI passing on a merely *mergeable*
-   corpus PR is not the bar, because the pair lands in one coordinator step.
+5. **Then merge the runner change here.** The order is the merge bar: a PR asserting BC
+   behaviour merges after the corpus PR it cites — `MERGED`, not merely mergeable
+   (`orchestrating-a-session`).
 
 **No local BC container is not a blocker** — open the corpus PR and let its CI adjudicate (step
 2). **No verdict available at all** (corpus CI broken, BC legs failing for unrelated reasons,
@@ -85,16 +81,11 @@ Corpus-PR: https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull
 Corpus-NA: precompiled-dependency path; a corpus test source-compiles and would pass
 ```
 
-One regex matches the `Corpus-PR:` line: optional leading whitespace, the marker, the full
-`.../BusinessCentral.AL.Language.Tests/pull/<N>` URL, optionally a trailing `/` or `.`, nothing
-else. So a markdown link, a bold marker, an angle-bracket autolink, GitHub's `owner/repo#N`
-shorthand, a mid-sentence mention, and a marker whose URL sits on the next line all fail
-(#3330, each pinned in `test_check_corpus_linkage.sh`). The `Corpus-NA:` reason is free text and
-must not be a placeholder (`n/a`, `none`, `TBD`, `-`, …); both forms are case-insensitive.
-
-A `Corpus-PR:` line that fails the regex is reported as *malformed*, not absent, so the log says
-which of the two you have. Check before pushing — the script reads the body and the changed
-paths from the environment:
+The `Corpus-PR:` line is the marker plus the full `.../pull/<N>` URL and nothing else — a
+markdown link, a bold marker, an autolink, `owner/repo#N` shorthand, a mid-sentence mention or a
+URL on the next line all fail, and are reported as *malformed*, not absent (#3330, pinned in
+`test_check_corpus_linkage.sh`). The `Corpus-NA:` reason must not be a placeholder (`n/a`,
+`none`, `TBD`, `-`, …). Check before pushing:
 
 ```bash
 PR_BODY="$(cat body.md)" CHANGED_FILES="$(git diff --name-only origin/main...HEAD)" \
@@ -104,13 +95,10 @@ PR_BODY="$(cat body.md)" CHANGED_FILES="$(git diff --name-only origin/main...HEA
 The gate checks that you **declared** something; whether the declaration is right is the
 reviewer's call, never CI's.
 
-**Since #3737 the line does more than declare.** `.github/actions/resolve-corpus-ref` reads
-it and checks the corpus out at that pull request's branch head while it is open, and at
-`master` once it has merged — so the same line that satisfies the gate is what points CI at
-your corpus tests. Two consequences. The line must **stay** in the body after the corpus PR
-merges, and a body edited after the last push is not what the matrix measured until something
-re-triggers it, so **push an empty commit after adding or changing the line**. Each leg prints
-`corpus: <sha> (<ref>)`; read it to confirm which corpus the verdict is about.
+**Since #3737 the line also points CI at your corpus tests** (the PR's branch head while open,
+`master` once merged). So it must **stay** in the body after the corpus PR merges, and a body
+edited after the last push is not what the matrix measured — **push an empty commit after adding
+or changing the line**, and read each leg's `corpus: <sha> (<ref>)`.
 
 ## Not a licence to skip TDD
 

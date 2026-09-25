@@ -37,9 +37,8 @@ that the message says which of the three it is.
 | present, but **naming nothing that exists** | **3**, naming what it *does* say | a typo is visible in the message rather than inferred from an absence |
 | present but **unreadable** | **3**, deliberately *not* folded into row 1 | an absent thing is the legitimate pass; an unreadable one is a broken measurement |
 
-**Folding the third row into the first puts the broken case back on the exit-0 path.** The
-origin (two gate scripts whose hardcoded path matched nothing and reported success) is in
-`docs/incidents/guards-need-a-third-state.md`; the live instance is `resolve_corpus_ref.sh`.
+**Folding the third row into the first puts the broken case back on the exit-0 path**; the live
+instance is `resolve_corpus_ref.sh`.
 
 ## The constraint that stops the fix trading one defect for another
 
@@ -90,11 +89,8 @@ only when you have executed the guard on the input you are claiming it covers: #
 backstop three readers had credited that did not cover the truncated-summary case, and the
 guard returned PASS on it.
 
-## The same shape one level down
-
-At the *tool-use* level this class is documented in `CLAUDE.md` (`grep -E`, `rg`) and
-`verify-execution-not-the-tick.md`. **A zero from a pattern you chose is not evidence**, there
-and in anything you write.
+**The same shape one level down** — `grep -E`, `rg` (`CLAUDE.md`) and
+`verify-execution-not-the-tick.md`: **a zero from a pattern you chose is not evidence.**
 
 ## Sister rules
 

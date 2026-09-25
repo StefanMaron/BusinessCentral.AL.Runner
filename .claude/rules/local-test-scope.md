@@ -14,20 +14,13 @@ Two genuine exceptions:
   second run has caught real defects here that a single cold run cannot surface.
   **Run twice against ONE cache root**, and read both runs.
 
-  The condition used to be "when your change touches caching", and that is the
-  half that fails: three defects in one session were each correct cold and wrong
-  warm, and none of their authors thought they were touching a cache.
-
-  | PR | the change | what a warm run showed |
-  |---|---|---|
-  | #3882 | a loud-failure guard | fired cold, **silent warm** — the cache HIT returned before reaching the guard |
-  | #3908 | a parse fix | the fixed code **replayed the buggy value** from cache; the key had no term for the parse |
-  | #3913 | a property default | answered `false` cold, `true` warm — a third call site reached only on a HIT |
-
-  **CI cannot catch these**: it provisions fresh every leg, so the legs stay green
-  forever while every repeat local run is wrong. All three were caught in review.
+  Three defects in one session were each correct cold and wrong warm, and none of
+  their authors thought they were touching a cache (#3882, #3908, #3913). **CI
+  cannot catch these**: it provisions fresh every leg.
 
   So ask *"is there a cache between my change and its observable?"*, not *"did I
   edit cache code?"* — and when the answer is yes, the proving test runs twice.
 
 See the `al-runner-tests` skill for run commands and flags.
+
+History: docs/incidents/local-test-scope.md

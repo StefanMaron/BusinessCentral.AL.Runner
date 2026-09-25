@@ -79,3 +79,15 @@ transcripts on one box) were deleted outright rather than moved, because they go
 
 - **#3825.** Compiling Base Application's shipped AL source with BC's own compiler measured
   257 s and 8.83 GiB.
+
+## Moved out of the rule to fit the always-loaded budget (#4542)
+
+- **`RunnerPageInstance`** re-implemented `LogicalControl.Editable` ->
+  `CommonDominatingValueHelper.CalculateValue` while `TestPageClient.dll` shipped in the
+  artifacts. It is not a wire proxy: `TestServiceConnection.CallServer<T>(f) => f()` calls
+  directly and `ServiceUrl` is a deliberately fake `"localhost/bla"`.
+- **#3825.** The agreed route was to compile the shipped `.app`'s AL source with BC's own
+  compiler, costly in time and memory for Base Application. The pair was populated by the
+  `.app`'s own IL and present at the moment of the failing lookup; Base Application does compile
+  and the capability was worth having for other issues, none of which was evidence the value was
+  unavailable. A `dictCount=` print beside the failing lookup would have shown it.

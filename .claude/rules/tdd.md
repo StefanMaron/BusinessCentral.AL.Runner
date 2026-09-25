@@ -43,11 +43,9 @@ issue** (`batch-sibling-issues-by-file.md`):
    Force a clean rebuild when you mutated a build input (`.csproj`, an MSBuild target, a
    generator); an incremental build may skip the compile entirely.
 
-   **Rebuild after `--restore` too** — otherwise `--no-build` re-measures the mutant, and that
-   red is deterministic, narrow and on the right arm, so it ends investigations wrongly (#4343).
-   `tools/mutation-verdict.py` refuses (exit 3) a run whose output directory predates the last
-   `--restore`. Judge the output **directory**, not one assembly (the mutated code usually lives
-   in a dependency), and a mutation in a file no build reads has no rebuild that clears it.
+   **Rebuild after `--restore` too** — otherwise `--no-build` re-measures the mutant, a red
+   convincing enough to end an investigation wrongly (#4343). `tools/mutation-verdict.py`
+   refuses (exit 3) a run whose output directory predates the last `--restore`.
 3. **Rebuild and re-run. Confirm RED — and that the RED is the assertion, not the build**
    (`Assert` in the error text, not `error CS`; a compile failure prints no `Total:`). Restore.
 4. **Report both numbers in the PR body** — `Failed: 1, Passed: 7` → `Failed: 0, Passed: 8`.
@@ -72,7 +70,7 @@ structure (#3900).
 (#3948). Pipe the run through `tools/mutation-verdict.py` before believing a red: exit 1 real,
 4 a build break, 5 the engine guard, 3 unmeasured (#3957).
 
-**A `tools/test_*.py` guard is a process, not a `dotnet test` suite — pass its exit code:**
+**A `tools/test_*.py` guard is a process — pass its exit code:**
 
 ```bash
 python3 tools/test_no_racing_label_edit.py > g.txt 2>&1; rc=$?
@@ -96,9 +94,6 @@ a mutation aimed at a method whose name is a prefix of the one the tests call (#
 tests you expected, and after a green mutation check the edited symbol is the one the test path
 calls.
 
-**CI catches the opposite error, never this one.** A test that passes when it should fail reads
-as coverage until somebody looks.
-
 **Choose the mutation to test a property, not to produce a red.** One that reds everything
 proves coverage exists; one that reds exactly the right subset proves the tests discriminate
 (PR #3947). **Re-running the author's mutation is the weakest check a reviewer can make** — pick
@@ -108,8 +103,8 @@ your own.
 writer sharing a rule usually get one test. Pin both directions: the walk stops at the boundary
 *and* still finds what is inside it (#4343).
 
-A required step, not a tool: no framework, no CI job. One rebuild. Measurements behind every
-trap: `docs/incidents/tdd.md`.
+A required step, not a tool — one rebuild. CI catches a test that fails when it should pass,
+never one that passes when it should fail. Measurements: `docs/incidents/tdd.md`.
 
 ## Sister rules
 

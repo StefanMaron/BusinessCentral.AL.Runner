@@ -60,11 +60,9 @@ is not evidence.
 
 ### The fourth mechanism: a correct instrument reading the WRONG SUBJECT
 
-A working instrument answering a different question than the one asked — well-formed,
-plausible, wrong (#3805 / corpus #325): free ids read from the corpus checkout inside the runner
-worktree rather than the branch being pushed to; enum values counted in an empty top-level array
-while the enums live in the `Namespaces` tree; duplicate ids counted repo-wide by id alone rather
-than by `(object kind, id)` within one `app.json`'s `idRanges`. **Ask what the query read, not
+A working instrument answering a different question — free ids read from the wrong checkout, an
+empty array counted while the data lives elsewhere, duplicates counted by id alone rather than
+`(object kind, id)` within one `app.json` (#3805 / corpus #325). **Ask what the query read, not
 only what it returned.**
 
 **The one least likely to be re-checked is a coordinator's own number, supplied while
@@ -81,27 +79,18 @@ text on `main` (#3940, #3972, #4090, #4059; the figures are in
 `sha256sum`, a `git diff --name-status | wc -l`, a `grep -c`.
 
 **Re-derive a number before you repeat it in anything durable** — an issue, a PR body, a commit
-message, a rule. Passing one along unchecked makes you its second source, and a reader cannot
-tell a number you verified from one you forwarded. Three sharpenings:
-
-- **Checking one component of a figure is not checking the figure** — a partly-checked figure
-  carries the full authority of a checked one, to its author most of all (#4090).
-- **A figure whose precision does not change any decision is the one least likely to be
-  checked, and it is not therefore harmless** — it is what a later reader cites for a decision
-  that *is* sensitive to it.
-- **Re-derive, do not relay, a correction you are handed.** #4059's brief carried one; re-deriving
-  it found that the dot-count remedy it decorated cannot work at all — after
-  `git reset --soft origin/main` the merge base **is** `origin/main`, so three-dot equals two-dot
-  by construction.
+message, a rule; passing one along makes you its second source. **Checking one component of a
+figure is not checking the figure** (#4090); **a figure whose precision changes no decision is
+the least likely to be checked, and not therefore harmless**; and **re-derive, do not relay, a
+correction you are handed** — #4059's re-derivation found the remedy it decorated could not work
+at all.
 
 ### Does this want a tool? No — do not write the count
 
-A guard sweeping the figures in `.claude/rules/` and `CLAUDE.md` cannot tell which subject a
-sentence measures, so it inherits the fourth mechanism and trains readers to dismiss it (#4059).
-The answer is upstream of any guard: **a figure that changes without anyone editing the sentence
-is not written at all** (owner's direction, #4539). A claim that needs pinning is pinned without
-a number — `tools/test_partial_class_claims.py` checks that each named class spans several files.
-So split by what the number is *about*:
+A guard sweeping figures cannot tell which subject a sentence measures, so it inherits the
+fourth mechanism (#4059). Instead, **a figure that changes without anyone editing the sentence
+is not written at all** (owner's direction, #4539); a claim that needs pinning is pinned without
+a number (`tools/test_partial_class_claims.py`). Split by what the number is *about*:
 
 | the figure is about | what to write |
 |---|---|
