@@ -2751,6 +2751,9 @@ foreach (var bundle in bundles)
     // Everything below resolves package dirs and loads deps relative to a directory; when
     // the bundle is a parent of many apps there is no bucket root, so the bundle dir is it.
     var depRootDir = bucketRoot ?? bundleAbs;
+    // #4567: set when DEP-RESOLVE-FAIL printed the cause, so what follows does not restate it.
+    bool bundleDependencyUnresolved = false;
+    bool bundleDependenciesResolved = false;
     {
         var appJsonPath = Path.Combine(depRootDir, "app.json");
         if (bundleManifests.Count > 0)
@@ -2782,6 +2785,7 @@ foreach (var bundle in bundles)
                 using (AlRunner.Infrastructure.PhaseLog.Stage("dep-resolve"))
                     ordered = resolver.Resolve(roots);
                 bundleResolvedDeps = ordered;
+                bundleDependenciesResolved = true;
                 // Issue #2239: per-bundle dep counts are diagnostic detail — gated behind
                 // --verbose.
                 if (AlRunner.Log.Verbose)
@@ -2961,7 +2965,13 @@ foreach (var bundle in bundles)
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"  [{rel}] DEP-RESOLVE-FAIL: {ex.Message}");
+                // Only a failure before resolution finished is an unresolved dependency; one
+                // later in this block (SetResolvedDeps, LoadAll) must not hide AL errors.
+                bundleDependencyUnresolved = !bundleDependenciesResolved;
+                // A helper, not a loop here: a loop inside a handler forces Main to FullOpts
+                // (HandlerLoopJitTierGuardTests).
+                DependencyResolveFailureOutput.WriteDependencyResolveFailure(
+                    rel, ex, AlRunner.Infrastructure.BcArtifacts.SelectedVersion.ToString(), AlRunner.Log.Verbose);
             }
         }
         else
@@ -3266,9 +3276,12 @@ foreach (var bundle in bundles)
                 if (!cacheBlockerReported)
                 {
                     cacheBlockerReported = true;
-                    Console.Error.WriteLine(
-                        $"  [{rel}] [cache] NOKEY — this run cannot compute an AL-output cache "
-                        + $"identity, so the cache is neither consulted nor written: {cacheBlocker}");
+                    // #4567: after DEP-RESOLVE-FAIL this only restates that cause.
+                    if (DependencyResolveFailureOutput.ShouldPrintNokey(AlRunner.Log.Verbose,
+                            bundleDependencyUnresolved, AlRunner.Infrastructure.RunnerFingerprint.UncacheableReason, depIds))
+                        Console.Error.WriteLine(
+                            $"  [{rel}] [cache] NOKEY — this run cannot compute an AL-output cache "
+                            + $"identity, so the cache is neither consulted nor written: {cacheBlocker}");
                 }
             }
             else
@@ -3685,8 +3698,8 @@ foreach (var bundle in bundles)
                             {
                                 Console.Error.WriteLine(
                                     $"<bundled>: AL diagnostics that identified the excluded object(s):");
-                                foreach (var d in exclDiags)
-                                    Console.Error.WriteLine($"  {d}");
+                                foreach (var line in DependencyResolveFailureOutput.AlDiagnosticListing(exclDiags, bundleDependencyUnresolved, AlRunner.Log.Verbose))
+                                    Console.Error.WriteLine(line);
                             }
                             if (!allProfiles)
                             {
@@ -3819,9 +3832,9 @@ foreach (var bundle in bundles)
                 // Emit produced zero sources — BC's compiler swallowed exceptions internally.
                 // Surface AL diagnostics (parse/declaration errors) so the failure is visible.
                 Console.Error.WriteLine($"<bundled>: EMIT-ZERO — 0 sources emitted, {alDiagnostics.Count} AL error(s):");
-                foreach (var d in alDiagnostics)
-                    Console.Error.WriteLine($"  {d}");
-                bundleErrors.Add($"<bundled>: EMIT-ZERO ({alDiagnostics.Count} AL error(s))");
+                foreach (var line in DependencyResolveFailureOutput.AlDiagnosticListing(alDiagnostics, bundleDependencyUnresolved, AlRunner.Log.Verbose))
+                    Console.Error.WriteLine(line);
+                bundleErrors.Add($"<bundled>: EMIT-ZERO ({alDiagnostics.Count} AL error(s){DependencyResolveFailureOutput.DependencyUnresolvedSuffix(bundleDependencyUnresolved)})");
             }
             // AL-diagnostic compile-failure guard (#2150). BC's ContinueBuildOnError keeps
             // compiling an object's SIBLINGS after a declaration-stage error on one object
@@ -3848,11 +3861,11 @@ foreach (var bundle in bundles)
                     $"<bundled>: AL-DIAGNOSTIC-FAIL — {moduleName}: {sources.Count} object(s) emitted but " +
                     $"{alDiagnostics.Count} AL error(s) were reported by BC's own compiler; a real " +
                     $"service tier would refuse to publish this module:");
-                foreach (var d in alDiagnostics)
-                    Console.Error.WriteLine($"  {d}");
+                foreach (var line in DependencyResolveFailureOutput.AlDiagnosticListing(alDiagnostics, bundleDependencyUnresolved, AlRunner.Log.Verbose))
+                    Console.Error.WriteLine(line);
                 bundleErrors.Add(
                     $"<bundled>: AL-DIAGNOSTIC-FAIL for {moduleName}: {alDiagnostics.Count} AL error(s) " +
-                    $"reported even though {sources.Count} object(s) emitted.");
+                    $"reported even though {sources.Count} object(s) emitted{DependencyResolveFailureOutput.DependencyUnresolvedSuffix(bundleDependencyUnresolved)}.");
                 sources = Array.Empty<EmittedSource>(); // do not run a module BC would refuse to publish
             }
             if (sources.Count > 0)
@@ -3869,8 +3882,8 @@ foreach (var bundle in bundles)
                     if (alDiagnostics.Count > 0)
                     {
                         Console.Error.WriteLine($"<bundled>: AL diagnostics from emit ({alDiagnostics.Count}):");
-                        foreach (var d in alDiagnostics)
-                            Console.Error.WriteLine($"  {d}");
+                        foreach (var line in DependencyResolveFailureOutput.AlDiagnosticListing(alDiagnostics, bundleDependencyUnresolved, AlRunner.Log.Verbose))
+                            Console.Error.WriteLine(line);
                     }
                     bundleErrors.Add($"<bundled>: COMPILE-FAIL ({compile.Errors.Count}): {compile.Errors.FirstOrDefault()?.Split('\n')[0]}");
                 }
@@ -4161,8 +4174,8 @@ foreach (var bundle in bundles)
                     $"{suiteName}: AL-DIAGNOSTIC-FAIL — {sources.Count} object(s) emitted but " +
                     $"{suiteAlDiagnostics.Count} AL error(s) were reported by BC's own compiler; " +
                     $"a real service tier would refuse to publish this module:");
-                foreach (var d in suiteAlDiagnostics)
-                    Console.Error.WriteLine($"  {d}");
+                foreach (var line in DependencyResolveFailureOutput.AlDiagnosticListing(suiteAlDiagnostics, bundleDependencyUnresolved, AlRunner.Log.Verbose))
+                    Console.Error.WriteLine(line);
                 bundleErrors.Add(
                     $"{suiteName}: AL-DIAGNOSTIC-FAIL ({suiteAlDiagnostics.Count}): " +
                     $"{suiteAlDiagnostics.FirstOrDefault()?.Split('\n')[0]}");
@@ -4181,8 +4194,8 @@ foreach (var bundle in bundles)
                 if (suiteAlDiagnostics.Count > 0)
                 {
                     Console.Error.WriteLine($"{suiteName}: AL diagnostics ({suiteAlDiagnostics.Count}):");
-                    foreach (var d in suiteAlDiagnostics)
-                        Console.Error.WriteLine($"  {d}");
+                    foreach (var line in DependencyResolveFailureOutput.AlDiagnosticListing(suiteAlDiagnostics, bundleDependencyUnresolved, AlRunner.Log.Verbose))
+                        Console.Error.WriteLine(line);
                 }
                 bundleErrors.Add($"{suiteName}: COMPILE-FAIL ({compile.Errors.Count}): {compile.Errors.FirstOrDefault()?.Split('\n')[0]}");
                 continue;

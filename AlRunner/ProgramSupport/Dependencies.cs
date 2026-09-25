@@ -880,10 +880,12 @@ internal static partial class ProgramSupport
             // honest consequence is not to consult or write the AL-output cache for it. The
             // terms are still returned so a caller with a different question (diagnostics) has
             // something to read; the blocker is what the cache gates honour.
-            Console.Error.WriteLine(
-                $"  [cache] dependency resolution failed while computing the cache key for " +
-                $"{depRootDir}: {ex.GetType().Name}: {ex.Message}. This run cannot claim a cache " +
-                $"identity — the AL-output cache will be neither consulted nor written for it.");
+            // #4567: verbose only — both callers print the same cause through the NOKEY line.
+            if (AlRunner.Log.Verbose)
+                Console.Error.WriteLine(
+                    $"  [cache] dependency resolution failed while computing the cache key for " +
+                    $"{depRootDir}: {ex.GetType().Name}: {ex.Message}. This run cannot claim a cache " +
+                    $"identity — the AL-output cache will be neither consulted nor written for it.");
             return new OrderedDependencyIds(
                 new[] { $"unresolved:{ex.GetType().Name}:{ex.Message}" },
                 $"the dependency closure of '{depRootDir}' could not be resolved "
