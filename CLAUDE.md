@@ -42,6 +42,8 @@ Operating rules live in `.claude/rules/` and are auto-loaded. Task-specific refe
 - Drive a full work cycle (triage → parallel impls in worktrees → orchestrator merge pass, until the queue is empty) → slash command `/work-cycle`
 - Run **unattended** (never-idle loop, one agent at a time, fixed priority order, weekly-budget pacing, preflight that refuses a box which would produce wrong answers) → skill `autonomous-cycle`
 - Run Microsoft's BaseApp test buckets to find real gaps (sources, the exact configuration, sizing, clustering, and why `--test-data` is mandatory) → skill `running-ms-test-buckets`
+- Find a C# symbol's definition and callers without grepping → skill `find-code`
+- Decompiler setup, citing a BC binary by build and hash, why `strings` cannot find a member → skill `inspecting-bc-binaries`
 
 ### How a rule is written
 
@@ -59,281 +61,122 @@ introducing commit rewrote (#3952), so it cost an argument per rule and settled 
 
 ## Code navigation: use these before grepping
 
-Finding and reading code is the single biggest token cost in this repo, and the cost driver is
-the **number** of round trips, not the size of any one result: every call re-sends the whole
-accumulated conversation, so 200 small greps cost far more than 20 targeted ones. Use the tools
-below before a grep sweep over `AlRunner/**/*.cs`. Re-measure the cost with
-`tools/agent-cost.py <tasks-dir>` rather than trusting a figure written here (measurements:
+Finding and reading code is the single biggest token cost in this repo, and the driver is the
+**number** of round trips — every call re-sends the whole conversation, so 200 small greps cost
+far more than 20 targeted ones. Use the tools below before a grep sweep over
+`AlRunner/**/*.cs`; re-measure with `tools/agent-cost.py <tasks-dir>` (measurements:
 docs/incidents/CLAUDE.md.md).
 
-**0. `tools/context-pack.py` — one round trip, many answers.**
+**0. `tools/context-pack.py <Name> [<Name>...]`** — definition + source + call sites for each,
+in one round trip. Prefer it whenever you have more than one symbol. A `PreToolUse` hook
+(`.claude/hooks/prefer-code-navigation.py`) **blocks** shell reads/searches of
+`AlRunner/**/*.cs` for `impl-agent` and `reviewer` and only advises elsewhere (#3707); append
+`# hook:allow-grep` to override one call. Grep stays right for logs, JSON, TRX, markdown and
+`.al` sources.
 
-```bash
-tools/context-pack.py <Name> [<Name>...]   # definition + source + call sites for each
-```
-
-Prefer it whenever you have more than one symbol to resolve; that is the whole point of it.
-A `PreToolUse` hook (`.claude/hooks/prefer-code-navigation.py`) acts when a shell read or
-search targets `AlRunner/**/*.cs`: it **blocks** when the PreToolUse payload's `agent_type` is
-`impl-agent` or `reviewer` and stays an advisory reminder elsewhere, so the coordinator keeps
-grep (#3707). Append `# hook:allow-grep` to override one call. Grep stays right everywhere for logs, JSON, TRX, markdown and `.al` sources.
-
-**1. Knowledge graph — this is the one a subagent has.**
-
-Rebuild AND query from `AlRunner/`, not the repo root:
+**1. Knowledge graph — the one a subagent has.** Rebuild AND query from `AlRunner/`:
 
 ```bash
 cd AlRunner && graphify update .              # seconds
 cd AlRunner && graphify query "SomeSymbol callers"
 ```
 
-Both commands default to `graphify-out/graph.json` **relative to the current directory**, so a
-rebuild run from one directory and a query run from another silently use different files.
-Rebuilding takes seconds, so rebuild rather than wonder whether it is current; in a worktree
-the graph only drifts by your own edits.
+Both default to `graphify-out/graph.json` **relative to the current directory**, so rebuilding
+in one directory and querying from another silently uses different files; rebuild rather than
+wonder whether it is current. **Phrase queries as bare symbols or `Symbol callers`, never as an
+English question** — the resolver matches a stray word and gives no sign it failed. The graph is
+**static** only: an orphaned hook and a live one look identical in it; use
+`AL_RUNNER_HOOK_AUDIT=1` for "does this fire".
 
-**Phrase queries as bare symbols or `Symbol callers` — never as an English question.** The
-start-node resolver matches on the words you type, so an English question matches on a stray
-word, returns unrelated nodes, and gives no sign it failed.
-
-The graph maps **static** structure only: which types and files reference which. It cannot tell
-you whether a `Hook(...)` registration or a Cecil rewrite actually fires at runtime — an
-orphaned hook and a live one look identical in it. Use `AL_RUNNER_HOOK_AUDIT=1` for that
-question.
-
-**2. Language server via `tools/lsp-query.py` — works everywhere, subagents included.**
+**2. `tools/lsp-query.py` — works everywhere, subagents included.**
 
 ```bash
 tools/lsp-query.py callers <SymbolName>   # what calls it (no line/col needed)
 tools/lsp-query.py symbol  <SymbolName>   # where it is defined
 ```
 
-Several seconds per query, one process, no daemon. Exit 0 = answered, 1 = not in its index,
-**2 = the server failed and the result means nothing** — never read a 2 as "nothing
-calls this". Exit 1 is a real negative for a type or an ordinary member, but **not for
-a LOCAL FUNCTION** (one declared inside another method): `csharp-ls` does not index
-those at all, so several in `Program.cs` report it — confirm a surprising zero with
-`rg -n "<Name>" AlRunner/`. Full guidance: skill `find-code`.
+Exit 0 = answered, 1 = not in its index, **2 = the server failed and the result means
+nothing** — never read a 2 as "nothing calls this". Exit 1 is a real negative for a type or an
+ordinary member, but **not for a LOCAL FUNCTION** (declared inside another method): `csharp-ls`
+does not index those, so confirm a surprising zero with `rg -n "<Name>" AlRunner/`. Full
+guidance: skill `find-code`.
 
-**2b. The built-in `LSP` tool — main session only.**
-
-It answers `findReferences`, `incomingCalls`, `goToDefinition` and `workspaceSymbol` for
-`.cs`, and it is the sharpest instrument here: `findReferences` on
-`GetDataAccessForTableCore` returns its call sites across every partial-class file in one
-call.
-
-**The harness disables `LSP` inside subagents on build v2.1.252** (it worked on v2.1.152;
-anthropics/claude-code#62904), and neither the agent's `tools:` frontmatter nor
-`ENABLE_LSP_TOOL=1` re-enables it; re-measure on a new build before assuming either way. **If you are a subagent, use
-`tools/lsp-query.py`** and do not spend calls rediscovering this.
-
-When you are the main session briefing a subagent, resolve its symbols first and paste the
-answers into the brief as `# LSP CONTEXT (pre-resolved)`, so it does not have to go looking.
-Setup is in the README's tooling section (`mise use -g dotnet:csharp-ls` plus the `csharp-lsp`
-plugin); if `LSP` reports no server for `.cs`, the plugin is not active — that is a setup
-answer, never a "nothing calls this" answer.
+**2b. The built-in `LSP` tool — main session only.** It is the sharpest instrument here
+(`findReferences`, `incomingCalls`, `goToDefinition`, `workspaceSymbol`), but **the harness
+disables it inside subagents on build v2.1.252** (anthropics/claude-code#62904) and neither
+`tools:` frontmatter nor `ENABLE_LSP_TOOL=1` re-enables it; re-measure on a new build. **A
+subagent uses `tools/lsp-query.py`** and does not spend calls rediscovering this. A main session
+briefing a subagent resolves its symbols first and pastes them as `# LSP CONTEXT
+(pre-resolved)`. Setup: the README's tooling section; "no server for `.cs`" is a setup answer,
+never a "nothing calls this" answer.
 
 **2c. The `bc-decompiler` MCP server — for "what does BC actually do".**
-
 `mcp__bc-decompiler__*` reads `Microsoft.Dynamics.Nav.Ncl.dll` and friends directly:
-`search_members` → `get_decompiled_source` → `find_callers` (which resolves through async
-state machines), and `compare_symbols` diffs a method between two BC versions. One cached BC
-version is one registered context, aliased `bc<major><minor>` — one per version in
-`.github/bc-versions.txt`. If the tools are absent from
-your session, nothing is broken — it is not installed or not loaded. Setup:
+`search_members` → `get_decompiled_source` → `find_callers` (resolves through async state
+machines); `compare_symbols` diffs a method between two BC versions. One context per version in
+`.github/bc-versions.txt`, aliased `bc<major><minor>` (e.g. `bc284`). Absent tools mean not
+installed or not loaded, not broken. Setup (`tools/setup-bc-decompiler.sh`; `.mcp.json` is
+gitignored and read only at session start), loading a context, and reading `list_contexts` —
+**`registeredAliases` is not loaded** — are in skill `inspecting-bc-binaries`.
 
-```bash
-tools/setup-bc-decompiler.sh      # needs the .NET 10 SDK; the runner itself stays on net8.0
-```
-
-That clones and publishes `pardeike/DecompilerServer` into `$DECOMPILER_SERVER_DIR`
-(default `~/Documents/Repos/tools/DecompilerServer`) and prints the block to put in
-`.mcp.json` at the repository root:
-
-```json
-{ "mcpServers": { "bc-decompiler": { "type": "stdio", "command": "dotnet",
-    "args": ["<DEST>/publish/DecompilerServer.dll"], "env": {} } } }
-```
-
-Two things about that file. `.mcp.json` is **gitignored** — per-machine, never committed. And
-it is read **only at session start**, so a freshly written one does nothing for the session
-you are in: "configured" and "usable right now" are different states, and only a restart
-turns the first into the second. `tools/preflight.py` tells them apart by speaking MCP to the
-server itself; in-session, `mcp__bc-decompiler__status` is the check.
-
-A context needs its BC artifacts on disk first — `load_assembly` points at
-`<artifacts>/<ver>/Microsoft.Dynamics.Nav.Ncl.dll` under `~/.local/share/al-runner/artifacts/`
-(or `$AL_RUNNER_ARTIFACTS_ROOT`), so a version that was never provisioned cannot be
-decompiled. `al-runner provision --bc-version <ver>` fetches it; then load once per version
-(contexts persist in `~/.decompilerserver/` across restarts):
-
-```
-load_assembly(assemblyPath: "<artifacts>/<ver>/Microsoft.Dynamics.Nav.Ncl.dll",
-              additionalSearchDirs: ["<artifacts>/<ver>"], contextAlias: "bc284")
-```
-
-**`list_contexts` answers two different questions in one response, and the wrong one is the
-easier to read.** `registeredAliases` lists every alias that *can* be activated; `items` lists
-the contexts actually **loaded**. An alias in the first and not the second means nothing has
-been read through it — so a cross-version comparison resting on it is an inference, not a
-measurement. Measured: an agent read `bc270`/`bc273` sharing an MVID from `items`, saw `bc275`
-in `registeredAliases`, and concluded 27.5 was a distinct binary; hashing the files showed all
-three `Ncl.dll` byte-identical. Hash the artifact, or load the context, before claiming two
-versions differ.
-
-**The mirror error is the commoner one: citing ONE binary under a version label that implies
-independence.** The builds `27.0.38460.53934`, `27.3.44313.53909` and `27.5.46862.53931` are one
-file (sha256 `affa03c9…`, 10716984 bytes), so "measured on 27.5" and "27.0, 27.3 and 27.5 agree"
-can be the same single measurement wearing three labels — and nothing in the first phrasing looks
-like a claim about independence, which is why it passes review.
-
-**But the version label does not identify the binary either way, so neither does a `27.x`/`28.x`
-boundary.** A two-part version covers several builds and they are not all the same file:
-`27.5.46862.48827` (`0a6ce45e…`) differs from `27.5.46862.53931` (`affa03c9…`), and the
-`28.4.53241` builds are not one binary either. So "one anywhere inside 27.x is one measurement"
-is false in both directions — two 27.5 results can be two binaries, and `28.0` through `28.4` can
-be one. **Cite the build, and the hash**: `27.5.46862.53931 (affa03c9)` is a measurement, `27.5`
-is not. `sha256sum` over the artifact directories is the whole check, and
-`tools/test_bc_binary_identity_claims.py` pins the groupings this paragraph states against whatever
-is provisioned. Measured three times: #3372 (the over-claim above), #3859, where an agent deleted
-a stale waiver recording exactly this hazard and then made the error the waiver had described, and
-#4221, where this paragraph's own example was the wrong shape.
-
+**The version label does not identify the binary**, in either direction: several builds under
+one label can be distinct files, and several labels can be one file. **Cite the build and the
+hash** (`27.5.46862.53931 (affa03c9)`), never `27.5`, and hash the artifacts before claiming two
+versions agree or differ (#3372, #3859, #4221; worked example: skill `inspecting-bc-binaries`).
 
 **2d. A `private` member in another file is usually still reachable — the file is not the class.**
 
 `RecordPatches` is ONE `partial class` spread over **many files**, and so are `BcRuntime`,
 `NclCecilRewrite`, `ProgramSupport`, `LiveNavTestPage` and `RunnerPageInstance`. So a `private`
-member declared in one of those files is accessible from every other file declaring the
-same class, and "it is private, and it is in a different file" is two true statements whose
-conjunction implies something false.
-
-Measured cost: issue #3933 advised widening a `private` decoder to `internal` or moving it, and the
-coordinator repeated that in a dispatch brief; the calling file declared the same `partial class`
-and had access all along (#3945). Nothing contradicts the reading until someone tries the call, and
-the edit it argues for — widening visibility, or a new shared location — is a real diff in a hot
-file.
+member declared in one of those files is accessible from every other file declaring the same
+class; "private, and in a different file" does not mean unreachable (#3933, #3945).
 
 ```bash
 command grep -n "partial class" <the-calling-file>   # same class? then you already have access
 ```
 
-**3. `grep` here is a shell function, and it fails silently.**
+**3. `grep` here is a shell function, and it fails silently.** It rejects `-E`, `--include` and
+some pipelines with `error: unknown option '-G'` and **exits 0 with no output**, which reads
+exactly like "no matches". **Never conclude "nothing matches" from a bare `grep -E` here** — use
+`command grep -E`, `rg --hidden`, or a python scan.
 
-`grep` resolves to a shell **function**, not `/usr/bin/grep`. It rejects `-E`, `--include` and
-some pipelines with `error: unknown option '-G'` — and **exits 0 with no output**, which reads
-exactly like "no matches found". That is a false negative, not an error you will notice.
-
-```bash
-command grep -E "pattern" file     # bypasses the function
-rg --hidden "pattern"              # ripgrep, but see below: --hidden is not optional here
-python3 - <<'EOF' ... EOF          # or do the scan in python, which also batches
-```
-
-**Never conclude "nothing matches" from a bare `grep -E` in this repo.** Re-run it with
-`command grep` before believing an empty result.
-
-**3b. `rg` skips dot-directories, and in THIS repo that hides everything that governs you.**
-
-Both obvious tools have a silent-false-negative mode, for different reasons, and they look
-identical from the outside:
+**3b. Four tools whose failure looks like "no matches".**
 
 | tool | failure | looks like |
 |---|---|---|
 | `grep -E` (the shell function) | rejects the flag, exits **0**, prints nothing | no matches |
-| `rg` without `--hidden` | skips dot-directories entirely | no matches |
+| `rg` without `--hidden` | skips dot-directories — all of `.claude/` | no matches |
 | `gh <thing> list --limit N` | returns the first N and says nothing | the thing does not exist |
 | `strings -el` on a .NET assembly | reads UTF-16 only, so a **member name** matches only by luck | the member is unreferenced |
 
-The third is the one that bites a *check* rather than a search, so it reaches a decision.
-Measured 2026-09-14: with more labels in the repository than the limit, `gh label list --limit 100 |
-grep -c 'blocked-by: corpus-verdict'` answered **0** for a label that exists — an agent nearly
-created a duplicate on that reading. `--limit` is a cap, never a page: there is no second page and no
-warning. Ask the API, which paginates:
+- **`rg --hidden`** (plus `--glob '!.git'` when noisy) for anything under `.claude/` — rules,
+  skills, agents, hooks — which is exactly where "where is this written down?" searches go.
+- **`--limit` is a cap, never a page**, and it bites existence *checks* (#4170). Use
+  `gh api <path> --paginate`, and `?per_page=1 --jq '.total_count'` to ask "how many"
+  (`ci-verdicts.md`, the paged-count trap).
+- **For "is this member referenced", read the `MemberReference` table** (the `bc-decompiler`
+  tools, or `System.Reflection.Metadata`), never any `strings` form — names live in the UTF-8
+  `#Strings` heap, literals in UTF-16 `#US` (#4229; table and measurement: skill
+  `inspecting-bc-binaries`).
+- **`mise` prints a banner on stdout**, so `x=$(gh ...)` can capture it instead of the value.
+  Filter a capture to the shape you expect (`| command grep -E '^[0-9]+$'`), never test only
+  that it is non-empty.
+
+**Never conclude "this text is not in the repo" from one tool alone** — confirm an empty result
+with the other.
+
+**3c. `--body "..."` silently deletes your backticked spans.** A double-quoted string runs each
+`` `span` `` as command substitution; `gh` exits 0 and the damage is public before you notice
+(#4110). **Write markdown bodies through a quoted heredoc to a file and pass `--body-file`**;
+never `--body "…"` for prose containing backticks, `$` or `!`, and re-read what you posted.
+**Pick a delimiter the text cannot contain** — a heredoc ends at the first matching line,
+including one inside the content. Writing the file from Python avoids both.
 
 ```bash
-gh api repos/<owner>/<repo>/labels --paginate --jq '.[].name'
-```
-
-**The fourth row is the one whose corrective advice causes it.** "C# string literals are UTF-16,
-so `strings | grep` false-negatives on .NET assemblies; use `strings -a -el`" circulates in agent
-briefs here and is half right — and the wrong half is the half people reach for it with. A .NET
-assembly keeps the two in different heaps:
-
-| what | heap | encoding | the flag that finds it |
-|---|---|---|---|
-| **member / type / namespace names** | `#Strings` | **UTF-8** | `strings -a` |
-| **user string literals** (`"out-of-scope: ..."`) | `#US` | UTF-16 | `strings -a -el` |
-
-Measured on `28.1.49838.53910/Microsoft.Dynamics.Nav.Ncl.dll`, for the metadata name
-`RunRequestPageAsync`: `strings -a -el` finds **0**, `strings -a` finds **4**. So an agent told to
-use `-el` and asked whether a *member* is referenced gets a clean zero and reads it as a finding.
-
-**A non-zero from `-el` is not a refutation of this, and does not rescue the method.** A minority of the
-identifier-like `#Strings` names in that binary also occur verbatim in `#US` --
-`ALDownloadFromStream` answers **1** under `-el` -- because some *literal* happens to spell the
-same text. That hit is never the metadata entry, so the count still says nothing about whether the
-member is referenced; it is a coincidence of spelling, and a scan that is usually right by
-accident is worse than one that is always wrong, because the failures look like data.
-
-**For "is this member referenced", read the `MemberReference` table, not bytes.** It answers a
-question no byte scan can: a `MemberReference` means this assembly **calls** the member, a
-`MethodDefinition` that it **defines** it. On PR #4224 that split was load-bearing — the `.app`
-chunk referencing `NavReport::RunRequestPageAsync` is also the one defining `RunReportRequestPage`,
-and only the table distinguishes them (#4229).
-
-The instrument for that is already set up here: the `mcp__bc-decompiler__*` tools (§ 2c), whose
-`find_callers` resolves through async state machines and whose `search_members` answers the
-definition side. Reach for those, or read the tables with `System.Reflection.Metadata`, rather
-than any `strings` form, whenever the question is about metadata rather than literal bytes.
-
-The same shape applies to every `gh ... list --limit`: a `--limit 100` over 200 open issues is
-a silent half-answer, and `?per_page=1 --jq '.total_count'` is how you ask "how many" rather
-than "show me some" (`ci-verdicts.md`, the paged-count trap).
-
-This bites harder here than in most repos, because nearly everything that governs agent
-behaviour lives under `.claude/` — `rules/`, `skills/`, `agents/`, `hooks/`, `commands/`. So
-"where is this instruction written down?" is exactly the search that comes back empty while
-being wrong.
-
-```bash
-rg --hidden "pattern"                          # required for .claude/**
-rg --hidden --glob '!.git' "pattern"           # ...and again when .git makes it noisy
-```
-
-**Never conclude "this text is not in the repo" from one tool alone.** Confirm an empty
-result with the other one before believing it.
-
-One more empty-looking answer that is not: **`mise` prints a banner on stdout**, so
-`x=$(gh ... )` captures `mise ~/.config/mise/config.toml tools: gh@2.100.0` alongside — or
-instead of — the value you wanted. **Filter a capture to the shape you expect**
-(`| command grep -E '^[0-9]+$'`) rather than testing whether it is non-empty.
-
-**3c. Writing markdown through `--body "..."` silently deletes your backticked spans.**
-
-A double-quoted shell string evaluates backticks as command substitution, so every `` `code
-span` `` in prose becomes the *output* of running it — usually empty, plus a `command not
-found` on stderr that no reader of the posted text ever sees. Measured on a live issue comment
-(#4110): a run id and a timestamp vanished, leaving `Reading the oldest queued run's jobs (,
-queued since ):` published, while `gh` exited 0 and printed the comment URL.
-
-This is the same family as the two traps above — the command succeeds, and the loss is visible
-only on a re-read — and it is worse in one way: the damage is public before you notice.
-
-```bash
-cat > /tmp/body.md <<'MDEOF'      # quoted delimiter: NO substitution at all
+cat > "$f" <<'MDEOF'      # quoted delimiter: no substitution at all
 ... `code spans` and $vars stay literal ...
 MDEOF
-gh issue comment <N> --body-file /tmp/body.md
+gh issue comment <N> --body-file "$f"
 ```
-
-**Write any markdown body to a file through a quoted heredoc and pass `--body-file`.** Never
-`--body "…"` for prose containing backticks, `$`, or `!`. If you must inline it, re-read the
-posted text before trusting it.
-
-**And pick a delimiter the text cannot contain.** A heredoc ends at the first line equal to its
-delimiter, *including one inside the content*, so a body whose own example shows a heredoc
-terminates early and the shell then parses the remainder as commands. Measured composing the
-very PR that added this section. Writing the file from Python has neither problem.
 
 History: docs/incidents/CLAUDE.md.md

@@ -189,6 +189,10 @@ NOT_A_MATRIX_CLAIM = [
     ("docs/table-trigger-metadata.md", "27.0 27.5 28.4",
      "the three Ncl.dll builds whose decompiled DefinedTriggers body was compared -- a "
      "historical measurement of which binaries were read, not the matrix"),
+    (".claude/skills/inspecting-bc-binaries/SKILL.md", "27.0 27.3 27.5",
+     "the three builds that are one Ncl.dll file, quoted as the misleading phrasing the "
+     "section warns against -- a binary-identity example pinned by "
+     "tools/test_bc_binary_identity_claims.py, not a leg set (moved from CLAUDE.md, #4542)"),
     ("docs/runtime-packages.md", "27.5 28.1 28.4",
      "the three BC compilers that built the three genuine third-party runtime packages measured "
      "for #3537 -- a historical measurement of which builds were compared, not the matrix"),

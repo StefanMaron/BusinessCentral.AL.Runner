@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pin CLAUDE.md's `strings -el` false-negative claim against a real assembly.
+"""Pin the `strings -el` false-negative claim in .claude/skills/inspecting-bc-binaries/SKILL.md (moved from CLAUDE.md, #4542) against a real assembly.
 
 The document states that a .NET assembly keeps member names in the UTF-8
 `#Strings` heap and user string literals in the UTF-16 `#US` heap, so `strings -el`
@@ -37,7 +37,7 @@ import sys
 EXIT_OK, EXIT_REFUTED, EXIT_CANNOT_MEASURE = 0, 1, 3
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DOC = os.path.join(REPO, "CLAUDE.md")
+DOC = os.path.join(REPO, ".claude", "skills", "inspecting-bc-binaries", "SKILL.md")
 NCL = "Microsoft.Dynamics.Nav.Ncl.dll"
 
 # Captures the build, the member name, and both counts the document states.
@@ -69,12 +69,12 @@ def main():
     # findall, not search: a second copy of the sentence would let a drifted one
     # hide behind a correct one (#4241).
     if not found:
-        print("UNMEASURABLE: CLAUDE.md's `strings -el` measurement sentence no longer matches")
+        print("UNMEASURABLE: the skill's `strings -el` measurement sentence no longer matches")
         print("  this guard's pattern -- the prose was reworded, so nothing was measured.")
         print("  Re-read the paragraph and update the pattern.")
         return EXIT_CANNOT_MEASURE
     if len(found) > 1:
-        print("UNMEASURABLE: the pattern matches %d places in CLAUDE.md, so this guard"
+        print("UNMEASURABLE: the pattern matches %d places in the skill, so this guard"
               % len(found))
         print("  cannot tell which sentence it is pinning. Make the claim unique.")
         return EXIT_CANNOT_MEASURE
@@ -84,13 +84,13 @@ def main():
     said_el, said_plain = int(m.group("el")), int(m.group("plain"))
 
     if shutil.which("strings") is None:
-        print("  SKIP CLAUDE.md's `strings -el` claim: `strings` is not installed here")
+        print("  SKIP the skill's `strings -el` claim: `strings` is not installed here")
         print("       (binutils). Nothing to measure with; not a failure.")
         return EXIT_OK
 
     path = os.path.join(artifacts_root(), build, NCL)
     if not os.path.isfile(path):
-        print("  SKIP CLAUDE.md's `strings -el` claim: %s is not provisioned here." % build)
+        print("  SKIP the skill's `strings -el` claim: %s is not provisioned here." % build)
         print("       This is the ordinary state on CI, which never provisions BC for this job.")
         print("       Provision with: al-runner provision --bc-version %s" % build)
         return EXIT_OK
@@ -105,7 +105,7 @@ def main():
     # The direction is the claim. A UTF-16 scan must not find a #Strings name...
     if el != 0:
         problems.append(
-            "`strings -a -el` found %d occurrence(s) of `%s`, but CLAUDE.md's whole point is "
+            "`strings -a -el` found %d occurrence(s) of `%s`, but the skill's whole point is "
             "that a UTF-16 scan finds NONE of a metadata name." % (el, member)
         )
     # ...and the plain scan must, or the example proves nothing.
@@ -120,8 +120,8 @@ def main():
             print("FAIL: %s" % p)
         print()
         print("Measured on %s:" % build)
-        print("  strings -a -el -> %d   (CLAUDE.md says %d)" % (el, said_el))
-        print("  strings -a     -> %d   (CLAUDE.md says %d)" % (plain, said_plain))
+        print("  strings -a -el -> %d   (the skill says %d)" % (el, said_el))
+        print("  strings -a     -> %d   (the skill says %d)" % (plain, said_plain))
         print("Fix the prose to match the assembly -- never the reverse (#4229).")
         return EXIT_REFUTED
 

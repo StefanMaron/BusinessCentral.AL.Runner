@@ -136,3 +136,16 @@ transcripts on one box) were deleted outright rather than moved, because they go
   identifier-like `#Strings` names, 1,937 (5.1%) also occur verbatim in `#US`.
 - **#3952.** The byte figure the "How a rule is written" section used to carry was met by 2 of the
   15 rules its own introducing commit rewrote.
+
+## Moved out of CLAUDE.md (#4542)
+
+- **§ 2d, the measured cost.** Issue #3933 advised widening a `private` decoder to `internal` or
+  moving it, and the coordinator repeated that in a dispatch brief; the calling file declared the
+  same `partial class` and had access all along (#3945). Nothing contradicts the reading until
+  someone tries the call, and the edit it argues for is a real diff in a hot file.
+- **§ 3c, the delimiter trap** was measured composing the very PR that added that section: a body
+  whose own example showed a heredoc terminated early, and the shell parsed the rest as commands.
+- **§ 2c and the `strings` row of § 3b** — the decompiler setup, the `list_contexts` incident, the
+  binary-identity worked example and the `#Strings`/`#US` measurement — moved whole to
+  `.claude/skills/inspecting-bc-binaries/SKILL.md`, and the two guards pinning those sentences
+  (`tools/test_bc_binary_identity_claims.py`, `tools/test_strings_heap_claim.py`) read that file now.

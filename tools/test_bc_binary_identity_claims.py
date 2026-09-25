@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Pin CLAUDE.md's BC binary-identity example against the artifacts on this box.
+"""Pin the BC binary-identity example in .claude/skills/inspecting-bc-binaries/SKILL.md (moved from CLAUDE.md, #4542) against the artifacts on this box.
 
-CLAUDE.md warns against citing a two-part version label as though it identified a
+The skill warns against citing a two-part version label as though it identified a
 binary, and states a worked example to make the hazard concrete. That example is
 itself a countable claim about files on disk, so it drifts exactly like the claims
 the surrounding section is about -- #4221 is the instance: the paragraph named
@@ -55,7 +55,7 @@ import sys
 EXIT_OK, EXIT_DRIFTED, EXIT_CANNOT_MEASURE = 0, 1, 3
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DOC = os.path.join(REPO, "CLAUDE.md")
+DOC = os.path.join(REPO, ".claude", "skills", "inspecting-bc-binaries", "SKILL.md")
 NCL = "Microsoft.Dynamics.Nav.Ncl.dll"
 
 
@@ -133,7 +133,7 @@ def main():
         if not found:
             unmeasurable.append(
                 "%s: the sentence stating it no longer matches this guard's pattern "
-                "(CLAUDE.md was reworded). Re-read the paragraph and update the regex." % label
+                "(the skill was reworded). Re-read the paragraph and update the regex." % label
             )
             continue
 
@@ -146,7 +146,7 @@ def main():
         # tools/test_partial_class_claims.py, which pins no counts since #4539.)
         if len(found) > 1:
             unmeasurable.append(
-                "%s: the pattern matches %d places in CLAUDE.md, so this guard cannot "
+                "%s: the pattern matches %d places in the skill, so this guard cannot "
                 "tell which one it is pinning. Make the claim unique, or narrow the "
                 "pattern." % (label, len(found))
             )
@@ -199,7 +199,7 @@ def main():
         return EXIT_CANNOT_MEASURE
 
     if not have:
-        print("  SKIP CLAUDE.md's binary-identity claims: no BC artifacts under %s" % root)
+        print("  SKIP the skill's binary-identity claims: no BC artifacts under %s" % root)
         print("       -- the claims are still stated correctly, but nothing here can")
         print("       compare them against a file. This is the ordinary state on CI,")
         print("       whose tools-tests job never provisions BC.")
@@ -219,7 +219,7 @@ def main():
     # is measurably wrong, say so, whatever happened to the other.
     if problems:
         print()
-        print("CLAUDE.md's binary-identity example disagrees with the artifacts on this box.")
+        print("the skill's binary-identity example disagrees with the artifacts on this box.")
         print("Fix the prose to match the hashes -- never the reverse (#4221).")
         return EXIT_DRIFTED
 
@@ -228,7 +228,7 @@ def main():
         print("       is provisioned here, so there is nothing to compare against.")
         return EXIT_OK
 
-    print("OK: %d binary-identity claim(s) in CLAUDE.md agree with %d provisioned artifact(s)."
+    print("OK: %d binary-identity claim(s) in the skill agree with %d provisioned artifact(s)."
           % (checked, len(have)))
     return EXIT_OK
 
