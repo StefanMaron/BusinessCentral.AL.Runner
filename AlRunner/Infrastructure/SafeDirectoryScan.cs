@@ -122,7 +122,7 @@ public static class SafeDirectoryScan
         SearchOption searchOption = SearchOption.AllDirectories)
     {
         var memo = CurrentMemo.Value;
-        if (memo != null && searchOption == SearchOption.AllDirectories
+        if (memo is { IsDisposed: false } && searchOption == SearchOption.AllDirectories
             && MemoizedPatterns.Contains(searchPattern))
         {
             var (found, denied) = memo.GetOrWalk(root, searchPattern);
@@ -178,6 +178,7 @@ public static class SafeDirectoryScan
             new(StringComparer.Ordinal);
         private int _calls;
         private int _walks;
+        private volatile bool _disposed;
 
         internal RunMemo(RunMemo? previous) => _previous = previous;
 
@@ -199,8 +200,15 @@ public static class SafeDirectoryScan
                 })).Value;
         }
 
+        /// <summary>
+        /// True once the run has ended. A flow that captured this memo before then (a task
+        /// started inside the run) walks instead of answering from a finished run.
+        /// </summary>
+        public bool IsDisposed => _disposed;
+
         public void Dispose()
         {
+            _disposed = true;
             if (ReferenceEquals(CurrentMemo.Value, this)) CurrentMemo.Value = _previous;
         }
     }

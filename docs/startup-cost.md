@@ -64,7 +64,9 @@ that nothing regressed, not the size of the gain.
 `AlRunner.Tests/SafeDirectoryScanRunMemoTests.cs` pins the scope behaviour, and the
 `package_dir_repeat_walks` field of the `AL_RUNNER_PHASE_LOG` process row — asserted `0` in
 `PhaseLogIntegrationTests.RealRun_EmitsOrderedPerBundleRecordsAndOneProcessRecord` — pins that a
-one-shot run actually opens the scope.
+one-shot run actually opens the scope. `AlRunner.Tests/PackageDirMemoRenewalTests.cs` pins the
+renewals: a `--server` request finds an `.alpackages`/`.deps-bin` added after the previous
+request, and a second `--watch` cycle walks again.
 
 ### Where the scope opens
 
@@ -73,6 +75,9 @@ one-shot run actually opens the scope.
 | one-shot CLI, `--dap` | the whole run, opened before the first `.alpackages` scan in `Program.cs` |
 | `--watch` | renewed at the top of every cycle after the first |
 | `--server` | one per request, inside `RunAllBundlesForServer`; the startup scope is closed before the server goes resident |
+
+A disposed memo is dead: a task that captured it inside a run and outlives the run walks
+instead of answering from it.
 
 Never the process: both directories are user-owned, and a developer can add an `.alpackages`
 (a symbol download) between two watch cycles or two server requests. The runner itself never

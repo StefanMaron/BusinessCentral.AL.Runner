@@ -73,6 +73,40 @@ public sealed class SafeDirectoryScanRunMemoTests : IDisposable
         Assert.Equal(1, next.Walks);
     }
 
+    /// <summary>
+    /// A task started inside a run keeps the run's memo in its captured context after the run
+    /// ends. It must walk afresh then, not answer from the finished run.
+    /// </summary>
+    [Fact]
+    public async Task AFlowThatOutlivesItsRun_WalksAfterTheRunEnds()
+    {
+        var appB = Path.Combine(_root, "app-b");
+        var runEnded = new TaskCompletionSource();
+        Task<IReadOnlyList<string>> late;
+        var memo = SafeDirectoryScan.BeginRunMemo();
+        try
+        {
+            Assert.Empty(SafeDirectoryScan.Directories(appB, ".alpackages"));
+            late = Task.Run(async () =>
+            {
+                await runEnded.Task;
+                return SafeDirectoryScan.Directories(appB, ".alpackages");
+            });
+        }
+        finally
+        {
+            memo.Dispose();
+        }
+
+        var added = Path.Combine(appB, ".alpackages");
+        Directory.CreateDirectory(added);
+        runEnded.SetResult();
+
+        Assert.Equal(new[] { added }, await late);
+        Assert.True(memo.IsDisposed);
+        Assert.Equal(1, memo.Walks);
+    }
+
     [Fact]
     public void OutsideAnyRun_EverySearchWalks()
     {
