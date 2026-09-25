@@ -125,3 +125,14 @@ paginated API form, which has no cap.
 The generalisation is the part worth keeping: every `gh ... list --limit` is exposed, including
 `gh issue list --limit 100` against a queue of more than 100. Any count taken from a capped listing is
 wrong in the direction that looks clean.
+
+## Figures moved out of the rule (#4539)
+
+The rule now cites these measurements rather than restating them; the figures are what each
+citation measured, frozen to that moment. Population figures (counts of labels, files,
+transcripts on one box) were deleted outright rather than moved, because they go stale here too.
+
+- **The `#US` coincidence, `28.1.49838.53910/Microsoft.Dynamics.Nav.Ncl.dll`.** Of 38,100
+  identifier-like `#Strings` names, 1,937 (5.1%) also occur verbatim in `#US`.
+- **#3952.** The byte figure the "How a rule is written" section used to carry was met by 2 of the
+  15 rules its own introducing commit rewrote.

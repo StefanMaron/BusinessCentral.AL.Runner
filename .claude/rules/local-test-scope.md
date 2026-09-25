@@ -2,7 +2,7 @@
 
 Default local scope is targeted: the tests that cover the surface you changed,
 plus the new tests you wrote. Do not routinely run the full `dotnet test`
-suite or the full 2000+-test AL corpus locally before every push — that is
+suite or the full AL corpus locally before every push — that is
 what CI and PR builds exist for, and re-running it every iteration mostly
 re-proves what CI is about to prove anyway.
 
@@ -20,7 +20,7 @@ Two genuine exceptions:
 
   | PR | the change | what a warm run showed |
   |---|---|---|
-  | #3882 | a loud-failure guard | fired cold, **silent warm** — the cache HIT returned 80 lines before the guard |
+  | #3882 | a loud-failure guard | fired cold, **silent warm** — the cache HIT returned before reaching the guard |
   | #3908 | a parse fix | the fixed code **replayed the buggy value** from cache; the key had no term for the parse |
   | #3913 | a property default | answered `false` cold, `true` warm — a third call site reached only on a HIT |
 

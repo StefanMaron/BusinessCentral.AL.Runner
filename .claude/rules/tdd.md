@@ -51,8 +51,8 @@ are claiming to prove:
    **And rebuild after `--restore` too, because the mutation is still in the binary until you
    do.** `--no-build` then re-measures the mutant, and the red that produces is deterministic,
    narrow, on the *right* arm for the hypothesis, and survives running the class alone — every
-   property that normally ends an investigation (#4343, measured: five identical `Failed: 2`
-   runs after a clean restore; one rebuild gave 2/2). It is the one trap in this section that
+   property that normally ends an investigation (#4343, measured: repeated identical reds
+   after a clean restore; one rebuild cleared them). It is the one trap in this section that
    fails toward a **red**, so "distrust a surprising green" does not catch it, and the repo's own
    engine-bootstrap ordering recommends `--no-build` elsewhere. `tools/mutation-verdict.py`
    refuses (exit 3) a run whose output directory predates the last `--restore`, so you do not
@@ -78,9 +78,9 @@ Once **per closed issue**, matching the per-issue RED→GREEN that
 **Citation.** Two instances in one session, both caught only by an executed mutation
 (`docs/incidents/tdd.md`). #3819's fixture *constructed* the relationship it was meant to prove
 — `FakeExpression(id, name)` asserting `Name` holds the raw AL identifier, which it does not —
-so every test passed against a join that resolved nothing for 7,173 declarations. #3882 carried
-two guards at review time: mutating `DependencyLoader.LoadOne` gave `Failed: 1, Passed: 7`;
-mutating `DependencyMetadataProducer.Ensure` left **all 8 green** — a gap found in review and
+so every test passed against a join that resolved nothing for any declaration. #3882 carried
+two guards at review time: mutating `DependencyLoader.LoadOne` went red;
+mutating `DependencyMetadataProducer.Ensure` left **every test green** — a gap found in review and
 fixed before merge, which is the outcome this step exists to produce.
 
 **Trap: a test that names the thing is not a test that drives it.** #3882's second guard had
@@ -91,13 +91,13 @@ finds them and reads as coverage, which is why the mutation is the check and the
 **Trap: one red proves something is covered, not WHICH thing.** A fix that feeds two
 observables owes a mutation per observable. #3917 fixed a derivation reaching both an equivalence
 projection and the AL-observable virtual table; reverting **only** the AL-observable half left
-**252 tests green**, because all three new test files reached the projection alone. Its own body
+**every test green**, because all the new test files reached the projection alone. Its own body
 argued the two-rendering point correctly and it still tested one — so awareness does not close
 this, and a single red that says "the fix is covered" is the shape to distrust (#3912).
 
 **Trap: a mutation that breaks the build proves nothing, and it fails LOUDLY.** The landing
 check above catches the silent direction; this is the other one. Mutating a call site by text
-substitution produced `exit 1` with **10 `error CS`** lines and no `Total:` — a broken build
+substitution produced `exit 1` with **`error CS`** lines and no `Total:` — a broken build
 wearing the shape of a caught regression. Measured twice on one guard in one hour (#3900), by an
 agent and its coordinator independently. Prefer mutating a **value** the assertion reads over
 editing code structure, and read the error text before believing a red.
@@ -105,7 +105,7 @@ editing code structure, and read the error text before believing a red.
 **Trap: a red from the engine-bootstrap guard prints `Total:` and reads as a caught regression.**
 On a box with BC artifacts but no `tools/engine-test-bootstrap.sh` run, every `bc-engine-serial`
 test fails before doing any work, so the missing-`Total:` tell above does not fire: #3948's
-premise mutation read `Failed: 18` and meant `Failed: 0` once bootstrapped. Sub-millisecond
+premise mutation read as a row of failures and meant `Failed: 0` once bootstrapped. Sub-millisecond
 durations and the text `REFUSING TO SKIP` are not enough either, because a mutation of the guard
 itself produces both and is a genuine red. Pipe the run through `tools/mutation-verdict.py` before
 believing a red: exit 1 is a real one, 4 a build break, 5 the engine guard, 3 unmeasured (#3957;
@@ -134,14 +134,14 @@ green and looks like the system working.
 **Trap: a mutation can LAND, EXECUTE, and still change nothing — because the system absorbs
 it.** The traps above are mutations that never reached the code. This one reaches it and runs,
 and the green is still not about your test. Measured in review of #4003: duplicating an
-`insertRow` call left all 4 tests passing, which reads as "the `Company.Count()` assertion proves
+`insertRow` call left every test passing, which reads as "the `Company.Count()` assertion proves
 nothing". An AL probe printed `company count = 1` — BC's provider `Insert` **refuses a
 duplicate primary key**, returning `false` rather than adding a row, so the second call was a
 genuine no-op *for the row count* and no second row ever existed. Note what that leaves: a
 rejected operation and an idempotent one are indistinguishable through `Count()` and quite
 different through the **return value**, which did move and would have diagnosed this more
 cheaply than the probe did. A mutation
-seeding a *distinct* company gave `Failed: 1, Passed: 3`, and the test was sound all along.
+seeding a *distinct* company went red, and the test was sound all along.
 
 So step 2's landing check is necessary and not sufficient: confirm the mutation changed the
 **observable the assertion reads**, not merely the source. Prefer mutating a value the assertion
@@ -156,11 +156,11 @@ than green — the exit code cannot tell you the difference.
 
 **The harder half: a filter or a mutation target that matches the WRONG thing rather than
 nothing.** A zero is at least conspicuous; a plausible number is not. Both measured on #3923 in
-one pass: `~ExtensionRuntimeDeltasTests` returned **8** of 9, because the file declares a second
+one pass: `~ExtensionRuntimeDeltasTests` returned **all but one** of the file's tests, because it declares a second
 class (`…BcReaderTests`) the filter excluded — and a mutation aimed at
 `TryBuildExtensionRuntimeDeltasXml` left every test green, because the tests call
 `TryBuildExtensionRuntimeDeltasXmlForApp`, whose name has the first as a **prefix**. Mutating the
-right one gave 7 of 9 red.
+right one turned most of them red.
 
 So: **count the tests you expected**, and after a mutation that leaves things green, check the
 symbol you edited is the one the test path calls before concluding the test is weak.
@@ -173,7 +173,7 @@ and until then it reads as coverage while protecting nothing.
 proves coverage exists; one that reds *exactly the right subset* proves the tests discriminate — and
 only the second is worth anything on a coverage PR. Measured on PR #3947, where a reviewer replaced
 both of the author's mutations and each replacement established something the original could not:
-returning `null` from a `bool?` reader reds all three tests, while **inverting** the boolean preserves
+returning `null` from a `bool?` reader reds every test, while **inverting** the boolean preserves
 `null`, so the absent-case test correctly stays GREEN — which is what proves that test is pinned to
 `null` rather than riding along. And `? null : null` on a reader reds its tests whatever the fixture
 holds, while making the reader **read the wrong one of two properties** produced
@@ -186,7 +186,7 @@ the same hypothesis by the same route. Pick your own.
 **And when one side of a two-sided boundary is pinned, ask immediately whether the other is.** A
 reader and a writer sharing a rule — a path convention, a name, a stop condition — usually get one
 test, and the asymmetry is invisible from either file alone. Measured (#4343): deleting the
-repository-root stop from `mutation-verdict.py`'s stamp lookup left **all 89 assertions green**,
+repository-root stop from `mutation-verdict.py`'s stamp lookup left **every assertion green**,
 while the identical stop in `apply-mutation.py` was pinned; the unguarded walk then read a foreign
 worktree's stamp and refused an honest run. Trap: the obvious fix — stop walking — passes the new
 test too, so pin **both** directions, that the walk stops at the boundary *and* still finds what is

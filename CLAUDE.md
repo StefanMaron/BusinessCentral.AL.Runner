@@ -54,8 +54,8 @@ derivation behind it"). A new rule is done when it carries that shape — claim,
 its derivation moved out and its incidents file present. **Keep it short, and treat length as a
 symptom rather than a bar**: a rule that has grown long is usually carrying a derivation that
 belongs in `docs/incidents/`, so move that and the length follows. There is deliberately no byte
-figure here; the one this sentence used to carry was met by 2 of the 15 rules its own introducing
-commit rewrote (#3952), so it cost an argument per rule and settled nothing.
+figure here; the one this sentence used to carry was met by only a few of the rules its own
+introducing commit rewrote (#3952), so it cost an argument per rule and settled nothing.
 
 ## Code navigation: use these before grepping
 
@@ -83,13 +83,13 @@ grep (#3707). Append `# hook:allow-grep` to override one call. Grep stays right 
 Rebuild AND query from `AlRunner/`, not the repo root:
 
 ```bash
-cd AlRunner && graphify update .              # ~2 seconds, 200 files
+cd AlRunner && graphify update .              # seconds
 cd AlRunner && graphify query "SomeSymbol callers"
 ```
 
 Both commands default to `graphify-out/graph.json` **relative to the current directory**, so a
 rebuild run from one directory and a query run from another silently use different files.
-Rebuilding takes ~2 seconds, so rebuild rather than wonder whether it is current; in a worktree
+Rebuilding takes seconds, so rebuild rather than wonder whether it is current; in a worktree
 the graph only drifts by your own edits.
 
 **Phrase queries as bare symbols or `Symbol callers` — never as an English question.** The
@@ -108,7 +108,7 @@ tools/lsp-query.py callers <SymbolName>   # what calls it (no line/col needed)
 tools/lsp-query.py symbol  <SymbolName>   # where it is defined
 ```
 
-~8.5s per query, one process, no daemon. Exit 0 = answered, 1 = not in its index,
+Several seconds per query, one process, no daemon. Exit 0 = answered, 1 = not in its index,
 **2 = the server failed and the result means nothing** — never read a 2 as "nothing
 calls this". Exit 1 is a real negative for a type or an ordinary member, but **not for
 a LOCAL FUNCTION** (one declared inside another method): `csharp-ls` does not index
@@ -119,7 +119,7 @@ those at all, so several in `Program.cs` report it — confirm a surprising zero
 
 It answers `findReferences`, `incomingCalls`, `goToDefinition` and `workspaceSymbol` for
 `.cs`, and it is the sharpest instrument here: `findReferences` on
-`GetDataAccessForTableCore` returns its three call sites across two partial-class files in one
+`GetDataAccessForTableCore` returns its call sites across every partial-class file in one
 call.
 
 **The harness disables `LSP` inside subagents on build v2.1.252** (it worked on v2.1.152;
@@ -138,7 +138,8 @@ answer, never a "nothing calls this" answer.
 `mcp__bc-decompiler__*` reads `Microsoft.Dynamics.Nav.Ncl.dll` and friends directly:
 `search_members` → `get_decompiled_source` → `find_callers` (which resolves through async
 state machines), and `compare_symbols` diffs a method between two BC versions. One cached BC
-version is one registered context, aliased `bc270` … `bc284`. If the tools are absent from
+version is one registered context, aliased `bc<major><minor>` — one per version in
+`.github/bc-versions.txt`. If the tools are absent from
 your session, nothing is broken — it is not installed or not loaded. Setup:
 
 ```bash
@@ -187,13 +188,13 @@ can be the same single measurement wearing three labels — and nothing in the f
 like a claim about independence, which is why it passes review.
 
 **But the version label does not identify the binary either way, so neither does a `27.x`/`28.x`
-boundary.** A two-part version covers several builds and they are not all the same file: on this
-box `27.5.46862.48827` (`0a6ce45e…`) differs from `27.5.46862.53931` (`affa03c9…`), and three
-`28.4.53241` builds are three distinct binaries. So "one anywhere inside 27.x is one measurement"
+boundary.** A two-part version covers several builds and they are not all the same file:
+`27.5.46862.48827` (`0a6ce45e…`) differs from `27.5.46862.53931` (`affa03c9…`), and the
+`28.4.53241` builds are not one binary either. So "one anywhere inside 27.x is one measurement"
 is false in both directions — two 27.5 results can be two binaries, and `28.0` through `28.4` can
 be one. **Cite the build, and the hash**: `27.5.46862.53931 (affa03c9)` is a measurement, `27.5`
 is not. `sha256sum` over the artifact directories is the whole check, and
-`tools/test_bc_binary_identity_claims.py` pins the counts this paragraph states against whatever
+`tools/test_bc_binary_identity_claims.py` pins the groupings this paragraph states against whatever
 is provisioned. Measured three times: #3372 (the over-claim above), #3859, where an agent deleted
 a stale waiver recording exactly this hazard and then made the error the waiver had described, and
 #4221, where this paragraph's own example was the wrong shape.
@@ -201,9 +202,9 @@ a stale waiver recording exactly this hazard and then made the error the waiver 
 
 **2d. A `private` member in another file is usually still reachable — the file is not the class.**
 
-`RecordPatches` is ONE `partial class` spread over **106 files**; `BcRuntime` over 26,
-`NclCecilRewrite` and `ProgramSupport` over 9 each, `LiveNavTestPage` 8, `RunnerPageInstance` 5. So
-a `private` member declared in one of those files is accessible from every other file declaring the
+`RecordPatches` is ONE `partial class` spread over **many files**, and so are `BcRuntime`,
+`NclCecilRewrite`, `ProgramSupport`, `LiveNavTestPage` and `RunnerPageInstance`. So a `private`
+member declared in one of those files is accessible from every other file declaring the
 same class, and "it is private, and it is in a different file" is two true statements whose
 conjunction implies something false.
 
@@ -245,10 +246,9 @@ identical from the outside:
 | `strings -el` on a .NET assembly | reads UTF-16 only, so a **member name** matches only by luck | the member is unreferenced |
 
 The third is the one that bites a *check* rather than a search, so it reaches a decision.
-Measured 2026-09-14: this repository had **164** labels, and `gh label list --limit 100 |
+Measured 2026-09-14: with more labels in the repository than the limit, `gh label list --limit 100 |
 grep -c 'blocked-by: corpus-verdict'` answered **0** for a label that exists — an agent nearly
-created a duplicate on that reading. The count moves; the mechanism does not, so re-derive it
-with the paginated form below rather than trusting the figure. `--limit` is a cap, never a page: there is no second page and no
+created a duplicate on that reading. `--limit` is a cap, never a page: there is no second page and no
 warning. Ask the API, which paginates:
 
 ```bash
@@ -269,11 +269,11 @@ Measured on `28.1.49838.53910/Microsoft.Dynamics.Nav.Ncl.dll`, for the metadata 
 `RunRequestPageAsync`: `strings -a -el` finds **0**, `strings -a` finds **4**. So an agent told to
 use `-el` and asked whether a *member* is referenced gets a clean zero and reads it as a finding.
 
-**A non-zero from `-el` is not a refutation of this, and does not rescue the method.** Of 38,100
-identifier-like `#Strings` names in that binary, **1,937 (5.1%)** also occur verbatim in `#US` --
+**A non-zero from `-el` is not a refutation of this, and does not rescue the method.** A minority of the
+identifier-like `#Strings` names in that binary also occur verbatim in `#US` --
 `ALDownloadFromStream` answers **1** under `-el` -- because some *literal* happens to spell the
 same text. That hit is never the metadata entry, so the count still says nothing about whether the
-member is referenced; it is a coincidence of spelling, and a scan that is right 95% of the time by
+member is referenced; it is a coincidence of spelling, and a scan that is usually right by
 accident is worse than one that is always wrong, because the failures look like data.
 
 **For "is this member referenced", read the `MemberReference` table, not bytes.** It answers a

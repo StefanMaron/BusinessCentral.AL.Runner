@@ -30,7 +30,7 @@ A corpus test green on a real service tier beats, in this order, every one of:
 3. Microsoft's documentation,
 4. the name of a BC codeunit, or a comment naming one.
 
-**And one thing outranks the corpus CI itself: the Windows nightly.** The eight cloud legs run
+**And one thing outranks the corpus CI itself: the Windows nightly.** The corpus's cloud legs run
 on `MsDyn365Bc.On.Linux`, one particular patched container rather than Business Central; the
 nightly runs an official Microsoft container on Windows. Where the two disagree, Windows is
 right by definition and the Linux result is an image bug.
@@ -103,29 +103,29 @@ independent mechanisms put it there** — only the second explains the conclusio
   `-returnTrueIfAllPassed`, so a failing test makes it **return `$false`** rather than throw —
   and the call is piped to `| Out-Null`, which discards that return value. The job therefore
   succeeds. There is a `catch` beside it, but it covers a genuine exception and **does not fire
-  on failing tests**: measured on run `34736501961`, whose summary reports five failures and
-  whose log contains **zero** `::warning::Run-TestsInBcContainer` lines. Do not go looking for a
+  on failing tests**: measured on run `34736501961`, whose summary reports failures and
+  whose log contains **no** `::warning::Run-TestsInBcContainer` line. Do not go looking for a
   warning to detect swallowed failures — there is none.
 
 Both are intended. The header states the cost the design accepts: *"if the license drifts, it
 re-reports those as failures forever and everyone learns to ignore it."* Measured on run `34736501961`
-(corpus `6aaac721`, BC 28.4.53241.54606): both jobs `success`, and its own summary reads
+(corpus `6aaac721`): both jobs `success`, and its own summary reads, in this shape,
 
 <!-- Recipe-unpinned: quoted OUTPUT, not a command -- this block is the nightly's own summary text, reproduced so a reader recognises it; there is nothing here to execute -->
 ```
-**3383 passed, 5 failed, 0 skipped, 3388 total.**
+**<P> passed, <F> failed, 0 skipped, <T> total.**
 ```
 
-with five named failures underneath, two of them the very claim the runner PR reading that run
-was trying to settle. Both directions were measured the same night — a `failure` that ran
-nothing (`Import-Module BcContainerHelper` finding no module, 22 s, corpus #343) and this
-`success` over five real failures.
+with a non-zero failure count and the named failures underneath, among them the very claim the
+runner PR reading that run was trying to settle. Both directions were measured the same night — a `failure` that ran
+nothing (`Import-Module BcContainerHelper` finding no module, corpus #343) and this
+`success` over real failures.
 
 The summary block is the verdict: it prints the headline counts, a row per failure with the
 message measured on that run, and the exact BC build and artifact URL it used. `conclusion`
 tells you whether the workflow completed, which is a different question from what BC answered.
 
-**It adjudicates; it does not gate.** The nightly takes 1-2 hours and is deliberately not a
+**It adjudicates; it does not gate.** The nightly is slow and is deliberately not a
 required status context, so the corpus's own required legs remain the merge gate either way
 (`verify-execution-not-the-tick.md` § "Which legs were ever going to run it").
 
@@ -161,7 +161,7 @@ converts a live question, or a self-inflicted regression, into settled classific
 
 ## The tier is patched, so check before quoting it on a UI surface
 
-The corpus CI boots a Linux BC image that installs ~30 numbered patches into BC's own
+The corpus CI boots a Linux BC image that installs numbered patches into BC's own
 assemblies at startup. Most are faithful; an unfaithful one turns a corpus result on that
 surface into a measurement of the patch, and the green direction is the one nobody notices — a
 test asserting "nothing happens" records the patch as BC behaviour (#2986).

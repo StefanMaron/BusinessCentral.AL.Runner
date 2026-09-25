@@ -33,9 +33,8 @@ Committing early is the preferred answer to all of these.
 `git reset --soft origin/main` resets to whatever your **local** `origin/main` says. If `main`
 has moved since your last fetch, every intervening merge is captured in your commit as a
 **deletion**, and a force-push offers that as the PR's diff. Measured (#3907): a docs-only
-branch whose only intended change was +22/-1 in one markdown file committed
-`12 files changed, 60 insertions(+), 1032 deletions(-)` — another PR's entire contribution
-staged for deletion — and was force-pushed before anyone noticed.
+branch whose only intended change was a few lines in one markdown file committed another PR's
+entire contribution staged for deletion, and was force-pushed before anyone noticed.
 
 **The trap is that every ordinary guard is SILENT on this class.** `--force-with-lease` covers
 someone else's push to your branch, not your branch's content; `git status --porcelain` is clean

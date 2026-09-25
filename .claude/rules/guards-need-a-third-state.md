@@ -99,7 +99,7 @@ so binding it against the buffer type it appears to hang off answers `null` — 
 body reads `item2.PassesFieldFilters(...)`, which is extension-method syntax for
 `DataHelper.PassesFieldFilters(item2, ...)`. That null was treated as optional. Every row then
 passed through **unfiltered**: `Record.SetRange` narrowed nothing, `FindFirst` answered the
-page's first row for every query, and nothing threw — `rows=29 passes=NULL`, with four corpus
+page's first row for every query, and nothing threw — `passes=NULL`, with corpus
 arms reading `Actual:<0>`.
 
 **The trap is that the two null-producing causes are indistinguishable at the bind and have

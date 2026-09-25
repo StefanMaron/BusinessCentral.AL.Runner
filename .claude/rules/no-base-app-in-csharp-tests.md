@@ -7,9 +7,9 @@ assert what it is asserting.
 
 `"application"` is the Base Application dependency, and it is not declared through the
 `dependencies` array, which is why it gets added without anyone noticing what it pulls in: the
-whole Base Application closure, loaded on every runner invocation. That costs about 70 seconds
-cold and 6 seconds warm per invocation, and the suite spawns the runner roughly 130 times —
-the single largest cost in the C# suite (#2364).
+whole Base Application closure, loaded on every runner invocation. That cost is paid per
+invocation, cold or warm, and the suite spawns the runner many times — the single largest cost
+in the C# suite (#2364).
 
 ## Enforcement, and the allowlist
 
@@ -22,10 +22,10 @@ Legitimate, and they stay:
 - `PlaceholderFloorProvisioningTests` — the placeholder `1.0.0.0` application floor IS its
   subject; remove it and nothing is being tested.
 - `Fixtures/SubscriberScanAudit` — `EventSubscriberScanEquivalenceTests` drives the runner with
-  `AL_RUNNER_SUBSCRIBER_SCAN_AUDIT=1` and asserts over 3,000 real `[NavEventSubscriber]` methods
+  `AL_RUNNER_SUBSCRIBER_SCAN_AUDIT=1` and asserts over thousands of real `[NavEventSubscriber]` methods
   across Base Application + System Application, a count with nothing to count without the
   platform closure loaded. It has its own fixture so the floor is paid once per CI leg rather
-  than 28 times.
+  than once per test class.
 
 **A class that looks like it needs the floor needs one property of it**, not the floor: work
 out which property and supply it (#2364). Two that have come up, with what replaced the floor —
@@ -42,8 +42,8 @@ is the violation a class-only list missed (#2364).
 
 **The bar for adding to either allowlist is a completed run showing the class or fixture fails
 without the floor**, never a reading of what the test looks like it needs: a partial local run
-named three classes and CI, running to completion on eight legs, found five failures in two
-further classes (#2364).
+named some classes and CI, running to completion on every leg, found failures in further
+classes (#2364).
 
 ## Sister rules
 

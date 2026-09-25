@@ -113,3 +113,12 @@ the call site: it takes **six** parameters, and `MethodInfo.Invoke` does not app
 defaults (`includeFlowFields = true`, `checkAgainstOriginalAndModified = false`,
 `bothShouldPass = false`), so a five-argument invoke raises `TargetParameterCountException` at
 runtime. Passing all six explicitly with BC's own call-site values took the arms to 6/6.
+
+## Figures moved out of the rule (#4539)
+
+The rule now cites these measurements rather than restating them; the figures are what each
+citation measured, frozen to that moment. Population figures (counts of labels, files,
+transcripts on one box) were deleted outright rather than moved, because they go stale here too.
+
+- **#4147 / PR #4192.** The unfiltered bind printed `rows=29 passes=NULL`, and four corpus arms
+  read `Actual:<0>`.

@@ -39,14 +39,14 @@ Step 3 is the one that is never optional. Full detail, including escape hatches:
    Mandatory — a test becomes part of the corpus only by merging into that repo's `master`. The
    orchestrator merges it once the corpus's required BC legs are green
    (`verify-execution-not-the-tick.md` § "Which legs were ever going to run it" says which of the
-   sixteen those are, and which of them ever run your tests).
+   corpus legs those are, and which of them ever run your tests).
 
    **An unattended loop that is both author and coordinator may merge its own corpus PR**
    (owner waiver, 2026-09-24, standing rather than per-PR). The separation exists so a second
    pair of eyes sees a corpus change; in a single-agent loop there is no second pair, and
-   holding the PR open buys nothing — #397 sat green and `CLEAN` for over five hours with
-   nobody to merge it. **The bar it replaces is not weaker, and is not optional**: all eight
-   required cloud legs green, the per-test PASS lines read out of the gating run's log by
+   holding the PR open buys nothing — #397 sat green and `CLEAN` with
+   nobody to merge it. **The bar it replaces is not weaker, and is not optional**: every
+   required cloud leg green, the per-test PASS lines read out of the gating run's log by
    name (a leg can be green having never run your codeunit), the head re-read immediately
    before merging, and `--match-head-commit <sha>` passed so the merge refuses rather than
    taking a commit nobody checked. Anything short of that is a report to the owner, not a

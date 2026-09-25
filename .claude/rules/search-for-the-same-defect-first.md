@@ -66,7 +66,7 @@ A label is only as good as the sweep that applied it, and sweeps are built from 
 sweeper happened to key on. Measured on this repository: `area: metadata-conversion` had been
 applied from the `blocked-by: metadata-emitter` label, so it inherited that label's blind spot
 and **three issues on the same route carried no area label at all** — #3568, #3590 and #3491,
-three of twenty-three, and #3568 was the same measurement programme as the issue it was missing
+and #3568 was the same measurement programme as the issue it was missing
 from. Each would have been found by a *different* one of the four keys above, which is why the
 rule asks for three. Derivation: docs/incidents/search-for-the-same-defect-first.md.
 

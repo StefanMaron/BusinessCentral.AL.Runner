@@ -195,3 +195,27 @@ current tree. `tools/test_partial_class_counts.py` pins those six counts and not
 The distinction worth carrying: **a figure about the tree can be pinned; a figure about a moment
 can only be cited.** The second is the one that travels, and citation -- not automation -- is its
 remedy.
+
+## Figures moved out of the rule (#4539)
+
+The rule now cites these measurements rather than restating them; the figures are what each
+citation measured, frozen to that moment. Population figures (counts of labels, files,
+transcripts on one box) were deleted outright rather than moved, because they go stale here too.
+
+- **2026-09-11, the `PASS +<name>` pattern.** It matched 6 of 9 tests on a green leg; a
+  differently-shaped query found all nine.
+- **#3805 / corpus #325.** The id-alone duplicate scan produced 61 duplicates that do not exist.
+- **The permission-mask correction.** The coordinator's scan counted 27 lowercase-bearing entries,
+  all on Tables; on codeunits the true count was one.
+
+### The partial-class pin no longer pins counts (#4539)
+
+The section above recorded `tools/test_partial_class_counts.py` as the one exception: tree-state
+counts, pinned because their subject is the current tree. #4539 reversed that on the owner's
+direction (2026-09-25) that figures which change without anyone editing the sentence belong in no
+durable text. `CLAUDE.md` § 2d now names the partial classes without counting their files, and
+the pin was reshaped with it into `tools/test_partial_class_claims.py`: it checks that each class
+the sentence names is a `partial class` declared in more than one file, which is the part of the
+claim that does not go stale. Deleting it outright was the first cut, and it reddened
+`tools/test_agent_doc_guard_counts.py`, whose pinned guard count lives in
+`.claude/agents/impl-agent.md` (#4540's scope).
