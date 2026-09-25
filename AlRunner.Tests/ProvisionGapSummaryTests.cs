@@ -57,7 +57,7 @@ public sealed class ProvisionGapSummaryTests
 
     /// <summary>
     /// #4560's proving test: two dependents of one symbols-only app print ONE entry — keyed on
-    /// the app (publisher, name, version), not on the message text.
+    /// the line naming the app, not on the whole message (the winner path differs per edge).
     /// </summary>
     [Fact]
     public void TwoDependentsOfOneSymbolsOnlyApp_PrintOneEntry()
@@ -69,6 +69,23 @@ public sealed class ProvisionGapSummaryTests
         Assert.Equal(1, Occurrences(output, "Microsoft/Any v28.1.49838.55128"));
         // Verbatim, including the continuation lines: the entry names the winner path.
         Assert.Contains("winner: /cache-a/Microsoft_Library Assert.app", output);
+    }
+
+    /// <summary>
+    /// One dependent app missing two different floors is two things to fix: the key is the
+    /// whole first line, not the app it starts with.
+    /// </summary>
+    [Fact]
+    public void TwoFloorsOfOneDependent_AreTwoEntries()
+    {
+        const string floorA = "[dep] Contoso/Widgets v1.0.0.0 declares a floor of Microsoft/System >= 28.1.0.0, and it cannot be supplied:"
+            + "\n      no copy was found in any searched directory";
+        const string floorB = "[dep] Contoso/Widgets v1.0.0.0 declares a floor of Microsoft/Business Foundation >= 28.1.0.0, and it cannot be supplied:"
+            + "\n      no copy was found in any searched directory";
+
+        var output = ActionNeeded(Bucket("/bundle-a", new[] { floorA, floorB }));
+
+        Assert.Contains("Action needed (2):", output);
     }
 
     /// <summary>Two different VERSIONS of one app are two things to fix, not one.</summary>
@@ -90,8 +107,7 @@ public sealed class ProvisionGapSummaryTests
 
         var output = ActionNeeded(Bucket("/bundle-a", new[] { gapA, gapB }));
 
-        // A message that does not start `[dep] Publisher/Name vX` is keyed on its whole text, so
-        // an unrecognised shape is repeated rather than folded into another entry.
+        // Distinct first lines are distinct entries, whatever shape the message has.
         Assert.Contains(gapA, output);
         Assert.Contains(gapB, output);
         Assert.Contains("Action needed (2):", output);

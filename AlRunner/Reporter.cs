@@ -51,10 +51,9 @@ public sealed record BucketResult(string BucketPath, BucketStage Stage,
                                    // Everything about this bundle that says the package cache
                                    // could not serve the run: DependencyResolver's unservable
                                    // dependencies, plus platform runtime apps the dependency load
-                                   // found symbol-only. Each is printed once at discovery time,
-                                   // ~20s into a run that then spends minutes compiling — so
-                                   // PrintSummary repeats them at the end, where a scripted caller
-                                   // and a human scrolling to the bottom actually look (#2587).
+                                   // found symbol-only. Printed once per app by PrintActionNeeded,
+                                   // at the end, where a scripted caller and a human scrolling to
+                                   // the bottom actually look (#2587, #4560).
                                    // Optional/trailing for the same reason as RanGroupCount.
                                    IReadOnlyList<string>? ProvisionGaps = null,
                                    // #3538: company initialization aborted for one or more of
@@ -513,9 +512,11 @@ public static class Reporter
     }
 
     /// <summary>
-    /// The gaps across all buckets, one per app. The app is read from the message's leading
-    /// <c>[dep] Publisher/Name vX.Y.Z.W</c>; a message that does not start that way is keyed on
-    /// its whole text, so an unrecognised shape is repeated rather than dropped.
+    /// The gaps across all buckets, one per app. Keyed on the message's FIRST line, which names
+    /// the app and what is wrong with it (`[dep] Publisher/Name vX resolved to ... NO
+    /// IMPLEMENTATION`); the lines under it can differ per dependency edge (the winner path) and
+    /// are not part of the key. The whole first line, not just the app: a floor gap names the
+    /// dependent AND the floor, and two different floors are two things to fix.
     /// </summary>
     internal static IReadOnlyList<string> ActionNeededEntries(IReadOnlyList<BucketResult> buckets)
     {
@@ -523,16 +524,11 @@ public static class Reporter
         var result = new List<string>();
         foreach (var g in buckets.SelectMany(b => b.ProvisionGaps ?? Array.Empty<string>()))
         {
-            var m = GapAppKey.Match(g);
-            var key = m.Success ? "app:" + m.Groups["app"].Value : "text:" + g;
-            if (seen.Add(key)) result.Add(g);
+            var firstLine = g.Split('\n')[0].TrimEnd('\r');
+            if (seen.Add(firstLine)) result.Add(g);
         }
         return result;
     }
-
-    private static readonly System.Text.RegularExpressions.Regex GapAppKey = new(
-        @"^\[dep\] (?:note: )?(?<app>\S[^\r\n]*? v\d+(?:\.\d+)*)\b",
-        System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     /// <summary>
     /// The run's last line (#4562): the verdict and what the exit code means, in the same

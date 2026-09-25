@@ -126,8 +126,8 @@ public sealed class ExpectationManifestWiringTests : IDisposable
         AssertCount(output, "pass-oos:", 2);
         AssertCount(output, "pass-known-gap:", 1);
         AssertCount(output, "pass-divergence:", 1);
-        AssertCount(output, "skipped:", 1);
-        AssertCount(output, "  fail:", 0);
+        AssertCount(output, "   skipped ", 1);
+        AssertCount(output, "   failed ", 0);
 
         // The whole point of #1734: the reclassification reaches the exit code.
         Assert.True(exit == 0,
@@ -176,8 +176,8 @@ public sealed class ExpectationManifestWiringTests : IDisposable
         AssertCount(output, "pass-oos:", 2);
         AssertCount(output, "pass-known-gap:", 1);
         AssertCount(output, "pass-divergence:", 1);
-        AssertCount(output, "skipped:", 1);
-        AssertCount(output, "  fail:", 9);   // every Drift_* method, and nothing else
+        AssertCount(output, "   skipped ", 1);
+        AssertCount(output, "   failed ", 9);   // every Drift_* method, and nothing else
 
         Assert.True(exit == 1,
             $"manifest drift must fail the run (exit 1 = test failures). exit={exit}\n{output}");
@@ -233,7 +233,7 @@ public sealed class ExpectationManifestWiringTests : IDisposable
             workingDir: isolatedCwd);
 
         Assert.DoesNotContain("Add an expect-oos entry", output, StringComparison.Ordinal);
-        AssertCount(output, "  fail:", 1);
+        AssertCount(output, "   failed ", 1);
         Assert.True(exit == 1, $"an uncaught OOS throw stays a failing test. exit={exit}\n{output}");
     }
 
@@ -263,7 +263,7 @@ public sealed class ExpectationManifestWiringTests : IDisposable
             workingDir: unrelatedCwd);
 
         AssertCount(output, "pass-oos:", 1);
-        AssertCount(output, "  fail:", 0);
+        AssertCount(output, "   failed ", 0);
         Assert.True(exit == 0,
             $"the bundle-path-relative manifest must reclassify the OOS throw regardless of cwd. exit={exit}\n{output}");
     }
@@ -363,7 +363,7 @@ public sealed class ExpectationManifestWiringTests : IDisposable
             $"--expectations \"{dir}\" --expectations-require-match "
             + $"--test GreenPath_PlainPass \"{SuitePath}\"");
 
-        AssertCount(output, "  fail:", 0);
+        AssertCount(output, "   failed ", 0);
         Assert.Contains("UNMATCHED", output, StringComparison.Ordinal);
         Assert.Contains("known-gaps-fixture.json", output, StringComparison.Ordinal);
         Assert.Contains("Expct Fixture Test.GreenPath_PlainPass", output, StringComparison.Ordinal);
@@ -388,7 +388,7 @@ public sealed class ExpectationManifestWiringTests : IDisposable
             $"--expectations \"{dir}\" --expectations-require-match "
             + $"--test GreenPath_PlainPass \"{SuitePath}\"");
 
-        AssertCount(output, "  fail:", 0);
+        AssertCount(output, "   failed ", 0);
         Assert.Contains("declares no test method 'GreenPath_PlainPas'", output, StringComparison.Ordinal);
         Assert.Contains("GreenPath_PlainPass", output, StringComparison.Ordinal);
         Assert.True(exit == 5, $"expected exit 5, got {exit}\n{output}");
@@ -468,7 +468,7 @@ public sealed class ExpectationManifestWiringTests : IDisposable
             $"--expectations \"{dir}\" --expectations-require-match "
             + $"--test GreenPath_PlainPass \"{SuitePath}\"");
 
-        AssertCount(output, "  fail:", 0);
+        AssertCount(output, "   failed ", 0);
         Assert.Contains("UNMATCHED", output, StringComparison.Ordinal);
         Assert.Contains("object id 60810 was loaded as \"Expct Fixture Tests\"", output, StringComparison.Ordinal);
         Assert.True(exit == 5,
@@ -493,7 +493,7 @@ public sealed class ExpectationManifestWiringTests : IDisposable
 
         // The entry did not match, so the known-gap reclassification never happened and
         // the test failed plainly — exactly the pre-#3123 outcome, now explained.
-        AssertCount(output, "  fail:", 1);
+        AssertCount(output, "   failed ", 1);
         Assert.Contains("UNMATCHED", output, StringComparison.Ordinal);
         Assert.Contains("object id 60810 was loaded as \"Expct Fixture Tests\"", output, StringComparison.Ordinal);
         Assert.True(exit == 1, $"a real test failure outranks the audit. exit={exit}\n{output}");
@@ -516,7 +516,7 @@ public sealed class ExpectationManifestWiringTests : IDisposable
 
         Assert.DoesNotContain("UNMATCHED", output, StringComparison.Ordinal);
         Assert.DoesNotContain("match audit", output, StringComparison.Ordinal);
-        AssertCount(output, "  fail:", 1);
+        AssertCount(output, "   failed ", 1);
         Assert.True(exit == 1, $"expected the pre-#3123 behaviour, exit 1. exit={exit}\n{output}");
     }
 
@@ -599,8 +599,8 @@ public sealed class ExpectationManifestWiringTests : IDisposable
 
         // The run's own bundle passed one test and failed none, so a non-zero exit here
         // could only come from the audit.
-        AssertCount(output, "  pass:", 1);
-        AssertCount(output, "  fail:", 0);
+        AssertCount(output, "   passed ", 1);
+        AssertCount(output, "   failed ", 0);
         Assert.DoesNotContain("UNMATCHED", output, StringComparison.Ordinal);
         Assert.Contains("all 1 entry in scope for this run matched a discovered test", output, StringComparison.Ordinal);
         Assert.True(exit == 0,

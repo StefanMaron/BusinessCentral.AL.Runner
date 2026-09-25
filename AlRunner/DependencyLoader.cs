@@ -261,7 +261,8 @@ public sealed class DependencyLoader
                 var bcVer = AlRunner.Infrastructure.BcArtifacts.SelectedVersion.ToString();
                 // Reported, not just printed: this block predicts the run's failure exactly, and
                 // on a long run it scrolls thousands of lines above the summary the caller reads.
-                // Still loud on stderr — see Infrastructure/ProvisionGapLog.cs (#2587).
+                // Printed once, in the run's closing "Action needed" block — see
+                // Infrastructure/ProvisionGapLog.cs (#2587, #4560).
                 AlRunner.Infrastructure.ProvisionGapLog.Report(
                     AlRunner.Infrastructure.ProvisioningCheck.BuildPlatformAppMissingR2RMessage(
                         m.Publisher, m.Name, m.Version.ToString(), path, bcVer));
@@ -548,8 +549,8 @@ public sealed class DependencyLoader
                 // with an unrelated-looking "no loaded type RecordNNNNN found".
                 //
                 // A sidecar that exists and was preferred over every other tier, then failed
-                // to load, is a provisioning gap — not a diagnostic. Reported so it is loud
-                // now AND repeated in the run summary (#2587), where a caller reading the
+                // to load, is a provisioning gap — not a diagnostic. Reported so it reaches the
+                // run's closing "Action needed" block (#2587, #4560), where a caller reading the
                 // bottom of a long run will actually find it.
                 AlRunner.Infrastructure.ProvisionGapLog.Report(
                     AlRunner.Infrastructure.ProvisioningCheck.BuildPrecompiledSidecarLoadFailedMessage(
