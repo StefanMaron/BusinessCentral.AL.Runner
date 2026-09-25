@@ -142,6 +142,8 @@ public static partial class RecordPatches
             foreach (var (flagName, flagValue) in PublisherAttributes(method))
                 kind.SetAttribute(flagName, flagValue);
             AppendInherentPermissionAttributes(kind, method.InherentPermission);
+            foreach (var (name, value) in SubscriberAttributes(method.Subscriber))
+                kind.SetAttribute(name, value);
             attributes.AppendChild(kind);
             element.AppendChild(attributes);
             AppendParametersSubtree(doc, element, method.Parameters);
@@ -229,6 +231,25 @@ public static partial class RecordPatches
     {
         foreach (var (name, value) in InherentPermissionAttributes(inherent))
             kind.SetAttribute(name, value);
+    }
+
+    /// <summary>
+    /// The seven attributes BC's emitter writes on an <c>EventSubscriberAttribute</c> element
+    /// beyond <c>Name</c>, in BC's document order, all unconditional — every one of the 140
+    /// subscriber elements BC emits for System Application 28.1.49838.53910 carries all seven.
+    /// Empty for every other kind. docs/codeunit-metadata-from-bc.md#subscribers-from-the-assembly.
+    /// </summary>
+    internal static IEnumerable<(string Name, string Value)> SubscriberAttributes(
+        BcAppSymbolCache.EventSubscriberSymbol? subscriber)
+    {
+        if (subscriber is null) yield break;
+        yield return ("SenderType", subscriber.SenderType);
+        yield return ("SenderId", subscriber.SenderId.ToString(CultureInfo.InvariantCulture));
+        yield return ("EventName", subscriber.EventName);
+        yield return ("ElementName", subscriber.ElementName);
+        yield return ("ElementId", subscriber.ElementId.ToString(CultureInfo.InvariantCulture));
+        yield return ("SkipOnMissingLicense", subscriber.SkipOnMissingLicense ? "True" : "False");
+        yield return ("SkipOnMissingPermission", subscriber.SkipOnMissingPermission ? "True" : "False");
     }
 
     /// <summary>

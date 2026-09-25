@@ -579,6 +579,10 @@ public static partial class RecordPatches
             foreach (var (appPath, symbol) in EnumerateBcAppCodeunitSymbols())
             {
                 if (rows.ContainsKey(symbol.Id)) continue;   // source-compiled wins
+                // The app path is carried only this far: the method table is decided HERE, while
+                // the .app that produced the symbol is still known, and the row keeps the verdict
+                // rather than the path — a consumer holding the row cannot ask the wrong app.
+                var (methods, complete) = ResolveCodeunitMethodTable(appPath, symbol.Id, symbol.AttributedMethods);
                 rows[symbol.Id] = new CodeunitMetaRow(
                     symbol.Id, symbol.Name,
                     ResolveTableNo(symbol.TableNo, symbol.Id),
@@ -587,12 +591,8 @@ public static partial class RecordPatches
                     symbol.ALNamespace,
                     symbol.InherentEntitlements,
                     symbol.InherentPermissions,
-                    symbol.AttributedMethods,
-                    // The app path is carried only this far: the witness is asked HERE, while
-                    // the .app that produced the symbol is still known, and the row keeps the
-                    // verdict rather than the path. A consumer holding the row cannot then ask
-                    // the question against the wrong app.
-                    AssemblyProvesNoSubscriber(appPath, symbol.Id));
+                    methods,
+                    complete);
             }
 
             // Loud, never silent (#3540). This is the runner answering a column WRONG on
