@@ -38,6 +38,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **metadata:** derive the codeunit method table for codeunits with event subscribers
 - **provisioning:** default BC version selection honours the app.json application/platform floor
 - **loader:** refuse a service-tier file that does not satisfy the requested assembly version
 - **output:** move runner-internal notes behind --verbose, one line per download set, shorter [test-data] lines
