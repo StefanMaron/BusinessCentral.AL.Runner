@@ -1743,8 +1743,8 @@ The attempt's output is **replayed** on top of the output this process has alrea
 it is only safe where the parent has printed nothing the child also prints.
 
 **The parent always prints something.** `Program.cs` queues its startup lines and flushes them
-(`FlushDeferredStartupLines`) *before* either deferral decision, and the bundle banner —
-`al-runner — running N bundle(s)` — is an unconditional `Console.WriteLine`, not gated on
+(`FlushDeferredStartupLines`) *before* either deferral decision, and the run header —
+`al-runner <version> · BC <build> · N app(s)` — is an unconditional `Console.WriteLine`, not gated on
 `--verbose`. So a replay duplicates at least that line on **every** path, quiet runs included.
 That is a pre-existing property of #2232's cold deferral, tracked as **#4481**; this issue's warm
 skip widens the exposure rather than creating it.

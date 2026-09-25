@@ -157,7 +157,7 @@ public sealed class ExplicitEngineMinorWarningOncePerInvocationTests
             var (exit, output) = Run(root, cacheDir, "--no-auto-provision", "--bc-version", selected.ToString());
 
             Assert.True(exit == 0, $"expected a clean run against the aliased engine artifacts. exit={exit}\n{output}");
-            Assert.Contains($"[bc] selected BC {selected} (", output, StringComparison.Ordinal);
+            Assert.Contains($" · BC {selected} · ", output, StringComparison.Ordinal);
 
             var count = Regex.Matches(output, Regex.Escape(WarningFragment)).Count;
             Assert.True(count == 1,

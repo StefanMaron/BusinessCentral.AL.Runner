@@ -18,6 +18,21 @@ internal static partial class ProgramSupport
     internal static string VersionString()
         => $"al-runner v{AlRunner.Infrastructure.RunnerVersion.Informational(typeof(Program).Assembly)}";
 
+    // #4599: the one run header — tool version, the BC build that ran (#2077: a result, so it
+    // stays at default verbosity), the non-w1 country (#2236) and the app count. The artifact
+    // path is in the `[bc] selected BC` line, printed only under --verbose (and --server).
+    internal static string RunHeader(string runnerVersion, string? bcVersion, string country, int apps, bool watch)
+    {
+        var bc = country == "w1" ? $"BC {bcVersion}" : $"BC {bcVersion} [country: {country}]";
+        var header = $"al-runner {runnerVersion} · {bc} · {apps} {(apps == 1 ? "app" : "apps")}";
+        return watch ? header + " · watch mode (Ctrl+C to quit)" : header;
+    }
+
+    internal static string SelectedBcLine(string? bcVersion, string? serviceTierDir, string country)
+        => country == "w1"
+            ? $"[bc] selected BC {bcVersion} ({serviceTierDir})"
+            : $"[bc] selected BC {bcVersion} ({serviceTierDir}) [country: {country}]";
+
     internal static void PrintGuide(TextWriter w)
     {
         w.WriteLine("al-runner — AGENT GUIDE");
@@ -138,9 +153,10 @@ internal static partial class ProgramSupport
         w.WriteLine("  packages is a normal, working configuration, not a mismatch to \"fix\".");
         w.WriteLine("  Attributing a runtime failure to \"the engine's BC-X.Y patch set\" without");
         w.WriteLine("  knowing which version was actually selected is a guess. The runner PRINTS its");
-        w.WriteLine("  selection at the start of every run — look for the \"[bc] no --bc-version");
-        w.WriteLine("  given — selecting/provisioning BC ...\" and \"[bc] selected BC ... (path)\" lines");
-        w.WriteLine("  on stderr — so read those rather than assuming which default applied. Pin");
+        w.WriteLine("  selection at the start of every run, in the run header \"al-runner <version> ·");
+        w.WriteLine("  BC <build> · N app(s)\"; --verbose adds the \"[bc] no --bc-version given —");
+        w.WriteLine("  selecting/provisioning BC ...\" and \"[bc] selected BC ... (path)\" lines on");
+        w.WriteLine("  stderr — so read those rather than assuming which default applied. Pin");
         w.WriteLine("  --bc-version explicitly anyway on a machine with more than one cached BC");
         w.WriteLine("  version, so a run's outcome does not depend on which default logic fires.");
         w.WriteLine();
@@ -223,7 +239,7 @@ internal static partial class ProgramSupport
         w.WriteLine("PRE-FLIGHT — do these before concluding anything about a failure");
         w.WriteLine("  1. al-runner --version");
         w.WriteLine("  2. Confirm the artifact version you are running against resolves as intended —");
-        w.WriteLine("     read the \"[bc] selected BC ...\" line the runner always prints, rather than");
+        w.WriteLine("     read the \"· BC <build> ·\" run header the runner always prints, rather than");
         w.WriteLine("     assuming which default logic fired (see EXECUTION's --bc-version entry).");
         w.WriteLine("  3. Re-run the failing case alone with --test <name> --verbose. --verbose turns");
         w.WriteLine("     on the internal [Component] logs that name the failing subsystem.");
@@ -503,10 +519,11 @@ internal static partial class ProgramSupport
         w.WriteLine("                          instead defaults to the latest version present in");
         w.WriteLine("                          ~/.local/share/al-runner/artifacts, auto-matching the");
         w.WriteLine("                          shipped engine variant to it. Either way the runner");
-        w.WriteLine("                          PRINTS its selection at the start of every run (see the");
-        w.WriteLine("                          \"[bc] selected BC ...\" line) — read that instead of");
-        w.WriteLine("                          assuming which default applies. A prefix matches the");
-        w.WriteLine("                          highest version with that prefix. Missing artifacts are");
+        w.WriteLine("                          PRINTS its selection at the start of every run, in the");
+        w.WriteLine("                          \"al-runner <ver> · BC <build> · N app(s)\" header —");
+        w.WriteLine("                          read that instead of assuming which default applies. A");
+        w.WriteLine("                          prefix matches the highest version with that prefix.");
+        w.WriteLine("                          Missing artifacts are");
         w.WriteLine("                          auto-provisioned by default (see --no-auto-provision);");
         w.WriteLine("                          an unavailable/refused version still fails loud.");
         w.WriteLine("                          Mutually exclusive with --artifact-path.");

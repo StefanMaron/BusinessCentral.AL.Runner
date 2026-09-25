@@ -179,17 +179,20 @@ public sealed class BcVersionDefaultDocumentationTests
     [Fact]
     public void Guide_VersionSelectionClaim_MatchesRealRunOutput()
     {
-        var (runExit, _, stderr) = Run(null, $"\"{MinimalBundle}\"");
+        var (runExit, stdout, stderr) = Run(null, $"\"{MinimalBundle}\"");
         Assert.True(runExit == 0, $"expected a clean run of the minimal bundle. exit={runExit}\n{stderr}");
-        Assert.Contains("[bc] selected BC ", stderr, StringComparison.Ordinal);
+        // #4599: the default run names its BC build in the run header on stdout.
+        Assert.Matches(new Regex(@"^al-runner \S+ · BC \S+ · 1 app\r?$", RegexOptions.Multiline), stdout);
 
         var (guideExit, guide, _) = Run(null, "--guide");
         Assert.True(guideExit == 0, $"--guide must exit 0. exit={guideExit}");
 
         // The stale, now-false claim must be gone...
         Assert.DoesNotContain("does not currently print its selection", guide, StringComparison.Ordinal);
-        // ...and the guide must name the EXACT prefix a real run just produced above, not
+        // ...and the guide must name the EXACT shape a real run just produced above, not
         // a paraphrase that could drift from the real message text unnoticed.
+        Assert.Contains("\"al-runner <version> ·", guide, StringComparison.Ordinal);
+        Assert.Contains("BC <build> · N app(s)\"", guide, StringComparison.Ordinal);
         Assert.Contains("[bc] selected BC ", guide, StringComparison.Ordinal);
     }
 

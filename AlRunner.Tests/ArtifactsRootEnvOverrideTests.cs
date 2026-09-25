@@ -286,7 +286,9 @@ public sealed class ArtifactsRootEnvOverrideTests
             // engine — which is exactly what the relocated root has to supply.
             var (exit, output) = RunRunner(
                 relocated, homeOverride: null, workingDir: null,
-                runnerArgs: "--no-auto-provision \"" +
+                // --verbose: the `[bc] selected BC <ver> (<path>)` line naming the artifact
+                // directory prints only under it since #4599.
+                runnerArgs: "--no-auto-provision --verbose \"" +
                             Path.Combine(RepoRoot, "AlRunner.Tests", "Fixtures", "RecordTriggerXRec") + "\"");
 
             Assert.True(exit == 0, $"a run out of the relocated root must succeed. exit={exit}\n{output}");

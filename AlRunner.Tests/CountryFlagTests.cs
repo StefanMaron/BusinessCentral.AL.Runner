@@ -85,9 +85,21 @@ public sealed class CountryFlagTests
     }
 
     [Fact]
-    public void Country_Us_IsNamedInTheSelectedBcVersionLine()
+    public void Country_Us_IsNamedInTheRunHeader()
     {
-        var (exit, _, stderr) = Run("--country", "us", "--no-auto-provision", $"\"{MinimalBundle}\"");
+        var (exit, stdout, stderr) = Run("--country", "us", "--no-auto-provision", $"\"{MinimalBundle}\"");
+        Assert.True(exit == 0, $"exit={exit}\n{stderr}");
+
+        // #4599: the default run header carries the country; the verbose [bc] line is gone.
+        var m = Regex.Match(stdout, @"^al-runner \S+ · BC \S+ \[country: (\S+)\] · 1 app\r?$", RegexOptions.Multiline);
+        Assert.True(m.Success, $"expected the run header to name the country. stdout:\n{stdout}");
+        Assert.Equal("us", m.Groups[1].Value);
+    }
+
+    [Fact]
+    public void Country_Us_IsNamedInTheVerboseSelectedBcVersionLine()
+    {
+        var (exit, _, stderr) = Run("--country", "us", "--no-auto-provision", "--verbose", $"\"{MinimalBundle}\"");
         Assert.True(exit == 0, $"exit={exit}\n{stderr}");
 
         var m = Regex.Match(stderr, @"\[bc\] selected BC \S+ \([^)]*\) \[country: (\S+)\]");
@@ -98,27 +110,28 @@ public sealed class CountryFlagTests
     [Fact]
     public void Country_Omitted_DefaultsToW1_AndPrintsNoCountrySuffix()
     {
-        var (exit, _, stderr) = Run("--no-auto-provision", $"\"{MinimalBundle}\"");
+        var (exit, stdout, stderr) = Run("--no-auto-provision", $"\"{MinimalBundle}\"");
         Assert.True(exit == 0, $"exit={exit}\n{stderr}");
 
-        // The pre-#2236 line shape, byte-for-byte: no [country: ...] suffix at all for the
-        // invisible w1 default — a w1 run must read exactly as it always has.
-        Assert.Matches(new Regex(@"\[bc\] selected BC \S+ \([^)]*\)\r?$", RegexOptions.Multiline), stderr);
-        Assert.DoesNotContain("[country:", stderr, StringComparison.Ordinal);
+        // No [country: ...] suffix at all for the invisible w1 default (#2236), in the
+        // run header (#4599) or anywhere else.
+        Assert.Matches(new Regex(@"^al-runner \S+ · BC \S+ · 1 app\r?$", RegexOptions.Multiline), stdout);
+        Assert.DoesNotContain("[country:", stdout + stderr, StringComparison.Ordinal);
     }
 
     [Fact]
     public void Country_IsCaseInsensitive_UppercaseUsAndLowercaseUsSelectTheSameChannel()
     {
-        var (exitUpper, _, stderrUpper) = Run("--country", "US", "--no-auto-provision", $"\"{MinimalBundle}\"");
-        var (exitLower, _, stderrLower) = Run("--country", "us", "--no-auto-provision", $"\"{MinimalBundle}\"");
+        var (exitUpper, stdoutUpper, stderrUpper) = Run("--country", "US", "--no-auto-provision", $"\"{MinimalBundle}\"");
+        var (exitLower, stdoutLower, stderrLower) = Run("--country", "us", "--no-auto-provision", $"\"{MinimalBundle}\"");
 
         Assert.True(exitUpper == 0, stderrUpper);
         Assert.True(exitLower == 0, stderrLower);
 
-        var mUpper = Regex.Match(stderrUpper, @"\[country: (\S+)\]");
-        var mLower = Regex.Match(stderrLower, @"\[country: (\S+)\]");
-        Assert.True(mUpper.Success && mLower.Success, $"upper:\n{stderrUpper}\nlower:\n{stderrLower}");
+        // #4599: the country is named in the run header on stdout.
+        var mUpper = Regex.Match(stdoutUpper, @"\[country: (\S+)\]");
+        var mLower = Regex.Match(stdoutLower, @"\[country: (\S+)\]");
+        Assert.True(mUpper.Success && mLower.Success, $"upper:\n{stdoutUpper}\nlower:\n{stdoutLower}");
         Assert.Equal("us", mUpper.Groups[1].Value);
         Assert.Equal(mLower.Groups[1].Value, mUpper.Groups[1].Value);
     }

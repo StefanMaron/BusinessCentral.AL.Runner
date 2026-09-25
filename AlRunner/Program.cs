@@ -1453,10 +1453,11 @@ try
     // even recognized, which is exactly the kind of silent-no-op this repo's
     // loud-failures.md rule exists to prevent for a flag that changes what gets downloaded.
     var selectedCountryForPrint = AlRunner.Infrastructure.BcArtifacts.SelectedCountry;
-    deferredStartupLines.Add(() => Console.Error.WriteLine(
-        selectedCountryForPrint == "w1"
-            ? $"[bc] selected BC {selectedVersionForPrint} ({serviceTierDirForPrint})"
-            : $"[bc] selected BC {selectedVersionForPrint} ({serviceTierDirForPrint}) [country: {selectedCountryForPrint}]"));
+    // #4599: at default verbosity the run header below names the BC build; this line adds the
+    // artifact path. --server keeps it because its header does not name the BC build.
+    if (AlRunner.Log.Verbose || serverMode)
+        deferredStartupLines.Add(() => Console.Error.WriteLine(
+            SelectedBcLine(selectedVersionForPrint?.ToString(), serviceTierDirForPrint, selectedCountryForPrint)));
 }
 catch (InvalidOperationException ex)
 {
@@ -1618,11 +1619,15 @@ catch (Exception ex)
 // may still hand off via either re-exec decision below, and touches no bundle work at all
 // before doing so — the flush after both decisions is what makes this print exactly once,
 // from whichever generation is actually terminal.
-deferredStartupLines.Add(() => Console.WriteLine(serverMode
-    ? "al-runner — server mode (JSON-RPC over stdin/stdout)"
-    : watchMode
-        ? $"al-runner — watch mode, {bundles.Count} bundle(s) (Ctrl+C to quit)"
-        : $"al-runner — running {bundles.Count} bundle(s)"));
+{
+    var runHeader = serverMode
+        ? "al-runner — server mode (JSON-RPC over stdin/stdout)"
+        : RunHeader(AlRunner.Infrastructure.RunnerVersion.Informational(typeof(Program).Assembly),
+            AlRunner.Infrastructure.BcArtifacts.SelectedVersion?.ToString(),
+            AlRunner.Infrastructure.BcArtifacts.SelectedCountry,
+            bundles.Count, watchMode);
+    deferredStartupLines.Add(() => Console.WriteLine(runHeader));
+}
 
 // The packaged tool no longer ships Microsoft.Dynamics.Nav.Ncl.dll (see
 // check-nupkg-contents.sh) — it must be resolved from the user's own BC artifact

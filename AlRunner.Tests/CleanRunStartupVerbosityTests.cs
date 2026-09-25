@@ -19,12 +19,12 @@
 // print any of them, and a --verbose run must print every one that this dev/CI build
 // can actually reach (see below for the two that can't, and why).
 //
-// What deliberately still prints at default verbosity (see Program.cs's own comments,
-// and issue #2077/#2210's reasoning): `[bc] selected BC <version> (<path>)` — which BC
-// version actually ran is a RESULT, not a diagnostic, per #2077's measured 42-test
-// swing decided silently — and `al-runner — running N bundle(s)`, the run header. Both
-// are pinned here too, as the negative control: this fix must not have swept those
-// away along with the bookkeeping.
+// What deliberately still prints at default verbosity (issue #2077/#2210's reasoning):
+// which BC version actually ran is a RESULT, not a diagnostic, per #2077's measured
+// 42-test swing decided silently. Since #4599 it is one run header line,
+// `al-runner <version> · BC <build> · N app(s)`; the `[bc] selected BC <version> (<path>)`
+// line adding the artifact path is --verbose only. Both are pinned here too, as the
+// negative control: this fix must not have swept the BC build away with the bookkeeping.
 //
 // Two of the moved lines are NOT exercised by a live spawn here, and covered by a
 // structural source check instead (ProgramCs_EngineVariantAndReexecLines_GatedOnVerbose
@@ -40,6 +40,7 @@
 // branch is unreached here.
 using System.Diagnostics;
 using System.Text;
+using System.Text.RegularExpressions;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -202,6 +203,33 @@ public sealed class CleanRunStartupVerbosityTests
         }
     }
 
+    /// <summary>
+    /// #4599 --verbose counterpart: the header still prints, and the `[bc] selected BC` line
+    /// adds the artifact path, naming the same build as the header.
+    /// </summary>
+    [SkippableFact]
+    public void VerboseRun_PrintsRunHeaderAndSelectedBcLineWithArtifactPath()
+    {
+        TestArtifacts.SkipIfMissing();
+        var alCacheDir = NewCacheDir();
+        try
+        {
+            var (output, exit) = Run(alCacheDir, "--verbose");
+            Assert.True(exit == 0 && output.Contains("pass:        1"),
+                $"fixture must compile and pass cleanly:\n{output}");
+
+            var header = RunHeaderLine.Match(output);
+            Assert.True(header.Success, $"expected the run header line:\n{output}");
+            var bc = header.Groups["bc"].Value;
+            Assert.Matches(new Regex($@"^\[bc\] selected BC {Regex.Escape(bc)} \(\S*{Regex.Escape(bc)}\)\r?$",
+                RegexOptions.Multiline), output);
+        }
+        finally
+        {
+            try { Directory.Delete(alCacheDir, recursive: true); } catch { }
+        }
+    }
+
     /// <summary>--verbose counterpart: the warm run's HIT line must still be reachable.</summary>
     [SkippableFact]
     public void VerboseRun_PrintsCacheHitLineOnAWarmRun()
@@ -226,10 +254,16 @@ public sealed class CleanRunStartupVerbosityTests
         }
     }
 
+    // #4599: `al-runner <version> · BC <build> · <N> app(s)`, alone on its line.
+    private static readonly Regex RunHeaderLine = new(
+        @"^al-runner (?<ver>\S+) · BC (?<bc>\d+\.\d+\.\d+\.\d+) · (?<apps>\d+) apps?\r?$",
+        RegexOptions.Multiline);
+
     /// <summary>
-    /// Negative control: the two lines issue #2239 deliberately kept visible at default
-    /// verbosity — see #2077/#2210's reasoning on why "which BC version ran" is a result,
-    /// not a diagnostic — must not have been swept away along with the bookkeeping.
+    /// Negative control: "which BC version ran" is a result, not a diagnostic (#2077/#2210),
+    /// so a default run still names it — since #4599 in one header line carrying the tool
+    /// version, the BC build and the app count, in place of the `[bc] selected BC` line and
+    /// the `al-runner — running N bundle(s)` banner.
     /// </summary>
     [SkippableFact]
     public void DefaultRun_StillPrintsSelectedVersionAndRunningBanner()
@@ -242,8 +276,15 @@ public sealed class CleanRunStartupVerbosityTests
             Assert.True(exit == 0 && output.Contains("pass:        1"),
                 $"fixture must compile and pass cleanly:\n{output}");
 
-            Assert.Contains("[bc] selected BC ", output);
-            Assert.Contains("al-runner — running ", output);
+            var headers = RunHeaderLine.Matches(output);
+            Assert.True(headers.Count == 1, $"expected exactly one run header line:\n{output}");
+            Assert.Equal(AlRunner.Infrastructure.RunnerVersion.Informational(typeof(AlRunner.Log).Assembly),
+                headers[0].Groups["ver"].Value);
+            Assert.Equal("1", headers[0].Groups["apps"].Value);
+
+            // The two lines the header replaces are gone at default verbosity.
+            Assert.DoesNotContain("[bc] selected BC ", output);
+            Assert.DoesNotContain("al-runner — running ", output);
         }
         finally
         {
@@ -318,8 +359,8 @@ public sealed class CleanRunStartupVerbosityTests
 
         Assert.DoesNotContain("[expectations]", output);
         Assert.DoesNotContain("found cached BC", output);
-        // Negative control: the run still says which BC ran.
-        Assert.Contains("[bc] selected BC ", output);
+        // Negative control: the run still says which BC ran (#4599: in the run header).
+        Assert.Matches(RunHeaderLine, output);
     }
 
     [SkippableFact]
