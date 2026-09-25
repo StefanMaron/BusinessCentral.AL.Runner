@@ -89,7 +89,10 @@
 //   mechanism AssignAutoIncrement, the rowversion clock and the All Profile write guards
 //   already use. Every type it touches (NavRecord, NCLMetaField, NavGuid, DataError) is
 //   runtime-engine, never AL business logic.
+using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
+using AlRunner.Infrastructure;
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
 using Microsoft.Dynamics.Nav.Types.Exceptions;
@@ -123,6 +126,8 @@ public static class UserTableTriggerPatches
     private const string WindowsSecurityIdFieldName = "Windows Security ID"; // User 7
     private const string IsolatedStorageUserIdFieldName = "User Id";     // Isolated Storage 4
     private const string TenantReportLayoutUserIdFieldName = "User ID";  // Tenant Rep. Layout 5
+    private const string StateFieldName = "State";                       // User 4
+    private const string AuthenticationEmailFieldName = "Authentication Email"; // User 11
 
     /// <summary>
     /// Prepended to NavRecord.InsertAsync(DataError, bool, bool, bool). A no-op for every table
@@ -162,6 +167,7 @@ public static class UserTableTriggerPatches
         if (!RowWithSameSecurityIdExists(user))
         {
             ValidateUserFieldIsUnique(user, UserNameFieldName, skipWhenEmpty: false);
+            ValidateAuthenticationEmail(user, insert: true);
             ValidateUserFieldIsUnique(user, WindowsSecurityIdFieldName, skipWhenEmpty: true);
         }
 
@@ -257,7 +263,8 @@ public static class UserTableTriggerPatches
     /// and collation — deliberately not re-decided here. #2983 lists it as an open question, and
     /// answering it by hand-writing a comparison would be answering it wrongly.</para>
     /// </summary>
-    private static void ValidateUserFieldIsUnique(NavRecord user, string fieldName, bool skipWhenEmpty)
+    private static void ValidateUserFieldIsUnique(
+        NavRecord user, string fieldName, bool skipWhenEmpty, bool insert = true)
     {
         var meta = user.MetaTable;
         if (meta == null) return;
@@ -270,22 +277,143 @@ public static class UserTableTriggerPatches
         // Windows SID are ordinary; two users with the same name are what BC refuses.
         if (skipWhenEmpty && value.IsZeroOrEmpty) return;
 
-        var session = user.ParentSession;
-        if (session == null) return;
-
-        bool taken;
-        using (var probe = new NavRecord(session, UserTableId, SecurityFiltering.Ignored))
-        {
-            probe.ALSetRange(field.FieldNo, value);
-            taken = probe.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult();
-        }
-        if (!taken) return;
+        if (!AnotherUserCarries(user, field.FieldNo, value, insert, enabledUsersOnly: false)) return;
 
         // BC's own exception types, constructed through BC's own factories, so the message AL
         // sees is BC's message ("The user name must be unique.") rather than a runner paraphrase.
         throw fieldName == WindowsSecurityIdFieldName
             ? NavNCLUserTableUserWindowsSidMustBeUniqueException.Create()
             : NavNCLUserTableUserNameMustBeUniqueException.Create();
+    }
+
+    /// <summary>
+    /// BC's <c>FindUserRecordWithFieldValueAsync</c>: does a User row other than the one under
+    /// write carry <paramref name="value"/> in <paramref name="fieldNo"/>? On insert BC's
+    /// <c>EqualsFilter</c> needs no exclusion (the row is not in the table yet); on modify its
+    /// <c>UserTableFilter</c> excludes the row's own security id. <paramref name="enabledUsersOnly"/>
+    /// is BC's <c>AddEnabledUsersFilter</c>: State (field 4) = Enabled (ordinal 0).
+    /// </summary>
+    private static bool AnotherUserCarries(
+        NavRecord user, int fieldNo, NavValue value, bool insert, bool enabledUsersOnly)
+    {
+        var meta = user.MetaTable;
+        var session = user.ParentSession;
+        if (meta == null || session == null) return false;
+
+        var sidFieldNo = FieldNoByName(meta, UserSecurityIdFieldName);
+        var ownSid = user.GetFieldValue(sidFieldNo);
+        var stateFieldNo = enabledUsersOnly ? FieldNoByName(meta, StateFieldName) : 0;
+
+        using var probe = new NavRecord(session, UserTableId, SecurityFiltering.Ignored);
+        probe.ALSetRange(fieldNo, value);
+        // CS0618: sync-over-async, the same trade the rest of this file makes.
+#pragma warning disable CS0618
+        if (!probe.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult()) return false;
+        do
+        {
+            if (!insert && Equals(probe.GetFieldValue(sidFieldNo), ownSid)) continue;
+            if (enabledUsersOnly && !IsEnabled(probe.GetFieldValue(stateFieldNo))) continue;
+            return true;
+        }
+        while (probe.ALNext() > 0);
+#pragma warning restore CS0618
+        return false;
+    }
+
+    private static bool IsEnabled(NavValue? state) => state is NavOption { Value: 0 };
+
+    /// <summary>
+    /// BC's <c>SystemTableTriggers.ValidateAuthenticationEmailAsync</c> for the User row under
+    /// write: normalise "Authentication Email" (field 11) in place, refuse an address another
+    /// enabled user carries, and on modify clear the user's Authentication Object ID when the
+    /// email changed.
+    ///
+    /// <para>OBSERVABLY EQUIVALENT: the normalisation and the invalid-address refusal are BC's
+    /// own <c>TrimAndAnalyzeAuthenticationEmail</c>, invoked rather than re-implemented; the
+    /// refusal is BC's <c>NavNclUserTableAuthEmailMustBeUniqueException</c>; the object-id clear
+    /// is BC's <c>UserManagement.SetAuthenticationObjectId</c>. The topology gate is BC's own
+    /// property, read off the runner's <c>StandardServiceTopology</c>. Corpus 61206
+    /// "Test User Auth Email Trigger" (onprem app) pins each arm, issue #2363.</para>
+    /// </summary>
+    private static void ValidateAuthenticationEmail(NavRecord user, bool insert)
+    {
+        if (!NavEnvironment.Topology.IsUniqueAuthenticationEmailRequired) return;
+
+        var meta = user.MetaTable;
+        var session = user.ParentSession;
+        if (meta == null || session == null) return;
+
+        var emailFieldNo = FieldNoByName(meta, AuthenticationEmailFieldName);
+        var current = (user.GetFieldValue(emailFieldNo) as NavText)?.Value ?? string.Empty;
+        var approved = TrimAndAnalyzeAuthenticationEmail(current);
+        if (approved != current)
+            user.SetFieldValue(emailFieldNo, new NavText(approved));
+
+        if (!string.IsNullOrEmpty(approved)
+            && IsEnabled(user.GetFieldValue(FieldNoByName(meta, StateFieldName)))
+            && AnotherUserCarries(user, emailFieldNo, user.GetFieldValue(emailFieldNo), insert, enabledUsersOnly: true))
+        {
+            throw NavNclUserTableAuthEmailMustBeUniqueException.Create(approved);
+        }
+
+        if (insert) return;
+
+        var sid = user.GetFieldValue(FieldNoByName(meta, UserSecurityIdFieldName));
+        if (sid == null || sid.IsZeroOrEmpty) return;
+        string? original = null;
+        using (var stored = new NavRecord(session, UserTableId, SecurityFiltering.Ignored))
+        {
+#pragma warning disable CS0618
+            if (stored.ALGet(DataError.TrapError, sid))
+#pragma warning restore CS0618
+                original = (stored.GetFieldValue(emailFieldNo) as NavText)?.Value;
+        }
+        if (string.IsNullOrEmpty(approved) || original == null || original != approved)
+            UserManagement.SetAuthenticationObjectId(session, sid.ToGuid(), string.Empty);
+    }
+
+    private static MethodInfo? _trimAndAnalyze;
+
+    /// <summary>BC's private static <c>SystemTableTriggers.TrimAndAnalyzeAuthenticationEmail</c>,
+    /// invoked so its FormatException-to-NavCannotSpecifyAuthenticationEmailException refusal is
+    /// BC's own, and unwrapped so AL sees BC's exception rather than a TargetInvocationException.</summary>
+    private static string TrimAndAnalyzeAuthenticationEmail(string email)
+    {
+        _trimAndAnalyze ??= BcShape.RequiredMethod(
+            typeof(NavRecord).Assembly.GetType("Microsoft.Dynamics.Nav.Runtime.SystemTableTriggers")
+                ?? throw new BcShapeGapException(
+                    "User (2000000120) authentication email", "SystemTableTriggers",
+                    "type not found in Ncl"),
+            "TrimAndAnalyzeAuthenticationEmail", BindingFlags.NonPublic | BindingFlags.Static,
+            "User (2000000120) authentication email", "SystemTableTriggers.TrimAndAnalyzeAuthenticationEmail",
+            "BC's normaliser for User.\"Authentication Email\"", new[] { typeof(string) });
+        try
+        {
+            return (string)_trimAndAnalyze.Invoke(null, new object[] { email })!;
+        }
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Prepended to NavRecord.ModifyAsync(DataError, bool, bool, bool) — the funnel both AL
+    /// <c>Modify()</c> and a page save reach. A no-op for every table but User (2000000120); for
+    /// that one it runs the validations of BC's <c>SystemTableTriggers.OnBeforeModifyUserAsync</c>
+    /// in BC's order: user name unique, Windows SID unique, then the authentication email (#2363).
+    /// The super-user, application-id and license-type checks of that arm are not reproduced.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void OnBeforeUserModify(object? record)
+    {
+        if (record is not NavRecord { IsTemporary: false } user) return;
+        if (user.MetaTable?.TableId != UserTableId) return;
+
+        ValidateUserFieldIsUnique(user, UserNameFieldName, skipWhenEmpty: false, insert: false);
+        ValidateUserFieldIsUnique(user, WindowsSecurityIdFieldName, skipWhenEmpty: true, insert: false);
+        ValidateAuthenticationEmail(user, insert: false);
     }
 
     /// <summary>

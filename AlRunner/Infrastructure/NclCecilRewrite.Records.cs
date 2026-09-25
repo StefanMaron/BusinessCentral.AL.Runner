@@ -1427,6 +1427,38 @@ public static partial class NclCecilRewrite
             Console.Error.WriteLine("[Cecil] Prepended StampSystemFieldsOnModify → NavRecord.ModifyAsync(DataError,bool,bool,bool)");
         }
 
+        // ── NavRecord.ModifyAsync(DataError, bool, bool, bool) — User system-table modify arm ──
+        // SystemTableTriggers.OnBeforeModifyUserAsync refuses a user name / Windows SID another
+        // user carries and normalises + validates "Authentication Email" (#2363). Same funnel as
+        // the stamp above, for the same reason (AL Modify and page save meet here). Inserted
+        // AFTER that block, so it lands before the stamp: validate, then stamp, then write.
+        {
+            var navRecord = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord")
+                ?? throw new InvalidOperationException("NavRecord type not found in Ncl");
+            var modify4 = navRecord.Methods.FirstOrDefault(m =>
+                m.Name == "ModifyAsync"
+                && m.Parameters.Count == 4
+                && m.Parameters[0].ParameterType.Name == "DataError"
+                && m.Parameters[1].ParameterType.MetadataType == Mono.Cecil.MetadataType.Boolean
+                && m.Parameters[2].ParameterType.MetadataType == Mono.Cecil.MetadataType.Boolean
+                && m.Parameters[3].ParameterType.MetadataType == Mono.Cecil.MetadataType.Boolean)
+                ?? throw new InvalidOperationException("NavRecord.ModifyAsync(DataError,bool,bool,bool) not found");
+
+            var helperMi = typeof(AlRunner.Patches.UserTableTriggerPatches).GetMethod(
+                nameof(AlRunner.Patches.UserTableTriggerPatches.OnBeforeUserModify),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException("UserTableTriggerPatches.OnBeforeUserModify not found");
+            var helperRef = asm.MainModule.ImportReference(helperMi);
+
+            var body = modify4.Body;
+            var il = body.GetILProcessor();
+            var firstOriginal = body.Instructions[0];
+            il.InsertBefore(firstOriginal, il.Create(OpCodes.Ldarg_0));
+            il.InsertBefore(firstOriginal, il.Create(OpCodes.Call, helperRef));
+            if (body.MaxStackSize < 1) body.MaxStackSize = 1;
+            Console.Error.WriteLine("[Cecil] Prepended OnBeforeUserModify → NavRecord.ModifyAsync(DataError,bool,bool,bool)");
+        }
+
         // ── NavRecord.get_ALReadPermission / get_ALWritePermission → return true ─────
         // AL `Rec.ReadPermission()` / `Rec.WritePermission()` lower to these getters.
         // Runner has no real permission system (single privileged user). Real BC's
