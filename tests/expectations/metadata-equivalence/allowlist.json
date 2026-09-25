@@ -1089,7 +1089,7 @@
     },
     {
       "member": "ActionDefinition.#runPageModeField",
-      "reason": "The extension-runtime-delta render emits the member's ID and Name and the wrapper's placement attributes, and states nothing else -- so BC emits this value and the runner leaves it OFF rather than answering it wrongly (#3926). This value IS stated in the same ActionChanges[].Actions / ControlChanges[].Controls entry the render already walks, so it is a read-don't-guess fix rather than a limit: what the runner shows here is the type's own default (null / 0 / False / the zero enum), never a derivation anyone checked. LEFT OFF DELIBERATELY: writing BC's value without reading it from the symbol file would manufacture agreement, which is the failure this harness exists to catch. What invalidates this entry is #3926 landing the read.",
+      "reason": "BC writes RunPageMode on every action, and the render writes it only where SymbolReference.json STATES it (#3926). The stated case now agrees: all five stated members across 27.5.46862.53931, 28.1.49838.53910, 28.1.49838.54308 and 28.4.53241.54407 state View and BC writes View. What remains is the UNSTATED case: the three trigger actions with no RunObject (pageextensions 324, 4318 and 9862) state nothing and BC writes Edit, with RunPageModeSpecified True. That default rule is measured on three members only and is not stated anywhere, so writing Edit would be a guess the harness could not catch; it is left off. What invalidates this entry is a measured rule for an action's default RunPageMode.",
       "issue": 3926,
       "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
     },
@@ -1209,13 +1209,13 @@
     },
     {
       "member": "ActionDefinition.RunPageMode",
-      "reason": "The extension-runtime-delta render emits the member's ID and Name and the wrapper's placement attributes, and states nothing else -- so BC emits this value and the runner leaves it OFF rather than answering it wrongly (#3926). This value IS stated in the same ActionChanges[].Actions / ControlChanges[].Controls entry the render already walks, so it is a read-don't-guess fix rather than a limit: what the runner shows here is the type's own default (null / 0 / False / the zero enum), never a derivation anyone checked. LEFT OFF DELIBERATELY: writing BC's value without reading it from the symbol file would manufacture agreement, which is the failure this harness exists to catch. What invalidates this entry is #3926 landing the read.",
+      "reason": "BC writes RunPageMode on every action, and the render writes it only where SymbolReference.json STATES it (#3926). The stated case now agrees: all five stated members across 27.5.46862.53931, 28.1.49838.53910, 28.1.49838.54308 and 28.4.53241.54407 state View and BC writes View. What remains is the UNSTATED case: the three trigger actions with no RunObject (pageextensions 324, 4318 and 9862) state nothing and BC writes Edit, with RunPageModeSpecified True. That default rule is measured on three members only and is not stated anywhere, so writing Edit would be a guess the harness could not catch; it is left off. What invalidates this entry is a measured rule for an action's default RunPageMode.",
       "issue": 3926,
       "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
     },
     {
       "member": "ActionDefinition.RunPageModeSpecified",
-      "reason": "The extension-runtime-delta render emits the member's ID and Name and the wrapper's placement attributes, and states nothing else -- so BC emits this value and the runner leaves it OFF rather than answering it wrongly (#3926). This value IS stated in the same ActionChanges[].Actions / ControlChanges[].Controls entry the render already walks, so it is a read-don't-guess fix rather than a limit: what the runner shows here is the type's own default (null / 0 / False / the zero enum), never a derivation anyone checked. LEFT OFF DELIBERATELY: writing BC's value without reading it from the symbol file would manufacture agreement, which is the failure this harness exists to catch. What invalidates this entry is #3926 landing the read.",
+      "reason": "BC writes RunPageMode on every action, and the render writes it only where SymbolReference.json STATES it (#3926). The stated case now agrees: all five stated members across 27.5.46862.53931, 28.1.49838.53910, 28.1.49838.54308 and 28.4.53241.54407 state View and BC writes View. What remains is the UNSTATED case: the three trigger actions with no RunObject (pageextensions 324, 4318 and 9862) state nothing and BC writes Edit, with RunPageModeSpecified True. That default rule is measured on three members only and is not stated anywhere, so writing Edit would be a guess the harness could not catch; it is left off. What invalidates this entry is a measured rule for an action's default RunPageMode.",
       "issue": 3926,
       "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
     },
@@ -1294,12 +1294,6 @@
     {
       "member": "ControlDefinition.ControlGUID",
       "reason": "BC COMPUTES this and SymbolReference.json states it nowhere, so the render leaves it off (#3926). ControlGUID is a real GUID from BC's own emitter against the runner's zeroed one; SourceExtensionType, HelpLink, ExtensionId and ControlRuntimeId are publish-time facts about an installed extension, which the runner has no published-app pipeline to produce. Unlike the read-don't-guess group this needs a derivation or a scope call before it can move, and neither has been made -- so this entry records an unmeasured surface, not a correct answer.",
-      "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
-    },
-    {
-      "member": "ControlDefinition.DataColumnName",
-      "reason": "The extension-runtime-delta render emits the member's ID and Name and the wrapper's placement attributes, and states nothing else -- so BC emits this value and the runner leaves it OFF rather than answering it wrongly (#3926). This value IS stated in the same ActionChanges[].Actions / ControlChanges[].Controls entry the render already walks, so it is a read-don't-guess fix rather than a limit: what the runner shows here is the type's own default (null / 0 / False / the zero enum), never a derivation anyone checked. LEFT OFF DELIBERATELY: writing BC's value without reading it from the symbol file would manufacture agreement, which is the failure this harness exists to catch. What invalidates this entry is #3926 landing the read.",
       "issue": 3926,
       "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
     },

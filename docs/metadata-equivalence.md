@@ -1587,8 +1587,22 @@ before — which is strictly worse than the omission it would replace.
 `RunObjectSrcTable` and `PushAction`: the symbol file states a bare object NAME
 (`RunObject: "AppSource Product List"`) and BC states the resolved type and id (`Page`, `2515`) —
 a different fact, needing the page inventory this layer does not have, for the reason
-`BcAppSymbolCache.ActionRunObjectSymbol` gives. `RunPageMode` is out for a second reason: BC
-writes `Edit` on two members whose symbol entry states nothing, so its default rule is unmeasured.
+`BcAppSymbolCache.ActionRunObjectSymbol` gives.
+
+**Two more, read in a later pass, measured over every delta member of the four captured builds**
+(27.5.46862.53931, 28.1.49838.53910, 28.1.49838.54308, 28.4.53241.54407):
+
+| BC attribute | source | transform | pairs measured | exact |
+|---|---|---|---:|---|
+| `RunPageMode` | the member's stated `RunPageMode` | verbatim, **only when stated** | 5 | 5/5 |
+| `DataColumnName` | stated `SourceExpression` `Rec."<field>"` joined to the target page's stated `SourceTable` and that table's fields, tableextensions included | the field id as text | 16 | 16/16 |
+
+`RunPageMode` stays off when unstated: the three trigger actions with no `RunObject`
+(pageextensions 324, 4318, 9862) state nothing and BC writes `Edit`, a default rule measured on
+three members and stated nowhere. `DataColumnName` is joined within the pageextension's own app
+only; a target page or table declared elsewhere, a `SourceExpression` that is not a `Rec.` field,
+or a name the table does not have all leave it off. The four 774 controls' `ImportanceSpecified`
+(BC writes `Importance="Standard"`) is not stated either, and stays declared.
 
 **The 28.1 population did not contain every shape, and 27.5 caught it.** Pageextension 2516
 `AppSourceMarketPlaceExtension` has a deltas document on 27.5 and none on 28.1 (#3923), so the
