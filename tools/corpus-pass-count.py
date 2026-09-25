@@ -32,10 +32,17 @@ A pattern written against either fixed spelling reports 0 on the other half of
 the matrix while those legs are green and executing. `PASS +<prefix>` -- a `+`
 quantifier, never a literal run of spaces -- matches both.
 
-The eight OnPrem legs run a different, much smaller suite (29 tests on that run
+The OnPrem legs run a different, much smaller suite (29 tests on that run
 against 2915 cloud) and have run none of the recent cloud additions. They are
 green for unrelated reasons, so a 0 there is expected and is reported as
 `not-run`, not as a failure.
+
+Which legs MUST have run it is the corpus ruleset's answer, read through
+.github/scripts/corpus_pr_state.py's `required_contexts` on every call and never
+written here (#4593). A required leg that did not run the codeunit -- another
+suite, no test phase, or absent from the run because its ci.yml predates the leg
+-- is exit 1; a ruleset that could not be read, or a required leg whose log
+could not be fetched, is exit 3.
 
 Run: tools/corpus-pass-count.py 34079169063 TestPart_
 """
@@ -183,6 +190,56 @@ def classify(leg: dict) -> str:
     return "not-run"
 
 
+STATE_MODULE = os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", ".github", "scripts",
+    "corpus_pr_state.py"))
+
+
+def required_legs(repo: str) -> tuple[list[str] | None, str]:
+    """(the corpus's required leg names, reason) -- None means not measured.
+
+    One reader for the corpus ruleset, owned by corpus_pr_state.py; a failed
+    import is the third state like a failed read.
+    """
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("corpus_pr_state_for_cpc", STATE_MODULE)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+    except Exception as exc:  # noqa: BLE001 - an import failure is an unmeasured answer
+        return None, f"could not import {STATE_MODULE}: {exc!r}"
+    return mod.required_contexts(repo=repo)
+
+
+def required_leg_verdict(rows, required, why: str) -> tuple[int, list[str]]:
+    """(0 every required leg ran it / 1 one did not / 3 unmeasured, lines). Pure."""
+    if required is None:
+        return 3, [f"UNMEASURED: the corpus's required legs could not be read ({why}),",
+                   "  so whether every required leg ran the codeunit was not established."]
+    by_name = {}
+    for job, _leg, kind in rows:
+        by_name.setdefault(job["name"], []).append(kind)
+    lines, code = [], 0
+    for name in required:
+        kinds = by_name.get(name)
+        if not kinds:
+            lines.append(f"REQUIRED leg {name} is absent from this run -- a dispatch runs "
+                         "one leg, and a run whose ci.yml predates a leg never has it")
+            code = 1
+        elif "ran" in kinds or "failed" in kinds:
+            continue
+        elif "log-unavailable" in kinds:
+            lines.append(f"REQUIRED leg {name}: log could not be fetched, so not measured")
+            code = code or 3
+        else:
+            lines.append(f"REQUIRED leg {name} did not run the codeunit ({', '.join(kinds)})")
+            code = 1
+    if code == 0:
+        lines.append(f"every required leg ({len(required)}, from the corpus ruleset) ran it.")
+    return code, lines
+
+
 def fetch_jobs(run_id: str) -> list[dict]:
     rc, out = gh(["api", f"repos/{CORPUS}/actions/runs/{run_id}/jobs?per_page=100",
                   "--jq", '.jobs[] | "\\(.id)\t\\(.name)\t\\(.conclusion)"'])
@@ -280,12 +337,18 @@ def main() -> int:
 
     print(f"{len(ran)} leg(s) ran the codeunit; {len(notrun)} ran a suite "
           f"without it; {len(failed)} had failures.")
+    required, why = required_legs(args.repo)
+    req_code, req_lines = required_leg_verdict(rows, required, why)
+    for line in req_lines:
+        print(line)
     if len(counts) > 1:
         print(f"WARNING: legs disagree on how many passed: {sorted(counts)} -- "
               f"a leg short of the others\n  is a real finding, not a log-format "
               f"artifact (this tool matches both spellings).")
         return 1
-    return 1 if failed else 0
+    if failed or req_code == 1:
+        return 1
+    return req_code
 
 
 if __name__ == "__main__":

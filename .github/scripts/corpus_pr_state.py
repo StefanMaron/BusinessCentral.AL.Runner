@@ -46,8 +46,10 @@ WHAT DECIDES `mergeable_state`
 ------------------------------
 GitHub's own answer, not a leg count of our own. `blocked` is what a REQUIRED
 status check that is red or has not reported produces, which on the corpus is one
-of the eight cloud legs; `unstable` is a non-required check failing, which on the
-corpus is one of the eight OnPrem legs, and the merge bar accepts that. Measured
+of its cloud legs; `unstable` is a non-required check failing, which on the
+corpus is one of its OnPrem legs, and the merge bar accepts that. Which legs are
+required is the corpus ruleset's answer, read by `required_contexts` below and
+never written here (#4593). Measured
 2026-09-10 through the REST API, which is the same call
 .github/actions/resolve-corpus-ref/action.yml already makes cross-repo with
 `github.token`:
@@ -379,7 +381,7 @@ def classify(payload) -> tuple[str, str]:
         return "MERGEABLE", "open, no conflict, every required BC leg green"
     if mstate == "unstable":
         return "MERGEABLE", ("open and mergeable; a check that is NOT required is failing "
-                             "-- on the corpus that is one of the eight OnPrem legs, which "
+                             "-- on the corpus that is one of the OnPrem legs, which "
                              "the merge bar does not gate on")
     if mstate == "dirty":
         return "NOT-MERGEABLE", "it conflicts with the corpus master branch"
@@ -401,6 +403,73 @@ def _gh(args: list[str]) -> tuple[int, str]:
     # mise prints a banner on stdout; drop it so the JSON parses (CLAUDE.md).
     out = "\n".join(l for l in out.split("\n") if not l.startswith("mise "))
     return p.returncode, out.strip()
+
+
+# The corpus's default branch; its ruleset is the merge bar. The required legs
+# are READ from it, never listed or counted here: the owner added `BC 28.5 / test`
+# on 2026-09-25 and every "eight" on this side went stale that day (#4593).
+CORPUS_BASE = "master"
+_REQUIRED_JQ = ('[.[] | select(.type == "required_status_checks") '
+                '| .parameters.required_status_checks[].context]')
+
+
+def required_contexts(run=None, repo: str = CORPUS_REPO, branch: str = CORPUS_BASE
+                      ) -> tuple[list[str] | None, str]:
+    """(the corpus's required status contexts, reason) -- None means NOT MEASURED.
+
+    Talks to api.github.com, so every failure is the third state and never an
+    empty list: an empty required set would make every leg "not required", which
+    is the pass direction (guards-need-a-third-state.md). A ruleset that answers
+    with no required checks at all is treated the same way -- the corpus has had
+    required legs throughout, so zero means the read did not see them.
+    """
+    run = run or _gh
+    rc, out = run(["api", f"repos/{repo}/rules/branches/{branch}", "--jq", _REQUIRED_JQ])
+    if rc != 0:
+        return None, f"could not read {repo}'s ruleset for {branch}: {out[:200]}"
+    try:
+        names = json.loads(out)
+    except Exception:
+        return None, f"could not parse {repo}'s ruleset answer: {out[:200]}"
+    if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+        return None, f"unexpected ruleset answer shape from {repo}: {out[:200]}"
+    if not names:
+        return None, (f"{repo}'s ruleset for {branch} answered with no required status "
+                      "checks, which is not the corpus's configuration -- the read did "
+                      "not see them")
+    return sorted(dict.fromkeys(names)), ""
+
+
+def missing_legs(required: list[str], reported: list[str]) -> list[str]:
+    """The required contexts with no check run at all among `reported`. Pure."""
+    seen = set(reported)
+    return [name for name in required if name not in seen]
+
+
+def missing_required_legs(head: str, run=None) -> tuple[list[str] | None, str]:
+    """(required legs with no check run on `head`, reason) -- None means not measured."""
+    run = run or _gh
+    required, why = required_contexts(run=run)
+    if required is None:
+        return None, why
+    rc, out = run(["api", "--paginate",
+                   f"repos/{CORPUS_REPO}/commits/{head}/check-runs?per_page=100",
+                   "--jq", ".check_runs[].name"])
+    if rc != 0:
+        return None, f"could not list check runs on corpus head {head[:8]}: {out[:200]}"
+    return missing_legs(required, [l.strip() for l in out.splitlines() if l.strip()]), ""
+
+
+def describe_blocked(head: str, missing: list[str] | None, why: str) -> str:
+    """The clause appended to a `blocked` detail. Detail only: the verdict is GitHub's."""
+    if missing is None:
+        return f"which required legs have not reported could not be read ({why})"
+    if not missing:
+        return "every required leg reported on this head, so at least one is red or still running"
+    return (f"required leg(s) with no check run on head {head[:8]}: {', '.join(missing)} -- "
+            f"a branch whose ci.yml does not dispatch a leg never produces it; it reports "
+            f"once the branch runs on a ci.yml that does, so update it from {CORPUS_BASE} "
+            f"after the leg has landed there")
 
 
 def fetch_pull(number: int, run=None, attempts: int = 3, sleep=time.sleep
@@ -435,14 +504,20 @@ def fetch_pull(number: int, run=None, attempts: int = 3, sleep=time.sleep
     return payload, last
 
 
-def states_for_body(body: str, fetch=None, script: str | None = None
+def states_for_body(body: str, fetch=None, script: str | None = None, legs=None
                     ) -> tuple[list[Entry], str]:
     """(one Entry per cited corpus PR, refusal reason).
 
     A non-empty reason with an empty list means the body could not be read at
     all -- a malformed declaration, or a parse that could not run. That is the
     third state, not "nothing declared".
+
+    `legs` names the required legs a `blocked` corpus PR never reported. It
+    defaults to the live read only when `fetch` does too: a caller injecting
+    `fetch` is offline and must not reach the network through a side door.
     """
+    if legs is None and fetch is None:
+        legs = missing_required_legs
     fetch = fetch or fetch_pull
     numbers, why = corpus_pr_numbers(body, script=script)
     if numbers is None:
@@ -456,7 +531,12 @@ def states_for_body(body: str, fetch=None, script: str | None = None
         state, detail = classify(payload)
         if state == "UNREADABLE" and read_why:
             detail = f"{detail} ({read_why})"
-        entries.append(Entry(number, state, str(payload.get("head") or ""), detail))
+        head = str(payload.get("head") or "")
+        if (legs is not None and state == "NOT-MERGEABLE" and head
+                and str(payload.get("mergeable_state") or "").lower() == "blocked"):
+            missing, legs_why = legs(head)
+            detail = f"{detail}; {describe_blocked(head, missing, legs_why)}"
+        entries.append(Entry(number, state, head, detail))
     return entries, ""
 
 
