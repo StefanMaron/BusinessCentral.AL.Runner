@@ -142,7 +142,8 @@ def main():
         # down -- the guard would read the decoy and exit 0. Two matches means
         # this guard can no longer tell which sentence it is pinning, which is
         # unmeasurable rather than a pass. (Found in review of PR #4238 against
-        # tools/test_partial_class_counts.py, which has the same exposure.)
+        # the partial-class pin, which had the same exposure; now
+        # tools/test_partial_class_claims.py, which pins no counts since #4539.)
         if len(found) > 1:
             unmeasurable.append(
                 "%s: the pattern matches %d places in CLAUDE.md, so this guard cannot "

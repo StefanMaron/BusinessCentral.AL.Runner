@@ -53,7 +53,7 @@ So **before adding a shim to the "New types we add" row, establish that Microsof
 already ship that component in the artifacts.** That row permits new types; it is not a licence
 to re-implement one that is sitting on disk.
 
-`RunnerPageInstance` is the instance that produced this section: ~9,246 lines re-implementing
+`RunnerPageInstance` is the instance that produced this section: a large shim re-implementing
 `LogicalControl.Editable` -> `CommonDominatingValueHelper.CalculateValue`, while
 `Microsoft.Dynamics.Nav.Client.TestPageClient.dll` ships in every artifact directory (verified
 27.0, 27.5, 28.1, 28.4). It is not a wire proxy: `TestServiceConnection.CallServer<T>(f) => f()`
@@ -76,7 +76,7 @@ answers it.
 
 See #3825 for the instance. The issue recorded a page's `Name`/`SourceExpression` pair as
 *unrecoverable* for a precompiled page, and the agreed answer was to compile the shipped `.app`'s
-AL source with BC's own compiler — measured at **257 s and 8.83 GiB** for Base Application. The
+AL source with BC's own compiler — measured as costly in both time and memory for Base Application. The
 pair was in `NavForm.SourceExpressions` all along, populated by the `.app`'s own IL, present at
 the moment of the failing lookup. The missing piece was a **join**, not the data.
 

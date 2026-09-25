@@ -13,8 +13,8 @@ WHY THIS EXISTS
   count at all: the quiet failure is an agent taking the stated number as the contract and
   never noticing the guards the prose does not account for.
 
-WHY A SIBLING AND NOT AN ENTRY IN test_partial_class_counts.py
-  That guard pins `CLAUDE.md`'s partial-class counts: its CLAIMS table, its counting
+WHY A SIBLING AND NOT AN ENTRY IN test_partial_class_counts.py (now test_partial_class_claims.py, countless since #4539)
+  That guard pinned `CLAUDE.md`'s partial-class counts: its CLAIMS table, its counting
   function and its target file are all that subject. These are guard-file counts in a
   different document, counted a different way. Folding them in would put two unrelated
   concerns behind one name; the shape it taught — a named claim, a regex, one query that

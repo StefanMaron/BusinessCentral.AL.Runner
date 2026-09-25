@@ -9,7 +9,7 @@ correspondingly generous timeout, and never chain short sleeps to fake a wait.
 **Commit and push before you start anything long.** A push is the only thing that makes your
 work survive a turn ending unexpectedly, and it gets CI working in parallel with you.
 
-A cold full-corpus run (build + AL emit + C# compile + execute ~2000 tests) is not a
+A cold full-corpus run (build + AL emit + C# compile + execute every test) is not a
 few-seconds operation — budget several minutes, or use a compile cache where one is available.
 
 **CI is the one thing you never wait for, in the foreground or anywhere else** — a workflow run
@@ -29,8 +29,8 @@ One mechanism — a child process of your turn dies with your turn — in three 
   promise does not hold for anything started inside your own turn — and this shape is not
   optional, so asking for the foreground does not avoid it. The harness moves any foreground
   `Bash` call to the background at a hard **600s** cap, which the call's own `timeout` field
-  does not raise. Measured over all 828 transcripts on this box: **95** CI waits were
-  auto-backgrounded and **all 95** had `run_in_background` unset (#4288). The notification you
+  does not raise. Measured in #4288: **every** auto-backgrounded CI wait had
+  `run_in_background` unset. The notification you
   then get reports the **wrapper's** exit status, not the tool's — `ci-verdicts.md` §0 owns
   what that does to a verdict.
 
@@ -39,7 +39,7 @@ A `PreToolUse` hook refuses a CI wait on the **duration it asks for**, not on th
 `gh pr checks --watch`, `ci-wait.py` whose `--timeout` is absent or at/above the 600s cap,
 and a sleep loop polling CI as that shape. A `--timeout 0` read, a value under the cap, and a
 backgrounded local run that is not a CI wait all stay allowed (#3707, #4288). Trap: gating that
-refusal on `run_in_background` is what made it refuse none of the 95.
+refusal on `run_in_background` is what made it refuse none of them.
 
 **If you are about to end a turn while local work you launched is still running, that is the
 bug.** Correct shapes, in order of preference: run it in the foreground; push first so the loss

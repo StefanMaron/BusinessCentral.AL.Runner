@@ -80,11 +80,11 @@ measurement is in docs/incidents/loud-failures.md).
 **Spell out a member list long enough to miscount, and never truncate one.** A comment reading
 `DataTransfer.{AddFieldValue,AddConstantValue,AddSourceFilter,AddJoin,` — running past a line
 break mid-list — generated wrong expansions in both directions: the PR body citing it, and its
-coordinator, read out **seven** members including a phantom `AddSourceValue`, when there were
-**eight** and the real member `AddSourceFilter` sat in the very line being misread (#3927). Both
+coordinator, read out a member list **one short**, including a phantom `AddSourceValue`, while the real
+member `AddSourceFilter` sat in the very line being misread (#3927). Both
 errors look entirely plausible downstream, so nothing catches them. The danger needs **both**
 properties — enough members to lose count, and truncation hiding where the list ends: measured
-over `AlRunner/**/*.cs`, 20 comments use brace shorthand and only that one had both, so short
+over `AlRunner/**/*.cs` at the time, only that one brace-shorthand comment had both, so short
 complete forms like `{get,set}` and `{TKey,TValue}` are fine and clearer than the expansion.
 
 **And a symbol search does not find prose describing what a symbol did.** Deleting a member and
@@ -120,7 +120,7 @@ positions.
 
 **Leave the pointer, and pin a load-bearing claim with a drift test.** Prose moved out of the
 code can stop matching it with nothing failing; the pointer is what lets a reader who finds
-the claim find the document, and this repository already has about ten such drift tests
+the claim find the document, and this repository already has several such drift tests
 (`tools/test_matrix_docs_drift.py`, `CliDocumentationTests` and siblings).
 
 ## Anti-patterns (don't ship these)

@@ -56,3 +56,12 @@ Two things this measured, both now in the rule:
 
 The four wrong rows, the two false-message sites, and the mutation results never moved across
 any round.
+
+## Figures moved out of the rule (#4539)
+
+The rule now cites these measurements rather than restating them; the figures are what each
+citation measured, frozen to that moment. Population figures (counts of labels, files,
+transcripts on one box) were deleted outright rather than moved, because they go stale here too.
+
+- **#3927.** The PR body and its coordinator read the truncated `DataTransfer.{...}` list as
+  **seven** members including a phantom `AddSourceValue`; there were **eight**.

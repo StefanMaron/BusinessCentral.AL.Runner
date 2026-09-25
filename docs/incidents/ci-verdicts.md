@@ -407,3 +407,27 @@ Settled by `Part of #3389` plus a new docs issue (#4484) scoped to what the PR d
 rather than an empty list -- was live in the shipped recipe, which interpolated `$head`
 unvalidated while warning only about the abbreviated case; measured 2026-09-23, `head_sha=`
 answers `total_count: 1158` against `0` for `head_sha=84a63b26`.
+
+## Figures moved out of the rule (#4539)
+
+The rule now cites these measurements rather than restating them; the figures are what each
+citation measured, frozen to that moment. Population figures (counts of labels, files,
+transcripts on one box) were deleted outright rather than moved, because they go stale here too.
+
+- **#4288, the 600s cap.** Every one of the 52 foreground calls declaring a timeout above 600s,
+  spanning 660000 to 3600000 ms, reported `within its 600s timeout`.
+- **#3341.** The `rc=0` read under `| tail` sat in the issue body for three days before correction.
+- **`c028bf3f`.** Run `34656743829` FAILED across five legs at 23:06; run `34658754607` reported
+  `success` at 23:37 with `floor-matrix: skipped`.
+- **`917bbbf2`.** Eight consecutive `success` floor runs over seven hours, every one skipped.
+- **#4111.** At filing, `ci-wait.py` printed `GREEN on d50d41fd` beside a true distance of 8 commits.
+- **#4203 / corpus #371.** The gate concluded `failure` at 20:04:28Z, corpus #371 merged at
+  20:21:08Z, and a body edit at 20:50:05Z produced a fresh `success`: 46 minutes stale.
+- **#3942.** The blocked PR showed 13/13 checks green and `mergeable: MERGEABLE`.
+- **#4110.** A paged read reported about 81 queued runs across three comments while `total_count`
+  said 433; a "76 -> 40, it is draining" was page turnover.
+- **#3922.** Measured four times; one window held `main` red for 9h45m and blocked five PRs. The
+  inherited total fell from 17 to 13 in twenty minutes when one of four foreign pairs merged.
+- **#4092.** Twelve open PRs went red on codeunit 60974. Across thirteen rebases, twelve patch-ids
+  were identical and one changed with zero differing added/removed lines; of fifteen red PRs, two
+  were red on their own (`Failed: 1, Passed: 5641` and `Failed: 2, Passed: 5692`).

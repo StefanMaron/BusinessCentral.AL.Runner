@@ -15,9 +15,8 @@ the assignee's login is theirs. The answer changes what the assignee is worth:
 | another loop on the **same** account | **nothing** — same login, so it cannot say *which* loop | read on — the open-PR check below is what resolves it |
 | a loop on a **different** account | **everything** — a real boundary, and it is authoritative | **stop**, per `branch-and-pr.md`'s assignee boundary; nothing below waives it |
 
-Measured 2026-09-22: five remote `agent/fbk-*/…` branches and three `agent: fbk-*` labels from
-a second agent-running account, whose newest pull request here is 2026-09-12 — so the
-cross-account case is real and currently quiet, not hypothetical and not busy.
+Measured 2026-09-22: remote `agent/fbk-*/…` branches and `agent: fbk-*` labels from a second
+agent-running account — so the cross-account case is real, not hypothetical.
 
 **The branch prefix is the same discriminator, and it is the stronger one**: `agent/fbk-2/…`
 versus `agent/stma-auto-1/…` cannot be rewritten by another loop, where a label can.
@@ -78,7 +77,7 @@ close on merge — not a grep of the body.
 
 **But the parse LAGS the PR's creation, so a fresh PR can read as claiming nothing.** Measured
 on PR #4119: created through the REST endpoint, `closingIssuesReferences` came back **empty**
-and resolved to `[4111]` about **twelve seconds** later, with a correct closing declaration for
+and resolved to `[4111]` only **seconds** later, with a correct closing declaration for
 that issue in the
 body throughout. Nothing reports the pending state — an empty array is what a PR closing no
 issue also returns.
@@ -147,21 +146,20 @@ window a completion-time signal cannot cover:
 tools/review-claim.py --pr <N> --post --agent-id <YOUR-ID>
 ```
 
-Measured over the 60 most recent pull requests on 2026-09-19, counting only repeats on the
-**identical head**, where nothing about the PR changed between the passes: **18 of 59 PRs (31%)
-carry two or more verdicts on one head**, and **17 of those 19 pairs are under 15 minutes apart**
-(median 5.5 min) against a measured ~15.6 min/PR review. So the second reviewer usually started
-while the first was still running — #4306 has two verdicts on `4cfe233e` **123 seconds** apart —
-and a `status: reviewed` label written when a review *finishes* would have been too late for 17
-of the 19 (#4284).
+Measured over recent pull requests on 2026-09-19, counting only repeats on the **identical
+head**, where nothing about the PR changed between the passes: **two or more verdicts on one head
+were common**, and **most such pairs landed closer together than one review takes**. So the second
+reviewer usually started while the first was still running — #4306 has two verdicts on
+`4cfe233e` minutes apart — and a `status: reviewed` label written when a review
+*finishes* would have been too late for nearly all of them (#4284).
 
 **Trap: this reports, it never blocks, and that is deliberate.** A second pass is sometimes
-right — the fourth pass on #4281 produced findings the first three did not. What was missing is
+right — a later pass on #4281 produced findings the earlier ones did not. What was missing is
 not a lock but a signal, so that spending a second review is a decision someone made rather than
 an accident. The tool has no flag to route around, because nothing is in the way.
 
 **Second trap: a claim is about a HEAD, and it expires.** A claim naming a superseded head, or
-one older than 45 minutes, is reported and does not hold — a reviewer that died mid-pass must not
+one older than `tools/review-claim.py`'s `--max-age`, is reported and does not hold — a reviewer that died mid-pass must not
 lock a PR forever, which is the same judgement the abandoned-draft clause above makes. And exit 3
 is not exit 0: "nobody is reviewing this" and "I could not find out" send a coordinator to
 opposite actions.

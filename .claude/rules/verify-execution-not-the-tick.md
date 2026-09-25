@@ -1,8 +1,8 @@
 # A green tick does not prove execution — and the check for it false-zeros
 
-Before merging a corpus PR, confirm the tests you added actually **ran**: corpus PR #220
-carried 32 new tests, all 16 legs went green, and none of the 32 ever executed, because BC's
-per-object codegen had failed and the other 2639 tests carried the run.
+Before merging a corpus PR, confirm the tests you added actually **ran**: corpus PR #220's
+new tests never executed while every leg went green, because BC's per-object codegen had failed
+and the rest of the corpus carried the run.
 
 The check itself has produced a wrong answer — **always zero, always in the shape of a result**
 — by five mechanisms (#3311), and zero is the answer that ends an investigation.
@@ -45,7 +45,7 @@ instead of running it.
 **A zero from a pattern you chose is not evidence.** Confirm it with a second,
 differently-shaped query whose shape does not depend on the same assumption:
 
-- the harness's own summary line, `2915 total, 2915 passed, 0 failed, 0 skipped` — it
+- the harness's own summary line, `<N> total, <N> passed, 0 failed, 0 skipped` — it
   distinguishes a leg that ran a suite from one that never reached the test phase;
 - the count of *all* PASS names on the leg, which tells you the log parsed at all;
 - for a prefix question, grep for one full test name copied from the `.al` file.
@@ -59,10 +59,10 @@ investigating — and the tool's answer is the one nothing else cross-checks. Th
 |---|---|---|
 | a `\| tail` pipeline's `$?` | 0 | it is 0 whatever the tool returned (#3864) |
 | an exit-code claim about `ci-wait.py` | "exits 0 on a non-verdict" | never re-run directly; it exits 2 |
-| a log pattern for `PASS +<name>` | 6 of 9 tests | the `(known-gap)` column widened the gap the `+` had to span |
+| a log pattern for `PASS +<name>` | some of the codeunit's tests, not all | the `(known-gap)` column widened the gap the `+` had to span |
 
-The third is the sharpest: **six of nine is exactly the shape of a real finding** — "that codeunit
-did not run" — on a leg that was green. A second, differently-shaped query found all nine.
+The third is the sharpest: **a partial count is exactly the shape of a real finding** — "that
+codeunit did not run" — on a leg that was green. A second, differently-shaped query found them all.
 
 So when a query about a run returns something surprising, re-derive it a second way **before**
 reporting it, and treat the instrument with the suspicion you would give the subject: a tool that
@@ -82,7 +82,7 @@ surprising result rather than by the instrument:
 | "are any ids duplicated?" | the id alone, repo-wide | `(object kind, id)`, scoped to one `app.json`'s `idRanges` |
 
 The first produced an id that was genuinely free in the tree measured and taken in the tree
-pushed to. The second produced an all-zeros table. The third produced **61 duplicates** that do
+pushed to. The second produced an all-zeros table. The third produced **dozens of duplicates** that do
 not exist, because a codeunit and a table may share an id.
 
 **Ask what the query read, not only what it returned.** A checkout resolved elsewhere, a
@@ -91,9 +91,9 @@ all return clean answers to a question nobody asked.
 
 **A fourth instance, and the one least likely to be re-checked: the coordinator's own number,
 supplied while correcting an agent.** Told that a permission mask was case-sensitive on one
-codeunit, the coordinator "corrected" the scale to 27 lowercase-bearing entries. All 27 were on
-**Tables**; the scan walked every `Properties` bag without tracking which object kind owned it,
-and the issue's surface was codeunits, where the true count is **one**. The agent re-derived the
+codeunit, the coordinator "corrected" the scale to a much larger count of lowercase-bearing
+entries. Every one of them was on **Tables**; the scan walked every `Properties` bag without tracking which object kind owned it,
+and the issue's surface was codeunits, where there was **a single** such entry. The agent re-derived the
 figure instead of relaying it and found the split.
 
 Two things make that shape worse than an agent's own miss. A correction arrives with authority,
@@ -111,75 +111,78 @@ someone who did the work feels redundant.
 Measured six times, each caught only downstream — and the last two are the author of the
 re-derivation sentence failing to apply it:
 
-| the number | what it was | how far it travelled |
+| the figure | what was wrong with it | how far it travelled |
 |---|---|---|
-| "seven orphaned registrations" | **eight**, and one member name was invented by expanding a brace shorthand | a PR body and three dispatch briefs (#3940) |
-| "2 of the **14** rules" | **15** | an issue body, a PR body, a commit message, then merged into `CLAUDE.md` as measured fact (#3972) |
-| "I grepped diff **lines**" — an account of how the 14 arose | a line grep returns **69**; the real cause is unrecoverable | the correction's own issue and PR body |
-| "**two** distinct binaries" | **four** — all four hashes differ | a PR body and a coordinator comment praising it for binary-identity discipline |
-| "1,573 codeunit ids" | **1,690** — per-chunk 226/353/348/383/380, every chunk off by 17-35 | two issue comments, a PR comment, a 255-line test-file header (#4090) |
-| "four scratch repositories, both stale-ref orderings × `--soft`/`--hard`" | the dot-count claim those figures supported does not reproduce at all | **the shipped rule text on `main`** (#4059) |
+| a count of orphaned registrations | an undercount, with one member name invented by expanding a brace shorthand | a PR body and several dispatch briefs (#3940) |
+| a count of rules | off by one | an issue body, a PR body, a commit message, then merged into `CLAUDE.md` as measured fact (#3972) |
+| an account of how that count arose | the method it named does not produce it; the real cause is unrecoverable | the correction's own issue and PR body |
+| a count of distinct binaries | an undercount — every hash differed | a PR body and a coordinator comment praising it for binary-identity discipline |
+| a count of codeunit ids | every per-chunk figure off | issue comments, a PR comment, a test-file header (#4090) |
+| the scratch-repository orderings behind a dot-count claim | the claim they supported does not reproduce at all | **the shipped rule text on `main`** (#4059) |
 
-Every one reads correctly, arrives with provenance, and is cheap to check: **`sha256sum` on four
-files, `git diff --name-status | wc -l`, one `grep -c`.** The cost of re-deriving is seconds; the
-cost of not is that the figure reaches a rule file, where the next reader inherits it.
+Every one reads correctly, arrives with provenance, and is cheap to check — a `sha256sum`, a
+`git diff --name-status | wc -l`, a `grep -c`. The cost of re-deriving is seconds; the cost of
+not is that the figure reaches a rule file, where the next reader inherits it. The figures
+themselves are in `docs/incidents/verify-execution-not-the-tick.md`.
 
 **Re-derive a number before you repeat it in anything durable** — an issue, a PR body, a commit
 message, a rule. Passing one along unchecked makes you its second source, and a reader cannot tell
 a number you verified from one you forwarded.
 
-Note the fourth row errs *toward* caution, which is the safe direction for binary identity — but it
-is still wrong, and `CLAUDE.md` asks you to cite the binaries you measured, not a count of them.
+Note the binaries row errs *toward* caution, which is the safe direction for binary identity — but
+it is still wrong, and `CLAUDE.md` asks you to cite the binaries you measured, not a count of them.
 
-**Checking one component of a figure is not checking the figure.** The fifth row's author had
-verified one component — that the population came in five chunks, against the package — and
+**Checking one component of a figure is not checking the figure.** The codeunit-id row's author had
+verified one component — how many chunks the population came in, against the package — and
 repeated the rest as though the whole number had been measured. A partly-checked figure carries
 the full authority of a checked one, to its author most of all.
 
 **And a conclusion that survives the error is what removes the last chance of noticing.** Those
-wrong per-chunk figures gave "77.4% lost"; the true ones give **77.3%**. Nothing downstream looked
-wrong, because nothing downstream *was* wrong — so the number was published in four places. The
-corollary is uncomfortable and worth stating plainly: **a figure whose precision does not change
-any decision is the one least likely to be checked, and it is not therefore harmless** — it is
-what a later reader cites for a decision that *is* sensitive to it.
+wrong per-chunk figures gave a headline percentage within a rounding step of the true one, so
+nothing downstream looked wrong, because nothing downstream *was* wrong — and the number was
+published in several places (#4090). The corollary is uncomfortable and worth stating plainly:
+**a figure whose precision does not change any decision is the one least likely to be checked,
+and it is not therefore harmless** — it is what a later reader cites for a decision that *is*
+sensitive to it.
 
 **Re-derive, do not relay, a correction you are handed.** A correction arrives with the authority
 of someone who found an error, which is the last thing that gets re-tested. #4059's own brief
-carried one — that a claim's variable was "three-way, eight orderings" — and re-deriving it in
-three scratch repositories produced a *different and larger* correction: the dot-count remedy the
-figures decorated cannot work at all, because `git reset --soft origin/main` makes `origin/main`
-HEAD's parent, so the merge base **is** `origin/main` and three-dot equals two-dot by construction
+carried one, about how many orderings a claim depended on, and re-deriving it in scratch
+repositories produced a *different and larger* correction: the dot-count remedy the figures
+decorated cannot work at all, because `git reset --soft origin/main` makes `origin/main` HEAD's
+parent, so the merge base **is** `origin/main` and three-dot equals two-dot by construction
 (measured, both `b6ce42df`). Relaying the brief would have published a second wrong number in the
 same sentence.
 
-### Does this want a tool? Mostly no — and the sweep says why
+### Does this want a tool? No — do not write the count
 
-#4059 asked. Measured on `775e3d02`: 295 raw numeric tokens across `.claude/rules/` and
-`CLAUDE.md`, of which 26 are countable claims. Re-deriving the cheaply checkable ones gave **one
-real drift and two false alarms of my own making** — `RecordPatches` "94 files" was genuinely 96,
-while "200 files" and "20 comments" were my grep reading a different subject than the sentence
-meant. That is the fourth mechanism above, fired by the checking tool itself, at a rate of two in
-three.
+#4059 asked whether the figures in `.claude/rules/` and `CLAUDE.md` want a mechanical check. A
+sweep re-deriving them found one real drift — `RecordPatches`' partial-class file count, wrong
+within a day of being written — and false alarms of the sweep's own making, where its grep read a
+different subject than the sentence meant. That is the fourth mechanism above, fired by the
+checking tool itself. **A guard that cannot tell which subject a sentence measures inherits that
+error**, and a check that is often wrong trains its readers to dismiss it — so do not add one.
 
-**A guard that cannot tell which subject a sentence measures inherits that rate**, and a check
-wrong two times in three trains its readers to dismiss it. So the split is by what the number is
-*about*:
+The answer is upstream of any guard: **a figure that changes without anyone editing the sentence
+is not written at all** (owner's direction, #4539). #4059 answered it the other way for
+tree-state counts, pinning them with a test; that kept the numbers in the prose with a maintenance
+cost attached. #4539 removed the counts and reshaped the pin into
+`tools/test_partial_class_claims.py`, which checks the claim — each named class really spans
+several files — without a number. So the split is by what the number is *about*:
 
-| the figure is about | remedy |
+| the figure is about | what to write |
 |---|---|
-| **the tree as it is now** — a file count, a call-site count, a member list | **pinnable**: one unambiguous query settles it, and it drifts silently. `tools/test_partial_class_counts.py` |
-| **a moment** — a run's output, a diff that no longer exists, an assembly hash | **citable only**: say what you ran, so the next reader can re-run it |
-
-The second is the population that travels, and citation is its whole remedy. `RecordPatches` was
-written as 94 on 2026-09-12 and was 96 by 2026-09-13 — wrong within a day, which is what a pin is
-for and what prose cannot fix.
+| **the tree, the queue or the box as it is now** — a file count, a call-site count, a label count, a backlog share | **nothing numeric**: state the claim and the trap, and name the query that answers it, so the reader measures it themselves |
+| **the configuration** — how many legs a PR runs, which versions | **the source file** (`.github/pr-bc-versions.txt`, `.github/bc-versions.txt`), never a copy of what it says today |
+| **a moment** — a run's output, a diff that no longer exists, an assembly hash | **the citation**: the issue, PR or run id, so the next reader can re-run it; the numbers go in `docs/incidents/` if anywhere |
+| **a value the reader acts on** — an exit code, a flag, a timeout | **the value** — it is the instruction |
 
 ## Which legs were ever going to run it
 
-The corpus runs 16 legs, eight cloud and eight OnPrem, and **only the eight cloud legs are the
-required contexts**. The OnPrem legs run a different, much smaller suite and have run none of
-the recent cloud additions. So on a cloud-app corpus PR, eight zeros are the correct answer and
-eight non-zeros are the finding; `corpus-pass-count.py` labels the OnPrem legs `not-run` for
+The corpus runs a cloud and an OnPrem leg for every BC version in its `.github/workflows/ci.yml`
+matrix, and **only the cloud legs are the required contexts**. The OnPrem legs run a different,
+much smaller suite and have run none of the recent cloud additions. So on a cloud-app corpus PR,
+zeros on the OnPrem legs are the correct answer and non-zeros on the cloud legs are the finding; `corpus-pass-count.py` labels the OnPrem legs `not-run` for
 exactly that reason.
 
 ## Sister rules

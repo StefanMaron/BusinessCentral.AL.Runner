@@ -70,3 +70,12 @@ comments to state the *real* reason, so the question is not re-litigated from a 
   ("Action Back must be disabled") and #3504's 114 ("should not be editable") — which is what
   an unconditional `true` predicts. `Assert.IsTrue` passes vacuously, and that count is
   unmeasured.
+
+## Figures moved out of the rule (#4539)
+
+The rule now cites these measurements rather than restating them; the figures are what each
+citation measured, frozen to that moment. Population figures (counts of labels, files,
+transcripts on one box) were deleted outright rather than moved, because they go stale here too.
+
+- **#3825.** Compiling Base Application's shipped AL source with BC's own compiler measured
+  257 s and 8.83 GiB.

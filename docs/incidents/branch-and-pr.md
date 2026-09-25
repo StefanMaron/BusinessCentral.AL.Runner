@@ -170,3 +170,13 @@ inside a code span. Markdown is not protection: GitHub's parser does not see it.
 quoting the defect has to write `#<N>` or put a preposition in, which is why the test arms above
 use `#789` inside deliberately safe framings and the rule text writes `#111`/`#222` rather than
 real numbers.
+
+## Figures moved out of the rule (#4539)
+
+The rule now cites these measurements rather than restating them; the figures are what each
+citation measured, frozen to that moment. Population figures (counts of labels, files,
+transcripts on one box) were deleted outright rather than moved, because they go stale here too.
+
+- **#1883 / #3960.** The claim's timeline records two `labeled` events at `20:05:42Z` and zero
+  `unlabeled`.
+- **#4294.** The two loops tripped the past-tense closing-keyword trap within four hours.

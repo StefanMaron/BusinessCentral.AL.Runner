@@ -578,3 +578,13 @@ prevent round 3's.
 | 3 | the `.gitignore` pin | substring test, green on rename and comment-out | a control that should have redded |
 | 4 | the tree census | passed over an empty-but-successful read | review |
 | 5 | the reader's repository boundary | unpinned, while the writer's was pinned | the asymmetry |
+
+## Figures moved out of the rule (#4539)
+
+The rule now cites these measurements rather than restating them; the figures are what each
+citation measured, frozen to that moment. Population figures (counts of labels, files,
+transcripts on one box) were deleted outright rather than moved, because they go stale here too.
+
+- **#3923.** `~ExtensionRuntimeDeltasTests` returned 8 of 9 tests; mutating the correctly-named
+  method gave 7 of 9 red.
+- **PR #3947.** Returning `null` from the `bool?` reader reddened all three tests.

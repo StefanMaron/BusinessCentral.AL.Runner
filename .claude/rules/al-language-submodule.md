@@ -118,9 +118,9 @@ repository until someone chose to take it, and nothing chooses now. So for each 
 newly failing, either land the runner fix, or add an entry naming the issue that tracks it —
 searching the open queue first and filing a runner-gap issue only when none exists
 (`file-issues-for-gaps.md`). Two things to get right, both learned the first time this fired
-(#3737, corpus PR #273 → six failures on `Codeunit60559.RunObjectNaming*`, tracked by #2943):
-name the **methods**, not `Method: "*"`, unless every test in the codeunit fails — two of that
-codeunit's eight passed, and a wildcard would have claimed those as failures and drifted the
+(#3737, corpus PR #273 → failures on `Codeunit60559.RunObjectNaming*`, tracked by #2943):
+name the **methods**, not `Method: "*"`, unless every test in the codeunit fails — some of that
+codeunit's tests passed, and a wildcard would have claimed those as failures and drifted the
 other way; and read the failing set from a leg that **finished**, because a leg that died in its
 unit tests never ran the corpus at all and reports no failures rather than none.
 
