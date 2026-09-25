@@ -1139,14 +1139,15 @@ public sealed class ExtensionRuntimeDeltasTests
 
     /// <summary>
     /// An actionref stating no <c>Visible</c> gets BC's <c>Visible="1"</c> — 5 of 5 captured
-    /// documents. A plain action stating nothing gets none (BC writes no Visible on 774's
-    /// unstated actions either), and a plain action's stated literal is unchanged.
+    /// documents. A plain action stating nothing gets its own table's <c>true</c>, not the
+    /// actionref's <c>1</c> (docs/metadata-equivalence.md#deltas-action-defaults), and a plain
+    /// action's stated literal is unchanged.
     /// </summary>
     [Fact]
-    public void An_actionref_gets_Visible_1_and_a_plain_action_does_not()
+    public void An_actionref_gets_Visible_1_and_a_plain_action_gets_its_own_default()
     {
         var (actions, _) = RenderDefaults();
-        Assert.Null(actions[0].Attribute("Visible"));
+        Assert.Equal("true", actions[0].Attribute("Visible")?.Value);
         Assert.Equal("false", actions[1].Attribute("Visible")?.Value);
         Assert.Equal("1", actions[2].Attribute("Visible")?.Value);
     }
