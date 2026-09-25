@@ -193,4 +193,27 @@ public sealed class CodeunitSubscriberMethodTableTests
         Assert.Equal((false, true), RecordPatches.DecodeSubscriberCallOptions(permission));
         Assert.Equal((false, false), RecordPatches.DecodeSubscriberCallOptions(0));
     }
+
+    /// <summary>
+    /// Every [NavEvent] publisher the assembly declares must be in the symbol file's list, or the
+    /// codeunit is withheld. The shipped symbol files never omit one, so this drives the check
+    /// with codeunit 3906's list minus OnVerifyAddtoAllowedList — and, as the control, the full
+    /// list, which must be accepted.
+    /// </summary>
+    [SkippableFact]
+    public void A_publisher_the_symbol_file_omits_withholds_the_codeunit()
+    {
+        var cu = RegisteredCodeunits().FirstOrDefault(c => c.Id == 3906 && c.Bundle.AppName == "System Application");
+        Assert.NotNull(cu);
+        var app = MetadataEquivalenceHarness.FindAppPackage(cu!.Bundle)!;
+
+        BcAppSymbolCache.CodeunitMethodSymbol Publisher(int id, string name)
+            => new(id, name, "EventPublisherAttribute", "InternalEvent", Parameters: []);
+        var add = Publisher(-1957074930, "OnVerifyAddtoAllowedList");
+        var modify = Publisher(-476582944, "OnVerifyModifyAllowedList");
+
+        Assert.Null(RecordPatches.CodeunitMethodTableRefusalForTests(app, 3906, [add, modify]));
+        Assert.Equal("publisher 'OnVerifyAddtoAllowedList' is not in the symbol file",
+            RecordPatches.CodeunitMethodTableRefusalForTests(app, 3906, [modify]));
+    }
 }

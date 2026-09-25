@@ -1800,7 +1800,7 @@ Two follow-ups were filed from it, both for gaps no open issue covered:
   argument index 1 means `GlobalVarAccess` for `IntegrationEvent` and `Isolated` for
   `InternalEvent`, so a position-keyed rule is right 128 times and wrong 28.
 
-The rest point at **#3788** (codeunit derivation), **#3797** (xmlport derivation), **#4279**
+The rest point at **#4605** (codeunit `EventSubscriberInstance`), **#3797** (xmlport derivation), **#4279**
 (enum/permission-set residue) and **#4282** (page properties `EmitPageXml` does not read).
 
 **One page resists derivation and is named rather than smoothed over.** Page 1998's symbol

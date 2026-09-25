@@ -4,8 +4,8 @@
     {
       "member": "Codeunit.CodeUnit.EventSubscriberInstance",
       "statedBy": "expected",
-      "reason": "TRIAGED (#4400): the runner SHOULD state it — derivable from data the symbol file already carries, and the omission is a gap. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): BC states it on 558/558 codeunits, 'StaticAutomatic' 555 and 'Manual' 3; SymbolReference.json declares an EventSubscriberInstance property on exactly 3, all 'Manual', so 'declared value, else StaticAutomatic' reproduces BC on 558 of 558 with no residue. Cost: one field on CodeunitMetaRow plus one SetAttribute in TryBuildCodeunitMetadataEquivalenceXml. NOT AL-observable — CodeUnit Metadata (2000000137) declares no such column (its 11 fields are read from the platform package's own CodeUnitMetadata.Table.al), so this is document-equivalence only. Tracked on #3788, the codeunit-derivation issue; that issue's scope is the members BC's emitter states and the runner does not, which this is.",
-      "issue": 3788
+      "reason": "TRIAGED (#4400): the runner SHOULD state it — derivable from data the symbol file already carries, and the omission is a gap. Re-derived on BC 28.1.49838.53910, both ground-truth bundles (1,286 objects): BC states it on 558/558 codeunits, 'StaticAutomatic' 555 and 'Manual' 3; SymbolReference.json declares an EventSubscriberInstance property on exactly 3, all 'Manual', so 'declared value, else StaticAutomatic' reproduces BC on 558 of 558 with no residue. Cost: one field on CodeunitMetaRow plus one SetAttribute in TryBuildCodeunitMetadataEquivalenceXml. NOT AL-observable — CodeUnit Metadata (2000000137) declares no such column (its 11 fields are read from the platform package's own CodeUnitMetadata.Table.al), so this is document-equivalence only. Tracked on #4605 (re-homed from #3788, which closed with the codeunit method table).",
+      "issue": 4605
     },
     {
       "member": "Codeunit.CodeUnit.MetadataVersion",
