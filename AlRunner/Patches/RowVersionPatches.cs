@@ -192,6 +192,7 @@ public static partial class RowVersionPatches
         // RowVersionPatches.SystemIdIntegrity.cs for why that copy includes SystemId).
         PreserveSystemIdOnModify(provider, recordBuffer);
         _pendingModifyRestore = null;
+        _modifyRestored = false;
         if (ResolveStampIndex(provider, recordBuffer) is not int index) return;
         var previous = _pItem!.GetValue(recordBuffer, new object[] { index });
         _pItem.SetValue(recordBuffer, NextRowVersion(), new object[] { index });
@@ -218,22 +219,57 @@ public static partial class RowVersionPatches
         _pendingModifyRestore = null;
         if (!ReferenceEquals(pending.Buffer, oldRecord)) return;
         _pItem!.SetValue(pending.Buffer, pending.Previous, new object[] { pending.Index });
+        _modifyRestored = true;
+    }
+
+    // Set when OnModifyOutputBuilt restored a database-backed Modify's input; turned into
+    // _keepOwnResult by the table-version bump that restore always causes, in the same ModifyAsync.
+    [ThreadStatic] private static bool _modifyRestored;
+    [ThreadStatic] private static bool _keepOwnResult;
+    private static FieldInfo? _fBufferedResults; // ResultSet.bufferedResults
+
+    /// <summary>
+    /// Cecil prepend on DataAccess.IncrementBumperTokenWithoutInvalidatingEnumerator. Arms
+    /// <see cref="TryUpdateAtIndex"/> for this bump only when it comes from a database-backed
+    /// Modify; any other bump (Delete, a temporary table's Modify) disarms it.
+    /// </summary>
+    public static void OnTableVersionBump()
+    {
+        _keepOwnResult = _modifyRestored;
+        _modifyRestored = false;
     }
 
     /// <summary>
-    /// Replaces TempTableDataProvider.get_ShouldResultSetBufferRows. True for the SQL stand-in,
-    /// BC's own false for a `temporary` table.
+    /// Replaces ResultSet.TryUpdateAtIndex. BC's body verbatim, plus one case: an unbuffered
+    /// result set answers true once, for the bump of a database-backed Modify.
     ///
-    /// <para>Observably equivalent: a database-backed table lives in SQL on real BC, whose
-    /// provider inherits DataProvider's true. The flag decides one thing AL can see: after a
-    /// Modify bumps the table version (#4678), ResultSetEnumerator.UpdateCurrentRowAndClone keeps
-    /// the modifying record's own result valid only if ResultSet.TryUpdateAtIndex has a buffered
-    /// row to overwrite. Without it, Find() on a record that modified itself out of its own filter
-    /// answers false; BC finds it (corpus 60367 OwnFilter_*, Base Application test 134932
-    /// MakeTwoMultilineDocumentsOutOfBalanceByMovingToThirdDocument).</para>
+    /// <para>Observably equivalent: on SQL the modifying record's result set is buffered, so
+    /// BC overwrites the row and the record's own result stays valid (Find() on a record that
+    /// moved itself out of its filter finds it: corpus 60367 OwnFilter_*, Base Application test
+    /// 134932). The runner's result sets are unbuffered and its Next() reads the live store, so
+    /// staying valid without a stored copy is what main did before #4678 for every Modify.
+    /// Trap: SQL's buffer is dropped after ResultSet.MaxBufferedResults (1024) rows, after
+    /// which BC does invalidate; this does not model that.</para>
     /// </summary>
-    public static bool ShouldResultSetBufferRows(object? provider)
-        => BlobStoreIsolationPatches.IsDatabaseBacked(provider);
+    public static bool TryUpdateAtIndex(object resultSet, int index, object? recordBuffer)
+    {
+        bool keep = _keepOwnResult;
+        _keepOwnResult = false;
+        if (_fBufferedResults?.DeclaringType != resultSet.GetType())
+            _fBufferedResults = resultSet.GetType().GetField("bufferedResults",
+                    BindingFlags.NonPublic | BindingFlags.Instance)
+                ?? throw new InvalidOperationException("ResultSet.bufferedResults not found");
+        if (_fBufferedResults.GetValue(resultSet) is Array buffered)
+        {
+            if (index < buffered.Length)
+            {
+                buffered.SetValue(recordBuffer, index);
+                return true;
+            }
+            return false;
+        }
+        return keep;
+    }
 
     private static object NextRowVersion()
     {

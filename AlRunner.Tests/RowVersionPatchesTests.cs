@@ -49,6 +49,7 @@ public sealed class RowVersionPatchesTests
             "_pSystemIdField", "_pSystemIdProp", "_pReadOnlyBuffer", "_pReadOnlyBufferSystemId",
             "_pTableCaptionSafe", "_fPrimaryTree", "_mCreateUniqueConstraint", "_pStoredItem",
             "_pendingInsertStampIndex", "_pendingModifyRestore",
+            "_modifyRestored", "_keepOwnResult", "_fBufferedResults",
         })
         {
             var f = t.GetField(name, BindingFlags.NonPublic | BindingFlags.Static)
@@ -344,22 +345,73 @@ public sealed class RowVersionPatchesTests
         Assert.Null(buffer[0]);
     }
 
-    // ── #4680: the SQL stand-in buffers its result sets, as SQL's provider does ──
-    // Without the buffer, the version bump above invalidates the MODIFYING record's own result,
-    // and Find() on a record that moved itself out of its filter answers false (corpus 60367).
+    // ── #4680: the bump of a database-backed Modify keeps the modifier's own result valid ──
+    // BC keeps it valid by overwriting a buffered row, which SQL's result sets have and the
+    // runner's do not; corpus 60367 OwnFilter_* pins the AL-visible half.
 
-    [Fact]
-    public void ShouldResultSetBufferRows_DatabaseBackedProvider_IsTrue()
+    private sealed class FakeResultSet
+    {
+#pragma warning disable CS0414, CS0649 // read by reflection, as ResultSet.bufferedResults is
+        private object?[]? bufferedResults;
+#pragma warning restore CS0414, CS0649
+        public FakeResultSet(int? buffered) => bufferedResults = buffered is int n ? new object?[n] : null;
+        public object?[]? Buffered => bufferedResults;
+    }
+
+    private static void DatabaseBackedModifyUpToTheBump()
     {
         var provider = MarkDatabaseBackedProvider();
-        Assert.True(RowVersionPatches.ShouldResultSetBufferRows(provider));
+        var buffer = new FakeBuffer(new FakeMetaTable(new FakeMetaField(0)), slotCount: 1) { [0] = NavBigInteger.Create(5) };
+        RowVersionPatches.OnBeforeModify(provider, CompanyToken, buffer);
+        RowVersionPatches.OnModifyOutputBuilt(buffer);
+        RowVersionPatches.OnTableVersionBump();
     }
 
     [Fact]
-    public void ShouldResultSetBufferRows_TemporaryProvider_KeepsBcsFalse()
+    public void TryUpdateAtIndex_Unbuffered_AfterDatabaseBackedModifyBump_SucceedsOnce()
     {
-        Assert.False(RowVersionPatches.ShouldResultSetBufferRows(new object()));
-        Assert.False(RowVersionPatches.ShouldResultSetBufferRows(null));
+        ResetReflectionCache();
+        var set = new FakeResultSet(buffered: null);
+        DatabaseBackedModifyUpToTheBump();
+
+        Assert.True(RowVersionPatches.TryUpdateAtIndex(set, 0, new object()));
+        Assert.False(RowVersionPatches.TryUpdateAtIndex(set, 0, new object()));
+    }
+
+    [Fact]
+    public void TryUpdateAtIndex_Unbuffered_BumpWithoutARestoredModify_KeepsBcsFalse()
+    {
+        ResetReflectionCache();
+        var set = new FakeResultSet(buffered: null);
+        DatabaseBackedModifyUpToTheBump();
+        RowVersionPatches.OnTableVersionBump(); // a second bump, e.g. a Delete, disarms
+
+        Assert.False(RowVersionPatches.TryUpdateAtIndex(set, 0, new object()));
+    }
+
+    [Fact]
+    public void TryUpdateAtIndex_Unbuffered_TemporaryModify_KeepsBcsFalse()
+    {
+        ResetReflectionCache();
+        var set = new FakeResultSet(buffered: null);
+        var buffer = new FakeBuffer(new FakeMetaTable(new FakeMetaField(0)), slotCount: 1);
+        RowVersionPatches.OnBeforeModify(new object(), CompanyToken, buffer); // never marked => temporary
+        RowVersionPatches.OnModifyOutputBuilt(buffer);
+        RowVersionPatches.OnTableVersionBump();
+
+        Assert.False(RowVersionPatches.TryUpdateAtIndex(set, 0, new object()));
+    }
+
+    [Fact]
+    public void TryUpdateAtIndex_Buffered_IsBcsBody()
+    {
+        ResetReflectionCache();
+        var set = new FakeResultSet(buffered: 2);
+        var row = new object();
+
+        Assert.True(RowVersionPatches.TryUpdateAtIndex(set, 1, row));
+        Assert.Same(row, set.Buffered![1]);
+        Assert.False(RowVersionPatches.TryUpdateAtIndex(set, 2, row));
     }
 
     // ── Guard clauses stay quiet: nothing to stamp, no reflection even attempted ──

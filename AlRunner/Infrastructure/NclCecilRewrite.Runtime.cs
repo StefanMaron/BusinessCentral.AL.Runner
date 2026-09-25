@@ -963,13 +963,21 @@ public static partial class NclCecilRewrite
                     H(rowVersion, "OnModifyOutputBuilt"),
                     argSlots: 1); // oldRecord — the buffer OnBeforeModify stamped
 
-                // That version bump also reaches the MODIFYING record's own result set; BC keeps
-                // it valid only by writing the output into the set's row buffer, which exists
-                // only when the provider asks for buffering. The SQL provider does; the SQL
-                // stand-in answers TempTableDataProvider's false. Answer as SQL for it.
+                // That bump also reaches the MODIFYING record's own result set. BC keeps it valid
+                // only if ResultSet.TryUpdateAtIndex can overwrite a buffered row, which on SQL it
+                // can; the SQL stand-in's result sets are unbuffered (buffering would also make
+                // them cacheable in TransactionalDataCache, which test rollback does not reset).
+                // So the bump a database-backed Modify causes arms one TryUpdateAtIndex success.
+                // IncrementBumper... is the only caller of UpdateCurrentRowAndClone, which is the
+                // only caller of TryUpdateAtIndex (bc270..bc284, bodies unchanged).
+                PrependStaticCall(nclMod,
+                    ByParams(Rt + "DataAccess", "IncrementBumperTokenWithoutInvalidatingEnumerator",
+                        "Int32", "NCLMetaTable", "ResultSetEnumerator", "ReadOnlyRecordBuffer"),
+                    H(rowVersion, "OnTableVersionBump"),
+                    argSlots: 0);
                 ReplaceBodyWithHelper(nclMod,
-                    FindNclMethod(nclMod, Rt + "TempTableDataProvider", "get_ShouldResultSetBufferRows", 0),
-                    H(rowVersion, "ShouldResultSetBufferRows"));
+                    ByParams(Rt + "ResultSet", "TryUpdateAtIndex", "Int32", "ReadOnlyRecordBuffer"),
+                    H(rowVersion, "TryUpdateAtIndex"));
 
                 // ── Rename store-aliasing boundary for `temporary` records (issue #1765) ──
                 // A temporary record's BLOB committed with Modify() is LOST across a
