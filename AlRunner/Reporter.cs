@@ -532,14 +532,16 @@ public static class Reporter
 
     /// <summary>
     /// The run's last line (#4562): the verdict and what the exit code means, in the same
-    /// words as `--help`'s exit-code table.
+    /// words as `--help`'s exit-code table. A --jobs worker passes <paramref name="shard"/>, so
+    /// the only line starting `Result:` is the parent's, which states the process exit.
     /// </summary>
-    public static string ResultLine(int exitCode, int? forcedFrom = null)
+    public static string ResultLine(int exitCode, int? forcedFrom = null, bool shard = false)
     {
+        var label = shard ? "Shard result" : "Result";
         if (forcedFrom is int real && real != exitCode)
-            return $"Result: {(real == 0 ? "PASSED" : "FAILED")}, exit code {exitCode} "
+            return $"{label}: {(real == 0 ? "PASSED" : "FAILED")}, exit code {exitCode} "
                 + $"(--no-strict-exit; the run's own code is {real}: {ExitCodeMeaning(real)})";
-        return $"Result: {(exitCode == 0 ? "PASSED" : "FAILED")}, exit code {exitCode} ({ExitCodeMeaning(exitCode)})";
+        return $"{label}: {(exitCode == 0 ? "PASSED" : "FAILED")}, exit code {exitCode} ({ExitCodeMeaning(exitCode)})";
     }
 
     internal static string ExitCodeMeaning(int exitCode) => exitCode switch

@@ -294,10 +294,11 @@ public sealed class DependencyEmitExclusionEndToEndTests
         return app.ToArray();
     }
 
-    private static (string Output, int Exit) RunRunner(string bundlePath, string cacheDir)
+    private static (string Output, int Exit) RunRunner(string bundlePath, string cacheDir, string extraArgs = "")
     {
         var args = new System.Text.StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
+        args.Append(extraArgs);
         args.Append($" --cache \"{cacheDir}\"");
         args.Append($" \"{bundlePath}\"");
         var psi = new System.Diagnostics.ProcessStartInfo
@@ -372,6 +373,40 @@ public sealed class DependencyEmitExclusionEndToEndTests
             // dropping one of 203 objects on a headless-unavailable DotNet type.
             Assert.Equal(0, exit);
             Assert.Contains("MainBundle_RunsGreenWhileTheDependencyIsPartial", output, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// #4560 review: --output-json prints no closing "Action needed" block, so the gap must
+    /// still be written at discovery — deferring it there would print it nowhere. The stdout is
+    /// the JSON document, so the gap reaching the combined output means it reached stderr.
+    /// </summary>
+    [SkippableFact]
+    public void PartiallyEmittedDependency_IsStillReported_UnderOutputJson()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var root = TestScratch.FlatDir("al-runner-dex-json-");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var bundle = BuildFixture(root);
+            var cacheDir = Path.Combine(root, "cache");
+            Directory.CreateDirectory(cacheDir);
+
+            var (output, exit) = RunRunner(bundle, cacheDir, " --output-json");
+
+            // Positive control: the run produced its document, so the flag took effect.
+            Assert.Contains("\"exitCode\"", output, StringComparison.Ordinal);
+            Assert.DoesNotContain("Action needed (", output, StringComparison.Ordinal);
+            // The assertion: the gap, named, with no --verbose.
+            Assert.Contains("1 of this dependency's 2 object(s)", output, StringComparison.Ordinal);
+            Assert.Contains("DEX Dep Broken", output, StringComparison.Ordinal);
+            Assert.Equal(0, exit);
         }
         finally
         {

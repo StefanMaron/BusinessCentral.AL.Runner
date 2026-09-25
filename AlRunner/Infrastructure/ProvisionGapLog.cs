@@ -22,7 +22,8 @@
 //   Every gap reaches the "Action needed" block right before the Result line, once per app —
 //   printing each at discovery too repeated it per dependency edge (17 blocks for 7 apps).
 //   --verbose still prints it at discovery. Nothing is dropped: every bucket, including one
-//   that failed to compile or execute, carries its gaps to that block.
+//   that failed to compile or execute, carries its gaps to that block. A run that prints no
+//   such block (--output-json, --server) keeps the discovery write: see DeferToActionNeeded.
 namespace AlRunner.Infrastructure;
 
 internal static class ProvisionGapLog
@@ -41,12 +42,22 @@ internal static class ProvisionGapLog
     }
 
     /// <summary>
+    /// Set only by a run whose closing "Action needed" block will print the collected gaps
+    /// (#4560). Left false — --output-json, --server — every gap is written to stderr at
+    /// discovery, because nothing else would ever print it (loud-failures.md).
+    /// </summary>
+    internal static bool DeferToActionNeeded { get; set; }
+
+    /// <summary>Whether a gap is written at the moment it is found.</summary>
+    internal static bool WriteAtDiscovery => Log.Verbose || !DeferToActionNeeded;
+
+    /// <summary>
     /// Report one gap: recorded for the run's closing "Action needed" block, which prints it
-    /// once per app (#4560). Written at discovery only under --verbose.
+    /// once per app (#4560); written at discovery too when <see cref="WriteAtDiscovery"/>.
     /// </summary>
     internal static void Report(string message)
     {
-        if (Log.Verbose) Console.Error.WriteLine(message);
+        if (WriteAtDiscovery) Console.Error.WriteLine(message);
         lock (_lock) _gaps.Add(message);
     }
 

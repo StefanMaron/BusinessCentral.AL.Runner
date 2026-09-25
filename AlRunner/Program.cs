@@ -2535,6 +2535,9 @@ bool watchUi = watchMode
     && !Console.IsOutputRedirected
     && Spectre.Console.AnsiConsole.Profile.Capabilities.Interactive
     && Spectre.Console.AnsiConsole.Profile.Capabilities.Ansi;
+// #4560: only a run that prints the closing "Action needed" block may defer a provisioning gap
+// to it. --output-json prints no such block, and the dashboard's own view shows none.
+AlRunner.Infrastructure.ProvisionGapLog.DeferToActionNeeded = !serverMode && !outputJson && !watchUi;
 string watchBundleName = bundles.Count == 1
     ? Path.GetFileName(Path.GetFullPath(bundles[0]).TrimEnd(Path.DirectorySeparatorChar))
     : $"{bundles.Count} bundles";
@@ -2865,10 +2868,10 @@ foreach (var bundle in bundles)
                 // certain object-ID-0 failure later, and #1689 is precisely the report that
                 // nothing named it. One line per app, and only for a shape that cannot work.
                 // #4560: collected, and printed ONCE in the run's closing "Action needed" block
-                // (Reporter.PrintActionNeeded). At discovery only under --verbose.
+                // (Reporter.PrintActionNeeded); at discovery too when no such block will print.
                 foreach (var u in resolver.UnservableDependencies)
                 {
-                    if (AlRunner.Log.Verbose) Console.Error.WriteLine(u);
+                    if (AlRunner.Infrastructure.ProvisionGapLog.WriteAtDiscovery) Console.Error.WriteLine(u);
                     bundleProvisionGaps.Add(u);
                 }
                 // Also always-on, and for the same reason, but a weaker claim than the list
@@ -2878,7 +2881,7 @@ foreach (var bundle in bundles)
                 // same way, because the failure it precedes names nothing (#3719).
                 foreach (var g in resolver.ProvisioningGaps)
                 {
-                    if (AlRunner.Log.Verbose) Console.Error.WriteLine(g);
+                    if (AlRunner.Infrastructure.ProvisionGapLog.WriteAtDiscovery) Console.Error.WriteLine(g);
                     bundleProvisionGaps.Add(g);
                 }
                 // Compiler sees only non-workspace dirs in its .app scanner; the
@@ -2902,9 +2905,6 @@ foreach (var bundle in bundles)
                 // as `dep-load:<Name>` (see DependencyLoader.LoadAll). Wrapping it here too
                 // would nest, and nested stages double-count — see PhaseLog.Stage.
                 var loaded = depLoader.LoadAll(ordered, depRootDir);
-                // Platform runtime apps the load found symbol-only. Read straight after the load
-                // that produces them, before anything else can reset the collector.
-                bundleProvisionGaps.AddRange(AlRunner.Infrastructure.ProvisionGapLog.Collected);
                 // Issue #2239: same as "resolved N dep(s)" above — gated behind --verbose.
                 if (AlRunner.Log.Verbose)
                     Console.WriteLine($"  [{rel}] loaded {loaded.Count} dep assembl(ies)");
@@ -4336,6 +4336,9 @@ foreach (var bundle in bundles)
     // groups can abort in one and initialize cleanly in the next, and both facts belong to
     // this bucket. Draining also means the next bucket starts empty rather than inheriting
     // this one's condition.
+    // Everything ProvisionGapLog collected for this bundle — read HERE, after the last
+    // reporter (#4197's enumextension report runs after LoadAll), and before the next Reset.
+    bundleProvisionGaps.AddRange(AlRunner.Infrastructure.ProvisionGapLog.Collected);
     results.Add(new BucketResult(bundleAbs, bundleStage,
         bundleErrors, null, bundleTests,
         bundleEmit, bundleComp, bundleRun, ranGroupCount, bundleProvisionGaps,
@@ -5184,7 +5187,7 @@ if (!outputJson && !willResume)
     Reporter.PrintActionNeeded(allResults, Console.Out);
     Console.WriteLine();
     Console.WriteLine(Reporter.ResultLine(strictExitCode ? computedExitCode : 0,
-        strictExitCode ? null : computedExitCode));
+        strictExitCode ? null : computedExitCode, shard: AlRunner.Infrastructure.TestSelectionAudit.IsWorker));
 }
 
 // Exit non-zero if anything failed — the default since the v2 cut, matching main/v1.

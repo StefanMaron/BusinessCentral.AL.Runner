@@ -45,6 +45,41 @@ public sealed class ProvisionGapLogTests
         Assert.Equal(new[] { "a gap" }, ProvisionGapLog.Collected);
     }
 
+    /// <summary>
+    /// #4560 review: a run that prints no closing "Action needed" block (--output-json,
+    /// --server) must still write every gap at discovery, or the gap is printed nowhere.
+    /// Only a run that WILL print the block may defer it there.
+    /// </summary>
+    [Theory]
+    [InlineData(false, false, true)]   // no Action needed block: written at discovery
+    [InlineData(true, false, false)]   // the block will print it: deferred
+    [InlineData(true, true, true)]     // --verbose writes at discovery regardless
+    public void Report_WritesAtDiscovery_UnlessTheActionNeededBlockWillPrintIt(
+        bool deferred, bool verbose, bool expectWritten)
+    {
+        var original = Console.Error;
+        var (savedDefer, savedVerbose) = (ProvisionGapLog.DeferToActionNeeded, AlRunner.Log.Verbose);
+        var captured = new StringWriter();
+        try
+        {
+            ProvisionGapLog.Reset();
+            ProvisionGapLog.DeferToActionNeeded = deferred;
+            AlRunner.Log.Verbose = verbose;
+            Console.SetError(captured);
+            ProvisionGapLog.Report("a gap");
+        }
+        finally
+        {
+            Console.SetError(original);
+            ProvisionGapLog.DeferToActionNeeded = savedDefer;
+            AlRunner.Log.Verbose = savedVerbose;
+        }
+
+        Assert.Equal(expectWritten, captured.ToString().Contains("a gap"));
+        // Recorded either way: the block, when it prints, reads it from here.
+        Assert.Equal(new[] { "a gap" }, ProvisionGapLog.Collected);
+    }
+
     [Fact]
     public void Reset_ForgetsThePreviousBundlesGaps()
     {

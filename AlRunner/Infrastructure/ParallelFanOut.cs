@@ -406,6 +406,9 @@ internal static class ParallelFanOut
             worst = TestSelectionAudit.ExitCode;
         }
 
+        // The run's one `Result:` line, after every escalation above; the shards label theirs.
+        Console.WriteLine();
+        Console.WriteLine(Reporter.ResultLine(worst));
         ScratchDirs.Release(tempDir);
         return worst;
     }

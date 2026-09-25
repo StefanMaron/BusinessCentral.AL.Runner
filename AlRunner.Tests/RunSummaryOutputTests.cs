@@ -143,6 +143,68 @@ public sealed class RunSummaryOutputTests
         Assert.DoesNotContain(lines, l => l.Contains("AL emit:", StringComparison.Ordinal));
     }
 
+    private static string LastResultLine(string stdout) =>
+        Assert.Single(Lines(stdout), l => l.StartsWith("Result:", StringComparison.Ordinal));
+
+    /// <summary>
+    /// #4562: the Result line states the code the process exits with AFTER every escalation —
+    /// here an --output-junit path that cannot be written turns an all-passing run's 0 into 2.
+    /// </summary>
+    [SkippableFact]
+    public void ResultLine_StatesTheEscalatedExitCode()
+    {
+        TestArtifacts.SkipIfMissing();
+        // A directory where the file should go: the write fails after every test passed.
+        var junitDir = TestScratch.Dir("al-runner-run-summary-junit-is-a-dir");
+        Directory.CreateDirectory(junitDir);
+        var (stdout, stderr, exit) = Run(Fixture,
+            "--test", "Codeunit50150.CustomerInsertPasses", "--output-junit", $"\"{junitDir}\"");
+
+        Assert.True(exit == 2, $"the passing test alone, then a lost output file:\n{stdout}\n{stderr}");
+        Assert.StartsWith("Result: FAILED, exit code 2 (", LastResultLine(stdout));
+    }
+
+    /// <summary>
+    /// #4563: --quiet (and --failures-only) wins over --verbose for PASS lines, whatever order
+    /// they come in; the failure is still listed.
+    /// </summary>
+    [SkippableFact]
+    public void Quiet_HidesPassLines_EvenWithVerbose()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (stdout, _, _) = Run(Fixture, "--verbose", "--quiet");
+
+        Assert.DoesNotContain(Lines(stdout), l => l.StartsWith("PASS ", StringComparison.Ordinal));
+        Assert.True(RunnerFailureLines.Failed(stdout, 50150, "CustomerNameFails"), stdout);
+    }
+
+    /// <summary>
+    /// #4562 under --jobs: the one line starting `Result:` is the parent's, and it states the
+    /// process exit — a shard's own verdict must not be the last `Result:` a reader finds.
+    /// </summary>
+    [SkippableFact]
+    public void Jobs_PrintOneResultLine_ThatMatchesTheProcessExit()
+    {
+        TestArtifacts.SkipIfMissing();
+        // A copy of the fixture that cannot compile, beside the original that runs and fails.
+        var broken = Path.Combine(TestScratch.Dir("al-runner-run-summary-jobs"), "BrokenCopy");
+        if (Directory.Exists(broken)) Directory.Delete(broken, recursive: true);
+        Directory.CreateDirectory(broken);
+        foreach (var f in Directory.GetFiles(Fixture))
+            File.Copy(f, Path.Combine(broken, Path.GetFileName(f)));
+        File.AppendAllText(Path.Combine(broken, "ProbeCustomerTest.Codeunit.al"), "\nthis does not compile\n");
+
+        var (stdout, stderr, exit) = Run(Fixture, "--jobs", "2", $"\"{broken}\"");
+
+        Assert.True(exit == 3, $"one shard cannot compile, so the run exits 3:\n{stdout}\n{stderr}");
+        Assert.Equal("Result: FAILED, exit code 3 (an app could not compile)", LastResultLine(stdout));
+        Assert.Equal("Result: FAILED, exit code 3 (an app could not compile)",
+            Lines(stdout.TrimEnd('\n'))[^1]);
+        // Each shard still says what it saw, labelled as a shard.
+        Assert.Contains("Shard result: FAILED, exit code 1 (", stdout);
+        Assert.Contains("Shard result: FAILED, exit code 3 (", stdout);
+    }
+
     /// <summary>
     /// #4562's bug: a bundle path ending in a separator printed `===  ===` — Path.GetFileName of
     /// "appB/" is empty. --show-pass keeps the header, so the label is visible.
