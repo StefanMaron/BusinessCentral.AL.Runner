@@ -431,3 +431,36 @@ transcripts on one box) were deleted outright rather than moved, because they go
 - **#4092.** Twelve open PRs went red on codeunit 60974. Across thirteen rebases, twelve patch-ids
   were identical and one changed with zero differing added/removed lines; of fifteen red PRs, two
   were red on their own (`Failed: 1, Passed: 5641` and `Failed: 2, Passed: 5692`).
+
+## Moved out of the rule to fit the always-loaded budget (#4542)
+
+The rule keeps each directive, trap and citation; the measurements and narrative below are what
+those citations point at. Recipes the rule used to carry inline moved to the on-demand
+`reading-ci-runs` skill (`.claude/skills/reading-ci-runs/SKILL.md`), which also now holds the
+whole "which harness code ran has two dials" section.
+
+- **The `| tail` exit code (#3864).** Measured twice on 2026-09-11: an agent reported
+  `ci-wait.py` "exits 0 on a non-verdict" from a piped read (it exits 2, and did), and the
+  coordinator made the same mistake reading a `| tail` earlier the same night.
+- **The wrapper's exit code (#4288).** Measured on PR #4286: the reviewer asked for the
+  foreground, was backgrounded anyway at the 600s cap, and the `0` it was handed was the
+  compound command's last element.
+- **#3341.** `rc=0` beside a GraphQL failure is impossible directly (`rc=1`) and exact under
+  `| tail`. It was load-bearing: it made the reporter conclude the exit code was unreliable **in
+  both directions**, a stronger and different claim than the true one, and every reader of that
+  issue inherited it, sourced to a real transcript.
+- **The attribution block (#3942).** This loop's own commits carry `{login:"", name:"Test"}` and
+  `{login:"claude"}`; #3943 was `CLEAN` with both. What blocked #3927 was a third entry
+  resolving to a real account. `tools/pr-attribution.py` wraps
+  `gh pr view <N> --json commits --jq '[.commits[].authors[]|{login,name}]|unique'`.
+- **The stale corpus gate (#4206).** Measured three times in one session — #4135/corpus #348,
+  #4202/#368 and #4203/#371 — each a stored `failure` outliving the corpus merge until an
+  unrelated body edit happened to re-run the gate.
+- **A two-file copy of `ci-wait.py`** (no `agent_stdio.py`) says so in a `note:` line on stderr
+  (#3658); a lone copy exits 3 rather than judging the PR with the freshness check skipped
+  (#3295). One `git ls-remote` confirms the shared `origin/main` ref against the remote, so the
+  freshness check costs no network otherwise.
+- **Deliberately not in `tools/ci-wait.py`.** It answers "has this PR's required check reported
+  a verdict on its current head", a different question from "get me an independent second run of
+  this exact commit". Automating the dispatch would be a new, narrowly scoped tool, not an
+  addition to it.
