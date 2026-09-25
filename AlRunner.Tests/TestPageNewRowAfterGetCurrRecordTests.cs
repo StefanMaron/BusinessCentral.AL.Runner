@@ -1,7 +1,9 @@
 // TestPageNewRowAfterGetCurrRecordTests — issue #2394. Pins the runner mechanism behind
 // LiveNavTestPage.NewRowBecameCurrent: a top-level page's new row raises OnAfterGetCurrRecord
 // alone (not OnAfterGetRecord), and a row that trigger handed the page from the table is adopted
-// as an existing row, so the next write modifies it instead of inserting a second one. The BC
+// as an existing row, so the next write modifies it instead of inserting a second one — but
+// only a row that was not already stored before the trigger ran (a blank-keyed stored row does
+// not turn a new row into a Modify). The BC
 // behaviour is adjudicated upstream by corpus codeunit 60927 "ONG Tests"; see
 // docs/testpage-write-buffer.md#the-new-row-becomes-current.
 using System.Diagnostics;
@@ -145,6 +147,24 @@ public sealed class TestPageNewRowAfterGetCurrRecordTests : IDisposable
             end;
         }
 
+        page 62854 "Nrc Plain Card"
+        {
+            PageType = Card;
+            SourceTable = "Nrc Row";
+            ApplicationArea = All;
+            layout
+            {
+                area(Content)
+                {
+                    group(General)
+                    {
+                        field("No."; Rec."No.") { ApplicationArea = All; }
+                        field(Name; Rec.Name) { ApplicationArea = All; }
+                    }
+                }
+            }
+        }
+
         codeunit 62853 "Nrc Tests"
         {
             Subtype = Test;
@@ -187,6 +207,33 @@ public sealed class TestPageNewRowAfterGetCurrRecordTests : IDisposable
                 Log.Get('ONINSERT');
                 if Log.Hits <> 1 then
                     Error('table OnInsert ran %1 time(s), expected 1', Log.Hits);
+            end;
+
+            // The negative side of the adoption rule: a stored row that matches the new row's
+            // STARTING key (blank) was not handed over by any trigger, so the new row stays an
+            // insert — typing a key and OK writes a second row and leaves the blank one alone.
+            [Test]
+            procedure BlankKeyedRowAlreadyStored_NewRowIsStillInserted()
+            var
+                Row: Record "Nrc Row";
+                Card: TestPage "Nrc Plain Card";
+            begin
+                Reset();
+                Row."No." := '';
+                Row.Name := 'blank';
+                Row.Insert();
+                Card.OpenNew();
+                Card."No.".SetValue('N2');
+                Card.Name.SetValue('n2');
+                Card.OK().Invoke();
+                if Row.Count() <> 2 then
+                    Error('rows: %1, expected 2', Row.Count());
+                Row.Get('');
+                if Row.Name <> 'blank' then
+                    Error('the stored blank-keyed row was edited: Name <%1>', Row.Name);
+                Row.Get('N2');
+                if Row.Name <> 'n2' then
+                    Error('Name on N2 was <%1>, expected <n2>', Row.Name);
             end;
 
             local procedure Reset()
@@ -234,6 +281,7 @@ public sealed class TestPageNewRowAfterGetCurrRecordTests : IDisposable
                  {
                      "OpenNew_RaisesAfterGetCurrRecordOnly",
                      "RowHandedOverByTheTrigger_IsModifiedNotInsertedAgain",
+                     "BlankKeyedRowAlreadyStored_NewRowIsStillInserted",
                  })
             Assert.Contains("PASS  Codeunit62853." + name, output);
         Assert.DoesNotContain("FAIL", output);

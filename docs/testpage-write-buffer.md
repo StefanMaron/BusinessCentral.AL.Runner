@@ -242,8 +242,11 @@ an open card behaves like `OpenNew()`.
 **How the runner does it.** `LiveNavTestPage.InsertEmptyRow` calls `NewRowBecameCurrent` once
 the page's own `NavForm.NewRecord` has run: `OnAfterGetCurrRecord` alone (a new row fetched
 nothing, so there is no `OnAfterGetRecord`), then `AfterGetCurrRecordAsync`'s tail,
-`OldRecord.ALAssign(SourceTable)`. If the trigger left the page on a row that already exists in
-the table, the pending insert is dropped, so the next write is a `Modify`.
+`OldRecord.ALAssign(SourceTable)`. If the trigger left the page on a row that exists in the
+table now and did not before the trigger ran, the pending insert is dropped, so the next write is
+a `Modify`. The before-check matters: a stored row whose key equals the new row's starting key
+(usually blank) is not a row the trigger handed over, and the new row stays an insert (corpus
+60927 `OpenNew_WhenABlankKeyedRowIsStored_StillInsertsTheNewRow`).
 `AlRunner.Tests/TestPageNewRowAfterGetCurrRecordTests.cs` pins both halves.
 
 **Not modelled.** A part's `New()` and its draft line do not raise it; no corpus test measures

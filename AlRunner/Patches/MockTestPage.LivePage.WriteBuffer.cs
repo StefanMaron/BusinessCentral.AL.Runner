@@ -110,13 +110,16 @@ internal partial class LiveNavTestPage
 
     private void NewRowBecameCurrent()
     {
+        // Measured BEFORE the trigger: a new row whose starting key (usually blank) already
+        // matches a stored row is still a new row, and must stay a pending insert.
+        var existedBefore = !_record!.IsTemporary && RowExistsInTable(_record);
         _page!.RaiseOnAfterGetCurrRecord();
         // AfterGetCurrRecordAsync's own tail.
-        _record!.OldRecord.ALAssign(_record);
-        // The trigger may have handed the page a row that already exists (Customer Card:
-        // insert from template, Rec.Copy, CurrPage.Update). The client re-reads that row, so
-        // it is no longer an unsaved new row: the next write is a Modify, not a second Insert.
-        if (!_record.IsTemporary && RowExistsInTable(_record))
+        _record.OldRecord.ALAssign(_record);
+        // The trigger handed the page a row that exists only now (Customer Card: insert from
+        // template, Rec.Copy, CurrPage.Update). The client re-reads that row, so it is no
+        // longer an unsaved new row: the next write is a Modify, not a second Insert.
+        if (!existedBefore && !_record.IsTemporary && RowExistsInTable(_record))
             _pendingNewRow = false;
     }
 
