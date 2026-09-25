@@ -1,0 +1,11 @@
+[
+  {
+    "codeunitId": 60026,
+    "CodeunitName": "Test Perm Mock Enforcement",
+    "Method": "MockedSet_WithoutTheGrant_RefusesInsert",
+    "Mode": "expect-divergence",
+    "Reason": "permission-enforcement",
+    "Doc": "docs/scope.md#permission-enforcement",
+    "Note": "Real BC refuses the Insert inside ASSERTERROR; the runner does not enforce permissions, so the Insert goes through and the ASSERTERROR fails. A Permissions Mock Set narrows NavTestExecution.EffectivePermissionSets, but BC reads those sets through PermissionManager on NavSession.Permissions, which is null on the skeleton session. The two sibling arms in the same codeunit (granted insert, cleared assignments) pass. Permanent by owner decision on #4578, not a gap."
+  }
+]
