@@ -950,21 +950,21 @@ public sealed class ExtensionRuntimeDeltasTests
             // The group keeps its own two values, and gains no ApplicationArea: that is stated
             // only on its children, so a render leaking a child's bag upward shows here.
             var group = actions["640938020"];
-            Assert.Equal("ENU=Request Approval", group.Attribute("CaptionML")!.Value);
-            Assert.Equal("SendApprovalRequest", group.Attribute("Image")!.Value);
+            Assert.Equal("ENU=Request Approval", (string?)group.Attribute("CaptionML"));
+            Assert.Equal("SendApprovalRequest", (string?)group.Attribute("Image"));
             Assert.Null(group.Attribute("ApplicationArea"));
 
             // The nested action: every value distinct from the group's, so neither "no
             // attributes" nor "the parent's attributes" satisfies it.
             var cancel = actions["640938022"];
-            Assert.Equal("#Basic,#Suite", cancel.Attribute("ApplicationArea")!.Value);
-            Assert.Equal("ENU=Cancel Approval Re&quest", cancel.Attribute("CaptionML")!.Value);
-            Assert.Equal("CancelApprovalRequest", cancel.Attribute("Image")!.Value);
-            Assert.Equal("ENU=Cancel the approval request.", cancel.Attribute("ToolTipML")!.Value);
+            Assert.Equal("#Basic,#Suite", (string?)cancel.Attribute("ApplicationArea"));
+            Assert.Equal("ENU=Cancel Approval Re&quest", (string?)cancel.Attribute("CaptionML"));
+            Assert.Equal("CancelApprovalRequest", (string?)cancel.Attribute("Image"));
+            Assert.Equal("ENU=Cancel the approval request.", (string?)cancel.Attribute("ToolTipML"));
 
             var send = actions["640938021"];
-            Assert.Equal("ENU=Send A&pproval Request", send.Attribute("CaptionML")!.Value);
-            Assert.Equal("ENU=Request approval of the job queue entry.", send.Attribute("ToolTipML")!.Value);
+            Assert.Equal("ENU=Send A&pproval Request", (string?)send.Attribute("CaptionML"));
+            Assert.Equal("ENU=Request approval of the job queue entry.", (string?)send.Attribute("ToolTipML"));
         }
         finally { Directory.Delete(dir, recursive: true); }
     }
