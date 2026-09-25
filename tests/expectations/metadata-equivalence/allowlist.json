@@ -600,14 +600,11 @@
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
     },
     {
-      "member": "InfopartPageDefinition.#applicationAreaField",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies InfopartPageDefinition.ApplicationArea, declared in this file with the measurement.",
-      "issue": 4282
-    },
-    {
       "member": "InfopartPageDefinition.#editableField",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies InfopartPageDefinition.Editable, declared in this file with the measurement.",
-      "issue": 4282
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. It accompanies InfopartPageDefinition.Editable, the expression-notation boundary declared in this file with the measurement, and is version-contingent for the same reason.",
+      "outOfScope": true,
+      "versionContingent": true,
+      "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
     },
     {
       "member": "InfopartPageDefinition.#providerIDField",
@@ -623,26 +620,10 @@
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
     },
     {
-      "member": "InfopartPageDefinition.#showFilterField",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies InfopartPageDefinition.ShowFilter, declared in this file with the measurement.",
-      "issue": 4282
-    },
-    {
       "member": "InfopartPageDefinition.#updatePropagationField",
       "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
-    },
-    {
-      "member": "InfopartPageDefinition.AboutTextML.<presence>",
-      "reason": "A multi-language caption element the runner emits only when the symbol file states that property. BC's emitter writes the element whenever the AL declares the property, including where its resolved value is empty, so BC-present / runner-null is the same scope boundary as the *MLString member declared beside it: the runner reads no translation resources at all (docs/limitations.md), so the only language it could ever state is the one already in the symbol file.",
-      "outOfScope": true,
-      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
-    },
-    {
-      "member": "InfopartPageDefinition.AboutTextMLString",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 21 pages declare AboutText, including on parts; EmitPartControlXml writes no AboutText. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 4282
     },
     {
       "member": "InfopartPageDefinition.AboutTextTranslationKey",
@@ -651,26 +632,10 @@
       "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
     },
     {
-      "member": "InfopartPageDefinition.AboutTitleML.<presence>",
-      "reason": "A multi-language caption element the runner emits only when the symbol file states that property. BC's emitter writes the element whenever the AL declares the property, including where its resolved value is empty, so BC-present / runner-null is the same scope boundary as the *MLString member declared beside it: the runner reads no translation resources at all (docs/limitations.md), so the only language it could ever state is the one already in the symbol file.",
-      "outOfScope": true,
-      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
-    },
-    {
-      "member": "InfopartPageDefinition.AboutTitleMLString",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 21 pages declare AboutTitle, including on parts; EmitPartControlXml writes no AboutTitle. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 4282
-    },
-    {
       "member": "InfopartPageDefinition.AboutTitleTranslationKey",
       "reason": "A translation-file lookup id for a page-level property. Same boundary as the seven TranslationKey.* entries already in this file and for the same measured reason: the runner reads no .xlf or Translations/ resources anywhere, so a key it could state would address a file it never opens. Separately derivable rather than impossible -- the FNV-1a-32 construction in TranslationKeysAreDerivable_NotAPermanentLimit reproduces BC's own keys -- so this is a scope boundary that the runner gaining translation support invalidates.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
-    },
-    {
-      "member": "InfopartPageDefinition.ApplicationArea",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 112 pages declare ApplicationArea, including on their part controls; EmitPartControlXml writes no ApplicationArea attribute. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 4282
     },
     {
       "member": "InfopartPageDefinition.CaptionTranslationKey",
@@ -686,8 +651,8 @@
     },
     {
       "member": "InfopartPageDefinition.Editable",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 113 pages declare Editable; EmitPartControlXml does not carry it onto the part control. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
-      "issue": 4282,
+      "reason": "The part's Editable EXPRESSION, the same boundary as InfopartPageDefinition.Visible beside it: BC's emitter rewrites the AL expression into its compiled form -- 'not Active' against the runner's 'not Rec.Active' on page 8351's ToolList part -- and the runner passes the AL text through, since rewriting it is the re-implementation #3491 exists about. Literal Editable values and the unstated default match BC since #4282 (docs/dependency-page-properties.md#part-controls). VERSION-CONTINGENT: on BC 28.1.49838.53910 this is 1 occurrence on one System Application page whose part states an expression that mentions Rec., so a build without that page or that shape matches nothing.",
+      "outOfScope": true,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
     },
@@ -716,11 +681,6 @@
       "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
-    },
-    {
-      "member": "InfopartPageDefinition.ShowFilter",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 26 pages declare ShowFilter; EmitPartControlXml writes no ShowFilter attribute, so the part answers the type default. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 4282
     },
     {
       "member": "InfopartPageDefinition.UpdatePropagation",

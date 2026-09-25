@@ -343,7 +343,10 @@ internal static partial class BcAppSymbolCache
         // property verbatim (e.g. tabledata "Sent Email" = rd), resolved to BC's
         // IndirectPermissions vector by RecordPatches.EmitSourceObjectIndirectPermissions.
         bool? AnalysisModeEnabled = null,
-        string? Permissions = null);
+        string? Permissions = null,
+        // #4282. The page's own ApplicationArea, verbatim ("#All", "#Basic,#Suite"); null when
+        // not stated. Read for its parts, which inherit it (RecordPatches.EmitPartControlXml).
+        string? ApplicationArea = null);
 
     /// <summary>
     /// The <c>Enabled</c> / <c>Visible</c> one action DECLARES, exactly as the compiler wrote
@@ -532,7 +535,11 @@ internal static partial class BcAppSymbolCache
         // DependencyPageMetadataXml.EmitPartXml turns each one into a refusing SubFormLink
         // rather than dropping it: a two-condition link reduced to one filters the part LESS,
         // so the subpage shows rows the host row does not own.
-        List<string>? UnreadableSubPageLinkEntries = null);
+        List<string>? UnreadableSubPageLinkEntries = null,
+        // #4282. The part's own ApplicationArea / AboutTitle / AboutText, verbatim; null when the
+        // part states none. Inheriting the host page's ApplicationArea is the emitter's job
+        // (RecordPatches.EmitPartControlXml), so nothing is defaulted here.
+        string? ApplicationArea = null, string? AboutTitle = null, string? AboutText = null);
 
     /// <summary>
     /// One entry of a part's <c>SubPageLink</c> property, still as AL source text.
@@ -1656,6 +1663,7 @@ internal static partial class BcAppSymbolCache
         props.TryGetValue("ContextSensitiveHelpPage", out var contextSensitiveHelpPage);
         props.TryGetValue("DataCaptionExpression", out var dataCaptionExpression);
         props.TryGetValue("Permissions", out var permissions);
+        props.TryGetValue("ApplicationArea", out var pageApplicationArea);
         var analysisModeEnabled = SymbolBoolOrNull(props, "AnalysisModeEnabled", ref unreadableBooleans);
 
         static string? OrNullIfBlank(string? v) => string.IsNullOrWhiteSpace(v) ? null : v;
@@ -1686,7 +1694,8 @@ internal static partial class BcAppSymbolCache
             OrNullIfBlank(dataCaptionExpression),
             PageTypeStated: !string.IsNullOrWhiteSpace(pageType),
             AnalysisModeEnabled: analysisModeEnabled,
-            Permissions: OrNullIfBlank(permissions));
+            Permissions: OrNullIfBlank(permissions),
+            ApplicationArea: OrNullIfBlank(pageApplicationArea));
     }
 
     /// <summary>
@@ -1973,6 +1982,9 @@ internal static partial class BcAppSymbolCache
                 props.TryGetValue("Visible", out var visible);
                 props.TryGetValue("ShowFilter", out var showFilter);
                 props.TryGetValue("SubPageLink", out var subPageLink);
+                props.TryGetValue("ApplicationArea", out var applicationArea);
+                props.TryGetValue("AboutTitle", out var aboutTitle);
+                props.TryGetValue("AboutText", out var aboutText);
                 var links = ParseSubPageLink(subPageLink, out var unreadableLinks);
                 into.Add(new PagePartSymbol(id, name!, partPageId,
                     string.IsNullOrEmpty(caption) ? null : caption,
@@ -1980,7 +1992,10 @@ internal static partial class BcAppSymbolCache
                     string.IsNullOrEmpty(enabled) ? null : enabled,
                     string.IsNullOrEmpty(visible) ? null : visible,
                     string.IsNullOrEmpty(showFilter) ? null : showFilter,
-                    links, unreadableLinks));
+                    links, unreadableLinks,
+                    string.IsNullOrEmpty(applicationArea) ? null : applicationArea,
+                    string.IsNullOrEmpty(aboutTitle) ? null : aboutTitle,
+                    string.IsNullOrEmpty(aboutText) ? null : aboutText));
             }
         }
 

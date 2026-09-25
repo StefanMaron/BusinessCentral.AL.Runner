@@ -130,6 +130,41 @@ only `tabledata` entries on a page (`AL0104` for `codeunit`), and the table name
 `ResolveTableIdByName`. An entry the runner cannot parse or resolve withdraws the whole attribute,
 with a stderr line.
 
+<a id="part-controls"></a>
+### Subpage parts (`InfopartPageDefinition`)
+
+BC writes `ApplicationArea`, `Editable`, `Enabled`, `ShowFilter` and `Visible` on **every** part,
+whatever the AL states, and `AboutTitleML`/`AboutTextML` when stated. `EmitPartControlXml`'s rule:
+
+| attribute | written |
+|---|---|
+| `ApplicationArea` | the part's own, else the **host page's**, else nothing |
+| `Editable` / `Enabled` / `Visible` | stated value verbatim, else `true` |
+| `ShowFilter` | stated value verbatim (the symbol file states `0`/`1`), else `1` |
+| `AboutTitleML` / `AboutTextML` / `CaptionML` | iff stated, through BC's own `ToMultiLanguageString` |
+
+Cross-tabulated over every part of Business Foundation + System Application — 53 parts on
+`27.5.46862.53931`, 55 on each of `28.1.49838.53910`, `28.1.49838.54308` and `28.4.53241.54407`:
+**zero** disagreements on any attribute whose stated value is a literal or absent. A stated
+*expression* (`Visible = IsTenant`, `Editable = not Rec.Active`) is passed through as AL text, which
+BC rewrites into its compiled notation (`p9855p9855IsTenant`, `not Active`) — the boundary
+`InfopartPageDefinition.Visible` and `.Editable` declare in the allowlist.
+
+Every part in those apps states an area or sits on a page that does, so the "else nothing" arm and
+the nesting arms were settled by a compiled probe (the recipe under *Reproducing*): a part on a page
+stating no `ApplicationArea` gets none; a part inside a `group`, and one in `area(FactBoxes)`, both
+inherit the page's; a stated area wins over the page's.
+
+**The quoting.** BC's `MultiLanguage.Parse` splits an unquoted value at `;` and treats a leading
+`"` as the start of a quoted one, so the probe's `AboutTitle = 'Title; with semicolon'` is written
+`ENU="Title; with semicolon"`. `MultiLanguageExtensions.ToMultiLanguageString` (Types.dll) is the
+serializer that does that — quoting on `;`, `=` or `"`, doubling `"` — so every `ENU=` attribute in
+`EmitPageXml` goes through it rather than concatenating. Page 4312's "Agent Available Tools"
+`AboutText` is the instance in the bundles.
+
+Nothing at runtime reads a part's `ApplicationArea` here: BC's license/area filter over the page is
+switched off by `MetadataProviderElementRemoval`, so this is document equivalence only.
+
 ## What is deliberately not implemented, and why
 
 - **`ActionContainers` / `ViewContainers`.** BC writes `ActionContainers` on all 235 pages

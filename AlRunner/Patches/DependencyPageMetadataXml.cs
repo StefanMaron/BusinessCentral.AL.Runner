@@ -151,7 +151,7 @@ public static partial class RecordPatches
             // neighbours use: pages 1433 and 9260 state a Caption of one SPACE and BC writes
             // CaptionML="ENU= ". Either tidy-up drops the attribute on both.
             if (!string.IsNullOrEmpty(page.Caption))
-                w.WriteAttributeString("CaptionML", "ENU=" + page.Caption);
+                w.WriteAttributeString("CaptionML", EnuMultiLanguage(page.Caption));
 
             w.WriteStartElement("Properties");
             w.WriteAttributeString("SourceExtensionType", "ModernDev");
@@ -291,6 +291,16 @@ public static partial class RecordPatches
     }
 
     private const string XsiNs = "http://www.w3.org/2001/XMLSchema-instance";
+
+    /// <summary>
+    /// One ENU text as the MultiLanguage attribute value BC's emitter writes, serialized by BC's
+    /// own <c>MultiLanguageExtensions.ToMultiLanguageString</c>: a text containing <c>;</c>,
+    /// <c>=</c> or <c>"</c> is quoted, which a bare <c>"ENU=" + text</c> is not, and BC's parser
+    /// then splits it at the <c>;</c> (#4282, page 4312's AboutTextML).
+    /// </summary>
+    private static string EnuMultiLanguage(string text)
+        => Microsoft.Dynamics.Nav.Types.Metadata.MultiLanguageExtensions.ToMultiLanguageString(
+            Microsoft.Dynamics.Nav.Types.Metadata.MultiLanguage.From(1033, text));
 
     /// <summary>
     /// The page's <c>&lt;Methods&gt;</c> subtree — BC's emitted method table — written only when
@@ -483,7 +493,7 @@ public static partial class RecordPatches
         // already writes for a part's CaptionML. The symbol file states the bare text.
         void MultiLanguage(string name, string? stated)
         {
-            if (!string.IsNullOrEmpty(stated)) w.WriteAttributeString(name, "ENU=" + stated);
+            if (!string.IsNullOrEmpty(stated)) w.WriteAttributeString(name, EnuMultiLanguage(stated));
         }
 
         MultiLanguage("AboutTitleML", page.AboutTitle);
@@ -880,8 +890,8 @@ public static partial class RecordPatches
     /// attributes (Editable/Enabled/Visible/ShowFilter) are written RAW, exactly as
     /// PageControlSymbol already does for field controls — an AL-bound one resolves later
     /// through the page's own registered source expressions (real IL, not this XML); a
-    /// literal true/false/number resolves directly. Absent when the symbol file states none,
-    /// matching the compiler's own AL-default-true behaviour for these three.
+    /// literal true/false/number resolves directly. When the symbol file states none, the AL
+    /// default BC's emitter writes (#4282).
     /// </summary>
     private static void EmitPartControlXml(XmlWriter w, BcAppSymbolCache.PageSymbol hostPage, BcAppSymbolCache.PagePartSymbol part)
     {
@@ -890,11 +900,23 @@ public static partial class RecordPatches
         w.WriteAttributeString("ID", part.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
         w.WriteAttributeString("Name", part.Name);
         w.WriteAttributeString("PagePartID", part.PagePartId.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        if (!string.IsNullOrEmpty(part.Caption)) w.WriteAttributeString("CaptionML", "ENU=" + part.Caption);
-        if (!string.IsNullOrEmpty(part.EditableExpr)) w.WriteAttributeString("Editable", part.EditableExpr);
-        if (!string.IsNullOrEmpty(part.EnabledExpr)) w.WriteAttributeString("Enabled", part.EnabledExpr);
-        if (!string.IsNullOrEmpty(part.VisibleExpr)) w.WriteAttributeString("Visible", part.VisibleExpr);
-        if (!string.IsNullOrEmpty(part.ShowFilterExpr)) w.WriteAttributeString("ShowFilter", part.ShowFilterExpr);
+        if (!string.IsNullOrEmpty(part.Caption)) w.WriteAttributeString("CaptionML", EnuMultiLanguage(part.Caption));
+        // #4282. Observably equivalent: BC's emitter writes these on EVERY part — the stated
+        // value, else the part's host-page ApplicationArea (absent when neither states one), and
+        // "true"/"true"/"true"/"1" for the four flags. Zero disagreements over every part of
+        // Business Foundation + System Application on 27.5.46862.53931, 28.1.49838.53910,
+        // 28.1.49838.54308 and 28.4.53241.54407, plus a compiled probe for the no-area and
+        // group/FactBox arms: docs/dependency-page-properties.md#part-controls. Nothing at
+        // runtime reads a part's ApplicationArea here (MetadataProviderElementRemoval disables
+        // BC's filter), and each default is the value BC's reader already answers for absence.
+        var applicationArea = part.ApplicationArea ?? hostPage.ApplicationArea;
+        if (!string.IsNullOrEmpty(applicationArea)) w.WriteAttributeString("ApplicationArea", applicationArea);
+        w.WriteAttributeString("Editable", part.EditableExpr ?? "true");
+        w.WriteAttributeString("Enabled", part.EnabledExpr ?? "true");
+        w.WriteAttributeString("Visible", part.VisibleExpr ?? "true");
+        w.WriteAttributeString("ShowFilter", part.ShowFilterExpr ?? "1");
+        if (!string.IsNullOrEmpty(part.AboutTitle)) w.WriteAttributeString("AboutTitleML", EnuMultiLanguage(part.AboutTitle));
+        if (!string.IsNullOrEmpty(part.AboutText)) w.WriteAttributeString("AboutTextML", EnuMultiLanguage(part.AboutText));
 
         foreach (var link in part.SubFormLink)
             EmitSubFormLinkXml(w, hostPage, part, link);
