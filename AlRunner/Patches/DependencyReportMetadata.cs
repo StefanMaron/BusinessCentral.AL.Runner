@@ -541,6 +541,12 @@ public static partial class RecordPatches
         }
         if (sourceExpr != null)
             w.WriteElementString("SourceExpr", sourceExpr);
+        // Observably equivalent: BC's emitter writes AutoCalcField on every column, default
+        // included (ReportBaseMetadataEmitter.WriteDataItemColumn, shouldOutputDefaultProperties),
+        // and MetaDataItemColumn defaults it to FALSE when the element is missing — which made
+        // DataItem.FindCalcFields skip every FlowField column of a precompiled report (#4648;
+        // AutoCalcFieldEmitTests, corpus 60935).
+        w.WriteElementString("AutoCalcField", col.AutoCalcField ? "1" : "0");
         w.WriteEndElement();
     }
 
