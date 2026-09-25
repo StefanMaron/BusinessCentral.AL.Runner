@@ -2248,6 +2248,11 @@ internal sealed partial class RunnerPageInstance
         InvokeRecordTrigger("OnAfterGetCurrRecord", Type.EmptyTypes, Array.Empty<object>());
     }
 
+    /// <summary>OnAfterGetCurrRecord alone — a new row becoming current fetched nothing, so
+    /// OnAfterGetRecord does not run for it.</summary>
+    internal void RaiseOnAfterGetCurrRecord()
+        => InvokeRecordTrigger("OnAfterGetCurrRecord", Type.EmptyTypes, Array.Empty<object>());
+
     // Set the first time RaiseOnOpenPage runs. A SECOND (or later) call means the TestPage
     // was closed and reopened — issue #2658. The runner attaches its ITestPage at
     // CONSTRUCTION (see RunnerTestPageState's WHY note) and keeps the SAME RunnerPageInstance,
