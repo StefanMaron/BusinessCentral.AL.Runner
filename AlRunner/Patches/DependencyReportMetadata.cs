@@ -101,6 +101,15 @@ public static partial class RecordPatches
         return null;
     }
 
+    /// <summary>
+    /// The request-page control tree a precompiled dependency's symbol file states for
+    /// <paramref name="reportId"/>, or null when no loaded dependency declares the report or
+    /// the report states no controls (#4661). Keyed by REPORT id: a request page's id space
+    /// is its report's, so asking the page-symbol index with this id reads an unrelated page.
+    /// </summary>
+    internal static IReadOnlyList<BcAppSymbolCache.RequestPageControlSymbol>? TryGetDependencyRequestPageControls(int reportId)
+        => FindDependencyReportSymbol(reportId)?.Report.RequestPageControls;
+
     // ── ProcessingOnly for a report the runner never source-compiled ─────────
 
     /// <summary>

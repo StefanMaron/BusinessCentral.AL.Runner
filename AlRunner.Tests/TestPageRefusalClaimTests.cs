@@ -447,7 +447,10 @@ public sealed class TestPageRefusalClaimTests
         // compiler dropped (a procedure call in a client expression, AL0573). An ACTION's
         // Enabled answers false there, measured on BC 28.4; every other arm refuses, because no
         // service tier has been asked what BC answers for it — #3762.
-        Assert.Equal(5, Regex.Matches(page, @"throw TestPageShapeGap\.").Count);
+        //
+        // 5 -> 6 by #4661, an ADDITION: a precompiled report's request-page control the symbol
+        // file does not state refuses rather than reading as "declares none" (true).
+        Assert.Equal(6,Regex.Matches(page, @"throw TestPageShapeGap\.").Count);
         // 2: the OnLookup-trigger read whose three-valued answer came back "could not determine"
         // (#2946/#2995), and #3447's NavForm.RegisterPageExtension lookup - the method BC's own
         // RaiseOn<trigger>Async loops depend on, so a build that stops declaring it would make

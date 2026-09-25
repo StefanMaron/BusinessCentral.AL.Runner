@@ -682,7 +682,21 @@ internal static partial class BcAppSymbolCache
         // DependencyReportMetadata emits the <RequestPage> element. The node's own contents
         // are deliberately NOT parsed; see EmitRequestPageXml for why the control tree it
         // carries cannot be transcribed faithfully.
-        bool HasRequestPage = false);
+        bool HasRequestPage = false,
+        // Every node of the request page's control tree that carries an Id, with the
+        // Visible/Editable/Enabled text the symbol file states for it (#4661). Not emitted
+        // into the metadata document (see above); read only to answer a TestRequestPage
+        // control's declared property on a report the runner never compiled.
+        List<RequestPageControlSymbol>? RequestPageControls = null);
+
+    /// <summary>
+    /// One node of a precompiled report's request-page control tree (#4661): a field, a group,
+    /// or the content area. <see cref="ParentId"/> is the enclosing node's Id, 0 at the top, so
+    /// a field's enclosing groups can be walked without the MasterPage BC would build from
+    /// metadata the runner does not have. A null property means the AL declares none.
+    /// </summary>
+    internal sealed record RequestPageControlSymbol(
+        int Id, int ParentId, string? VisibleExpr, string? EditableExpr, string? EnabledExpr);
 
     /// <summary>
     /// One <c>layout(Name) { Type; MimeType; LayoutFile; Caption; Summary; ObsoleteState;
@@ -2443,7 +2457,39 @@ internal static partial class BcAppSymbolCache
             // on all 660 shipped reports, neither of which is what BC's document carries, so
             // reading either would import a value the emitter must then discard.
             report.TryGetProperty("RequestPage", out var requestPage)
-                && requestPage.ValueKind == JsonValueKind.Object);
+                && requestPage.ValueKind == JsonValueKind.Object,
+            requestPage.ValueKind == JsonValueKind.Object ? ReadRequestPageControls(requestPage) : null);
+    }
+
+    /// <summary>
+    /// Flatten a report's <c>RequestPage.Controls</c> tree into one row per node that has an
+    /// Id, each carrying its parent's Id (#4661). Null when the node states no controls.
+    /// </summary>
+    private static List<RequestPageControlSymbol>? ReadRequestPageControls(JsonElement requestPage)
+    {
+        if (!requestPage.TryGetProperty("Controls", out var controls) || controls.ValueKind != JsonValueKind.Array)
+            return null;
+        var into = new List<RequestPageControlSymbol>();
+        foreach (var control in controls.EnumerateArray())
+            CollectRequestPageControls(control, parentId: 0, into);
+        return into;
+    }
+
+    private static void CollectRequestPageControls(JsonElement control, int parentId, List<RequestPageControlSymbol> into)
+    {
+        int id = control.TryGetProperty("Id", out var idProp) && idProp.TryGetInt32(out var idv) ? idv : 0;
+        if (id != 0)
+        {
+            var props = SymbolProperties(control);
+            props.TryGetValue("Visible", out var visible);
+            props.TryGetValue("Editable", out var editable);
+            props.TryGetValue("Enabled", out var enabled);
+            into.Add(new RequestPageControlSymbol(id, parentId, visible, editable, enabled));
+        }
+
+        if (control.TryGetProperty("Controls", out var children) && children.ValueKind == JsonValueKind.Array)
+            foreach (var child in children.EnumerateArray())
+                CollectRequestPageControls(child, id != 0 ? id : parentId, into);
     }
 
     private static List<ReportLayoutSymbol>? ReadReportLayouts(JsonElement report)
