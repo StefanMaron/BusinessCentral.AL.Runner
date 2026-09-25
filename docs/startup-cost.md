@@ -56,6 +56,44 @@ The whole al-language corpus (corpus `0d9d246b`, 3,348 tests) passed 3,348 of 3,
 binaries. Its instruction count varies by about 60G between identical warm runs, so it can show
 that nothing regressed, not the size of the gain.
 
+## Startup housekeeping
+
+**Rule: the stale-scratch sweep (#2706) and the package-dedup prune (#2990) run once per
+invocation, in its outermost process.** Every re-exec — the shadow hop in `TryShadowReexec` and
+the fresh-rewrite hop in `Program.cs` — calls `ProgramSupport.HandOffStartupHousekeeping` on the
+child's `ProcessStartInfo`, and the child consumes `AL_RUNNER_STARTUP_HOUSEKEEPING_DONE=1` and
+skips both. The `startup_housekeeping` field of the `AL_RUNNER_PHASE_LOG` process row says which
+process ran it: `PhaseLogIntegrationTests` pins `[true, false]` for a two-generation run and
+`StartupOutputReexecDedupTests` pins `[true, false, false]` for the stacked three-generation one.
+
+The child **clears** the variable as it reads it, so the hand-off covers one generation only. A
+process the terminal generation spawns later — a `--jobs` worker, an abort-resume child — sweeps
+again, because the processes that leave stale scratch behind are the ones that die during an
+invocation. **Trap:** it is not `AL_RUNNER_NCL_SHADOW_DONE`. That variable is also set by hand to
+run a shadow directory directly, and such a run has no parent that swept for it.
+`StartupHousekeepingJobsWorkerTests` pins the clearing through the production wrapper: both
+`--jobs` workers must report `startup_housekeeping: true`.
+
+The variable is internal. Exporting `AL_RUNNER_STARTUP_HOUSEKEEPING_DONE=1` in your own shell
+suppresses the sweep for the whole re-exec chain of that invocation (the outermost process skips
+it and still marks its child); processes spawned later still sweep. The cost is leftover scratch
+until the next invocation, nothing worse.
+
+### Measured (#2375)
+
+The sweep's cost is one enumeration of the temp directory's top level, so it scales with how full
+that directory is, and before this change it was paid in every generation. Trivial bundle, BC
+28.1.49838.53910, warm `--cache`, `--package-cache ~/.al-runner/platform-apps`, seven interleaved
+runs each, load average about 2 on 12 cores, wall time of the whole invocation:
+
+| `TMPDIR` | before (median) | after (median) |
+|---|---|---|
+| 122,194 entries (this agent box) | 1.76 s | 1.68 s |
+| 3 entries (the CI shape) | 1.60 s | 1.59 s |
+
+On the busy directory the sweep and prune together took about 90 ms per process. On a clean one the sweep is a few
+milliseconds, so the change is below the noise there.
+
 ## Package-directory discovery memo
 
 **Rule: a recursive search for `.alpackages` or `.deps-bin` walks each root once per run.**

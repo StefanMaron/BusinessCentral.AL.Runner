@@ -246,6 +246,8 @@ public sealed class StartupOutputReexecDedupTests
             // the shared, machine-wide ncl-cecil cache directory other concurrently
             // running tests/processes also read and write.
             psi.Environment["AL_RUNNER_NCL_CACHE"] = "0";
+            var phaseLog = Path.Combine(privateDir, "phases.jsonl");
+            psi.Environment["AL_RUNNER_PHASE_LOG"] = phaseLog;
             var (output, exit) = Run(psi);
 
             Assert.Equal(0, exit);
@@ -261,6 +263,17 @@ public sealed class StartupOutputReexecDedupTests
             Assert.Equal(1, CountOccurrences(output, "[provision] BC "));
             Assert.Equal(1, CountOccurrences(output, "[bc] selected BC "));
             Assert.Equal(1, CountOccurrences(output, "al-runner — running "));
+
+            // #2375: the startup housekeeping runs in the outermost generation only — each of
+            // the two hops hands it to its child, which skips it.
+            var housekeeping = File.ReadAllLines(phaseLog)
+                .Where(l => l.Length > 0)
+                .Select(l => System.Text.Json.JsonDocument.Parse(l).RootElement)
+                .Where(e => e.GetProperty("kind").GetString()!.StartsWith("process", StringComparison.Ordinal))
+                .OrderBy(e => e.GetProperty("start_ms").GetInt64())
+                .Select(e => e.GetProperty("startup_housekeeping").GetBoolean())
+                .ToArray();
+            Assert.Equal(new[] { true, false, false }, housekeeping);
         }
         finally
         {

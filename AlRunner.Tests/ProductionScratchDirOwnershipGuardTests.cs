@@ -119,10 +119,11 @@ public sealed class ProductionScratchDirOwnershipGuardTests
                          + "which calls ScratchDirs.Create (#3838, the site this guard exists "
                          + "because nothing caught)"),
         ["Program.cs"] =
-            (4, Why.Owned, "two owned ScratchDirs.Create call sites — the watchdog-resume carry "
-                         + "directory and a --server inline bundle — plus two occurrences in the "
-                         + "sweep's own diagnostic messages, which name the root being swept and "
-                         + "create nothing"),
+            (2, Why.Owned, "two owned ScratchDirs.Create call sites — the watchdog-resume carry "
+                         + "directory and a --server inline bundle"),
+        ["ProgramSupport/StartupHousekeeping.cs"] =
+            (2, Why.CannotBeOwned, "the sweep's own diagnostic messages, which name the root being "
+                         + "swept and create nothing (moved out of Program.cs by #2375)"),
         ["Infrastructure/DepExtractionDir.cs"] =
             (1, Why.Owned, "RootForProcess builds the path; the only caller wraps it in "
                          + "ScratchDirs.Create"),

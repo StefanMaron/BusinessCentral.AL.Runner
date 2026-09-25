@@ -116,6 +116,12 @@ public sealed class PhaseLogRecord
     public int PackageDirWalks { get; set; }
     public int PackageDirRepeatWalks { get; set; }
 
+    /// <summary>
+    /// Whether this process ran the startup housekeeping (scratch sweep, package-dedup prune).
+    /// One process per invocation should: a re-exec child skips it (#2375). Process rows only.
+    /// </summary>
+    public bool StartupHousekeeping { get; set; }
+
     // ── Bundle-row and app-row only. Named slices of the row's turn that are NOT
     // already reported elsewhere on it — for a bundle row, the block #1828 exists to
     // attribute (work outside every app group); for an app row, the block #1861
@@ -165,6 +171,7 @@ public sealed class PhaseLogRecord
             Bool(sb, "server_gc", ServerGc);
             Num(sb, "package_dir_walks", PackageDirWalks);
             Num(sb, "package_dir_repeat_walks", PackageDirRepeatWalks);
+            Bool(sb, "startup_housekeeping", StartupHousekeeping);
         }
         // Bundle and app rows only, and only when something was measured: a process
         // row's once-per-process costs already have their own named fields, and an
@@ -249,6 +256,12 @@ public static class PhaseLog
     {
         if (!Enabled) return;
         Process_.Kind = "process-reexec-parent";
+    }
+
+    public static void SetStartupHousekeeping(bool ran)
+    {
+        if (!Enabled) return;
+        Process_.StartupHousekeeping = ran;
     }
 
     public static void SetPackageCacheDirs(int count)
