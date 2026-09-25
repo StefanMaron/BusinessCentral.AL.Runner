@@ -81,8 +81,9 @@ How it was isolated, on BC 28.1.49838: removing the shim directory from the grou
 the only change — took it from `success=True objects=1218 errors=0` to
 `success=False objects=0 errors=1` with that AL0133 named. Three other candidate differences
 were tested and **ruled out**: the `System.app` version (28.0.53872.0 vs the 28.0.54265.0 the
-runner resolves — 1,218 objects on 28.1.49838.53910 either way), the package's resources (stripping `addin/` gives
-62 × AL0327, a different signature), and the DotNet probing *order*, which already matched.
+runner resolves — 1,218 objects on 28.1.49838.53910 either way), the package's resources
+(stripping `addin/` gives 62 × AL0327, a different signature), and the DotNet probing *order*,
+which already matched.
 
 `AlRunner.csproj` now stages that shim into a `dotnet-shims` directory as build **content**, so
 it travels with `al-runner.dll` into every output that references the project, and

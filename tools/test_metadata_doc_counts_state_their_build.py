@@ -43,6 +43,15 @@ BUILD = re.compile(r"\b\d+\.\d+\.\d+\.\d+\b")
 
 # The emitted-document counts this file publishes. Matched on the digits so a
 # reworded sentence around them still gets checked.
+#
+# COMMA-FORMATTED SPELLINGS ONLY, deliberately. The doc also carries one
+# unpunctuated `objects=1218` (verbatim tool output from an isolation
+# experiment), which this guard therefore cannot see. Adding "1218" here would
+# red the file today, and the fix is not available from here: that sentence
+# says "on BC 28.1.49838", a THREE-part prefix that is ambiguous between the two
+# provisioned builds 28.1.49838.53910 and 28.1.49838.54308 -- and both emit
+# 1218, so the count does not disambiguate it either. Resolving it needs whoever
+# ran that experiment, not a guess. Tracked rather than guessed: #4533.
 COUNTS = ("1,218", "1,166", "1,220")
 
 failures = []
@@ -149,6 +158,25 @@ def main():
 
     check("the counts are labelled as documents, not left as a bare number",
           re.search(r"documents?\b", text, re.I) is not None)
+
+    # BUILD requires FOUR parts, and on the shipped doc a 2- or 3-part pattern
+    # would agree with it on every span -- so loosening that line fails silently.
+    # This pins the discrimination on a constructed span rather than on the doc,
+    # which is the only way to separate them (a reviewer of #4532 raised it).
+    #
+    # It is not hypothetical here: `28.1.49838` is ambiguous between the two
+    # provisioned builds 28.1.49838.53910 and 28.1.49838.54308, which is exactly
+    # the under-specification #3816 is about.
+    loose = "System Application emits 1,218 documents on 28.1.49838."
+    check("a 3-part build does not satisfy the build requirement",
+          not BUILD.search(loose),
+          f"BUILD matched {loose!r} -- a 2- or 3-part version now counts as naming "
+          f"a build, which is the under-specification this guard exists to refuse")
+    tight = "System Application emits 1,218 documents on 28.1.49838.53910."
+    check("...and a 4-part build does satisfy it",
+          BUILD.search(tight) is not None,
+          f"BUILD did not match {tight!r} -- the pattern no longer recognises a "
+          f"full build, so every span would fail regardless of what it says")
 
     print()
     print(f"{passes} passed, {len(failures)} failed")
