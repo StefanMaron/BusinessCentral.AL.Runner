@@ -816,6 +816,10 @@ internal static class TestDataProvisioner
     /// selected. That is the same class of silent wrong answer as restoring an empty snapshot.
     /// </summary>
     internal static string ResolveCompany(IReadOnlyList<string> companies, string? overrideName, string backupForDiagnostics)
+        => ResolveCompany(companies, overrideName, backupForDiagnostics, CompanyPrompt.FromConsole(), Console.Error);
+
+    internal static string ResolveCompany(IReadOnlyList<string> companies, string? overrideName,
+        string backupForDiagnostics, CompanyPrompt? prompt, TextWriter notices)
     {
         // Everything actionable goes on the FIRST line. Measured: the bundle reporter keeps
         // only line 1 of an EXEC-FAIL message, so a message that named a count on line 1 and
@@ -823,13 +827,7 @@ internal static class TestDataProvisioner
         // on it.
         var list = string.Join(", ", companies.Select(c => $"'{c}'"));
         if (overrideName != null)
-        {
-            if (!companies.Contains(overrideName, StringComparer.Ordinal))
-                throw new TestDataUnavailableException(
-                    $"--test-data-company '{overrideName}' is not a company in "
-                    + $"'{Path.GetFileName(backupForDiagnostics)}', which holds {list}.");
-            return overrideName;
-        }
+            return MatchCompany(companies, overrideName, backupForDiagnostics, prompt, notices);
         if (companies.Count == 0)
             throw new TestDataUnavailableException(
                 $"--test-data: the backup '{backupForDiagnostics}' reports no companies, so there is nothing to hydrate.");
@@ -839,6 +837,55 @@ internal static class TestDataProvisioner
                 + $"({list}) and none was named — pick one with --test-data-company \"<name>\". "
                 + "Choosing for you would mean every hydrated row came from a company nobody selected.");
         return companies[0];
+    }
+
+    /// <summary>
+    /// #4553: <c>--test-data-company</c> names a company exactly, or by a case-insensitive
+    /// prefix. An exact name (ordinal, then case-insensitive) wins over being a prefix of
+    /// another; several prefix matches are never resolved silently — asked about on a
+    /// terminal, refused otherwise.
+    /// </summary>
+    private static string MatchCompany(IReadOnlyList<string> companies, string text,
+        string backupForDiagnostics, CompanyPrompt? prompt, TextWriter notices)
+    {
+        if (companies.Contains(text, StringComparer.Ordinal)) return text;
+
+        var exact = companies.Where(c => string.Equals(c, text, StringComparison.OrdinalIgnoreCase)).ToList();
+        var matches = exact.Count > 0
+            ? exact
+            : companies.Where(c => c.StartsWith(text, StringComparison.OrdinalIgnoreCase)).ToList();
+        var backupName = Path.GetFileName(backupForDiagnostics);
+
+        if (matches.Count == 1)
+        {
+            notices.WriteLine($"[test-data] --test-data-company '{text}' selected company '{matches[0]}'.");
+            return matches[0];
+        }
+        if (matches.Count == 0)
+            throw new TestDataUnavailableException(
+                $"--test-data-company '{text}' matches no company in '{backupName}', which holds "
+                + string.Join(", ", companies.Select(c => $"'{c}'")) + ".");
+
+        var candidates = string.Join(", ", matches.Select(c => $"'{c}'"));
+        var ambiguous = $"--test-data-company '{text}' matches {matches.Count} companies in '{backupName}' "
+            + $"({candidates}) — use a longer prefix, or the full name in quotes.";
+        if (prompt == null) throw new TestDataUnavailableException(ambiguous);
+
+        prompt.Out.WriteLine($"--test-data-company '{text}' matches {matches.Count} companies:");
+        for (var i = 0; i < matches.Count; i++) prompt.Out.WriteLine($"  {i + 1}) {matches[i]}");
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            prompt.Out.Write($"Pick one [1-{matches.Count}]: ");
+            prompt.Out.Flush();
+            var line = prompt.In.ReadLine();
+            if (line == null) break;
+            if (int.TryParse(line.Trim(), out var n) && n >= 1 && n <= matches.Count)
+            {
+                notices.WriteLine($"[test-data] --test-data-company '{text}' selected company '{matches[n - 1]}'.");
+                return matches[n - 1];
+            }
+        }
+        throw new TestDataUnavailableException(ambiguous);
     }
 
     private static string ResolveCompany(string backup)

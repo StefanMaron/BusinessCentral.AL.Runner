@@ -74,6 +74,21 @@ public sealed class BundleRootValidationTests : IDisposable
         return (p.ExitCode, so.ToString(), se.ToString());
     }
 
+    /// <summary>
+    /// #4553 wiring: Program.cs passes each bundle's argv position to the validator, so an
+    /// unquoted company name that spilled into the positionals is named with the quoted fix.
+    /// </summary>
+    [Fact]
+    public void Cli_UnquotedMultiWordOptionValue_SuggestsQuoting()
+    {
+        var spilled = Path.Combine(_root, "International");
+        var (exit, _, stderr) = RunCli("--test-data-company", "CRONUS", spilled);
+
+        Assert.Equal(2, exit);
+        Assert.Contains($"no such directory: {spilled}", stderr);
+        Assert.Contains($"--test-data-company \"CRONUS {spilled}\"", stderr);
+    }
+
     // ── Positive direction: the missing path must be named, and the exit code must be
     // the documented 2 — never 134 and never a raw .NET stack trace. ──────────────
 

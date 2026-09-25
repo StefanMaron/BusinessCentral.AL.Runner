@@ -217,7 +217,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md#dev-loop) for provisioning them as a separ
 | `--show-pass` | Include PASS lines in per-test output. Equivalent to `AL_RUNNER_SHOW_PASS=1`. |
 | `--precompile <input.app>` | Subcommand: compile one `.app` to a DLL via `--out`. |
 | `--test-data` / `--test-data=PATH` | Hydrate the in-memory database from a BC `.bak`, so tests find the setup records a real environment has. A table is read the first time the run touches it, never up front, so the cost tracks what the suite actually uses. Off by default. Resolves `sandbox/<version>/<country>/BusinessCentral-<CC>.bak` from the artifact cache, or the explicit path. A missing backup fails the run naming every path probed — it never continues against an empty database. Needs the `bcbak` backup reader on PATH or at `$AL_RUNNER_BCBAK`. Table-extension (`$ext`) fields are merged into the base record; see [docs/limitations.md](docs/limitations.md) for what is and is not hydrated. |
-| `--test-data-company NAME` | Company inside the backup to hydrate. Default: the first company the backup reports, printed at the start of the run. |
+| `--test-data-company NAME` | Company inside the backup to hydrate; required when the backup holds more than one. NAME may be a case-insensitive prefix (`cronus`): a unique match is used and named, an exact name beats a prefix, and several matches are listed (a numbered prompt on a terminal, a failure otherwise). |
 
 When a test fails on a table that has **no rows** in this run, the runner prints a one-line
 `[test-data]` explanation under the failure naming that table and pointing at `--test-data`.

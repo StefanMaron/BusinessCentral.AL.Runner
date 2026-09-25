@@ -25,7 +25,7 @@ al-runner [OPTIONS] <bundle-dir>...
 |---|---|
 | `--package-cache PATH` | An extra `.app` package cache directory. Repeatable. |
 | `--test-data`, `--test-data=PATH` | Hydrate the database from a Business Central backup. Needs the `bcbak` reader. |
-| `--test-data-company NAME` | Which company inside the backup to use. Defaults to the first one. |
+| `--test-data-company NAME` | Which company inside the backup to use. Required when the backup holds more than one. NAME may be a case-insensitive prefix (`cronus`): a unique match is used and named on stderr, an exact name beats a prefix, and several matches are listed (a numbered prompt on a terminal, a failure otherwise). |
 
 ## Speed
 

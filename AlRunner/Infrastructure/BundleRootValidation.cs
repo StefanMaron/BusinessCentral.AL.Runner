@@ -27,13 +27,39 @@ internal static class BundleRootValidation
     /// other CLI usage error in Program.cs already uses — see PrintHelp).
     /// </summary>
     public static string? Validate(IReadOnlyList<string> bundleRoots)
+        => Validate(bundleRoots, Array.Empty<string?>());
+
+    public static string? Validate(IReadOnlyList<string> bundleRoots, IReadOnlyList<string?> missingDirectoryHints)
     {
-        foreach (var root in bundleRoots)
+        for (var i = 0; i < bundleRoots.Count; i++)
         {
-            var problem = Describe(root);
-            if (problem != null) return problem;
+            var problem = Describe(bundleRoots[i]);
+            if (problem == null) continue;
+            var hint = i < missingDirectoryHints.Count ? missingDirectoryHints[i] : null;
+            if (hint != null && problem.StartsWith("al-runner: no such directory:", StringComparison.Ordinal))
+                problem += Environment.NewLine + hint;
+            return problem;
         }
         return null;
+    }
+
+    /// <summary>
+    /// #4553: the positional at <paramref name="index"/> directly follows an option's value
+    /// (the token before it is neither an option nor a bundle), so an unquoted multi-word value
+    /// most likely spilled into the bundle list. Null for any other positional.
+    /// </summary>
+    public static string? SpilledOptionValueHint(IReadOnlyList<string> args, int index, IReadOnlySet<int> bundleIndices)
+    {
+        if (index < 2 || index >= args.Count) return null;
+        var value = args[index - 1];
+        var option = args[index - 2];
+        if (value.StartsWith('-') || bundleIndices.Contains(index - 1) || !option.StartsWith('-')) return null;
+
+        var words = new List<string> { value };
+        for (var j = index; j < args.Count && bundleIndices.Contains(j) && !args[j].StartsWith('-'); j++)
+            words.Add(args[j]);
+        return $"  '{args[index]}' follows the value of {option}. If that value contains spaces, quote it: "
+            + $"{option} \"{string.Join(' ', words)}\"";
     }
 
     /// <summary>
