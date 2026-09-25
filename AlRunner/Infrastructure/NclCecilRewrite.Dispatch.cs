@@ -626,26 +626,29 @@ public static partial class NclCecilRewrite
 
         // Code coverage: CODECOVERAGELOG(TRUE) is NOT rewritten — BC's own recorder runs over the
         // ALCodeEnvironment the skeleton NCLMetadata is seeded with (CodeCoveragePatches, #4468).
-        // What IS rewritten is the one step that needs AL source text the runner cannot serve:
-        // CodeCoverageDataProvider.ComputeRecordsForObject, which builds the Code Coverage
-        // (2000000049) line rows. Unpatched it reaches ALCodeEnvironment.GetSourceCodeLines and
-        // fails with a NavMetadataNotFoundException claiming the object does not exist.
+        // What IS rewritten is the one step that reads AL source text from table 2000000207:
+        // ALCodeEnvironment.GetSourceCodeLines(RuntimePackageApplicationObjectId), the private
+        // static behind both the Code Coverage line rows and the recorder's test-method names
+        // (#4572). The runner answers from the .al files it compiled.
         {
-            var ccDataProvider = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.CodeCoverageDataProvider");
-            var targets = ccDataProvider?.Methods
-                .Where(x => x.Name == "ComputeRecordsForObject" && x.HasBody).ToList();
+            var codeEnv = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.ALCodeEnvironment");
+            var targets = codeEnv?.Methods
+                .Where(x => x.Name == "GetSourceCodeLines" && x.IsStatic && x.HasBody
+                    && x.Parameters.Count == 1
+                    && x.Parameters[0].ParameterType.Name == "RuntimePackageApplicationObjectId")
+                .ToList();
             if (targets == null || targets.Count != 1)
                 throw new InvalidOperationException(
-                    "[Cecil] Expected exactly ONE CodeCoverageDataProvider.ComputeRecordsForObject to "
-                    + $"prepend the code-coverage line-rows refusal to, found {targets?.Count ?? 0}. BC's "
-                    + "shape has changed; reading Code Coverage (2000000049) would fail with a message "
-                    + "naming the wrong cause. See AlRunner/Patches/CodeCoveragePatches.cs and issue #4468.");
+                    "[Cecil] Expected exactly ONE static ALCodeEnvironment.GetSourceCodeLines("
+                    + $"RuntimePackageApplicationObjectId) to serve AL source text through, found {targets?.Count ?? 0}. "
+                    + "BC's shape has changed; reading Code Coverage (2000000049) would fail with a message "
+                    + "naming the wrong cause. See AlRunner/Patches/CodeCoveragePatches.cs and issue #4572.");
             var helper = typeof(AlRunner.Patches.CodeCoveragePatches).GetMethod(
-                nameof(AlRunner.Patches.CodeCoveragePatches.RefuseCodeCoverageLineRows),
+                nameof(AlRunner.Patches.CodeCoveragePatches.SourceCodeLinesFor),
                 BindingFlags.Public | BindingFlags.Static)
                 ?? throw new InvalidOperationException(
-                    "[Cecil] CodeCoveragePatches.RefuseCodeCoverageLineRows not found");
-            PrependStaticCall(asm.MainModule, targets[0], helper, argSlots: 0);
+                    "[Cecil] CodeCoveragePatches.SourceCodeLinesFor not found");
+            ReplaceBodyWithHelper(asm.MainModule, targets[0], helper);
         }
 
         // ALNavApp resource retrieval — NavApp.GetResource / GetResourceAsText are IN

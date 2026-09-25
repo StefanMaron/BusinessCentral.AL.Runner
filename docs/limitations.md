@@ -1806,7 +1806,8 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
 
 <a id="code-coverage-virtual-tables"></a>
 
-- **Code coverage records, but the `Code Coverage` (2000000049) line rows refuse.**
+- **Code coverage records, and the `Code Coverage` (2000000049) line rows are served for
+  objects compiled from source; a precompiled dependency's rows refuse.**
   `CODECOVERAGELOG(TRUE)` starts BC's own recorder: the skeleton `NCLMetadata` is seeded with a
   real `ALCodeEnvironment`, built through BC's constructor with the same two delegates
   `NCLMetadata`'s own constructor passes (`AlRunner/Patches/CodeCoveragePatches.cs`,
@@ -1815,13 +1816,26 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   loads its counters into BC's own providers for the three code-coverage virtual tables
   (2000000049, 2000000288, 2000000289) — corpus codeunit 60339 pins the state transitions.
 
-  **What still refuses** is reading a `Code Coverage` line row after something was recorded.
-  BC builds those rows from each covered object's AL source text, which it reads from the
-  application database (`ALCodeEnvironment.GetSourceCodeLines`); the runner has no store for it,
-  so the read raises `RunnerOutOfScopeException` with the `not-yet-implemented` anchor instead
-  of BC's own failure, which claims the covered object does not exist. The anchor tears through
-  an AL `[TryFunction]`, so the gap cannot read as `false`. Emptying the table with `DeleteAll`
-  does not refuse. Pinned in `tests/runner-extras/code-coverage-line-rows-oos`.
+  BC builds the `Code Coverage` line rows from each covered object's AL source text, which it
+  reads from the application database (`ALCodeEnvironment.GetSourceCodeLines`, table 2000000207
+  "User AL Code"). The runner answers that one read from the `.al` files it compiled: the file's
+  preamble followed by the object, the numbering BC's `[SourceSpans]` use, so `Line No.` is the
+  object's line in its file and every row, hit count and status after that is BC's own code
+  ([#4572](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4572); corpus
+  codeunit 60341).
+
+  **What still refuses** is reading the rows of a covered object the run did not compile from
+  source — a precompiled dependency. The read raises `RunnerOutOfScopeException`
+  (`ALCodeEnvironment.GetSourceCodeLines`, `not-yet-implemented`, naming the object) instead of
+  BC's own failure, which claims the covered object does not exist; the anchor tears through an
+  AL `[TryFunction]`. The refusal is per object, so a filtered read of an object compiled from
+  source is still served. Pinned in `tests/runner-extras/code-coverage-line-rows`.
+
+  Not verified against a service tier: the `Line` text. BC replaces it with a "source not
+  available" text when the covered app's `resourceExposurePolicy` does not include source in
+  its symbols; which answer the runner gives depends on what its app group reports for the
+  object. And the per-test tables 2000000288 and 2000000289 read empty after recording across a
+  test start ([#4666](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4666)).
 
   The runner's own `--coverage` flag is a separate route over the same statement-hit stream
   (`AlRunner/Infrastructure/AlCoverageReport.cs`) and needs none of this.

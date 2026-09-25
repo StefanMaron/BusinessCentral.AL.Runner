@@ -470,6 +470,7 @@ public static partial class RecordPatches
         // for the page-side failure this prevents.
         ResetXmlPortMetadataForReload();
         _sourceDirs.Clear();
+        CodeCoveragePatches.ResetSourceMapForReload();   // same dirs, edited files (#4572 review)
         _compileManifestByDir.Clear();
         _manifestSymbolsByPath.Clear();   // a --watch edit to app.json is re-read (#4071)
         _installBaseline = null;

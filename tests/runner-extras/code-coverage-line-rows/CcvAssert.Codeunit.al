@@ -14,6 +14,12 @@ codeunit 65650 "Ccv Assert"
             Error('Expected FALSE: %1', Msg);
     end;
 
+    procedure AreEqual(Expected: Variant; Actual: Variant; Msg: Text)
+    begin
+        if Format(Expected) <> Format(Actual) then
+            Error('Expected ''%1'' but got ''%2'': %3', Expected, Actual, Msg);
+    end;
+
     procedure ExpectedError(Fragment: Text)
     begin
         if StrPos(GetLastErrorText(), Fragment) = 0 then
