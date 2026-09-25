@@ -37,6 +37,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **cli:** one wording for the cross-major note — the variants-shipped branch stops hand-rolling its own
 - **expectations:** delete six allowlist entries the versionContingent flag was hiding
 - **expectations:** drop object-scoping claims the allowlist schema cannot make, and the derivations its Doc pointers already hold
 - **preflight:** carry dir_size's completeness flag into the scratch total
