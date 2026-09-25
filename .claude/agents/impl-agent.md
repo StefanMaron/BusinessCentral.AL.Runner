@@ -269,7 +269,7 @@ The unfiltered suite is for CI; it spends most of its time in tests that spawn t
 
    ```bash
    for t in tools/test_*.py; do python3 "$t" >/dev/null || echo "FAILED: $t"; done   # ~30s
-   dotnet test AlRunner.Tests --filter "FullyQualifiedName~GuardTests"               # 290 tests
+   dotnet test AlRunner.Tests --filter "FullyQualifiedName~GuardTests"               # 304 tests
    ```
 
    The loop above runs **55** guards (`tools/test_*.py`); `.github/scripts/test_*` holds a further
