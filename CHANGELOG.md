@@ -41,6 +41,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **metadata:** xmlport CalcFields and RequestFilterFields in BC's Field<n> form
 - **metadata:** write the request page's empty PromotedActionCategoriesML, and re-home the rest of #4282
 - **testpage:** resolve a precompiled action's shared-name RunObject
 - **reports:** run OnInitReport at report construction, so BC's own report engine runs it too
