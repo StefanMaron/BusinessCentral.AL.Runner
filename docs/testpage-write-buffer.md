@@ -138,6 +138,37 @@ Two failure modes are handled by keeping today's behaviour rather than refusing:
   goes back. A partially-restored buffer is the state this rule exists to remove, and it
   would be harder to diagnose than the un-restored one.
 
+## A row the page saved itself
+
+A page's own AL can write the row the test is typing into: `CurrPage.SaveRecord()` (or
+`CurrPage.Update(true)`) from a field's `OnValidate` reaches `NavForm.SaveRecordAsync`, which
+inserts a new row there and then. Base Application's order subforms do this —
+"Sales Order Subform".`QuantityOnAfterValidate` saves an Item line (issue #4577).
+
+**What BC does.** `SaveRecordAsync` picks Insert or Modify on `!SourceTable.HasBeenInserted`.
+So once the page has inserted the row, every later save of it is a Modify, and the table's
+`OnInsert` does not run again. And `NavForm.form_UpdateRequest` re-raises a part's
+`UpdateRequest` on its host with the **part** as sender, so a part's `RecordSaved` says
+nothing about the host's row.
+
+**What measured it.** Corpus codeunit 60412 "PSR Page Saved Row Tests"
+(StefanMaron/BusinessCentral.AL.Language.Tests#407): a `DelayedInsert` part row its own trigger
+saved keeps a value typed afterwards, and is saved once; a host's edit survives a part saving
+its row; a new card row its key field's trigger saved runs `OnInsert` once.
+
+**How the runner does it.**
+
+- `NewRowAlreadyInsertedByThePage` turns a pending insert into a pending Modify when the
+  record already `HasBeenInserted`. It runs in `FlushPendingNewRow` (close, row leave, the
+  key-complete part insert) and in `ActivateControl` (insert on focus). Before it, the flush
+  re-inserted the row; `InsertPendingRow` traps that duplicate error, so the values typed after
+  the page's save were dropped with no error, and `OnInsert` ran a second time.
+- `RunnerPageInstance`'s `UpdateRequest` handler refreshes the before-image on `RecordSaved`
+  only when the sender is its own form. Before, a part's save refreshed the host's
+  before-image, so the host's pending edit compared equal to it and was never written.
+
+`AlRunner.Tests/TestPagePageSavedRowTests.cs` has one AL test per change.
+
 ## Why `LiveNavTestField.Write` snapshots inline
 
 `TestPageWriteBuffer` offers two spellings, and the two-part one exists for a single caller.

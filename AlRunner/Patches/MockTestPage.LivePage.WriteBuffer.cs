@@ -184,6 +184,7 @@ internal partial class LiveNavTestPage
     {
         if (!_pendingNewRow) return;
         _pendingNewRow = false;
+        if (NewRowAlreadyInsertedByThePage()) { ContinueAsAnEditOfTheSavedRow(); return; }
         // A row New() started and nothing wrote to is not persisted — BC discards it rather
         // than inserting a blank line, so a subpage part that showed 2 rows still shows 2.
         // See RowValuesChangedSinceLoad for the mechanism and what measured it.
@@ -658,8 +659,31 @@ internal partial class LiveNavTestPage
         if (_validationErrors.Count > 0) return;
 
         _pendingNewRow = false;
+        if (NewRowAlreadyInsertedByThePage()) { ContinueAsAnEditOfTheSavedRow(); return; }
         // A vetoed insert leaves the row a started draft, as the client's does.
         if (!InsertPendingRow()) _pendingNewRow = true;
+    }
+
+    /// <summary>
+    /// The started row is already in the table because the page's own AL wrote it —
+    /// <c>CurrPage.SaveRecord()</c> / <c>CurrPage.Update(true)</c> reach
+    /// <c>NavForm.SaveRecordAsync</c>, which inserts it. From then on the row is edited, not
+    /// started: the pending insert becomes a pending Modify.
+    ///
+    /// Observably equivalent: <c>NavForm.SaveRecordAsync</c> itself chooses Insert versus
+    /// Modify on <c>!SourceTable.HasBeenInserted</c>, the same flag read here. Trap: inserting
+    /// again instead fails on the duplicate key and, through <c>InsertPendingRow</c>'s
+    /// <c>TrapError</c>, silently drops every value typed after the page's save (#4577).
+    ///
+    /// A predicate only: the caller clears <c>_pendingNewRow</c> itself, so the clear stays
+    /// inside the flush methods <c>BuiltInCancelIsNotADiscardTests</c> licenses (#4295).
+    /// </summary>
+    private bool NewRowAlreadyInsertedByThePage() => _record?.HasBeenInserted == true;
+
+    private void ContinueAsAnEditOfTheSavedRow()
+    {
+        _insertPositionCaptured = false;
+        _pendingModify = true;
     }
 
     // BC's IsFieldControl needs a column binder and a row: a Rec-bound control. Page-variable
