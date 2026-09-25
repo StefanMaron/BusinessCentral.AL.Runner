@@ -91,6 +91,7 @@ public static partial class RecordPatches
     {
         // The AllObj block resolved exactly the same set of Ncl helpers; reuse it.
         EnsureAllObjReflection(metaTable);
+        EnsureReportMetadataReflection(metaTable);   // NavBoolean.Create(bool)
         EnsureDataAccessProviderReflection(dataAccess);
 
         var provider = _pDataAccessDataProvider!.GetValue(dataAccess)
@@ -131,7 +132,9 @@ public static partial class RecordPatches
                 ResolvedPath: string.Empty,
                 Caption: l.Caption ?? string.Empty,
                 Summary: l.Summary ?? string.Empty,
-                IsDefault: string.Equals(l.Name, report.DefaultRenderingLayout, System.StringComparison.OrdinalIgnoreCase));
+                IsDefault: string.Equals(l.Name, report.DefaultRenderingLayout, System.StringComparison.OrdinalIgnoreCase),
+                ObsoleteState: l.ObsoleteState ?? string.Empty,
+                ExcelLayoutMultipleDataSheets: l.ExcelLayoutMultipleDataSheets ?? string.Empty);
     }
 
     private static IEnumerable<AlReportLayoutInfo> EnumerateDependencyReportLayouts()
@@ -208,13 +211,43 @@ public static partial class RecordPatches
                             + $"\"{field.FieldName}\" option set ('{field.FieldOptionMetadata?.OptionString}')");
                     return _aovNavOptionCreate!.Invoke(null, new object?[] { field.FieldOptionMetadata, ordinal });
                 }
-            // Every other column — Company Name, App ID, Layout/Media GUIDs, User Defined,
-            // Obsolete State, Excel sheet configuration, … — is exactly what an
-            // application-provided (non-tenant, non-user-defined) layout row carries on a
-            // real tier for a report in the current extension: the type's default value.
+            // BC writes both columns from the layout's declaration when it publishes an app
+            // (Ncl AppReportLayoutStorage.AddAppReportLayout, same body on 27.0 and 28.4):
+            // IsObsolete = ObsoleteState != No; the Excel column is Default when unset,
+            // SingleSheet for false, MultipleSheets for true. Corpus 60974 pins both (#4045).
+            case "isobsolete":
+                return NavBoolean(IsObsoleteLayout(layout));
+            case "excellayoutmultipledatasheets":
+                return _aovNavOptionCreate!.Invoke(null, new object?[]
+                    { field.FieldOptionMetadata, ExcelSheetConfigurationOrdinal(layout) });
+            // Every other column — Company Name, App ID, Layout/Media GUIDs, User Defined, …
+            // — is exactly what an application-provided (non-tenant, non-user-defined) layout
+            // row carries on a real tier for a report in the current extension: the type's
+            // default value.
             default:
                 return Default();
         }
+    }
+
+    /// <summary>BC's rule: any declared ObsoleteState other than No marks the layout obsolete.</summary>
+    internal static bool IsObsoleteLayout(AlReportLayoutInfo layout)
+        => !string.IsNullOrEmpty(layout.ObsoleteState)
+           && !string.Equals(layout.ObsoleteState, "No", System.StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Ordinal of enum "Excel Sheet Configuration" (Default 0, Single Data sheet 1, Multiple data
+    /// sheets 2) for the layout's declared <c>ExcelLayoutMultipleDataSheets</c>. A spelling that is
+    /// not a boolean is refused rather than read as Default.
+    /// </summary>
+    internal static int ExcelSheetConfigurationOrdinal(AlReportLayoutInfo layout)
+    {
+        var v = layout.ExcelLayoutMultipleDataSheets;
+        if (string.IsNullOrEmpty(v)) return 0;
+        if (v == "1" || string.Equals(v, "true", System.StringComparison.OrdinalIgnoreCase)) return 2;
+        if (v == "0" || string.Equals(v, "false", System.StringComparison.OrdinalIgnoreCase)) return 1;
+        throw ReportLayoutListShapeGap(
+            $"report {layout.ReportId} layout '{layout.Name}' declares "
+            + $"ExcelLayoutMultipleDataSheets = '{v}', which is not a boolean");
     }
 
     /// <summary>

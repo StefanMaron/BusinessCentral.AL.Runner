@@ -49,7 +49,11 @@ public sealed record AlReportLayoutInfo(
     /// one, so this is what a plain <c>Report.SaveAs</c> with no explicit
     /// <c>SetTempLayoutSelectedName</c> selection renders through.
     /// </summary>
-    bool IsDefault = false);
+    bool IsDefault = false,
+    /// <summary>The AL <c>ObsoleteState</c> property verbatim, or "" when not declared.</summary>
+    string ObsoleteState = "",
+    /// <summary>The AL <c>ExcelLayoutMultipleDataSheets</c> property as a symbol file spells it, or "" when not declared.</summary>
+    string ExcelLayoutMultipleDataSheets = "");
 
 public static class AlReportLayoutRegistry
 {
@@ -99,7 +103,9 @@ public static class AlReportLayoutRegistry
             // Same "later wins only where it has something to say" rule: a pass that
             // could not read DefaultRenderingLayout reports false for every layout, and
             // must not un-mark a default an informed pass already established.
-            IsDefault: existing.IsDefault || incoming.IsDefault);
+            IsDefault: existing.IsDefault || incoming.IsDefault,
+            ObsoleteState: Prefer(existing.ObsoleteState, incoming.ObsoleteState),
+            ExcelLayoutMultipleDataSheets: Prefer(existing.ExcelLayoutMultipleDataSheets, incoming.ExcelLayoutMultipleDataSheets));
 
     private static string Prefer(string existing, string incoming) =>
         string.IsNullOrEmpty(incoming) ? existing : incoming;

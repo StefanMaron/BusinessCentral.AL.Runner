@@ -668,9 +668,13 @@ internal static partial class BcAppSymbolCache
         // carries cannot be transcribed faithfully.
         bool HasRequestPage = false);
 
-    /// <summary>One <c>layout(Name) { Type; MimeType; LayoutFile; Caption; Summary }</c>, verbatim.</summary>
+    /// <summary>
+    /// One <c>layout(Name) { Type; MimeType; LayoutFile; Caption; Summary; ObsoleteState;
+    /// ExcelLayoutMultipleDataSheets }</c>, verbatim (the last as the symbol file spells a boolean).
+    /// </summary>
     internal sealed record ReportLayoutSymbol(
-        string Name, string? Type, string? MimeType, string? LayoutFile, string? Caption, string? Summary);
+        string Name, string? Type, string? MimeType, string? LayoutFile, string? Caption, string? Summary,
+        string? ObsoleteState = null, string? ExcelLayoutMultipleDataSheets = null);
 
     /// <summary>One entry of a report's data-item tree, flattened in declaration order.</summary>
     internal sealed record ReportDataItemSymbol(
@@ -2405,7 +2409,7 @@ internal static partial class BcAppSymbolCache
             var p = SymbolProperties(layout);
             string? Get(string key) => p.TryGetValue(key, out var v) && !string.IsNullOrEmpty(v) ? v : null;
             result.Add(new ReportLayoutSymbol(name, Get("Type"), Get("MimeType"), Get("LayoutFile"),
-                Get("Caption"), Get("Summary")));
+                Get("Caption"), Get("Summary"), Get("ObsoleteState"), Get("ExcelLayoutMultipleDataSheets")));
         }
         return result.Count == 0 ? null : result;
     }
