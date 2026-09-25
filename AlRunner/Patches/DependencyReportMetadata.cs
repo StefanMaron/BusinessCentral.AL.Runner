@@ -433,6 +433,13 @@ public static partial class RecordPatches
         // choice does not change handler routing, and is written to match BC's emit rather
         // than to drive it.
         w.WriteAttributeString("PageType", report.ProcessingOnly ? "ReportProcessingOnly" : "ReportPreview");
+        // Observably equivalent: BC's emitter writes "" on every request page it was measured
+        // on (a four-shape probe app, report 9810, all four xmlports; 28.1.49838.53910), and 0 of
+        // 660 reports state PromotedActionCategories on their request page, so "" is the only
+        // value. BC's reader parses "" and absence to the same object (#4357's presence diff);
+        // written so the document matches, as WriteXmlPortRequestPageXml already does.
+        // See docs/report-metadata-from-bc.md#request-page-promoted-action-categories.
+        w.WriteAttributeString("PromotedActionCategoriesML", "");
         w.WriteAttributeString("Editable", "1");
         // BC's emitter default for a request page, written unconditionally because AL cannot
         // override it HERE: HelpLink is a real page property (6 System Application pages declare

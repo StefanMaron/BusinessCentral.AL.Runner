@@ -379,6 +379,35 @@ neither, so the harness's current population — one report — cannot adjudicat
 closes anything. Settling it needs a ground-truth bundle containing a report that states them;
 tracked separately rather than guessed here.
 
+<a id="request-page-promoted-action-categories"></a>
+### `PromotedActionCategoriesML` is written empty (#4282)
+
+BC writes `PromotedActionCategoriesML=""` on every request page it was measured on, and
+`WriteRequestPageXml` now writes the same. Report 9810 is the only report in the ground-truth
+bundles, so that one object could not say whether the empty string was universal or conditional.
+A probe app compiled with BC's own compiler (28.1.49838.53910; the recipe is in
+`docs/dependency-page-properties.md` under *Reproducing*) settled it. Four report shapes all got
+`""`:
+
+- processing-only, `UseRequestPage = false`, an empty `requestpage`
+- a dataset and no `requestpage` section at all
+- processing-only with request-page fields and an action
+- a dataset with `SaveValues = true` on its request page
+
+All four System Application xmlports carry the same `""`, and `WriteXmlPortRequestPageXml`
+already writes it. No report in Base or System Application states `PromotedActionCategories` on
+its request page, so there is no stated value to read. Stating one in a probe (with the
+`NoPromotedActionProperties` feature off) makes BC's own emitter throw a
+`NullReferenceException` on that report, so it is not a shape a shipped app can have.
+
+The attribute is **unobservable**: BC's reader produces the same object with and without it, so
+the value comparison could never have seen it missing. It was found by the presence diff
+(`Report.Properties.PromotedActionCategoriesML` in `unobservable-omissions.json`, now removed).
+
+The same probe showed that `HelpLink` is not a constant. BC writes the app manifest's
+`ContextSensitiveHelpUrl`, which is `https://learn.microsoft.com/dynamics365/business-central/`
+for the two apps the harness measures. That is tracked on #4675.
+
 ### Why the control tree is not transcribed
 
 The symbol file does carry one: 2,938 control nodes over those 466 reports, with 1,891

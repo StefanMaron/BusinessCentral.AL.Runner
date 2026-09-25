@@ -289,6 +289,47 @@ public sealed class ReportRequestPageSubtreeTests
     }
 
     /// <summary>
+    /// <c>PromotedActionCategoriesML</c> is written present-but-EMPTY on every request page,
+    /// as BC's emitter does. Settled by a probe app compiled with BC's own compiler
+    /// (28.1.49838.53910): four report shapes — processing-only with an empty request page,
+    /// a dataset with no <c>requestpage</c> section, fields plus actions, and
+    /// <c>SaveValues</c> over a dataset — all emit <c>""</c>, as do report 9810 and all four
+    /// System Application xmlports. No report in Base or System Application states the property
+    /// on its request page, so there is no stated value to read
+    /// (docs/report-metadata-from-bc.md#request-page-promoted-action-categories).
+    /// </summary>
+    [Fact]
+    public void TheRequestPagePropertiesCarryAnEmptyPromotedActionCategoriesML()
+    {
+        var dir = TestScratch.Dir("al-runner-report-requestpage-promotedcategories");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            // WithControls states SaveValues on its RequestPage node: stated request-page
+            // properties do not change the constant.
+            foreach (var id in new[] { ChangePassword, WithControls })
+            {
+                var properties = Assert.IsAssignableFrom<XmlElement>(
+                    Emit(Report(dir, id)).SelectSingleNode(
+                        "RequestPage/*[local-name()='PageDefinition']/*[local-name()='Properties']"));
+                // HasAttribute, not GetAttribute alone: GetAttribute answers "" for an ABSENT
+                // attribute too, which is the omission this test exists to catch.
+                Assert.True(properties.HasAttribute("PromotedActionCategoriesML"),
+                    $"report {id}: the request page states no PromotedActionCategoriesML");
+                Assert.Equal("", properties.GetAttribute("PromotedActionCategoriesML"));
+            }
+
+            var noSubtree = Emit(Report(dir, NoRequestPageNode));
+            Assert.Null(noSubtree.SelectSingleNode("RequestPage"));
+            Assert.DoesNotContain("PromotedActionCategoriesML", noSubtree.OuterXml, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
     /// The same fact through BC's OWN reader: <c>MetaPageProperties.HelpLink</c> is the member
     /// the metadata-equivalence harness compares, and #4057 measured it <c>&lt;null&gt;</c> on
     /// the runner against BC's constant. Reading it back through
