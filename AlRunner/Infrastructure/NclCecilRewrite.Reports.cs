@@ -38,6 +38,12 @@ public static partial class NclCecilRewrite
                     new[] { typeof(int), typeof(bool), typeof(bool), typeof(object) })
                 ?? throw new InvalidOperationException(
                     "NavReportSync.SyncStaticRun(int,bool,bool,object) not found — do not commit"));
+            var syncStaticRunKeepRef = asm.MainModule.ImportReference(
+                typeof(AlRunner.NavReportSync).GetMethod(
+                    nameof(AlRunner.NavReportSync.SyncStaticRunKeepRequestWindow),
+                    new[] { typeof(int) })
+                ?? throw new InvalidOperationException(
+                    "NavReportSync.SyncStaticRunKeepRequestWindow(int) not found — do not commit"));
             var syncExecutePrintRef = asm.MainModule.ImportReference(
                 typeof(AlRunner.NavReportSync).GetMethod(
                     nameof(AlRunner.NavReportSync.SyncExecuteOrPrint),
@@ -112,8 +118,9 @@ public static partial class NclCecilRewrite
                     // also sync-over-asyncs and runs metadata-bound side
                     // effects (DefaultPaperSourceKindRaw, PreviewMode,
                     // UseRequestForm, OnInitReport via EndInitializationAsync)
-                    // that are not AL-observable. OnInitReport is fired
-                    // explicitly by NavReportSync.SyncRun.
+                    // that are not AL-observable. OnInitReport is fired by
+                    // NavReportSync.RunOnInitReportAtConstruction, at the end of
+                    // every construction route — never re-add it to SyncRun (#4656).
                     if (method.Name == "BeginInitialization"
                         && ps.Count == 0
                         && method.ReturnType.FullName == "System.Void")
@@ -186,10 +193,8 @@ public static partial class NclCecilRewrite
                     // fell straight through the `ret` — a silent no-op, not the intended
                     // loud OOS throw. Cecil-own the body directly (like the instance
                     // Run/RunModal rewrite above) so the redirect is real IL, not a hook that
-                    // can silently fail to bind. Missing trailing args get BC's own
-                    // documented defaults (RequestWindow=true, SystemPrinter=false) — inert
-                    // today since SyncStaticRun does not raise a dialog, but correct in case a
-                    // future implementation reads them.
+                    // can silently fail to bind. Run(id) passes no RequestWindow at all (see the
+                    // Count == 1 branch); a missing SystemPrinter/record gets false/null.
                     //
                     // The one shape NOT handled here is the ReportRunOptions overload
                     // (Run(ReportRunOptions) only — RunModal has no such overload): its single
@@ -221,10 +226,19 @@ public static partial class NclCecilRewrite
                             il.Append(il.Create(OpCodes.Throw));
                             body.MaxStackSize = 1;
                         }
+                        else if (sps.Count == 1)
+                        {
+                            // BC's Run(int)/RunModal(int) pass requestWindow: null, so the report
+                            // keeps its own UseRequestPage (#4665) — never substitute `true` here.
+                            il.Append(il.Create(OpCodes.Ldarg_0)); // reportId
+                            il.Append(il.Create(OpCodes.Call, syncStaticRunKeepRef));
+                            il.Append(il.Create(OpCodes.Ret));
+                            body.MaxStackSize = 1;
+                        }
                         else
                         {
                             il.Append(il.Create(OpCodes.Ldarg_0)); // reportId
-                            il.Append(sps.Count >= 2 ? il.Create(OpCodes.Ldarg_1) : il.Create(OpCodes.Ldc_I4_1)); // requestWindow (BC default: true)
+                            il.Append(il.Create(OpCodes.Ldarg_1)); // requestWindow
                             il.Append(sps.Count >= 3 ? il.Create(OpCodes.Ldarg_2) : il.Create(OpCodes.Ldc_I4_0)); // systemPrinter (BC default: false)
                             il.Append(sps.Count >= 4 ? il.Create(OpCodes.Ldarg_3) : il.Create(OpCodes.Ldnull));   // record (no filter)
                             il.Append(il.Create(OpCodes.Call, syncStaticRunRef));

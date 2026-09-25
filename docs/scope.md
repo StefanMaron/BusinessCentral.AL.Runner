@@ -172,11 +172,11 @@ source-compiled report, so a renderer that demands the layout content — includ
 a custom document merger reading `LayoutData` — gets nothing. Rendering itself is
 out of scope; only selection/resolution is supported.
 
-Instance `report.Run()` / `report.RunModal()` on an AL variable **does** run: the
-runner JmpHooks the sync wrapper into `NavReportSync.SyncRun`, which reflectively
-invokes `OnInitReport` → `OnPreReport` → per-DataItem `OnPreDataItem` / `OnPostDataItem`
-→ `OnPostReport`. DataItem row iteration is a follow-up (FindSet +
-`OnAfterGetRecord` per row).
+Instance `report.Run()` / `report.RunModal()` on an AL variable **does** run: a Cecil
+rewrite routes the sync wrapper into `NavReportSync.SyncRun`, which runs `OnPreReport` →
+the data items → `OnPostReport`. `OnInitReport` runs earlier, when the report instance is
+constructed (the variable's first use, or BC's own `REPORT.Run` from precompiled code), as it
+does in BC (#4656).
 
 ### §3.6. Background jobs / scheduling <a id="jobs"></a>
 
