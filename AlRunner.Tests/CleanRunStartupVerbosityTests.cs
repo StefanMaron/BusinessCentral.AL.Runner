@@ -300,7 +300,7 @@ public sealed class CleanRunStartupVerbosityTests
             var args = new List<string> { "--bc-version", prefix };
             args.AddRange(extraArgs);
             var (output, exit) = RunIn(Path.Combine(scratch, "cwd"), app, cache, artifactsRoot, args.ToArray());
-            Assert.True(exit == 0 && output.Contains("pass:        1"),
+            Assert.True(exit == 0 && output.Contains("passed 1 ", StringComparison.Ordinal),
                 $"fixture must compile and pass cleanly:\n{output}");
             return (output, exit);
         }
