@@ -67,7 +67,7 @@ public static partial class RecordPatches
         var missingInherent = facts.InherentMethodIds.Where(id => !symbolIds.Contains(id)).ToList();
         if (missingInherent.Count > 0)
         {
-            why = $"[InherentPermissions] method(s) {string.Join(", ", missingInherent)} are not in the symbol file (local)";
+            why = $"InherentPermissions-attributed method(s) {string.Join(", ", missingInherent)} are not in the symbol file (local)";
             return false;
         }
         var symbolNames = (symbolMethods ?? []).Select(m => m.Name).ToList();
@@ -215,7 +215,7 @@ public static partial class RecordPatches
             if (inherent)
             {
                 if (methodId is { } inheritId) inherentMethodIds.Add(inheritId);
-                else refusal ??= $"[InherentPermissions] method '{md.GetString(method.Name)}' carries no MethodId";
+                else refusal ??= $"InherentPermissions-attributed method '{md.GetString(method.Name)}' carries no MethodId";
             }
             if (methodId is { } mid && span is { } s && !spanByMethodId.TryAdd(mid, s))
                 refusal ??= $"method id {mid} occurs twice";
