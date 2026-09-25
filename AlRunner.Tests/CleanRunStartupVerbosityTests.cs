@@ -80,10 +80,11 @@ public sealed class CleanRunStartupVerbosityTests
     };
 
     private static (string Output, int Exit) Run(string alCacheDir, params string[] extraArgs)
-        => RunIn(RepoRoot, Fixture, alCacheDir, extraArgs);
+        => RunIn(RepoRoot, Fixture, alCacheDir, artifactsRoot: null, extraArgs);
 
     private static (string Output, int Exit) RunIn(
-        string workingDirectory, string fixture, string alCacheDir, params string[] extraArgs)
+        string workingDirectory, string fixture, string alCacheDir, string? artifactsRoot,
+        params string[] extraArgs)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         // Deliberately NOT TestBuildConfig.BcVersionArg — the auto-selection lines this
@@ -107,6 +108,8 @@ public sealed class CleanRunStartupVerbosityTests
         // this class is specifically about the CLI --verbose flag's effect, so nothing
         // may leak in from outside either test.
         psi.Environment.Remove("AL_RUNNER_VERBOSE");
+        if (artifactsRoot != null)
+            psi.Environment[AlRunner.Infrastructure.BcArtifacts.ArtifactsRootEnvVar] = artifactsRoot;
 
         var sb = new StringBuilder();
         using var p = Process.Start(psi)!;
@@ -270,11 +273,18 @@ public sealed class CleanRunStartupVerbosityTests
         return dest;
     }
 
-    private static string EngineMajorMinorPrefix()
+    // An artifacts root holding only the engine's own build, linked to the real directory, so
+    // the prefix resolves to that build however many other patches this box has cached.
+    private static (string Root, string Prefix) EngineOnlyArtifactsRoot(string scratch)
     {
         var built = AlRunner.Infrastructure.BcArtifacts.EngineBuiltVersion();
         Skip.If(built == null, "this build carries no engine build version, so no prefix to pass");
-        return $"{built!.Major}.{built.Minor}";
+        var real = AlRunner.Infrastructure.BcArtifacts.ArtifactDirFor(built!.ToString());
+        Skip.IfNot(Directory.Exists(real), $"the engine's own build is not cached at {real}");
+        var root = Path.Combine(scratch, "artifacts");
+        Directory.CreateDirectory(root);
+        Directory.CreateSymbolicLink(Path.Combine(root, built.ToString()), real);
+        return (root, $"{built.Major}.{built.Minor}");
     }
 
     private static (string Output, int Exit) RunUserAppOutsideTheRepo(params string[] extraArgs)
@@ -286,9 +296,10 @@ public sealed class CleanRunStartupVerbosityTests
         {
             Assert.Null(AlRunner.Infrastructure.ExpectationsDirectoryResolution.Resolve(
                 new[] { app }, Path.Combine(scratch, "cwd")));
-            var args = new List<string> { "--bc-version", EngineMajorMinorPrefix() };
+            var (artifactsRoot, prefix) = EngineOnlyArtifactsRoot(scratch);
+            var args = new List<string> { "--bc-version", prefix };
             args.AddRange(extraArgs);
-            var (output, exit) = RunIn(Path.Combine(scratch, "cwd"), app, cache, args.ToArray());
+            var (output, exit) = RunIn(Path.Combine(scratch, "cwd"), app, cache, artifactsRoot, args.ToArray());
             Assert.True(exit == 0 && output.Contains("pass:        1"),
                 $"fixture must compile and pass cleanly:\n{output}");
             return (output, exit);

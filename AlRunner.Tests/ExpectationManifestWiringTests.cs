@@ -284,8 +284,10 @@ public sealed class ExpectationManifestWiringTests : IDisposable
         var isolatedCwd = Path.Combine(_scratchRoot, "loud-miss", "cwd");
         Directory.CreateDirectory(isolatedCwd);
 
+        // --verbose since #4561: the notice is for someone asking about expectations, and a
+        // user app outside this repository is not. CleanRunStartupVerbosityTests pins both sides.
         var (output, _) = RunRunner(
-            $"--test GreenPath_OosDeclared \"{isolatedBundle}\"",
+            $"--verbose --test GreenPath_OosDeclared \"{isolatedBundle}\"",
             workingDir: isolatedCwd);
 
         Assert.Contains("[expectations] no tests/expectations manifest found", output, StringComparison.Ordinal);

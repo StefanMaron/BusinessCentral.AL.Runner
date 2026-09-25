@@ -114,7 +114,10 @@ public sealed class LoudDiagnosisReachesTheUserTests
             {
                 var text = lines[i];
                 if (text.TrimStart().StartsWith("//", StringComparison.Ordinal)) continue;
-                if (text.Contains("Console.Error.WriteLine(", StringComparison.Ordinal)) { start = i; break; }
+                // FailureOnlyNotes.Add carries the #3540 TableNo text since #4561: full text
+                // under --verbose, a footer line when a test failed.
+                if (text.Contains("Console.Error.WriteLine(", StringComparison.Ordinal)
+                    || text.Contains("FailureOnlyNotes.Add(", StringComparison.Ordinal)) { start = i; break; }
             }
             if (start >= 0) break;
         }
