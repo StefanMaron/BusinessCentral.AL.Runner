@@ -217,8 +217,10 @@ durable text. `CLAUDE.md` § 2d now names the partial classes without counting t
 the pin was reshaped with it into `tools/test_partial_class_claims.py`: it checks that each class
 the sentence names is a `partial class` declared in more than one file, which is the part of the
 claim that does not go stale. Deleting it outright was the first cut, and it reddened
-`tools/test_agent_doc_guard_counts.py`, whose pinned guard count lives in
-`.claude/agents/impl-agent.md` (#4540's scope).
+`tools/test_agent_doc_guard_counts.py`, whose pinned guard count lived in
+`.claude/agents/impl-agent.md`. #4248 removed that count too, after two PRs each adding a guard
+bumped it identically and merged cleanly into a red `main`; the pin became
+`tools/test_agent_doc_guard_claims.py`.
 
 ## Moved out of the rule to fit the always-loaded budget (#4542)
 
