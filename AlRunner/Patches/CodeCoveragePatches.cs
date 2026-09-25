@@ -162,7 +162,8 @@ public static class CodeCoveragePatches
 
     private static Delegate MakeFunc(Type funcType, string helperName)
     {
-        var helper = typeof(CodeCoveragePatches).GetMethod(helperName, BindingFlags.Public | BindingFlags.Static)!;
+        var helper = typeof(CodeCoveragePatches).GetMethod(helperName, BindingFlags.Public | BindingFlags.Static)
+            ?? throw new InvalidOperationException($"[CodeCoverage] CodeCoveragePatches.{helperName} not found");
         var types = funcType.GetGenericArguments();
         var x = Expression.Parameter(types[0], "x");
         var call = Expression.Call(helper, Expression.Convert(x, typeof(object)));

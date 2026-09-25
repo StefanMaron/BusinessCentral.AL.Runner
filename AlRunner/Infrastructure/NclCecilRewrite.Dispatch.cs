@@ -642,7 +642,9 @@ public static partial class NclCecilRewrite
                     + "naming the wrong cause. See AlRunner/Patches/CodeCoveragePatches.cs and issue #4468.");
             var helper = typeof(AlRunner.Patches.CodeCoveragePatches).GetMethod(
                 nameof(AlRunner.Patches.CodeCoveragePatches.RefuseCodeCoverageLineRows),
-                BindingFlags.Public | BindingFlags.Static)!;
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] CodeCoveragePatches.RefuseCodeCoverageLineRows not found");
             PrependStaticCall(asm.MainModule, targets[0], helper, argSlots: 0);
         }
 
