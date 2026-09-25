@@ -17,6 +17,15 @@
             "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/shared-scratchpad-guard.py\""
           }
         ]
+      },
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/refuse-dispatch-from-worktree.py\""
+          }
+        ]
       }
     ]
   }

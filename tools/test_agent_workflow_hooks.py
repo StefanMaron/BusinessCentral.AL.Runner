@@ -26,6 +26,7 @@ ROOT = os.path.dirname(HERE)
 HOOKS = os.path.join(ROOT, ".claude", "hooks")
 REFUSE = os.path.join(HOOKS, "refuse-stash-and-ci-waits.py")
 NAV = os.path.join(HOOKS, "prefer-code-navigation.py")
+DISPATCH = os.path.join(HOOKS, "refuse-dispatch-from-worktree.py")
 
 # Synthetic, never this checkout: the suite itself runs from an agent worktree
 # during development and from the main checkout in CI, so deriving either cwd
@@ -1318,6 +1319,82 @@ for name, cmd in NAV_ALLOWED:
 for name, cmd in NAV_BLOCKED_DESPITE_DOTNET:
     ok, d = blocks(NAV, cmd, "context-pack.py", cwd=WORKTREE)
     check(name, ok, d)
+
+print("\ndispatching a subagent from inside an agent worktree -- refused for the coordinator (#4534)")
+
+
+def dispatch(*, cwd: str, agent_type: str = "", prompt: str = "Review PR #1",
+             tool: str = "Agent", isolation: str = "", project_dir: str = "",
+             raw: str = "") -> subprocess.CompletedProcess:
+    payload = {"tool_name": tool, "cwd": cwd,
+               "tool_input": {"subagent_type": "reviewer", "prompt": prompt}}
+    if agent_type:
+        payload["agent_type"] = agent_type
+    if isolation:
+        payload["tool_input"]["isolation"] = isolation
+    # CLAUDE_PROJECT_DIR is what the harness sets for a hook; the test session running
+    # this suite has its own, so pin it rather than inherit it.
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
+    if project_dir:
+        env["CLAUDE_PROJECT_DIR"] = project_dir
+    return subprocess.run([sys.executable, DISPATCH], input=raw or json.dumps(payload),
+                          capture_output=True, text=True, env=env)
+
+
+r = dispatch(cwd=WORKTREE)
+check("coordinator in a worktree -> Agent dispatch refused (exit 2)",
+      r.returncode == 2 and "fbk-9-issue-1234" in r.stderr and f"cd {MAIN_CHECKOUT}" in r.stderr,
+      f"exit={r.returncode} stderr={r.stderr.strip()[:200]!r}")
+r = dispatch(cwd=WORKTREE + "/AlRunner/Patches")
+check("coordinator in a worktree SUBDIRECTORY -> refused too", r.returncode == 2,
+      f"exit={r.returncode}")
+r = dispatch(cwd=WORKTREE, tool="Task")
+check("the legacy `Task` tool name is refused the same way", r.returncode == 2,
+      f"exit={r.returncode}")
+r = dispatch(cwd=WORKTREE.replace("/", "\\"))
+check("a Windows-shaped worktree cwd is refused", r.returncode == 2, f"exit={r.returncode}")
+r = dispatch(cwd=MAIN_CHECKOUT)
+check("coordinator in the main checkout -> allowed", r.returncode == 0,
+      f"exit={r.returncode} stderr={r.stderr.strip()[:160]!r}")
+r = dispatch(cwd=WORKTREE, agent_type="impl-agent")
+check("a SUBAGENT dispatching from its own worktree -> allowed", r.returncode == 0,
+      f"exit={r.returncode}")
+r = dispatch(cwd=WORKTREE, prompt="work in that tree dispatch:allow-worktree-cwd")
+check("the prompt escape marker -> allowed", r.returncode == 0, f"exit={r.returncode}")
+r = dispatch(cwd=WORKTREE, isolation="worktree")
+check("a dispatch requesting its OWN worktree isolation -> allowed (it does not inherit the cwd)",
+      r.returncode == 0, f"exit={r.returncode} stderr={r.stderr.strip()[:160]!r}")
+r = dispatch(cwd=WORKTREE, project_dir=WORKTREE)
+check("a session LAUNCHED inside that worktree (Claude Code --worktree) -> allowed",
+      r.returncode == 0, f"exit={r.returncode} stderr={r.stderr.strip()[:160]!r}")
+r = dispatch(cwd=WORKTREE + "/AlRunner", project_dir=WORKTREE)
+check("...and from a subdirectory of the tree it was launched in -> allowed", r.returncode == 0,
+      f"exit={r.returncode}")
+r = dispatch(cwd=WORKTREE, project_dir=MAIN_CHECKOUT)
+check("a session launched in the main checkout that cd'd into a worktree -> still refused",
+      r.returncode == 2, f"exit={r.returncode}")
+r = dispatch(cwd=WORKTREE, project_dir=MAIN_CHECKOUT + "/.claude/worktrees/stma-auto-1-issue-9")
+check("a session launched in ONE worktree that cd'd into ANOTHER -> still refused",
+      r.returncode == 2, f"exit={r.returncode}")
+r = dispatch(cwd=WORKTREE, raw="{not json")
+check("an unparseable payload fails open but says so on stderr",
+      r.returncode == 0 and "could not read the hook payload" in r.stderr,
+      f"exit={r.returncode} stderr={r.stderr!r}")
+r = subprocess.run([sys.executable, DISPATCH],
+                   input=json.dumps({"tool_name": "Bash", "cwd": WORKTREE,
+                                     "tool_input": {"command": "ls"}}),
+                   capture_output=True, text=True)
+check("a non-dispatch tool from a worktree -> not this hook's business", r.returncode == 0,
+      f"exit={r.returncode}")
+
+dispatch_registered = [h.get("command", "")
+                       for entry in json.load(open(os.path.join(ROOT, ".claude", "settings.json"),
+                                                   encoding="utf-8")).get("hooks", {}).get("PreToolUse", [])
+                       if set((entry.get("matcher") or "").split("|")) >= {"Agent", "Task"}
+                       for h in entry.get("hooks", [])]
+check("settings.json registers refuse-dispatch-from-worktree.py for Agent and Task",
+      any("refuse-dispatch-from-worktree.py" in c for c in dispatch_registered),
+      str(dispatch_registered))
 
 print("\nboth hooks are actually registered -- a hook nothing invokes blocks nothing")
 settings = json.load(open(os.path.join(ROOT, ".claude", "settings.json"), encoding="utf-8"))

@@ -3532,6 +3532,88 @@ finally:
 # ------------------------------------------- END --reap-carried in main() (#4424)
 
 
+# ------------------------------------------- an EXTRACTED copy probes the cwd (#4534)
+# The documented remedy for a stale copy is to extract origin/main's into a temp
+# directory. That copy has no repository at its own location, so before #4534 it
+# printed "not inside a git repository" and a neutral-but-stale checkout could get
+# no branch-ownership verdict by either route. Driven as a real subprocess on a real
+# extracted copy: stubbing the resolver would test the stub.
+_x_tmp = tempfile.mkdtemp(prefix="preflight-extracted-")
+try:
+    _x_tools = os.path.join(_x_tmp, "copy", "tools")
+    os.makedirs(_x_tools)
+    for _f in ("preflight.py", "agent_self_freshness.py", "agent_stdio.py"):
+        shutil.copy(os.path.join(HERE, _f), _x_tools)
+    _x_nothing = os.path.join(_x_tmp, "nothing")
+    _x_wt = os.path.join(_x_tmp, "repo", ".claude", "worktrees", "fbk-9-issue-1234")
+    os.makedirs(_x_nothing)
+    os.makedirs(_x_wt)
+    subprocess.run(["git", "init", "-q", "-b", "agent/fbk-9/issue-1234", _x_wt], check=True)
+    subprocess.run(["git", "-C", _x_wt, "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                    "commit", "-q", "--allow-empty", "-m", "x"], check=True)
+    subprocess.run(["git", "-C", _x_wt, "remote", "add", "origin",
+                    "https://github.com/StefanMaron/BusinessCentral.AL.Runner.git"], check=True)
+    _x_foreign = os.path.join(_x_tmp, "unrelated")
+    _x_bare = os.path.join(_x_tmp, "no-origin")
+    for _d, _origin in ((_x_foreign, "https://github.com/someone/unrelated.git"), (_x_bare, None)):
+        os.makedirs(_d)
+        subprocess.run(["git", "init", "-q", _d], check=True)
+        if _origin:
+            subprocess.run(["git", "-C", _d, "remote", "add", "origin", _origin], check=True)
+
+    check("resolve_repo: no repository at either place is (None, 'none'), never a guess",
+          pf.resolve_repo(_x_tools, _x_nothing) == (None, "none"),
+          pf.resolve_repo(_x_tools, _x_nothing))
+    _x_res = pf.resolve_repo(_x_tools, _x_wt)
+    check("resolve_repo: an extracted copy falls back to the repository at the cwd",
+          _x_res[1] == "cwd" and os.path.realpath(_x_res[0] or "") == os.path.realpath(_x_wt),
+          _x_res)
+    check("resolve_repo: the script's own repository still wins over the cwd",
+          pf.resolve_repo(HERE, _x_wt)[1] == "script", pf.resolve_repo(HERE, _x_wt))
+
+    _x_run = subprocess.run(
+        [sys.executable, os.path.join(_x_tools, "preflight.py"), "--agent-id", "stma-x-1",
+         "--json", "--no-tools", "--no-sizes", "--no-freshness-fetch",
+         "--skip-budget-fallback"],
+        cwd=_x_wt, capture_output=True, text=True, timeout=300)
+    try:
+        _x_doc = json.loads(_x_run.stdout)
+    except ValueError:
+        _x_doc = {}
+    _x_own = [c for c in _x_doc.get("checks", []) if c.get("name") == "branch-ownership"]
+    check("an extracted copy run from a FOREIGN worktree answers branch-ownership FAIL",
+          len(_x_own) == 1 and _x_own[0].get("status") == "FAIL"
+          and "fbk-9" in _x_own[0].get("summary", ""),
+          f"rc={_x_run.returncode} stderr={_x_run.stderr.strip()[-300:]!r} own={_x_own}")
+    check("...and says it is probing the cwd rather than its own location",
+          "probes the repository at the cwd" in _x_run.stderr, _x_run.stderr[-300:])
+
+    _x_none = subprocess.run(
+        [sys.executable, os.path.join(_x_tools, "preflight.py"), "--json", "--no-tools",
+         "--no-freshness-fetch"],
+        cwd=_x_nothing, capture_output=True, text=True, timeout=120)
+    check("an extracted copy with no repository at the cwd either refuses with exit 3",
+          _x_none.returncode == 3 and "nothing was probed" in _x_none.stderr,
+          f"rc={_x_none.returncode} stderr={_x_none.stderr.strip()[-200:]!r}")
+
+    check("is_this_repository: this repository, a fork of it, and nothing else",
+          pf.is_this_repository("StefanMaron/BusinessCentral.AL.Runner")
+          and pf.is_this_repository("fbk/businesscentral.al.runner")
+          and not pf.is_this_repository("someone/unrelated")
+          and not pf.is_this_repository("StefanMaron/BusinessCentral.AL.Language.Tests")
+          and not pf.is_this_repository(None), "")
+    for _d, _why in ((_x_foreign, "someone/unrelated"), (_x_bare, "no GitHub origin")):
+        _x_other = subprocess.run(
+            [sys.executable, os.path.join(_x_tools, "preflight.py"), "--json", "--no-tools",
+             "--no-freshness-fetch"],
+            cwd=_d, capture_output=True, text=True, timeout=120)
+        check(f"an extracted copy run from a repository that is not this one ({_why}) refuses, exit 3",
+              _x_other.returncode == 3 and "not this repository" in _x_other.stderr,
+              f"rc={_x_other.returncode} stderr={_x_other.stderr.strip()[-200:]!r}")
+finally:
+    shutil.rmtree(_x_tmp, ignore_errors=True)
+# ------------------------------------------- END extracted copy (#4534)
+
 print()
 if FAILURES:
     print(f"FAILED: {len(FAILURES)} check(s): {', '.join(FAILURES)}")

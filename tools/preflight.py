@@ -968,6 +968,30 @@ def git_repo_root(start: str) -> Optional[str]:
     return r.out.strip() if r.ok else None
 
 
+def resolve_repo(script_dir: str, cwd: str) -> tuple[Optional[str], str]:
+    """The repository to probe, and whether it came from this file's location or the cwd.
+
+    The script's own location wins. An extracted copy -- the documented remedy for a
+    stale one (`ci-verdicts.md`) -- lives in a temp directory with no repository, so
+    it falls back to the cwd; without that, the remedy could never answer
+    `branch-ownership` and a neutral-but-stale checkout got no ownership verdict by
+    either route (#4534).
+    """
+    repo = git_repo_root(script_dir)
+    if repo:
+        return repo, "script"
+    repo = git_repo_root(cwd)
+    return (repo, "cwd") if repo else (None, "none")
+
+
+THIS_REPOSITORY_NAME = "BusinessCentral.AL.Runner"
+
+
+def is_this_repository(slug: Optional[str]) -> bool:
+    """True for this repository or a fork of it (the owner may differ, the name may not)."""
+    return bool(slug) and slug.rsplit("/", 1)[-1].lower() == THIS_REPOSITORY_NAME.lower()
+
+
 def repo_slug(repo: str) -> Optional[str]:
     r = run(["git", "-C", repo, "remote", "get-url", "origin"])
     if not r.ok:
@@ -3850,6 +3874,10 @@ def freshness_refusal(printer=None, *, remote_check: bool = True) -> Optional[in
                 "origin/main's without saying so, and a copy predating #2936 reports a "
                 "HEALTHY box as unable to push. NOTHING WAS PROBED; this is not a verdict "
                 "about the box." % ("STALE" if stale else "one NOTHING VOUCHES FOR"))
+        printer("To get a verdict anyway, run origin/main's copy from here: extract "
+                "preflight.py, agent_self_freshness.py and agent_stdio.py with "
+                "`git show origin/main:tools/<f>` into a temp `tools/` directory and run it "
+                "from this directory -- it probes the repository at the cwd (#4534).")
         return 3
     return None
 
@@ -3955,11 +3983,21 @@ def main(argv: Optional[list[str]] = None) -> int:
             }, indent=2))
         return stale
 
-    here = os.path.dirname(os.path.abspath(__file__))
-    repo = git_repo_root(here)
+    repo, where = resolve_repo(os.path.dirname(os.path.abspath(__file__)), os.getcwd())
     if not repo:
-        print("preflight: not inside a git repository", file=sys.stderr)
+        print("preflight: neither this copy's own location nor the cwd is inside a git "
+              "repository; nothing was probed", file=sys.stderr)
         return 3
+    if where == "cwd":
+        print(f"note: this copy of preflight.py lives outside any repository (an extracted "
+              f"copy), so it probes the repository at the cwd: {repo}", file=sys.stderr)
+        # Only the script's own location vouches for the subject; a cwd can be anything.
+        cwd_slug = repo_slug(repo)
+        if not is_this_repository(cwd_slug):
+            print(f"preflight: the repository at the cwd ({cwd_slug or 'no GitHub origin'}) is "
+                  f"not this repository ({THIS_REPOSITORY_NAME}); nothing was probed",
+                  file=sys.stderr)
+            return 3
     # The MAIN checkout, not whichever worktree this copy of the script lives in:
     # the worktree census and the reaper both have to see every worktree.
     running_root = repo

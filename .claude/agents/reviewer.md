@@ -66,7 +66,15 @@ tools/preflight.py --agent-id <YOUR-ID>   # its `branch-ownership` row
 ```
 
 FAIL means the directory is not yours: review from your own checkout with absolute paths, and
-never mutate a file inside it. Re-check after a resume, not only at dispatch.
+never mutate a file inside it. Re-check after a resume, not only at dispatch. The worst case is
+the **worktree of the PR you are reviewing** — a missed restore then edits the branch your
+verdict is about (#4534). If the checkout you land in is stale, preflight refuses; extract
+`origin/main`'s copy per its refusal message and run it from here, and it probes the cwd.
+
+**Your scratch files go under `tools/agent_scratchpad.py ... path <file>`, never at the
+scratchpad root** — a shared `review.md` there once carried another reviewer's verdict onto the
+wrong PR (#4534). `.claude/hooks/shared-scratchpad-guard.py` refuses such a write in a reviewer
+context; reading a shared file is never refused.
 
 ## 1. Does the proving test prove anything?
 

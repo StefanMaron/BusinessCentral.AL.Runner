@@ -401,7 +401,9 @@ a merge can turn `main` red, which outranks everything you were about to do.
    share a repository, check the *branch prefix*, not the author field — loops running under the
    same account all report that account as the author. Getting this wrong means force-pushing
    another loop's work.
-3. **A PR is waiting on review.** Dispatch the `reviewer` agent. A PR authored by the account
+3. **A PR is waiting on review.** Dispatch the `reviewer` agent — from the main checkout, never
+   from the worktree of the branch under review; a hook refuses a dispatch from any agent
+   worktree (`orchestrating-a-session` § Implementation agents). A PR authored by the account
    the loop runs as may be merged unattended **only when every one of these aligns** — any one
    missing sends it to the human queue instead:
 
