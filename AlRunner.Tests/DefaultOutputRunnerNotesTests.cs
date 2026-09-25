@@ -149,6 +149,101 @@ public sealed class DefaultOutputRunnerNotesTests
         Assert.Contains("AlRunner.Infrastructure.FailureOnlyNotes.Flush(Console.Error, anyTestFailedOrErrored);", src);
     }
 
+    // The one-shot flush above is never reached by --server, --dap or --watch: each returns or
+    // loops before it. So every resident mode flushes per request/cycle, or the footer is lost.
+    private static string ProgramRegion(string src, string startMarker, string endMarker)
+    {
+        var start = src.IndexOf(startMarker, StringComparison.Ordinal);
+        Assert.True(start >= 0, $"Program.cs no longer contains `{startMarker}`");
+        var end = src.IndexOf(endMarker, start + startMarker.Length, StringComparison.Ordinal);
+        Assert.True(end > start, $"Program.cs no longer contains `{endMarker}` after `{startMarker}`");
+        return src.Substring(start, end - start);
+    }
+
+    private static int Count(string haystack, string needle)
+    {
+        int n = 0;
+        for (int i = haystack.IndexOf(needle, StringComparison.Ordinal); i >= 0;
+             i = haystack.IndexOf(needle, i + needle.Length, StringComparison.Ordinal))
+            n++;
+        return n;
+    }
+
+    private const string ResidentFlush = "AlRunner.Infrastructure.FailureOnlyNotes.FlushAfter(";
+
+    [Fact]
+    public void ProgramCs_ServerMode_FlushesFailureOnlyNotesOnEveryRequest()
+    {
+        var src = File.ReadAllText(Path.Combine(RepoRoot, "AlRunner", "Program.cs"));
+        var server = src.Substring(src.IndexOf("int RunServerLoop(", StringComparison.Ordinal));
+        // One flush per per-request drain: runTests and execute each drain once.
+        var drains = Count(server, "CompanyInitializer.DrainFailures()");
+        Assert.True(drains >= 2, $"expected the runTests and execute drains in RunServerLoop, found {drains}");
+        Assert.Equal(drains, Count(server, ResidentFlush));
+    }
+
+    [Fact]
+    public void ProgramCs_DapMode_FlushesFailureOnlyNotesWhenTheRunFinishes()
+    {
+        var src = File.ReadAllText(Path.Combine(RepoRoot, "AlRunner", "Program.cs"));
+        var dap = ProgramRegion(src, "_ = bundleRunTask.ContinueWith(t =>", "SendTerminatedOnce();");
+        Assert.Contains(ResidentFlush, dap);
+    }
+
+    [Fact]
+    public void ProgramCs_WatchMode_FlushesFailureOnlyNotesEveryCycle()
+    {
+        var src = File.ReadAllText(Path.Combine(RepoRoot, "AlRunner", "Program.cs"));
+        var watch = ProgramRegion(src, "Reporter.PrintSummary(results, Console.Out);", "[watch] waiting for AL source changes");
+        Assert.Contains(ResidentFlush, watch);
+    }
+
+    [Theory]
+    [InlineData(TestOutcome.Pass, 0)]
+    [InlineData(TestOutcome.Skipped, 0)]
+    [InlineData(TestOutcome.Fail, 1)]
+    [InlineData(TestOutcome.Error, 1)]
+    public void FlushAfter_WritesTheFooterOnlyWhenATestFailedOrErrored(TestOutcome outcome, int expected)
+    {
+        var savedVerbose = Log.Verbose;
+        FailureOnlyNotes.ResetForTests();
+        try
+        {
+            Log.Verbose = false;
+            FailureOnlyNotes.Add(FullText, Footer);
+            var sink = new StringWriter();
+            var tests = new[]
+            {
+                new TestResult("Codeunit50000", "Passes", TestOutcome.Pass, null, null, TimeSpan.Zero),
+                new TestResult("Codeunit50000", "Other", outcome, null, null, TimeSpan.Zero),
+            };
+            Assert.Equal(expected, FailureOnlyNotes.FlushAfter(sink, tests));
+            Assert.Equal(expected == 1 ? Footer + Environment.NewLine : "", sink.ToString());
+            Assert.Empty(FailureOnlyNotes.PendingForTests());
+        }
+        finally
+        {
+            Log.Verbose = savedVerbose;
+            FailureOnlyNotes.ResetForTests();
+        }
+    }
+
+    // ── #4564: the Program.cs wiring ─────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("AlRunner.Provisioning.ArtifactDownloader.TestApps(")]
+    [InlineData("AlRunner.Provisioning.ArtifactDownloader.PlatformApps(")]
+    public void ProgramCs_ManifestAppDownloads_AreCondensedOnVerbose(string call)
+    {
+        var src = File.ReadAllText(Path.Combine(RepoRoot, "AlRunner", "Program.cs"));
+        var at = src.IndexOf(call, StringComparison.Ordinal);
+        Assert.True(at >= 0, $"Program.cs no longer calls `{call}`");
+        Assert.Equal(1, Count(src, call));
+        var args = src.Substring(at, src.IndexOf(");", at, StringComparison.Ordinal) + 2 - at);
+        Assert.Contains("AlRunner.Infrastructure.ProvisionProgressLog.Condense(", args);
+        Assert.Contains("AlRunner.Log.Verbose)", args);
+    }
+
     // ── #4564: one line per download set ─────────────────────────────────────────────────
 
     // The shape ArtifactDownloader.TestApps logs for a successful set.

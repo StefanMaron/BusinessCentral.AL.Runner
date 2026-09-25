@@ -4275,6 +4275,9 @@ var cycleDur = results.Aggregate(TimeSpan.Zero,
 
 if (watchUi)
 {
+    // #4561: the dashboard owns the screen, and the cycle body's stderr is silenced (#5), so the
+    // note had no surface here before #4561 either; clear it so the next cycle starts empty.
+    AlRunner.Infrastructure.FailureOnlyNotes.FlushAfter(TextWriter.Null, results.SelectMany(b => b.Tests));
     // Interactive: render the idle "● watching" dashboard once, then service
     // keyboard scrolling AND the file-change watcher in one interleaved poll loop.
     // The dashboard frequently exceeds the screen, so we paint only the visible
@@ -4350,6 +4353,8 @@ else
     // integration test asserts on these exact markers — do not change them.
     Reporter.PrintPerTest(results, Console.Out, showPass);
     Reporter.PrintSummary(results, Console.Out);
+    // #4561: the one-shot flush is never reached from --watch; once per cycle.
+    AlRunner.Infrastructure.FailureOnlyNotes.FlushAfter(Console.Error, results.SelectMany(b => b.Tests));
     // The marker is printed from inside onArmed, which WatchSource invokes only
     // AFTER every FileSystemWatcher is live (#1822) — so it can never be a promise
     // the process has not yet kept. Flush before blocking: when stdout is a
@@ -6425,6 +6430,8 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
         {
             var runs = t.Result;
             exitCode = runs.Count > 0 ? runs.Max(r => r.ExitCode) : 0;
+            // #4561: the one-shot flush is never reached from --dap.
+            AlRunner.Infrastructure.FailureOnlyNotes.FlushAfter(Console.Error, runs.SelectMany(r => r.Tests));
         }
         SendTerminatedOnce();
     }, System.Threading.Tasks.TaskScheduler.Default);
@@ -7492,6 +7499,8 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 CompanyInitializer.DrainFailures(), expectations);
             if (exitCode == 0 && companyInitFailures.Any(f => f.AcceptedReason == null))
                 exitCode = 2;
+            // #4561: the one-shot flush is never reached from here; per request, on stderr.
+            AlRunner.Infrastructure.FailureOnlyNotes.FlushAfter(Console.Error, allTests);
 
             // #3884 Copilot review: the field alone left a client reading `exitCode` with an
             // ordinary success carrying a short table. Same policy as the CLI, so the three
@@ -7681,6 +7690,8 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 CompanyInitializer.DrainFailures(), expectations);
             if (exitCode == 0 && companyInitFailures.Any(f => f.AcceptedReason == null))
                 exitCode = 2;
+            // #4561: the one-shot flush is never reached from here; per request, on stderr.
+            AlRunner.Infrastructure.FailureOnlyNotes.FlushAfter(Console.Error, allTests);
 
             // Same policy as runTests and the CLI, over BOTH tables — and over the
             // capture/iteration attribution, which is a measurement the caller asked for in

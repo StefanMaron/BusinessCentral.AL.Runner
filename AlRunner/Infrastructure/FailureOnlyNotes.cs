@@ -4,7 +4,7 @@ namespace AlRunner.Infrastructure;
 /// A runner limitation the user cannot act on, which can only matter as an explanation of a
 /// failed test (#4561). Under --verbose the full text prints where it arises; otherwise one
 /// line per note prints after the summary, and only when a test failed or errored. Never
-/// dropped: a failing run always names it.
+/// dropped: a failing run always names it, in every mode — one-shot, --server, --dap, --watch.
 /// </summary>
 internal static class FailureOnlyNotes
 {
@@ -40,6 +40,11 @@ internal static class FailureOnlyNotes
             w.WriteLine(n);
         return notes.Count;
     }
+
+    /// <summary>The resident modes' flush (--server per request, --dap per session, --watch per
+    /// cycle): the one-shot path's flush is never reached by them.</summary>
+    public static int FlushAfter(TextWriter w, IEnumerable<AlRunner.TestResult> tests) =>
+        Flush(w, tests.Any(t => t.Outcome is AlRunner.TestOutcome.Fail or AlRunner.TestOutcome.Error));
 
     internal static IReadOnlyList<string> PendingForTests()
     {
