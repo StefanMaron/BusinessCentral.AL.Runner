@@ -38,6 +38,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **testpage:** evaluate a control's CaptionClass for TestPage Caption
 - **metadata:** write BC's always-emitted action defaults on extension-delta actions
 - **metadata-conversion:** write the part-control properties BC writes on every InfopartPageDefinition
 - **testpage:** resolve a precompiled page action's RunObject name to a codeunit, report, xmlport or query
