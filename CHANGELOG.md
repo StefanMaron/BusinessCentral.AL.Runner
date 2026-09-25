@@ -38,6 +38,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **provisioning:** default BC version selection honours the app.json application/platform floor
 - **loader:** refuse a service-tier file that does not satisfy the requested assembly version
 - **output:** move runner-internal notes behind --verbose, one line per download set, shorter [test-data] lines
 - **deps:** rank a runnable dependency copy above a symbols-only one, and stop advising provisioning that cannot help
@@ -342,6 +343,7 @@ All notable changes to this project are documented here. Format based on
 - **integer-vt:** judge a half-open range against the base window, not the envelope-widened span
 
 ### Documentation
+- **claude-md:** move reference material and derivations out of CLAUDE.md
 - **agents:** delete figures that go stale on their own from skills and agent definitions
 - **rules:** cut ci-verdicts.md to claim, citation and trap; recipes move to a reading-ci-runs skill
 - **rules:** delete figures that go stale on their own from rules and CLAUDE.md
