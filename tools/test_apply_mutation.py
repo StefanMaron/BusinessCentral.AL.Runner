@@ -782,6 +782,59 @@ with open(p3, encoding="utf-8") as fh:
     check("...and the file really WAS restored, so the refusal is about the stamp alone",
           fh.read() == "original\n", fh.read())
 
+print("a stale __pycache__ .pyc does not outlive the source (#4598)")
+# CPython validates a .pyc by the source's mtime (whole seconds) and size. A same-size
+# mutation (`3` -> `0`) applied and restored inside one second leaves the old .pyc VALID, so a
+# fresh interpreter keeps running the mutated (or, after apply, the unmutated) code. The mtime is
+# pinned to one fixed second here, so the test does not depend on how fast it runs.
+import subprocess
+_d = tempfile.mkdtemp()
+_mod = os.path.join(_d, "pycmod.py")
+with open(_mod, "w", encoding="utf-8") as fh:
+    fh.write("def f():\n    return 3\n")
+_a, _r = os.path.join(_d, "a"), os.path.join(_d, "r")
+for f, s in ((_a, "return 3"), (_r, "return 0")):
+    with open(f, "w", encoding="utf-8") as fh:
+        fh.write(s)
+_T = 1_700_000_000
+_env = {k: v for k, v in os.environ.items()
+        if k not in ("PYTHONDONTWRITEBYTECODE", "PYTHONPYCACHEPREFIX")}
+
+def _import_f() -> str:
+    os.utime(_mod, (_T, _T))
+    out = subprocess.run([sys.executable, "-c", "import pycmod; print(pycmod.f())"],
+                         cwd=_d, env=_env, capture_output=True, text=True)
+    return out.stdout.strip() or out.stderr.strip()
+
+check("the fixture writes a .pyc at all, so the cases below measure something",
+      _import_f() == "3" and any(n.startswith("pycmod.") for n in
+                                 os.listdir(os.path.join(_d, "__pycache__"))),
+      str(os.listdir(_d)))
+with redirect_stdout(io.StringIO()):
+    _rc = am.main(["apply-mutation.py", _mod, "--anchor-file", _a, "--replacement-file", _r])
+_got = _import_f()
+check("after apply, a fresh interpreter runs the MUTATED code, not the cached original",
+      _rc == am.APPLIED and _got == "0", f"rc={_rc}, f() -> {_got}")
+# Cache the MUTANT independently of the apply arm above, so this case reds on its own: clear the
+# cache and import, which compiles the mutated source into a .pyc stamped with that same second.
+import shutil
+shutil.rmtree(os.path.join(_d, "__pycache__"), ignore_errors=True)
+check("...(setup) the mutant is now what the cache holds", _import_f() == "0")
+with redirect_stdout(io.StringIO()):
+    _rc = am.main(["apply-mutation.py", _mod, "--restore"])
+_got = _import_f()
+check("after --restore, a fresh interpreter runs the RESTORED code, not the cached mutant",
+      _rc == am.APPLIED and _got == "3", f"rc={_rc}, f() -> {_got}")
+# A sibling module whose name merely STARTS with the mutated one must keep its cache.
+_sib = os.path.join(_d, "__pycache__", "pycmod.extra.cpython-399.pyc")
+with open(_sib, "wb") as fh:
+    fh.write(b"x")
+with redirect_stdout(io.StringIO()):
+    am.main(["apply-mutation.py", _mod, "--anchor-file", _a, "--replacement-file", _r])
+    am.main(["apply-mutation.py", _mod, "--restore"])
+check("...and another module's .pyc that shares the prefix is left alone",
+      os.path.exists(_sib), str(os.listdir(os.path.join(_d, "__pycache__"))))
+
 if FAILURES:
     print(f"\n{len(FAILURES)} failed, {0} passed")
     sys.exit(1)
