@@ -331,6 +331,15 @@ public sealed class PhaseLogIntegrationTests : IDisposable
             Assert.Equal(0, parent.GetProperty("emit_ms").GetInt64());
         });
 
+        // #2375: the startup housekeeping (scratch sweep, package-dedup prune) runs in exactly
+        // one generation of an invocation — the outermost — and every re-exec child skips it.
+        // Needs a hop to discriminate; from build output the shadow hop is unconditional.
+        Assert.True(parents.Count >= 1, $"no re-exec parent row, so the hand-off is untested. Output:\n{output}");
+        var generations = parents.Append(proc).OrderBy(r => r.GetProperty("start_ms").GetInt64()).ToList();
+        Assert.Equal(
+            generations.Select((_, i) => i == 0).ToArray(),
+            generations.Select(r => r.GetProperty("startup_housekeeping").GetBoolean()).ToArray());
+
         // ── start_ms: the field that turns durations into an occupancy timeline (#1829).
         //
         // Summed wall clock over a step tells you how much work happened, never when the

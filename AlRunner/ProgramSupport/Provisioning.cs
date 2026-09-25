@@ -110,6 +110,7 @@ internal static partial class ProgramSupport
         var argv = RewriteArtifactPathArg(Environment.GetCommandLineArgs());
         foreach (var a in argv.Skip(1)) psi.ArgumentList.Add(a);
         psi.Environment["AL_RUNNER_NCL_SHADOW_DONE"] = "1";
+        HandOffStartupHousekeeping(psi);
 
         // #2034: this line explains why a second process is about to launch — a
         // genuinely operational fact, not an internal Cecil-rewrite diagnostic — so it

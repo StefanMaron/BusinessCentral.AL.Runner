@@ -239,6 +239,9 @@ bool showPass = Environment.GetEnvironmentVariable("AL_RUNNER_FAILURES_ONLY") !=
     }
 }
 
+// Consumed before any dispatch so no process this one spawns inherits it (#2375).
+bool startupHousekeepingHandedOff = ConsumeStartupHousekeepingHandOff();
+
 // ── --precompile subcommand ────────────────────────────────────────────────
 if (args[0] == "--precompile")
 {
@@ -252,49 +255,11 @@ if (args[0] == "--emit-app")
     return RunEmitApp(args.Skip(1).ToArray());
 }
 
-// #2706: reclaim the scratch directories of runner / test-host processes that no longer exist
-// (killed, OOM'd, watchdog-aborted — they cannot clean up after themselves). Runs before
-// argument parsing so it does not depend on which mode this invocation is in, and before any
-// BC type loads so it costs one directory enumeration on a clean machine. Only directories
-// whose recorded owner is provably dead are removed; see ScratchDirs for the rules.
-try
+// #2706 / #2990: once per invocation — a re-exec child's parent already ran it (#2375).
+if (!startupHousekeepingHandedOff)
 {
-    var swept = AlRunner.Infrastructure.ScratchDirs.SweepStale();
-    // Deleting other processes' directories is the only destructive thing the runner does on
-    // its own initiative, so say so UNCONDITIONALLY — not behind AL_RUNNER_PERF. On a clean
-    // machine this never prints; if the liveness test ever misjudges a live owner, this line is
-    // the only evidence that would exist. Detail stays behind PerfTrace.
-    if (swept.Removed.Count > 0)
-        Console.Error.WriteLine($"scratch sweep: reclaimed {swept.Removed.Count} stale dir(s) from dead runners under {Path.GetTempPath()}");
-    if (swept.Removed.Count > 0 || swept.Failed > 0)
-        PerfTrace.Log($"scratch sweep: removed {swept.Removed.Count} stale dir(s), kept {swept.Kept}, failed {swept.Failed} under {Path.GetTempPath()}");
-}
-catch (Exception ex)
-{
-    PerfTrace.Log($"scratch sweep skipped: {ex.GetType().Name}: {ex.Message}");
-}
-
-// #2990: the package-dedup staging root is deliberately SHARED and owner-less — a stage must
-// outlive the run that created it, or the cache never hits — so ScratchDirs' owner-liveness
-// rule above cannot reclaim anything here and never did. Measured: 138 stage directories and
-// 28,004 staged entries on this machine, growing without bound because the stage key includes
-// the .app set's absolute paths and fixture bundles live under GUID-named temp trees.
-// PkgDedupCache removes only what it can prove is both unclaimed by a live process and unused
-// for a week; see its header for the three conditions and the one race that remains.
-try
-{
-    var pruned = AlRunner.Infrastructure.PkgDedupCache.Prune();
-    // Same reasoning as the sweep above: deleting directories on the runner's own initiative is
-    // announced unconditionally, because this line is the only evidence that would exist if the
-    // liveness or age test ever misjudged a stage that was still in use.
-    if (pruned.Removed.Count > 0)
-        Console.Error.WriteLine($"pkgdedup prune: reclaimed {pruned.Removed.Count} unused staging dir(s) under {AlRunner.Infrastructure.PkgDedupCache.Root}");
-    if (pruned.Removed.Count > 0 || pruned.Failed > 0 || pruned.MarkersRemoved > 0)
-        PerfTrace.Log($"pkgdedup prune: removed {pruned.Removed.Count}, kept {pruned.Kept}, skipped {pruned.Skipped}, failed {pruned.Failed}, markers {pruned.MarkersRemoved}");
-}
-catch (Exception ex)
-{
-    PerfTrace.Log($"pkgdedup prune skipped: {ex.GetType().Name}: {ex.Message}");
+    RunStartupHousekeeping();
+    AlRunner.Infrastructure.PhaseLog.SetStartupHousekeeping(true);
 }
 
 // Failure classification (the FAILURE CLASSIFICATION block + v2-classification.json)
@@ -1716,6 +1681,7 @@ deferredStartupLines.Add(() => Console.WriteLine(serverMode
         foreach (var a in userArgs)
             psi.ArgumentList.Add(a);
         psi.Environment["AL_RUNNER_REEXECED"] = "1";
+        HandOffStartupHousekeeping(psi);
         // #2034 audit: this is the SAME class of silently-swallowed re-exec explanation
         // (a fresh Cecil IL rewrite forces one more relaunch so the child loads the
         // now-cached bytes cleanly) — also retagged so it survives the default filter.
