@@ -38,6 +38,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **process:** dispatcher-side guard against an inherited foreign worktree cwd
 - **cli:** one unresolved dependency prints its cause once, not four renderings plus a cascade
 - **metadata:** xmlport SourceTableView and LinkFields in BC's encoded Field<n> form
 - **ci:** label hygiene reads the PR's own loop from its branch prefix, not only its labels
