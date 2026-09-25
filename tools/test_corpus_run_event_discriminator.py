@@ -50,7 +50,7 @@ WHAT IS ACTUALLY PINNED, AND WHY IT IS NOT A KEYWORD SWEEP
 THE THIRD STATE (`guards-need-a-third-state.md`)
   A section heading that no longer matches means this guard is measuring NOTHING.
   That is reported as UNMEASURABLE (exit 3), never as success -- the same reason
-  `test_agent_doc_guard_counts.py` refuses a regex that matches nothing.
+  `test_agent_doc_guard_claims.py` refuses a regex that matches nothing.
 
 Run: python3 tools/test_corpus_run_event_discriminator.py
 """
