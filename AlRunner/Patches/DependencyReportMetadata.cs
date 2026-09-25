@@ -458,7 +458,7 @@ public static partial class RecordPatches
         // <SourceObject … SourceTable="<id>"/> (measured: the runner's own emit-captured document
         // for a source-compiled report). Without it NavForm.SourceTable stays null and the
         // request page's OnOpenPage NREs on its first `Rec` access — report 742.
-        // SaveValues / ShowFilter sit on this element too and are not written yet: #4664.
+        // SaveValues / ShowFilter sit on this element too and are not written yet: #4667.
         if (report.RequestPageSourceTableId > 0)
             w.WriteAttributeString("SourceTable",
                 report.RequestPageSourceTableId.ToString(System.Globalization.CultureInfo.InvariantCulture));
