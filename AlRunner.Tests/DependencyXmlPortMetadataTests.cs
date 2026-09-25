@@ -680,4 +680,72 @@ public class DependencyXmlPortMetadataTests
         Assert.Null(EmitExportPort().SelectSingleNode("/XmlPort/Permissions"));
     }
 
+    /// <summary>
+    /// The symbol file states an enum property's AL member; BC's document carries the member's
+    /// metadata name, and MetaXmlPort's constructor rejects anything else with a bare
+    /// <c>ArgumentException("Format")</c> — Base Application xmlports 5050 and 9991, both
+    /// <c>Format = VariableText</c> (#4604). Pairs from CodeAnalysis <c>ObjectParser</c>'s
+    /// <c>EnumPropertyMemberInfo</c> table, 28.1.49838.54424.
+    /// </summary>
+    [Theory]
+    [InlineData("Format", "VariableText", "Variable Text")]
+    [InlineData("Format", "FixedText", "Fixed Text")]
+    [InlineData("Format", "Xml", "Xml")]
+    [InlineData("TextEncoding", "MSDOS", "MS-DOS")]
+    [InlineData("TextEncoding", "UTF8", "UTF-8")]
+    [InlineData("TextEncoding", "UTF16", "UTF-16")]
+    [InlineData("TextEncoding", "WINDOWS", "WINDOWS")]
+    [InlineData("Encoding", "ISO88592", "ISO-8859-2")]
+    [InlineData("FormatEvaluate", "Xml", "XML Format/Evaluate")]
+    [InlineData("FormatEvaluate", "Legacy", "C/SIDE Format/Evaluate")]
+    public void EnumProperties_AreWrittenAsTheirMetadataName(string property, string stated, string expected)
+    {
+        var doc = EmitExportPort(new Dictionary<string, string> { [property] = stated });
+        Assert.Equal(expected, doc.SelectSingleNode($"/XmlPort/{property}")?.InnerText);
+    }
+
+    /// <summary>
+    /// Unstated, FormatEvaluate is AL's default <c>Legacy</c>; stated <c>Xml</c> above, it is
+    /// not — the value used to be a constant whatever the object declared (#4604).
+    /// </summary>
+    [Fact]
+    public void UnstatedFormatEvaluate_IsCSideFormatEvaluate()
+    {
+        Assert.Equal("C/SIDE Format/Evaluate",
+            EmitExportPort().SelectSingleNode("/XmlPort/FormatEvaluate")?.InnerText);
+    }
+
+    /// <summary>
+    /// A member nobody has mapped refuses through the same exception #4471's encodings use,
+    /// which the synthesizer turns into its logged refusal — never a document BC's reader
+    /// then rejects with an ArgumentException naming only the property.
+    /// </summary>
+    [Fact]
+    public void UnknownEnumMember_Refuses()
+    {
+        var ex = Assert.Throws<RecordPatches.XmlPortPropertyNotEncodableException>(
+            () => EmitExportPort(new Dictionary<string, string> { ["Format"] = "Tabular" }));
+        Assert.Contains("Format", ex.Message);
+        Assert.Contains("Tabular", ex.Message);
+    }
+
+    /// <summary>
+    /// BC's own reader, not a string comparison: the document for a variable-text port with a
+    /// stated text encoding — xmlport 5050's shape — must construct a MetaXmlPort, and the
+    /// parsed values must be the ones the object declared.
+    /// </summary>
+    [Fact]
+    public void VariableTextPort_IsAcceptedByBcsMetaXmlPortReader()
+    {
+        var doc = EmitExportPort(new Dictionary<string, string>
+        {
+            ["Format"] = "VariableText",
+            ["TextEncoding"] = "UTF8",
+            ["FormatEvaluate"] = "Xml",
+        });
+        var meta = new Microsoft.Dynamics.Nav.Types.Metadata.MetaXmlPort(doc, null, 0, 0);
+        Assert.Equal(Microsoft.Dynamics.Nav.Types.XmlPortNodeFormat.VariableText, meta.Format);
+        Assert.Equal(Microsoft.Dynamics.Nav.Types.XmlPortFormatEvaluate.XML, meta.FormatEvaluate);
+    }
+
 }
