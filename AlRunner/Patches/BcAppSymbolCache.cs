@@ -684,9 +684,9 @@ internal static partial class BcAppSymbolCache
         // System Application at 28.1.49838.53910 — including all 24 that state
         // UseRequestPage = 0 — so this is effectively always true on Microsoft's own apps and
         // is carried anyway, because "states a node" is what decides whether
-        // DependencyReportMetadata emits the <RequestPage> element. The node's control tree is
-        // deliberately NOT parsed; see WriteRequestPageXml for why it cannot be transcribed
-        // faithfully.
+        // DependencyReportMetadata emits the <RequestPage> element. The node's own contents
+        // are deliberately NOT parsed; see EmitRequestPageXml for why the control tree it
+        // carries cannot be transcribed faithfully.
         bool HasRequestPage = false,
         // Every node of the request page's control tree that carries an Id, with the
         // Visible/Editable/Enabled text the symbol file states for it (#4661). Not emitted
