@@ -104,14 +104,13 @@
 //   NavForm.OpenForm and force-closes it the way Microsoft's catch does. Nothing about handler
 //   matching, trapping or OnOpenPage is reimplemented — see RunTargetPage.
 //
-// WHAT IS STILL REFUSED, LOUDLY
-//   RunObject targeting a Report / Codeunit / XmlPort / Query. It raises with a
-//   `not-yet-implemented` reason anchor, which `docs/expectations.md` lets a manifest track as
-//   `expect-fail-known-gap` against an OPEN issue — the classification the old `testpage-action`
-//   anchor made impossible. Answering it by opening something else would be a silent wrong
-//   answer, which is what `loud-failures.md` exists to prevent. The same applies to a link whose
-//   fields this run cannot resolve to numbers: a link that cannot be applied is refused by name,
-//   never dropped, because a dropped link shows the target's WHOLE table.
+// THE OTHER FOUR KINDS (issue #2943, corpus codeunit 60559)
+//   A test session performs a Codeunit target — on the host's row, RunPageOnRec or not — and
+//   REFUSES Report, XmlPort and Query with BC's own "The method X is not supported for
+//   TestPages." (raised by Ncl's TestServiceConnection). TryRunActionRunObject does both. What
+//   stays refused by name is a link whose fields this run cannot resolve to numbers — a dropped
+//   link shows the target's WHOLE table — and a precompiled page's RunObject name that does not
+//   resolve to exactly one page (#4582).
 using System.Reflection;
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types.Exceptions;
@@ -164,13 +163,34 @@ internal sealed partial class RunnerPageInstance
     {
         if (ResolveActionRunTarget(actionId) is not { } target) return false;
 
-        if (target.Kind != MetaTypes.RunObjectType.Page)
-            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                $"TestPage action {actionId} on page {_pageId}",
-                $"not-yet-implemented — the action declares RunObject = {target.Kind} "
-                + $"{Describe(target)}, and the runner only performs a RunObject that names a "
-                + "PAGE so far. Opening a report, codeunit, xmlport or query from an action is "
-                + "tracked by issue #2943");
+        switch (target.Kind)
+        {
+            case MetaTypes.RunObjectType.Page:
+                break;
+            case MetaTypes.RunObjectType.Codeunit:
+                RunTargetCodeunit(target);
+                return true;
+            // Refused by BC's own TestServiceConnection (Ncl), which a test session's client
+            // layer calls for these three: RunReport / RunXmlPort / GetQueryTableMetadata each
+            // throw NavTestMethodNotSupportedInPageTestException naming themselves. Same
+            // exception, same argument, so AL sees BC's message verbatim — corpus codeunit
+            // 60559, green on all eight cloud legs (#2943).
+            case MetaTypes.RunObjectType.Report:
+                throw NavTestMethodNotSupportedInPageTestException.Create(
+                    System.Globalization.CultureInfo.CurrentCulture, "RunReport");
+            case MetaTypes.RunObjectType.XMLport:
+                throw NavTestMethodNotSupportedInPageTestException.Create(
+                    System.Globalization.CultureInfo.CurrentCulture, "RunXmlPort");
+            case MetaTypes.RunObjectType.Query:
+                throw NavTestMethodNotSupportedInPageTestException.Create(
+                    System.Globalization.CultureInfo.CurrentCulture, "GetQueryTableMetadata");
+            default:
+                throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                    $"TestPage action {actionId} on page {_pageId}",
+                    $"not-yet-implemented — the action declares RunObject = {target.Kind} "
+                    + $"{Describe(target)}, a RunObject kind AL's grammar does not produce and "
+                    + "BC's action builder has no dispatch for");
+        }
 
         if (target.ObjectId <= 0)
             throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
@@ -179,7 +199,7 @@ internal sealed partial class RunnerPageInstance
                 + "that name does not resolve to a page this run knows about. It is either a "
                 + "report / codeunit / xmlport / query (which the symbol file states by name "
                 + "only, with no object type) or a page that is not loaded, and the runner will "
-                + "not guess which; tracked by issue #2943");
+                + "not guess which; tracked by issue #4582");
 
         RunTargetPage(actionId, target);
         return true;
@@ -207,6 +227,33 @@ internal sealed partial class RunnerPageInstance
             target.Links.Count > 0
                 ? BuildLinkedTargetRecord(actionId, target)
                 : (target.RunPageOnRec ? _record : null));
+
+    /// <summary>
+    /// Run a <c>RunObject = Codeunit</c> target the way BC's <c>InvokeCodeUnitAction</c> does:
+    /// <c>Codeunit.Run</c> on the HOST's current row, whether or not <c>RunPageOnRec</c> is
+    /// declared (corpus codeunit 60559: both arms measure the host's row on all eight cloud
+    /// legs). BC hands over <c>NavBindingManager.GetRecContext()</c> — a snapshot of the row,
+    /// not the page's live cursor — so the codeunit gets a copy here too, and whatever it does
+    /// to its <c>Rec</c>'s filters or position cannot move the TestPage under the test.
+    /// </summary>
+    private void RunTargetCodeunit(ActionRunTarget target)
+    {
+        NavRecord? record = null;
+        if (_record != null)
+        {
+            var temporary = _record.IsTemporary;
+            record = TestPageFactory.TryBuildBlankRecord(_owner, _record.TableID, temporary, out var why)
+                ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                    $"TestPage action RunObject = Codeunit {Describe(target)} on page {_pageId}",
+                    $"not-yet-implemented — the runner could not build a record of the host's "
+                    + $"table {_record.TableID} to hand the codeunit the host's row ({why})");
+            // shareTable only for a temporary host: a temporary copy must see the host's rows,
+            // and BC refuses shareTable: true unless both records are temporary.
+            record.ALCopy(_record, temporary);
+        }
+
+        BcRuntime.NavCodeunit_RunCodeunit(Microsoft.Dynamics.Nav.Types.DataError.ThrowError, target.ObjectId, record);
+    }
 
     /// <summary>
     /// Open <paramref name="pageId"/> through BC's own <c>NavForm.RunAsync</c> /
@@ -699,7 +746,7 @@ internal sealed partial class RunnerPageInstance
                 + "page ships precompiled, so its symbol file states the target by NAME with no "
                 + $"object type. That name is also a {string.Join("/", otherKinds)} in this run, so "
                 + "the runner cannot tell which object the AL named and will not guess; tracked "
-                + "by issue #2943");
+                + "by issue #4582");
 
         return new ActionRunTarget(
             // A name this run's page inventory answers, and nothing else answers, IS a page. A
