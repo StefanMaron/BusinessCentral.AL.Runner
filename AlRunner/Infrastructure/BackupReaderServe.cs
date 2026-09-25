@@ -532,6 +532,7 @@ internal static class BackupReaderServe
         Console.Error.WriteLine(
             $"[warn] --test-data: the backup reader's serve mode is unavailable ({reason}); "
             + "falling back to one reader process per command, which is correct but far slower. "
-            + "Upgrade the reader on AL_RUNNER_BCBAK, or set AL_RUNNER_BCBAK_SERVE=0 to silence this.");
+            + "If the reader has no `serve` command, upgrade the one on AL_RUNNER_BCBAK; otherwise "
+            + "the reason above is what to fix. AL_RUNNER_BCBAK_SERVE=0 silences this.");
     }
 }

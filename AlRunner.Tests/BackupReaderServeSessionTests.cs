@@ -54,6 +54,7 @@ public static class ServeStubReader
               exit 0
             fi
             echo "serve|$4" >> "$log"
+            echo "$$" > "$log.pid"
             {{onServeStart}}
             n=0
             while IFS= read -r line; do
@@ -208,8 +209,25 @@ public sealed class BackupReaderServeSessionTests : IDisposable
 
         Assert.Contains("did not answer within 1500ms", ex.Message, StringComparison.Ordinal);
         Assert.True(clock.Elapsed < TimeSpan.FromSeconds(15), $"took {clock.Elapsed}");
+
+        // Killed by the timeout itself, not later by Dispose: the child is gone before this
+        // class tears anything down (the stand-in would otherwise sleep for 30 s).
+        var pid = int.Parse(File.ReadAllText(_log + ".pid").Trim());
+        var gone = SpinWait.SpinUntil(() => !IsRunning(pid), TimeSpan.FromSeconds(3));
+        Assert.True(gone, $"the hung serve child (pid {pid}) is still running after the timeout");
         Assert.DoesNotContain(Log(), l => l.StartsWith("spawn|", StringComparison.Ordinal));
         Assert.Null(BackupReaderServe.FallbackReason);
+    }
+
+    // Absent, or a zombie awaiting reaping: either way it no longer runs.
+    private static bool IsRunning(int pid)
+    {
+        try
+        {
+            var stat = File.ReadAllText($"/proc/{pid}/stat");
+            return stat[(stat.LastIndexOf(')') + 2)] != 'Z';
+        }
+        catch (IOException) { return false; }
     }
 
     [SkippableTheory]
