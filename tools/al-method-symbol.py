@@ -18,8 +18,22 @@ Two traps this tool exists to remove, both of which return a clean empty answer:
   * a BC `.app` is a 40-byte header followed by a zip, and the Base Application `.app`
     contains ANOTHER `.app` -- the sources and SymbolReference.json are in the INNER
     one, so a single-level reader finds nothing and reads as "the method is absent";
-  * codeunits live in the `Namespaces` tree, NOT in the top-level `Codeunits` key,
-    which is present and empty.
+  * nearly every codeunit lives in the `Namespaces` tree, NOT in the top-level
+    `Codeunits` key -- so a reader that checks only the top level finds almost
+    nothing. That key is NOT empty, and describing it that way is what #4503
+    fixed here: it holds the codeunits that declare no namespace. Measured on
+    28.1.49838.53910, top-level vs nested:
+
+        Base Application          13   1670
+        Application Test Library  42      1
+        Business Foundation        0     25
+        System Application         0    533
+        System.app                 0     29
+
+    Every top-level entry lacks a `Namespace`, on all five. So the trap is real
+    -- a top-level-only reader misses 1670 of 1683 in Base Application -- but
+    the reason is that the key is a REMAINDER, not that it is unused. This tool
+    walks both locations.
 
   tools/al-method-symbol.py <app-file> <codeunit-id> [method-name-substring]
 
