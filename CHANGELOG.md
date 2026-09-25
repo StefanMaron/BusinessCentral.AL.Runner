@@ -38,6 +38,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **ci:** label hygiene reads the PR's own loop from its branch prefix, not only its labels
 - **build:** keep every service-tier-sourced DLL out of bin, not only the named ones
 - **cache:** fingerprint only runner-declared members, not a BCL base's inherited surface
 - **metadata:** a ground-truth bundle records the generator that wrote it; a stale one fails loudly
