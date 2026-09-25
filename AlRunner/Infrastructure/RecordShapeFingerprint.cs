@@ -86,29 +86,35 @@ internal static class RecordShapeFingerprint
         if (!seen.Add(type)) return;
 
         sb.Append(type.FullName).Append('{');
-        // Sorted by name, because reflection does NOT guarantee member order — the runtime is
-        // free to return properties in metadata order, which can change with an unrelated edit
-        // to the source file. An unsorted walk would produce a fingerprint that changes when
-        // nothing about the shape did, which is the mirror of the defect this fixes.
-        foreach (var p in type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                              .OrderBy(p => p.Name, StringComparer.Ordinal))
-        {
+        var properties = OwnProperties(type);
+        var fields = OwnFields(type);
+        foreach (var p in properties)
             sb.Append(p.Name).Append(':').Append(TypeName(p.PropertyType)).Append(';');
-        }
-        foreach (var f in type.GetFields(BindingFlags.Public | BindingFlags.Instance)
-                              .OrderBy(f => f.Name, StringComparer.Ordinal))
-        {
+        foreach (var f in fields)
             sb.Append(f.Name).Append(':').Append(TypeName(f.FieldType)).Append(';');
-        }
         sb.Append('}');
 
-        foreach (var p in type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                              .OrderBy(p => p.Name, StringComparer.Ordinal))
-            Walk(p.PropertyType, sb, seen);
-        foreach (var f in type.GetFields(BindingFlags.Public | BindingFlags.Instance)
-                              .OrderBy(f => f.Name, StringComparer.Ordinal))
-            Walk(f.FieldType, sb, seen);
+        foreach (var p in properties) Walk(p.PropertyType, sb, seen);
+        foreach (var f in fields) Walk(f.FieldType, sb, seen);
     }
+
+    // Sorted by name, because reflection does NOT guarantee member order — the runtime is free to
+    // return members in metadata order, which can change with an unrelated edit to the source
+    // file, and an unsorted walk would move the fingerprint when nothing about the shape did.
+    //
+    // Filtered on the member's DECLARING type, not on the holder's: an own type deriving from a
+    // BCL base (`class X : List<T>`) would otherwise record the base's inherited Capacity/Count/
+    // indexer and tie the key to the SDK (#4516). Not BindingFlags.DeclaredOnly — that would also
+    // drop members inherited from an OWN base record, which are ours and must stay in the key.
+    private static PropertyInfo[] OwnProperties(Type type) =>
+        type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(p => p.DeclaringType is { } d && IsOwnType(d))
+            .OrderBy(p => p.Name, StringComparer.Ordinal).ToArray();
+
+    private static FieldInfo[] OwnFields(Type type) =>
+        type.GetFields(BindingFlags.Public | BindingFlags.Instance)
+            .Where(f => f.DeclaringType is { } d && IsOwnType(d))
+            .OrderBy(f => f.Name, StringComparer.Ordinal).ToArray();
 
     /// <summary>
     /// The name recorded for a member's type. Generic arguments are spelled out, so

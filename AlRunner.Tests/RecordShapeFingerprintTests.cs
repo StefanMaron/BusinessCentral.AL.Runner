@@ -214,4 +214,50 @@ public class RecordShapeFingerprintTests
         // through the list rather than merely naming the element type.
         Assert.Contains("FieldId", description);
     }
+    // #4516: a runner-owned type DERIVING from a BCL type put the base's inherited public members
+    // (List<T>.Capacity/Count/Item) into the description, so the key moved with the .NET SDK.
+    // The type NAME is held constant across both assertions below, so a pass cannot come from a
+    // differing name reaching the description (#4505's trap).
+    private sealed class OwnedList : List<Leaf> { }
+    private sealed record OwnedListRoot(OwnedList Items);
+
+    [Fact]
+    public void ABclBasesInheritedMembers_AreNotInTheDescription()
+    {
+        var description = RecordShapeFingerprint.Describe(typeof(OwnedListRoot));
+
+        Assert.DoesNotContain("Capacity:", description);
+        Assert.DoesNotContain("Count:", description);
+        Assert.DoesNotContain("Item:", description);
+        // Stated positively too: the owned type is recorded, with no members of its own.
+        Assert.Contains("+OwnedList{}", description);
+    }
+
+    // A non-collection BCL base leaks the same way (Exception.Message, .HResult, ...).
+    private sealed class OwnedError : Exception { public int Code { get; init; } }
+
+    [Fact]
+    public void ANonCollectionBclBase_LeaksNothingEither_ButTheOwnMemberStays()
+    {
+        var description = RecordShapeFingerprint.Describe(typeof(OwnedError));
+
+        Assert.DoesNotContain("Message:", description);
+        Assert.DoesNotContain("HResult:", description);
+        Assert.Contains("Code:System.Int32", description);
+    }
+
+    // The other side of the boundary: a member inherited from a RUNNER-OWNED base is ours, and
+    // must stay in the key. BindingFlags.DeclaredOnly would drop it, so a branch adding a field
+    // to a shared base record would stop changing the fingerprint.
+    private abstract record OwnBase(int BaseId);
+    private sealed record OwnDerived(string Name) : OwnBase(1);
+
+    [Fact]
+    public void AMemberInheritedFromAnOwnBase_IsStillInTheDescription()
+    {
+        var description = RecordShapeFingerprint.Describe(typeof(OwnDerived));
+
+        Assert.Contains("BaseId:System.Int32", description);
+        Assert.Contains("Name:System.String", description);
+    }
 }
