@@ -27,8 +27,9 @@
 //   the object's own Properties bag.
 //
 //   Plus the <Methods> subtree, CONDITIONALLY — see AppendMethodsSubtree below. It is written
-//   only for a codeunit whose loaded assembly proves the symbol file's view of it is complete,
-//   and omitted for every other, including every codeunit of an app that was never scanned.
+//   only for a codeunit whose attributed methods the runner can state completely (subscribers
+//   from the app's own assembly, RecordPatches.CodeunitSubscriberMethods.cs), and omitted for
+//   every other, including every codeunit of an app that was never scanned.
 //
 //   What is still ABSENT is absent honestly, because the symbol file does not state it:
 //   TestIsolation, EventSubscriberInstance and MetadataVersion. The harness reports each as a
@@ -96,7 +97,7 @@ public static partial class RecordPatches
     /// The <c>&lt;Methods&gt;</c> subtree — BC's emitted method table — written only when the
     /// runner can prove its view of it is COMPLETE, and omitted entirely otherwise.
     ///
-    /// <para><b>The gate is the assembly witness, never the list's own length</b> (#3788).
+    /// <para><b>The gate is the assembly, never the list's own length</b> (#3788).
     /// SymbolReference.json states every event PUBLISHER exactly — by id, by name and in BC's
     /// document order — and no event SUBSCRIBER at all, because the file is an app's
     /// consumer-facing API surface and an AL subscriber is always <c>local</c>. So the symbol
@@ -105,10 +106,9 @@ public static partial class RecordPatches
     /// puts every later one in a different method's slot — the runner asserting an association
     /// it has no evidence for (loud-failures.md).</para>
     ///
-    /// <para>Measured with this gate over three BC builds — 27.5.46862.53931, 28.1.49838.53910
-    /// and 28.4.53241.54407 — 66 codeunits render on each, all exact, zero wrong slots; without
-    /// it, 28.1 renders 76 codeunits of which 8 carry a wrong slot. See
-    /// docs/codeunit-metadata-from-bc.md#the-method-table.</para>
+    /// <para>The subscribers the symbol file cannot state are merged in from the app's assembly
+    /// by <c>ResolveCodeunitMethodTable</c>; a codeunit it cannot state completely stays absent.
+    /// See docs/codeunit-metadata-from-bc.md#subscribers-from-the-assembly.</para>
     /// </summary>
     private static void AppendMethodsSubtree(XmlDocument doc, XmlElement root, CodeunitMetaRow row)
     {
@@ -142,6 +142,8 @@ public static partial class RecordPatches
             foreach (var (flagName, flagValue) in PublisherAttributes(method))
                 kind.SetAttribute(flagName, flagValue);
             AppendInherentPermissionAttributes(kind, method.InherentPermission);
+            foreach (var (name, value) in SubscriberAttributes(method.Subscriber))
+                kind.SetAttribute(name, value);
             attributes.AppendChild(kind);
             element.AppendChild(attributes);
             AppendParametersSubtree(doc, element, method.Parameters);
@@ -229,6 +231,25 @@ public static partial class RecordPatches
     {
         foreach (var (name, value) in InherentPermissionAttributes(inherent))
             kind.SetAttribute(name, value);
+    }
+
+    /// <summary>
+    /// The seven attributes BC's emitter writes on an <c>EventSubscriberAttribute</c> element
+    /// beyond <c>Name</c>, in BC's document order, all unconditional — every one of the 140
+    /// subscriber elements BC emits for System Application 28.1.49838.53910 carries all seven.
+    /// Empty for every other kind. docs/codeunit-metadata-from-bc.md#subscribers-from-the-assembly.
+    /// </summary>
+    internal static IEnumerable<(string Name, string Value)> SubscriberAttributes(
+        BcAppSymbolCache.EventSubscriberSymbol? subscriber)
+    {
+        if (subscriber is null) yield break;
+        yield return ("SenderType", subscriber.SenderType);
+        yield return ("SenderId", subscriber.SenderId.ToString(CultureInfo.InvariantCulture));
+        yield return ("EventName", subscriber.EventName);
+        yield return ("ElementName", subscriber.ElementName);
+        yield return ("ElementId", subscriber.ElementId.ToString(CultureInfo.InvariantCulture));
+        yield return ("SkipOnMissingLicense", subscriber.SkipOnMissingLicense ? "True" : "False");
+        yield return ("SkipOnMissingPermission", subscriber.SkipOnMissingPermission ? "True" : "False");
     }
 
     /// <summary>

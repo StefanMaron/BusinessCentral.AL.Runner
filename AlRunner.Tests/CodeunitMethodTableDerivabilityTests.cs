@@ -16,7 +16,8 @@
 //     EventPublisherAttribute            stated by SymbolReference.json as an IntegrationEvent
 //                                        or InternalEvent method attribute — DERIVABLE
 //     InherentPermissionsMethodAttribute stated when the method is not local — MOSTLY derivable
-//     EventSubscriberAttribute           stated NOWHERE in the symbol file — NOT derivable
+//     EventSubscriberAttribute           stated NOWHERE in the symbol file — derived from the
+//                                        app's assembly instead (CodeunitSubscriberMethodTableTests)
 //
 //   Measured on BC 28.1.49838.53910, System Application + Business Foundation: 558 codeunit
 //   documents, 145 with a <Methods> subtree, 326 <Method> elements, of which 0 carry no
@@ -44,13 +45,11 @@
 //   on 0 of the 461 that do not, so no property separates them. That is the measurement this
 //   file's last test pins, and it is the reason the entries stay rather than the count.
 //
-// WHAT WOULD CLOSE IT, FOR WHOEVER PICKS THIS UP
-//   A second input, not a better parse. The runner already discovers subscribers by reading
-//   [NavEventSubscriber] off the LOADED R2R assembly — AssemblyTypeIndex.FindAttributedMethods,
-//   which EventSubscriberPatches drives over every dependency. Joining that to the symbol file's
-//   publishers would supply both halves. It needs the dependency assembly loaded inside the
-//   metadata path, which today reads the .app without loading it, so it is its own piece of work
-//   with its own cost and ordering questions rather than a widening of this derivation.
+// WHAT CLOSED IT
+//   A second input, not a better parse: the app's own R2R assembly states the subscribers, and
+//   their [SignatureSpan] source lines give BC's order. RecordPatches.CodeunitSubscriberMethods.cs;
+//   what it still withholds is #4601. The tests in this file pin the symbol file's side of the
+//   argument, which is unchanged.
 
 using System.IO.Compression;
 using System.Text.Json;

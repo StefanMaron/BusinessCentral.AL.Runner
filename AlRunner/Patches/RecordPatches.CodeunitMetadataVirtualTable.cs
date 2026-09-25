@@ -116,10 +116,11 @@ public static partial class RecordPatches
     /// or when it was source-parsed rather than read from a dependency .app. Whether this list
     /// is COMPLETE is <paramref name="MethodsProvenComplete"/>'s job, never this list's own
     /// length (#3788).</param>
-    /// <param name="MethodsProvenComplete">True only when the app's loaded assemblies were
-    /// scanned AND saw this codeunit AND found no <c>[NavEventSubscriber]</c> on it. False
-    /// covers the codeunit having one and the scan never having happened, which are different
-    /// facts with the same correct consequence: do not render a subtree that may be short.</param>
+    /// <param name="MethodsProvenComplete">True only when the app's assembly accounts for every
+    /// attributed method in <paramref name="AttributedMethods"/> — subscribers merged in, nothing
+    /// local left out (<c>ResolveCodeunitMethodTable</c>). False covers a gap the runner cannot
+    /// state and the assembly never having been read, which are different facts with the same
+    /// correct consequence: do not render a subtree that may be short.</param>
     private sealed record CodeunitMetaRow(int Id, string Name, int TableNo, bool SingleInstance, string Subtype,
         string? ALNamespace = null, string? InherentEntitlements = null, string? InherentPermissions = null,
         List<BcAppSymbolCache.CodeunitMethodSymbol>? AttributedMethods = null,
@@ -579,6 +580,10 @@ public static partial class RecordPatches
             foreach (var (appPath, symbol) in EnumerateBcAppCodeunitSymbols())
             {
                 if (rows.ContainsKey(symbol.Id)) continue;   // source-compiled wins
+                // The app path is carried only this far: the method table is decided HERE, while
+                // the .app that produced the symbol is still known, and the row keeps the verdict
+                // rather than the path — a consumer holding the row cannot ask the wrong app.
+                var (methods, complete) = ResolveCodeunitMethodTable(appPath, symbol.Id, symbol.AttributedMethods);
                 rows[symbol.Id] = new CodeunitMetaRow(
                     symbol.Id, symbol.Name,
                     ResolveTableNo(symbol.TableNo, symbol.Id),
@@ -587,12 +592,8 @@ public static partial class RecordPatches
                     symbol.ALNamespace,
                     symbol.InherentEntitlements,
                     symbol.InherentPermissions,
-                    symbol.AttributedMethods,
-                    // The app path is carried only this far: the witness is asked HERE, while
-                    // the .app that produced the symbol is still known, and the row keeps the
-                    // verdict rather than the path. A consumer holding the row cannot then ask
-                    // the question against the wrong app.
-                    AssemblyProvesNoSubscriber(appPath, symbol.Id));
+                    methods,
+                    complete);
             }
 
             // Never silent (#3540): the row's TableNo reads 0, which is also the truthful answer

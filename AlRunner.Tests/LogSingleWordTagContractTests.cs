@@ -60,6 +60,7 @@ public sealed class LogSingleWordTagContractTests
         new("bold", Kind.NotALogLine, "Spectre.Console markup"),
         new("Content_Types", Kind.NotALogLine, "the [Content_Types].xml entry name inside an .app package"),
         new("green", Kind.NotALogLine, "Spectre.Console markup"),
+        new("NavByReferenceAttribute", Kind.NotALogLine, "a RuntimeAttributes value BC's metadata emitter writes verbatim, rendered into a <Parameter> element (#3788)"),
         new("grey", Kind.NotALogLine, "Spectre.Console markup"),
         new("Oo", Kind.NotALogLine, "a regex character class, [Oo]bject, in a BcCompiler diagnostic pattern"),
         new("red", Kind.NotALogLine, "Spectre.Console markup"),

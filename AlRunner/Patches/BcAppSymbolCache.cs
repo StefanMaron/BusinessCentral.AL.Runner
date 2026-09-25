@@ -811,12 +811,26 @@ internal static partial class BcAppSymbolCache
     /// <c>Parameters</c> array at all. An EMPTY list is different from null: BC writes
     /// <c>&lt;Parameters /&gt;</c> for a method that declares none, and 15 of the 152 methods
     /// the runner emits at 28.1.49838.53910 are in that state (#4084).</param>
+    /// <param name="Subscriber">The values BC writes on an <c>EventSubscriberAttribute</c>
+    /// element beyond <c>Name</c>. Never read from the symbol file, which states no subscriber;
+    /// set only on a method derived from the app's own assembly
+    /// (<c>RecordPatches.CodeunitSubscriberMethods</c>, #3788).</param>
     internal sealed record CodeunitMethodSymbol(
         int Id, string Name, string Kind, string AttributeName,
         bool IncludeSender = false, bool? Isolated = null,
         InherentPermissionSymbol? InherentPermission = null,
         bool? GlobalVarAccess = null,
-        List<MethodParameterSymbol>? Parameters = null);
+        List<MethodParameterSymbol>? Parameters = null,
+        EventSubscriberSymbol? Subscriber = null);
+
+    /// <summary>
+    /// The seven attributes BC's emitter writes on an <c>EventSubscriberAttribute</c> element
+    /// beyond <c>Name</c>, read off the method's <c>[NavEventSubscriber]</c> arguments. See
+    /// docs/codeunit-metadata-from-bc.md#subscribers-from-the-assembly.
+    /// </summary>
+    internal sealed record EventSubscriberSymbol(
+        string SenderType, int SenderId, string EventName, string ElementName, int ElementId,
+        bool SkipOnMissingLicense, bool SkipOnMissingPermission);
 
     /// <summary>
     /// One <c>&lt;Parameter&gt;</c> element BC's <c>ObjectMetadataEmitter</c> writes, in the five
