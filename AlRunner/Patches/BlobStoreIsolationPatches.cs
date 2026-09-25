@@ -48,19 +48,30 @@ public static class BlobStoreIsolationPatches
     /// rows inserted through it must not share BLOB objects with the record that
     /// inserted them. Called from RecordPatches.NavDataAccessSource_GetDataAccessForTable
     /// on every non-temporary hand-out (the same DataAccess may be handed out many
-    /// times — registration is idempotent).
+    /// times — registration is idempotent). Returns whether this call registered the provider.
     /// </summary>
-    public static void MarkDatabaseBacked(object? dataAccess)
+    public static bool MarkDatabaseBacked(object? dataAccess)
     {
-        if (dataAccess == null) return;
-        var provider = dataAccess.GetType()
-            .GetProperty("DataProvider", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-            ?.GetValue(dataAccess);
-        if (provider == null) return;
-        // AddOrUpdate rather than Add: GetDataAccessForTable is called per Record
-        // construction and returns the same cached DataAccess every time.
+        if (dataAccess == null) return false;
+        // BC's DataAccess declares DataProvider, so a missing property is a moved shape; answering
+        // "not database-backed" would silently re-open the #1751 leak. A throwing factory caches nothing.
+        var provider = _dataProviderProps.GetOrAdd(dataAccess.GetType(), static t =>
+                t.GetProperty("DataProvider", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                ?? throw new BcShapeGapException(
+                    "BLOB isolation (database-backed provider registry)", $"{t.Name}.DataProvider",
+                    "property not found — BC's DataAccess.DataProvider moved"))
+            .GetValue(dataAccess);
+        if (provider == null) return false;
+        // GetDataAccessForTable runs per Record construction and returns the same cached
+        // DataAccess every time. Look before writing: ConditionalWeakTable.AddOrUpdate on an
+        // existing key allocates a fresh entry and retires the old one, so an unconditional
+        // write churned the table on every record variable (#4487).
+        if (_databaseBackedProviders.TryGetValue(provider, out _)) return false;
         _databaseBackedProviders.AddOrUpdate(provider, _sentinel);
+        return true;
     }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, PropertyInfo> _dataProviderProps = new();
 
     /// <summary>
     /// Cecil prepend on TempTableDataProvider.Insert. Latches whether the row about

@@ -1137,8 +1137,8 @@ public static partial class RecordPatches
             throw new InvalidOperationException(
                 $"NavRecordHandle.CreateTarget: no loaded type Record{id} found");
 
-        var ctor = recordType.GetConstructors()
-            .FirstOrDefault(c => c.GetParameters().Length == 6);
+        var ctor = _concreteRecordCtors.GetOrAdd(recordType,
+            t => Array.Find(t.GetConstructors(), c => c.GetParameters().Length == 6));
         if (ctor == null)
             throw new InvalidOperationException($"Record{id} has no 6-arg constructor");
 

@@ -425,6 +425,17 @@ public static partial class BcRuntime
     private static readonly ConcurrentDictionary<string, Assembly> _latestGenerationByAssemblyName =
         new(StringComparer.Ordinal);
 
+    // Assembly.GetName() builds a fresh AssemblyName per call, and IsStaleBundleAssembly runs
+    // on every record and codeunit materialisation, so the simple name is read once per
+    // assembly (#4487). An assembly's identity cannot change after load.
+    private static readonly ConditionalWeakTable<Assembly, string> _simpleNames = new();
+
+    internal static string? SimpleName(Assembly asm)
+    {
+        var name = _simpleNames.GetValue(asm, a => a.GetName().Name ?? "");
+        return name.Length == 0 ? null : name;
+    }
+
     /// <summary>
     /// Records <paramref name="asm"/> as the current generation for its own simple name,
     /// superseding whatever this process previously registered under that name. Called
@@ -442,7 +453,7 @@ public static partial class BcRuntime
     /// DependencyLoader is exactly that shape.</para>
     internal static void RegisterAssemblyGeneration(Assembly asm)
     {
-        var name = asm.GetName().Name;
+        var name = SimpleName(asm);
         if (name != null) _latestGenerationByAssemblyName[name] = asm;
         NoteCurrentBundleAssembly(asm);
         _retiredGenerations.TryRemove(asm, out _);
@@ -514,7 +525,7 @@ public static partial class BcRuntime
     internal static bool IsStaleBundleAssembly(Assembly asm)
     {
         if (_retiredGenerations.ContainsKey(asm)) return true;
-        var name = asm.GetName().Name;
+        var name = SimpleName(asm);
         return name != null
             && _latestGenerationByAssemblyName.TryGetValue(name, out var latest)
             && !ReferenceEquals(asm, latest);

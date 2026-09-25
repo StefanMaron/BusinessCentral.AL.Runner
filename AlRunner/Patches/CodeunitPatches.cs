@@ -446,6 +446,9 @@ public static partial class BcRuntime
             (Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle)ctor.Invoke(new object[] { sessionParent, instance });
     }
 
+    // Keyed on the Type, not the id, so a reloaded generation gets its own entry (#4487).
+    private static readonly ConcurrentDictionary<Type, ConstructorInfo?> _codeunitTreeCtorCache = new();
+
     /// Replacement for NavCodeunitHandle.CreateTarget().
     /// Bypasses NavGlobal.NCLMetadata by looking up the compiled codeunit class directly
     /// from the loaded assembly and constructing it via the 1-arg ITreeObject ctor.
@@ -479,10 +482,10 @@ public static partial class BcRuntime
                 return new NoOpCodeunit(self, id);
             throw new InvalidOperationException(BuildMissingCodeunitMessage(id));
         }
-        var ctor = codeunitType.GetConstructors()
+        var ctor = _codeunitTreeCtorCache.GetOrAdd(codeunitType, t => t.GetConstructors()
             .FirstOrDefault(c => c.GetParameters().Length == 1 &&
                 typeof(Microsoft.Dynamics.Nav.Runtime.ITreeObject)
-                    .IsAssignableFrom(c.GetParameters()[0].ParameterType));
+                    .IsAssignableFrom(c.GetParameters()[0].ParameterType)));
         if (ctor == null)
             throw new InvalidOperationException(
                 $"Codeunit{id} has no single-arg ITreeObject constructor");
