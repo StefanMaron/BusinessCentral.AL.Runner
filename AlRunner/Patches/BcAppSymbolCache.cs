@@ -715,8 +715,11 @@ internal static partial class BcAppSymbolCache
     /// <c>Name</c> and its resolved <c>TypeName</c> — but NOT the source expression, which
     /// only the AL source has. That gap is why the synthesizer reads the report's own
     /// source file back out of the .app rather than inventing an expression.
+    ///
+    /// <para><c>AutoCalcField</c> is AL's default <c>true</c> unless the symbol file states the
+    /// property; it states it only when the AL did (#4648).</para>
     /// </summary>
-    internal sealed record ReportColumnSymbol(int Id, string Name, string? TypeName);
+    internal sealed record ReportColumnSymbol(int Id, string Name, string? TypeName, bool AutoCalcField = true);
 
     /// <summary>
     /// One xmlport as SymbolReference.json states it — which is its <c>Id</c>, <c>Name</c>,
@@ -2546,7 +2549,10 @@ internal static partial class BcAppSymbolCache
                 var bracket = typeName?.IndexOf('[');
                 if (bracket is > 0) typeName = typeName!.Substring(0, bracket.Value);
             }
-            result.Add(new ReportColumnSymbol(id, name!, typeName));
+            // "0" is the only value 28.1's Base Application states other than "1" (#4648).
+            var autoCalcField = !(SymbolProperties(col).TryGetValue("AutoCalcField", out var acf)
+                                  && acf is "0" or "false" or "False");
+            result.Add(new ReportColumnSymbol(id, name!, typeName, autoCalcField));
         }
         return result;
     }
