@@ -39,6 +39,8 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **testpage:** surface a failing page-driven row insert instead of trapping it
+- **testpage:** show a RunObject codeunit's write on the host page and pin its Rec's filters and isolation
 - **transactions:** value-consuming XmlPort.Import refuses a pending write transaction
 - **record:** a refused Insert must not leave the record carrying a rowversion
 - **testpage:** evaluate a control's CaptionClass for TestPage Caption
