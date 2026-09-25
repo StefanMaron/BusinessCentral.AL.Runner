@@ -195,8 +195,8 @@ public sealed class RunnerExtrasIdRangeGuardTests
             "61220..61229 — same over-declaration as the entry above. No live collision.",
 
         ["tests/runner-extras: http-egress-boundary-oos | testpage-promoted-actionref"] =
-            "64550..64559 — testpage-promoted-actionref declares 64540-64559 and uses only 64546 "
-            + "upward of the overlap's floor. No live collision.",
+            "64550..64559 — testpage-promoted-actionref declares 64540-64559 and uses nothing "
+            + "at or above the overlap's floor. No live collision.",
 
         ["tests/runner-extras: http-egress-boundary-oos | windows-language-license-stub"] =
             "64550..64555 — windows-language-license-stub declares 64546-64555 and uses only "
@@ -211,8 +211,8 @@ public sealed class RunnerExtrasIdRangeGuardTests
             + "table keys on (Type, ID). No live collision, and a narrow miss.",
 
         ["tests/runner-extras: testpage-promoted-actionref | windows-language-license-stub"] =
-            "64546..64555 — testpage-promoted-actionref has report 64546, "
-            + "windows-language-license-stub has codeunit 64546; different kinds, so no live collision."
+            "64546..64555 — testpage-promoted-actionref uses only page 64547 there, "
+            + "windows-language-license-stub codeunit 64546; no live collision."
     };
 
     // ---------------------------------------------------------------- the facts

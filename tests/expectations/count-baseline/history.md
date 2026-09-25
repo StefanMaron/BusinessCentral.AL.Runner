@@ -2351,3 +2351,18 @@ three tests failed on the runner's source parse reading the other branch (#4071)
 Measured 3P/0F/0E on the bundle, twice against one cache root, not computed from the diff.
 
 Written by an agent (Claude, `stma-auto2-7`).
+
+## runner-extras `testpage-promoted-actionref` 18 -> 13 (#2943)
+
+Five arms removed, with the five fixture objects and actions only they used:
+`RunObjectNamingA{Report,Codeunit,Query}RefusesAsANotYetImplementedGap`,
+`RunObjectNamingAnXmlPortRefusesAsANotYetImplementedGap` and
+`ARefusalNamesTheObjectOfTheKindTheActionDeclared`. Each pinned the runner's own
+`not-yet-implemented` refusal of a non-page `RunObject`, naming #2943. With #2943 fixed the runner
+runs a codeunit target and refuses a report / xmlport / query with BC's own message, which is plain
+BC behaviour and is pinned upstream by corpus codeunit 60559 (all eight arms), so no
+runner-specific claim was left for these arms to make.
+
+Measured 13P/0F/0E on the bundle, not computed from the diff.
+
+Written by an agent (Claude, `stma-auto-3`).
