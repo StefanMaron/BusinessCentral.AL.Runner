@@ -1,6 +1,6 @@
 // UserTableTriggerPatches — the runner's stand-in for BC's SystemTableTriggers arms on the
-// User system table (2000000120): the uniqueness validation and companion row its insert arm
-// runs, and the cascade its delete arm runs.
+// User system table (2000000120): the validation and companion row its insert arm runs, the
+// validation its modify arm runs, and the cascade its delete arm runs.
 //
 // WHY THIS EXISTS
 //   On a real tier, inserting into User (2000000120) does more than write that one row.
@@ -60,10 +60,11 @@
 //       await NavSqlRecentRecords.DeleteAllForUser(session, userSid.ToGuid());
 //       session.Tenant.AuthenticationCache.ExpireUser(userSid.ToGuid());
 //
-//   REPRODUCED HERE NOW: the two uniqueness refusals (#2983) and the four table cascades
-//   (#2356). Nothing about the shape changed — this is still a prepend on NavRecord's own AL
-//   entry points, using BC's own exception types, and it is still a no-op for every table but
-//   User.
+//   REPRODUCED HERE NOW: the two uniqueness refusals (#2983), the four table cascades
+//   (#2356), and the authentication-email validation on insert AND modify (#2363), with the
+//   modify arm's user-name / Windows SID refusals it shares. Still a prepend on NavRecord's own
+//   entry points, using BC's own exception types and BC's own normaliser, and a no-op for every
+//   table but User.
 //
 //   WHICH TABLES THOSE FOUR IDS ACTUALLY ARE, read off the platform's own System.app rather
 //   than from the names in #2356, which got two of them wrong:
@@ -74,11 +75,8 @@
 //       2000000233  Tenant Report Layout Selection   field 5 "User ID"           (Guid)
 //
 //   NOT reproduced, and deliberately so:
-//     * ValidateAuthenticationEmailAsync / ValidateApplicationIdAsync. Both are format-and-
-//       uniqueness validation whose *format* half is BC's own rule set; reproducing it would
-//       be re-implementing behaviour rather than reusing it, and the authentication-email
-//       surface is #2363's subject and assigned. The two refusals implemented here need no
-//       rule set at all — they are existence lookups on a field the table already states.
+//     * ValidateApplicationIdAsync, and the modify arm's super-user / license-type checks:
+//       no issue has needed them, and each is its own rule set.
 //     * NavSqlRecentRecords.DeleteAllForUser (a SQL-side table the runner has no store for)
 //       and AuthenticationCache.ExpireUser (a tenant cache the skeleton session does not
 //       have). Neither is observable from AL in this runner.
@@ -250,14 +248,9 @@ public static class UserTableTriggerPatches
     }
 
     /// <summary>
-    /// BC's <c>IsUserFieldUniqueAsync(recordBuffer, fieldNo, insert: true)</c> for one field of
-    /// the User row under insert, raising BC's OWN exception type when it is already taken.
-    ///
-    /// <para>The lookup is the same shape BC's is: an equals-filter on that one field over the
-    /// User table, first row only. The row under insert is not in the table yet, so nothing has
-    /// to be excluded from the filter — which is exactly why BC passes <c>insert: true</c> and
-    /// uses <c>EqualsFilter</c> rather than its <c>UserTableFilter</c> (that one is the modify
-    /// path, and excludes the row's own security id).</para>
+    /// BC's <c>IsUserFieldUniqueAsync(recordBuffer, fieldNo, insert)</c> for one field of the
+    /// User row under write, raising BC's OWN exception type when another user already carries
+    /// the value. The lookup is <see cref="AnotherUserCarries"/>.
     ///
     /// <para>Case sensitivity is whatever BC's own filter machinery does with this field's type
     /// and collation — deliberately not re-decided here. #2983 lists it as an open question, and
