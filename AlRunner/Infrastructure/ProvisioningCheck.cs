@@ -68,6 +68,14 @@ public static class ProvisioningCheck
                && string.Equals(name, "System", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
+    /// #4556: auto-provisioning is the default, so "re-run with --auto-provision" cannot
+    /// change a run's outcome; dropping an explicit --no-auto-provision can. One wording for
+    /// every message that offers `al-runner provision`.
+    /// </summary>
+    internal const string AutoProvisionIsDefaultNote =
+        "auto-provisioning does this by default; if you passed --no-auto-provision, drop it";
+
+    /// <summary>
     /// Report returned by <see cref="CheckPlatformApps"/>. Each issue entry is a symbol-only
     /// (non-R2R) platform app found in the cache that should be an R2R runtime package.
     /// </summary>
@@ -98,7 +106,7 @@ public static class ProvisioningCheck
             lines.Add("");
             lines.Add("  (a) One command (recommended):");
             lines.Add("        al-runner provision");
-            lines.Add("      or re-run with --auto-provision.");
+            lines.Add($"      ({AutoProvisionIsDefaultNote}).");
             lines.Add("");
             lines.Add("  (b) Force-download Microsoft platform apps only:");
             // Use the FIRST missing app's own real version — not a truncation of Version
@@ -364,7 +372,7 @@ public static class ProvisioningCheck
             $"  The runner will use service-tier DLL dispatch as a fallback.",
             $"",
             $"  Fix: run ONE of:",
-            $"    al-runner provision  (or re-run with --auto-provision)",
+            $"    al-runner provision  ({AutoProvisionIsDefaultNote})",
             // Suggest the APP's own version, not bcVersion (the engine's) — the engine is
             // version-agnostic w.r.t. the R2R apps it dispatches to, so these can differ
             // (e.g. engine 28.1 running 28.2 R2R apps); using bcVersion here would 404.

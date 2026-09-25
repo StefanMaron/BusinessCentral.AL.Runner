@@ -2390,4 +2390,34 @@ public sealed class ProvisioningCheckTests : IDisposable
         Assert.Equal(a, b, StringComparer.OrdinalIgnoreCase);
         Assert.NotEqual(a, b, StringComparer.Ordinal);
     }
+
+    // ── #4556: never recommend --auto-provision — it is the default ──────────
+    // Re-running with the default changes nothing; the only step that can is dropping an
+    // explicit --no-auto-provision, which is what the advice says instead.
+
+    [Fact]
+    public void PlatformAppsReport_Advice_DoesNotRecommendTheDefaultFlag()
+    {
+        var report = new ProvisioningCheck.PlatformAppsReport(
+            "28.1.49838.50794",
+            new[] { ("System Application", "28.1.49838.50794", "/pkg/sysapp.app") },
+            new[] { "/pkg" });
+
+        var msg = report.ToDetailedMessage();
+
+        Assert.DoesNotContain("re-run with --auto-provision", msg);
+        Assert.Contains("--no-auto-provision", msg);
+        Assert.Contains("al-runner provision", msg);
+    }
+
+    [Fact]
+    public void BuildPlatformAppMissingR2RMessage_DoesNotRecommendTheDefaultFlag()
+    {
+        var msg = ProvisioningCheck.BuildPlatformAppMissingR2RMessage(
+            "Microsoft", "System Application", "28.2.0.0",
+            "/pkg/microsoft_system application_28.2.0.0.app", "28.2.50931.52786");
+
+        Assert.DoesNotContain("re-run with --auto-provision", msg);
+        Assert.Contains("--no-auto-provision", msg);
+    }
 }

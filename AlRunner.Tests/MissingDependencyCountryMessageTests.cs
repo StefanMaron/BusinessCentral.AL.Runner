@@ -28,7 +28,9 @@ public sealed class MissingDependencyCountryMessageTests
         var msg = ex.ToDetailedMessage("28.4.53241.53989");
 
         Assert.Contains("al-runner provision", msg);
-        Assert.Contains("--auto-provision", msg);
+        // #4556: auto-provisioning is the default; re-running with it changes nothing.
+        Assert.DoesNotContain("re-run with --auto-provision", msg);
+        Assert.Contains("--no-auto-provision", msg);
         Assert.DoesNotContain("--country", msg);
         Assert.DoesNotContain("localization", msg, StringComparison.OrdinalIgnoreCase);
     }

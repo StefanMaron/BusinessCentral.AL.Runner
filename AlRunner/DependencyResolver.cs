@@ -384,6 +384,25 @@ public sealed class DependencyResolver
         var isPlatformApp = IsMicrosoftPlatformApp(dep.Name, dep.Publisher);
         (AppManifest Manifest, string Path) bestExecutableAnyVersion = default;
 
+        // #4556: the ranking and the unservable diagnostic below must share ONE "can run"
+        // predicate. Ranking on IsR2R alone put Microsoft's provisioned test toolkit (AL
+        // source, no R2R) in the same tier as a symbols-only .alpackages copy, and the higher
+        // version — the one nothing can run — won. Tiers: 2 = R2R; 1 = a non-R2R loader tier
+        // can implement it (AL source for Tier-3, or a Tier-1 sidecar DLL); 0 = nothing can.
+        // Platform apps stay R2R-only: their AL is declarations whose bodies are native.
+        // Trap: keep R2R strictly above tier 1 — merging them would let a higher source-only
+        // copy displace an R2R one, which R2RCopy_StillBeats_HigherCopyThatShipsOnlyAlSource pins.
+        var tier = new Dictionary<string, int>(StringComparer.Ordinal);
+        int Tier((AppManifest Manifest, string Path) c)
+        {
+            if (tier.TryGetValue(c.Path, out var t)) return t;
+            t = Executable(c.Path) ? 2
+                : isPlatformApp ? 0
+                : AppLoader.HasAlSource(c.Path) || HasPrecompiledSidecar(c.Manifest) ? 1
+                : 0;
+            return tier[c.Path] = t;
+        }
+
         // A package this run built FROM SOURCE outranks a packaged copy of the same app —
         // above executability, above version (#2688). Version cannot decide it and directory
         // order does not either: a real BC artifact ships a four-part build number
@@ -433,10 +452,11 @@ public sealed class DependencyResolver
                 continue;
             }
 
-            var candidateExecutable = Executable(c.Path);
-            if (candidateExecutable != Executable(best.Path))
+            var candidateTier = Tier(c);
+            var bestTier = Tier(best);
+            if (candidateTier != bestTier)
             {
-                if (candidateExecutable) best = c;
+                if (candidateTier > bestTier) best = c;
                 continue;
             }
             if (c.Manifest.Version > best.Manifest.Version) best = c;
@@ -477,72 +497,29 @@ public sealed class DependencyResolver
 
         if (best.Manifest != null)
         {
-            // Ranking executability first means a code-bearing candidate can no longer be
-            // shadowed by a higher symbols-only one. So reaching here with a symbols-only
-            // winner means NO code-bearing copy satisfied dep.Version at all — the code-
-            // bearing copies, if any, were excluded by the minimum-version filter. That is
-            // the one case left that still ends in object-ID-0 at runtime, and the fix is
-            // provisioning rather than resolution, so name the versions involved.
-            //
-            // Not fatal, and deliberately quiet for Microsoft platform apps: symbols-only is
-            // legitimate for those, whose runtime can come from the service-tier DLLs (see
-            // IsMicrosoftPlatformApp). Warning on them would fire on healthy runs and teach
-            // readers to ignore this.
-            // "Cannot execute" is NOT the same as "carries no implementation". A package with
-            // no publishedartifacts DLL but WITH src/*.al is served by the loader's Tier-3
-            // on-the-fly source compile — which is exactly how Microsoft ships its test
-            // toolkit. Verified against the real 28.1.49838.53479 test-apps artifact:
-            // `Microsoft_Library Assert.app` is 22 KB, IsR2R=false, one src/*.al. Gating on
-            // !Executable alone would fire on every healthy toolkit resolution, which is the
-            // answer to the open question this diagnostic carried (#1689): the healthy run
-            // tolerates a symbols-only winner because that winner still ships AL.
-            //
-            // The genuinely unservable shape is neither R2R nor AL — symbols and a manifest
-            // and nothing else, as produced by a symbol-only package download. No loader tier
-            // can implement it, so every call into it ends at
-            // "The object with ID 0 does not have a member with that ID".
-            // Tier 1 counts too. A committed sidecar DLL under <bundle>/**/.deps-bin/ is a
-            // complete implementation that DependencyLoader.LoadOne prefers over every other
-            // tier, so a package paired with one is fully servable no matter what the .app
-            // itself carries. Leaving it out of this list is what made the notice fire on
-            // every green CI leg for tests/runner-extras/testpage-precompiled-dep-control,
-            // whose fixture ships exactly that pairing on purpose (#2739).
-            if (!Executable(best.Path)
-                && !AppLoader.HasAlSource(best.Path)
-                && !HasPrecompiledSidecar(best.Manifest)
+            // Reaching here with a tier-0 winner means no copy that any loader tier can run
+            // met dep.Version (Tier ranks runnable copies first). Tier 0 is neither R2R, nor
+            // AL source for Tier-3, nor a Tier-1 sidecar DLL (#1689, #2739); every call into
+            // it ends at "The object with ID 0 does not have a member with that ID".
+            // Quiet for Microsoft platform apps, whose runtime is the service-tier DLLs.
+            if (Tier(best) == 0
                 && !IsMicrosoftPlatformApp(best.Manifest.Name, best.Manifest.Publisher))
             {
                 var tooOld = candidates
-                    .Where(c => c.Manifest.Version < dep.Version && Executable(c.Path))
+                    .Where(c => c.Manifest.Version < dep.Version && Tier(c) > 0)
                     .OrderByDescending(c => c.Manifest.Version)
                     .ToList();
                 if (tooOld.Count == 0)
-                {
-                    // No other copy exists at all — the case #1689 reported, and the one this
-                    // block used to fall straight through in silence. Nothing downstream can
-                    // name the app: DependencyLoader's symbol-only branch says it is "relying
-                    // on service-tier/already-loaded assembly" (true for platform apps, false
-                    // here), and the runtime error that follows names neither app nor codeunit.
-                    _unservable.Add(
-                        $"[dep] {best.Manifest.Publisher}/{best.Manifest.Name} v{best.Manifest.Version} "
-                        + "resolved to a package with NO IMPLEMENTATION (no publishedartifacts DLL,"
-                        + "\n      no src/*.al) and no other copy was found in the package caches:"
-                        + $"\n      winner: {best.Path}"
-                        + "\n      Calls into this app will fail with \"The object with ID 0 does not"
-                        + "\n      have a member with that ID\". Provision a package that carries an"
-                        + "\n      implementation — `al-runner provision`, or re-run with --auto-provision;"
-                        + "\n      for the Microsoft test toolkit specifically:"
-                        + $"\n        al-runner provision --test-apps --bc-version {best.Manifest.Version}");
-                }
+                    _unservable.Add(BuildUnservableReport(dep, best, candidates, Tier));
                 else
                     _diagnostics.Add(
                         $"[dep] note: {best.Manifest.Publisher}/{best.Manifest.Name} resolved to a "
                         + $"SYMBOLS-ONLY package v{best.Manifest.Version} (no publishedartifacts DLL):"
                         + $"\n           winner: {best.Path}"
                         + string.Concat(tooOld.Select(c =>
-                            $"\n      below min: v{c.Manifest.Version} {c.Path} (code-bearing)"))
-                        + $"\n           Code-bearing copies exist but are all below the required minimum"
-                        + $"\n           v{dep.Version}, so none could be chosen. Provision a code-bearing"
+                            $"\n      below min: v{c.Manifest.Version} {c.Path} ({(Tier(c) == 2 ? "R2R" : "AL source or sidecar DLL")})"))
+                        + $"\n           Runnable copies exist but are all below the required minimum"
+                        + $"\n           v{dep.Version}, so none could be chosen. Provide a runnable"
                         + "\n           package at or above that version, or execution will fail with"
                         + "\n           \"The object with ID 0 does not have a member with that ID\".");
             }
@@ -556,6 +533,45 @@ public sealed class DependencyResolver
             candidates.OrderByDescending(c => c.Manifest.Version).Select(c => $"v{c.Manifest.Version}"));
         found = default;
         return false;
+    }
+
+    /// <summary>
+    /// #4556: say what the resolver found — the winner, every other copy and why it was not
+    /// used, the directories searched — and only a remedy that changes the outcome. Not
+    /// --auto-provision (the default), and not `provision --bc-version` for another build,
+    /// whose output directory this run does not search.
+    /// </summary>
+    private string BuildUnservableReport(
+        DependencyRef dep,
+        (AppManifest Manifest, string Path) best,
+        List<(AppManifest Manifest, string Path)> candidates,
+        Func<(AppManifest Manifest, string Path), int> tier)
+    {
+        var others = candidates
+            .Where(c => !string.Equals(c.Path, best.Path, StringComparison.Ordinal))
+            .GroupBy(c => c.Path, StringComparer.Ordinal).Select(g => g.First())
+            .OrderByDescending(c => c.Manifest.Version)
+            .Select(c => $"\n        v{c.Manifest.Version} {c.Path} — "
+                + (c.Manifest.Version < dep.Version
+                    ? $"below the minimum v{dep.Version}"
+                    : tier(c) == 0 ? "no implementation either" : "not chosen"))
+            .ToList();
+        var searched = _cacheDirs.Count > 0
+            ? string.Join(", ", _cacheDirs)
+            : "nothing — this run was given no package cache directories";
+        var m = best.Manifest;
+        return
+            $"[dep] {m.Publisher}/{m.Name} v{m.Version} resolved to a package with NO IMPLEMENTATION"
+            + "\n      (no publishedartifacts DLL, no src/*.al, no .deps-bin sidecar DLL):"
+            + $"\n      winner: {best.Path} (highest version at or above the minimum v{dep.Version})"
+            + (others.Count == 0
+                ? "\n      other copies: none in the searched directories"
+                : "\n      other copies:" + string.Concat(others))
+            + $"\n      searched: {searched}"
+            + "\n      Calls into this app will fail with \"The object with ID 0 does not have a member"
+            + "\n      with that ID\". To fix it, put a copy of"
+            + $" {m.Publisher}/{m.Name} v{dep.Version} or later that"
+            + "\n      carries AL source or an R2R DLL into one of the searched directories.";
     }
 
     private void EnsureIndexed()

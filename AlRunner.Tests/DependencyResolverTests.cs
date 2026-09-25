@@ -596,6 +596,100 @@ public sealed class DependencyResolverTests : IDisposable
         Assert.False(AppLoader.IsR2R(result[0].AppPath));
     }
 
+    // ── #4556: "can run" means R2R, AL source or a sidecar — in the ranking too ──
+    //
+    // Microsoft's test-toolkit apps ship AL source and no R2R DLL, so ranking on IsR2R alone
+    // put the provisioned toolkit and a symbols-only .alpackages copy in one tier, and the
+    // higher version — the one no loader tier can run — won.
+
+    /// <summary>
+    /// A symbols-only v28.4 in .alpackages beside a provisioned v28.1 that ships AL source,
+    /// both above the 28.0 minimum: the v28.1 copy must win, whichever directory is scanned
+    /// first, and nothing is reported as unservable.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void LowerCopyWithAlSource_Beats_HigherSymbolsOnlyCopy(bool symbolsOnlyDirFirst)
+    {
+        var appId = "45560000-0000-0000-0000-000000000001";
+        var alpackages = MakeDir("4556-alpackages-" + symbolsOnlyDirFirst);
+        var testApps = MakeDir("4556-test-apps-" + symbolsOnlyDirFirst);
+        WriteApp(alpackages, "Microsoft_Tests-TestLibraries_28.4.53241.53504.app", appId,
+            "Tests-TestLibraries", "Microsoft", "28.4.53241.53504", r2r: false);
+        File.WriteAllBytes(Path.Combine(testApps, "Microsoft_Tests-TestLibraries.app"),
+            MakeMinimalApp(appId, "Tests-TestLibraries", "Microsoft", "28.1.49838.53479",
+                r2r: false, alSource: true));
+
+        var dirs = symbolsOnlyDirFirst ? new[] { alpackages, testApps } : new[] { testApps, alpackages };
+        var resolver = new DependencyResolver(dirs);
+        var result = resolver.Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(appId), "Tests-TestLibraries", "Microsoft", new Version(28, 0, 0, 0)),
+        });
+
+        var resolved = Assert.Single(result);
+        Assert.Equal(new Version(28, 1, 49838, 53479), resolved.Manifest.Version);
+        Assert.Equal(Path.Combine(testApps, "Microsoft_Tests-TestLibraries.app"), resolved.AppPath);
+        Assert.Empty(resolver.UnservableDependencies);
+    }
+
+    /// <summary>
+    /// Control for the ranking above: an R2R copy still outranks a HIGHER copy that ships
+    /// only AL source, so the #4556 change reorders only candidates that have no R2R payload.
+    /// </summary>
+    [Fact]
+    public void R2RCopy_StillBeats_HigherCopyThatShipsOnlyAlSource()
+    {
+        var appId = "45560000-0000-0000-0000-000000000002";
+        var dir = MakeDir("4556-r2r-vs-source");
+        WriteApp(dir, "Lib_v28_1_r2r.app", appId, "SomeLib", "SomeVendor", "28.1.0.0", r2r: true);
+        File.WriteAllBytes(Path.Combine(dir, "Lib_v28_4_src.app"),
+            MakeMinimalApp(appId, "SomeLib", "SomeVendor", "28.4.0.0", r2r: false, alSource: true));
+
+        var resolver = new DependencyResolver(new[] { dir });
+        var result = resolver.Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(appId), "SomeLib", "SomeVendor", new Version(28, 0, 0, 0)),
+        });
+
+        var resolved = Assert.Single(result);
+        Assert.Equal("Lib_v28_1_r2r.app", Path.GetFileName(resolved.AppPath));
+    }
+
+    /// <summary>
+    /// When no copy can run, the report must say what the resolver found: every other copy,
+    /// and why each was not used — never "no other copy was found" when one was. And it must
+    /// not recommend --auto-provision (the default) or a `provision --bc-version` for the
+    /// winner's own build, whose output directory this run does not search.
+    /// </summary>
+    [Fact]
+    public void SymbolsOnlyWinner_ReportNamesTheOtherCopies_AndNoRemedyTheRunCannotHonour()
+    {
+        var appId = "45560000-0000-0000-0000-000000000003";
+        var alpackages = MakeDir("4556-report-alpackages");
+        var other = MakeDir("4556-report-other");
+        WriteApp(alpackages, "Microsoft_Library Assert_28.4.53241.53504.app", appId,
+            "Library Assert", "Microsoft", "28.4.53241.53504", r2r: false);
+        WriteApp(other, "Microsoft_Library Assert_28.1.app", appId,
+            "Library Assert", "Microsoft", "28.1.49838.53479", r2r: false);
+
+        var resolver = new DependencyResolver(new[] { alpackages, other });
+        resolver.Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(appId), "Library Assert", "Microsoft", new Version(28, 0, 0, 0)),
+        });
+
+        var report = Assert.Single(resolver.UnservableDependencies);
+        Assert.Contains(Path.Combine(alpackages, "Microsoft_Library Assert_28.4.53241.53504.app"), report);
+        Assert.Contains("v28.1.49838.53479 " + Path.Combine(other, "Microsoft_Library Assert_28.1.app"), report);
+        Assert.DoesNotContain("no other copy", report, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("--auto-provision", report);
+        Assert.DoesNotContain("--bc-version", report);
+        // The remedy it does give names the directories a copy would be found in.
+        Assert.Contains(other, report[report.IndexOf("searched:", StringComparison.Ordinal)..]);
+    }
+
     private static void WriteApp(string dir, string fileName,
         string appId, string name, string publisher, string version, bool r2r)
     {

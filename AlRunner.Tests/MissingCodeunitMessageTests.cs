@@ -83,4 +83,19 @@ public sealed class MissingCodeunitMessageTests
         // whole message's weight.
         Assert.Contains("--package-cache", msg);
     }
+
+    /// <summary>
+    /// #4556: auto-provisioning is the default, so "re-run with --auto-provision" is a step
+    /// that cannot change the outcome. The advice names the one that can: dropping an
+    /// explicit --no-auto-provision.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(BothArms))]
+    public void Message_DoesNotRecommendTheDefaultFlag(int id)
+    {
+        var msg = BcRuntime.BuildMissingCodeunitMessageForTests(id);
+
+        Assert.DoesNotContain("re-run with --auto-provision", msg);
+        Assert.Contains("--no-auto-provision", msg);
+    }
 }
