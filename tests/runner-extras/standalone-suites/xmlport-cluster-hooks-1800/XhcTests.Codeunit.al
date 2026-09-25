@@ -198,6 +198,9 @@ codeunit 62182 "XHC Tests"
         // a row whose primary key already exists, which is a legitimate duplicate-key
         // failure, not evidence about the orphaned-hook fix this test exists to prove.
         Row_.Delete();
+        // A value-consuming Import is refused while this test holds an uncommitted write
+        // (corpus 60041, AlRunner#2184), so close the write transaction first.
+        Commit();
 
         TempBlob.CreateInStream(DocumentInStream);
         XhcIn.SetSource(DocumentInStream);
