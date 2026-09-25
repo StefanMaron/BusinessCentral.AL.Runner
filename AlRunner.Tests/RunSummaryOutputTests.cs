@@ -46,6 +46,13 @@ public sealed class RunSummaryOutputTests
 
     private static string[] Lines(string s) => s.Split('\n');
 
+    // Facts asserting on the same invocation share one spawn: each spawn costs ~10 s, and the
+    // class is serial, so a spawn per fact is what made it the #1887 tail.
+    private static readonly Lazy<(string Stdout, string Stderr, int Exit)> DefaultRun =
+        new(() => Run(Fixture));
+    private static readonly Lazy<(string Stdout, string Stderr, int Exit)> ShowPassTrailingSeparatorRun =
+        new(() => Run(Fixture + Path.DirectorySeparatorChar, "--show-pass"));
+
     /// <summary>
     /// #4563 (owner decision 2026-09-25): PASS lines are hidden by default; the failure entry
     /// and the counts still say what passed.
@@ -54,7 +61,7 @@ public sealed class RunSummaryOutputTests
     public void DefaultRun_ListsTheFailure_NotThePass()
     {
         TestArtifacts.SkipIfMissing();
-        var (stdout, stderr, exit) = Run(Fixture);
+        var (stdout, stderr, exit) = DefaultRun.Value;
 
         Assert.True(exit == 1, $"one test fails by construction, so exit 1:\n{stdout}\n{stderr}");
         Assert.DoesNotContain(Lines(stdout), l => l.StartsWith("PASS ", StringComparison.Ordinal));
@@ -62,12 +69,15 @@ public sealed class RunSummaryOutputTests
         Assert.Contains("Tests: 2   passed 1   failed 1   errors 0 ", stdout);
     }
 
-    /// <summary>#4563's other half: --show-pass brings the PASS lines back.</summary>
+    /// <summary>
+    /// #4563's other half: --show-pass brings the PASS lines back. Shares the trailing-separator
+    /// run below; the separator does not bear on which lines print.
+    /// </summary>
     [SkippableFact]
     public void ShowPass_ListsThePassingTest()
     {
         TestArtifacts.SkipIfMissing();
-        var (stdout, _, _) = Run(Fixture, "--show-pass");
+        var (stdout, _, _) = ShowPassTrailingSeparatorRun.Value;
 
         Assert.Contains(Lines(stdout),
             l => Regex.IsMatch(l, @"^PASS +Codeunit50150\.CustomerInsertPasses \(\d+ms\)$"));
@@ -81,7 +91,7 @@ public sealed class RunSummaryOutputTests
     public void FailureEntry_NamesTheCodeunit_AndDropsTheDialogExceptionType()
     {
         TestArtifacts.SkipIfMissing();
-        var (stdout, _, _) = Run(Fixture);
+        var (stdout, _, _) = DefaultRun.Value;
 
         var heading = Assert.Single(RunnerFailureLines.All(stdout));
         Assert.Matches(@"^FAIL  ""Probe Customer Test""\.CustomerNameFails \(Codeunit50150, \d+ ms\)$", heading);
@@ -120,7 +130,7 @@ public sealed class RunSummaryOutputTests
     public void DefaultRun_EndsWithCountsSeedAndResult_AndNoPerAppLines()
     {
         TestArtifacts.SkipIfMissing();
-        var (stdout, _, exit) = Run(Fixture);
+        var (stdout, _, exit) = DefaultRun.Value;
         var lines = Lines(stdout.TrimEnd('\n'));
 
         Assert.Equal(1, exit);
@@ -213,7 +223,7 @@ public sealed class RunSummaryOutputTests
     public void TrailingSeparatorBundlePath_PrintsANonEmptyLabel()
     {
         TestArtifacts.SkipIfMissing();
-        var (stdout, _, _) = Run(Fixture + Path.DirectorySeparatorChar, "--show-pass");
+        var (stdout, _, _) = ShowPassTrailingSeparatorRun.Value;
         var lines = Lines(stdout);
 
         Assert.DoesNotContain("===  ===", stdout);
