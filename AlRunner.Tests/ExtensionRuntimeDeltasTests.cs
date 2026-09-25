@@ -737,7 +737,8 @@ public sealed class ExtensionRuntimeDeltasTests
     /// <para>Four decoys, each a way a looser rule would be wrong: an action stating an
     /// EXPRESSION <c>Visible</c> (the default must not paper over it); a GROUP (<c>Kind</c> 1,
     /// another table, no <c>RunPageMode</c>); an ACTIONREF (<c>Kind</c> 4, no
-    /// <c>Enabled</c>/<c>RunPageMode</c>); and a CONTROL, which has no action table at all.</para>
+    /// <c>Enabled</c>/<c>RunPageMode</c>); and a CONTROL of <c>Kind</c> 2 — <c>ControlKind.CueGroup</c>,
+    /// the same number as <c>ActionKind.Action</c>, so only the IsAction check excludes it.</para>
     /// </summary>
     [Fact]
     public void An_action_stating_none_of_them_gets_BCs_always_emitted_action_defaults()
@@ -770,7 +771,7 @@ public sealed class ExtensionRuntimeDeltasTests
                       ],
                       "ControlChanges": [
                         { "Anchor": "Content", "ChangeKind": 2,
-                          "Controls": [ { "Kind": 8, "Id": 640938044, "Name": "A Field" } ] }
+                          "Controls": [ { "Kind": 2, "Id": 640938044, "Name": "A Field" } ] }
                       ]
                     }
                   ]
