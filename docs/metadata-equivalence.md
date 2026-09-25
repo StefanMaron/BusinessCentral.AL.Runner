@@ -1691,6 +1691,43 @@ goes **up** on each build (for example, System Application 28.1.49838.53910 goes
 over 196 members to 96,105 over 200). The previous count was low because the type mismatch hid
 those members, not because the render agreed with BC on them.
 
+<a id="deltas-emitter-defaults"></a>
+### Values BC's emitter computes when nothing states them (#3926 group 2)
+
+Every value below is written on a delta member although no symbol property states it. Each was
+checked against **every** `Actions`/`Controls` element of the 45 captured documents on
+27.5.46862.53931, 28.1.49838.53910, 28.1.49838.54308 and 28.4.53241.54407 (50 member elements),
+and a value is written only when no element disagrees.
+
+| value | rule | measured | settled by |
+|---|---|---|---|
+| `ControlGUID` | `new Guid(extensionId, (short)memberId, memberId == 0 ? 1 : 0, 0x10, memberId >> 24, memberId >> 16, 0, 0x83, 0x6b, 0xd2, 0xd2)` | 50/50 | BC's `CodeAnalysis.Emit.MetadataEmitterHelper.GeneratePageControlGuid`, with `SymbolKind.PageExtension` (0x10); `ExtensionRuntimeDeltasBcMappingTests` calls it |
+| `SourceExtensionType` | `ModernDev` on every member | 50/50 | a literal in `PageBaseMetadataEmitter.WriteExtensionSpecificMetadataAttributes` |
+| `Visible` on an actionref | `1` when the actionref states no `Visible` | 5/5 | measurement only |
+| `Importance` on a field control | `Standard` when the control states a `SourceExpression` and no `Importance` | 16/16 | measurement only |
+
+The last two are measured defaults, not emitter code, so each is kept to the shape it was measured
+on: no measured actionref states `Visible`, no measured control states `Importance`, and every
+measured control is a field.
+
+**Not written, because the data does not support one answer:**
+
+- **Unstated `RunPageMode`.** BC writes `Edit` on the three unstated trigger actions of 324, 4318
+  and 9862, and nothing on the three unstated `RunObject` actions of 774. That is a counter-example,
+  so it is not a constant default.
+- **`HelpLink`.** BC's emitter builds it from the app's `contextSensitiveHelpUrl` option and the
+  pageextension's `ContextSensitiveHelpPage` (`WriteContextSpecificHelpUrlPropertyIfNeeded`). 774's
+  three `RunObject` actions carry none, and every other member carries
+  `https://learn.microsoft.com/dynamics365/business-central/`.
+- **`ExtensionId`.** BC writes `774` on pageextension 774's four field controls, which bind fields
+  of tableextension 774. Both ids are 774, so the captured data cannot say which one BC writes.
+- **`UIElementIdentifier.ControlRuntimeId`.** This parses from BC's `AnchorId` hash, which the
+  render does not write. It is not the `ControlGUID`.
+- **The `*TranslationKey` family**, which is out of scope (#3568).
+
+On 28.1.49838.53910 the runtime-delta difference rows went from 908 to 850. The 58 rows removed are
+exactly the eleven members the allowlist no longer declares, and no row was added.
+
 <a id="deltas-declaration-order"></a>
 ### Declaration order is load-bearing, because the differ pairs positionally
 
