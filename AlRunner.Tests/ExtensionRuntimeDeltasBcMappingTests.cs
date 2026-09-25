@@ -89,6 +89,40 @@ public sealed class ExtensionRuntimeDeltasBcMappingTests
     }
 
     /// <summary>
+    /// The runner's pageextension <c>ControlGUID</c> is what BC's own
+    /// <c>MetadataEmitterHelper.GeneratePageControlGuidString(controlId, objectId,
+    /// SymbolKind.PageExtension)</c> answers, over ids chosen to reach every byte of the encoding:
+    /// both 16-bit halves, the high byte's sign bit, and 0, which BC special-cases.
+    /// </summary>
+    [SkippableTheory]
+    [InlineData(2515, 1174679510)]
+    [InlineData(774, 191117080)]
+    [InlineData(9862, 2032512200)]
+    [InlineData(2147483647, -1)]
+    [InlineData(1, int.MinValue)]
+    [InlineData(324, 0)]
+    public void The_runners_ControlGUID_agrees_with_BCs_own_emitter(int extensionId, int memberId)
+    {
+        var dll = Path.Combine(AlRunner.Infrastructure.BcArtifacts.ServiceTierDir,
+            "Microsoft.Dynamics.Nav.CodeAnalysis.dll");
+        Skip.IfNot(File.Exists(dll),
+            $"Microsoft.Dynamics.Nav.CodeAnalysis.dll is not on this box ({dll}), so there is no " +
+            "oracle to compare against and this test would assert nothing.");
+
+        var ca = Assembly.LoadFrom(dll);
+        var kind = ca.GetType("Microsoft.Dynamics.Nav.CodeAnalysis.SymbolKind", throwOnError: true)!;
+        var method = ca.GetType("Microsoft.Dynamics.Nav.CodeAnalysis.Emit.MetadataEmitterHelper", throwOnError: true)!
+            .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
+            .Single(m => m.Name == "GeneratePageControlGuidString");
+
+        // Every parameter supplied explicitly: MethodInfo.Invoke does not apply C# defaults.
+        var bc = (string)method.Invoke(null, new object?[]
+            { memberId, extensionId, Enum.Parse(kind, "PageExtension"), "B" })!;
+
+        Assert.Equal(bc, RecordPatches.PageExtensionControlGuidForTests(extensionId, memberId));
+    }
+
+    /// <summary>
     /// A word from neither vocabulary — a sibling member's name — is NOT a container, on either
     /// side. That is what keeps an anchored change on the kind-implied fallback instead of
     /// emitting an attribute BC's reader would refuse.

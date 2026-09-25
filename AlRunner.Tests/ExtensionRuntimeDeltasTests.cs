@@ -879,8 +879,10 @@ public sealed class ExtensionRuntimeDeltasTests
             // ...and the member that states nothing gains nothing. This is the half that fails if
             // a member's properties ever leak onto a neighbouring element.
             foreach (var absent in new[]
-                     { "ApplicationArea", "CaptionML", "Image", "ToolTipML", "Visible", "Enabled" })
+                     { "ApplicationArea", "CaptionML", "Image", "ToolTipML", "Enabled" })
                 Assert.Null(bare.Attribute(absent));
+            // Visible is the exception: BC's actionref default, not the neighbour's value.
+            Assert.Equal("1", bare.Attribute("Visible")?.Value);
 
             // The AL area anchor "Navigation" is the container RelatedInformation, which is what
             // BC writes for 2516's first ActionAdd — so this fixture also pins that the pair is
@@ -964,12 +966,10 @@ public sealed class ExtensionRuntimeDeltasTests
             Assert.Equal("Other", actions[2].Attribute("TargetName")?.Value);
             Assert.Null(actions[2].Attribute("TargetID"));
 
-            // Nothing BC computes is invented on an actionref.
-            foreach (var absent in new[] { "ControlGUID", "SourceExtensionType", "HelpLink", "Visible" })
-            {
-                Assert.Null(actions[1].Attribute(absent));
-                Assert.Null(actions[2].Attribute(absent));
-            }
+            // HelpLink is computed from the app manifest and the pageextension's
+            // ContextSensitiveHelpPage, which this render does not read, so it stays off.
+            Assert.Null(actions[1].Attribute("HelpLink"));
+            Assert.Null(actions[2].Attribute("HelpLink"));
 
             Assert.Equal("ControlDefinition", control.Attribute(xsi + "type")!.Value);
             Assert.Null(control.Attribute("TargetName"));
@@ -977,21 +977,134 @@ public sealed class ExtensionRuntimeDeltasTests
         finally { Directory.Delete(dir, recursive: true); }
     }
 
+    // The emitter-default fixture. Real ids from BC's own captured documents, so each expected
+    // ControlGUID is a literal BC wrote rather than one this file computed: pageextension 2515's
+    // action 1174679510 and pageextension 774's control 191117080. DECOY: the extended page is
+    // declared with id 88380941, so a GUID built from the TARGET page's id instead of the
+    // extension's own is visibly wrong. A second control binds nothing (no SourceExpression),
+    // and a third states its own Importance.
+    internal const string EmitterDefaultsSymbolReference = """
+        {
+          "RuntimeVersion": "17.0",
+          "Pages": [ { "Id": 88380941, "Name": "ERD Defaults Target" } ],
+          "PageExtensions": [
+            {
+              "Id": 2515,
+              "Name": "Defaults Ext",
+              "TargetObject": "ERD Defaults Target",
+              "ActionChanges": [
+                { "Anchor": "Processing", "ChangeKind": 2,
+                  "Actions": [ { "Kind": 2, "Id": 1174679510, "Name": "Plain" },
+                               { "Kind": 2, "Id": 640938042, "Name": "Hidden",
+                                 "Properties": [ { "Name": "Visible", "Value": "false" } ] } ] },
+                { "Anchor": "Promoted", "ChangeKind": 1,
+                  "Actions": [ { "Kind": 4, "TargetId": 1174679510, "TargetName": "Plain",
+                                 "Id": 859995181, "Name": "Plain_Promoted" } ] }
+              ],
+              "ControlChanges": [
+                { "Anchor": "Content", "ChangeKind": 2,
+                  "Controls": [ { "Kind": 8, "Id": 191117080, "Name": "Bound",
+                                  "Properties": [ { "Name": "SourceExpression", "Value": "Rec.Code" } ] },
+                                { "Kind": 0, "Id": 640938043, "Name": "Unbound Group" },
+                                { "Kind": 8, "Id": 640938044, "Name": "Stated Importance",
+                                  "Properties": [ { "Name": "SourceExpression", "Value": "Rec.Code" },
+                                                  { "Name": "Importance", "Value": "Promoted" } ] } ] }
+              ]
+            }
+          ]
+        }
+        """;
+
+    private static (XElement[] Actions, XElement[] Controls) RenderDefaults()
+    {
+        var dir = TestScratch.Dir("al-runner-extension-runtime-deltas-defaults");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var root = Render(WriteAppWith(dir, EmitterDefaultsSymbolReference), "Page", 2515)!.Root!;
+            return (root.Elements($"{Ns}ActionAdd").Elements($"{Ns}Actions").ToArray(),
+                    root.Elements($"{Ns}ControlAdd").Elements($"{Ns}Controls").ToArray());
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    /// <summary>
+    /// Every member carries BC's <c>ControlGUID</c>: the encoding
+    /// <c>MetadataEmitterHelper.GeneratePageControlGuid</c> builds from the EXTENSION's id and the
+    /// member's id (docs/metadata-equivalence.md#deltas-emitter-defaults). The expected strings
+    /// are copied out of BC's own documents for 2515 and 774 on every captured build.
+    /// </summary>
+    [Fact]
+    public void Every_member_carries_the_ControlGUID_BCs_emitter_encodes_from_the_extension_and_member_ids()
+    {
+        var (actions, controls) = RenderDefaults();
+        Assert.Equal("{000009d3-2fd6-0000-1046-0400836bd2d2}", actions[0].Attribute("ControlGUID")?.Value);
+        Assert.Equal("{000009d3-7c2d-0000-1033-4200836bd2d2}", actions[2].Attribute("ControlGUID")?.Value);
+        // 774's control id, rendered under this fixture's extension id 2515 (0x9d3): only the
+        // first group moves, which is what separates "the extension id" from "a fixed prefix".
+        Assert.Equal("{000009d3-3718-0000-100b-6400836bd2d2}", controls[0].Attribute("ControlGUID")?.Value);
+        // Distinct per member: a render writing one GUID for everyone fails here.
+        Assert.Equal(6, actions.Concat(controls).Select(m => m.Attribute("ControlGUID")?.Value).Distinct().Count());
+    }
+
+    /// <summary>
+    /// <c>SourceExtensionType</c> is a literal in BC's emitter
+    /// (<c>PageBaseMetadataEmitter.WriteExtensionSpecificMetadataAttributes</c> writes
+    /// <c>NavExtensionType.ModernDev</c>), and every member of every captured document carries it.
+    /// </summary>
+    [Fact]
+    public void Every_member_carries_SourceExtensionType_ModernDev()
+    {
+        var (actions, controls) = RenderDefaults();
+        Assert.Equal(6, actions.Length + controls.Length);
+        foreach (var m in actions.Concat(controls))
+            Assert.Equal("ModernDev", m.Attribute("SourceExtensionType")?.Value);
+    }
+
+    /// <summary>
+    /// An actionref stating no <c>Visible</c> gets BC's <c>Visible="1"</c> — 5 of 5 captured
+    /// documents. A plain action stating nothing gets none (BC writes no Visible on 774's
+    /// unstated actions either), and a plain action's stated literal is unchanged.
+    /// </summary>
+    [Fact]
+    public void An_actionref_gets_Visible_1_and_a_plain_action_does_not()
+    {
+        var (actions, _) = RenderDefaults();
+        Assert.Null(actions[0].Attribute("Visible"));
+        Assert.Equal("false", actions[1].Attribute("Visible")?.Value);
+        Assert.Equal("1", actions[2].Attribute("Visible")?.Value);
+    }
+
+    /// <summary>
+    /// A field control (one stating a <c>SourceExpression</c>) that states no <c>Importance</c>
+    /// gets BC's <c>Importance="Standard"</c> — 16 of 16 captured documents. A control binding
+    /// nothing and a control stating its own Importance are outside that measurement and get none;
+    /// actions never do.
+    /// </summary>
+    [Fact]
+    public void An_unstated_field_control_gets_Importance_Standard_and_nothing_else_does()
+    {
+        var (actions, controls) = RenderDefaults();
+        Assert.Equal("Standard", controls[0].Attribute("Importance")?.Value);
+        Assert.Null(controls[1].Attribute("Importance"));
+        Assert.Null(controls[2].Attribute("Importance"));
+        foreach (var a in actions) Assert.Null(a.Attribute("Importance"));
+    }
+
     [Fact]
     public void Values_the_runner_cannot_derive_are_left_off_rather_than_defaulted()
         => WithApp(appPath =>
         {
-            // BC's emitted documents carry ControlGUID, SourceExtensionType and the
-            // *TranslationKey hashes. SymbolReference.json states none of them, so the render
-            // must omit them: writing "" or a computed placeholder would be manufactured
-            // agreement, in the direction that is hardest to notice.
+            // BC's emitted documents carry HelpLink and the *TranslationKey hashes, which this
+            // render does not derive, so it omits them: writing "" or a placeholder would be
+            // manufactured agreement, in the direction that is hardest to notice.
             var doc = Render(appPath, "Page", SharedExtId);
             Assert.NotNull(doc);
 
             var action = doc!.Root!.Elements($"{Ns}ActionAdd").Elements($"{Ns}Actions").Single();
             foreach (var absent in new[]
                      {
-                         "ControlGUID", "SourceExtensionType", "CaptionTranslationKey",
+                         "HelpLink", "CaptionTranslationKey",
                          "ToolTipTranslationKey", "AboutTextTranslationKey", "AboutTitleTranslationKey",
                      })
                 Assert.Null(action.Attribute(absent));
