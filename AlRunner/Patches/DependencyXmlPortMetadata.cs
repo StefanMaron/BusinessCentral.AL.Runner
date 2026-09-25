@@ -866,6 +866,18 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// An Enum field is <c>Option</c>: BC wrote <c>Option</c> for <c>Item."Costing Method"</c>
+    /// (<c>Enum "Costing Method"</c>) in xmlport 99000751 on BC 28.5.54151.55132 (#4651).
+    /// </summary>
+    private static string? XmlPortFieldDataType(ParsedField f)
+    {
+        if (f.EnumTypeId > 0 || f.EnumTypeName != null
+            || (f.TypeName ?? "").TrimStart().StartsWith("Enum", StringComparison.OrdinalIgnoreCase))
+            return "Option";
+        return XmlPortDataTypeName(f.TypeName);
+    }
+
+    /// <summary>
     /// The <c>DataType</c> to write for a bound node: the AL type WITHOUT its length suffix,
     /// spelled the way BC's own <c>NavType</c> enum spells it. <c>Code[20]</c> -> <c>Code</c>.
     ///
@@ -882,18 +894,6 @@ public static partial class RecordPatches
     /// needs no change here, the same reasoning as
     /// <see cref="CanonicalNavTypeName"/>, which this delegates to.</para>
     /// </summary>
-    /// <summary>
-    /// An Enum field is <c>Option</c>: BC wrote <c>Option</c> for <c>Item."Costing Method"</c>
-    /// (<c>Enum "Costing Method"</c>) in xmlport 99000751 on BC 28.5.54151.55132 (#4651).
-    /// </summary>
-    private static string? XmlPortFieldDataType(ParsedField f)
-    {
-        if (f.EnumTypeId > 0 || f.EnumTypeName != null
-            || (f.TypeName ?? "").TrimStart().StartsWith("Enum", StringComparison.OrdinalIgnoreCase))
-            return "Option";
-        return XmlPortDataTypeName(f.TypeName);
-    }
-
     private static string? XmlPortDataTypeName(string? declaredTypeName)
     {
         if (string.IsNullOrWhiteSpace(declaredTypeName)) return null;
