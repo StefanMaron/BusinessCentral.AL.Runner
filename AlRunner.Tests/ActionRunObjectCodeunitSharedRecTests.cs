@@ -44,9 +44,10 @@ public sealed class ActionRunObjectCodeunitSharedRecTests : IDisposable
         var (exit, output) = Spawn(_root, pkg);
 
         // Each arm asserts inside AL; the counts distinguish "passed" from "discovered nothing".
-        Assert.True(output.Contains("pass:        3"),
+        Assert.True(output.Contains("passed 3 ", StringComparison.Ordinal),
             $"expected all three arms to pass; exit={exit}\n{output}");
-        Assert.Matches(@"fail:\s+0\b", output);
+        Assert.Matches(@"\bfailed 0\b", output);
+        Assert.Matches(@"\berrors 0\b", output);
         Assert.Equal(0, exit);
     }
 
