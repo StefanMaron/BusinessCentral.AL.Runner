@@ -40,7 +40,13 @@ work; deriving means the runner does, and the runner does not add the relations.
 `Compilation.Emit` is **atomic per module**: one object BC cannot emit yields zero documents for
 the entire app, not a partial result. Measured per app:
 
-| app | `.al` files | outcome | documents |
+Counts below are **documents emitted**, measured on **BC 28.1.49838.53910**. The BC build is
+part of the figure, not decoration: System Application emits 1,166 on 27.5.46862.53931, 1,218
+on both 28.1.49838.53910 and 28.1.49838.54308, and 1,220 on 28.4.53241.54407 — all fully
+covered, the object set simply differs between builds. A bare count with no build is
+under-specified (#3816). Business Foundation is 70 on all four.
+
+| app | `.al` files | outcome | documents (28.1.49838.53910) |
 |---|---|---|---|
 | Business Foundation | 96 | clean, 5.8–6.2 s | **70** (was 55 before #3875 — see “The platform floor”) |
 | System Application | 1,319 | clean since #3745, 10.9–13.1 s | **1,218** (138 tables, 533 codeunits, 224 pages, 164 permission sets, 142 enums, 7 queries, 5 runtime deltas, 4 xmlports, 1 report) |
@@ -75,7 +81,7 @@ How it was isolated, on BC 28.1.49838: removing the shim directory from the grou
 the only change — took it from `success=True objects=1218 errors=0` to
 `success=False objects=0 errors=1` with that AL0133 named. Three other candidate differences
 were tested and **ruled out**: the `System.app` version (28.0.53872.0 vs the 28.0.54265.0 the
-runner resolves — 1,218 objects either way), the package's resources (stripping `addin/` gives
+runner resolves — 1,218 objects on 28.1.49838.53910 either way), the package's resources (stripping `addin/` gives
 62 × AL0327, a different signature), and the DotNet probing *order*, which already matched.
 
 `AlRunner.csproj` now stages that shim into a `dotnet-shims` directory as build **content**, so
@@ -86,7 +92,7 @@ load-bearing, because the tier is where the copy that does not bind lives.
 **The 23 AL0185 "is missing" declaration errors this used to report were a consequence, not a
 cause.** With the shim in place they become 62 × AL0327 for control-add-in resources the
 producer's work directory does not carry, which are non-fatal: the emit produces all 1,218
-documents anyway.
+documents on 28.1.49838.53910 anyway (see the per-build spread above).
 
 Base Application needed a second shim of the same shape, for a different assembly —
 `Microsoft.AspNetCore.StaticFiles`, which no BC artifact ships. See the next section; it is the
@@ -218,7 +224,7 @@ the Microsoft platform apps themselves, on the premise that their floors cycle
 `<Dependencies>` array, which `Visit`'s own colour-marker detector already handles. The
 exemption therefore prevented no cycle and cost both apps their platform symbols:
 
-| app | before #3875 | after | BC's own emitter |
+| app | before #3875 | after (28.1.49838.53910) | BC's own emitter |
 |---|---|---|---|
 | System Application | `specsLen=0` → 2,587 declaration diagnostics → `METADATA-EMIT-ZERO`, run aborts | **1,218** documents | 1,218 |
 | Business Foundation | `specsLen=1` → **55** documents, **reported as success** | **70** documents | 70 |
