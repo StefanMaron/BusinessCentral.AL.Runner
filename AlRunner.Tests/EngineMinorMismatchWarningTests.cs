@@ -24,22 +24,51 @@ namespace AlRunner.Tests;
 
 public class EngineMinorMismatchWarningTests
 {
+    // #4547: the minors CI measures. A different minor on this list runs silently; these
+    // tests pass the list explicitly so they do not depend on what the build embedded.
+    private static readonly Version[] Measured =
+        { new(27, 0), new(27, 5), new(28, 1), new(28, 3) };
+
     [Fact]
-    public void DescribeExplicitEngineMinorMismatch_DifferentMinor_WarnsWithBothVersions()
+    public void DescribeExplicitEngineMinorMismatch_UnmeasuredMinor_WarnsWithBothVersions()
     {
         var built = new Version("28.1.49838.50794");
-        var selected = new Version("28.3.52162.53954");
+        var selected = new Version("28.2.50931.53737"); // 28.2 is not in Measured
 
-        var message = BcArtifacts.DescribeExplicitEngineMinorMismatch(built, selected);
+        var message = BcArtifacts.DescribeExplicitEngineMinorMismatch(built, selected, Measured);
 
         Assert.NotNull(message);
         Assert.Contains("28.1.49838.50794", message);
-        Assert.Contains("28.3.52162.53954", message);
+        Assert.Contains("28.2.50931.53737", message);
         Assert.Contains("explicitly selected", message);
-        Assert.Contains("KNOWN-DEGRADED", message);
-        Assert.Contains("#2008", message);
+        Assert.Contains("not a BC version CI measures", message);
+        Assert.Contains("27.0, 27.5, 28.1, 28.3", message);
         // Names the fix, not just the symptom, so the message is actionable.
-        Assert.Contains("-p:_BCVersion=28.3.52162.53954", message);
+        Assert.Contains("-p:_BCVersion=28.2.50931.53737", message);
+    }
+
+    [Fact]
+    public void DescribeExplicitEngineMinorMismatch_MeasuredDifferentMinor_SameMajor_ReturnsNull()
+    {
+        // #4547: the reported case — a dev build of one minor asked for another minor CI measures.
+        var built = new Version("28.1.49838.50794");
+        var selected = new Version("28.3.52162.53954");
+
+        Assert.Null(BcArtifacts.DescribeExplicitEngineMinorMismatch(built, selected, Measured));
+    }
+
+    [Fact]
+    public void DescribeExplicitEngineMinorMismatch_NoMeasuredList_StillWarns_AndSaysWhy()
+    {
+        // A build with no embedded bc-versions.txt cannot tell a measured minor from an unmeasured
+        // one, so it keeps the conservative answer and names that as the reason.
+        var built = new Version("28.1.49838.50794");
+        var selected = new Version("28.3.52162.53954");
+
+        var message = BcArtifacts.DescribeExplicitEngineMinorMismatch(built, selected, measuredMinors: null);
+
+        Assert.NotNull(message);
+        Assert.Contains("carries no record of which BC versions CI measures", message);
     }
 
     [Fact]
@@ -48,7 +77,7 @@ public class EngineMinorMismatchWarningTests
         var built = new Version("28.1.49838.50794");
         var selected = new Version("28.1.49838.50794");
 
-        Assert.Null(BcArtifacts.DescribeExplicitEngineMinorMismatch(built, selected));
+        Assert.Null(BcArtifacts.DescribeExplicitEngineMinorMismatch(built, selected, Measured));
     }
 
     [Fact]
@@ -60,7 +89,7 @@ public class EngineMinorMismatchWarningTests
         var built = new Version("28.1.49838.50794");
         var selected = new Version("28.1.49838.53910");
 
-        Assert.Null(BcArtifacts.DescribeExplicitEngineMinorMismatch(built, selected));
+        Assert.Null(BcArtifacts.DescribeExplicitEngineMinorMismatch(built, selected, Measured));
     }
 
     [Fact]
@@ -73,7 +102,7 @@ public class EngineMinorMismatchWarningTests
         var built = new Version("27.5.46862.53931");
         var selected = new Version("28.1.49838.53910");
 
-        var message = BcArtifacts.DescribeExplicitEngineMinorMismatch(built, selected);
+        var message = BcArtifacts.DescribeExplicitEngineMinorMismatch(built, selected, Measured);
 
         Assert.NotNull(message);
         Assert.Contains("27.5.46862.53931", message);
@@ -85,6 +114,6 @@ public class EngineMinorMismatchWarningTests
     {
         // BcEngineVersion is missing on a binary built before this attribute existed —
         // nothing to compare against, so this must not fabricate a warning.
-        Assert.Null(BcArtifacts.DescribeExplicitEngineMinorMismatch(builtVersion: null, new Version("28.3.52162.53954")));
+        Assert.Null(BcArtifacts.DescribeExplicitEngineMinorMismatch(builtVersion: null, new Version("28.3.52162.53954"), Measured));
     }
 }

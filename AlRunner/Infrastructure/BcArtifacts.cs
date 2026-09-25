@@ -630,39 +630,34 @@ public static class BcArtifacts
     }
 
     /// <summary>
-    /// Pure core of <see cref="ExplicitEngineMinorMismatchWarning"/>, split out for direct unit
-    /// testing (see AlRunner.Tests.EngineMinorMismatchWarningTests) — mirrors the
-    /// BcEngineReadinessGuard.AssertReadyOnCi(bool,string?,bool) shape: a pure function over
-    /// explicit values is provable with no BC engine or CLI invocation involved.
+    /// The off-version warning for an explicit <c>--bc-version</c>/<c>--artifact-path</c> on a
+    /// single-build install, or null when there is nothing to warn about. Pure, so
+    /// EngineMinorMismatchWarningTests and MeasuredBcVersionsWarningTests drive it directly.
     ///
-    /// #2008's actual root cause: a shipped al-runner binary's engine (Ncl.dll etc.) is built
-    /// for one BC MINOR (the release pipeline pins BC 28.1 as `required-version` — see
-    /// bc-tests.yml), but Ncl.dll's own AssemblyVersion is always MAJOR.0.0.0, so
-    /// VerifyEngineConsistency (which only compares Major) cannot see a same-major
-    /// different-minor selection at all. Running that binary with `--bc-version 28.3`
-    /// silently ran BC 28.1's engine against BC 28.3 artifacts and threw a
-    /// NullReferenceException deep inside BC's own FieldDataProvider ctor
-    /// (NavGlobal.get_SystemTenant → get_NCLMetadata) with nothing pointing at the real
-    /// cause. The runner ALREADY had this exact warning — Program.cs's auto-select default
-    /// path prints it when the user passes neither --bc-version nor --artifact-path — but it
-    /// was unreachable in precisely the case that needed it: an EXPLICIT --bc-version/
-    /// --artifact-path skips the auto-select branch entirely. This is the same warning,
-    /// reachable from the explicit-selection path too.
+    /// Silent for the engine's own minor (build-level skew is tolerated because bin carries no
+    /// service-tier assembly — #3977, #4527) and for another minor of the same major that
+    /// <paramref name="measuredMinors"/> lists (#4547: CI measures it, and a 28.5-built runner on
+    /// BC 28.4 and 28.1 gave the same per-test corpus result as a runner built for each). A null
+    /// list is "unknown", never "measured", so it warns. #2008 is the history of this warning.
     /// </summary>
-    internal static string? DescribeExplicitEngineMinorMismatch(System.Version? builtVersion, System.Version selectedVersion)
+    internal static string? DescribeExplicitEngineMinorMismatch(System.Version? builtVersion, System.Version selectedVersion,
+        IReadOnlyCollection<System.Version>? measuredMinors)
     {
         if (builtVersion == null) return null; // older/unstamped binary — nothing to compare
         if (builtVersion.Major == selectedVersion.Major && builtVersion.Minor == selectedVersion.Minor)
-            // Build-level skew within the minor is tolerated because bin carries no service-tier
-            // assembly to disagree with the selected build: Directory.Build.targets strips them by
-            // origin, pinned by VersionAgnosticClosureTests (#3977, #4527 — a leaked AsyncInterfaces
-            // made 28.1.49838.54424 fail against an engine built for .53910, silently).
+            return null;
+        var selectedMinor = new System.Version(selectedVersion.Major, selectedVersion.Minor);
+        if (measuredMinors != null && builtVersion.Major == selectedVersion.Major
+            && measuredMinors.Contains(selectedMinor))
             return null;
 
+        var why = measuredMinors == null
+            ? "this build carries no record of which BC versions CI measures, so the pairing cannot be vouched for"
+            : $"BC {selectedMinor} is not a BC version CI measures (measured: " +
+              $"{string.Join(", ", measuredMinors.OrderBy(v => v))}), so this engine/artifact pairing is untested";
         return $"[bc] warning: this binary's engine was built for BC {builtVersion} but BC {selectedVersion} was " +
-            $"explicitly selected (--bc-version/--artifact-path) — different minor is a KNOWN-DEGRADED " +
-            $"configuration (measured: dozens of extra failures from engine/artifact minor skew, see #2008). " +
-            $"Fix with one of: drop --bc-version so the runner auto-selects its own engine's minor " +
+            $"explicitly selected (--bc-version/--artifact-path) — {why}. Fix with one of: select a measured " +
+            $"version, drop --bc-version so the runner auto-selects its own engine's minor " +
             $"({builtVersion.Major}.{builtVersion.Minor}), or rebuild with -p:_BCVersion={selectedVersion}.";
     }
 
@@ -674,7 +669,29 @@ public static class BcArtifacts
     /// than printing it: Program.cs queues it so only the terminal generation prints (#4038).
     /// </summary>
     public static string? ExplicitEngineMinorMismatchWarning()
-        => DescribeExplicitEngineMinorMismatch(EngineBuiltVersion(), SelectedVersion);
+        => DescribeExplicitEngineMinorMismatch(EngineBuiltVersion(), SelectedVersion, MeasuredBcMinors());
+
+    /// <summary>The BC major.minor versions CI measures (.github/bc-versions.txt, embedded at build
+    /// time); null when this build carries no copy, which callers treat as "unknown".</summary>
+    public static IReadOnlyList<System.Version>? MeasuredBcMinors()
+    {
+        using var stream = typeof(BcArtifacts).Assembly.GetManifestResourceStream("AlRunner.bc-versions.txt");
+        if (stream == null) return null;
+        using var reader = new StreamReader(stream);
+        var parsed = ParseMeasuredMinors(reader.ReadToEnd());
+        return parsed.Count == 0 ? null : parsed;
+    }
+
+    /// <summary>The major.minor tokens of a bc-versions.txt body, skipping '#' comment lines.</summary>
+    internal static IReadOnlyList<System.Version> ParseMeasuredMinors(string text) =>
+        text.Split('\n')
+            .Select(l => l.Trim())
+            .Where(l => l.Length > 0 && !l.StartsWith('#'))
+            .SelectMany(l => l.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+            .Select(t => System.Version.TryParse(t, out var v) ? new System.Version(v.Major, Math.Max(v.Minor, 0)) : null)
+            .Where(v => v != null)
+            .Select(v => v!)
+            .ToList();
 
     /// <summary>
     /// Issue #2210: the auto-select default path's cross-major note body — describes the
