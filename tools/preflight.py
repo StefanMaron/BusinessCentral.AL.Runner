@@ -3682,8 +3682,8 @@ def check_corpus(repo: str, enabled: bool) -> CheckResult:
                     "Fix the compile/suite error above - the tests those suites "
                     "declare are MISSING from this run, not passing.", data)
     # A key that is ABSENT is a third state, not a zero (#3361). parse_corpus_run
-    # seeds the summary from `Tests: N total` and adds a key only when its line
-    # appears, so a block truncated or reshaped by a BC-version change yields
+    # seeds the summary from the counts line's `Tests: N` and adds a key only when its
+    # field appears, so a line truncated or reshaped by a BC-version change yields
     # {"total", "pass"} -- and `.get("fail")` answers None, which is falsy, which
     # is this check's PASS direction for a question it never measured. The
     # `pass != counted` comparison below does not backstop it: `pass` is still
