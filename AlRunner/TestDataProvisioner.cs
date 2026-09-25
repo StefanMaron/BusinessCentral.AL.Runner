@@ -490,10 +490,12 @@ internal static class TestDataProvisioner
             return;
         }
 
-        var company = ResolveCompany(backup);
-
+        // `tables` BEFORE `companies`: `tables` starts the reader's serve session with this
+        // symbol set, which `companies` then reuses — the other order starts two (#2263).
         var tablesOutput = BackupReaderTool.Run(SymbolArgs(new[] { "tables", backup }, symbols));
         var entries = BackupCatalog.ParseTables(tablesOutput);
+
+        var company = ResolveCompany(backup);
 
         var plan = BuildPlan(entries, company, SymbolManifests(symbols));
         foreach (var armLine in DescribeArm(

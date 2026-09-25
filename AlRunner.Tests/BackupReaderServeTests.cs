@@ -21,6 +21,7 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+[Collection(TestDataStaticsSerialCollection.Name)]
 public sealed class BackupReaderServeTests
 {
     private static readonly string[] HydrateArgs =
@@ -38,7 +39,7 @@ public sealed class BackupReaderServeTests
     [Fact]
     public void ReadRequest_CarriesTableCompanyAndTheHyphenatedMergeKey()
     {
-        Assert.True(BackupReaderServe.TryBuildReadRequest(HydrateArgs, 7, out var request));
+        Assert.True(BackupReaderServe.TryBuildRequest(HydrateArgs, 7, out var request));
         Assert.NotNull(request);
         Assert.Equal("/backups/BusinessCentral-W1.bak", request!.Backup);
         Assert.Equal("/apps/Base.app,/apps/System.app", request.Symbols);
@@ -62,7 +63,7 @@ public sealed class BackupReaderServeTests
     public void ReadRequest_OmitsTheMergeKeyWhenTheFlagIsAbsent()
     {
         var plain = HydrateArgs.Where(a => a != "--merge-extensions").ToArray();
-        Assert.True(BackupReaderServe.TryBuildReadRequest(plain, 1, out var request));
+        Assert.True(BackupReaderServe.TryBuildRequest(plain, 1, out var request));
         using var doc = JsonDocument.Parse(request!.Json);
         Assert.False(doc.RootElement.TryGetProperty("merge-extensions", out _));
     }
@@ -71,14 +72,39 @@ public sealed class BackupReaderServeTests
     public void ReadRequest_CarriesTop()
     {
         var withTop = HydrateArgs.Concat(new[] { "--top", "1" }).ToArray();
-        Assert.True(BackupReaderServe.TryBuildReadRequest(withTop, 1, out var request));
+        Assert.True(BackupReaderServe.TryBuildRequest(withTop, 1, out var request));
         using var doc = JsonDocument.Parse(request!.Json);
         Assert.Equal(1, doc.RootElement.GetProperty("top").GetInt32());
     }
 
+    [Fact]
+    public void TablesRequest_CarriesOnlyIdAndCmd_AndKeepsTheSymbolsForTheSession()
+    {
+        Assert.True(BackupReaderServe.TryBuildRequest(
+            new[] { "tables", "/backups/x.bak", "--symbols", "/apps/Base.app" }, 4, out var request));
+        Assert.Equal("tables", request!.Command);
+        Assert.Equal("/apps/Base.app", request.Symbols);
+        Assert.True(request.SymbolsMatter);
+        // The reader refuses any other key: "unknown request key 'symbols' for cmd 'tables'".
+        Assert.Equal("""{"id":4,"cmd":"tables"}""", request.Json);
+    }
+
+    [Fact]
+    public void CompaniesRequest_DoesNotDependOnTheSymbolSet()
+    {
+        Assert.True(BackupReaderServe.TryBuildRequest(new[] { "companies", "/backups/x.bak" }, 2, out var request));
+        Assert.Equal("companies", request!.Command);
+        Assert.Null(request.Symbols);
+        Assert.False(request.SymbolsMatter);
+        Assert.Equal("""{"id":2,"cmd":"companies"}""", request.Json);
+    }
+
     [Theory]
-    // A different command entirely.
-    [InlineData("tables", "/backups/x.bak", "--symbols", "/apps/Base.app")]
+    // A command this transport does not model.
+    [InlineData("describe", "/backups/x.bak", "--table", "T", "--symbols", "/apps/Base.app")]
+    // `tables` / `companies` with an option the reader would answer differently.
+    [InlineData("tables", "/backups/x.bak", "--prefetch")]
+    [InlineData("companies", "/backups/x.bak", "--symbols", "/apps/Base.app")]
     // A format the CLI shape is not JSON for.
     [InlineData("read", "/backups/x.bak", "--table", "T", "--format", "tsv")]
     // An option this slice does not model — decline rather than send a request that means
@@ -88,9 +114,9 @@ public sealed class BackupReaderServeTests
     [InlineData("read", "/backups/x.bak", "--table", "T", "--top", "many")]
     // No table at all.
     [InlineData("read", "/backups/x.bak", "--company", "C")]
-    public void ReadRequest_DeclinesWhatItCannotExpress(params string[] args)
+    public void Request_DeclinesWhatItCannotExpress(params string[] args)
     {
-        Assert.False(BackupReaderServe.TryBuildReadRequest(args, 1, out var request));
+        Assert.False(BackupReaderServe.TryBuildRequest(args, 1, out var request));
         Assert.Null(request);
     }
 
@@ -183,6 +209,50 @@ public sealed class BackupReaderServeTests
         var ex = Assert.Throws<BackupReaderException>(
             () => BackupReaderServe.TranslateReadResponse("not json at all", "read T"));
         Assert.Contains("could not be parsed", ex.Message);
+    }
+
+    [Fact]
+    public void TablesAnswerRebuildsTheCliLines_AndParsesToTheSameEntries()
+    {
+        // Verbatim shapes from bcdb 0.1.2 on the 28.1 W1 backup: an unresolved per-database
+        // table (company null, no "al") and a resolved company table.
+        const string serve = """
+            {"id": 5, "ok": true, "tables": [{"company": null, "name": "$ndo$cachesync", "rows": 0, "compression": "none"}, {"company": "CRONUS International Ltd_", "name": "Payment Terms", "rows": 12, "compression": "page", "al": {"id": 3, "name": "Payment Terms", "app": "Base Application"}}]}
+            """;
+        const string cli =
+            "       0  none  -\t$ndo$cachesync\t-\n"
+            + "      12  page  CRONUS International Ltd_\tPayment Terms\t3 \"Payment Terms\" (Base Application)\n";
+
+        var text = BackupReaderServe.TranslateResponse("tables", serve, "tables");
+        Assert.Equal(cli, text);
+
+        var entries = BackupCatalog.ParseTables(text);
+        Assert.Equal(2, entries.Count);
+        Assert.Equal(new BackupTableEntry(12, "page", "CRONUS International Ltd_", "Payment Terms", 3, "Base Application"), entries[1]);
+        Assert.Null(entries[0].AlTableId);
+        Assert.Equal("-", entries[0].Company);
+    }
+
+    [Fact]
+    public void CompaniesAnswerRebuildsTheCliLines()
+    {
+        var text = BackupReaderServe.TranslateResponse("companies",
+            """{"id": 1, "ok": true, "companies": ["CRONUS International Ltd_", "My Company"]}""", "companies");
+        Assert.Equal("CRONUS International Ltd_\nMy Company\n", text);
+        Assert.Equal(new[] { "CRONUS International Ltd_", "My Company" }, BackupCatalog.ParseCompanies(text));
+    }
+
+    [Theory]
+    [InlineData("tables", """{"id":1,"ok":true}""", "tables")]
+    [InlineData("tables", """{"id":1,"ok":true,"tables":[{"company":null,"rows":1,"compression":"page"}]}""", "name")]
+    [InlineData("tables", """{"id":1,"ok":true,"tables":[{"company":null,"name":"T","compression":"page"}]}""", "rows")]
+    [InlineData("tables", """{"id":1,"ok":true,"tables":[{"company":null,"name":"T","rows":1,"compression":"page","al":{"name":"T","app":"A"}}]}""", "al.id")]
+    [InlineData("companies", """{"id":1,"ok":true}""", "companies")]
+    [InlineData("companies", """{"id":1,"ok":true,"companies":[1]}""", "companies[]")]
+    public void AnAnswerMissingWhatTheCommandMustCarryIsRefused_NotReadAsEmpty(string command, string answer, string named)
+    {
+        var ex = Assert.Throws<BackupReaderException>(() => BackupReaderServe.TranslateResponse(command, answer, command));
+        Assert.Contains($"'{named}'", ex.Message);
     }
 
     // ── the kill switch ────────────────────────────────────────────────────────
