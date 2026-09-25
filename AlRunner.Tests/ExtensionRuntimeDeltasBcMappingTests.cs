@@ -89,6 +89,19 @@ public sealed class ExtensionRuntimeDeltasBcMappingTests
     }
 
     /// <summary>
+    /// The render's <c>ControlGUID</c> comes from BC's own
+    /// <c>MetadataEmitterHelper.GeneratePageControlGuidString</c>, bound on this build. Expected
+    /// values: two literals copied from BC's captured documents, and member id 0, which BC's
+    /// method special-cases (third group <c>0001</c>) and no captured document reaches.
+    /// </summary>
+    [Theory]
+    [InlineData(2515, 1174679510, "{000009d3-2fd6-0000-1046-0400836bd2d2}")]
+    [InlineData(774, 191117080, "{00000306-3718-0000-100b-6400836bd2d2}")]
+    [InlineData(324, 0, "{00000144-0000-0001-1000-0000836bd2d2}")]
+    public void The_ControlGUID_is_BCs_own_emitter_answer(int extensionId, int memberId, string expected)
+        => Assert.Equal(expected, RecordPatches.PageExtensionControlGuidForTests(extensionId, memberId));
+
+    /// <summary>
     /// A word from neither vocabulary — a sibling member's name — is NOT a container, on either
     /// side. That is what keeps an anchored change on the kind-implied fallback instead of
     /// emitting an attribute BC's reader would refuse.

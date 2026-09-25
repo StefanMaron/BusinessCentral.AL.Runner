@@ -11,12 +11,15 @@
 //   - A RENDER, NOT AN OBJECT. AllDeltas is get-only over a private list and the only public
 //     constructor is parameterless, so BC's own FromXml is the sole route to a populated
 //     instance — the same reason TryBuildEnumMetadataEquivalenceXml renders (#3807).
-//   - A VALUE THE RUNNER DOES NOT DERIVE IS LEFT OFF, NEVER DEFAULTED. Writing BC's
-//     ControlGUID, SourceExtensionType or *TranslationKey hashes without reading them from the
-//     symbol file would manufacture agreement, which is what this harness exists to catch.
+//   - A VALUE THE RUNNER DOES NOT DERIVE IS LEFT OFF, NEVER DEFAULTED. A value BC computes is
+//     written only where BC's emitter code decides it without further input (SetEmitterDefaults);
+//     HelpLink, ExtensionId and the *TranslationKey hashes stay off.
 
 using System.Globalization;
+using System.Reflection;
 using System.Xml;
+using AlRunner.Infrastructure;
+using NavCodeAnalysis = Microsoft.Dynamics.Nav.CodeAnalysis;
 
 namespace AlRunner.Patches;
 
@@ -194,6 +197,7 @@ public static partial class RecordPatches
                 SetActionRefTarget(member, origin.ActionRefTargetId, actionRefTarget);
             else
                 SetStatedMemberAttributes(member, origin.DeclaredProperties);
+            SetEmitterDefaults(member, ext.Id, memberId, origin, isActionRef: actionRefTarget is not null);
             if (!origin.IsAction
                 && TryBoundRecFieldName(origin.DeclaredProperties) is { } boundField)
             {
@@ -247,9 +251,9 @@ public static partial class RecordPatches
     /// <see cref="BcAppSymbolCache.ActionRunObjectSymbol"/>'s own summary gives.</para>
     ///
     /// <para><c>RunPageMode</c> is read ONLY when stated: every stated value in the four captured
-    /// builds is what BC writes (5 of 5). An unstated one is left off, because BC writes
-    /// <c>Edit</c> on the three trigger actions stating nothing and that default rule is
-    /// unmeasured.</para>
+    /// builds is what BC writes (5 of 5). An unstated one is left off: it is not a constant, since
+    /// BC writes <c>Edit</c> on three unstated actions (324, 4318, 9862) and nothing on three
+    /// others (774's RunObject actions).</para>
     /// </summary>
     private static void SetStatedMemberAttributes(
         XmlElement member, Dictionary<string, string>? declared)
@@ -309,10 +313,9 @@ public static partial class RecordPatches
     /// extended page rather than of this extension, and a same-named member here is then a
     /// different action. An unstated <c>TargetId</c> leaves <c>TargetID</c> off.</para>
     ///
-    /// <para>Nothing else is written. BC's <c>ControlGUID</c>, <c>SourceExtensionType</c> and
-    /// <c>HelpLink</c> are computed, and its <c>Visible="1"</c> is stated nowhere — every
-    /// measured actionref states no <c>Properties</c> at all, so a stated-property read here
-    /// would rest on no measurement.</para>
+    /// <para>No stated property is read here: every measured actionref states no
+    /// <c>Properties</c>, so such a read would rest on no measurement. BC's computed values are
+    /// <see cref="SetEmitterDefaults"/>'s.</para>
     /// </summary>
     private static void SetActionRefTarget(XmlElement member, int? targetId, string targetName)
     {
@@ -428,11 +431,10 @@ public static partial class RecordPatches
     /// <c>InvalidOperationException</c>, so neither is a container and both land in the null
     /// branch here.</para>
     ///
-    /// <para>Deliberately a literal table rather than a reflective call into
-    /// <c>Microsoft.Dynamics.Nav.CodeAnalysis</c>: this file must not take a load-time dependency
-    /// on an assembly the runner does not otherwise need.
-    /// <c>ExtensionRuntimeDeltasBcMappingTests</c> is what stops the table drifting from BC —
-    /// it invokes <c>GetContainerType</c> itself and fails when the two disagree.</para>
+    /// <para>A literal copy of BC's mapping. The runner already references
+    /// <c>Microsoft.Dynamics.Nav.CodeAnalysis</c>, so binding <c>GetContainerType</c> the way
+    /// <see cref="PageExtensionControlGuid"/> binds its method is open; until then
+    /// <c>ExtensionRuntimeDeltasBcMappingTests</c> invokes it and fails when the two disagree.</para>
     /// </summary>
     private static string? BcContainerForAlArea(string anchor, bool isAction) => isAction
         ? anchor switch
@@ -465,6 +467,74 @@ public static partial class RecordPatches
     /// </summary>
     internal static string? BcContainerForAlAreaForTests(string anchor, bool isAction)
         => BcContainerForAlArea(anchor, isAction);
+
+    /// <summary>
+    /// The values BC's emitter writes on a delta member that no symbol property states
+    /// (docs/metadata-equivalence.md#deltas-emitter-defaults).
+    ///
+    /// <para><b>Observably equivalent</b>, each decided by BC's emitter and matching every
+    /// captured document on four builds:</para>
+    /// <list type="bullet">
+    /// <item><c>ControlGUID</c>: BC's own method, <see cref="PageExtensionControlGuid"/>.</item>
+    /// <item><c>SourceExtensionType="ModernDev"</c>: a literal in
+    /// <c>PageBaseMetadataEmitter.WriteExtensionSpecificMetadataAttributes</c>.</item>
+    /// <item><c>Visible</c> on an actionref and <c>Importance</c> on a field control:
+    /// <c>PageBaseMetadataEmitter.WriteAction</c> → <c>WriteProperties(..., shouldOutputDefaultValues:
+    /// true)</c> → <c>DefaultPropertyValuesEmitter</c>, which writes each unstated property whose
+    /// <c>PropertyTypeInfo</c> generates metadata: <c>ObjectParser.PageActionRefProperties</c>
+    /// Visible=true (serialized <c>1</c>), <c>PageFieldProperties</c> Importance=Standard.</item>
+    /// </list>
+    ///
+    /// <para>Trap: those two are written as literals, not read from BC's tables, because the
+    /// table holds <c>true</c> where the document holds <c>1</c> and driving the emitter itself
+    /// needs compiler symbols this render does not have. A stated <c>SourceExpression</c> stands
+    /// in for "field control"; groups and parts have their own tables with other defaults.
+    /// Unstated <c>RunPageMode</c> is NOT written: 774's three RunObject actions carry none.</para>
+    /// </summary>
+    private static void SetEmitterDefaults(
+        XmlElement member, int extensionId, int memberId, BcAppSymbolCache.PageExtensionMemberOrigin origin,
+        bool isActionRef)
+    {
+        member.SetAttribute("ControlGUID", PageExtensionControlGuid(extensionId, memberId));
+        member.SetAttribute("SourceExtensionType", "ModernDev");
+
+        var declared = origin.DeclaredProperties;
+        if (isActionRef && declared?.ContainsKey("Visible") != true)
+            member.SetAttribute("Visible", "1");
+        if (!origin.IsAction && declared is not null
+            && declared.ContainsKey("SourceExpression") && !declared.ContainsKey("Importance"))
+            member.SetAttribute("Importance", "Standard");
+    }
+
+    private const string DeltasSurface = "MetadataRuntimeDeltas render (metadata equivalence)";
+
+    private static MethodInfo? _generatePageControlGuidString;
+
+    /// <summary>
+    /// A pageextension member's <c>ControlGUID</c>, from BC's own
+    /// <c>CodeAnalysis.Emit.MetadataEmitterHelper.GeneratePageControlGuidString(controlId,
+    /// objectId, SymbolKind.PageExtension, "B")</c> — the call BC's
+    /// <c>WriteCommonControlAttributes</c> makes. It is <c>internal</c>, so it is bound by
+    /// reflection; a missing bind refuses rather than writing no GUID.
+    /// </summary>
+    private static string PageExtensionControlGuid(int extensionId, int memberId)
+    {
+        var symbolKind = typeof(NavCodeAnalysis.SymbolKind);
+        _generatePageControlGuidString ??= BcShape.RequiredMethod(
+            symbolKind.Assembly.GetType("Microsoft.Dynamics.Nav.CodeAnalysis.Emit.MetadataEmitterHelper")
+                ?? throw new BcShapeGapException(DeltasSurface, "MetadataEmitterHelper",
+                    "type not found in Microsoft.Dynamics.Nav.CodeAnalysis"),
+            "GeneratePageControlGuidString", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static,
+            DeltasSurface, "MetadataEmitterHelper.GeneratePageControlGuidString",
+            "BC's ControlGUID encoding for an extension member",
+            new[] { typeof(int), typeof(int), symbolKind, typeof(string) });
+        // Every argument explicit: MethodInfo.Invoke does not apply the "B" default.
+        return (string)_generatePageControlGuidString.Invoke(null, new object[]
+            { memberId, extensionId, NavCodeAnalysis.SymbolKind.PageExtension, "B" })!;
+    }
+
+    internal static string PageExtensionControlGuidForTests(int extensionId, int memberId)
+        => PageExtensionControlGuid(extensionId, memberId);
 
     private const string MetaObjectsNamespace = "urn:schemas-microsoft-com:dynamics:NAV:MetaObjects";
     private const string XsiNamespace = "http://www.w3.org/2001/XMLSchema-instance";

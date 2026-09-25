@@ -1039,9 +1039,9 @@
     },
     {
       "member": "ActionDefinition.#runPageModeField",
-      "reason": "BC writes RunPageMode on every action, and the render writes it only where SymbolReference.json STATES it (#3926). The stated case now agrees: all five stated members across 27.5.46862.53931, 28.1.49838.53910, 28.1.49838.54308 and 28.4.53241.54407 state View and BC writes View. What remains is the UNSTATED case: the three trigger actions with no RunObject (pageextensions 324, 4318 and 9862) state nothing and BC writes Edit, with RunPageModeSpecified True. That default rule is measured on three members only and is not stated anywhere, so writing Edit would be a guess the harness could not catch; it is left off. What invalidates this entry is a measured rule for an action's default RunPageMode.",
+      "reason": "BC writes RunPageMode on some actions, and the render writes it only where SymbolReference.json STATES it (#3926). The stated case agrees: all five stated members across 27.5.46862.53931, 28.1.49838.53910, 28.1.49838.54308 and 28.4.53241.54407 state View and BC writes View. The unstated case is NOT a constant default: BC writes Edit (RunPageModeSpecified True) on the three unstated trigger actions of 324, 4318 and 9862, and writes nothing on the three unstated RunObject actions of 774. What invalidates this entry is a measured rule separating those two groups (docs/metadata-equivalence.md#deltas-emitter-defaults).",
       "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
+      "Doc": "docs/metadata-equivalence.md#deltas-emitter-defaults"
     },
     {
       "member": "ActionDefinition.#targetIDField",
@@ -1074,12 +1074,6 @@
       "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
     },
     {
-      "member": "ActionDefinition.ControlGUID",
-      "reason": "BC COMPUTES this and SymbolReference.json states it nowhere, so the render leaves it off (#3926). ControlGUID is a real GUID from BC's own emitter against the runner's zeroed one; SourceExtensionType, HelpLink, ExtensionId and ControlRuntimeId are publish-time facts about an installed extension, which the runner has no published-app pipeline to produce. Unlike the read-don't-guess group this needs a derivation or a scope call before it can move, and neither has been made -- so this entry records an unmeasured surface, not a correct answer.",
-      "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
-    },
-    {
       "member": "ActionDefinition.Enabled",
       "reason": "Two distinct causes, both measured on 28.1.49838.53910. (1) An EXPRESSION-valued Visible/Enabled is left off: the symbol file states the bare AL name (`IsSaaS`, `CopilotActionsVisible`) and BC writes a mangled reference to the extension's own global built from the extension id (`px774p774IsSaaS`, `px324px324CopilotActionsVisible`), which SymbolReference does not state -- writing the AL name would be a WRONG value derived from a right input. #3926 landed the LITERAL half, so the three `Visible=\"false\"` controls of pageextension 774 now agree and only the expression-valued members remain here. (2) The residue on ControlDefinition.Visible is the positional one-slot shift from the unemitted PagePropertiesChange -- see MultiLanguage.Texts. What invalidates this entry is deriving BC's global-name mangling, or emitting PagePropertiesChange.",
       "issue": 3926,
@@ -1087,9 +1081,9 @@
     },
     {
       "member": "ActionDefinition.HelpLink",
-      "reason": "BC COMPUTES this and SymbolReference.json states it nowhere, so the render leaves it off (#3926). ControlGUID is a real GUID from BC's own emitter against the runner's zeroed one; SourceExtensionType, HelpLink, ExtensionId and ControlRuntimeId are publish-time facts about an installed extension, which the runner has no published-app pipeline to produce. Unlike the read-don't-guess group this needs a derivation or a scope call before it can move, and neither has been made -- so this entry records an unmeasured surface, not a correct answer.",
+      "reason": "BC COMPUTES this and the render does not (#3926). BC's emitter writes HelpLink from the app's contextSensitiveHelpUrl compilation option and the pageextension's ContextSensitiveHelpPage (CodeAnalysis PageBaseMetadataEmitter.WriteContextSpecificHelpUrlPropertyIfNeeded), and not on every member: 774's three RunObject actions carry none on all four captured builds while every other member carries https://learn.microsoft.com/dynamics365/business-central/. So it is neither a constant nor read from anything this render holds. What invalidates this entry is reading those two inputs and the rule that skips 774's actions (docs/metadata-equivalence.md#deltas-emitter-defaults).",
       "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
+      "Doc": "docs/metadata-equivalence.md#deltas-emitter-defaults"
     },
     {
       "member": "ActionDefinition.Microsoft.Dynamics.Nav.Types.Metadata.IMetaActionDefinition.Trigger.<presence>",
@@ -1159,27 +1153,15 @@
     },
     {
       "member": "ActionDefinition.RunPageMode",
-      "reason": "BC writes RunPageMode on every action, and the render writes it only where SymbolReference.json STATES it (#3926). The stated case now agrees: all five stated members across 27.5.46862.53931, 28.1.49838.53910, 28.1.49838.54308 and 28.4.53241.54407 state View and BC writes View. What remains is the UNSTATED case: the three trigger actions with no RunObject (pageextensions 324, 4318 and 9862) state nothing and BC writes Edit, with RunPageModeSpecified True. That default rule is measured on three members only and is not stated anywhere, so writing Edit would be a guess the harness could not catch; it is left off. What invalidates this entry is a measured rule for an action's default RunPageMode.",
+      "reason": "BC writes RunPageMode on some actions, and the render writes it only where SymbolReference.json STATES it (#3926). The stated case agrees: all five stated members across 27.5.46862.53931, 28.1.49838.53910, 28.1.49838.54308 and 28.4.53241.54407 state View and BC writes View. The unstated case is NOT a constant default: BC writes Edit (RunPageModeSpecified True) on the three unstated trigger actions of 324, 4318 and 9862, and writes nothing on the three unstated RunObject actions of 774. What invalidates this entry is a measured rule separating those two groups (docs/metadata-equivalence.md#deltas-emitter-defaults).",
       "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
+      "Doc": "docs/metadata-equivalence.md#deltas-emitter-defaults"
     },
     {
       "member": "ActionDefinition.RunPageModeSpecified",
-      "reason": "BC writes RunPageMode on every action, and the render writes it only where SymbolReference.json STATES it (#3926). The stated case now agrees: all five stated members across 27.5.46862.53931, 28.1.49838.53910, 28.1.49838.54308 and 28.4.53241.54407 state View and BC writes View. What remains is the UNSTATED case: the three trigger actions with no RunObject (pageextensions 324, 4318 and 9862) state nothing and BC writes Edit, with RunPageModeSpecified True. That default rule is measured on three members only and is not stated anywhere, so writing Edit would be a guess the harness could not catch; it is left off. What invalidates this entry is a measured rule for an action's default RunPageMode.",
+      "reason": "BC writes RunPageMode on some actions, and the render writes it only where SymbolReference.json STATES it (#3926). The stated case agrees: all five stated members across 27.5.46862.53931, 28.1.49838.53910, 28.1.49838.54308 and 28.4.53241.54407 state View and BC writes View. The unstated case is NOT a constant default: BC writes Edit (RunPageModeSpecified True) on the three unstated trigger actions of 324, 4318 and 9862, and writes nothing on the three unstated RunObject actions of 774. What invalidates this entry is a measured rule separating those two groups (docs/metadata-equivalence.md#deltas-emitter-defaults).",
       "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
-    },
-    {
-      "member": "ActionDefinition.SourceExtensionType",
-      "reason": "BC COMPUTES this and SymbolReference.json states it nowhere, so the render leaves it off (#3926). ControlGUID is a real GUID from BC's own emitter against the runner's zeroed one; SourceExtensionType, HelpLink, ExtensionId and ControlRuntimeId are publish-time facts about an installed extension, which the runner has no published-app pipeline to produce. Unlike the read-don't-guess group this needs a derivation or a scope call before it can move, and neither has been made -- so this entry records an unmeasured surface, not a correct answer.",
-      "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
-    },
-    {
-      "member": "ActionDefinition.SourceExtensionTypeSpecified",
-      "reason": "BC COMPUTES this and SymbolReference.json states it nowhere, so the render leaves it off (#3926). ControlGUID is a real GUID from BC's own emitter against the runner's zeroed one; SourceExtensionType, HelpLink, ExtensionId and ControlRuntimeId are publish-time facts about an installed extension, which the runner has no published-app pipeline to produce. Unlike the read-don't-guess group this needs a derivation or a scope call before it can move, and neither has been made -- so this entry records an unmeasured surface, not a correct answer.",
-      "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
+      "Doc": "docs/metadata-equivalence.md#deltas-emitter-defaults"
     },
     {
       "member": "ActionDefinition.TargetID",
@@ -1212,40 +1194,16 @@
       "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
     },
     {
-      "member": "ActionRefDefinition.ControlGUID",
-      "reason": "BC COMPUTES this on an actionref and SymbolReference.json states it nowhere, so the render leaves it off (#3926). Same cause as the ActionDefinition entry of the same member: ControlGUID is a real GUID from BC's own emitter against the runner's zeroed one, and SourceExtensionType and HelpLink are publish-time facts about an installed extension, which the runner has no published-app pipeline to produce. Surfaced when the render started emitting actionrefs as ActionRefDefinition rather than ActionDefinition, which made the type agree and exposed the members under it (pageextension 2515 on every captured build, 2516 on 27.5). What invalidates this entry is a derivation or a scope call for these publish-time members, the same as for ActionDefinition.",
-      "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#deltas-actionref"
-    },
-    {
       "member": "ActionRefDefinition.HelpLink",
-      "reason": "BC COMPUTES this on an actionref and SymbolReference.json states it nowhere, so the render leaves it off (#3926). Same cause as the ActionDefinition entry of the same member: ControlGUID is a real GUID from BC's own emitter against the runner's zeroed one, and SourceExtensionType and HelpLink are publish-time facts about an installed extension, which the runner has no published-app pipeline to produce. Surfaced when the render started emitting actionrefs as ActionRefDefinition rather than ActionDefinition, which made the type agree and exposed the members under it (pageextension 2515 on every captured build, 2516 on 27.5). What invalidates this entry is a derivation or a scope call for these publish-time members, the same as for ActionDefinition.",
+      "reason": "BC COMPUTES this and the render does not (#3926). BC's emitter writes HelpLink from the app's contextSensitiveHelpUrl compilation option and the pageextension's ContextSensitiveHelpPage (CodeAnalysis PageBaseMetadataEmitter.WriteContextSpecificHelpUrlPropertyIfNeeded), and not on every member: 774's three RunObject actions carry none on all four captured builds while every other member carries https://learn.microsoft.com/dynamics365/business-central/. So it is neither a constant nor read from anything this render holds. What invalidates this entry is reading those two inputs and the rule that skips 774's actions (docs/metadata-equivalence.md#deltas-emitter-defaults).",
       "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#deltas-actionref"
-    },
-    {
-      "member": "ActionRefDefinition.SourceExtensionType",
-      "reason": "BC COMPUTES this on an actionref and SymbolReference.json states it nowhere, so the render leaves it off (#3926). Same cause as the ActionDefinition entry of the same member: ControlGUID is a real GUID from BC's own emitter against the runner's zeroed one, and SourceExtensionType and HelpLink are publish-time facts about an installed extension, which the runner has no published-app pipeline to produce. Surfaced when the render started emitting actionrefs as ActionRefDefinition rather than ActionDefinition, which made the type agree and exposed the members under it (pageextension 2515 on every captured build, 2516 on 27.5). What invalidates this entry is a derivation or a scope call for these publish-time members, the same as for ActionDefinition.",
-      "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#deltas-actionref"
-    },
-    {
-      "member": "ActionRefDefinition.SourceExtensionTypeSpecified",
-      "reason": "BC COMPUTES this on an actionref and SymbolReference.json states it nowhere, so the render leaves it off (#3926). Same cause as the ActionDefinition entry of the same member: ControlGUID is a real GUID from BC's own emitter against the runner's zeroed one, and SourceExtensionType and HelpLink are publish-time facts about an installed extension, which the runner has no published-app pipeline to produce. Surfaced when the render started emitting actionrefs as ActionRefDefinition rather than ActionDefinition, which made the type agree and exposed the members under it (pageextension 2515 on every captured build, 2516 on 27.5). What invalidates this entry is a derivation or a scope call for these publish-time members, the same as for ActionDefinition.",
-      "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#deltas-actionref"
-    },
-    {
-      "member": "ActionRefDefinition.Visible",
-      "reason": "BC writes Visible=\"1\" on every measured actionref -- pageextensions 2515 and 2516, 5 documents over four builds -- while each symbol entry states no Properties at all, so the value is BC's own default for an actionref and nothing states it. The render leaves it off and BC's reader then answers its type default, 'true' (#3926). Writing \"1\" would rest a default rule on two members; what invalidates this entry is measuring that rule (an actionref stating Visible, or a BC emitter member that decides it).",
-      "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#deltas-actionref"
+      "Doc": "docs/metadata-equivalence.md#deltas-emitter-defaults"
     },
     {
       "member": "ControlDefinition.#extensionIdField",
-      "reason": "BC COMPUTES this and SymbolReference.json states it nowhere, so the render leaves it off (#3926). ControlGUID is a real GUID from BC's own emitter against the runner's zeroed one; SourceExtensionType, HelpLink, ExtensionId and ControlRuntimeId are publish-time facts about an installed extension, which the runner has no published-app pipeline to produce. Unlike the read-don't-guess group this needs a derivation or a scope call before it can move, and neither has been made -- so this entry records an unmeasured surface, not a correct answer.",
+      "reason": "BC writes ExtensionId=\"774\" on pageextension 774's four field controls, and nothing states it (#3926). It is not derivable from the captured data: those controls bind fields declared by tableextension 774, and the pageextension is also 774, so the four documents cannot say which id BC writes. The render leaves it off. What invalidates this entry is a measurement that separates the two ids (docs/metadata-equivalence.md#deltas-emitter-defaults).",
       "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
+      "Doc": "docs/metadata-equivalence.md#deltas-emitter-defaults"
     },
     {
       "member": "ControlDefinition.AboutTextTranslationKey",
@@ -1266,52 +1224,28 @@
       "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
     },
     {
-      "member": "ControlDefinition.ControlGUID",
-      "reason": "BC COMPUTES this and SymbolReference.json states it nowhere, so the render leaves it off (#3926). ControlGUID is a real GUID from BC's own emitter against the runner's zeroed one; SourceExtensionType, HelpLink, ExtensionId and ControlRuntimeId are publish-time facts about an installed extension, which the runner has no published-app pipeline to produce. Unlike the read-don't-guess group this needs a derivation or a scope call before it can move, and neither has been made -- so this entry records an unmeasured surface, not a correct answer.",
-      "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
-    },
-    {
       "member": "ControlDefinition.ExtensionId",
-      "reason": "BC COMPUTES this and SymbolReference.json states it nowhere, so the render leaves it off (#3926). ControlGUID is a real GUID from BC's own emitter against the runner's zeroed one; SourceExtensionType, HelpLink, ExtensionId and ControlRuntimeId are publish-time facts about an installed extension, which the runner has no published-app pipeline to produce. Unlike the read-don't-guess group this needs a derivation or a scope call before it can move, and neither has been made -- so this entry records an unmeasured surface, not a correct answer.",
+      "reason": "BC writes ExtensionId=\"774\" on pageextension 774's four field controls, and nothing states it (#3926). It is not derivable from the captured data: those controls bind fields declared by tableextension 774, and the pageextension is also 774, so the four documents cannot say which id BC writes. The render leaves it off. What invalidates this entry is a measurement that separates the two ids (docs/metadata-equivalence.md#deltas-emitter-defaults).",
       "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
+      "Doc": "docs/metadata-equivalence.md#deltas-emitter-defaults"
     },
     {
       "member": "ControlDefinition.ExtensionIdSpecified",
-      "reason": "BC COMPUTES this and SymbolReference.json states it nowhere, so the render leaves it off (#3926). ControlGUID is a real GUID from BC's own emitter against the runner's zeroed one; SourceExtensionType, HelpLink, ExtensionId and ControlRuntimeId are publish-time facts about an installed extension, which the runner has no published-app pipeline to produce. Unlike the read-don't-guess group this needs a derivation or a scope call before it can move, and neither has been made -- so this entry records an unmeasured surface, not a correct answer.",
+      "reason": "BC writes ExtensionId=\"774\" on pageextension 774's four field controls, and nothing states it (#3926). It is not derivable from the captured data: those controls bind fields declared by tableextension 774, and the pageextension is also 774, so the four documents cannot say which id BC writes. The render leaves it off. What invalidates this entry is a measurement that separates the two ids (docs/metadata-equivalence.md#deltas-emitter-defaults).",
       "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
+      "Doc": "docs/metadata-equivalence.md#deltas-emitter-defaults"
     },
     {
       "member": "ControlDefinition.HelpLink",
-      "reason": "BC COMPUTES this and SymbolReference.json states it nowhere, so the render leaves it off (#3926). ControlGUID is a real GUID from BC's own emitter against the runner's zeroed one; SourceExtensionType, HelpLink, ExtensionId and ControlRuntimeId are publish-time facts about an installed extension, which the runner has no published-app pipeline to produce. Unlike the read-don't-guess group this needs a derivation or a scope call before it can move, and neither has been made -- so this entry records an unmeasured surface, not a correct answer.",
+      "reason": "BC COMPUTES this and the render does not (#3926). BC's emitter writes HelpLink from the app's contextSensitiveHelpUrl compilation option and the pageextension's ContextSensitiveHelpPage (CodeAnalysis PageBaseMetadataEmitter.WriteContextSpecificHelpUrlPropertyIfNeeded), and not on every member: 774's three RunObject actions carry none on all four captured builds while every other member carries https://learn.microsoft.com/dynamics365/business-central/. So it is neither a constant nor read from anything this render holds. What invalidates this entry is reading those two inputs and the rule that skips 774's actions (docs/metadata-equivalence.md#deltas-emitter-defaults).",
       "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
-    },
-    {
-      "member": "ControlDefinition.ImportanceSpecified",
-      "reason": "The extension-runtime-delta render emits the member's ID and Name and the wrapper's placement attributes, and states nothing else -- so BC emits this value and the runner leaves it OFF rather than answering it wrongly (#3926). This value IS stated in the same ActionChanges[].Actions / ControlChanges[].Controls entry the render already walks, so it is a read-don't-guess fix rather than a limit: what the runner shows here is the type's own default (null / 0 / False / the zero enum), never a derivation anyone checked. LEFT OFF DELIBERATELY: writing BC's value without reading it from the symbol file would manufacture agreement, which is the failure this harness exists to catch. What invalidates this entry is #3926 landing the read.",
-      "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
+      "Doc": "docs/metadata-equivalence.md#deltas-emitter-defaults"
     },
     {
       "member": "ControlDefinition.InstructionalTextTranslationKey",
       "reason": "A translation-file lookup id on an extension-runtime-delta member. Same SCOPE DECISION BY THE REPOSITORY OWNER as the TranslationKey entries above (2026-09-10, relayed on #3568): translations are out of scope for the runner, so this surface is not one the runner needs to reproduce. The render leaves it off; what BC states is a key computed from names. Listed separately from the TranslationKey.* entries because this is the DEFINITION member that carries the key string, not the parsed key's components.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
-    },
-    {
-      "member": "ControlDefinition.SourceExtensionType",
-      "reason": "BC COMPUTES this and SymbolReference.json states it nowhere, so the render leaves it off (#3926). ControlGUID is a real GUID from BC's own emitter against the runner's zeroed one; SourceExtensionType, HelpLink, ExtensionId and ControlRuntimeId are publish-time facts about an installed extension, which the runner has no published-app pipeline to produce. Unlike the read-don't-guess group this needs a derivation or a scope call before it can move, and neither has been made -- so this entry records an unmeasured surface, not a correct answer.",
-      "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
-    },
-    {
-      "member": "ControlDefinition.SourceExtensionTypeSpecified",
-      "reason": "BC COMPUTES this and SymbolReference.json states it nowhere, so the render leaves it off (#3926). ControlGUID is a real GUID from BC's own emitter against the runner's zeroed one; SourceExtensionType, HelpLink, ExtensionId and ControlRuntimeId are publish-time facts about an installed extension, which the runner has no published-app pipeline to produce. Unlike the read-don't-guess group this needs a derivation or a scope call before it can move, and neither has been made -- so this entry records an unmeasured surface, not a correct answer.",
-      "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
     },
     {
       "member": "ControlDefinition.ToolTipTranslationKey",
@@ -1361,9 +1295,9 @@
     },
     {
       "member": "UIElementIdentifier.ControlRuntimeId",
-      "reason": "BC COMPUTES this and SymbolReference.json states it nowhere, so the render leaves it off (#3926). ControlGUID is a real GUID from BC's own emitter against the runner's zeroed one; SourceExtensionType, HelpLink, ExtensionId and ControlRuntimeId are publish-time facts about an installed extension, which the runner has no published-app pipeline to produce. Unlike the read-don't-guess group this needs a derivation or a scope call before it can move, and neither has been made -- so this entry records an unmeasured surface, not a correct answer.",
+      "reason": "BC's AnchorId -- a value it computes beside AnchorName -- parses into this runtime id; the render writes no AnchorId, so the reader answers 0 (#3926). It is a different value from ControlGUID, which the render now writes. What invalidates this entry is deriving BC's AnchorId (docs/metadata-equivalence.md#deltas-emitter-defaults).",
       "issue": 3926,
-      "Doc": "docs/metadata-equivalence.md#metadataruntimedeltas"
+      "Doc": "docs/metadata-equivalence.md#deltas-emitter-defaults"
     },
     {
       "member": "ActionDefinition.ApplicationArea",
