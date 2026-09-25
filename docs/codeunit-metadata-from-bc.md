@@ -401,8 +401,9 @@ carry, so any other refuses rather than guessing a spelling.
 Measured at 28.1.49838.53910 with `CodeunitSubscriberMethodTableTests`: 140 of 145 codeunits
 now emit a subtree, every one exactly BC's, and the 5 withheld are 55, 58, 59, 4300 and 9702 —
 11 methods — each with a subscriber taking a `var` Text parameter. That expected set, read off
-BC's own documents, is the same on 27.5.46862.53931, 28.1.49838.54044 and 28.4.53241.53989; the
-runner's side was run on 28.1.49838.53910 only.
+BC's own documents, is the same on 27.5.46862.53931, 28.1.49838.54044, 28.4.53241.53989 and
+28.5.54151.55132. The runner's side was run on 28.1.49838.53910 and on 28.5.54151.55132
+(`Ncl.dll` `01c732f1`), where 141 of 146 emit and the same 5 are withheld.
 
 ### The `InherentPermissions` method attribute
 
