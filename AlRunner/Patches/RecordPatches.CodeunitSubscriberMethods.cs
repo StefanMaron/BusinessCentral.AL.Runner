@@ -1,16 +1,9 @@
-// RecordPatches.CodeunitSubscriberMethods — the <Methods> subtree for a codeunit that DOES declare
-// event subscribers, completed from the app's own R2R assembly (#3788).
-//
-// The symbol file states every publisher and no subscriber (RecordPatches.CodeunitSubscriberWitness
-// says why). #4078 therefore emitted the subtree only where the assembly proves there is no
-// subscriber. This file supplies the other half from the assembly's ECMA-335 metadata — never a
-// load — and orders the merged list by each method's [SignatureSpan] source line, which is BC's
-// document order. Anything it cannot state exactly makes the whole codeunit abstain, because
-// MetadataObjectDiff pairs Methods and Parameters positionally and a short list mis-pairs every
-// later element (loud-failures.md). See docs/codeunit-metadata-from-bc.md#subscribers-from-the-assembly.
-//
-// Harness-only: `CodeUnit Metadata` (2000000137) has no method column, so nothing AL-observable
-// reads this subtree.
+// RecordPatches.CodeunitSubscriberMethods — the codeunit <Methods> subtree completed from the app's
+// own R2R assembly (#3788): subscribers the symbol file cannot state, merged with its publishers in
+// [SignatureSpan] source order. Anything not stated exactly withholds the whole codeunit, because
+// MetadataObjectDiff pairs Methods and Parameters positionally (loud-failures.md). Harness-only:
+// CodeUnit Metadata (2000000137) has no method column.
+// See docs/codeunit-metadata-from-bc.md#subscribers-from-the-assembly.
 
 using System.Collections.Concurrent;
 using System.Collections.Immutable;

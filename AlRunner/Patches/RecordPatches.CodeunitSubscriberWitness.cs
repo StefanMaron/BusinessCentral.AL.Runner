@@ -14,21 +14,11 @@
 //   A declare a subscriber? The answer comes from the assembly's own ECMA-335 metadata, which is
 //   where the subscriber attribute lives.
 //
-// WHY A WITNESS AND NOT A DATA SOURCE
-//   The assembly could supply the subscriber methods themselves — it carries their names, and
-//   MethodIdAttribute reproduces BC's <Method ID> for 140 of 140 subscribers on System
-//   Application 28.1.49838.53910. What it cannot supply is BC's ORDER. BC's document order is
-//   the AL SOURCE declaration order (70/70 on the codeunits with two or more emitted methods),
-//   and the metadata table's order is alphabetical. Every ordering hypothesis tried against
-//   BC's documents — alphabetical, metadata-table, MethodId ascending, kind-then-table — scored
-//   at best 22 of 70. Recovering source order means parsing the AL shipped in the .app, which is
-//   the parser treadmill #3491 describes.
-//
-//   So the assembly is used for the question it answers exactly and cheaply, and the symbol file
-//   supplies the data for the codeunits it answers completely. Measured with that policy over
-//   three BC builds (27.5.46862.53931, 28.1.49838.53910, 28.4.53241.54407 — two distinct
-//   binaries across the 27.x/28.x boundary): 66 codeunits emitted on every build, all exact,
-//   ZERO fabricated slots, and the honest-absence count falls from 326 to 174 on 28.1.
+// THE SUBSCRIBERS THEMSELVES
+//   This file only answers whether a codeunit has a subscriber. The subscriber methods, and the
+//   source-line order they merge in by, are RecordPatches.CodeunitSubscriberMethods.cs's
+//   (docs/codeunit-metadata-from-bc.md#subscribers-from-the-assembly). Pages still use the
+//   witness alone (#4267).
 //
 // TWO ROUTES TO THE SAME ANSWER, AND WHY BOTH ARE NEEDED
 //   Nothing is LOADED by either. They read the same bytes' ECMA-335 metadata by two paths:

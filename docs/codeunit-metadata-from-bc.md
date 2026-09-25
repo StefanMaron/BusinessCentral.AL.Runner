@@ -226,9 +226,10 @@ own corpus test, and is deliberately not part of #3606.
 ## The method table: what BC emits, and which half the symbol file can supply
 
 `MetaRuntimeInfo.Methods` (and `#methodsDictionary`, the same collection under a second
-signature) is the `<Methods>` subtree of a `<CodeUnit>` document. The runner derives it for a
-codeunit whose loaded assembly proves the derivation is complete, and omits it otherwise
-(#3788, after #3963 established why the symbol file alone cannot).
+signature) is the `<Methods>` subtree of a `<CodeUnit>` document. The runner derives it for
+every codeunit whose attributed methods it can state completely — publishers from the symbol
+file, subscribers from the app's own assembly — and omits it otherwise (#3788; #3963
+established why the symbol file alone cannot). What is still withheld is #4601.
 
 ### BC emits the ATTRIBUTED methods, not the methods
 
@@ -271,11 +272,13 @@ Modelled over both apps at 28.1:
 | symbol file alone | 76 | 168 | 66 | **8** | 133 |
 | **symbol file + assembly witness** | 66 | 152 | 66 | **0** | 174 |
 
-### The assembly is a witness, not a data source
+### The assembly as a witness (the first half of #3788)
 
 The dependency's own R2R assembly carries `[NavEventSubscriberAttribute]` on exactly the methods
 the symbol file cannot see, and `MethodIdAttribute` reproduces BC's `<Method ID>` for 140 of 140
-subscribers. What it cannot supply is BC's **order**.
+subscribers. The first landing (PR #4078) used it only as a witness, because it looked as if the
+assembly could not supply BC's **order**. That turned out to be wrong: see
+[subscribers from the assembly](#subscribers-from-the-assembly) below.
 
 BC's document order is the **AL source declaration order** — measured 70 of 70 against the `.al`
 sources shipped inside the `.app`, on the codeunits with two or more emitted methods. The
@@ -291,10 +294,9 @@ assembly's metadata-table order is alphabetical. Every ordering hypothesis tried
 | `MethodId` ascending (unsigned) | 17 / 70 |
 | **AL source declaration order** | **70 / 70** |
 
-Recovering source order would mean parsing the AL shipped in the `.app`, which is the parser
-treadmill #3491 describes. So the assembly answers only the question it answers exactly and
-cheaply — *does this codeunit declare a subscriber?* — and the symbol file supplies the data for
-the codeunits it answers completely.
+None of those tried the one attribute that records the source position. Every generated method
+(and every publisher's `<Name>_Scope` class) carries `[SignatureSpan]`, and its start line
+orders the methods correctly 70 of 70.
 
 **Cost: no new load.** `DependencyLoader.LoadAll` runs before the `AddBcAppPath` loop at both
 `Program.cs` call sites, so the assemblies are already in the AppDomain;
@@ -321,6 +323,48 @@ app whose assemblies never loaded — a platform symbol-only app, or a load that
 service-tier DLL dispatch — has measured nothing about its subscribers, and reading that
 silence as "no subscribers" restores exactly the 8 fabrications above
 (`.claude/rules/guards-need-a-third-state.md`). Unknown abstains.
+
+<a id="subscribers-from-the-assembly"></a>
+### Subscribers from the assembly
+
+`RecordPatches.CodeunitSubscriberMethods.cs` reads each codeunit type's metadata out of the
+package's R2R chunks (`PEReader`, never a load) and builds the missing half:
+
+| BC writes | read from |
+|---|---|
+| `<Method ID Name>` | `[MethodId]`, `[NavName]` |
+| `SenderType SenderId EventName ElementName ElementId` | `[NavEventSubscriber]`'s constructor arguments. The four constructors put the element name or the element id in different slots. `SenderType` is spelled the AL way (`Codeunit`, not the enum's `CodeUnit`), for the three kinds BC's documents show. |
+| `SkipOnMissingLicense SkipOnMissingPermission` | the `EventSubscriberCallOptions` flags. Every shipped subscriber sets both or neither, so `The_two_skip_flags_are_read_from_their_own_bits` pins them directly. |
+| `<Parameter>` | the C# signature. `RuntimeType` is the signature type as written (`ByRef<bool>`, `INavRecordHandle`, `System.Guid`, `NavList<NavCode>`). `RuntimeAttributes` is the parameter's `[NavObjectId]`/`[NavByReference]`. `Name` is the C# parameter name. |
+| document order | `[SignatureSpan]` start line, publishers placed by their `_Scope` class |
+
+**Two shapes are not emitted even though they compile with `[NavEventSubscriber]`.** An
+install or upgrade codeunit's triggers (`OnUpgradePerCompany`, `OnInstallAppPerDatabase`, …)
+target the platform codeunits 2000000008/2000000010 and are `public`. BC does not emit them:
+12 of 12 are absent from the 28.1 documents, and all 140 emitted subscribers are `private`. A
+method matching only one of those two properties refuses.
+
+**The whole codeunit is withheld, and nothing is guessed,** when:
+
+- a subscriber parameter is `Text`/`Code`. BC writes `Length`, and the length lives in the
+  body (`ModifyLength(N)`), not in the signature;
+- a parameter is an `Interface`. BC writes `IsVar="True"` for a `var` one, and the signature
+  cannot show that;
+- a `local` method carries `[InherentPermissions]`. BC emits it and no symbol file states it.
+  This check also covers subscriber-free codeunits, which the first landing trusted;
+- a publisher or method cannot be placed at a unique source position.
+
+Measured against BC's own documents with `CodeunitSubscriberMethodTableTests`: every emitted
+subtree matches exactly (ids, order, all seven subscriber attributes, every parameter).
+
+| build | codeunits with `<Methods>` | subscriber codeunits emitted | withheld codeunits | absent methods (was) |
+|---|---:|---:|---:|---:|
+| 27.5.46862.53931 | 143 | 62 of 75 | 15 | 35 (169) |
+| 28.1.49838.53910 | 145 | 64 of 77 | 15 | 35 (174) |
+| 28.4.53241.54407 | 146 | 65 of 78 | 15 | 35 (175) |
+
+The remaining 15 are #4601: 9 with a `Text`/`Code` subscriber parameter, 2 with an
+`Interface` parameter, and 4 with a local `InherentPermissions` method.
 
 ### The `InherentPermissions` method attribute
 

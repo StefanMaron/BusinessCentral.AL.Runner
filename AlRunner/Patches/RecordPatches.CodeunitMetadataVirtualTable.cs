@@ -116,10 +116,11 @@ public static partial class RecordPatches
     /// or when it was source-parsed rather than read from a dependency .app. Whether this list
     /// is COMPLETE is <paramref name="MethodsProvenComplete"/>'s job, never this list's own
     /// length (#3788).</param>
-    /// <param name="MethodsProvenComplete">True only when the app's loaded assemblies were
-    /// scanned AND saw this codeunit AND found no <c>[NavEventSubscriber]</c> on it. False
-    /// covers the codeunit having one and the scan never having happened, which are different
-    /// facts with the same correct consequence: do not render a subtree that may be short.</param>
+    /// <param name="MethodsProvenComplete">True only when the app's assembly accounts for every
+    /// attributed method in <paramref name="AttributedMethods"/> — subscribers merged in, nothing
+    /// local left out (<c>ResolveCodeunitMethodTable</c>). False covers a gap the runner cannot
+    /// state and the assembly never having been read, which are different facts with the same
+    /// correct consequence: do not render a subtree that may be short.</param>
     private sealed record CodeunitMetaRow(int Id, string Name, int TableNo, bool SingleInstance, string Subtype,
         string? ALNamespace = null, string? InherentEntitlements = null, string? InherentPermissions = null,
         List<BcAppSymbolCache.CodeunitMethodSymbol>? AttributedMethods = null,
