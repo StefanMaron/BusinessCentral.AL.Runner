@@ -2,8 +2,11 @@
 //
 // RUNNER-MECHANISM test. The BC claim is corpus codeunit 67361: a page opened on a caller's
 // row shows, and saves, the row as the table holds it; a value the caller set in memory reaches
-// OnOpenPage only. This pins the runner's wiring for it: RunnerTestClientSession.GetPage
-// re-reads a caller-positioned row before the handler gets the page (skipped -> <MEM>/<CALC>).
+// Page.Run(Id, Rec)'s OnOpenPage only, and a RunPageOnRec target's OnOpenPage not at all. This
+// pins the runner's two pieces of wiring for it:
+//   - RunnerTestClientSession.RereadCallerRow re-reads a caller-positioned row before the
+//     handler gets the page (skipped -> <MEM>);
+//   - RunnerPageInstance.CopyHostRowForTarget re-reads the host's row (skipped -> <B:CALC>).
 //
 // The fixture declares no "application", per .claude/rules/no-base-app-in-csharp-tests.md.
 
@@ -175,7 +178,7 @@ public sealed class PageOpensOnStoredRowTests : IDisposable
                         Error('%1: expected <%2>, got <%3>', What, Expected, Actual);
                 end;
 
-                // Fails with <CALC> when the target shows the host's in-memory row.
+                // Fails with <B:CALC> when the target is handed the host's in-memory row.
                 [Test]
                 [HandlerFunctions('TargetHandler')]
                 procedure RunPageOnRecTargetShowsTheStoredRow()
@@ -188,7 +191,7 @@ public sealed class PageOpensOnStoredRowTests : IDisposable
                     Host.Last();
                     Check('CALC', Host.Grp.Value(), 'precondition: the host computed Grp');
                     Host.RunTarget.Invoke();
-                    Check('B:CALC', Probe.GetOpenSeen(), 'OnOpenPage sees the host''s row as the host holds it');
+                    Check('B:G2', Probe.GetOpenSeen(), 'OnOpenPage sees the host''s row as the table holds it');
                     Check('G2', Probe.GetShown(), 'the target shows the stored Grp');
                 end;
 

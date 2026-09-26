@@ -122,9 +122,9 @@ public sealed class RunnerTestClientSession : ITestClientSession
 
     /// <summary>
     /// The page shows the caller's row as it is in the table: a value the caller put into its
-    /// record and never saved reaches the target's OnOpenPage (the form's own clone) but not the
-    /// page, so it is neither shown nor stored by the page's save. Corpus codeunit 67361 (#4752):
-    /// a RunPageOnRec target and <c>Page.Run(Id, Rec)</c> alike. A row the table does not hold
+    /// record and never saved reaches <c>Page.Run(Id, Rec)</c>'s OnOpenPage (the form's own
+    /// clone) but not the page, so it is neither shown nor stored by the page's save. Corpus
+    /// codeunit 67361 (#4752), every cloud leg. A row the table does not hold
     /// keeps the caller's values — a missed Find leaves the fields alone
     /// (<c>PageOpensOnStoredRowTests</c> pins it).
     /// </summary>
