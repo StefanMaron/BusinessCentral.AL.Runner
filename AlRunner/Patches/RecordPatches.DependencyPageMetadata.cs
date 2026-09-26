@@ -278,6 +278,47 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// The value the precompiled dependency pageextensions of <paramref name="basePageName"/>
+    /// set for <paramref name="propertyName"/> on the member named <paramref name="memberName"/>
+    /// through <c>modify(...)</c>, verbatim, or null when none sets it (#4761). A modify replaces
+    /// the base member's declared value: corpus codeunit 67403 "PXCM Tests" (Base Application's
+    /// "Schedule a Report Ext" and "Approval Job Queue Entries").
+    ///
+    /// <para>Refuses when two extensions state DIFFERENT values: which one BC applies has not
+    /// been measured, and picking one would be a guess. A same-numbered source-parsed extension
+    /// is skipped, as in <see cref="DependencyPageExtensionFieldControls"/>.</para>
+    /// </summary>
+    internal static string? DependencyPageExtensionModifiedProperty(
+        string basePageName, string memberName, string propertyName, bool isAction)
+    {
+        string? value = null;
+        int? valueFrom = null;
+        foreach (var extId in DependencyPageExtensionIdsForPage(basePageName).Distinct().ToList())
+        {
+            if (_parsedPageExtensions.ContainsKey(extId)) continue;
+            var ext = TryGetDependencyPageExtensionSymbol(extId);
+            var modifications = isAction ? ext?.ActionModifications : ext?.ControlModifications;
+            if (modifications == null) continue;
+            foreach (var (anchor, properties) in modifications)
+            {
+                if (!NamesEqual(anchor, memberName)) continue;
+                foreach (var (name, stated) in properties)
+                {
+                    if (!string.Equals(name, propertyName, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (valueFrom != null && !string.Equals(value, stated, StringComparison.Ordinal))
+                        throw TestPageShapeGap.ControlProperty(
+                            $"TestPage {propertyName} on page '{basePageName}' member '{memberName}'",
+                            $"pageextensions {valueFrom} and {extId} both modify it, to '{value}' and "
+                            + $"'{stated}', and which one BC applies has not been measured (#4761)");
+                    value = stated;
+                    valueFrom = extId;
+                }
+            }
+        }
+        return value;
+    }
+
+    /// <summary>
     /// Every loaded dependency .app's parsed symbols, in registration order, so the page and
     /// pageextension lookups share one walk and one failure policy.
     ///
