@@ -120,16 +120,15 @@
 //     already said "This is a runner/BC-shape problem, not a problem with the AL under test" —
 //     it was describing a BcShapeGapException while raising a scope claim.
 //
-// ── (1), LEFT ALONE: nine citations that really are permanent ────────────────────────────
+// ── (1), LEFT ALONE: citations that really are permanent ────────────────────────────
 //   Read and kept, exactly as #2999 requires. Per file, so the next reader does not re-derive:
 //
-//     MockTestPage.cs (6 citations / 5 throws)
+//     MockTestPage.cs
 //       * a page with no SourceTable (the StandardDialog shape) — BC has no record-backed
 //         rowset for one either, so `false` is BC's own answer;
-//       * an OnQueryClosePage veto, which in BC leaves the page open awaiting a user (§3.11);
 //       * a control not bound to a source-table field, used to LOCATE A ROW;
 //       * three AL-AUTHORING errors real BC also raises — an option value that is neither a
-//         member nor a caption (two branches of one ternary, hence 6 citations over 5 throws),
+//         member nor a caption (two branches of one ternary),
 //         and a date spelling TestPage SetValue never produces.
 //
 //     RunnerPageInstance.cs (3 citations, of which 2 are uncontested and the third is not)

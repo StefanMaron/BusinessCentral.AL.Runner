@@ -494,9 +494,9 @@ public sealed class TestPageRefusalClaimTests
     };
 
     /// <summary>
-    /// The seven permanent THROWS (eight citations — the option-value refusal spells the pointer
+    /// The six permanent THROWS (seven citations — the option-value refusal spells the pointer
     /// on both branches of one ternary), by the sentence each one renders. The RunObject action
-    /// is the eighth throw and is deliberately absent: see
+    /// is the seventh throw and is deliberately absent: see
     /// <see cref="RunnerPageInstance_KeepsItsTwoUncontestedPermanentCitations"/>.
     ///
     /// <para>The Date one — "is not the round-trip spelling TestPage SetValue(Date) itself
@@ -508,7 +508,6 @@ public sealed class TestPageRefusalClaimTests
     public static IEnumerable<object[]> KeptMarkers() => new[]
     {
         new object[] { "MockTestPage*.cs", "this page has no SourceTable" },
-        new object[] { "MockTestPage*.cs", "OnQueryClosePage returned false" },
         new object[] { "MockTestPage*.cs", "so it cannot be used to locate a row" },
         new object[] { "MockTestPage*.cs", "is not an acceptable value" },
         new object[] { "MockTestPage*.cs", "is not one of the option's values" },
@@ -554,15 +553,17 @@ public sealed class TestPageRefusalClaimTests
     }
 
     [Fact]
-    public void MockTestPage_KeepsExactlyItsFivePermanentCitations()
+    public void MockTestPage_KeepsExactlyItsFourPermanentCitations()
     {
-        // Exact, because nothing in flight reclassifies a MockTestPage refusal: five citations
-        // across four throws (the option-value refusal spells the pointer on both branches of
+        // Exact, because nothing in flight reclassifies a MockTestPage refusal: four citations
+        // across three throws (the option-value refusal spells the pointer on both branches of
         // one ternary). Under-sweep and over-sweep both fail.
         //
         // Was six until #3384 removed the Date round-trip refusal — see KeptMarkers for why
-        // that one was wrong rather than swept. The number moves only with a reason recorded.
-        Assert.Equal(5, Regex.Matches(CodeOf("MockTestPage*.cs"), "docs/scope\\.md").Count);
+        // that one was wrong rather than swept — and five until #4710 removed the
+        // OnQueryClosePage veto refusal, which BC completes without an error (corpus codeunit
+        // 60419). The number moves only with a reason recorded.
+        Assert.Equal(4, Regex.Matches(CodeOf("MockTestPage*.cs"), "docs/scope\\.md").Count);
     }
 
     [Fact]

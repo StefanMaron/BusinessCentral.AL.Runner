@@ -1030,10 +1030,10 @@ internal partial class LiveNavTestPage
         // Order is parts THEN row here, as at every other close point, because a part's
         // OnValidate can touch the header (and a header OnModify reads the parts, #4146).
         //
-        // It runs before the refusal branches below on purpose: BC's send-then-close order does
-        // not depend on what the trigger answers, and the modal route already flushes ahead of
-        // its own raise (AttemptHandlerDrivenClose). No service tier has been asked what a
-        // refused close leaves behind on this route, and no test here asserts it either way.
+        // It runs before the trigger on purpose: BC's send-then-close order does not depend on
+        // what the trigger answers, and the modal route already flushes ahead of its own raise
+        // (AttemptHandlerDrivenClose). No service tier has been asked what a refused close
+        // leaves behind on this route, and no test here asserts it either way.
         //
         // The modal route does not come through here at all -- it reaches Dispose() instead --
         // and the two ROUTES nevertheless agree about an uncommitted subpage-part row, because
@@ -1044,34 +1044,13 @@ internal partial class LiveNavTestPage
         FlushParts();
         FlushRow(OnRefusedInsertAtClose);
 
-        // Two ways BC refuses a close, and they are not the same question — see
-        // RunnerPageInstance.CloseRefusal.
-        if (_page != null && !_page.RaiseOnClosePage(_formResult, out var refusal))
-        {
-            // An AL error the trigger raised, consumed by a declared [MessageHandler]. MEASURED
-            // on a real service tier (corpus codeunit 60602 "QCM Query Close Msg Tests",
-            // StefanMaron/BusinessCentral.AL.Language.Tests#272, green on all eight cloud legs
-            // and on the Windows nightly): Close() returns normally, the message reaches the
-            // handler exactly once on this route, and the page is left OPEN.
-            //
-            // Returning here is the whole of that: the tear-down below is skipped, so _opened
-            // stays true and BC's own form state is untouched
-            // — the test's TestPage variable keeps working, which is what a real tier leaves it
-            // holding. It is deliberately NOT a refusal any more; raising one here would be the
-            // runner erroring on a path BC completes without an error (issue #3179).
-            if (refusal == RunnerPageInstance.CloseRefusal.ErrorShownAsMessage) return;
-
-            // A plain veto (the trigger returned false) on the EXPLICIT TestPage.Close() path.
-            // Still a refusal, and still a permanent scope boundary (#2999 lists it among the
-            // fourteen): BC leaves the page open awaiting a user, and unlike the arm above no
-            // service tier has been asked what a test observes afterwards. A [TryFunction]
-            // reading false is BC's outcome.
-            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                // No " — " in the api — see RequireRecord.
-                $"TestPage page {_pageId} (OnQueryClosePage)",
-                "testpage-close-veto — the page's OnQueryClosePage returned false, which in BC "
-                + "leaves the page open awaiting the user. See docs/scope.md");
-        }
+        // A refused close -- a plain veto, or an AL error a [MessageHandler] consumed -- returns
+        // normally, runs no OnClosePage and leaves BC's form open. BC's
+        // TestPageProxy.InternalClose calls LogicalForm.Close, whose NavFormCloseHandler answers
+        // both refusals with "close refused" and raises nothing. Measured: corpus codeunit 60602
+        // "QCM Query Close Msg Tests" (the error arm, #3179) and 60419 "QCV Close Veto Tests"
+        // (the veto arm, #4710). What the variable is left as afterwards is #4713.
+        if (_page != null && !_page.RaiseOnClosePage(_formResult)) return;
         _opened = false;
 
         // The triggers above are this page's close, so BC's own form state has to agree that
@@ -1171,11 +1150,8 @@ internal partial class LiveNavTestPage
 
         // Both refusals leave the form OPEN and raise nothing here, which is what makes
         // FormRunModal's own attempt run -- and that second attempt is where the second message
-        // delivery, and the Action::None, come from. They are one branch on purpose: unlike
-        // Close(), which must tell them apart because a veto there is a scope boundary
-        // (testpage-close-veto), this route's observable outcome is produced downstream either
-        // way, and it is the outcome the route already had before #3593.
-        if (!_page.RaiseOnClosePage(result, out _)) return;
+        // delivery, and the Action::None, come from.
+        if (!_page.RaiseOnClosePage(result)) return;
 
         // The close succeeded, so BC's own form state has to agree -- otherwise IsOpen stays
         // true and FormRunModal runs the whole sequence a second time, which is exactly the
