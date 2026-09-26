@@ -93,12 +93,11 @@ code and was dropped.
 So the guard stays as it was. If a future change needs extensions bound during construction,
 that needs a different mechanism than a guard widening, and the constraint above is why.
 
-## The subpage part is a separate, still-open case
+## The subpage part
 
-A pageextension adding a global-bound control to a page used as a **subpage part** is not fixed
-by this. `RunnerPageInstance.Adopt` / `AdoptFromHost` wrap a form BC's `NavForm.GetPart` already
-built and initialised, and deliberately do not re-drive `SetSourceTable` — re-registering every
-source expression throws `ArgumentException("An item with the same key has already been added")`.
-So there is no "before the metadata load" left to bind at for that form. Tracked by **#4181**,
-which carries the measured trace and the reproducer; the arm that measured it was removed from
-this suite because it needs a different fix.
+A pageextension control on a page used as a **subpage part** is covered by the same bind.
+The part's form is built through `NavFormHandle.CreateTarget`, the Page-variable path above
+(measured: removing the bind there, and only there, reds the arm below), so its extensions are
+bound before its `SetSourceTable` and `RunnerPageInstance.Adopt` / `AdoptFromHost` reuse them. Corpus codeunit 60980
+`SubPageExtControl_BoundToExtensionGlobal_IsFoundAndReadsItsValue` measures it (#4181, fixed
+together with #4738).
