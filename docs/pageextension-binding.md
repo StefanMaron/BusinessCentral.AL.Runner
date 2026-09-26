@@ -60,6 +60,21 @@ page's metadata load — `SetSourceTable` on the record-bearing path, `EnsureMet
 the record-less one. That call is what raises `OnMetadataLoaded`; an extension registered
 afterwards registers nothing.
 
+## Pages the runner builds for AL, not for a TestPage
+
+`Page.Run` / `Page.RunModal` (`BcRuntime.NCLMetaForm_CreateObjectInstance` →
+`ConstructFormForStaticEntry`) and a Page variable (`CodeunitPatches.NavFormHandle_CreateTarget`)
+construct the page themselves and then call `SetSourceTable`. Both call
+`RunnerPageInstance.BindPageExtensionsBeforeMetadataLoad` between the two, for the reason in
+"Ordering". When a TestPage traps or is handed that page later, `RunnerPageInstance.Adopt`
+reuses those instances instead of binding a second time (#4738).
+
+Before this, the binding happened only at adoption, so on a trapped page an extension's
+expression-bound control (`field(Context; Format(Rec."Context Record ID"))`, Base Application
+pageextension 705 on page 700) and its global-bound controls were not found, and its
+`OnOpenPage` did not run. Corpus codeunit 67470 "PXR Tests"
+(StefanMaron/BusinessCentral.AL.Language.Tests#452) is the service-tier measurement.
+
 ## What is deliberately NOT done
 
 `NavForm.CallInitializeComponentExtensionMethod` also walks `PageExtensions`, calling each
