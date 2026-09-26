@@ -28,6 +28,15 @@ public sealed class XmlPortImportWriteTransactionTests
                   ?.GetValue(null)
               ?? throw new InvalidOperationException("ALDatabasePatches._runTransactionDepth not found"));
 
+    private static int OpenScopeCount()
+    {
+        var stack = typeof(RecordPatches)
+                        .GetField("_txScopeStack", BindingFlags.Static | BindingFlags.NonPublic)
+                        ?.GetValue(null)
+                    ?? throw new InvalidOperationException("RecordPatches._txScopeStack not found");
+        return (int)stack.GetType().GetProperty("Count")!.GetValue(stack)!;
+    }
+
     private void Reset()
     {
         TestArtifacts.SkipIf(!_engine.Ready,
@@ -42,6 +51,7 @@ public sealed class XmlPortImportWriteTransactionTests
     {
         Reset();
         ALDatabasePatches.NoteRecordWrite(null);
+        var scopes = OpenScopeCount();
 
         var ex = Assert.ThrowsAny<Exception>(() => ALDatabasePatches.NoteBcBeginTransactionWorld());
 
@@ -50,6 +60,7 @@ public sealed class XmlPortImportWriteTransactionTests
         // BC calls Begin outside the try whose finally runs End, so a refused Begin must not
         // have counted a transaction that nothing will close.
         Assert.Equal(0, RunTransactionDepth());
+        Assert.Equal(scopes, OpenScopeCount()); // nor pushed a scope nothing will pop (#4643)
         Assert.True(ALDatabasePatches.HasWriteTransaction(null),
             "a refusal must leave the caller's own pending write in place");
     }
@@ -58,12 +69,31 @@ public sealed class XmlPortImportWriteTransactionTests
     public void BeginWorld_NoPendingWrite_IsAllowed_AndCountsOneTransaction()
     {
         Reset();
+        var scopes = OpenScopeCount();
 
         ALDatabasePatches.NoteBcBeginTransactionWorld();
         Assert.Equal(1, RunTransactionDepth());
+        Assert.Equal(scopes + 1, OpenScopeCount()); // the world's own rollback scope (#4643)
 
-        ALDatabasePatches.NoteBcEndTransactionWorld();
+        ALDatabasePatches.NoteBcEndTransactionWorld(null, true);
         Assert.Equal(0, RunTransactionDepth());
+        Assert.Equal(scopes, OpenScopeCount());
+    }
+
+    [SkippableFact]
+    public void EndWorld_WithoutCommit_PopsTheScopeAndLeavesNoWriteTransaction()
+    {
+        Reset();
+        var scopes = OpenScopeCount();
+
+        ALDatabasePatches.NoteBcBeginTransactionWorld();
+        ALDatabasePatches.NoteRecordWrite(null);
+        ALDatabasePatches.NoteBcEndTransactionWorld(null, false);
+
+        Assert.Equal(0, RunTransactionDepth());
+        Assert.Equal(scopes, OpenScopeCount());
+        Assert.False(ALDatabasePatches.HasWriteTransaction(null),
+            "a rolled-back world leaves the caller with no write transaction either");
     }
 
     [SkippableFact]
@@ -76,13 +106,13 @@ public sealed class XmlPortImportWriteTransactionTests
         Assert.True(ALDatabasePatches.HasWriteTransaction(null),
             "precondition: the write inside the world must be visible as a write transaction");
 
-        ALDatabasePatches.NoteBcEndTransactionWorld();
+        ALDatabasePatches.NoteBcEndTransactionWorld(null, true);
 
         Assert.False(ALDatabasePatches.HasWriteTransaction(null),
             "the world owned the write; once it ends the caller holds none");
         // And so a second value-consuming import is allowed.
         ALDatabasePatches.NoteBcBeginTransactionWorld();
-        ALDatabasePatches.NoteBcEndTransactionWorld();
+        ALDatabasePatches.NoteBcEndTransactionWorld(null, true);
     }
 
     [SkippableFact]
