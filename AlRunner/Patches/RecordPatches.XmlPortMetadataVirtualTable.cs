@@ -22,6 +22,40 @@ public static partial class RecordPatches
     /// <summary>ObjectType.XmlPort — 6, the same constant the metadata-cache populator uses.</summary>
     private const int ObjectTypeXmlPort = 6;
 
+    /// <summary>
+    /// True for an xmlport the source-owner map does not know, but which a SOURCE-compiled app
+    /// outside <paramref name="visibleApps"/> compiled — the second owner evidence the app-group
+    /// filter needs here and no other inventory table does. KnownXmlPortIdSet also reads
+    /// compiled <c>XmlPort{id}</c> types, and a --watch cycle clears the source owners while
+    /// the previous cycle's assemblies stay loaded, so a later bundle's xmlport reached the
+    /// earlier bundle's run unowned and was listed (WatchDependentBundleInventoryTests, cycle 2).
+    /// A precompiled .app's xmlports are never hidden, as <see cref="IsHiddenFromAppGroup"/>
+    /// never hides an object it has no source owner for.
+    /// </summary>
+    private static bool IsCompiledXmlPortOfUnreachableSourceApp(int id, HashSet<Guid>? visibleApps,
+        ref Dictionary<int, Guid>? compiledSourceOwners)
+    {
+        if (visibleApps == null || _sourceObjectOwners.ContainsKey(("xmlport", id))) return false;
+        if (compiledSourceOwners == null)
+        {
+            compiledSourceOwners = new Dictionary<int, Guid>();
+            var packagedApps = new HashSet<Guid>();
+            foreach (var (_, symbols) in EnumerateRegisteredBcAppSymbols("xmlport app-group scope"))
+                if (Guid.TryParse(symbols.AppId, out var g)) packagedApps.Add(g);
+            foreach (var (asm, appId) in AlRunner.BcRuntime.RegisteredModuleAssemblies())
+            {
+                if (visibleApps.Contains(appId) || packagedApps.Contains(appId)) continue;
+                var index = AlRunner.Infrastructure.AssemblyTypeIndex.For(asm);
+                var names = index.IsMetadataBacked
+                    ? index.TypeNamesWithPrefix("XmlPort")
+                    : index.EnumerateWithPrefix("XmlPort").Select(t => t.Name);
+                foreach (var xmlPortId in ExtractXmlPortIdsFromNames(names))
+                    compiledSourceOwners[xmlPortId] = appId;
+            }
+        }
+        return compiledSourceOwners.ContainsKey(id);
+    }
+
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, object> _xmlPortOwnerAttempted = new();
 
     /// <summary>
@@ -57,7 +91,7 @@ public static partial class RecordPatches
     /// exactly that — the SymbolReference.json of a precompiled .app, the emitted assembly of a
     /// source-compiled one — so this writes BC's answer, not a stand-in. An xmlport the index
     /// cannot place keeps the null owner, so BC's own empty-GUID answer stands.
-    /// Corpus: codeunit 67350 Record_XmlPortMetadata_AppId_IsThisExtensionsOwnAppId.
+    /// Corpus: codeunit 67450 Record_XmlPortMetadata_AppId_IsThisExtensionsOwnAppId.
     ///
     /// <para>TRAP — the name matters beyond this table: <see cref="GetOrCreateAppOwner"/>
     /// caches one owner per app id for every consumer, so an owner is written only when the

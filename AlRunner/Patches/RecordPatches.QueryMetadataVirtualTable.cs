@@ -122,8 +122,10 @@ public static partial class RecordPatches
         // QueryDataProvider: GetObjectNumberAndInfoWithinRange(ObjectType.XmlPort, …, needNames:
         // false), then every column from the NCLMetaXmlPort the metadata cache resolves.
         Dictionary<(string Kind, int Id), Guid>? ownerIndex = null;
+        Dictionary<int, Guid>? compiledSourceOwners = null;
         AddSnapshotEntries(outer, ObjectTypeXmlPort, "XmlPort", KnownXmlPortIdSet(), visibleApps,
-            id => XmlPortMetadataResolves(id, ref ownerIndex));
+            id => !IsCompiledXmlPortOfUnreachableSourceApp(id, visibleApps, ref compiledSourceOwners)
+                  && XmlPortMetadataResolves(id, ref ownerIndex));
         return outer;
     }
 
