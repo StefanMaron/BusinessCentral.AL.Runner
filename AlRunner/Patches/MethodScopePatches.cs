@@ -404,45 +404,65 @@ public static partial class BcRuntime
     private static MethodInfo? _miRemoveTrap;
 
     /// <summary>
-    /// Removes the outstanding <c>Trap()</c> of each LOCAL TestPage variable of a disposing scope
-    /// that holds the last reference to its page, so a trap nothing consumed ends with its
-    /// variable instead of capturing a later page run (#4732). Observably equivalent to BC: BC's
-    /// scope exit releases the scope's <c>NavTestPageHandle</c>; the last release disposes the
-    /// <c>NavTestPage</c> (<c>TreeSharedObjectHandler.InternalRemoveReferenceDisposeIfLast</c>),
-    /// and <c>NavTestPage.Dispose(bool)</c> calls <c>TestExecution.RemoveTrap(this)</c>
-    /// (28.1.49838.53910). A page another variable still references (assigned out of the local)
-    /// keeps its trap. Corpus codeunit 67150 adjudicates it.
-    /// Trap: remove the trap only, never release or dispose the page — its client's Dispose
+    /// Removes the outstanding <c>Trap()</c> of each page whose every reference is held by the LOCAL
+    /// TestPage variables of a disposing scope, so a trap nothing consumed ends with its variables
+    /// instead of capturing a later page run (#4732, #4736). Observably equivalent to BC: BC's scope
+    /// exit releases each of the scope's <c>NavTestPageHandle</c>s in turn; the release that takes
+    /// the page's count to zero disposes the <c>NavTestPage</c>
+    /// (<c>TreeSharedObjectHandler.InternalRemoveReferenceDisposeIfLast</c>), and
+    /// <c>NavTestPage.Dispose(bool)</c> calls <c>TestExecution.RemoveTrap(this)</c>
+    /// (28.1.49838.53910). A page any other variable still references keeps its trap. Corpus
+    /// codeunits 67150 and 67151 adjudicate it.
+    /// Trap: count every local handle of one page together — several locals can share it
+    /// (<c>B := A</c>), so no single handle is ever the last reference on its own (#4736).
+    /// Remove the trap only, never release or dispose the page — its client's Dispose
     /// flush raises a refused delayed insert at scope exit that BC does not raise (corpus 60045).
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     internal static void RemoveLocalTestPageTraps(object? self)
     {
+        var handlesByPage = new List<(Microsoft.Dynamics.Nav.Runtime.NavTestPage Page, List<object> Handles)>();
         ForEachDirectChildHost(self, host =>
         {
             if (host is not Microsoft.Dynamics.Nav.Runtime.NavTestPageHandle tpHandle || !tpHandle.HasTarget)
                 return;
             var page = tpHandle.Target;
-            if (!IsLastReference(page.Tree, tpHandle) || _testExecutionInstance == null)
-                return;
+            var entry = handlesByPage.Find(e => ReferenceEquals(e.Page, page));
+            if (entry.Handles == null)
+                handlesByPage.Add((page, new List<object> { tpHandle }));
+            else
+                entry.Handles.Add(tpHandle);
+        });
+        if (_testExecutionInstance == null)
+            return;
+        foreach (var (page, handles) in handlesByPage)
+        {
+            if (!HoldsEveryReference(page.Tree, handles))
+                continue;
             _miRemoveTrap ??= AlRunner.Infrastructure.BcShape.RequiredMethod(
                 _testExecutionInstance.GetType(), "RemoveTrap",
                 BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance,
                 "testpage-trap-scope", "NavTestExecution.RemoveTrap(NavTestPage)",
                 "without it an unconsumed TestPage.Trap() outlives its variable (#4732)");
             _miRemoveTrap.Invoke(_testExecutionInstance, new object[] { page });
-        });
+        }
     }
 
     /// <summary>
-    /// Whether releasing <paramref name="reference"/> would dispose the object <paramref name="tree"/>
-    /// hosts, by BC's own two rules for <c>InternalRemoveReferenceDisposeIfLast</c>: a shared
-    /// object when its reference count would reach zero, any other when the reference is its parent.
+    /// Whether releasing all of <paramref name="references"/> would take the shared object
+    /// <paramref name="tree"/> hosts to a reference count of zero, BC's rule for disposing it in
+    /// <c>TreeSharedObjectHandler.InternalRemoveReferenceDisposeIfLast</c>. A TestPage's handler is
+    /// always the shared one (<c>NavTestPageBase</c> implements <c>ITreeSharedObject</c>), so a
+    /// non-shared handler (count -1) is a BC shape change and refuses.
     /// </summary>
-    private static bool IsLastReference(Microsoft.Dynamics.Nav.Runtime.TreeHandler tree, object reference)
+    private static bool HoldsEveryReference(Microsoft.Dynamics.Nav.Runtime.TreeHandler tree, List<object> references)
     {
-        var count = tree.ReferenceCount; // -1 on a non-shared handler
-        return count < 0 ? ReferenceEquals(tree.Parent, reference) : count == 1;
+        var count = tree.ReferenceCount;
+        if (count < 0)
+            throw new AlRunner.Infrastructure.BcShapeGapException(
+                "TestPage.Trap() scope exit", "NavTestPage.Tree.ReferenceCount",
+                "the page's tree handler is not shared, so the local handles' share of its references cannot be counted (#4736)");
+        return references.Count >= count;
     }
 
     /// <summary>
