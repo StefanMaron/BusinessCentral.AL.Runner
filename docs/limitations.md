@@ -2052,8 +2052,9 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   the caller regains control with nothing raised, `RunModal()` reports `Action::None` rather
   than the action the `[ModalPageHandler]` chose, and the page's uncommitted write survives.
   Each close route reproduces its own half — `RunModal` drops the handler's result so the AL
-  reads back `Action::None`, and `TestPage.Close()` returns with the page still open and
-  drivable.
+  reads back `Action::None`, and `TestPage.Close()` returns with the page still open. 60602
+  never reads the page after `Close()`; whether the TestPage variable can still be driven is
+  [#4713](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4713).
 
   The **delivery count** differs by route and is reproduced since
   ([#3593](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3593)). BC delivers

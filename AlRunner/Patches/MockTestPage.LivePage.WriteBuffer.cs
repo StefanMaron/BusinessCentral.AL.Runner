@@ -1049,10 +1049,7 @@ internal partial class LiveNavTestPage
         // TestPageProxy.InternalClose calls LogicalForm.Close, whose NavFormCloseHandler answers
         // both refusals with "close refused" and raises nothing. Measured: corpus codeunit 60602
         // "QCM Query Close Msg Tests" (the error arm, #3179) and 60419 "QCV Close Veto Tests"
-        // (the veto arm, #4710).
-        //
-        // _opened stays true on purpose: CurrPage.Close() reaches this method too, and there BC
-        // leaves the test's TestPage variable attached to the still-open form.
+        // (the veto arm, #4710). What the variable is left as afterwards is #4713.
         if (_page != null && !_page.RaiseOnClosePage(_formResult)) return;
         _opened = false;
 

@@ -123,15 +123,14 @@
 //     BuildMessage rendered a second time, and sent the reader to a file that documents
 //     nothing about report construction. Anchor unchanged, link corrected, doubling removed.
 //
-// ── (1), LEFT ALONE: twenty-eight sites that really are permanent ────────────────────────
+// ── (1), LEFT ALONE: sites that really are permanent ────────────────────────
 //   Read and kept. Per file, so the next reader does not re-derive them:
 //
 //     NclCecilRewrite.Reports.cs (6)  RDLC / Word / Excel result-set processors, the print
 //                                     server ctor, the document-service decorator ctor.
 //                                     External renderers and an external service.
 //                                     docs/scope.md#report-rendering, a section that exists.
-//     MockTestPage.cs (6)             a page with no SourceTable; an OnQueryClosePage veto
-//                                     (since removed, #4710: BC completes that Close());
+//     MockTestPage.cs                 a page with no SourceTable;
 //                                     a control not bound to a source-table field used to
 //                                     locate a row; and three AL-AUTHORING errors real BC also
 //                                     raises — an option value that is neither member nor
