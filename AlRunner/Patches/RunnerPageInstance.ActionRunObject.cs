@@ -213,18 +213,58 @@ internal sealed partial class RunnerPageInstance
     /// lookup, <c>TestPage.Trap()</c> and the "Unhandled UI" refusal are BC's and not a second
     /// implementation of them.
     ///
-    /// <para><c>RunPageOnRec</c> is AL's: true hands the target the host page's CURRENT record —
-    /// the runner's equivalent of the bookmark BC stamps onto the target's form state — false
+    /// <para><c>RunPageOnRec</c> is AL's: true opens the target on the host page's CURRENT row
+    /// — the runner's equivalent of the bookmark BC stamps onto the target's form state — false
     /// opens the page on its own rowset. A <c>RunPageLink</c> is applied on top of either, as
     /// filters on the TARGET's own cursor, which is what BC's <c>CreateForm</c> does with the
     /// two in that order (see this file's header).</para>
+    ///
+    /// <para>The target gets a copy of the host's row WITHOUT the host's filters, and the host
+    /// re-reads its row once the target returns. Corpus codeunit 67351 (#4634): the target of a
+    /// filtered host walks the whole table, moving the target's Rec leaves the host where it was,
+    /// and a value the target writes is what the host then shows and saves over.</para>
     /// </summary>
     private void RunTargetPage(int actionId, ActionRunTarget target)
-        => RunPageThroughBcFrontDoor(
+    {
+        RunPageThroughBcFrontDoor(
             target.ObjectId,
             target.Links.Count > 0
                 ? BuildLinkedTargetRecord(actionId, target)
-                : (target.RunPageOnRec ? _record : null));
+                : (target.RunPageOnRec ? CopyHostRowForTarget() : null));
+        RereadHostRowAfterTarget();
+    }
+
+    /// <summary>
+    /// The host's current row, field values included, on a cursor of its own with no filters —
+    /// the bookmark BC hands the target carries the row, not the host's view of the table.
+    /// Trap: handing over <c>_record</c> itself lets the target move and re-filter the host.
+    /// </summary>
+    private NavRecord? CopyHostRowForTarget()
+    {
+        if (_record == null) return null;
+        var copy = TestPageFactory.TryBuildBlankRecord(_owner, _record.TableID, _record.IsTemporary, out var why)
+            ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                $"TestPage action on page {_pageId}",
+                $"not-yet-implemented — RunPageOnRec opens the target on the host's row, and the "
+                + $"runner could not build a cursor over table {_record.TableID} to carry it ({why})");
+        // A temporary host shares its rows, or the target could not find the row at all.
+        copy.ALCopy(_record, _record.IsTemporary);
+        copy.ALReset();
+        return copy;
+    }
+
+    /// <summary>
+    /// Re-read the host's current row from the table after a RunObject page returns, so the
+    /// host shows — and later saves over — what the target wrote (corpus codeunit 67351). The
+    /// row was saved before the action ran (LiveNavTestAction.Invoke), so no pending edit is
+    /// lost. Values only: whether BC also raises the host's OnAfterGetRecord here is unmeasured.
+    /// </summary>
+    private void RereadHostRowAfterTarget()
+    {
+        if (_record == null || IsCurrentRowUnsavedNewRow?.Invoke() == true) return;
+        if (_record.ALFind(Microsoft.Dynamics.Nav.Types.DataError.TrapError, "="))
+            _record.OldRecord.ALAssign(_record);
+    }
 
     /// <summary>
     /// Run a <c>RunObject = Codeunit</c> target the way BC's <c>InvokeCodeUnitAction</c> does:

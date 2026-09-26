@@ -1,10 +1,12 @@
 // PageRunClonesCallersRecordTests — issue #4634.
 //
-// RUNNER-MECHANISM test. The BC claim (a page opened on a caller's record works on its own copy,
-// so the page moving its Rec leaves the caller where it was) is corpus codeunit 67351. This pins
-// the runner's own wiring for it: BcRuntime.ConstructFormForStaticEntry binds a caller-supplied
-// record with SetSourceTable(record, clone: true). Binding it with clone: false shares the
-// caller's cursor, and every arm below then reads <Echo> instead of <Bravo>.
+// RUNNER-MECHANISM test. The BC claims are corpus codeunit 67351: a page opened on a caller's
+// record works on its own copy; a RunPageOnRec target sees the host's row but not its filters;
+// and the host shows what the target wrote. This pins the runner's three pieces of wiring:
+//   - BcRuntime.ConstructFormForStaticEntry binds a caller's record with clone: true
+//     (clone: false -> the MOVE arms read <Charlie>);
+//   - RunnerPageInstance.CopyHostRowForTarget drops the host's filters (kept -> <2>, not <3>);
+//   - RunnerPageInstance.RereadHostRowAfterTarget re-reads the host row (skipped -> <Bravo>).
 //
 // The fixture declares no "application", per .claude/rules/no-base-app-in-csharp-tests.md.
 
@@ -44,8 +46,8 @@ public sealed class PageRunClonesCallersRecordTests : IDisposable
         var (exit, output) = Spawn(_root, pkg);
 
         // Each arm asserts inside AL; the counts distinguish "passed" from "discovered nothing".
-        Assert.True(output.Contains("passed 4 ", StringComparison.Ordinal),
-            $"expected all four arms to pass; exit={exit}\n{output}");
+        Assert.True(output.Contains("passed 6 ", StringComparison.Ordinal),
+            $"expected all six arms to pass; exit={exit}\n{output}");
         Assert.Matches(@"\bfailed 0\b", output);
         Assert.Matches(@"\berrors 0\b", output);
         Assert.Equal(0, exit);
@@ -83,9 +85,14 @@ public sealed class PageRunClonesCallersRecordTests : IDisposable
             {
                 SingleInstance = true;
                 var
+                    Mode: Text;
                     Seen: Text;
                     MovedTo: Text;
-                procedure Reset() begin Seen := ''; MovedTo := ''; end;
+                    RowCount: Integer;
+                procedure Reset(NewMode: Text) begin Mode := NewMode; Seen := ''; MovedTo := ''; RowCount := -1; end;
+                procedure GetMode(): Text begin exit(Mode); end;
+                procedure SetCount(Value: Integer) begin RowCount := Value; end;
+                procedure GetCount(): Integer begin exit(RowCount); end;
                 procedure SetSeen(Value: Text) begin Seen := Value; end;
                 procedure GetSeen(): Text begin exit(Seen); end;
                 procedure SetMovedTo(Value: Text) begin MovedTo := Value; end;
@@ -113,9 +120,12 @@ public sealed class PageRunClonesCallersRecordTests : IDisposable
                     Probe: Codeunit "PRCR Probe";
                 begin
                     Probe.SetSeen(Rec.Descr);
-                    Rec.Reset();
-                    Rec.FindLast();
-                    Probe.SetMovedTo(Rec.Descr);
+                    Probe.SetCount(Rec.Count());
+                    if Probe.GetMode() = 'MOVE' then begin
+                        Rec.Reset();
+                        Rec.FindLast();
+                        Probe.SetMovedTo(Rec.Descr);
+                    end;
                 end;
             }
 
@@ -154,12 +164,12 @@ public sealed class PageRunClonesCallersRecordTests : IDisposable
             {
                 Subtype = Test;
 
-                local procedure Seed()
+                local procedure Seed(Mode: Text)
                 var
                     Row: Record "PRCR Row";
                     Probe: Codeunit "PRCR Probe";
                 begin
-                    Probe.Reset();
+                    Probe.Reset(Mode);
                     Row.DeleteAll();
                     Row."No." := 'A'; Row.Descr := 'Alpha'; Row.Insert();
                     Row."No." := 'B'; Row.Descr := 'Bravo'; Row.Insert();
@@ -180,7 +190,7 @@ public sealed class PageRunClonesCallersRecordTests : IDisposable
                     Row: Record "PRCR Row";
                     Probe: Codeunit "PRCR Probe";
                 begin
-                    Seed();
+                    Seed('MOVE');
                     Row.Get('B');
                     Page.Run(Page::"PRCR Target", Row);
                     Check('Bravo', Probe.GetSeen(), 'the page opens on the caller''s row');
@@ -196,7 +206,7 @@ public sealed class PageRunClonesCallersRecordTests : IDisposable
                     Row: Record "PRCR Row";
                     Probe: Codeunit "PRCR Probe";
                 begin
-                    Seed();
+                    Seed('MOVE');
                     Row.Get('B');
                     Page.RunModal(Page::"PRCR Target", Row);
                     Check('Charlie', Probe.GetMovedTo(), 'the page moved its own Rec');
@@ -211,7 +221,7 @@ public sealed class PageRunClonesCallersRecordTests : IDisposable
                     Probe: Codeunit "PRCR Probe";
                     Host: TestPage "PRCR Host";
                 begin
-                    Seed();
+                    Seed('MOVE');
                     Host.OpenEdit();
                     Host.First();
                     Host.Next();
@@ -228,15 +238,58 @@ public sealed class PageRunClonesCallersRecordTests : IDisposable
                     Row: Record "PRCR Row";
                     Probe: Codeunit "PRCR Probe";
                 begin
-                    Seed();
+                    Seed('MOVE');
                     Row.Get('B');
                     Check('', Probe.GetMovedTo(), 'nothing opened');
                     Check('Bravo', Row.Descr, 'the caller''s record with no page run');
                 end;
 
+                // Fails with <2> when the target is handed the host's filters.
+                [Test]
+                [HandlerFunctions('TargetHandler')]
+                procedure RunObjectTargetDoesNotSeeTheHostsFilter()
+                var
+                    Probe: Codeunit "PRCR Probe";
+                    Host: TestPage "PRCR Host";
+                begin
+                    Seed('READ');
+                    Host.OpenEdit();
+                    Host.Filter.SetFilter("No.", 'B..C');
+                    Host.First();
+                    Check('Bravo', Host.Descr.Value(), 'precondition: the filtered host is on B');
+                    Host.RunTarget.Invoke();
+                    Check('Bravo', Probe.GetSeen(), 'the target opens on the host''s row');
+                    Check('3', Format(Probe.GetCount()), 'rows the target''s Rec counts under a filtered host');
+                end;
+
+                // Fails with <Bravo> when the host does not re-read its row after the target.
+                [Test]
+                [HandlerFunctions('TargetHandler')]
+                procedure RunObjectTargetWriteShowsOnTheHost()
+                var
+                    Row: Record "PRCR Row";
+                    Host: TestPage "PRCR Host";
+                begin
+                    Seed('WRITE');
+                    Host.OpenEdit();
+                    Host.First();
+                    Host.Next();
+                    Host.RunTarget.Invoke();
+                    Row.Get('B');
+                    Check('Written', Row.Descr, 'precondition: the target''s write reached the table');
+                    Check('B', Host."No.".Value(), 'the host stays on the written row');
+                    Check('Written', Host.Descr.Value(), 'the host after the target wrote its row');
+                end;
+
                 [PageHandler]
                 procedure TargetHandler(var Target: TestPage "PRCR Target")
+                var
+                    Probe: Codeunit "PRCR Probe";
                 begin
+                    if Probe.GetMode() = 'WRITE' then begin
+                        Target.Descr.SetValue('Written');
+                        Target.Close();
+                    end;
                 end;
 
                 [ModalPageHandler]
