@@ -426,7 +426,10 @@ internal static partial class BcAppSymbolCache
     /// <para>Members come from <c>ActionChanges[].Actions</c> and <c>ControlChanges[].Controls</c>
     /// (recursively — an added group nests its actions), the two containers the compiler
     /// writes for <c>addfirst/addlast/addafter/addbefore</c>; a <c>modify(...)</c> change
-    /// carries Properties only and contributes no member.</para>
+    /// carries Properties only and contributes no member. Its Properties are kept in
+    /// <c>ControlModifications</c> / <c>ActionModifications</c> instead, keyed by the modified
+    /// member's NAME (the change's <c>Anchor</c>), because that member lives in another
+    /// object's id space (#4761).</para>
     /// </summary>
     internal sealed record PageExtensionSymbol(
         int Id, string Name, string TargetObjectName,
@@ -460,7 +463,13 @@ internal static partial class BcAppSymbolCache
         // none and correctly get no element.
         Dictionary<string, string>? ObjectProperties = null,
         // Same as PageSymbol.ReferenceSourceFileName (#4622).
-        string? ReferenceSourceFileName = null);
+        string? ReferenceSourceFileName = null,
+        // modify(<name>) { ... } property bags: modified member NAME -> property name -> value,
+        // verbatim. Null means "this payload predates the field". Keys are compared with
+        // NamesEqual / OrdinalIgnoreCase at the consumer: a deserialised Dictionary has lost
+        // its comparer, and Base Application states one property as "visible".
+        Dictionary<string, Dictionary<string, string>>? ControlModifications = null,
+        Dictionary<string, Dictionary<string, string>>? ActionModifications = null);
 
     /// <summary>
     /// Where one member an AL <c>pageextension</c> adds came from, as SymbolReference.json
@@ -1802,8 +1811,26 @@ internal static partial class BcAppSymbolCache
                         kindByMember.TryGetValue(id, out var kind) ? kind : null);
         }
 
+        var controlModifications = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+        var actionModifications = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+        // ChangeKind 9 with no member array is modify(<Anchor>): measured on Base Application
+        // 28.5, every ChangeKind 9 entry carries no Controls/Actions and every other kind does.
+        void RecordModification(JsonElement change, string childKey, Dictionary<string, Dictionary<string, string>> into)
+        {
+            if (change.TryGetProperty(childKey, out _)) return;
+            if (!change.TryGetProperty("ChangeKind", out var ck) || !ck.TryGetInt32(out var kind) || kind != 9) return;
+            if (!change.TryGetProperty("Anchor", out var an) || an.GetString() is not { Length: > 0 } anchor) return;
+            var props = SymbolProperties(change);
+            if (props.Count == 0) return;
+            if (!into.TryGetValue(anchor, out var existing))
+                into[anchor] = existing = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (name, value) in props) existing[name] = value;
+        }
+
         if (ext.TryGetProperty("ActionChanges", out var actionChanges) && actionChanges.ValueKind == JsonValueKind.Array)
             foreach (var change in actionChanges.EnumerateArray())
+            {
+                RecordModification(change, "Actions", actionModifications);
                 if (change.TryGetProperty("Actions", out var added) && added.ValueKind == JsonValueKind.Array)
                     foreach (var a in added.EnumerateArray())
                     {
@@ -1812,8 +1839,11 @@ internal static partial class BcAppSymbolCache
                         CollectDeclaredProperties(a, "Actions");
                         RecordOrigin(before, isAction: true, change);
                     }
+            }
         if (ext.TryGetProperty("ControlChanges", out var controlChanges) && controlChanges.ValueKind == JsonValueKind.Array)
             foreach (var change in controlChanges.EnumerateArray())
+            {
+                RecordModification(change, "Controls", controlModifications);
                 if (change.TryGetProperty("Controls", out var added) && added.ValueKind == JsonValueKind.Array)
                     foreach (var c in added.EnumerateArray())
                     {
@@ -1822,13 +1852,15 @@ internal static partial class BcAppSymbolCache
                         CollectDeclaredProperties(c, "Controls");
                         RecordOrigin(before, isAction: false, change);
                     }
+            }
 
         return new PageExtensionSymbol(extId, name!, StripModuleQualifierPrefix(target!),
             memberNames, actionRefTargets, runObjects, origins,
             // The extension node's own bag, read with the same helper the members use. Always
             // non-null here so an empty bag and a pre-field payload stay distinguishable.
             SymbolProperties(ext),
-            ReadReferenceSourceFileName(ext));
+            ReadReferenceSourceFileName(ext),
+            controlModifications, actionModifications);
     }
 
     /// <summary>

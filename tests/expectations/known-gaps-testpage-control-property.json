@@ -30,5 +30,29 @@
     "Mode": "expect-fail-known-gap",
     "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2596",
     "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it -- see the sibling known-gaps-testpage-blank-temporal.json for why the pin could not advance to #155 alone. A control property expression that reads a source-table field raises RunnerOutOfScopeException (testpage-control-property: \"'Flag' is not a name the page publishes a binding for\") where real BC evaluates it. Tracked as #2596, which is open, labelled 'status: blocked', and is NOT closed by this PR; the fix for it removes this entry."
+  },
+  {
+    "codeunitId": 67403,
+    "CodeunitName": "PXCM Tests",
+    "Method": "PrecompiledPageExtModify_PrintOutput_PrinterNameIsEnabled",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4787",
+    "Note": "Since #4761 the runner reads pageextension 682's modify(\"Printer Name\") { Enabled = Rec.\"Report Output Type\" = Rec.\"Report Output Type\"::Print; }, where it used to answer the AL default true. That value is the raw AL text from SymbolReference.json, and PageControlExpression has no Rec. prefix or :: literal in its grammar, so the read refuses loudly (testpage-control-property). The expected values are this corpus test's, and it is pending on real BC in corpus PR #458. #4787 tracks evaluating the raw spelling; its fix removes this entry."
+  },
+  {
+    "codeunitId": 67403,
+    "CodeunitName": "PXCM Tests",
+    "Method": "PrecompiledPageExtModify_PdfOutput_PrinterNameIsDisabled",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4787",
+    "Note": "Since #4761 the runner reads pageextension 682's modify(\"Printer Name\") { Enabled = Rec.\"Report Output Type\" = Rec.\"Report Output Type\"::Print; }, where it used to answer the AL default true. That value is the raw AL text from SymbolReference.json, and PageControlExpression has no Rec. prefix or :: literal in its grammar, so the read refuses loudly (testpage-control-property). The expected values are this corpus test's, and it is pending on real BC in corpus PR #458. #4787 tracks evaluating the raw spelling; its fix removes this entry."
+  },
+  {
+    "codeunitId": 67403,
+    "CodeunitName": "PXCM Tests",
+    "Method": "PrecompiledPageExtModify_ExcelOutput_PrinterNameIsDisabled",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4787",
+    "Note": "Since #4761 the runner reads pageextension 682's modify(\"Printer Name\") { Enabled = Rec.\"Report Output Type\" = Rec.\"Report Output Type\"::Print; }, where it used to answer the AL default true. That value is the raw AL text from SymbolReference.json, and PageControlExpression has no Rec. prefix or :: literal in its grammar, so the read refuses loudly (testpage-control-property). The expected values are this corpus test's, and it is pending on real BC in corpus PR #458. #4787 tracks evaluating the raw spelling; its fix removes this entry."
   }
 ]

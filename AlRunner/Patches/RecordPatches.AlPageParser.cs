@@ -699,23 +699,28 @@ public static partial class RecordPatches
     /// <see cref="DependencyPageExtensionFieldControls"/>, the same set
     /// <see cref="GetPageControlFieldMap"/> binds (#4749). Their ids live in the extension's id
     /// space, so they cannot collide with the page's own.</para>
+    ///
+    /// <para>A precompiled pageextension's <c>modify(&lt;control&gt;)</c> value replaces the
+    /// declared one (#4761), through <see cref="DependencyPageExtensionModifiedProperty"/>.</para>
     /// </summary>
     internal static string? TryGetDependencyControlDeclaredProperty(int pageId, int controlId, string propertyName)
     {
         var symbol = TryGetDependencyPageSymbol(pageId);
         if (symbol == null) return null;
+        if (propertyName is not ("Editable" or "Visible" or "Enabled")) return null;
 
         foreach (var control in (symbol.Controls ?? new List<BcAppSymbolCache.PageControlSymbol>())
                      .Concat(DependencyPageExtensionFieldControls(symbol.Name)))
         {
             if (control.Id != controlId) continue;
-            return propertyName switch
+            var declared = propertyName switch
             {
                 "Editable" => control.EditableExpr,
                 "Visible" => control.VisibleExpr,
-                "Enabled" => control.EnabledExpr,
-                _ => null,
+                _ => control.EnabledExpr,
             };
+            return DependencyPageExtensionModifiedProperty(symbol.Name, control.Name, propertyName, isAction: false)
+                   ?? declared;
         }
         return null;
     }
@@ -744,15 +749,19 @@ public static partial class RecordPatches
     internal static string? TryGetDependencyActionDeclaredProperty(int pageId, int actionId, string propertyName)
     {
         var symbol = TryGetDependencyPageSymbol(pageId);
-        if (symbol?.MemberIdToDeclaredProperties is not { } declared) return null;
-        if (!declared.TryGetValue(actionId, out var properties)) return null;
+        if (symbol == null) return null;
+        if (propertyName is not ("Enabled" or "Visible")) return null;
 
-        return propertyName switch
-        {
-            "Enabled" => properties.Enabled,
-            "Visible" => properties.Visible,
-            _ => null,
-        };
+        string? declaredValue = null;
+        if (symbol.MemberIdToDeclaredProperties is { } declared
+            && declared.TryGetValue(actionId, out var properties))
+            declaredValue = propertyName == "Enabled" ? properties.Enabled : properties.Visible;
+
+        // A precompiled pageextension's modify(<action>) value replaces the declared one (#4761).
+        if (symbol.MemberIdToName is { } names && names.TryGetValue(actionId, out var actionName)
+            && DependencyPageExtensionModifiedProperty(symbol.Name, actionName, propertyName, isAction: true) is { } modified)
+            return modified;
+        return declaredValue;
     }
 
     /// <summary>
