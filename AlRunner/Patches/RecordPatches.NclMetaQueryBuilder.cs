@@ -41,7 +41,7 @@ public static partial class RecordPatches
         try { System.IO.File.AppendAllText("/tmp/qdiag.txt", "[NclMetaQueryBuilder] " + msg + "\n"); } catch { }
     }
 
-    private static void EnsureQueryBuilderReflection()
+    internal static void EnsureQueryBuilderReflection()
     {
         if (_tMetaQuery != null && _mCreateDynamicQuery != null) return;
         EnsureFormReportReflection();
@@ -601,7 +601,7 @@ public static partial class RecordPatches
     }
 
 
-    private static void AddColumn(object dataItem, int id, string name, int fieldNo, int index, string? caption = null, string? method = null, bool reverseSign = false)
+    internal static void AddColumn(object dataItem, int id, string name, int fieldNo, int index, string? caption = null, string? method = null, bool reverseSign = false)
     {
         var col = Activator.CreateInstance(_tMetaQueryColumn!)!;
         SetProp(col, "Id", id);
