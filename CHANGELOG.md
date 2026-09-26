@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **testpage:** Value() of a precompiled enum whose declared order is not ordinal order
 - **page:** apply a precompiled pageextension's modify() override of Visible/Editable/Enabled
 - **media:** an empty Media/MediaSet MediaId matches BC
 - **user:** run the User delete cascade after the row is deleted, not before OnDelete
