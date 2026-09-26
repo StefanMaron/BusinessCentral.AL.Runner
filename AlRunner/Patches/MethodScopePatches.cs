@@ -511,8 +511,11 @@ public static partial class BcRuntime
             {
                 if (host is Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle cuHandle && cuHandle.HasTarget)
                 {
+                    // Only the LAST reference's release disposes the instance in BC; a by-value
+                    // parameter (ALByValue -> CloneReference) is a second handle on one bound
+                    // instance and must not unbind it at the callee's exit (#4737).
                     var target = cuHandle.Target;
-                    if (target != null && target.IsSubscriptionBound)
+                    if (target != null && target.IsSubscriptionBound && IsLastReference(target.Tree, cuHandle))
                         UnbindManualSubscriptionDirect(target);
                 }
             }

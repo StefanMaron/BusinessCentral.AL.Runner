@@ -185,6 +185,41 @@ public class UnbindLocalManualSubscriptionsTests
     }
 
     /// <summary>
+    /// #4737: a by-value codeunit parameter is a second NavCodeunitHandle on the SAME bound
+    /// instance (ALByValue -> CloneReference), parented on the callee's scope. Releasing it at
+    /// the callee's exit is not the last reference, so BC does not dispose the instance and
+    /// its binding stays — the caller's handle (here parented on root) still holds it.
+    /// </summary>
+    [SkippableFact]
+    public void BoundTargetStillReferencedOutsideTheScope_StaysBound()
+    {
+        TestArtifacts.SkipIf(!_engine.Ready,
+            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
+
+        var root = Root();
+        var target = new Codeunit69003(root);
+        var callerHandle = new NavCodeunitHandle(root, target);
+        var scope = new NavScope(root);
+        _ = callerHandle.ALByValue(scope); // the callee's by-value parameter
+
+        SetSubscriptionBound(target, true);
+        var bindings = EventBindings();
+        bindings.Add(target);
+
+        BcRuntime.UnbindLocalManualSubscriptions(scope);
+
+        var stillBound = target.IsSubscriptionBound;
+        var stillListed = bindings.Cast<object>().Contains(target);
+        SetSubscriptionBound(target, false);
+        bindings.Remove(target);
+
+        Assert.True(stillBound,
+            "A by-value parameter's handle is not the last reference to the instance, so the " +
+            "callee's scope exit must not clear IsSubscriptionBound (#4737).");
+        Assert.True(stillListed, "The still-referenced instance must stay in Session.EventBindings.");
+    }
+
+    /// <summary>
     /// The sweep survives being called with a scope that has no reflected tree fields
     /// resolved at all (e.g. a unit test host that never bootstrapped the engine) — must
     /// return quietly rather than NRE. Runs unconditionally, mirroring
