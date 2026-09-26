@@ -228,4 +228,14 @@ public sealed class MediaSetPatchesTests
         Assert.NotEqual(Guid.Empty, self.Key.Value);
         Assert.Equal(self.Key.Value, MediaSetPatches.NavMediaSet_get_ALMediaId(self));
     }
+
+    private sealed class NoKeyValue { }
+
+    [Fact]
+    public void MediaId_UnboundKey_Refuses_RatherThanAnsweringEmpty()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => MediaSetPatches.NavMediaSet_get_ALMediaId(new NoKeyValue()));
+        Assert.Contains("cannot answer MediaId", ex.Message);
+    }
 }
