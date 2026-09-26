@@ -1,16 +1,16 @@
-// UserModifyArmBindingTests — issue #2363.
+// UserModifyArmBindingTests — issues #2363 and #4701.
 //
-// A RUNNER-MECHANISM test. The BC-observable claim (Insert/Modify on User normalise and
-// validate "Authentication Email"; Modify refuses a user name another user carries) is pinned
-// upstream, corpus codeunit 61206 "Test User Auth Email Trigger" in the OnPrem app.
+// A RUNNER-MECHANISM test. The BC-observable claims are pinned upstream in the OnPrem app:
+// corpus 61206 "Test User Auth Email Trigger" (what the User modify arm does) and corpus 61208
+// "Test User Auth Email Order" (that it runs after the OnBeforeModify subscribers).
 //
 // What this pins is the runner's own wiring, which no C# call graph shows: that
-// UserTableTriggerPatches.OnBeforeUserModify is prepended to the modify FUNNEL
-// NavRecord.ModifyAsync(4) — where AL Modify() and a page save meet
-// (docs/page-save-data-layer-prepends.md) — and not also to ALModifyAsync or the 3-arg
-// forwarder, which would run the validation twice; and that the BC member the patch invokes
-// rather than re-implements, SystemTableTriggers.TrimAndAnalyzeAuthenticationEmail(string),
-// still has the shape the reflection bind asks for.
+// UserTableTriggerPatches.OnBeforeUserModify is prepended to RecordImplementation.ModifyRecordAsync
+// — below NavRecord.ModifyAsync(4)'s subscriber and trigger dispatch, where BC's own
+// SystemTableTriggers arm sits (#4701) — and to no NavRecord modify entry point, where it would run
+// before the subscribers or twice; and that the BC member the patch invokes rather than
+// re-implements, SystemTableTriggers.TrimAndAnalyzeAuthenticationEmail(string), still has the
+// shape the reflection bind asks for.
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 using Xunit;
@@ -48,48 +48,61 @@ public sealed class UserModifyArmBindingTests
             .Select(i => (i.Operand as MethodReference)?.FullName ?? string.Empty)
             .ToList();
 
-    /// <summary>A rewritten Ncl carries the insert arm's prepend; an un-rewritten one is a skip,
-    /// never a pass, and never a failure of the subject below.</summary>
+    /// <summary>A rewritten Ncl carries the delete arm's prepend, which this class asserts nothing
+    /// about; an un-rewritten one is a skip, never a pass, and never a failure of the subject.</summary>
     private static void SkipUnlessRewritten(ModuleDefinition module)
         => Skip.IfNot(
-            CalledMethods(NavRecordMethod(module, "InsertAsync", "DataError", "Boolean", "Boolean", "Boolean"))
-                .Any(n => n.Contains("UserTableTriggerPatches::OnBeforeUserInsert(System.Object)", StringComparison.Ordinal)),
+            CalledMethods(NavRecordMethod(module, "ALDeleteAsync", "DataError", "Boolean", "Boolean"))
+                .Any(n => n.Contains("UserTableTriggerPatches::OnAfterUserDelete(System.Object)", StringComparison.Ordinal)),
             $"'{RewrittenNclPath}' has not been Cecil-rewritten; run the runner once to warm the Cecil cache.");
 
+    private static MethodDefinition RecordImplementationMethod(ModuleDefinition module, string name)
+    {
+        var method = module.GetType("Microsoft.Dynamics.Nav.Runtime.RecordImplementation")?.Methods.FirstOrDefault(m =>
+            m.Name == name && m.HasBody
+            && m.Parameters.Select(p => p.ParameterType.Name).SequenceEqual(new[] { "DataError" }));
+        Assert.True(method != null, $"RecordImplementation.{name}(DataError) not found in Ncl.");
+        return method!;
+    }
+
     [SkippableFact]
-    public void ModifyFunnel_CarriesTheUserModifyArm_InsideThePrependedPrefix()
+    public void ModifyRecord_CarriesTheUserModifyArm_OnItsParentRecord_AheadOfTheOriginalBody()
     {
         using var module = OpenNcl();
         SkipUnlessRewritten(module);
 
-        var modify4 = NavRecordMethod(module, "ModifyAsync", "DataError", "Boolean", "Boolean", "Boolean");
-        var instructions = modify4.Body.Instructions;
+        var instructions = RecordImplementationMethod(module, "ModifyRecordAsync").Body.Instructions;
         var index = instructions.ToList().FindIndex(i =>
             i.OpCode == OpCodes.Call && (i.Operand as MethodReference)?.FullName == UserModifyArm);
 
-        Assert.True(index > 0,
-            "NavRecord.ModifyAsync(4) does not call OnBeforeUserModify — a User Modify (AL or page "
-            + "save) would store an un-normalised Authentication Email and accept duplicates (#2363).");
+        Assert.True(index >= 2,
+            "RecordImplementation.ModifyRecordAsync does not call OnBeforeUserModify — a User Modify "
+            + "(AL or page save) would store an un-normalised Authentication Email and accept "
+            + "duplicates (#2363).");
+        Assert.Equal(OpCodes.Ldarg_0, instructions[index - 2].OpCode);
+        Assert.Equal(OpCodes.Ldfld, instructions[index - 1].OpCode);
+        Assert.Equal("parentRecord", (instructions[index - 1].Operand as FieldReference)?.Name);
         for (var i = 0; i < index; i++)
-            Assert.True(instructions[i].OpCode == OpCodes.Ldarg_0 || instructions[i].OpCode == OpCodes.Call,
-                $"instruction {i} of ModifyAsync(4) is {instructions[i].OpCode}: OnBeforeUserModify would "
-                + "run after part of the original body instead of before the write.");
+            Assert.True(
+                instructions[i].OpCode == OpCodes.Ldarg_0 || instructions[i].OpCode == OpCodes.Ldfld
+                || instructions[i].OpCode == OpCodes.Call,
+                $"instruction {i} of ModifyRecordAsync is {instructions[i].OpCode}: OnBeforeUserModify "
+                + "would run after part of the original body instead of before the write.");
     }
 
     [SkippableFact]
-    public void AlModifyAndTheThreeArgForwarder_DoNotAlsoCarryTheUserModifyArm()
+    public void NavRecordModifyEntryPoints_DoNotCarryTheUserModifyArm()
     {
+        // #4701: on NavRecord.ModifyAsync(4) the arm ran BEFORE the OnBeforeModify subscribers
+        // and the OnModify triggers; on ALModifyAsync or the 3-arg forwarder it would also run
+        // twice per AL modify.
         using var module = OpenNcl();
         SkipUnlessRewritten(module);
 
         var navRecord = module.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord")!;
-        foreach (var method in navRecord.Methods.Where(m => m.Name == "ALModifyAsync" && m.HasBody))
+        foreach (var method in navRecord.Methods.Where(m => (m.Name == "ALModifyAsync" || m.Name == "ModifyAsync") && m.HasBody))
             Assert.DoesNotContain(UserModifyArm, CalledMethods(method));
-        Assert.DoesNotContain(UserModifyArm, CalledMethods(
-            NavRecordMethod(module, "ModifyAsync", "DataError", "Boolean", "Boolean")));
-        Assert.Single(CalledMethods(
-            NavRecordMethod(module, "ModifyAsync", "DataError", "Boolean", "Boolean", "Boolean")),
-            n => n == UserModifyArm);
+        Assert.Single(CalledMethods(RecordImplementationMethod(module, "ModifyRecordAsync")), n => n == UserModifyArm);
     }
 
     [SkippableFact]

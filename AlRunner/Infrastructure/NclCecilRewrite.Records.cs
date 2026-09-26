@@ -1305,29 +1305,34 @@ public static partial class NclCecilRewrite
             Console.Error.WriteLine("[Cecil] Prepended StampSystemFieldsOnInsert → NavRecord.InsertAsync(DataError,bool,bool,bool)");
         }
 
-        // ── NavRecord.InsertAsync(DataError, bool, bool, bool) — User system-table insert arm ──
+        // ── RecordImplementation.InsertRecordAsync(DataError) — User system-table insert arm ──
         // On a real tier, SystemTableTriggers.OnBeforeInsertAsync's `case 2000000120:` arm
-        // refuses a duplicate user name / Windows SID (#2983) and then inserts the matching
-        // User Property (2000000121) row for every User it accepts. The runner bypasses BC's
-        // trigger dispatch on insert, so this prepend stands in for it; a no-op for every
-        // table but User. See AlRunner/Patches/UserTableTriggerPatches.cs, #2355 / #2983.
+        // refuses a duplicate user name / Windows SID (#2983), normalises and checks
+        // "Authentication Email" (#2363) and inserts the matching User Property (2000000121)
+        // row. BC reaches it from the data layer UNDER RecordImplementation.InsertRecordAsync,
+        // i.e. after NavRecord.InsertAsync has run the OnBeforeInsert subscribers, the OnInsert
+        // triggers and NavGlobalTriggers (#4701, corpus 61208). The runner's data layer is not
+        // BC's, so this prepend stands in for the arm at the nearest point above it.
         //
-        // InsertAsync(4), NOT ALInsertAsync(3): BC's arm sits in the data layer, and two
-        // routes reach it — ALInsertAsync(3) (AL Rec.Insert) and NavForm.SaveRecordAsync
-        // (CurrPage.Update / SaveRecord on a new record), which calls InsertAsync(4) directly.
-        // Prepending ALInsertAsync(3) missed the page route (#4121, corpus 61204). Both
-        // routes funnel through InsertAsync(4); it has no overrides (bc284).
+        // Both insert routes reach it: AL Rec.Insert and NavForm.SaveRecordAsync go through
+        // NavRecord.InsertAsync(4) (#4121); NavForm.SyncTempTableWithSourceTableAsync calls
+        // InsertRecordAsync directly. See AlRunner/Patches/UserTableTriggerPatches.cs.
+        //
+        // Emits `ldarg.0; ldfld parentRecord; call helper`: parentRecord is a FieldDefinition
+        // of this module, so the ldfld adds no typeRef/memberRef to Ncl (no token shift).
         {
-            var navRecord = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord")
-                ?? throw new InvalidOperationException("NavRecord type not found in Ncl");
-            var insert4 = navRecord.Methods.FirstOrDefault(m =>
-                m.Name == "InsertAsync"
-                && m.Parameters.Count == 4
-                && m.Parameters[0].ParameterType.Name == "DataError"
-                && m.Parameters[1].ParameterType.MetadataType == Mono.Cecil.MetadataType.Boolean
-                && m.Parameters[2].ParameterType.MetadataType == Mono.Cecil.MetadataType.Boolean
-                && m.Parameters[3].ParameterType.MetadataType == Mono.Cecil.MetadataType.Boolean)
-                ?? throw new InvalidOperationException("NavRecord.InsertAsync(DataError,bool,bool,bool) not found");
+            var recImpl = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.RecordImplementation")
+                ?? throw new InvalidOperationException("RecordImplementation type not found in Ncl");
+            var parentRecord = recImpl.Fields.FirstOrDefault(f => f.Name == "parentRecord"
+                    && f.FieldType.FullName == "Microsoft.Dynamics.Nav.Runtime.NavRecord")
+                ?? throw new InvalidOperationException(
+                    "RecordImplementation.parentRecord (NavRecord) not found — the User system-table "
+                    + "insert/modify arms could not be bound.");
+            var insertRecord = recImpl.Methods.FirstOrDefault(m =>
+                m.Name == "InsertRecordAsync"
+                && m.Parameters.Count == 1
+                && m.Parameters[0].ParameterType.Name == "DataError")
+                ?? throw new InvalidOperationException("RecordImplementation.InsertRecordAsync(DataError) not found");
 
             var helperMi = typeof(AlRunner.Patches.UserTableTriggerPatches).GetMethod(
                 nameof(AlRunner.Patches.UserTableTriggerPatches.OnBeforeUserInsert),
@@ -1335,13 +1340,14 @@ public static partial class NclCecilRewrite
                 ?? throw new InvalidOperationException("UserTableTriggerPatches.OnBeforeUserInsert not found");
             var helperRef = asm.MainModule.ImportReference(helperMi);
 
-            var body = insert4.Body;
+            var body = insertRecord.Body;
             var il = body.GetILProcessor();
             var firstOriginal = body.Instructions[0];
             il.InsertBefore(firstOriginal, il.Create(OpCodes.Ldarg_0));
+            il.InsertBefore(firstOriginal, il.Create(OpCodes.Ldfld, parentRecord));
             il.InsertBefore(firstOriginal, il.Create(OpCodes.Call, helperRef));
             if (body.MaxStackSize < 1) body.MaxStackSize = 1;
-            Console.Error.WriteLine("[Cecil] Prepended OnBeforeUserInsert → NavRecord.InsertAsync(DataError,bool,bool,bool)");
+            Console.Error.WriteLine("[Cecil] Prepended OnBeforeUserInsert → RecordImplementation.InsertRecordAsync(DataError)");
         }
 
         // ── NavRecord.ALDeleteAsync(DataError, bool, bool) — User system-table delete arm ──
@@ -1427,22 +1433,25 @@ public static partial class NclCecilRewrite
             Console.Error.WriteLine("[Cecil] Prepended StampSystemFieldsOnModify → NavRecord.ModifyAsync(DataError,bool,bool,bool)");
         }
 
-        // ── NavRecord.ModifyAsync(DataError, bool, bool, bool) — User system-table modify arm ──
+        // ── RecordImplementation.ModifyRecordAsync(DataError) — User system-table modify arm ──
         // SystemTableTriggers.OnBeforeModifyUserAsync refuses a user name / Windows SID another
-        // user carries and normalises + validates "Authentication Email" (#2363). Same funnel as
-        // the stamp above, for the same reason (AL Modify and page save meet here). Inserted
-        // AFTER that block, so it lands before the stamp: validate, then stamp, then write.
+        // user carries and normalises + validates "Authentication Email" (#2363). Placed on
+        // ModifyRecordAsync, not NavRecord.ModifyAsync, for the reason the insert arm above
+        // gives: BC runs it after the OnBeforeModify subscribers and OnModify triggers (#4701).
+        // AL Modify and a page save both reach it through NavRecord.ModifyAsync(4).
         {
-            var navRecord = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord")
-                ?? throw new InvalidOperationException("NavRecord type not found in Ncl");
-            var modify4 = navRecord.Methods.FirstOrDefault(m =>
-                m.Name == "ModifyAsync"
-                && m.Parameters.Count == 4
-                && m.Parameters[0].ParameterType.Name == "DataError"
-                && m.Parameters[1].ParameterType.MetadataType == Mono.Cecil.MetadataType.Boolean
-                && m.Parameters[2].ParameterType.MetadataType == Mono.Cecil.MetadataType.Boolean
-                && m.Parameters[3].ParameterType.MetadataType == Mono.Cecil.MetadataType.Boolean)
-                ?? throw new InvalidOperationException("NavRecord.ModifyAsync(DataError,bool,bool,bool) not found");
+            var recImpl = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.RecordImplementation")
+                ?? throw new InvalidOperationException("RecordImplementation type not found in Ncl");
+            var parentRecord = recImpl.Fields.FirstOrDefault(f => f.Name == "parentRecord"
+                    && f.FieldType.FullName == "Microsoft.Dynamics.Nav.Runtime.NavRecord")
+                ?? throw new InvalidOperationException(
+                    "RecordImplementation.parentRecord (NavRecord) not found — the User system-table "
+                    + "modify arm could not be bound.");
+            var modifyRecord = recImpl.Methods.FirstOrDefault(m =>
+                m.Name == "ModifyRecordAsync"
+                && m.Parameters.Count == 1
+                && m.Parameters[0].ParameterType.Name == "DataError")
+                ?? throw new InvalidOperationException("RecordImplementation.ModifyRecordAsync(DataError) not found");
 
             var helperMi = typeof(AlRunner.Patches.UserTableTriggerPatches).GetMethod(
                 nameof(AlRunner.Patches.UserTableTriggerPatches.OnBeforeUserModify),
@@ -1450,13 +1459,14 @@ public static partial class NclCecilRewrite
                 ?? throw new InvalidOperationException("UserTableTriggerPatches.OnBeforeUserModify not found");
             var helperRef = asm.MainModule.ImportReference(helperMi);
 
-            var body = modify4.Body;
+            var body = modifyRecord.Body;
             var il = body.GetILProcessor();
             var firstOriginal = body.Instructions[0];
             il.InsertBefore(firstOriginal, il.Create(OpCodes.Ldarg_0));
+            il.InsertBefore(firstOriginal, il.Create(OpCodes.Ldfld, parentRecord));
             il.InsertBefore(firstOriginal, il.Create(OpCodes.Call, helperRef));
             if (body.MaxStackSize < 1) body.MaxStackSize = 1;
-            Console.Error.WriteLine("[Cecil] Prepended OnBeforeUserModify → NavRecord.ModifyAsync(DataError,bool,bool,bool)");
+            Console.Error.WriteLine("[Cecil] Prepended OnBeforeUserModify → RecordImplementation.ModifyRecordAsync(DataError)");
         }
 
         // ── NavRecord.get_ALReadPermission / get_ALWritePermission → return true ─────

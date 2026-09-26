@@ -33,11 +33,14 @@
 //   Issue #2355. Measured on Microsoft's Tests-SINGLESERVER bucket, BC 28.1.49838.53910.
 //
 // WHY A PREPEND, AND WHY THIS ENTRY POINT
-//   NavRecord.InsertAsync(DataError, bool, bool, bool) is where every insert route meets:
-//   AL `Insert()` (via ALInsertAsync) and a page's CurrPage.Update / SaveRecord on a new
-//   record (NavForm.SaveRecordAsync calls it directly). BC's arm is in the data layer, so it
-//   runs on both; a prepend on ALInsertAsync alone missed the page route (#4121). Running
-//   BEFORE the user row is written matches BC's OnBEFOREInsert.
+//   BC reaches the arm from its data layer, below RecordImplementation.InsertRecordAsync /
+//   ModifyRecordAsync — so AFTER NavRecord.InsertAsync/ModifyAsync(4) have run the
+//   OnBeforeInsert/OnBeforeModify subscribers, the OnInsert/OnModify triggers and
+//   NavGlobalTriggers. The insert and modify helpers are prepended to those two
+//   RecordImplementation methods (on their parentRecord), the nearest point above BC's data
+//   layer; corpus 61208 pins that a subscriber sees the raw email and that an email it sets is
+//   normalised and checked (#4701). Every route meets there: AL Insert/Modify and a page save
+//   (NavForm.SaveRecordAsync, #4121) go through NavRecord.InsertAsync/ModifyAsync(4).
 //
 //   The companion insert itself goes through ALInsert, which re-enters this prepend with
 //   table 2000000121 and returns immediately — the table check below is what bounds it.
@@ -79,18 +82,16 @@
 //       them, and each is its own rule set.
 //     * The commit-time named-user license check both arms flag: the runner has no license
 //       (#4700, docs/limitations.md#environment-type).
-//     * TIMING: these prepends run at the top of NavRecord.InsertAsync/ModifyAsync, i.e. BEFORE
-//       the OnBeforeInsert/OnBeforeModify subscribers and the table's OnInsert/OnModify
-//       triggers; BC runs its arm inside the record write, after them. So a subscriber on User
-//       sees the normalised email here and the raw one on BC, and an email a subscriber sets
-//       is not normalised here (#4701).
+//     * TIMING of the DELETE cascade: it is prepended to NavRecord.ALDeleteAsync, so it runs
+//       before the OnBeforeDelete subscribers and OnDelete triggers; BC cascades after the
+//       delete (#4766). Insert and modify run at BC's point since #4701.
 //     * NavSqlRecentRecords.DeleteAllForUser (a SQL-side table the runner has no store for)
 //       and AuthenticationCache.ExpireUser (a tenant cache the skeleton session does not
 //       have). Neither is observable from AL in this runner.
 //
 // PRECOMPILED-DLL RESPECT
-//   No AL business-logic body is touched. This is a static helper Cecil PREPENDS to
-//   NavRecord's own AL insert entry point in the runtime engine (Ncl.dll), the same
+//   No AL business-logic body is touched. These are static helpers Cecil PREPENDS to
+//   NavRecord / RecordImplementation write methods in the runtime engine (Ncl.dll), the same
 //   mechanism AssignAutoIncrement, the rowversion clock and the All Profile write guards
 //   already use. Every type it touches (NavRecord, NCLMetaField, NavGuid, DataError) is
 //   runtime-engine, never AL business logic.
@@ -135,8 +136,8 @@ public static class UserTableTriggerPatches
     private const string AuthenticationEmailFieldName = "Authentication Email"; // User 11
 
     /// <summary>
-    /// Prepended to NavRecord.InsertAsync(DataError, bool, bool, bool). A no-op for every table
-    /// but User (2000000120); for that one it runs BC's
+    /// Prepended to RecordImplementation.InsertRecordAsync(DataError), on its parentRecord. A
+    /// no-op for every table but User (2000000120); for that one it runs BC's
     /// SystemTableTriggers.OnBeforeInsertAsync `case 2000000120:` arm in BC's own order —
     /// the uniqueness refusals first, then the User Property companion row.
     ///
@@ -399,8 +400,8 @@ public static class UserTableTriggerPatches
     }
 
     /// <summary>
-    /// Prepended to NavRecord.ModifyAsync(DataError, bool, bool, bool) — the funnel both AL
-    /// <c>Modify()</c> and a page save reach. A no-op for every table but User (2000000120); for
+    /// Prepended to RecordImplementation.ModifyRecordAsync(DataError), on its parentRecord — below
+    /// the OnBeforeModify subscribers, as in BC (#4701). A no-op for every table but User (2000000120); for
     /// that one it runs the validations of BC's <c>SystemTableTriggers.OnBeforeModifyUserAsync</c>
     /// in BC's order: user name unique, Windows SID unique, then the authentication email (#2363).
     /// The super-user, application-id and license-type checks of that arm are not reproduced.
