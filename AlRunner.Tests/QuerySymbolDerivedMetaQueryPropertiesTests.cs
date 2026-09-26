@@ -352,4 +352,161 @@ public sealed class QuerySymbolDerivedMetaQueryPropertiesTests : IDisposable
         Assert.Equal(1, link.GetType().GetProperty("SourceFieldNo")!.GetValue(link));
         Assert.Equal(1, link.GetType().GetProperty("DestinationFieldNo")!.GetValue(link));
     }
+
+    // ── #4744: a query from the bundle's own LOOSE SymbolReference.json ─────────────────────────
+    //
+    // No .app, so no NavxManifest.xml: the manifest URL arrives as the bundle's app.json
+    // contextSensitiveHelpUrl, registered with the file. The table the queries read lives in a
+    // separate .app whose OWN manifest states a different URL, so an answer taken from the wrong
+    // manifest is a different string rather than a coincidentally equal one.
+
+    private const int LooseNoHelpPage = 61078;
+    private const int LooseWithHelpPage = 61079;
+    private const int LooseStatedHelpLink = 61080;
+    private const string BundleHelpUrl = "https://example.invalid/bundle-app-json-help/";
+    private const string TablesAppHelpUrl = "https://example.invalid/tables-app-manifest-help/";
+
+    private static string LooseQuery(int id, string name, string properties) => $$"""
+        {
+          "Id": {{id}}, "Name": "{{name}}", "Properties": [ {{properties}} ],
+          "Elements": [
+            {
+              "Id": 1, "Name": "Root", "RelatedTable": "Derived Query Source",
+              "Columns": [ { "Id": 11, "Name": "Code_Col", "SourceColumn": "Code" } ]
+            }
+          ]
+        }
+        """;
+
+    /// <summary>The loose file BcCompiler.EmitAndRegisterBundleQuerySymbols writes, registered
+    /// with <paramref name="bundleHelpUrl"/>. Returns its path for re-registration.</summary>
+    private string RegisterLoose(string? bundleHelpUrl, string? path = null)
+    {
+        var tablesApp = Path.Combine(_root, "tables-only.app");
+        using (var zip = new FileStream(tablesApp, FileMode.Create))
+        using (var za = new ZipArchive(zip, ZipArchiveMode.Create))
+        {
+            var entry = za.CreateEntry("SymbolReference.json");
+            using (var w = new StreamWriter(entry.Open(), Encoding.UTF8))
+                w.Write($$"""
+                    {
+                      "AppId": "0d3c1b4e-5a8f-4c21-9e77-3b6a2f1c8d40",
+                      "Name": "Tables Only",
+                      "Tables": [
+                        {
+                          "Id": {{LinkedTable}}, "Name": "Derived Query Source",
+                          "Fields": [ { "Id": 1, "Name": "Code", "TypeDefinition": { "Name": "Code", "Length": 20 } } ]
+                        }
+                      ]
+                    }
+                    """);
+            NavxManifestFixture.Add(za, TablesAppHelpUrl);
+        }
+        path ??= Path.Combine(_root, "bundle", "SymbolReference.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, $$"""
+            {
+              "AppId": "a4f0e2d1-7c3b-4e59-8a16-5d2c9b7e1f03",
+              "Name": "Loose Bundle",
+              "Queries": [
+                {{LooseQuery(LooseNoHelpPage, "Loose No Help Page", "")}},
+                {{LooseQuery(LooseWithHelpPage, "Loose With Help Page",
+                    "{ \"Name\": \"ContextSensitiveHelpPage\", \"Value\": \"loose-help-page\" }")}},
+                {{LooseQuery(LooseStatedHelpLink, "Loose Stated HelpLink",
+                    "{ \"Name\": \"HelpLink\", \"Value\": \"https://example.invalid/stated\" }")}}
+              ]
+            }
+            """);
+        RecordPatches.ResetForReload();
+        RecordPatches.AddBcAppPath(tablesApp);
+        RecordPatches.RegisterBundleQuerySymbolsJson(path, bundleHelpUrl);
+        return path;
+    }
+
+    /// <summary>
+    /// A loose-file query takes its HelpLink from the URL its bundle registered it with, by the
+    /// same rule as a .app's: the URL alone, URL + ContextSensitiveHelpPage, and a stated
+    /// HelpLink winning over both (#4744).
+    /// </summary>
+    [Fact]
+    public void A_loose_symbol_file_query_derives_HelpLink_from_its_bundles_app_json_url()
+    {
+        RegisterLoose(BundleHelpUrl);
+
+        Assert.Equal(BundleHelpUrl, Read(Design(LooseNoHelpPage), "HelpLink"));
+        Assert.Equal(BundleHelpUrl + "loose-help-page", Read(Design(LooseWithHelpPage), "HelpLink"));
+        Assert.Equal("https://example.invalid/stated", Read(Design(LooseStatedHelpLink), "HelpLink"));
+    }
+
+    /// <summary>A bundle whose app.json states no URL gets no HelpLink — and not the URL of the
+    /// unrelated .app that supplies the table (#4744).</summary>
+    [Fact]
+    public void A_loose_symbol_file_query_gets_no_HelpLink_when_its_bundle_states_no_url()
+    {
+        RegisterLoose(bundleHelpUrl: null);
+        Assert.Null(Read(Design(LooseNoHelpPage), "HelpLink"));
+        Assert.Null(Read(Design(LooseWithHelpPage), "HelpLink"));
+
+        RegisterLoose(bundleHelpUrl: "");
+        Assert.Null(Read(Design(LooseNoHelpPage), "HelpLink"));
+    }
+
+    /// <summary>
+    /// Re-registering the same file — what every replay path does on the next run — answers the
+    /// URL it was re-registered with, not the one the first registration recorded. This is the
+    /// warm-run case: app.json edited, the same symbols file replayed.
+    /// </summary>
+    [Fact]
+    public void Re_registering_the_same_loose_file_answers_the_new_url()
+    {
+        var path = RegisterLoose(BundleHelpUrl);
+        Assert.Equal(BundleHelpUrl, Read(Design(LooseNoHelpPage), "HelpLink"));
+
+        const string edited = "https://example.invalid/edited-app-json/";
+        RecordPatches.RegisterBundleQuerySymbolsJson(path, edited);
+        Assert.Equal(edited, Read(Design(LooseNoHelpPage), "HelpLink"));
+    }
+
+    /// <summary>
+    /// The --server cross-bundle reuse path (#3250) captures the URL with the symbols file and
+    /// registers both on replay, after the reload that cleared the first registration (#4744).
+    /// </summary>
+    [Fact]
+    public void An_own_bundle_replay_registers_the_query_symbols_with_the_captured_url()
+    {
+        var path = RegisterLoose(BundleHelpUrl);
+        var replay = ProgramSupport.CaptureOwnBundleReplay(
+            Guid.NewGuid(), "HelpLinkReplayModule", cacheEnumSidecar: null,
+            querySymbolsJson: path, cacheQuerySidecar: null, queryContextSensitiveHelpUrl: BundleHelpUrl);
+        Assert.Equal(BundleHelpUrl, replay.QueryContextSensitiveHelpUrl);
+
+        // What the next request's reload does — the query is gone until the replay a reuse
+        // applies puts it back.
+        RecordPatches.ResetForReload();
+        RecordPatches.AddBcAppPath(Path.Combine(_root, "tables-only.app"));
+        Assert.Null(RecordPatches.TryGetQuerySymbol(LooseNoHelpPage));
+        ProgramSupport.ApplyOwnBundleReplay(replay);
+
+        Assert.Equal(BundleHelpUrl, Read(Design(LooseNoHelpPage), "HelpLink"));
+    }
+
+    /// <summary>The cache-HIT paths read the URL from the app.json the compile would read, since
+    /// no compile ran: the app root's, else the first source folder's, else none.</summary>
+    [Fact]
+    public void The_cache_hit_url_comes_from_the_app_json_the_compile_reads()
+    {
+        var appRoot = Path.Combine(_root, "hit-app");
+        var src = Path.Combine(appRoot, "src");
+        Directory.CreateDirectory(src);
+        File.WriteAllText(Path.Combine(appRoot, "app.json"),
+            """{ "contextSensitiveHelpUrl": "https://example.invalid/root-app-json/" }""");
+        File.WriteAllText(Path.Combine(src, "app.json"),
+            """{ "contextSensitiveHelpUrl": "https://example.invalid/src-app-json/" }""");
+
+        Assert.Equal("https://example.invalid/root-app-json/",
+            AlRunner.BcCompiler.ReadManifestContextSensitiveHelpUrl(appRoot, new[] { src }));
+        Assert.Equal("https://example.invalid/src-app-json/",
+            AlRunner.BcCompiler.ReadManifestContextSensitiveHelpUrl(null, new[] { src }));
+        Assert.Equal("", AlRunner.BcCompiler.ReadManifestContextSensitiveHelpUrl(null, new[] { _root }));
+    }
 }

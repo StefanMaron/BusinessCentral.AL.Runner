@@ -110,13 +110,13 @@ public sealed class BundleQuerySymbolsResetTests : IDisposable
         // lookup-only test passes on the broken build for the wrong reason.
         RecordPatches.ResetForReload();
         var first = WriteQuerySymbolsJson("QsrFirst", "Alpha", 11);
-        RecordPatches.RegisterBundleQuerySymbolsJson(first);
+        RecordPatches.RegisterBundleQuerySymbolsJson(first, contextSensitiveHelpUrl: null);
         Assert.Contains(first, RecordPatches.RegisteredBundleQuerySymbolJsonPathsForTests());
 
         // What Program.cs does between bundles: reset, then this bundle registers its own.
         RecordPatches.ResetForReload();
         var second = WriteQuerySymbolsJson("QsrSecond", "Beta", 22);
-        RecordPatches.RegisterBundleQuerySymbolsJson(second);
+        RecordPatches.RegisterBundleQuerySymbolsJson(second, contextSensitiveHelpUrl: null);
 
         var registered = RecordPatches.RegisteredBundleQuerySymbolJsonPathsForTests();
         Assert.Contains(second, registered);
@@ -129,14 +129,14 @@ public sealed class BundleQuerySymbolsResetTests : IDisposable
         // The AL-visible half, and the one that says what the defect COST. Two bundles in one
         // process declare query 79960 with different column ids; bundle 2 must read its own.
         RecordPatches.ResetForReload();
-        RecordPatches.RegisterBundleQuerySymbolsJson(WriteQuerySymbolsJson("QsrOne", "Alpha", 11));
+        RecordPatches.RegisterBundleQuerySymbolsJson(WriteQuerySymbolsJson("QsrOne", "Alpha", 11), contextSensitiveHelpUrl: null);
 
         // Precondition, asserted rather than assumed: if the JSON did not parse into a
         // QuerySymbol at all, everything below would be measuring an absent registration.
         Assert.Equal(("Alpha", 11), OnlyColumnOf(QueryId));
 
         RecordPatches.ResetForReload();
-        RecordPatches.RegisterBundleQuerySymbolsJson(WriteQuerySymbolsJson("QsrTwo", "Beta", 22));
+        RecordPatches.RegisterBundleQuerySymbolsJson(WriteQuerySymbolsJson("QsrTwo", "Beta", 22), contextSensitiveHelpUrl: null);
 
         // On the broken build this is ("Alpha", 11): the merge in EnsureBcSymbolQueryIndex is
         // first-wins and bundle 1's still-registered file is first in the list, so bundle 2's
@@ -156,13 +156,13 @@ public sealed class BundleQuerySymbolsResetTests : IDisposable
         // skips a path it already holds, so a clear that did not really clear shows up here.
         RecordPatches.ResetForReload();
         var path = WriteQuerySymbolsJson("QsrAgain", "Gamma", 33);
-        RecordPatches.RegisterBundleQuerySymbolsJson(path);
+        RecordPatches.RegisterBundleQuerySymbolsJson(path, contextSensitiveHelpUrl: null);
         Assert.Equal(("Gamma", 33), OnlyColumnOf(QueryId));
 
         RecordPatches.ResetForReload();
         Assert.Null(RecordPatches.TryGetQuerySymbol(QueryId));
 
-        RecordPatches.RegisterBundleQuerySymbolsJson(path);
+        RecordPatches.RegisterBundleQuerySymbolsJson(path, contextSensitiveHelpUrl: null);
         Assert.Equal(("Gamma", 33), OnlyColumnOf(QueryId));
     }
 
@@ -176,8 +176,8 @@ public sealed class BundleQuerySymbolsResetTests : IDisposable
         RecordPatches.ResetForReload();
         var a = WriteQuerySymbolsJson("QsrGroupA", "Alpha", 11);
         var b = WriteQuerySymbolsJson("QsrGroupB", "Beta", 22);
-        RecordPatches.RegisterBundleQuerySymbolsJson(a);
-        RecordPatches.RegisterBundleQuerySymbolsJson(b);
+        RecordPatches.RegisterBundleQuerySymbolsJson(a, contextSensitiveHelpUrl: null);
+        RecordPatches.RegisterBundleQuerySymbolsJson(b, contextSensitiveHelpUrl: null);
 
         var registered = RecordPatches.RegisteredBundleQuerySymbolJsonPathsForTests();
         Assert.Contains(a, registered);

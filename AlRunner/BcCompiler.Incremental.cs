@@ -258,6 +258,10 @@ public sealed partial class BcCompiler
     // the other bundles' files that were the actual defect.
     private readonly Dictionary<string, string> _radQuerySymbolsPathByModule =
         new(StringComparer.Ordinal);
+    // The app.json contextSensitiveHelpUrl the path above was registered with, replayed beside it
+    // so a fast-path cycle keeps the queries' manifest HelpLink (#4744).
+    private readonly Dictionary<string, string> _radQuerySymbolsHelpUrlByModule =
+        new(StringComparer.Ordinal);
 
     // #2655 — the same shadow copy for the three remaining emit-only registries that
     // ResetForNewBundleReload clears. Enum entries are RAW (base, or an enumextension's own
@@ -277,7 +281,7 @@ public sealed partial class BcCompiler
     /// declares is known and the live registries already hold its current metadata.</summary>
     private void CaptureRadMetadataSnapshotFull(
         string moduleName, IEnumerable<NavCA.IApplicationObjectTypeSymbol> declared,
-        string? bundleQuerySymbolsPath)
+        string? bundleQuerySymbolsPath, string contextSensitiveHelpUrl)
     {
         var pages = new Dictionary<int, string>();
         var xmlPorts = new Dictionary<int, string>();
@@ -345,9 +349,15 @@ public sealed partial class BcCompiler
         // defect #2939 exists to close, arriving through the door its fix opened. Pinned by
         // RadQuerySymbolsSnapshotModuleScopeTests.
         if (bundleQuerySymbolsPath != null && File.Exists(bundleQuerySymbolsPath))
+        {
             _radQuerySymbolsPathByModule[moduleName] = bundleQuerySymbolsPath;
+            _radQuerySymbolsHelpUrlByModule[moduleName] = contextSensitiveHelpUrl;
+        }
         else
+        {
             _radQuerySymbolsPathByModule.Remove(moduleName);
+            _radQuerySymbolsHelpUrlByModule.Remove(moduleName);
+        }
     }
 
     /// <summary>Incremental update — called after a successful RAD delta. Drops vacated
@@ -472,7 +482,8 @@ public sealed partial class BcCompiler
         // derived index (the file is rewritten in place by each full Emit), so replaying an
         // already-registered path is correct rather than merely harmless.
         if (_radQuerySymbolsPathByModule.TryGetValue(moduleName, out var querySymbolsPath))
-            AlRunner.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(querySymbolsPath);
+            AlRunner.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(querySymbolsPath,
+                _radQuerySymbolsHelpUrlByModule.GetValueOrDefault(moduleName));
     }
 
     /// <summary>
@@ -1530,7 +1541,7 @@ public sealed partial class BcCompiler
         // the shadow copy TryEmitIncremental's fast paths replay on every later cycle that
         // does NOT run a full Emit for this app. See _radPageMetadataByModule's header
         // comment.
-        CaptureRadMetadataSnapshotFull(moduleName, declared, bundleQuerySymbolsPath);
+        CaptureRadMetadataSnapshotFull(moduleName, declared, bundleQuerySymbolsPath, manifestInputs.ContextSensitiveHelpUrl);
     }
 
     /// <summary>Drops the current baseline for a bundle — used when a caller knows the next cycle must be a full rebuild regardless (e.g. a watched suite set changed).</summary>

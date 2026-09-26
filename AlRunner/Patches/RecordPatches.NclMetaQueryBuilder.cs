@@ -435,12 +435,10 @@ public static partial class RecordPatches
         if (TryDecodePermissionMaskLetters(sym.InherentPermissions, out var permissions))
             SetProp(mq, "InherentPermissions", permissions);
 
-        // #4675: derived like a page's, from the declaring .app's manifest. A query read from a
-        // loose SymbolReference.json (the bundle's own, on a cache HIT without BC's document) has
-        // no .app to read, so only a stated HelpLink is set there (#4744).
-        var appPath = TryGetQuerySymbolAppPath(sym.Id);
+        // #4675: derived like a page's, from the declaring app's manifest — the .app's, or for a
+        // query from the bundle's own loose SymbolReference.json, its app.json's (#4744).
         var helpLink = DeriveHelpLink(sym.HelpLink, sym.ContextSensitiveHelpPage,
-            appPath is null ? null : DependencyAppContextSensitiveHelpUrl(appPath));
+            TryGetQuerySymbolManifestHelpUrl(sym.Id));
         if (helpLink != null) TrySetProp(mq, "HelpLink", helpLink);
         // BC writes <QueryCategory/>, <APIGroup/> and <APIPublisher/> — an EMPTY element, which
         // its reader turns into "" rather than null. The design object's own default is already

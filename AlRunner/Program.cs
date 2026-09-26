@@ -3440,7 +3440,8 @@ foreach (var bundle in bundles)
                 // Query symbols: same story, different side effect. Registering the
                 // sidecar is what lets RecordPatches build a real NCLMetaQuery.
                 if (bundleDeclaresQuery)
-                    AlRunner.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(querySidecarPath!);
+                    AlRunner.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(querySidecarPath!,
+                        BcCompiler.ReadManifestContextSensitiveHelpUrl(appGroup.SuiteDir, allPaths));
             }
             catch (Exception ex)
             {
@@ -5967,7 +5968,8 @@ return strictExitCode ? computedExitCode : 0;
                         AlRunner.Infrastructure.AlCacheSidecars.ValidateCachedAssemblyBytes(bytes, cachePath);
                         LoadEnumRegistrySidecar(sidecarPath);
                         if (bundleDeclaresQuery)
-                            AlRunner.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(querySidecarPath);
+                            AlRunner.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(querySidecarPath,
+                                BcCompiler.ReadManifestContextSensitiveHelpUrl(bucketRoot, allPaths));
                         assemblyBytes = bytes;
                         cached = true;
                         AlRunner.Infrastructure.PhaseLog.NoteCacheHit();
@@ -6172,7 +6174,8 @@ return strictExitCode ? computedExitCode : 0;
                         ownReplayCapture = CaptureOwnBundleReplay(
                             bundleId.AppId, moduleName, sidecarPath,
                             declaresQuery ? BcCompiler.BundleQuerySymbolsPathFor(moduleName) : null,
-                            querySidecarPath);
+                            querySidecarPath,
+                            BcCompiler.ReadManifestContextSensitiveHelpUrl(bucketRoot, allPaths));
                     }
                     catch (Exception ex)
                     {

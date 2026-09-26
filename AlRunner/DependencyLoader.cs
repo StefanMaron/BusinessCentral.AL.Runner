@@ -1474,7 +1474,9 @@ public sealed class DependencyLoader
 /// capturing failed: a reuse must refuse rather than read it as "nothing to replay", which is
 /// what a module <c>LoadAll</c> registered looks like.
 /// </summary>
-internal sealed record OwnBundleRegistryReplay(string? EnumRegistrySidecar, string? QuerySymbolsJson, string? CaptureFailure = null)
+internal sealed record OwnBundleRegistryReplay(
+    string? EnumRegistrySidecar, string? QuerySymbolsJson, string? QueryContextSensitiveHelpUrl,
+    string? CaptureFailure = null)
 {
-    internal static OwnBundleRegistryReplay Failed(string reason) => new(null, null, reason);
+    internal static OwnBundleRegistryReplay Failed(string reason) => new(null, null, null, reason);
 }
