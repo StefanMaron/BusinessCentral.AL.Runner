@@ -35,6 +35,13 @@ internal sealed record BackupTableEntry(
     /// count is what tells the plan a base table HAS extension data (#2261).</summary>
     internal bool IsExtensionCompanion => TableName.EndsWith("$ext", StringComparison.Ordinal);
 
+    /// <summary>The catalog's company for a table that is not per company.</summary>
+    internal const string TenantWideCompany = "-";
+
+    /// <summary>True for a table that is not per company (DataPerCompany = false). Read without
+    /// `--company`: the reader answers "no table matches" when one is given (#4770).</summary>
+    internal bool IsTenantWide => string.Equals(Company, TenantWideCompany, StringComparison.Ordinal);
+
     /// <summary>The base table an extension companion belongs to.</summary>
     internal string BaseTableName => IsExtensionCompanion ? TableName[..^"$ext".Length] : TableName;
 
