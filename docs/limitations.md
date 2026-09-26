@@ -603,7 +603,10 @@ business logic, unmodified (`.claude/rules/precompiled-dll-respect.md`). There i
 generation any more: this section said the runner "auto-generates a blank shell … returns the
 type-default, and does nothing" until the 2026-09 audit, and that too was v1. A codeunit whose
 DLL is not loaded fails loudly, naming the codeunit and the package it belongs to
-(`CodeunitPatches.BuildMissingCodeunitMessage`), rather than answering a default.
+(`CodeunitPatches.BuildMissingCodeunitMessage`), rather than answering a default. When the
+package it belongs to resolved with no implementation (a symbols-only copy), the console says
+`Codeunit <n> is in <app> … — see Action needed: <app>`, and that app's entry in the closing
+`Action needed` block carries the fix; `--output-json` and JUnit keep the full message.
 
 ### Which dependencies an app's AL can reference
 

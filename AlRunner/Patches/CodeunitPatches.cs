@@ -480,7 +480,7 @@ public static partial class BcRuntime
             // those ranges we still throw with a helpful diagnostic.
             if ((id >= 1 && id <= 9999) || (id >= 130000 && id <= 139999))
                 return new NoOpCodeunit(self, id);
-            throw new InvalidOperationException(BuildMissingCodeunitMessage(id));
+            throw AlRunner.Infrastructure.MissingDependencyCodeunitException.For(id, "", BuildMissingCodeunitMessage(id));
         }
         var ctor = _codeunitTreeCtorCache.GetOrAdd(codeunitType, t => t.GetConstructors()
             .FirstOrDefault(c => c.GetParameters().Length == 1 &&
@@ -1629,8 +1629,9 @@ public sealed class NoOpCodeunit : Microsoft.Dynamics.Nav.Runtime.NavCodeunit
     protected override System.Threading.Tasks.ValueTask<object> OnInvokeAsync(int methodId, object[] arguments)
         => throw Missing(methodId);
 
-    private InvalidOperationException Missing(int methodId) => new(
-        $"AL called method id {methodId} on codeunit {_objectId}, which the runner could not " +
-        $"load, so there is no method to dispatch to. " +
-        BcRuntime.BuildMissingCodeunitMessage(_objectId));
+    private InvalidOperationException Missing(int methodId) =>
+        AlRunner.Infrastructure.MissingDependencyCodeunitException.For(_objectId,
+            $"AL called method id {methodId} on codeunit {_objectId}, which the runner could not " +
+            $"load, so there is no method to dispatch to. ",
+            BcRuntime.BuildMissingCodeunitMessage(_objectId));
 }

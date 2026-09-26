@@ -364,19 +364,17 @@ public static class ProvisioningCheck
     {
         return string.Join(Environment.NewLine, new[]
         {
+            // Lines 1-3 are the Action needed entry (ProvisionGapLog.SummaryLines, #4600).
             $"[provision-gap] '{publisher} {appName}' v{appVersion} is not available as an R2R runtime package.",
-            $"  Found:  {symbolOnlyPath}",
-            $"  Status: symbol/dev package only — cannot execute at runtime (procedure bodies are external/native).",
-            $"  Engine version: {bcVersion} (the app's own version, {appVersion}, may be a different minor —",
-            $"  the engine is version-agnostic w.r.t. the R2R apps it dispatches to at runtime).",
-            $"  The runner will use service-tier DLL dispatch as a fallback.",
-            $"",
-            $"  Fix: run ONE of:",
-            $"    al-runner provision  ({AutoProvisionIsDefaultNote})",
+            $"  Found:  {symbolOnlyPath} — symbol/dev package only; the runner falls back to service-tier DLL dispatch.",
             // Suggest the APP's own version, not bcVersion (the engine's) — the engine is
             // version-agnostic w.r.t. the R2R apps it dispatches to, so these can differ
             // (e.g. engine 28.1 running 28.2 R2R apps); using bcVersion here would 404.
-            $"    al-runner provision --platform-apps --bc-version {appVersion}",
+            $"  Fix: al-runner provision --platform-apps --bc-version {appVersion}",
+            $"  Status: cannot execute at runtime (procedure bodies are external/native).",
+            $"  Engine version: {bcVersion} (the app's own version, {appVersion}, may be a different minor —",
+            $"  the engine is version-agnostic w.r.t. the R2R apps it dispatches to at runtime).",
+            $"  Or run: al-runner provision  ({AutoProvisionIsDefaultNote})",
         });
     }
 
@@ -403,14 +401,14 @@ public static class ProvisioningCheck
     {
         return string.Join(Environment.NewLine, new[]
         {
+            // Lines 1-3 are the Action needed entry (ProvisionGapLog.SummaryLines, #4600).
             $"[provision-gap] '{publisher} {appName}' v{appVersion} has a precompiled sidecar DLL that could not be loaded.",
             $"  Found:  {sidecarPath}",
+            $"  Fix: rebuild or replace the sidecar DLL, or delete it to force a lower tier.",
             $"  Reason: {reason}",
             $"  Status: the .deps-bin sidecar exists, so it was preferred over every lower tier — but it did not load.",
             $"  The run continues on a lower tier, where this app's objects may not exist at all;",
             $"  that surfaces later as an unrelated-looking \"no loaded type RecordNNNNN found\".",
-            $"",
-            $"  Fix: rebuild or replace the sidecar DLL, or delete it to force a lower tier.",
         });
     }
 

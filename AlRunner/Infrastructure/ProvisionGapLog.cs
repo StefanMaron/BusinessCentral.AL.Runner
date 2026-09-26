@@ -39,7 +39,81 @@ internal static class ProvisionGapLog
     /// </summary>
     internal static void Reset()
     {
-        lock (_lock) _gaps = new List<string>();
+        lock (_lock)
+        {
+            _gaps = new List<string>();
+            _unservableApps = new List<(string App, Func<IEnumerable<int>> CodeunitIds)>();
+            _codeunitOwner = null;
+        }
+    }
+
+    /// <summary>How many lines of a gap the closing "Action needed" block prints (#4600).</summary>
+    internal const int SummaryLineCount = 3;
+
+    /// <summary>
+    /// The Action needed entry for one gap: its first <see cref="SummaryLineCount"/> lines. So
+    /// every gap message puts what a user acts on — the app and what is wrong, where, and the
+    /// fix — in those lines, and its diagnosis after them (printed only where the gap is found).
+    /// </summary>
+    internal static IReadOnlyList<string> SummaryLines(string gap, out bool shortened)
+    {
+        var lines = gap.Replace("\r\n", "\n").Split('\n');
+        shortened = lines.Length > SummaryLineCount;
+        return lines.Take(SummaryLineCount).ToList();
+    }
+
+    private static List<(string App, Func<IEnumerable<int>> CodeunitIds)> _unservableApps = new();
+    private static Dictionary<int, string>? _codeunitOwner;
+
+    /// <summary>
+    /// Record an app with no implementation (<c>Publisher/Name</c>) and how to list its codeunit
+    /// ids, so a failing call into one of them can name the app (#4600). Read lazily: only a
+    /// run that fails that way pays for the symbol read.
+    /// </summary>
+    internal static void RegisterUnservableApp(string app, Func<IEnumerable<int>> codeunitIds)
+    {
+        lock (_lock)
+        {
+            _unservableApps.Add((app, codeunitIds));
+            _codeunitOwner = null;
+        }
+    }
+
+    /// <summary>The codeunits of the package at <paramref name="appPath"/>, read from its symbols.</summary>
+    internal static void RegisterUnservableApp(string app, string appPath) =>
+        // A vanished or unreadable package throws here, lazily, and UnservableAppDeclaringCodeunit
+        // says so on stderr and attributes nothing (the failure then prints its full remedy).
+        RegisterUnservableApp(app, () => AlRunner.Patches.BcAppSymbolCache.Get(appPath).Objects
+            .Where(o => string.Equals(o.Kind.Replace(" ", ""), "Codeunit", StringComparison.OrdinalIgnoreCase))
+            .Select(o => o.Id));
+
+    /// <summary>
+    /// The registered app with no implementation that declares codeunit <paramref name="id"/>,
+    /// or null. An app whose symbols cannot be read attributes nothing: the caller then prints
+    /// the full message, which names the remedy without the app.
+    /// </summary>
+    internal static string? UnservableAppDeclaringCodeunit(int id)
+    {
+        lock (_lock)
+        {
+            if (_codeunitOwner == null)
+            {
+                _codeunitOwner = new Dictionary<int, string>();
+                foreach (var (app, ids) in _unservableApps)
+                {
+                    IEnumerable<int> list;
+                    try { list = ids().ToList(); }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"[provision-gap] could not read the codeunits of {app}, so a failure "
+                            + $"calling into it cannot name it: {ex.GetType().Name}: {ex.Message}");
+                        continue;
+                    }
+                    foreach (var cu in list) _codeunitOwner.TryAdd(cu, app);
+                }
+            }
+            return _codeunitOwner.TryGetValue(id, out var owner) ? owner : null;
+        }
     }
 
     /// <summary>

@@ -45,7 +45,7 @@ al-runner [OPTIONS] <bundle-dir>...
 | `--coverage` | Statement-level coverage using Business Central's own instrumentation. Writes Cobertura XML. |
 | `--show-pass` | Also print a PASS line for every passing test. Off by default; `--verbose` turns it on too. |
 | `--failures-only`, `--quiet` | Never print PASS lines, even under `--verbose`. |
-| `--verbose` | Show internal diagnostic logs. |
+| `--verbose` | Show internal diagnostic logs, and each `Action needed` entry's full diagnosis where it is found (the closing block prints at most 3 lines per entry). |
 | `--no-strict-exit` | Always exit 0, so a caller can parse the output without the step failing. |
 
 ## Debugging

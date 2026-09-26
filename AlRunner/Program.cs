@@ -2891,6 +2891,9 @@ foreach (var bundle in bundles)
                     if (AlRunner.Infrastructure.ProvisionGapLog.WriteAtDiscovery) Console.Error.WriteLine(u);
                     bundleProvisionGaps.Add(u);
                 }
+                // #4600: so a failing call into one of these apps names it (MissingDependencyCodeunitException).
+                foreach (var (unservableApp, unservablePath) in resolver.UnservableApps)
+                    AlRunner.Infrastructure.ProvisionGapLog.RegisterUnservableApp(unservableApp, unservablePath);
                 // Also always-on, and for the same reason, but a weaker claim than the list
                 // above: a floor this package cache cannot supply for a package that may be
                 // source-compiled (#3794). Kept a separate list on the resolver so

@@ -497,8 +497,9 @@ public static class Reporter
     /// <summary>
     /// Everything the package cache could not serve, ONCE per app, as the last block before the
     /// Result line (#4560). Nothing is printed at discovery (except under --verbose), so this is
-    /// the only place a default run names a gap. The entries are the discovery messages
-    /// verbatim — their wording is DependencyResolver's / ProvisionGapLog's, not this method's.
+    /// the only place a default run names a gap. Each entry is the first lines of the discovery
+    /// message (<see cref="AlRunner.Infrastructure.ProvisionGapLog.SummaryLines"/>, #4600) — the
+    /// wording is DependencyResolver's / ProvisioningCheck's, not this method's.
     /// </summary>
     public static void PrintActionNeeded(IReadOnlyList<BucketResult> buckets, TextWriter w) =>
         PrintActionNeededEntries(ActionNeededEntries(buckets), w);
@@ -529,9 +530,22 @@ public static class Reporter
         if (entries.Count == 0) return;
         w.WriteLine();
         w.WriteLine($"Action needed ({entries.Count}):");
+        var shortenedAny = false;
         foreach (var e in entries)
-            foreach (var line in e.Replace("\r\n", "\n").Split('\n'))
-                w.WriteLine("  " + line);
+        {
+            var lines = AlRunner.Infrastructure.ProvisionGapLog.SummaryLines(e, out var shortened);
+            foreach (var line in lines) w.WriteLine("  " + line);
+            shortenedAny |= shortened;
+        }
+        if (shortenedAny)
+            w.WriteLine("  (--verbose prints each entry's full diagnosis where it is found)");
+    }
+
+    /// <summary>Whether <paramref name="app"/> (<c>Publisher/Name</c>) has an Action needed entry.</summary>
+    private static Func<string, bool> HasActionNeededEntry(IReadOnlyList<BucketResult> buckets)
+    {
+        var headlines = ActionNeededEntries(buckets).Select(e => e.Split('\n')[0]).ToList();
+        return app => headlines.Any(h => h.Contains(app + " v", StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -591,6 +605,7 @@ public static class Reporter
         // #4562: one app's `=== <app> ===` header only repeats the summary; kept when PASS lines
         // are listed, because tools/preflight.py counts PASS lines per header.
         var headers = buckets.Count > 1 || showPass;
+        var hasActionNeededEntry = HasActionNeededEntry(buckets);
         foreach (var b in buckets)
         {
             if (b.Stage == BucketStage.CompileFailed)
@@ -671,7 +686,13 @@ public static class Reporter
                     : $"{label} {t.Codeunit}.{t.Method} ({ms}ms){suspectSuffix}");
                 if (t.Outcome != TestOutcome.Pass)
                 {
-                    if (!string.IsNullOrEmpty(t.Message))
+                    // #4600: a failure caused by an app in Action needed points there rather
+                    // than repeating its remedy; --output-json and JUnit keep t.Message.
+                    var pointer = AlRunner.Infrastructure.MissingDependencyCodeunitException
+                        .ConsolePointer(t.Exception, hasActionNeededEntry);
+                    if (pointer != null)
+                        w.WriteLine($"      {pointer}");
+                    else if (!string.IsNullOrEmpty(t.Message))
                         w.WriteLine($"      {ConsoleMessage(t.Message)}");
                     // #2240: printed AFTER BC's own message and BEFORE the AL stack, so the
                     // failure still reads as BC reported it and the explanation sits next to it
@@ -685,7 +706,8 @@ public static class Reporter
                         foreach (var frame in t.AlCallStack.Split('\n'))
                             w.WriteLine($"      {frame.TrimEnd('\r')}");
                     }
-                    else if (!string.IsNullOrEmpty(t.FullException))
+                    // The runner's own frames say nothing the pointer does not: --output-json keeps them.
+                    else if (pointer == null && !string.IsNullOrEmpty(t.FullException))
                     {
                         foreach (var line in FilteredStack(t.FullException, max: 8))
                             w.WriteLine($"      {line}");

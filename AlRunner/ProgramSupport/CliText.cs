@@ -112,8 +112,10 @@ internal static partial class ProgramSupport
         w.WriteLine("  or a .deps-bin sidecar DLL), then a symbols-only one; the highest version wins");
         w.WriteLine("  within each group. So a symbols-only copy wins only when no runnable copy");
         w.WriteLine("  meets the minimum — and then the run always prints a NO IMPLEMENTATION entry");
-        w.WriteLine("  listing every other copy it found (marking any below the minimum) and the");
-        w.WriteLine("  directories it searched.");
+        w.WriteLine("  in the closing `Action needed` block: the app, the winning package, and the fix");
+        w.WriteLine("  naming the directories it searched (at most 3 lines). --verbose also lists every");
+        w.WriteLine("  other copy it found, marking any below the minimum. A failing test that called");
+        w.WriteLine("  into such an app says `see Action needed: <app>` instead of repeating the fix.");
         w.WriteLine();
         w.WriteLine("  CALIBRATION: Microsoft platform apps (System, System Application, Base");
         w.WriteLine("  Application, Business Foundation, Application) never get that entry: a");
@@ -255,6 +257,13 @@ internal static partial class ProgramSupport
         w.WriteLine("      the same rule BC's compiler applies (issue #4096). Older runner versions accepted it.");
         w.WriteLine("      Action: add the app that declares X to app.json \"dependencies\", or set");
         w.WriteLine("      \"propagateDependencies\": true on the app you depend on that depends on it.");
+        w.WriteLine();
+        w.WriteLine("  \"Codeunit <n> is in <app>, which has no implementation in this run — see Action");
+        w.WriteLine("   needed: <app>\"");
+        w.WriteLine("      Meaning: the test called into a dependency whose only copy meeting the");
+        w.WriteLine("      minimum version is symbols-only. Action: apply that app's `Fix:` line in the");
+        w.WriteLine("      `Action needed` block at the end of the run. --output-json and JUnit carry the");
+        w.WriteLine("      full message.");
         w.WriteLine();
         w.WriteLine("  \"NavNCLMissingMethodException: Function ID <n> was called. The object with");
         w.WriteLine("   ID 0 does not have a member with that ID.\"");
@@ -709,7 +718,9 @@ internal static partial class ProgramSupport
         w.WriteLine("  --failures-only, --quiet");
         w.WriteLine("                          No PASS lines, even under --verbose.");
         w.WriteLine("  --verbose               Show internal [Component] diagnostic logs, PASS lines, the");
-        w.WriteLine("                          per-app rows and the AL emit / C# compile time split.");
+        w.WriteLine("                          per-app rows, the AL emit / C# compile time split, and");
+        w.WriteLine("                          each `Action needed` entry in full where it is found (the");
+        w.WriteLine("                          closing block prints at most 3 lines per entry).");
         w.WriteLine("  --strict                Accepted for back-compat; this is the default since the v2");
         w.WriteLine("                          cut. Exit codes:");
         w.WriteLine("                            0  all tests passed");
