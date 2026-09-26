@@ -121,15 +121,9 @@ internal static class WatchSource
     /// it can never race the watcher (see file header — this is the #1822 fix).
     /// </summary>
     internal static (System.Threading.ManualResetEventSlim Signal, List<FileSystemWatcher> Watchers, WatchActivity Activity)? ArmSourceWatch(
-        List<string> bundles, Action? onArmed = null)
+        List<string> bundles, Action? onArmed = null, SourceSnapshot? cycleStart = null)
     {
-        var dirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var b in bundles)
-        {
-            var abs = Path.GetFullPath(b);
-            var root = FindBucketRoot(abs) ?? abs;
-            if (Directory.Exists(root)) dirs.Add(root);
-        }
+        var dirs = WatchedDirs(bundles);
         if (dirs.Count == 0)
         {
             Console.Error.WriteLine("[watch] no source directories to watch.");
@@ -187,6 +181,20 @@ internal static class WatchSource
             watchers.Add(w);
         }
 
+        // #4706: compare only AFTER the watchers are live, so an edit landing during the
+        // comparison is seen by one or the other — never by neither.
+        if (cycleStart != null)
+        {
+            var changedPath = cycleStart.FirstDifference(SourceSnapshot.CaptureDirs(dirs));
+            if (changedPath != null)
+            {
+                activity.Touch();
+                signal.Set();
+                Console.Error.WriteLine(
+                    "[watch] " + changedPath + " changed while the last cycle was running; re-running.");
+            }
+        }
+
         // Every watcher above was constructed with EnableRaisingEvents = true, so by the
         // time control reaches here the watch is genuinely live. onArmed runs ONLY now —
         // never before this point — which is the whole fix for #1822.
@@ -239,9 +247,9 @@ internal static class WatchSource
     /// name="onArmed"/> runs after arming succeeds and before the blocking wait — pass
     /// the "waiting for changes" announcement here so it can never race the watcher.
     /// </summary>
-    internal static bool WaitForSourceChange(List<string> bundles, Action onArmed)
+    internal static bool WaitForSourceChange(List<string> bundles, Action onArmed, SourceSnapshot? cycleStart = null)
     {
-        var armed = ArmSourceWatch(bundles, onArmed);
+        var armed = ArmSourceWatch(bundles, onArmed, cycleStart);
         if (armed == null) return false;
         var (signal, watchers, activity) = armed.Value;
         try
@@ -260,6 +268,67 @@ internal static class WatchSource
     {
         foreach (var w in watchers) { w.EnableRaisingEvents = false; w.Dispose(); }
         signal.Dispose();
+    }
+
+    private static HashSet<string> WatchedDirs(List<string> bundles)
+    {
+        var dirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var b in bundles)
+        {
+            var abs = Path.GetFullPath(b);
+            var root = FindBucketRoot(abs) ?? abs;
+            if (Directory.Exists(root)) dirs.Add(root);
+        }
+        return dirs;
+    }
+
+    /// <summary>
+    /// Length and last-write time of every <c>.al</c> file under the watched roots, captured
+    /// when a watch cycle starts (#4706). The watchers are disposed while a cycle runs and
+    /// inotify keeps no backlog, so an edit saved mid-cycle raises no event; comparing this
+    /// against a fresh capture at re-arm is what sees it. A same-length rewrite inside one
+    /// timestamp tick is the one edit it cannot see.
+    /// </summary>
+    internal sealed class SourceSnapshot
+    {
+        private readonly Dictionary<string, (long Length, long WriteTicks)> _files;
+
+        private SourceSnapshot(Dictionary<string, (long Length, long WriteTicks)> files) => _files = files;
+
+        internal int FileCount => _files.Count;
+
+        internal static SourceSnapshot Capture(List<string> bundles) => CaptureDirs(WatchedDirs(bundles));
+
+        internal static SourceSnapshot CaptureDirs(IEnumerable<string> dirs)
+        {
+            var files = new Dictionary<string, (long, long)>(StringComparer.Ordinal);
+            var options = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true };
+            foreach (var dir in dirs)
+            {
+                if (!Directory.Exists(dir)) continue;
+                foreach (var path in Directory.EnumerateFiles(dir, "*", options))
+                {
+                    if (!path.EndsWith(".al", StringComparison.OrdinalIgnoreCase)) continue;
+                    var info = new FileInfo(path);
+                    // A file deleted between enumeration and this read is simply absent,
+                    // which the comparison reports as a difference.
+                    try { files[path] = (info.Length, info.LastWriteTimeUtc.Ticks); }
+                    catch (IOException) { }
+                }
+            }
+            return new SourceSnapshot(files);
+        }
+
+        /// <summary>A path added, removed or rewritten between this snapshot and
+        /// <paramref name="now"/>, or null when they agree.</summary>
+        internal string? FirstDifference(SourceSnapshot now)
+        {
+            foreach (var (path, stamp) in now._files)
+                if (!_files.TryGetValue(path, out var before) || before != stamp) return path;
+            foreach (var path in _files.Keys)
+                if (!now._files.ContainsKey(path)) return path;
+            return null;
+        }
     }
 
     // The bucket-root walk-up (climb parent directories until an app.json is found).
