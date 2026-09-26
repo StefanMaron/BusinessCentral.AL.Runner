@@ -395,7 +395,54 @@ public static partial class BcRuntime
         // detach below, while this scope's own child-handler chain is still intact.
         UnbindLocalManualSubscriptions(self);
 
+        // #4732: same reason, for a LOCAL "var X: TestPage ..." — see RemoveLocalTestPageTraps.
+        RemoveLocalTestPageTraps(self);
+
         DetachTreeHandlerFromParent(self);
+    }
+
+    private static MethodInfo? _miRemoveTrap;
+
+    /// <summary>
+    /// Removes the outstanding <c>Trap()</c> of each LOCAL TestPage variable of a disposing scope
+    /// that holds the last reference to its page, so a trap nothing consumed ends with its
+    /// variable instead of capturing a later page run (#4732). Observably equivalent to BC: BC's
+    /// scope exit releases the scope's <c>NavTestPageHandle</c>; the last release disposes the
+    /// <c>NavTestPage</c> (<c>TreeSharedObjectHandler.InternalRemoveReferenceDisposeIfLast</c>),
+    /// and <c>NavTestPage.Dispose(bool)</c> calls <c>TestExecution.RemoveTrap(this)</c>
+    /// (28.1.49838.53910). A page another variable still references (assigned out of the local)
+    /// keeps its trap. Corpus codeunit 67150 adjudicates it.
+    /// Trap: remove the trap only, never release or dispose the page — its client's Dispose
+    /// flush raises a refused delayed insert at scope exit that BC does not raise (corpus 60045).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static void RemoveLocalTestPageTraps(object? self)
+    {
+        ForEachDirectChildHost(self, host =>
+        {
+            if (host is not Microsoft.Dynamics.Nav.Runtime.NavTestPageHandle tpHandle || !tpHandle.HasTarget)
+                return;
+            var page = tpHandle.Target;
+            if (!IsLastReference(page.Tree, tpHandle) || _testExecutionInstance == null)
+                return;
+            _miRemoveTrap ??= AlRunner.Infrastructure.BcShape.RequiredMethod(
+                _testExecutionInstance.GetType(), "RemoveTrap",
+                BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance,
+                "testpage-trap-scope", "NavTestExecution.RemoveTrap(NavTestPage)",
+                "without it an unconsumed TestPage.Trap() outlives its variable (#4732)");
+            _miRemoveTrap.Invoke(_testExecutionInstance, new object[] { page });
+        });
+    }
+
+    /// <summary>
+    /// Whether releasing <paramref name="reference"/> would dispose the object <paramref name="tree"/>
+    /// hosts, by BC's own two rules for <c>InternalRemoveReferenceDisposeIfLast</c>: a shared
+    /// object when its reference count would reach zero, any other when the reference is its parent.
+    /// </summary>
+    private static bool IsLastReference(Microsoft.Dynamics.Nav.Runtime.TreeHandler tree, object reference)
+    {
+        var count = tree.ReferenceCount; // -1 on a non-shared handler
+        return count < 0 ? ReferenceEquals(tree.Parent, reference) : count == 1;
     }
 
     /// <summary>
@@ -438,6 +485,33 @@ public static partial class BcRuntime
     [MethodImpl(MethodImplOptions.NoInlining)]
     internal static void UnbindLocalManualSubscriptions(object? self)
     {
+        ForEachDirectChildHost(self, host =>
+        {
+            try
+            {
+                if (host is Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle cuHandle && cuHandle.HasTarget)
+                {
+                    var target = cuHandle.Target;
+                    if (target != null && target.IsSubscriptionBound)
+                        UnbindManualSubscriptionDirect(target);
+                }
+            }
+            catch
+            {
+                // Best-effort: a handle mid-teardown must not abort the sweep for the REST
+                // of this scope's children.
+            }
+        });
+    }
+
+    /// <summary>
+    /// Calls <paramref name="visit"/> with the hostObject of each DIRECT child of self's tree
+    /// handler — the local-variable handles BC's compiler emits on the generated scope class. A
+    /// throw from <paramref name="visit"/> propagates; a visitor that must not abort the walk
+    /// catches for itself.
+    /// </summary>
+    private static void ForEachDirectChildHost(object? self, Action<object?> visit)
+    {
         if (self == null) return;
         if (_fTreeObjTree == null || _fTreeHandlerFirstChildBase == null ||
             _fTreeHandlerNextSiblingBase == null || _fTreeHandlerHostObject == null)
@@ -454,30 +528,13 @@ public static partial class BcRuntime
 
         while (child != null)
         {
-            // Capture the sibling link BEFORE any mutation below, mirroring
-            // DetachTreeHandlerFromParent's own walk — UnbindManualSubscriptionDirect only
-            // touches EventBindings/IsSubscriptionBound, never the tree's sibling chain, but
-            // reading `next` up front keeps this loop robust regardless.
+            // Read the sibling link before visiting, so a visitor that mutates the tree cannot
+            // derail the walk.
             object? next;
             try { next = _fTreeHandlerNextSiblingBase.GetValue(child); }
             catch { next = null; }
 
-            try
-            {
-                if (_fTreeHandlerHostObject.GetValue(child) is
-                        Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle cuHandle
-                    && cuHandle.HasTarget)
-                {
-                    var target = cuHandle.Target;
-                    if (target != null && target.IsSubscriptionBound)
-                        UnbindManualSubscriptionDirect(target);
-                }
-            }
-            catch
-            {
-                // Best-effort: a handle mid-teardown must not abort the sweep for the REST
-                // of this scope's children.
-            }
+            visit(_fTreeHandlerHostObject.GetValue(child));
 
             child = next;
         }
