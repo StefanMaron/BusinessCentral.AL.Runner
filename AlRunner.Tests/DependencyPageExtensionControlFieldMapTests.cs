@@ -3,6 +3,10 @@
 // page's own symbol controls, so TestPage.GetField answered null and BC raised
 // "The field with ID = N is not found on the page." End-to-end proof on a real service tier:
 // corpus codeunit 67400 (StefanMaron/BusinessCentral.AL.Language.Tests#444).
+//
+// Issue #4749: the two sibling readers of the same symbol slice — a control's declared
+// Editable/Visible/Enabled, and the "Page Control Field" rows — fold the same extension controls
+// in. End-to-end proof: corpus codeunits 67401 and 67402.
 using System.Collections;
 using System.IO.Compression;
 using System.Reflection;
@@ -22,6 +26,8 @@ public class DependencyPageExtensionControlFieldMapTests
     private const int ExtGhostControlId = 646600003;
     private const int OtherPageExtControlId = 646600004;
     private const int PrecompiledExtId = 88246603;
+    private const int BarePageId = 88246606;
+    private const int BareExtControlId = 646600005;
     private const int SourceOtherPageExtId = 88246605;
 
     private static readonly Type RP = typeof(RecordPatches);
@@ -72,6 +78,15 @@ public class DependencyPageExtensionControlFieldMapTests
           ],
           "Pages": [
             {
+              "Id": 88246606,
+              "Name": "DPXC Bare Page",
+              "Properties": [
+                { "Name": "PageType", "Value": "Card" },
+                { "Name": "SourceTable", "Value": "88246600" }
+              ],
+              "Controls": [ { "Kind": 1, "Id": 1, "Name": "content" } ]
+            },
+            {
               "Id": 88246601,
               "Name": "DPXC Dep Page",
               "Properties": [
@@ -91,6 +106,22 @@ public class DependencyPageExtensionControlFieldMapTests
           ],
           "PageExtensions": [
             {
+              "Id": 88246607,
+              "Name": "DPXC Bare Page Ext",
+              "TargetObject": "DPXC Bare Page",
+              "ControlChanges": [
+                {
+                  "Anchor": "content",
+                  "ChangeKind": 2,
+                  "Controls": [
+                    { "Kind": 8, "Id": 646600005, "Name": "Bare Ext Code",
+                      "Properties": [ { "Name": "SourceExpression", "Value": "Rec.Code" },
+                                      { "Name": "Editable", "Value": "false" } ] }
+                  ]
+                }
+              ]
+            },
+            {
               "Id": 88246603,
               "Name": "DPXC Dep Page Ext",
               "TargetObject": "DPXC Dep Page",
@@ -100,7 +131,9 @@ public class DependencyPageExtensionControlFieldMapTests
                   "ChangeKind": 2,
                   "Controls": [
                     { "Kind": 8, "Id": 646600002, "Name": "Ext Flag",
-                      "Properties": [ { "Name": "SourceExpression", "Value": "Rec.\"Ext Flag\"" } ] },
+                      "Properties": [ { "Name": "SourceExpression", "Value": "Rec.\"Ext Flag\"" },
+                                      { "Name": "Editable", "Value": "false" },
+                                      { "Name": "Visible", "Value": "ShowExtFlag" } ] },
                     { "Kind": 8, "Id": 646600003, "Name": "Ghost",
                       "Properties": [ { "Name": "SourceExpression", "Value": "Rec.\"Does Not Exist\"" } ] }
                   ]
@@ -117,7 +150,8 @@ public class DependencyPageExtensionControlFieldMapTests
                   "ChangeKind": 2,
                   "Controls": [
                     { "Kind": 8, "Id": 646600004, "Name": "Leaked",
-                      "Properties": [ { "Name": "SourceExpression", "Value": "Rec.Code" } ] }
+                      "Properties": [ { "Name": "SourceExpression", "Value": "Rec.Code" },
+                                      { "Name": "Editable", "Value": "false" } ] }
                   ]
                 }
               ]
@@ -254,6 +288,123 @@ public class DependencyPageExtensionControlFieldMapTests
         finally
         {
             ParsedPageExtensions.Remove(PrecompiledExtId);
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    // ── #4749: the two sibling readers of the same dependency page symbol ─────────────────────
+
+    private static void WithDependencyApp(Action body)
+    {
+        var dir = TestScratch.Dir("al-runner-dep-pageext-fieldmap-tests");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir));
+            body();
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void DependencyPageExtensionControl_DeclaredProperties_AreReadBack()
+        => WithDependencyApp(() =>
+        {
+            Assert.Equal("false", RecordPatches.TryGetDependencyControlDeclaredProperty(PageId, ExtControlId, "Editable"));
+            Assert.Equal("ShowExtFlag", RecordPatches.TryGetDependencyControlDeclaredProperty(PageId, ExtControlId, "Visible"));
+            Assert.Null(RecordPatches.TryGetDependencyControlDeclaredProperty(PageId, ExtControlId, "Enabled"));
+            // The page's own control still answers for itself: it declares none.
+            Assert.Null(RecordPatches.TryGetDependencyControlDeclaredProperty(PageId, BaseControlId, "Editable"));
+        });
+
+    [Fact]
+    public void ForeignPageExtensionControl_DeclaredProperties_DoNotAnswerForThisPage()
+        => WithDependencyApp(() =>
+            // "Leaked" declares Editable = false, but on a pageextension of ANOTHER page.
+            Assert.Null(RecordPatches.TryGetDependencyControlDeclaredProperty(PageId, OtherPageExtControlId, "Editable")));
+
+    [Fact]
+    public void PageWithNoOwnControls_ExtensionControlsDeclaredProperties_AreReadBack()
+        => WithDependencyApp(() =>
+            Assert.Equal("false", RecordPatches.TryGetDependencyControlDeclaredProperty(BarePageId, BareExtControlId, "Editable")));
+
+    /// <summary>(PageNo, ControlId, TableNo, FieldNo, Editable) of every Page Control Field row.</summary>
+    private static List<(int PageNo, int ControlId, int TableNo, int FieldNo, string Editable)> PageControlFieldRows()
+    {
+        var rows = (IEnumerable)RP.GetMethod("EnumerateKnownPageControlFields", BindingFlags.NonPublic | BindingFlags.Static)!
+            .InvokeStatic();
+        var result = new List<(int, int, int, int, string)>();
+        foreach (var row in rows)
+        {
+            var t = row.GetType();
+            T Get<T>(string name) => (T)t.GetProperty(name)!.GetValue(row)!;
+            result.Add((Get<int>("PageNo"), Get<int>("ControlId"), Get<int>("TableNo"), Get<int>("FieldNo"), Get<string>("Editable")));
+        }
+        return result;
+    }
+
+    private static IDictionary ParsedTables =>
+        (IDictionary)RP.GetField("_parsedTables", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
+
+    [Fact]
+    public void PageControlField_PrecompiledPageExtensionControls_AreRowsOnTheBasePage()
+        => WithDependencyApp(() =>
+        {
+            // The rows must populate a precompiled source table themselves, as
+            // GetPageControlFieldMap does, not rely on something else having loaded it first.
+            ParsedTables.Remove(TableId);
+
+            var rows = PageControlFieldRows();
+            var onPage = rows.Where(r => r.PageNo == PageId).ToList();
+
+            Assert.Equal(
+                new[] { BaseControlId, ExtControlId, ExtGhostControlId },
+                onPage.Select(r => r.ControlId).OrderBy(i => i));
+            var ext = onPage.Single(r => r.ControlId == ExtControlId);
+            Assert.Equal((TableId, 50, "false"), (ext.TableNo, ext.FieldNo, ext.Editable));
+            // The page's own control resolves against the precompiled table too.
+            var own = onPage.Single(r => r.ControlId == BaseControlId);
+            Assert.Equal((TableId, 1), (own.TableNo, own.FieldNo));
+
+            Assert.DoesNotContain(rows, r => r.PageNo == PrecompiledExtId);
+            Assert.DoesNotContain(rows, r => r.ControlId == OtherPageExtControlId && r.PageNo == PageId);
+            Assert.Contains(rows, r => r.PageNo == BarePageId && r.ControlId == BareExtControlId);
+        });
+
+    [Fact]
+    public void PageControlField_SourcePageExtensionOfPrecompiledPage_IsARowOnTheBasePage()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-pageext-fieldmap-tests");
+        Directory.CreateDirectory(dir);
+        const int sourceExtId = 88246608;
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir));
+            InvokeParser("TryParsePageFile", $$"""
+                pageextension {{sourceExtId}} "DPXC Src Ext" extends "DPXC Dep Page"
+                {
+                    layout
+                    {
+                        addlast(content)
+                        {
+                            field("Src Ext Flag"; Rec."Ext Flag") { }
+                        }
+                    }
+                }
+                """);
+            var srcIds = ParsedControlIds(sourceExtId);
+            Assert.Single(srcIds);
+
+            var row = PageControlFieldRows().Single(r => r.ControlId == srcIds[0]);
+
+            Assert.Equal((PageId, TableId, 50), (row.PageNo, row.TableNo, row.FieldNo));
+        }
+        finally
+        {
+            ParsedPageExtensions.Remove(sourceExtId);
             Directory.Delete(dir, recursive: true);
         }
     }
