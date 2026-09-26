@@ -296,10 +296,10 @@ public class AppGroupObjectVisibilityTests
             var dir = WriteApp(Path.Combine(root, "dup" + letter), appId, "Dup " + letter, 62680, 62689);
             File.WriteAllText(Path.Combine(dir, "Dup.al"), $$"""
             table 62680 "Dup {{letter}} Table" { fields { field(1; "Code"; Code[20]) { } field(2; "Only{{letter}}"; Integer) { } } keys { key(PK; "Code") { Clustered = true; } } }
-            xmlport 62683 "Dup {{letter}} XmlPort" { schema { textelement(Root{{letter}}) { } } }
+            xmlport 62683 "Dup {{letter}} XmlPort" { Caption = 'Dup {{letter}} XmlPort Cap'; schema { textelement(Root{{letter}}) { } } }
             table {{bufferId}} "Dup {{letter}} Buffer" { fields { field(1; PK; Integer) { } field(2; Data; Blob) { } } keys { key(PK; PK) { Clustered = true; } } }
-            report 62686 "Dup {{letter}} Report" { ProcessingOnly = true; dataset { dataitem(I; Integer) { } } }
-            page 62687 "Dup {{letter}} Page" { SourceTable = "Dup {{letter}} Table"; layout { area(Content) { field(C; Rec.Code) { } } } }
+            report 62686 "Dup {{letter}} Report" { Caption = 'Dup {{letter}} Report Cap'; ProcessingOnly = true; dataset { dataitem(I; Integer) { } } }
+            page 62687 "Dup {{letter}} Page" { Caption = 'Dup {{letter}} Page Cap'; SourceTable = "Dup {{letter}} Table"; layout { area(Content) { field(C; Rec.Code) { } } } }
             query 62688 "Dup {{letter}} Query" { elements { dataitem(T; "Dup {{letter}} Table") { column(C; Code) { } } } }
             codeunit {{cu}} "Dup {{letter}} Tests"
             {
@@ -362,7 +362,7 @@ public class AppGroupObjectVisibilityTests
                 begin
                     AllObj.Get(AllObj."Object Type"::XMLport, 62683);
                     if AllObj."Object Name" <> 'Dup {{letter}} XmlPort' then Error('WRONG: AllObjWithCaption xmlport name for 62683 in {{letter}} is %1', AllObj."Object Name");
-                    if AllObj."Object Caption" <> 'Dup {{letter}} XmlPort' then Error('WRONG: AllObjWithCaption xmlport caption for 62683 in {{letter}} is %1', AllObj."Object Caption");
+                    if AllObj."Object Caption" <> 'Dup {{letter}} XmlPort Cap' then Error('WRONG: AllObjWithCaption xmlport caption for 62683 in {{letter}} is %1', AllObj."Object Caption");
                 end;
 
                 [Test]
@@ -375,7 +375,7 @@ public class AppGroupObjectVisibilityTests
                     if ReportMetadata.Name <> 'Dup {{letter}} Report' then Error('WRONG: Report Metadata name for 62686 in {{letter}} is %1', ReportMetadata.Name);
                     AllObj.Get(AllObj."Object Type"::Report, 62686);
                     if AllObj."Object Name" <> 'Dup {{letter}} Report' then Error('WRONG: AllObjWithCaption report name for 62686 in {{letter}} is %1', AllObj."Object Name");
-                    if AllObj."Object Caption" <> 'Dup {{letter}} Report' then Error('WRONG: AllObjWithCaption report caption for 62686 in {{letter}} is %1', AllObj."Object Caption");
+                    if AllObj."Object Caption" <> 'Dup {{letter}} Report Cap' then Error('WRONG: AllObjWithCaption report caption for 62686 in {{letter}} is %1', AllObj."Object Caption");
                 end;
 
                 [Test]
@@ -386,6 +386,7 @@ public class AppGroupObjectVisibilityTests
                 begin
                     if not PageMetadata.Get(62687) then Error('MISSING: Page Metadata 62687 in {{letter}}');
                     if PageMetadata.Name <> 'Dup {{letter}} Page' then Error('WRONG: Page Metadata name for 62687 in {{letter}} is %1', PageMetadata.Name);
+                    if PageMetadata.Caption <> 'Dup {{letter}} Page Cap' then Error('WRONG: Page Metadata caption for 62687 in {{letter}} is %1', PageMetadata.Caption);
                     if PageMetadata.SourceTable <> 62680 then Error('WRONG: Page Metadata source table for 62687 in {{letter}} is %1', PageMetadata.SourceTable);
                     AllObj.Get(AllObj."Object Type"::Page, 62687);
                     if AllObj."Object Name" <> 'Dup {{letter}} Page' then Error('WRONG: AllObjWithCaption page name for 62687 in {{letter}} is %1', AllObj."Object Name");
