@@ -57,6 +57,11 @@ the runner's copy is `RecordPatches.DeriveHelpLink`. Corpus codeunit 67250 measu
 through a Base Application report's `Report.SaveAs(Xml)` dataset, whose
 `BCReportInformation/ReportMetadata/ReportHelpLink` is the request page's `HelpLink`.
 
+A query the runner reads from the bundle's own loose `SymbolReference.json` has no `.app` and so
+no manifest. Its URL is the bundle's `app.json` `contextSensitiveHelpUrl`, which every site that
+registers the file passes with it, including the AL-output cache HIT paths, which read it from the
+current `app.json` rather than from the cache (#4744).
+
 ### `DataCaptionExpr` — write-iff-stated with a constant
 
 32 pages state `DataCaptionExpression` and BC writes the attribute on exactly those 32. The
