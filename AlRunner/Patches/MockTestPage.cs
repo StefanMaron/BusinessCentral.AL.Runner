@@ -62,6 +62,19 @@ internal partial class LiveNavTestPage : MockITestPage
         if (page != null) page.IsCurrentRowUnsavedNewRow = IsUnsavedNewRow;
     }
 
+    // BC's client re-reads the current row after every action, and a Card whose stored row is
+    // gone is closed by it: every later call, Close() included, raises "The TestPage is not
+    // open." -- with or without a CurrPage.Update in the action. A List moves to a neighbour
+    // instead, which the runner does not do yet (#4747). Corpus codeunit 67300, #4727.
+    // A pending insert is not deleted and a temporary source is unmeasured; both stay open.
+    internal void CloseIfCurrentRowDeleted()
+    {
+        if (_pendingNewRow || _record is not { IsTemporary: false } record || RowExistsInTable(record))
+            return;
+        if (RecordPatches.TryGetAnyPageType(_pageId) != "Card") return;
+        MarkDetached();
+    }
+
     // A temporary row is never in the stored table RowExistsInTable probes, so it is asked of
     // its own buffer through BC's HasBeenInserted, whose temporary branch is ExistsAsync(ALRecordId).
     // Corpus codeunit 60872 "ALT Page Update Temp New Test" (#4712).

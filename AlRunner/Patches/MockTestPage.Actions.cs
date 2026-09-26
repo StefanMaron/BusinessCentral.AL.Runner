@@ -73,6 +73,7 @@ internal sealed class LiveNavTestAction : ITestAction
         }
 
         _page.RaiseOnAction(_actionId);
+        _testPage.CloseIfCurrentRowDeleted();
     }
 
     public bool Visible => _page.ActionVisible(_actionId);
