@@ -1158,8 +1158,9 @@ public static partial class RecordPatches
     internal static int ResolveTableIdByName(string tableName)
     {
         if (string.IsNullOrEmpty(tableName)) return -1;
-        // First check already-parsed tables (test-source tables + previously-faulted-in BC tables).
-        foreach (var t in _parsedTables.Values)
+        // First check already-parsed tables (test-source tables + previously-faulted-in BC tables),
+        // an id several app groups declare by the executing group's own name for it (#4767).
+        foreach (var t in InAppGroupScope("table", _parsedTables))
             if (string.Equals(t.TableName, tableName, StringComparison.OrdinalIgnoreCase))
                 return t.TableId;
         // Otherwise scan the BC symbol table index (BaseApp/SystemApp tables).

@@ -105,7 +105,8 @@ public static partial class RecordPatches
     /// </summary>
     private static string? SourceCaptionFor(string kind, int id)
         => string.Equals(kind, "Report", StringComparison.OrdinalIgnoreCase)
-            ? (_parsedReports.TryGetValue(id, out var report) ? report.Caption : null)
+            ? (_parsedReports.TryGetValue(id, out var report) ? InAppGroupScope("report", id, report).Caption : null)
+            : TryGetAppGroupCaption(kind, id, out var own) ? own
             : _parsedObjectCaptions.TryGetValue((kind, id), out var caption) ? caption : null;
 
     /// <summary>

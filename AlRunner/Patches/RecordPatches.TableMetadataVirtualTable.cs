@@ -111,7 +111,8 @@ public static partial class RecordPatches
     // --watch mode (same bundle, one edited file) that is the NORMAL case, not a corner. The
     // remaining terms stay counts and are sound as counts, because the dictionaries they count
     // are only ever cleared by ResetForReload, which bumps the epoch in the same breath.
-    private static (int Epoch, int Parsed, int Pages) _tableMetadataRowsBuiltFrom = (-1, -1, -1);
+    // The Guid term is AppGroupScopeKey(): a group sharing an id with another builds its own rows (#4767).
+    private static (int Epoch, int Parsed, int Pages, Guid Scope) _tableMetadataRowsBuiltFrom = (-1, -1, -1, Guid.Empty);
     private static readonly object _tableMetadataRowsLock = new();
 
     /// <summary>
@@ -350,11 +351,11 @@ public static partial class RecordPatches
     /// </summary>
     private static List<TableMetadataRow> EnumerateKnownTableMetadata()
     {
-        var generation = (BcAppRegistrationEpoch, _parsedTables.Count, _parsedPages.Count);
+        var generation = (BcAppRegistrationEpoch, _parsedTables.Count, _parsedPages.Count, AppGroupScopeKey());
         if (_tableMetadataRows != null && _tableMetadataRowsBuiltFrom == generation) return _tableMetadataRows;
         lock (_tableMetadataRowsLock)
         {
-            generation = (BcAppRegistrationEpoch, _parsedTables.Count, _parsedPages.Count);
+            generation = (BcAppRegistrationEpoch, _parsedTables.Count, _parsedPages.Count, AppGroupScopeKey());
             if (_tableMetadataRows != null && _tableMetadataRowsBuiltFrom == generation) return _tableMetadataRows;
 
             // Built once and closed over below rather than through ResolvePageReference's own
@@ -394,7 +395,7 @@ public static partial class RecordPatches
                 t.ExternalName);
 
             // 1. Tables the runner source-compiled.
-            foreach (var parsed in _parsedTables.Values)
+            foreach (var parsed in InAppGroupScope("table", _parsedTables))
                 rows[parsed.TableId] = Build(parsed);
 
             // 2. Tables declared by precompiled dependency .app packages.
@@ -486,7 +487,7 @@ public static partial class RecordPatches
     // set can shrink, so a count cannot tell a set that lost N entries and gained N different
     // ones from the one it was built against.
     private static Dictionary<string, int>? _pageIdsByName;
-    private static (int Epoch, int Pages, int PageExts) _pageIdsByNameBuiltFrom = (-1, -1, -1);
+    private static (int Epoch, int Pages, int PageExts, Guid Scope) _pageIdsByNameBuiltFrom = (-1, -1, -1, Guid.Empty);
     private static readonly object _pageIdsByNameLock = new();
 
     /// <summary>
@@ -505,11 +506,11 @@ public static partial class RecordPatches
         // this index — they are not `case "page"`); it is kept because a wrong page id is far
         // worse than one extra walk in a rare case. So: if you are simplifying this key, THIS is
         // the term to drop, and TRAP 1 above is the one that must stay.
-        var generation = (BcAppRegistrationEpoch, _parsedPages.Count, _parsedPageExtensions.Count);
+        var generation = (BcAppRegistrationEpoch, _parsedPages.Count, _parsedPageExtensions.Count, AppGroupScopeKey());
         if (_pageIdsByName is { } memo && _pageIdsByNameBuiltFrom == generation) return memo;
         lock (_pageIdsByNameLock)
         {
-            generation = (BcAppRegistrationEpoch, _parsedPages.Count, _parsedPageExtensions.Count);
+            generation = (BcAppRegistrationEpoch, _parsedPages.Count, _parsedPageExtensions.Count, AppGroupScopeKey());
             if (_pageIdsByName is { } inner && _pageIdsByNameBuiltFrom == generation) return inner;
 
             var (pages, _) = BuildObjectIndexes();

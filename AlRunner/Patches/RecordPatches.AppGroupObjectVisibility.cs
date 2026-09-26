@@ -14,6 +14,12 @@ public static partial class RecordPatches
     private static readonly HashSet<(string Kind, int Id)> _ambiguousSourceObjects = new();
     // (normalized kind, id) -> every app group whose source declares it.
     private static readonly Dictionary<(string Kind, int Id), HashSet<Guid>> _sourceObjectDeclarers = new();
+    // (normalized kind, app group, id) -> that group's own parsed declaration and declared Caption.
+    // The per-kind _parsed* dictionaries keep whichever group parsed an id last (#4767).
+    private static readonly Dictionary<(string Kind, Guid AppGroup, int Id), object> _parsedByAppGroup = new();
+    private static readonly Dictionary<(string Kind, Guid AppGroup, int Id), string?> _captionByAppGroup = new();
+    // Every app group that declares at least one id another group also declares.
+    private static readonly HashSet<Guid> _appGroupsSharingAnId = new();
     // Full source dir -> the app group that compiles it; Guid.Empty when two groups share the dir
     // or the group has no app id. Not the nearest app.json: a suite compiles a sub-folder carrying
     // its own app.json into itself (CollectSuitePaths).
@@ -93,8 +99,67 @@ public static partial class RecordPatches
             if (!_sourceObjectDeclarers.TryGetValue(key, out var declarers))
                 _sourceObjectDeclarers[key] = declarers = new HashSet<Guid>();
             declarers.Add(appId);
+            if (declarers.Count > 1) _appGroupsSharingAnId.UnionWith(declarers);
+            // Runs after every extractor has parsed this file, so the dictionaries hold THIS
+            // file's declaration of the id right now.
+            if (ParsedDeclarationOf(kind, id) is { } parsed) _parsedByAppGroup[(key.Item1, appId, id)] = parsed;
+            _captionByAppGroup[(key.Item1, appId, id)] =
+                _parsedObjectCaptions.TryGetValue((kind, id), out var caption) ? caption : null;
         }
     }
+
+    private static object? ParsedDeclarationOf(string kind, int id) => NormalizeObjectTypeName(kind) switch
+    {
+        "table" => _parsedTables.GetValueOrDefault(id),
+        "page" => _parsedPages.GetValueOrDefault(id),
+        "pageextension" => _parsedPageExtensions.GetValueOrDefault(id),
+        "report" => _parsedReports.GetValueOrDefault(id),
+        "reportextension" => _parsedReportExtensions.GetValueOrDefault(id),
+        "query" or "queryextension" => _parsedQueries.GetValueOrDefault(id),
+        "xmlport" => _parsedXmlPorts.GetValueOrDefault(id),
+        _ => _parsedObjectDecls.GetValueOrDefault((kind, id)),
+    };
+
+    /// <summary>
+    /// <paramref name="processWide"/>, or the executing app group's own declaration of
+    /// (<paramref name="kind"/>, <paramref name="id"/>) when that group is one of several
+    /// declaring the id (#4767).
+    /// </summary>
+    private static T InAppGroupScope<T>(string kind, int id, T processWide) where T : class
+        => _appGroupsSharingAnId.Count > 0
+           && AppGroupScopeFor(kind, id) is { } group
+           && _parsedByAppGroup.TryGetValue((NormalizeObjectTypeName(kind), group, id), out var own)
+           && own is T mine
+            ? mine
+            : processWide;
+
+    /// <summary>Every value of one per-kind parsed dictionary, each through
+    /// <see cref="InAppGroupScope{T}(string, int, T)"/>.</summary>
+    private static IEnumerable<T> InAppGroupScope<T>(string kind, Dictionary<int, T> parsed) where T : class
+    {
+        foreach (var (id, value) in parsed)
+            yield return InAppGroupScope(kind, id, value);
+    }
+
+    /// <summary>The declared Caption of a shared id as the executing app group declares it;
+    /// false when the id is not shared by that group.</summary>
+    private static bool TryGetAppGroupCaption(string kind, int id, out string? caption)
+    {
+        caption = null;
+        return _appGroupsSharingAnId.Count > 0
+               && AppGroupScopeFor(kind, id) is { } group
+               && _captionByAppGroup.TryGetValue((NormalizeObjectTypeName(kind), group, id), out caption);
+    }
+
+    /// <summary>
+    /// A term for a per-process row cache built from the per-kind parsed dictionaries: the
+    /// executing app group when it shares an id with another group, else Guid.Empty, so only
+    /// such a group rebuilds the cache for itself (#4767).
+    /// </summary>
+    private static Guid AppGroupScopeKey()
+        => _appGroupsSharingAnId.Count > 0 && CurrentAppGroupAppId() is { } g && _appGroupsSharingAnId.Contains(g)
+            ? g
+            : Guid.Empty;
 
     /// <summary>
     /// The executing app group, when it is one of SEVERAL source app groups declaring
@@ -118,6 +183,9 @@ public static partial class RecordPatches
         _sourceObjectOwners.Clear();
         _ambiguousSourceObjects.Clear();
         _sourceObjectDeclarers.Clear();
+        _parsedByAppGroup.Clear();
+        _captionByAppGroup.Clear();
+        _appGroupsSharingAnId.Clear();
         _appGroupBySourceDir.Clear();
         _scopeAssembly = null;
         _scopeAppId = Guid.Empty;

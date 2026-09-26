@@ -436,10 +436,11 @@ public static partial class RecordPatches
 
     internal static int GetSourceTableIdForPage(int pageId)
     {
-        if (!_parsedPages.TryGetValue(pageId, out var page) || string.IsNullOrWhiteSpace(page.SourceTableName))
-            return 0;
+        if (!_parsedPages.TryGetValue(pageId, out var page)) return 0;
+        page = InAppGroupScope("page", pageId, page);
+        if (string.IsNullOrWhiteSpace(page.SourceTableName)) return 0;
 
-        foreach (var table in _parsedTables.Values)
+        foreach (var table in InAppGroupScope("table", _parsedTables))
             if (NamesEqual(table.TableName, page.SourceTableName))
                 return table.TableId;
 
