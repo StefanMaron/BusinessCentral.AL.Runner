@@ -14,9 +14,10 @@
 //
 // Trap: when every area is enabled (the session's area string is empty) this returns the page
 // untouched, so the empty-group pruning RemoveInList also does is not applied there — that is
-// the runner's behaviour from before #4750, deliberately kept for the common case. Actions are
-// not filtered yet (#4750's follow-up); see the PR body.
+// the runner's behaviour from before #4750, deliberately kept for the common case. Actions and
+// request pages are not filtered yet (#4795).
 using System.Reflection;
+using AlRunner.Infrastructure;
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types.Metadata;
 
@@ -53,11 +54,11 @@ public static class ApplicationAreaControlRemoval
 
         _isApplicationAreaEnabled = (Func<string, string, bool>)Delegate.CreateDelegate(
             typeof(Func<string, string, bool>),
-            provider.GetMethod("IsApplicationAreaEnabled", S, new[] { typeof(string), typeof(string) })
-                ?? throw Shape("MetadataProvider.IsApplicationAreaEnabled(string, string)"));
+            Required(provider, "IsApplicationAreaEnabled", new[] { typeof(string), typeof(string) }));
 
-        var removeInList = provider.GetMethod("RemoveInList", S) ?? throw Shape("MetadataProvider.RemoveInList");
-        _removeInList = removeInList.MakeGenericMethod(typeof(ControlBaseDefinition));
+        // RemoveInList, GetControl and GetPart are generic method definitions, so their
+        // signatures cannot be pinned before MakeGenericMethod; FindMethod refuses a second one.
+        _removeInList = Required(provider, "RemoveInList", null).MakeGenericMethod(typeof(ControlBaseDefinition));
         var p = _removeInList.GetParameters();
         if (p.Length != 8) throw Shape("MetadataProvider.RemoveInList with 8 parameters");
         _builderCtor = p[0].ParameterType.GetConstructor(
@@ -65,23 +66,29 @@ public static class ApplicationAreaControlRemoval
             ?? throw Shape($"{p[0].ParameterType.Name}(bool)");
 
         _predicate = Delegate.CreateDelegate(p[4].ParameterType,
-            typeof(ApplicationAreaControlRemoval).GetMethod(nameof(RemoveWhenAreaNotEnabled), S)
-                ?? throw Shape("ApplicationAreaControlRemoval.RemoveWhenAreaNotEnabled"));
+            ((Func<object, object, object?, bool, bool>)RemoveWhenAreaNotEnabled).Method);
         _getControl = Delegate.CreateDelegate(p[5].ParameterType,
-            (provider.GetMethod("GetControl", S) ?? throw Shape("MetadataProvider.GetControl"))
-                .MakeGenericMethod(typeof(ControlBaseDefinition)));
+            Required(provider, "GetControl", null).MakeGenericMethod(typeof(ControlBaseDefinition)));
         _getPart = Delegate.CreateDelegate(p[5].ParameterType,
-            (provider.GetMethod("GetPart", S) ?? throw Shape("MetadataProvider.GetPart"))
-                .MakeGenericMethod(typeof(ControlBaseDefinition)));
+            Required(provider, "GetPart", null).MakeGenericMethod(typeof(ControlBaseDefinition)));
 
-        var propertyHelper = navNcl.GetTypes().FirstOrDefault(t => t.Name == "PropertyHelper"
-                && t.GetMethod("PropertyIsFalse", S) != null)
-            ?? typeof(MasterPage).Assembly.GetTypes().FirstOrDefault(t => t.Name == "PropertyHelper"
-                && t.GetMethod("PropertyIsFalse", S) != null)
-            ?? throw Shape("PropertyHelper.PropertyIsFalse");
-        var isFalse = propertyHelper.GetMethods(S).Single(m => m.Name == "PropertyIsFalse" && m.GetParameters().Length == 1);
+        var visibleType = (typeof(InfopartPageDefinition).GetProperty(nameof(InfopartPageDefinition.Visible))
+            ?? throw Shape("InfopartPageDefinition.Visible")).PropertyType;
+        var isFalseSignature = new[] { visibleType };
+        var propertyHelper = navNcl.GetTypes().Concat(typeof(MasterPage).Assembly.GetTypes())
+            .FirstOrDefault(t => t.Name == "PropertyHelper"
+                && BcShape.FindMethod(t, "PropertyIsFalse", S, Surface, "PropertyHelper.PropertyIsFalse",
+                    "binds the Visible test of MetadataProvider.RemoveControl", isFalseSignature) != null)
+            ?? throw Shape($"PropertyHelper.PropertyIsFalse({visibleType.Name})");
+        var isFalse = Required(propertyHelper, "PropertyIsFalse", isFalseSignature);
         _propertyIsFalse = v => (bool)isFalse.Invoke(null, new[] { v })!;
     }
+
+    private const string Surface = "TestPage application-area control removal (#4750)";
+
+    private static MethodInfo Required(Type declaring, string name, Type[]? types) =>
+        BcShape.RequiredMethod(declaring, name, BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static,
+            Surface, $"{declaring.Name}.{name}", "the application-area half of BC's page removal pass", types);
 
     /// <summary>
     /// Replaces GetMasterPage's read of MetadataProvider.elementRemovalOption: open (a member
