@@ -30,8 +30,11 @@ public static partial class RecordPatches
         var identity = InProcessAppPackager.ReadIdentity(Path.Combine(suiteDir, "app.json"));
         var appId = identity?.AppId ?? Guid.Empty;
         if (identity != null && appId != Guid.Empty)
+        {
             _sourceAppDependencies[appId] = identity.Dependencies
                 .Select(d => d.AppId).Where(id => id != Guid.Empty).Distinct().ToArray();
+            RecordAppGroupDependencyRefs(appId, identity.Dependencies);
+        }
         foreach (var dir in dirs)
         {
             var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(dir));
@@ -124,6 +127,7 @@ public static partial class RecordPatches
         _appGroupBySourceDir.Clear();
         _scopeAssembly = null;
         _scopeAppId = Guid.Empty;
+        ResetPackageObjectVisibilityForReload();
     }
 
     /// <summary>
@@ -154,8 +158,16 @@ public static partial class RecordPatches
            && owners.TryGetValue((NormalizeObjectTypeName(kind), id), out var owner)
            && !visibleApps.Contains(owner);
 
+    // A source owner (or source ambiguity) decides first; only an object no source declares is
+    // looked up among the claimed precompiled packages (#4448).
     private static bool IsHiddenFromCurrentAppGroup(string kind, int id, HashSet<Guid>? visibleApps)
-        => IsHiddenFromAppGroup(kind, id, visibleApps, _sourceObjectOwners);
+    {
+        if (visibleApps == null) return false;
+        var key = (NormalizeObjectTypeName(kind), id);
+        return _sourceObjectOwners.ContainsKey(key) || _ambiguousSourceObjects.Contains(key)
+            ? IsHiddenFromAppGroup(kind, id, visibleApps, _sourceObjectOwners)
+            : IsHiddenFromAppGroup(kind, id, visibleApps, CurrentPackageVisibility().Owners);
+    }
 
     private sealed class ProviderScope
     {
@@ -178,7 +190,7 @@ public static partial class RecordPatches
         var scope = _inventoryScopeByProvider.GetValue(provider, _ => new ProviderScope
         {
             AppId = current,
-            VisibleApps = current is { } id ? VisibleAppClosure(id, _sourceAppDependencies) : null,
+            VisibleApps = current is { } id ? VisibleAppClosure(id, CurrentPackageVisibility().Dependencies) : null,
         });
         CheckInventoryScope(scope.AppId, current, table);
         return scope.VisibleApps;
@@ -196,7 +208,7 @@ public static partial class RecordPatches
     /// and then throw for every later group (#4447).</para>
     /// </summary>
     private static HashSet<Guid>? CurrentVisibleAppClosure()
-        => CurrentAppGroupAppId() is { } id ? VisibleAppClosure(id, _sourceAppDependencies) : null;
+        => CurrentAppGroupAppId() is { } id ? VisibleAppClosure(id, CurrentPackageVisibility().Dependencies) : null;
 
     private static Guid? CurrentAppGroupAppId()
     {
