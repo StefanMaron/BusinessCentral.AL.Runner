@@ -339,4 +339,54 @@ codeunit 62612 "AGV B Tests"
         XmlPortMetadata.SetRange(ID, 62620, 62629);
         Assert.IsTrue(XmlPortMetadata.IsEmpty(), 'XMLport Metadata in app group B lists an xmlport in the id range of unrelated app group C');
     end;
+
+    // #4448: a PRECOMPILED dependency .app that only a sibling app group declares. In the
+    // combined runner-extras run, xmlport-precompiled-dep-metadata declares "XPD Precompiled
+    // XmlPort Dep" (table 61600, xmlport 61602) and B declares nothing, so none of its objects
+    // may appear here. The positive control is AGVI Tests (app-group-visibility-install-dep), whose
+    // group declares its package and lists it.
+    // In the c+b ordered-bundle step XPD is not registered at all, so these hold trivially there.
+    [Test]
+    procedure AllObj_PrecompiledDepOfUnrelatedGroup_IsNotListed()
+    var
+        AllObj: Record AllObj;
+    begin
+        Assert.IsFalse(AllObj.Get(AllObj."Object Type"::Table, 61600), 'AllObj in app group B lists table 61600 of a precompiled .app only another app group depends on');
+        Assert.IsFalse(AllObj.Get(AllObj."Object Type"::XMLport, 61602), 'AllObj in app group B lists xmlport 61602 of a precompiled .app only another app group depends on');
+        // app-group-visibility-install-dep's dependency: its install trigger also fires under B.
+        Assert.IsFalse(AllObj.Get(AllObj."Object Type"::Table, 66360), 'AllObj in app group B lists table 66360 of a precompiled .app only another app group depends on');
+    end;
+
+    [Test]
+    procedure AllObjWithCaption_PrecompiledDepOfUnrelatedGroup_IsNotListed()
+    var
+        AllObjWithCaption: Record AllObjWithCaption;
+    begin
+        Assert.IsFalse(AllObjWithCaption.Get(AllObjWithCaption."Object Type"::Table, 61600), 'AllObjWithCaption in app group B lists table 61600 of a precompiled .app only another app group depends on');
+    end;
+
+    [Test]
+    procedure TableMetadata_PrecompiledDepOfUnrelatedGroup_IsNotListed()
+    var
+        TableMetadata: Record "Table Metadata";
+    begin
+        Assert.IsFalse(TableMetadata.Get(61600), 'Table Metadata in app group B lists table 61600 of a precompiled .app only another app group depends on');
+    end;
+
+    [Test]
+    procedure FieldTable_PrecompiledDepOfUnrelatedGroup_IsNotListed()
+    var
+        Field: Record Field;
+    begin
+        Field.SetRange(TableNo, 61600);
+        Assert.IsTrue(Field.IsEmpty(), 'Field in app group B lists fields of table 61600 of a precompiled .app only another app group depends on');
+    end;
+
+    [Test]
+    procedure XmlPortMetadata_PrecompiledDepOfUnrelatedGroup_IsNotListed()
+    var
+        XmlPortMetadata: Record "XmlPort Metadata";
+    begin
+        Assert.IsFalse(XmlPortMetadata.Get(61602), 'XMLport Metadata in app group B lists xmlport 61602 of a precompiled .app only another app group depends on');
+    end;
 }

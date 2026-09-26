@@ -29,9 +29,11 @@ public static partial class RecordPatches
     /// compiled <c>XmlPort{id}</c> types, and a --watch cycle clears the source owners while
     /// the previous cycle's assemblies stay loaded, so a later bundle's xmlport reached the
     /// earlier bundle's run unowned and was listed (WatchDependentBundleInventoryTests, cycle 2).
-    /// The xmlports of a registered .app package are not hidden (pinned by runner-extras
-    /// xmlport-metadata-floor-app); a precompiled DLL loaded with no registered .app symbols is
-    /// not in that set, so its xmlports CAN be hidden from a group whose closure omits it.
+    /// The xmlports of a registered .app package are skipped here: IsHiddenFromCurrentAppGroup's
+    /// package-owner rule decides them (floor apps stay listed, pinned by runner-extras
+    /// xmlport-metadata-floor-app; docs/virtual-tables-allobj.md#precompiled-package-visibility).
+    /// A precompiled DLL loaded with no registered .app symbols is not in that set, so its
+    /// xmlports CAN be hidden here from a group whose closure omits it.
     /// Pinned for ambiguous ids by AppGroupObjectVisibilityTests (the shared-id dupX/dupY groups).
     /// </summary>
     private static bool IsCompiledXmlPortOfUnreachableSourceApp(int id, HashSet<Guid>? visibleApps,

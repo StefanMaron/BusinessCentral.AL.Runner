@@ -1,0 +1,57 @@
+How .alpackages/*.app and .deps-bin/*.dll in this folder were produced
+=====================================================================
+
+"AGVI Precompiled Install Dep" (table 66360, Install codeunit 66361, subscriber codeunit 66363)
+loads as a Tier-1
+precompiled dependency: a compiled DLL under .deps-bin/<Publisher>_<Name>_<Version>.dll plus a
+symbol package under .alpackages/. Only THIS app group declares it, but every app group of the
+combined tests/runner-extras run fires its install trigger (the bundle's dependency install is
+shared), and that trigger reads AllObj for its own table (#4448). Its Payment Method
+OnAfterInsertEvent subscriber does the same when app-group-visibility-subscriber, which does not
+declare this app, inserts a Payment Method.
+
+Its object ids 66360-66369 sit inside this group's own idRanges (66350-66369) so that
+RunnerExtrasIdRangeGuardTests reserves them; this group's AL uses 66350-66359 only.
+
+The dep's AL source must NEVER live inside any runner-extras suite folder: the suite compile
+sweeps *.al recursively, and the table would then be source-compiled here, which is not the
+shape under test. Keep it in a scratch dir:
+
+  app.json   id 4448a1a1-7a1d-4c38-9e25-1f6d8a4c2660, name "AGVI Precompiled Install Dep",
+             publisher "AL Runner Fixtures", version 1.0.0.0, platform 27.0.0.0,
+             application 27.0.0.0, runtime 17.0, idRanges 66360-66369, no dependencies
+  table 66360 "AGVI Install Log" { field(1; "No."; Code[20]) } key PK "No."
+  codeunit 66361 "AGVI Install" (Subtype = Install), OnInstallAppPerCompany:
+      if not AllObj.Get(AllObj."Object Type"::Table, 66360) then
+          Error('AGVI install trigger cannot see its own table 66360 in AllObj');
+      insert an "AGVI Install Log" row with "No." = 'INSTALLED'
+  codeunit 66363 "AGVI Subscriber":
+      [EventSubscriber(ObjectType::Table, Database::"Payment Method", 'OnAfterInsertEvent', '', false, false)]
+      local procedure OnAfterInsertPaymentMethod(var Rec: Record "Payment Method")
+          if Rec.Code <> 'AGVS-SUB' then exit;   // other suites insert Payment Methods too
+          if not AllObj.Get(AllObj."Object Type"::Table, 66360) then
+              Error('AGVI subscriber cannot see its own table 66360 in AllObj');
+          // Base App "Type Helper" reads on this app's behalf, so its frame is the innermost app
+          // frame: only a walk of the WHOLE stack finds AGVI (var TypeHelper: Codeunit "Type Helper")
+          if TypeHelper.GetFieldLength(Database::"AGVI Install Log", 1) <> 20 then
+              Error('AGVI subscriber: Type Helper, called on its behalf, cannot see field 66360.1');
+          Rec.Description := 'AGVI SUBSCRIBER RAN';
+  a throwaway [Test] codeunit 66362 so the bundle emits a DLL (NOT copied back here)
+
+EMIT THE DLL ON THE OLDEST BC VERSION IN .github/bc-versions.txt (27.0). The committed DLL was
+emitted by a runner built with -p:_BCVersion=27.0.38460.53934. A DLL emitted on 28.x references
+the static ALMethodScope.ALFinally(ALMethodScope), which BC 27.0's Ncl does not have: the install
+trigger then throws MissingMethodException under every app group and the 27.0 leg's whole
+runner-extras run EXEC-FAILs. 27.0 emits the instance ALFinally(), which every later version has.
+
+Regenerate, from the repo root (AlRunner built -c Release):
+
+  python3 tests/runner-extras/app-group-visibility-install-dep/build_symbol_app.py.txt \
+      tests/runner-extras/app-group-visibility-install-dep/.alpackages/AL_Runner_Fixtures_AGVI_Precompiled_Install_Dep_1.0.0.0.app
+  dotnet build AlRunner -c Release -p:_BCVersion=27.0.38460.53934   # in a scratch worktree
+  dotnet AlRunner/bin/Release/net8.0/al-runner.dll --verbose /tmp/agvi-dep --auto-provision --cache /tmp/c27
+  # prints "[cache] WROTE key=<KEY> path=/tmp/c27/<KEY>.dll"
+  cp /tmp/c27/<KEY>.dll \
+     tests/runner-extras/app-group-visibility-install-dep/.deps-bin/AL_Runner_Fixtures_AGVI_Precompiled_Install_Dep_1.0.0.0.dll
+
+Both binaries match .gitignore patterns; commit them with `git add -f`.

@@ -1,0 +1,26 @@
+{
+  "id": "4448a1a1-7a1d-4c38-9e25-1f6d8a4c2650",
+  "name": "Runner Extras - App Group Visibility Install Dep",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #4448: the one app group declaring the precompiled 'AGVI Precompiled Install Dep'. Its objects are listed here and hidden from app groups that do not declare it, while its install trigger, which every app group of the run fires, still sees its own table. Its subscriber is exercised by app-group-visibility-subscriber.",
+  "description": "Issue #4448. A precompiled dependency's objects are hidden from app groups outside its dependency closure, but the bundle's dependency install triggers fire under whichever app group is executing. The trigger of this app reads AllObj for its own table 66360 and errors when it cannot see it, so an install run under a non-declaring group proves install triggers see their own app's closure. Ids 66360-66369 are reserved for the dependency (see REGENERATE-FIXTURES.txt). Runner-specific: the corpus runs one app set per service tier.",
+  "dependencies": [
+    {
+      "id": "4448a1a1-7a1d-4c38-9e25-1f6d8a4c2660",
+      "name": "AGVI Precompiled Install Dep",
+      "publisher": "AL Runner Fixtures",
+      "version": "1.0.0.0"
+    }
+  ],
+  "idRanges": [
+    {
+      "from": 66350,
+      "to": 66369
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud",
+  "application": "27.0.0.0"
+}
