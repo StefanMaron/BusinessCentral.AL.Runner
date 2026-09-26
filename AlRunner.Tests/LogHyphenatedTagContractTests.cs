@@ -46,6 +46,8 @@ public sealed class LogHyphenatedTagContractTests
         new("AlRunner/Patches/RecordPatches.PageControlFieldFromBcDocument.cs", "page-control-field", Kind.Loud),
         new("AlRunner/Infrastructure/PhaseLog.cs", "phase-log", Kind.Loud),
         new("AlRunner/Infrastructure/ProvisioningCheck.cs", "provision-gap", Kind.Loud),
+        // An unservable app whose symbols could not be read: the failure it would have named loses its app.
+        new("AlRunner/Infrastructure/ProvisionGapLog.cs", "provision-gap", Kind.Loud),
         new("AlRunner/Patches/RecordPatches.ReportRowFromBcDocument.cs", "report-metadata", Kind.Loud),
         new("AlRunner/Infrastructure/ServiceTierDllIndex.cs", "servicetier-dll", Kind.Loud, Anchor: "failed to load"),
         new("AlRunner/Infrastructure/ServiceTierDllIndex.cs", "servicetier-dll", Kind.Loud, Anchor: "index skip"),
