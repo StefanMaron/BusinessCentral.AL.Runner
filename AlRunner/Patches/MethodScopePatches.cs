@@ -395,31 +395,61 @@ public static partial class BcRuntime
         // detach below, while this scope's own child-handler chain is still intact.
         UnbindLocalManualSubscriptions(self);
 
-        // #4732: same reason, for a LOCAL "var X: TestPage ..." — see ReleaseLocalTestPageReferences.
-        ReleaseLocalTestPageReferences(self);
+        // #4732: same reason, for a LOCAL "var X: TestPage ..." — see RemoveLocalTestPageTraps.
+        RemoveLocalTestPageTraps(self);
 
         DetachTreeHandlerFromParent(self);
     }
 
+    private static MethodInfo? _miRemoveTrap;
+    private static FieldInfo? _fSharedRefCount;
+
     /// <summary>
-    /// Releases the page reference held by each LOCAL TestPage variable of a disposing scope, so a
-    /// <c>Trap()</c> nothing consumed ends with its variable instead of capturing a later page run
-    /// (#4732). Observably equivalent to BC: BC's scope exit disposes the scope's tree, whose
-    /// <c>NavTestPageHandle</c> child releases its reference target; the last release disposes the
-    /// <c>NavTestPage</c>, and <c>NavTestPage.Dispose(bool)</c> calls
-    /// <c>TestExecution.RemoveTrap(this)</c> (28.1.49838.53910). <c>ClearReference()</c> is BC's own
-    /// public release, so a page still referenced elsewhere (a var parameter, an assignment) keeps
-    /// its trap exactly as it would there.
-    /// Trap: release only — never Dispose() the handle's subtree; see NavMethodScope_Dispose.
+    /// Removes the outstanding <c>Trap()</c> of each LOCAL TestPage variable of a disposing scope
+    /// that holds the last reference to its page, so a trap nothing consumed ends with its
+    /// variable instead of capturing a later page run (#4732). Observably equivalent to BC: BC's
+    /// scope exit releases the scope's <c>NavTestPageHandle</c>; the last release disposes the
+    /// <c>NavTestPage</c> (<c>TreeSharedObjectHandler.InternalRemoveReferenceDisposeIfLast</c>),
+    /// and <c>NavTestPage.Dispose(bool)</c> calls <c>TestExecution.RemoveTrap(this)</c>
+    /// (28.1.49838.53910). A page another variable still references (assigned out of the local)
+    /// keeps its trap. Corpus codeunit 67150 adjudicates it.
+    /// Trap: remove the trap only, never release or dispose the page — its client's Dispose
+    /// flush raises a refused delayed insert at scope exit that BC does not raise (corpus 60045).
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    internal static void ReleaseLocalTestPageReferences(object? self)
+    internal static void RemoveLocalTestPageTraps(object? self)
     {
         ForEachDirectChildHost(self, host =>
         {
-            if (host is Microsoft.Dynamics.Nav.Runtime.NavTestPageHandle tpHandle && tpHandle.HasTarget)
-                tpHandle.ClearReference();
+            if (host is not Microsoft.Dynamics.Nav.Runtime.NavTestPageHandle tpHandle || !tpHandle.HasTarget)
+                return;
+            var page = tpHandle.Target;
+            if (!IsLastReference(page.Tree, tpHandle) || _testExecutionInstance == null)
+                return;
+            _miRemoveTrap ??= AlRunner.Infrastructure.BcShape.RequiredMethod(
+                _testExecutionInstance.GetType(), "RemoveTrap",
+                BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance,
+                "testpage-trap-scope", "NavTestExecution.RemoveTrap(NavTestPage)",
+                "without it an unconsumed TestPage.Trap() outlives its variable (#4732)");
+            _miRemoveTrap.Invoke(_testExecutionInstance, new object[] { page });
         });
+    }
+
+    /// <summary>
+    /// Whether releasing <paramref name="reference"/> would dispose the object <paramref name="tree"/>
+    /// hosts, by BC's own two rules for <c>InternalRemoveReferenceDisposeIfLast</c>: a shared
+    /// object when its reference count would reach zero, any other when the reference is its parent.
+    /// </summary>
+    private static bool IsLastReference(Microsoft.Dynamics.Nav.Runtime.TreeHandler tree, object reference)
+    {
+        if (tree.GetType().Name != "TreeSharedObjectHandler")
+            return ReferenceEquals(tree.Parent, reference);
+        _fSharedRefCount ??= tree.GetType().GetField("refCount", BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new AlRunner.Infrastructure.BcShapeGapException(
+                "testpage-trap-scope", "TreeSharedObjectHandler.refCount",
+                "field not found — without it the runner cannot tell whether a local TestPage holds "
+                + "the last reference to its page (#4732)");
+        return (int)_fSharedRefCount.GetValue(tree)! == 1;
     }
 
     /// <summary>
