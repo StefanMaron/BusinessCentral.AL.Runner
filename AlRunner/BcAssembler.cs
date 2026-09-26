@@ -4,6 +4,8 @@
 //   1. ApplyPolyfillRedirects — string substitutions routing AL-compiler-emitted
 //      references for APIs that don't exist on the real service-tier DLLs to
 //      small in-process polyfill shims (defined inline as PolyfillSource).
+//   1b. ScopeClassIdentity — gives each method-scope class the IsTest flag and method id
+//      BC's inline-scope emit carries and the scope-class emit does not (#4666).
 //
 // Post-compile pass (runs only when the real emit needs it):
 //   2. CallSiteArgWrap — fixes the residual call-site ByRef gap BC's emitter
@@ -187,9 +189,15 @@ public sealed class BcAssembler
     internal static SyntaxTree[] ParseInParallel(IReadOnlyList<EmittedSource> sources)
     {
         var parsed = new SyntaxTree[sources.Count];
-        SyntaxTree ParseOne(int i) => CSharpSyntaxTree.ParseText(
-            ApplyPolyfillRedirects(sources[i].Code), GeneratedParseOptions,
-            path: sources[i].Name + ".cs");
+        SyntaxTree ParseOne(int i)
+        {
+            var tree = CSharpSyntaxTree.ParseText(
+                ApplyPolyfillRedirects(sources[i].Code), GeneratedParseOptions,
+                path: sources[i].Name + ".cs");
+            return sources[i].Code.Contains("_Scope_", StringComparison.Ordinal)
+                ? ScopeClassIdentity.Apply(tree)
+                : tree;
+        }
 
         // Below this size the thread setup costs more than the parse it would overlap.
         const int ParallelThreshold = 8;
