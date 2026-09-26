@@ -171,9 +171,16 @@ public static class AlReportLayoutRegistry
                 // sidecar is already unreachable from a runner carrying this code —
                 // tolerating it here just keeps a hand-copied cache from throwing.
                 IsDefault: e.TryGetProperty("IsDefault", out var d)
-                           && d.ValueKind == System.Text.Json.JsonValueKind.True));
+                           && d.ValueKind == System.Text.Json.JsonValueKind.True,
+                ObsoleteState: OptionalString(e, "ObsoleteState"),
+                ExcelLayoutMultipleDataSheets: OptionalString(e, "ExcelLayoutMultipleDataSheets")));
             n++;
         }
         return n;
     }
+
+    private static string OptionalString(System.Text.Json.JsonElement e, string name)
+        => e.TryGetProperty(name, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.String
+            ? v.GetString() ?? string.Empty
+            : string.Empty;
 }

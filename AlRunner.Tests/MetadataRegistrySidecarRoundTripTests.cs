@@ -248,6 +248,34 @@ public class ReportLayoutRegistrySidecarRoundTripTests : IDisposable
     }
 
     /// <summary>
+    /// #4571: a compile-cache HIT replays layouts from this sidecar instead of re-reading the
+    /// compiler's symbols, so a declared ObsoleteState / ExcelLayoutMultipleDataSheets must
+    /// survive it, and an undeclared one must come back empty rather than defaulted.
+    /// </summary>
+    [Fact]
+    public void Sidecar_RoundTripsObsoleteStateAndExcelSheetValue()
+    {
+        AlReportLayoutRegistry.Register(Layout(70667, "Retiring", isDefault: false) with { ObsoleteState = "Pending" });
+        AlReportLayoutRegistry.Register(Layout(70667, "Sheets", isDefault: false) with { ExcelLayoutMultipleDataSheets = "false" });
+        AlReportLayoutRegistry.Register(Layout(70667, "Plain", isDefault: true));
+
+        var path = Path.Combine(TestScratch.Dir("al-runner-reportlayout-sidecar-obsolete"), "dep.report-layouts.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        Assert.Equal(3, AlReportLayoutRegistry.SaveSidecar(path, new[] { 70667 }));
+
+        AlReportLayoutRegistry.Clear();
+        Assert.Equal(3, AlReportLayoutRegistry.LoadSidecar(path));
+
+        var back = AlReportLayoutRegistry.Get(70667).ToDictionary(l => l.Name);
+        Assert.Equal("Pending", back["Retiring"].ObsoleteState);
+        Assert.Equal("", back["Retiring"].ExcelLayoutMultipleDataSheets);
+        Assert.Equal("false", back["Sheets"].ExcelLayoutMultipleDataSheets);
+        Assert.Equal("", back["Sheets"].ObsoleteState);
+        Assert.Equal("", back["Plain"].ObsoleteState);
+        Assert.Equal("", back["Plain"].ExcelLayoutMultipleDataSheets);
+    }
+
+    /// <summary>
     /// IsDefault has three states across the sidecar, not two: written true, written
     /// false, and ABSENT (a sidecar predating the property). A reader collapsing
     /// absent-to-false is invisible to a test that only ever writes true, so all three
