@@ -4,9 +4,13 @@
 // runner's own bookkeeping across a test-codeunit boundary, which only exists because the
 // runner replaces its table store there:
 //   - the SingleInstance instance cache is no longer dropped at the boundary;
-//   - a Record global held by that instance is re-pointed at the replacement store
-//     (RecordPatches.RebindRecordToLiveStore), keeping its filters — including one three
-//     codeunits down, since the walk has no depth cut-off;
+//   - every record that instance reaches is re-pointed at the replacement store on its next
+//     read (RecordPatches.RecordImplementation_LiveDataAccess, wired by Cecil into every read of
+//     RecordImplementation.dataAccess), keeping its filters: held directly, in an array, as a
+//     RecordRef, three codeunits down, through an interface, a variant, a List or a Dictionary,
+//     and on the Get and BLOB CalcFields paths the runner reads by reflection;
+//   - the per-boundary sweep of the shared-object container keeps a List/Dictionary the
+//     instance holds (BcRuntime.TreeObjectsReachableFromSingleInstances);
 //   - the reset after the install seed still keeps install-trigger state from the first test.
 // The bundle-start reset needs two runs in one process: SingleInstanceServerResetTests.
 //

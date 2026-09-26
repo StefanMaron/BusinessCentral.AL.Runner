@@ -4,6 +4,7 @@ table 71920 "SIL Row"
     {
         field(1; "Key"; Code[10]) { }
         field(2; Val; Integer) { }
+        field(3; Pic; Blob) { }
     }
     keys
     {

@@ -14,6 +14,8 @@ codeunit 71921 "SIL Single"
         ViaVariant: Variant;
         ViaList: List of [Interface "SIL Counter"];
         ViaDictionary: Dictionary of [Integer, Interface "SIL Counter"];
+        ByKey: Record "SIL Row";
+        ByBlob: Record "SIL Row";
 
     procedure Bump()
     begin
@@ -63,6 +65,24 @@ codeunit 71921 "SIL Single"
         Row.Init();
         Row."Key" := NewKey;
         Row.Insert();
+    end;
+
+    // Each of these two records is touched first, in the next test codeunit, by the operation
+    // it is named for — so that operation's own read of the store is the one that must re-point.
+    procedure GetByKey(KeyValue: Code[10]): Boolean
+    begin
+        exit(ByKey.Get(KeyValue));
+    end;
+
+    procedure LoadBlobRecord(KeyValue: Code[10])
+    begin
+        ByBlob.Get(KeyValue);
+    end;
+
+    procedure BlobHasValue(): Boolean
+    begin
+        ByBlob.CalcFields(Pic);
+        exit(ByBlob.Pic.HasValue());
     end;
 
     procedure CountAll(): Text
