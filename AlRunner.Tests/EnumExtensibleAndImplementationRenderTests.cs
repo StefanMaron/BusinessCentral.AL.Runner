@@ -225,6 +225,47 @@ public sealed class EnumExtensibleAndImplementationRenderTests
     }
 
     /// <summary>
+    /// #4640 — a value Caption carrying <c>;</c> or a leading <c>"</c> is rendered in BC's quoted
+    /// form, so BC's own reader gets the whole caption back rather than the text before the <c>;</c>.
+    /// </summary>
+    [SkippableFact]
+    public void TheRender_KeepsAValueCaptionWithMultiLanguageSyntaxWhole()
+    {
+        Skip.IfNot(_engine.Ready, _engine.SkipReason);
+        AlEnumMetadataRegistry.Clear();
+        try
+        {
+            var parsed = ReadBackThroughBc(RegisterAndRender(Parse("""
+                {
+                  "Id": 60002,
+                  "Name": "Separator Captions",
+                  "Values": [
+                    { "Name": "Semi", "Ordinal": 0, "Properties": [ { "Name": "Caption", "Value": "Before; after" } ] },
+                    { "Name": "Quote", "Ordinal": 1, "Properties": [ { "Name": "Caption", "Value": "\"Quoted\" start" } ] },
+                    { "Name": "Plain", "Ordinal": 2, "Properties": [ { "Name": "Caption", "Value": "Plain caption" } ] }
+                  ]
+                }
+                """)));
+
+            var byOrdinal = ValuesByOrdinal(parsed);
+            Assert.Equal(new[] { "Before; after" }, CaptionTexts(byOrdinal[0]));
+            Assert.Equal(new[] { "\"Quoted\" start" }, CaptionTexts(byOrdinal[1]));
+            Assert.Equal(new[] { "Plain caption" }, CaptionTexts(byOrdinal[2]));
+        }
+        finally
+        {
+            AlEnumMetadataRegistry.Clear();
+        }
+    }
+
+    private static string[] CaptionTexts(object metaEnumValue)
+    {
+        var ml = (Microsoft.Dynamics.Nav.Types.Metadata.MultiLanguage)metaEnumValue.GetType()
+            .GetProperty("CaptionML")!.GetValue(metaEnumValue)!;
+        return ml.Texts.ToArray();
+    }
+
+    /// <summary>
     /// The negative direction of the render: an enum that declares none of the four must leave
     /// every one of them OFF the document, so BC applies its own default rather than reading a
     /// value the runner manufactured. This is what stops "always write Extensible=1" and

@@ -968,6 +968,50 @@ public sealed class ExtensionRuntimeDeltasTests
         finally { Directory.Delete(dir, recursive: true); }
     }
 
+    /// <summary>
+    /// #4640 — a member Caption/ToolTip carrying <c>;</c> or a leading <c>"</c> is written in BC's
+    /// quoted form, which BC's parser reads back whole; a bare <c>ENU=</c> prefix is cut at the <c>;</c>.
+    /// </summary>
+    [Fact]
+    public void A_caption_or_tooltip_carrying_multilanguage_syntax_is_written_quoted()
+    {
+        var dir = TestScratch.Dir("al-runner-extension-runtime-deltas-quoted");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var appPath = WriteAppWith(dir, """
+                {
+                  "RuntimeVersion": "17.0",
+                  "PageExtensions": [
+                    {
+                      "Id": 88380946,
+                      "Name": "Quoted Ext",
+                      "TargetObject": "ERD Target Page",
+                      "ActionChanges": [
+                        { "Anchor": "Navigation", "ChangeKind": 2,
+                          "Actions": [ { "Kind": 2, "Id": 640938046, "Name": "Gallery",
+                                         "Properties": [ { "Name": "Caption", "Value": "Gallery; apps" },
+                                                         { "Name": "ToolTip", "Value": "\"Quoted\" tip" } ] } ] }
+                      ]
+                    }
+                  ]
+                }
+                """);
+
+            var action = Render(appPath, "Page", 88380946)!.Root!
+                .Elements($"{Ns}ActionAdd").Single().Elements($"{Ns}Actions").Single();
+            var caption = action.Attribute("CaptionML")!.Value;
+            var toolTip = action.Attribute("ToolTipML")!.Value;
+            Assert.Equal("ENU=\"Gallery; apps\"", caption);
+            Assert.Equal("ENU=\"\"\"Quoted\"\" tip\"", toolTip);
+            Assert.Equal(new[] { "Gallery; apps" },
+                Microsoft.Dynamics.Nav.Types.Metadata.MultiLanguage.Parse(caption).Texts);
+            Assert.Equal(new[] { "\"Quoted\" tip" },
+                Microsoft.Dynamics.Nav.Types.Metadata.MultiLanguage.Parse(toolTip).Texts);
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
     // An actionref fixture with DECOYS for every lookup a wrong render could make. The first
     // actionref promotes an action of the EXTENDED page (TargetId 640938039, declared nowhere
     // here), and a plain action carrying the same NAME is declared first — so a render that

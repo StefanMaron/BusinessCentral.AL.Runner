@@ -204,7 +204,7 @@ public static partial class RecordPatches
             if (caption is not null)
             {
                 var captionMl = doc.CreateElement("CaptionML");
-                captionMl.InnerText = "ENU=" + caption;
+                captionMl.InnerText = EnuMultiLanguageText.ToMultiLanguageString(caption);
                 value.AppendChild(captionMl);
             }
 
