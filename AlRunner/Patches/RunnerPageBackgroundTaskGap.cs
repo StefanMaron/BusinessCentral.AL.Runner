@@ -119,6 +119,8 @@ public static class RunnerPageBackgroundTaskGap
             return; // matches real BC: BeforeRunTaskAsync==false means preconditions not met, no After* fires
 
         NavChildSessionTaskError? error = null;
+        // Only the worker body is "in the child session"; Before/After run on the parent in BC too.
+        bool parentInWriteTransaction = ALDatabasePatches.EnterChildSession();
         try
         {
             SyncWait(childSessionTask.RunTaskInChildSessionAsync(session, NavCancellationToken.None));
@@ -126,6 +128,10 @@ public static class RunnerPageBackgroundTaskGap
         catch (NavBaseException ex)
         {
             error = new NavChildSessionTaskError(session, ex);
+        }
+        finally
+        {
+            ALDatabasePatches.ExitChildSession(parentInWriteTransaction);
         }
 
         if (error == null)

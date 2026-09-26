@@ -61,6 +61,31 @@ public static class ALDatabasePatches
     public static bool HasWriteTransaction(object? session)
         => System.Threading.Volatile.Read(ref _inWriteTransaction);
 
+    // ── Child session (page background task worker) ────────────────────────────
+    // RunnerPageBackgroundTaskGap runs a worker inline in the parent session; BC runs it in a
+    // fresh child NavSession (NavChildSessionTaskRuntime.RunAsync), which has no write
+    // transaction of its own and commits nothing of the parent's. Corpus codeunit 67202
+    // "Test Page BgTask Tx Tests" pins both directions (#4679).
+    private static int _childSessionDepth;
+
+    internal static bool InChildSession => System.Threading.Volatile.Read(ref _childSessionDepth) > 0;
+
+    /// <summary>Hide the parent's write transaction for the duration of a worker. Returns the
+    /// parent's state, which <see cref="ExitChildSession"/> must be handed back.</summary>
+    internal static bool EnterChildSession()
+    {
+        bool parentInWriteTransaction = System.Threading.Volatile.Read(ref _inWriteTransaction);
+        System.Threading.Volatile.Write(ref _inWriteTransaction, false);
+        System.Threading.Interlocked.Increment(ref _childSessionDepth);
+        return parentInWriteTransaction;
+    }
+
+    internal static void ExitChildSession(bool parentInWriteTransaction)
+    {
+        System.Threading.Interlocked.Decrement(ref _childSessionDepth);
+        System.Threading.Volatile.Write(ref _inWriteTransaction, parentInWriteTransaction);
+    }
+
     /// <summary>Replacement for ALDatabase.ALCommit(). There is nothing to flush — the
     /// in-memory store is written through — but the write transaction ends here, which is
     /// what AL observes via Database.IsInWriteTransaction().
@@ -106,6 +131,15 @@ public static class ALDatabasePatches
     /// </param>
     private static void CommitWithoutTestExecutionGuard(bool isAlCommitStatement = false)
     {
+        // A child session's commit ends only its own transaction, and the child is a fresh
+        // NavSession carrying none of the test's CommitBehavior: never move the parent's
+        // rollback floor from inside a worker (#4679).
+        if (InChildSession)
+        {
+            System.Threading.Volatile.Write(ref _inWriteTransaction, false);
+            return;
+        }
+
         switch (CurrentCommitBehaviorName())
         {
             case "Error":
