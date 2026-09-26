@@ -130,8 +130,8 @@
 //                                     server ctor, the document-service decorator ctor.
 //                                     External renderers and an external service.
 //                                     docs/scope.md#report-rendering, a section that exists.
-//     MockTestPage.cs (6)             a page with no SourceTable; an OnQueryClosePage veto,
-//                                     which in BC leaves the page open awaiting a user (§3.11);
+//     MockTestPage.cs (6)             a page with no SourceTable; an OnQueryClosePage veto
+//                                     (since removed, #4710: BC completes that Close());
 //                                     a control not bound to a source-table field used to
 //                                     locate a row; and three AL-AUTHORING errors real BC also
 //                                     raises — an option value that is neither member nor

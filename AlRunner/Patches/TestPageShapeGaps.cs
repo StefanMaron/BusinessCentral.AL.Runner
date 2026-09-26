@@ -126,7 +126,8 @@
 //     MockTestPage.cs (6 citations / 5 throws)
 //       * a page with no SourceTable (the StandardDialog shape) — BC has no record-backed
 //         rowset for one either, so `false` is BC's own answer;
-//       * an OnQueryClosePage veto, which in BC leaves the page open awaiting a user (§3.11);
+//       * an OnQueryClosePage veto -- since REMOVED (#4710): BC's Close() returns without an
+//         error there (corpus codeunit 60419), so it was never a scope boundary;
 //       * a control not bound to a source-table field, used to LOCATE A ROW;
 //       * three AL-AUTHORING errors real BC also raises — an option value that is neither a
 //         member nor a caption (two branches of one ternary, hence 6 citations over 5 throws),

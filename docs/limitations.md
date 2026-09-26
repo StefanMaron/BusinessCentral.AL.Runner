@@ -2023,13 +2023,18 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   Real BC drives every one of these, so each is the runner failing to keep up rather than a
   surface BC also lacks — which is the test for whether a refusal may cite `docs/scope.md` at
   all. Eight further refusals in those same two files genuinely are permanent and keep their
-  `docs/scope.md` citation: a page with no `SourceTable`, an `OnQueryClosePage` veto on the
-  explicit `TestPage.Close()` path, a lookup that could only come from a `TableRelation`, and
-  the AL-authoring errors real BC also raises. The veto refusal is scoped to that path: a page
-  the PLATFORM closes for a `[ModalPageHandler]` / `[PageHandler]` reproduces what a real
-  service tier does with a veto instead — no error reaches the test, `OnClosePage` still fires,
-  and `RunModal()` reports `Action::None`
-  ([#3050](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3050)).
+  `docs/scope.md` citation: a page with no `SourceTable`, a lookup that could only come from a
+  `TableRelation`, and the AL-authoring errors real BC also raises.
+
+  An `OnQueryClosePage` **veto** (the trigger returns `false`) is not a refusal on either close
+  route. On `TestPage.Close()` — and `CurrPage.Close()`, which reaches the same method — BC's
+  close handler answers "close refused" and raises nothing, so `Close()` returns normally and
+  `OnClosePage` does not run; corpus codeunit 60419 "QCV Close Veto Tests" measures it,
+  including the `Confirm`-answered-No shape the Base Application's User Card uses
+  ([#4710](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4710)). A page the
+  PLATFORM closes for a `[ModalPageHandler]` / `[PageHandler]` reproduces what a real service
+  tier does with a veto there — no error reaches the test, `OnClosePage` still fires, and
+  `RunModal()` reports `Action::None` ([#3050](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3050)).
 
   An `OnQueryClosePage` that raises an AL *error* — as opposed to vetoing — is not a refusal
   here at all, and used to be. BC's own client-side close handler shows the text as a
