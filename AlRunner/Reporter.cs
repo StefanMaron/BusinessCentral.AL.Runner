@@ -504,8 +504,9 @@ public static class Reporter
         PrintActionNeededEntries(ActionNeededEntries(buckets), w);
 
     /// <summary>
-    /// For every early `return 1` in the bundle loop (#4636): the closing block never prints on
-    /// those paths, so a deferred gap — possibly the abort's cause — would be printed nowhere.
+    /// For every early `return 1` in the bundle loop, and a bundle skipped for having no suites
+    /// (#4636): the closing block never sees those gaps, so a deferred one — possibly the abort's
+    /// cause — would be printed nowhere.
     /// Writes to stderr what is pending: finished buckets' gaps plus this bundle's so far.
     /// </summary>
     public static void PrintActionNeededOnAbort(

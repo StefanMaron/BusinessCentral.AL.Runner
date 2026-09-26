@@ -18,6 +18,7 @@
 // anywhere in this file, so nothing here belongs in the al-language corpus.
 using System;
 using System.IO;
+using AlRunner;
 using AlRunner.Infrastructure;
 using Xunit;
 
@@ -154,5 +155,54 @@ public sealed class ProvisionGapLogTests
             Assert.Equal(new[] { "a gap" }, read);
         }
         finally { Console.SetError(original); }
+    }
+
+    // ── #4636: the public abort overload Program.cs calls reads this class's state ──
+
+    private static string AbortOverloadOutput(bool deferToActionNeeded)
+    {
+        var original = Console.Error;
+        var (savedDefer, savedVerbose) = (ProvisionGapLog.DeferToActionNeeded, AlRunner.Log.Verbose);
+        var captured = new StringWriter();
+        try
+        {
+            AlRunner.Log.Verbose = false;
+            ProvisionGapLog.DeferToActionNeeded = deferToActionNeeded;
+            ProvisionGapLog.Reset();
+            Console.SetError(TextWriter.Null);
+            ProvisionGapLog.Report("[dep] gap reported during the interrupted dependency load");
+            Console.SetError(captured);
+            Reporter.PrintActionNeededOnAbort(
+                Array.Empty<BucketResult>(), new[] { "[dep] gap the bundle loop collected" });
+        }
+        finally
+        {
+            Console.SetError(original);
+            ProvisionGapLog.DeferToActionNeeded = savedDefer;
+            AlRunner.Log.Verbose = savedVerbose;
+            ProvisionGapLog.Reset();
+        }
+        return captured.ToString();
+    }
+
+    /// <summary>
+    /// A default run defers gaps, so the abort must print them: the bundle's own list AND what
+    /// ProvisionGapLog collected before the abort interrupted the load.
+    /// </summary>
+    [Fact]
+    public void AbortOverload_Deferred_PrintsTheBundlesGapsAndTheCollectedOnes()
+    {
+        var output = AbortOverloadOutput(deferToActionNeeded: true);
+
+        Assert.Contains("Action needed (2):", output);
+        Assert.Contains("[dep] gap the bundle loop collected", output);
+        Assert.Contains("[dep] gap reported during the interrupted dependency load", output);
+    }
+
+    /// <summary>Negative: not deferred, every gap was already written at discovery.</summary>
+    [Fact]
+    public void AbortOverload_NotDeferred_PrintsNothing()
+    {
+        Assert.Equal("", AbortOverloadOutput(deferToActionNeeded: false));
     }
 }

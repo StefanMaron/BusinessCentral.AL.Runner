@@ -3025,7 +3025,14 @@ foreach (var bundle in bundles)
     List<string> suites;
     using (AlRunner.Infrastructure.PhaseLog.Stage("enumerate-suites"))
         suites = EnumerateSuites(bundleAbs).ToList();
-    if (suites.Count == 0) { Console.WriteLine($"[{i2}/{bundles.Count}] {Reporter.BundleLabel(rel)} ... SKIP (no suites)"); continue; }
+    if (suites.Count == 0)
+    {
+        Console.WriteLine($"[{i2}/{bundles.Count}] {Reporter.BundleLabel(rel)} ... SKIP (no suites)");
+        // No BucketResult for this bundle, so the closing block never sees its gaps and the
+        // next bundle's Reset() drops them: print them now (finished buckets print at the end).
+        Reporter.PrintActionNeededOnAbort(Array.Empty<BucketResult>(), bundleProvisionGaps);
+        continue;
+    }
     // #4562: one app's progress line repeats the summary. Per-app lines print for more than one
     // app, or when PASS lines are listed (--show-pass / --verbose) — the same rule as the
     // `=== <app> ===` header in Reporter.PrintPerTest.

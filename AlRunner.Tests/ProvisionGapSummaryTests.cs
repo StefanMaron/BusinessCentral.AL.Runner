@@ -12,6 +12,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using AlRunner;
 using AlRunner.Infrastructure;
 using Xunit;
@@ -192,31 +193,75 @@ public sealed class ProvisionGapSummaryTests
     }
 
     /// <summary>
-    /// Wiring: every `return 1;` between the bundle's gap list and its BucketResult is an abort
-    /// that skips the closing block, so each must print the pending gaps first. Zero sites found
-    /// means the anchors moved, not that the loop is clean.
+    /// Wiring: every exit-code `return` between the bundle's gap list and its BucketResult is an
+    /// abort that skips the closing block, so each must print the pending gaps first. Matches
+    /// `return N;` and `return ExitCodes.X;`, a trailing comment allowed, the guard on the
+    /// previous code line. The --print-cache-key block is exempt: it prints a key and exits, it
+    /// does not abort a run. Zero sites found means the anchors moved, not that the loop is clean.
     /// </summary>
     [Fact]
     public void EveryEarlyReturnInTheBundleLoop_PrintsThePendingGapsFirst()
     {
-        var programCs = Path.GetFullPath(Path.Combine(
-            AppContext.BaseDirectory, "..", "..", "..", "..", "AlRunner", "Program.cs"));
-        var lines = File.ReadAllLines(programCs);
-        int start = Array.FindIndex(lines, l => l.Contains("var bundleProvisionGaps = new List<string>();"));
-        int end = start < 0 ? -1 : Array.FindIndex(lines, start, l => l.Contains("results.Add(new BucketResult(bundleAbs"));
-        Assert.True(start >= 0 && end > start, $"bundle-loop anchors not found in {programCs} (start={start}, end={end})");
+        const string Guard = "Reporter.PrintActionNeededOnAbort(results, bundleProvisionGaps);";
+        var lines = BundleLoop(out int start, out int end);
+        var (skipFrom, skipTo) = BlockSpan(lines, start, end, "if (printCacheKeyOnly)");
+        var exitReturn = new System.Text.RegularExpressions.Regex(
+            @"^return\s+(-?\d+|ExitCodes\.\w+)\s*;\s*(//.*)?$");
 
         var unguarded = new List<int>();
         int sites = 0;
         for (int i = start + 1; i < end; i++)
         {
-            if (lines[i].Trim() != "return 1;") continue;
+            if (i >= skipFrom && i <= skipTo) continue;
+            if (!exitReturn.IsMatch(lines[i].Trim())) continue;
             sites++;
-            if (lines[i - 1].Trim() != "Reporter.PrintActionNeededOnAbort(results, bundleProvisionGaps);")
-                unguarded.Add(i + 1);
+            int prev = i - 1;
+            while (prev > start && (lines[prev].Trim().Length == 0 || lines[prev].Trim().StartsWith("//"))) prev--;
+            if (lines[prev].Trim() != Guard) unguarded.Add(i + 1);
         }
-        Assert.True(sites > 0, "no `return 1;` found in the bundle loop: the scan measured nothing");
+        Assert.True(sites > 0, "no exit-code `return` found in the bundle loop: the scan measured nothing");
         Assert.True(unguarded.Count == 0,
             $"early return(s) at Program.cs line(s) {string.Join(", ", unguarded)} drop deferred provisioning gaps (#4636)");
+    }
+
+    /// <summary>
+    /// A bundle with no suites `continue`s before its BucketResult exists, and the next bundle's
+    /// Reset() drops what it collected, so it must print its own gaps before moving on.
+    /// </summary>
+    [Fact]
+    public void ABundleSkippedForNoSuites_PrintsItsGapsBeforeContinuing()
+    {
+        var lines = BundleLoop(out int start, out int end);
+        int skip = Array.FindIndex(lines, start, end - start, l => l.Contains("SKIP (no suites)"));
+        Assert.True(skip > start, "the `SKIP (no suites)` line was not found in the bundle loop");
+        int cont = Array.FindIndex(lines, skip, Math.Min(10, end - skip), l => l.Trim() == "continue;");
+        Assert.True(cont > skip, "no `continue;` within 10 lines of the `SKIP (no suites)` line");
+        Assert.Contains(lines.Skip(skip).Take(cont - skip + 1),
+            l => l.Contains("Reporter.PrintActionNeededOnAbort(") && l.Contains("bundleProvisionGaps"));
+    }
+
+    private static string[] BundleLoop(out int start, out int end)
+    {
+        var programCs = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory, "..", "..", "..", "..", "AlRunner", "Program.cs"));
+        var lines = File.ReadAllLines(programCs);
+        start = Array.FindIndex(lines, l => l.Contains("var bundleProvisionGaps = new List<string>();"));
+        end = start < 0 ? -1 : Array.FindIndex(lines, start, l => l.Contains("results.Add(new BucketResult(bundleAbs"));
+        Assert.True(start >= 0 && end > start, $"bundle-loop anchors not found in {programCs} (start={start}, end={end})");
+        return lines;
+    }
+
+    /// <summary>Line span of the brace block opened on the line after <paramref name="header"/>.</summary>
+    private static (int From, int To) BlockSpan(string[] lines, int start, int end, string header)
+    {
+        int h = Array.FindIndex(lines, start, end - start, l => l.Trim() == header);
+        Assert.True(h > start, $"`{header}` not found in the bundle loop: the exemption would be silent");
+        int depth = 0;
+        for (int i = h + 1; i < end; i++)
+        {
+            depth += lines[i].Count(c => c == '{') - lines[i].Count(c => c == '}');
+            if (depth == 0 && i > h + 1) return (h, i);
+        }
+        throw new InvalidOperationException($"`{header}` block never closed before the BucketResult");
     }
 }
