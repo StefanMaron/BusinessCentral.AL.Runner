@@ -115,7 +115,7 @@ public sealed class DefaultFallbackMinorWarningTests
         var (exit, output) = RunWithAliasedEngine(realEngineDir, selected);
 
         Assert.True(exit == 0, $"expected a clean run against the aliased engine artifacts. exit={exit}\n{output}");
-        Assert.Contains($"[bc] selected BC {selected} (", output, StringComparison.Ordinal);
+        Assert.Contains($" · BC {selected} · ", output, StringComparison.Ordinal); // the run header (#4692)
         Assert.Contains($"no cached BC {engine.Major}.{engine.Minor}.x", output, StringComparison.Ordinal);
         Assert.DoesNotContain("KNOWN-DEGRADED", output);
         Assert.DoesNotContain(WarningFragment, output);
@@ -132,7 +132,7 @@ public sealed class DefaultFallbackMinorWarningTests
 
         var (_, output) = RunWithAliasedEngine(realEngineDir, unmeasured);
 
-        Assert.Contains($"[bc] selected BC {unmeasured} (", output, StringComparison.Ordinal);
+        Assert.Contains($" · BC {unmeasured} · ", output, StringComparison.Ordinal);
         var count = Regex.Matches(output, Regex.Escape($"{WarningFragment} {unmeasured}")).Count;
         Assert.True(count == 1, $"expected the fallback warning exactly once; printed {count} time(s).\n{output}");
     }
