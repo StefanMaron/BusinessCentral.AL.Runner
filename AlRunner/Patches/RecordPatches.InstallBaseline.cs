@@ -303,7 +303,10 @@ public static partial class RecordPatches
         lock (_baselineMutationLock)
         {
             if (_installBaseline == null)
+            {
+                BcRuntime.RebindSingleInstanceRecordsToLiveStore();
                 return;
+            }
             pending = new InstallBaselineSnapshot(
                 _installBaseline, _isolatedStorageBaseline, _autoIncrementBaseline);
         }
@@ -566,6 +569,9 @@ public static partial class RecordPatches
 
         TenantStoragePatches.RestoreInstallBaseline(snapshot.IsolatedStorage);
         BcRuntime.RestoreAutoIncrementBaseline(snapshot.AutoIncrement);
+        // After the rows are back: the rebind resolves each table's live DataAccess, and one
+        // resolved earlier would be overwritten by the perTable assignment above (#4781).
+        BcRuntime.RebindSingleInstanceRecordsToLiveStore();
         PerfTrace.Log($"InstallBaseline.Restore {restoredRows} row(s)");
     }
 

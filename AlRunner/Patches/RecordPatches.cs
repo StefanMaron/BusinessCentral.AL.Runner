@@ -92,6 +92,35 @@ public static partial class RecordPatches
     // cache every Record-instance creates a fresh empty in-memory store.
     private static readonly ConditionalWeakTable<object, ConcurrentDictionary<int, object>> _dataAccessByTable = new();
 
+    // Every DataAccess ResetPerTestState dropped from _dataAccessByTable, with where it sat.
+    private sealed record RetiredDataAccess(object Source, int TableId);
+    private static readonly ConditionalWeakTable<object, RetiredDataAccess> _retiredDataAccess = new();
+    private const string SingleInstanceRebindSurface = "SingleInstance record rebind (#4781)";
+
+    /// <summary>
+    /// Point a record opened before a store reset at the store that replaced it. Observably
+    /// equivalent to BC: there every record reads the one database, so a SingleInstance
+    /// codeunit's Record global sees the rolled-back rows after a test-codeunit boundary while
+    /// keeping its own buffer and filters (#4781). The runner replaces the per-table store at
+    /// that boundary instead, and RecordImplementation.dataAccess caches the old one — without
+    /// this the record keeps reading the previous codeunit's rows. No-op for a temporary record
+    /// or one already on a live store.
+    /// </summary>
+    internal static void RebindRecordToLiveStore(NavRecord record)
+    {
+        var impl = RebindField(typeof(NavRecord), "recordImplementation").GetValue(record);
+        if (impl == null) return;
+        var fDataAccess = RebindField(impl.GetType(), "dataAccess");
+        var dataAccess = fDataAccess.GetValue(impl);
+        if (dataAccess == null || !_retiredDataAccess.TryGetValue(dataAccess, out var retired)) return;
+        var meta = (NCLMetaTable)RebindField(impl.GetType(), "metaTable").GetValue(impl)!;
+        fDataAccess.SetValue(impl, NavDataAccessSource_GetDataAccessForTable(retired.Source, meta, false));
+    }
+
+    private static FieldInfo RebindField(Type type, string name)
+        => AlRunner.Infrastructure.BcShape.RequiredField(type, name, SingleInstanceRebindSurface,
+            "a SingleInstance codeunit's Record global would keep reading the store of an earlier test codeunit");
+
     // ── Temporary-record DataAccess registry (issue #2524) ───────────────────────────────
     // A `Record X temporary` gets its OWN DataAccess from the isTemporary branch of
     // GetDataAccessForTableCore, and its store must contain EXACTLY the rows AL inserted --
@@ -1263,8 +1292,14 @@ public static partial class RecordPatches
         // approach is to drain the per-DataAccessSource dictionaries in place.
         // The DataAccessSource itself is cached on _skeletonSession's DataAccessSource
         // backing field (a single instance), so iterating known sources is sufficient.
-        foreach (var (_, perTable) in _dataAccessByTable)
+        foreach (var (source, perTable) in _dataAccessByTable)
+        {
+            // A SingleInstance codeunit's Record globals outlive this reset (#4781) and still
+            // hold these DataAccess objects; remembered so they can be rebound to the live store.
+            foreach (var (tableId, dataAccess) in perTable)
+                _retiredDataAccess.AddOrUpdate(dataAccess, new RetiredDataAccess(source, tableId));
             perTable.Clear();
+        }
 
         // Record links need no store of their own to reset: they live in the Record Link
         // table (2000000068), whose rows are cleared by the _dataAccessByTable drain above
@@ -1295,11 +1330,9 @@ public static partial class RecordPatches
         // at the same per-test boundary.
         AlRunner.BcRuntime.DisposeSkeletonSharedObjectContainerChildren();
 
-        // SingleInstance=true codeunit instances are session-scoped in real BC and get reset
-        // on the same per-test transaction rollback boundary as everything else above — without
-        // this a SingleInstance codeunit's instance-variable state would leak from one test into
-        // the next. See BcRuntime._singleInstanceCache / BcRuntime.ResetSingleInstanceCache.
-        AlRunner.BcRuntime.ResetSingleInstanceCache();
+        // Deliberately NOT BcRuntime.ResetSingleInstanceCache(): a SingleInstance instance lives
+        // on the company scope, which no test-isolation rollback disposes, so its state survives
+        // every codeunit and test boundary on BC (#4781). TestExecutor.Run resets it per bundle.
 
         // Manual-binding event subscriptions (BindSubscription/Session.EventBindings) are
         // likewise a live-instance leak risk across the same boundary: a subscriber a test

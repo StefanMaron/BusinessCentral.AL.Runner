@@ -326,11 +326,9 @@ public static partial class BcRuntime
     /// <summary>
     /// Drop every manually-bound event subscription (real BC's own
     /// <c>Session.EventBindings</c> list — see <see cref="BoundInstancesOf"/>) at the
-    /// per-test-isolation boundary. Must run alongside
-    /// <see cref="BcRuntime.ResetSingleInstanceCache"/> in
-    /// <c>RecordPatches.ResetPerTestState()</c>, for the same reason: a codeunit instance
-    /// that outlives the AL variable that created it must not leak state into the next
-    /// test codeunit's run.
+    /// per-test-isolation boundary, from <c>RecordPatches.ResetPerTestState()</c>. Unlike
+    /// SingleInstance codeunit state, which that boundary deliberately keeps (#4781), a
+    /// leftover manual binding does not reach the next test codeunit on BC.
     ///
     /// Corpus-verified (TestEventManualBindingCrossCodeunit, 60244/60245): a manual
     /// subscription left open (Unbind never reached) by one test CODEUNIT does not fire
