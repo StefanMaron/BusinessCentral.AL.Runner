@@ -43,6 +43,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **provisioning:** default-path major fallback stops calling CI-measured minors KNOWN-DEGRADED
 - **user-table:** run BC's User authentication-email validation on Insert/Modify
 - **tools:** apply-mutation --restore drops the stale __pycache__ .pyc
 - **testpage:** TestPage Filter.SetFilter replaces a group-0 filter OnOpenPage set before leaving another filter group active
