@@ -43,6 +43,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **testpage:** a CurrPage.Update refresh of an unsaved new row raises no OnAfterGetRecord
 - **testpage:** an OnQueryClosePage veto on TestPage.Close() returns instead of refusing
 - **xmlport:** dependency xmlports 5801 and 99000751 — namespaced Permissions, refusal reason, SourceField and DataType as BC writes them
 - **watch:** pick up an edit saved while a --watch cycle is running
