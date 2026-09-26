@@ -94,6 +94,32 @@ public sealed class CacheRootsDisableForRunTests
     }
 
     [Fact]
+    public void CleanupThrowawayRoot_InAProcessThatAdoptedTheRoot_LeavesItForTheGenerationThatMintedIt()
+    {
+        // #4725: the platform-apps attempt child (DeferredPlatformAppsAttempt), a --jobs worker
+        // and a re-exec child all ADOPT the root through the env var. The first two are not the
+        // terminal generation: their parent keeps running from the same root afterwards, out of
+        // an ncl-shadow directory that lives inside it. A child deleting it at exit left the
+        // parent with no System.Reflection.Metadata.dll on its TPA path.
+        CacheRoots.ResetForTests();
+        var adopted = TestScratch.FlatDir("al-runner-no-cache-test-");
+        var shadow = Path.Combine(adopted, "ncl-shadow");
+        Directory.CreateDirectory(shadow);
+        File.WriteAllText(Path.Combine(shadow, "probe.dll"), "x");
+        Environment.SetEnvironmentVariable(CacheRoots.NoCacheRootEnvVar, adopted);
+        try
+        {
+            Assert.Equal(adopted, CacheRoots.DisableForRun());
+
+            CacheRoots.CleanupThrowawayRoot();
+
+            Assert.True(File.Exists(Path.Combine(shadow, "probe.dll")),
+                $"an adopting generation deleted {adopted}, which the generation that minted it is still running from");
+        }
+        finally { CacheRoots.ResetForTests(); ClearEnvVar(); if (Directory.Exists(adopted)) Directory.Delete(adopted, true); }
+    }
+
+    [Fact]
     public void DisableForRun_CalledTwiceInTheSameProcess_ReturnsTheSameDirectoryBothTimes()
     {
         // Program.cs's own two re-exec decision points can each observe noCacheRequested

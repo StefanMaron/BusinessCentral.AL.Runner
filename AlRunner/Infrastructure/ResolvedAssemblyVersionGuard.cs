@@ -23,9 +23,14 @@ internal static class ResolvedAssemblyVersionGuard
     /// than the request. An unversioned request is served as before.
     /// </summary>
     internal static Assembly LoadIfSatisfies(AssemblyLoadContext ctx, AssemblyName requested, string path)
+        => LoadIfSatisfies(requested, path, static p => AssemblyName.GetAssemblyName(p).Version, ctx.LoadFromAssemblyPath);
+
+    /// <summary>Seam for <see cref="LoadIfSatisfies(AssemblyLoadContext, AssemblyName, string)"/>.</summary>
+    internal static Assembly LoadIfSatisfies(
+        AssemblyName requested, string path, Func<string, Version?> readVersion, Func<string, Assembly> load)
     {
-        EnsureSatisfies(requested, AssemblyName.GetAssemblyName(path).Version, path);
-        return ctx.LoadFromAssemblyPath(path);
+        EnsureSatisfies(requested, readVersion(path), path);
+        return load(path);
     }
 
     /// <summary>Same check for an assembly that is already loaded.</summary>
