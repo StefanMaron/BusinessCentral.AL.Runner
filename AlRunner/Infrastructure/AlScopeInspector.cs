@@ -40,12 +40,8 @@ public static class AlScopeInspector
     {
         AlNavNameReflection.EnsureInit();
         var result = new List<AlScopeLocal>();
-        foreach (var f in scope.GetType().GetFields(BindingFlags.Public | BindingFlags.Instance))
-        {
-            var name = AlNavNameReflection.GetAlName(f);
-            if (name == null) continue;
-            result.Add(ReadField(name, () => f.GetValue(scope)));
-        }
+        foreach (var (name, read) in AlScopeKey.NamedLocals(scope))
+            result.Add(ReadField(name, read));
         return result;
     }
 

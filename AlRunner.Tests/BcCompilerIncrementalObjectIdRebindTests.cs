@@ -180,8 +180,8 @@ public sealed class BcCompilerIncrementalObjectIdRebindTests : IDisposable
         Assert.NotEqual(baseline["Incr ObjId Caller"], fresh["Incr ObjId Caller"]);
 
         // ...and it moved exactly the thing this test is about: the folded object id literal.
-        Assert.Contains("new NavCodeunitHandle(this, 90310)", baseline["Incr ObjId Caller"], StringComparison.Ordinal);
-        Assert.Contains("new NavCodeunitHandle(this, 90311)", baseline["Incr ObjId Caller"], StringComparison.Ordinal);
+        AssertHoldsHandleTo(90310, baseline["Incr ObjId Caller"]);
+        AssertHoldsHandleTo(90311, baseline["Incr ObjId Caller"]);
 
         Assert.True(incremental == null,
             "the incremental path took the fast path after two codeunits swapped object ids. The "
@@ -224,8 +224,8 @@ public sealed class BcCompilerIncrementalObjectIdRebindTests : IDisposable
         var (incremental, fallbackReason, baseline, fresh) = RunCodeunitEdit(aRenumbered, CodeunitBBefore);
 
         Assert.NotEqual(baseline["Incr ObjId Caller"], fresh["Incr ObjId Caller"]);
-        Assert.Contains("new NavCodeunitHandle(this, 90310)", baseline["Incr ObjId Caller"], StringComparison.Ordinal);
-        Assert.Contains("new NavCodeunitHandle(this, 90319)", fresh["Incr ObjId Caller"], StringComparison.Ordinal);
+        AssertHoldsHandleTo(90310, baseline["Incr ObjId Caller"]);
+        AssertHoldsHandleTo(90319, fresh["Incr ObjId Caller"]);
 
         Assert.True(incremental == null,
             "the incremental path took the fast path after a codeunit was renumbered. The caller "
@@ -411,4 +411,10 @@ public sealed class BcCompilerIncrementalObjectIdRebindTests : IDisposable
         Assert.Contains("Incr ObjId Enum", fallbackReason, StringComparison.Ordinal);
         Assert.Contains("object id", fallbackReason, StringComparison.OrdinalIgnoreCase);
     }
+
+    // A codeunit variable's handle names its object id; the first argument is the owning scope,
+    // `this` for a global and the inline-scope local (`\u03b3scope` in emitted C#) for a local (#4697).
+    private static void AssertHoldsHandleTo(int objectId, string csharp) =>
+        Assert.Matches(new System.Text.RegularExpressions.Regex(
+            @"new NavCodeunitHandle\((this|\\u03b3scope), " + objectId + @"\)"), csharp);
 }

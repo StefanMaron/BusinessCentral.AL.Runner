@@ -103,6 +103,7 @@ public sealed class DependencyCacheKeyContentHashMemoTests : IDisposable
 
         WriteLine("schema:v2");
         RunnerFingerprint.WriteKeyLines(WriteLine);
+        WriteLine(BcCompiler.RunnerEmitModeCacheTerm);
         WriteLine($"app:{manifest.AppId}:{manifest.Publisher}:{manifest.Name}:{manifest.Version}");
         foreach (var dep in manifest.Dependencies.OrderBy(
                      d => $"{d.Publisher}/{d.Name}/{d.Version}/{d.AppId}", StringComparer.OrdinalIgnoreCase))

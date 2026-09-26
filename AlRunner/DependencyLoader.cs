@@ -1067,6 +1067,8 @@ public sealed class DependencyLoader
         // be served under the new key shape.
         WriteLine("schema:v2");
         AlRunner.Infrastructure.RunnerFingerprint.WriteKeyLines(WriteLine);
+        // #4697: a source dependency is emitted in the runner's emit mode too.
+        WriteLine(AlRunner.BcCompiler.RunnerEmitModeCacheTerm);
         WriteLine($"app:{manifest.AppId}:{manifest.Publisher}:{manifest.Name}:{manifest.Version}");
         foreach (var dep in manifest.Dependencies.OrderBy(d => $"{d.Publisher}/{d.Name}/{d.Version}/{d.AppId}", StringComparer.OrdinalIgnoreCase))
             WriteLine($"dep:{dep.AppId}:{dep.Publisher}:{dep.Name}:{dep.Version}");

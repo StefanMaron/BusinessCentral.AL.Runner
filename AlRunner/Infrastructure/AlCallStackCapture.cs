@@ -256,9 +256,10 @@ public static class AlCallStackCapture
             // Both are three-way (#4345): null means the answer could not be measured, and is
             // rendered as a runner-side marker rather than silently as BC's negative answer.
             bool? isTrigger = GetIsTrigger(scope);
-            int? lineNo = GetRelativeLine(scope.GetType(), stmtNo);
+            var key = AlScopeKey.Of(scope);
+            int? lineNo = GetRelativeLine(key, stmtNo);
 
-            var (appName, publisher, version) = GetAppMeta(scope.GetType().Assembly);
+            var (appName, publisher, version) = GetAppMeta(key.Module.Assembly);
 
             // Format:  "ObjectName"(ObjectType N).MethodName[(Trigger)] line L - App by Pub version V
             var sb = new StringBuilder();
@@ -281,24 +282,18 @@ public static class AlCallStackCapture
     }
 
     /// <summary>
-    /// Parse the AL object type label and numeric ID from the runtime class name.
+    /// Parse the AL object type label and numeric ID from the class name of the object that
+    /// declares <paramref name="member"/> — a scope key (AlScopeKey), or an object type.
     /// BC emits class names like <c>Codeunit60021</c>, <c>Table18</c>, <c>Page1</c>.
-    /// The scope class is nested inside the object class, so we walk up via
-    /// <see cref="Type.DeclaringType"/> when needed.
     /// Returns ("CodeUnit"|"Page"|…, number) or ("?", 0) if unknown.
     /// </summary>
     /// <remarks>Internal (not private): also used by AlCoverageTracker to resolve a
     /// scope's declaring AL object identity for the cobertura file mapping.</remarks>
-    internal static (string, int) ParseObjectTypeAndId(Type type)
-    {
-        // Walk up to the outermost non-nested type (scope classes are nested).
-        var t = type;
-        while (t.DeclaringType != null) t = t.DeclaringType;
-        return ParseObjectTypeAndIdForTests(t.Name);
-    }
+    internal static (string, int) ParseObjectTypeAndId(MemberInfo member) =>
+        ParseObjectTypeAndIdForTests(AlScopeKey.ObjectTypeOf(member).Name);
 
     /// <summary>
-    /// The name half of <see cref="ParseObjectTypeAndId(Type)"/>, split out so the prefix map
+    /// The name half of <see cref="ParseObjectTypeAndId(MemberInfo)"/>, split out so the prefix map
     /// can be asserted against the emitted names measured from BC rather than only through a
     /// live type (#3841 review). The caller passes an OUTERMOST type name.
     /// </summary>
@@ -438,7 +433,7 @@ public static class AlCallStackCapture
     /// Only an unresolved cached attribute handle, or a throw, is unmeasurable.
     /// </para>
     /// </summary>
-    private static int? GetRelativeLine(Type scopeType, int statementNumber)
+    private static int? GetRelativeLine(MemberInfo scopeType, int statementNumber)
     {
         // Unmeasurable: EnsureReflInit never bound these, so nothing can be read for ANY frame.
         if (_tSourceSpansAttr == null || _tSignatureSpanAttr == null)

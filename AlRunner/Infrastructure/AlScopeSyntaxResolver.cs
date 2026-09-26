@@ -1,5 +1,5 @@
-// Maps a compiled scope class to its member's loop table and write sets (#2056), the
-// same way AlCoverageTracker maps it to a file and scope name. Memoised per Type, misses
+// Maps a scope key (AlScopeKey) to its member's loop table and write sets (#2056), the
+// same way AlCoverageTracker maps it to a file and scope name. Memoised per key, misses
 // included, so a StmtHit costs one dictionary lookup.
 using System.Collections.Concurrent;
 
@@ -12,8 +12,8 @@ public static class AlScopeSyntaxResolver
 {
     private static AlMemberSyntaxIndex? _index;
     private static AlSourceLocationMap? _sourceMap;
-    private static readonly ConcurrentDictionary<Type, AlScopeSyntax?> _scopes = new();
-    private static readonly ConcurrentDictionary<Type, string> _unresolved = new();
+    private static readonly ConcurrentDictionary<System.Reflection.MemberInfo, AlScopeSyntax?> _scopes = new();
+    private static readonly ConcurrentDictionary<System.Reflection.MemberInfo, string> _unresolved = new();
 
     /// <summary>Bundle scopes whose member could not be matched in the parsed source, as
     /// "scope@file". A dependency or framework scope is not in the bundle and is not listed.</summary>
@@ -37,7 +37,7 @@ public static class AlScopeSyntaxResolver
         _unresolved.Clear();
     }
 
-    public static AlScopeSyntax? Resolve(Type scopeType)
+    public static AlScopeSyntax? Resolve(System.Reflection.MemberInfo scopeType)
     {
         if (_scopes.TryGetValue(scopeType, out var cached)) return cached;
         var resolved = ResolveUncached(scopeType);
@@ -45,7 +45,7 @@ public static class AlScopeSyntaxResolver
         return resolved;
     }
 
-    private static AlScopeSyntax? ResolveUncached(Type scopeType)
+    private static AlScopeSyntax? ResolveUncached(System.Reflection.MemberInfo scopeType)
     {
         var index = _index;
         var sourceMap = _sourceMap;

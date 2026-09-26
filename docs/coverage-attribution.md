@@ -9,6 +9,14 @@ All figures below were measured on BC `28.1.49838.53910` — the only artifact s
 took them — with `Microsoft_System Application_28.1.49838.53910.app` as the packaged dependency.
 One build, so nothing here is a cross-version claim.
 
+**Since #4697 the key is not `scope.GetType()`.** The runner compiles AL in BC's inline-scope mode,
+and every reader keys on `AlScopeKey.Of(scope)` (`AlRunner/Infrastructure/AlScopeKey.cs`): the AL
+method an `ALMethodScope` runs — found by its `[MethodId]` on the object type and cached per
+`(type, id)` — and the scope class otherwise (event publishers keep one). So question 1 below is
+asked of that member, and a packaged `.app`'s statements now pass questions 1-3; they still stop at
+question 4, because no root maps a packaged object. The measurements below were taken under the
+old `scope.GetType()` keying and are kept as the record of why the key moved.
+
 ## The resolution chain
 
 `AlCoverageTracker.ResolveScopeInfo` asks four questions in order, and any one of them ends the

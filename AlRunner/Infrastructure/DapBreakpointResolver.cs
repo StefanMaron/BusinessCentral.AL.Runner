@@ -27,7 +27,7 @@ public readonly record struct DapBreakpointRequest(string SourcePath, int Line, 
 /// <summary>One armable statement: the emitted AL scope class and the statement's index
 /// within it, which is what <see cref="AlDapSession.SetBreakpoint"/> registers, plus the
 /// 1-based column it starts at — the only thing that tells two targets on one line apart.</summary>
-public readonly record struct DapBreakpointTarget(Type ScopeType, int StatementIndex, int Column);
+public readonly record struct DapBreakpointTarget(MemberInfo ScopeType, int StatementIndex, int Column);
 
 /// <summary>Where one instrumented statement sits in the FILE: 1-based, both ends. The end is
 /// what makes "does this column fall inside the statement" answerable, as opposed to "does it
@@ -111,14 +111,15 @@ public static class DapBreakpointResolver
         // (label,id) -> every loaded scope type for that object, each with its own
         // (statement index -> absolute AL line) map.
         var byObject = new Dictionary<(string, int),
-            List<(Type Type, Dictionary<int, StatementSpan> LineByStmt)>>();
+            List<(MemberInfo Type, Dictionary<int, StatementSpan> LineByStmt)>>();
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
             Type[] types;
             try { types = asm.GetTypes(); }
             catch (ReflectionTypeLoadException ex) { types = ex.Types.Where(t => t != null).Cast<Type>().ToArray(); }
 
-            foreach (var t in types)
+            AlSourceSpansReflection.EnsureInit();
+            foreach (var t in types.SelectMany(type => AlScopeKey.DeclaredByMapped(type, AlSourceSpansReflection.SourceSpansAttribute, sourceMap)))
             {
                 var spans = AlSourceSpansReflection.TryGetSpans(t);
                 if (spans == null) continue;

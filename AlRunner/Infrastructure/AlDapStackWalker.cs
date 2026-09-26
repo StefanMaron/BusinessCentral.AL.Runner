@@ -49,7 +49,7 @@ public static class AlDapStackWalker
         int id = 0;
         while (cur != null && !cur.IsRootScope)
         {
-            var (label, objId) = AlCallStackCapture.ParseObjectTypeAndId(cur.GetType());
+            var (label, objId) = AlCallStackCapture.ParseObjectTypeAndId(AlScopeKey.Of(cur));
             sourceMap.TryGetValue((label, objId), out var path);
             // #3786: ResolveLine answers the line within the OWNING OBJECT's text, which is
             // a file line only for the first object in a file. The frame's SourcePath and
@@ -81,7 +81,7 @@ public static class AlDapStackWalker
 
     private static int ResolveLine(Microsoft.Dynamics.Nav.Runtime.NavMethodScope scope, int statementIndex)
     {
-        var spans = AlSourceSpansReflection.TryGetSpans(scope.GetType());
+        var spans = AlSourceSpansReflection.TryGetSpans(AlScopeKey.Of(scope));
         if (spans == null) return 0;
         if (statementIndex < 0 || statementIndex >= spans.Length) return 0;
         return AlSourceSpanCodec.AbsoluteFromLine(spans[statementIndex]);

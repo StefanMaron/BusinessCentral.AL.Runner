@@ -149,7 +149,7 @@ public static class AlDapSession
         Console.Error.WriteLine($"[dap-step-trace] t={elapsedMs}ms wall={wall}Z {msg}");
     }
 
-    private static readonly HashSet<(Type ScopeType, int Stmt)> _breakpoints = new();
+    private static readonly HashSet<(System.Reflection.MemberInfo ScopeType, int Stmt)> _breakpoints = new();
     private static readonly object _bpLock = new();
 
     private static volatile System.Threading.SemaphoreSlim? _pauseGate;
@@ -198,12 +198,12 @@ public static class AlDapSession
         Stopped = null;
     }
 
-    public static void SetBreakpoint(Type scopeType, int statementIndex)
+    public static void SetBreakpoint(System.Reflection.MemberInfo scopeType, int statementIndex)
     {
         lock (_bpLock) _breakpoints.Add((scopeType, statementIndex));
     }
 
-    public static void ClearBreakpoints(Type scopeType)
+    public static void ClearBreakpoints(System.Reflection.MemberInfo scopeType)
     {
         lock (_bpLock) _breakpoints.RemoveWhere(k => k.ScopeType == scopeType);
     }
@@ -302,7 +302,7 @@ public static class AlDapSession
         if (currentStatementNumber == int.MaxValue) return;
 
         bool breakpointHit;
-        lock (_bpLock) breakpointHit = _breakpoints.Contains((scope.GetType(), currentStatementNumber));
+        lock (_bpLock) breakpointHit = _breakpoints.Contains((AlScopeKey.Of(scope), currentStatementNumber));
 
         var stepKind = _stepKind;
         bool stepHit = false;

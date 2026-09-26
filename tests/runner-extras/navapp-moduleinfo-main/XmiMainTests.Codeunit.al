@@ -96,6 +96,36 @@ codeunit 61240 "XMI Main Tests"
                 DepApi.CallerIdAfterOwnHop(), DepApi.OwnId());
     end;
 
+    /// <summary>
+    /// #4697: GetCallerModuleInfo called inside the dep's OWN asserterror body still names
+    /// this bundle. The body is a closure frame of the dep, and skipping only it would
+    /// answer with the dep.
+    /// </summary>
+    [Test]
+    procedure DepGetCallerModuleInfo_InsideDepAssertErrorBody_NamesTheBundle()
+    var
+        DepApi: Codeunit "XMI Dep Api";
+        Got: Text;
+    begin
+        Got := DepApi.CallerNameInsideOwnAssertError();
+        if Got <> 'NavAppModuleInfo Main' then
+            Error('Caller module inside the dep''s asserterror body must be this bundle, got %1.', Got);
+    end;
+
+    /// <summary>
+    /// #4697 control: the call made from THIS bundle's asserterror body still names this
+    /// bundle as the dep's caller.
+    /// </summary>
+    [Test]
+    procedure DepGetCallerModuleInfo_CalledFromBundleAssertErrorBody_NamesTheBundle()
+    var
+        DepApi: Codeunit "XMI Dep Api";
+    begin
+        asserterror Error(DepApi.CallerName());
+        if GetLastErrorText() <> 'NavAppModuleInfo Main' then
+            Error('Caller module from the bundle''s asserterror body must be this bundle, got %1.', GetLastErrorText());
+    end;
+
     [Test]
     procedure GetModuleInfo_ByDepAppId_ResolvesRegisteredDep()
     var

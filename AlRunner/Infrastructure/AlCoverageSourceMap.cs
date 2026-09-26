@@ -214,18 +214,7 @@ public static class AlCoverageSourceMap
     /// second execution bundle attributed it correctly, which is what localised the defect to
     /// the root set rather than to the tracker.</para>
     ///
-    /// <para>A packaged .app dependency contributes nothing here, and must not — but NOT because
-    /// its coverage is legitimately absent. Its statements execute and are counted; they are
-    /// discarded earlier, because BC keys their scope on Ncl's generic <c>ALMethodScope&lt;T&gt;</c>,
-    /// which carries no [SourceSpans] and no object id, so no root set can reach them. Measured
-    /// (#4273): extracting the .app's own 1,319 embedded .al files and adding that root grew the
-    /// map from 1 entry to 1,054 and changed the report by zero classes. See
-    /// docs/coverage-attribution.md#the-two-scope-shapes-bcs-compiler-emits-and-where-sourcespans-sits.</para>
-    ///
-    /// <para>Trap: "the .app has no source on disk" is false and was the premise of #4273's
-    /// proposed fix — Microsoft ships src/*.al in every app, and AppLoader.ExtractAlWithPaths
-    /// already reads it. Do not re-derive a root for it from that; the failure is upstream of
-    /// the map.</para>
+    /// <para>Why a packaged .app dependency contributes nothing here: see docs/coverage-attribution.md#the-two-scope-shapes-bcs-compiler-emits-and-where-sourcespans-sits.</para>
     /// </summary>
     public static IReadOnlyList<string> RootsWithParsedSourceDependencies(IEnumerable<string> executionRoots)
     {
