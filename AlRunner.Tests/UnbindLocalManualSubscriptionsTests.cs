@@ -19,10 +19,9 @@
 // into the next [Test] on the same codeunit, unlike a GLOBAL variable's binding, which does"
 // — is plain BC behaviour and belongs upstream: see TestEventManualBinding's Contract 9/10,
 // submitted against StefanMaron/BusinessCentral.AL.Language.Tests#110. This file pins the
-// RUNNER'S OWN bookkeeping instead: that UnbindLocalManualSubscriptions actually walks a
-// disposing scope's own direct NavCodeunitHandle children, clears IsSubscriptionBound and
-// removes the bound target from Session.EventBindings for one that is still bound, leaves an
-// UNBOUND child's target untouched, and never touches a non-NavCodeunitHandle child at all —
+// RUNNER'S OWN bookkeeping instead: that UnbindLocalManualSubscriptions releases each direct
+// NavCodeunitHandle child's reference, so the instance is disposed (and unbound) exactly when
+// its last reference goes (#4737, #4756), and that a handle outside the scope keeps it alive —
 // none of which any AL test can address directly, since AL has no way to invoke this sweep
 // out of turn or to inspect Session.EventBindings itself.
 using System.Linq;
@@ -182,6 +181,109 @@ public class UnbindLocalManualSubscriptionsTests
         // Clean up so this binding does not leak into a later test in the same process.
         SetSubscriptionBound(target, false);
         bindings.Remove(target);
+    }
+
+    /// <summary>
+    /// #4737: a by-value codeunit parameter is a second NavCodeunitHandle on the SAME bound
+    /// instance (ALByValue -> CloneReference), parented on the callee's scope. Releasing it at
+    /// the callee's exit is not the last reference, so BC does not dispose the instance and
+    /// its binding stays — the caller's handle (here parented on root) still holds it.
+    /// </summary>
+    [SkippableFact]
+    public void BoundTargetStillReferencedOutsideTheScope_StaysBound()
+    {
+        TestArtifacts.SkipIf(!_engine.Ready,
+            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
+
+        var root = Root();
+        var target = new Codeunit69003(root);
+        var callerHandle = new NavCodeunitHandle(root, target);
+        var scope = new NavScope(root);
+        _ = callerHandle.ALByValue(scope); // the callee's by-value parameter
+
+        SetSubscriptionBound(target, true);
+        var bindings = EventBindings();
+        bindings.Add(target);
+
+        BcRuntime.UnbindLocalManualSubscriptions(scope);
+
+        var stillBound = target.IsSubscriptionBound;
+        var stillListed = bindings.Cast<object>().Contains(target);
+        SetSubscriptionBound(target, false);
+        bindings.Remove(target);
+
+        Assert.True(stillBound,
+            "A by-value parameter's handle is not the last reference to the instance, so the " +
+            "callee's scope exit must not clear IsSubscriptionBound (#4737).");
+        Assert.True(stillListed, "The still-referenced instance must stay in Session.EventBindings.");
+    }
+
+    /// <summary>
+    /// The owner-returns side of #4737: a callee's by-value clone is released at the callee's exit,
+    /// so when the owner's scope exits afterwards its handle is the last reference and the binding
+    /// ends. Unreleased, the clone would keep the count one too high and the binding would leak.
+    /// </summary>
+    [SkippableFact]
+    public void ByValueCloneReleasedFirst_OwnerExitUnbinds()
+    {
+        TestArtifacts.SkipIf(!_engine.Ready,
+            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
+
+        var root = Root();
+        var ownerScope = new NavScope(root);
+        var calleeScope = new NavScope(root);
+        var target = new Codeunit69003(root);
+        var ownerHandle = new NavCodeunitHandle(ownerScope, target);
+        _ = ownerHandle.ALByValue(calleeScope);
+
+        SetSubscriptionBound(target, true);
+        var bindings = EventBindings();
+        bindings.Add(target);
+
+        BcRuntime.UnbindLocalManualSubscriptions(calleeScope);
+        var boundAfterCallee = target.IsSubscriptionBound;
+        BcRuntime.UnbindLocalManualSubscriptions(ownerScope);
+        var boundAfterOwner = target.IsSubscriptionBound;
+        var stillListed = bindings.Cast<object>().Contains(target);
+        if (boundAfterOwner) { SetSubscriptionBound(target, false); bindings.Remove(target); }
+
+        Assert.True(boundAfterCallee, "The owner still references the instance when the callee returns.");
+        Assert.False(boundAfterOwner,
+            "Once the callee's clone and then the owner's handle are released, nothing references " +
+            "the instance, so its binding must end (#4737 review).");
+        Assert.False(stillListed, "The disposed instance must be gone from Session.EventBindings.");
+    }
+
+    /// <summary>
+    /// Two locals of one scope sharing one bound instance (<c>B := A</c>): neither handle is the
+    /// last reference on its own, but together they hold every reference, so the scope's exit
+    /// disposes the instance in BC and the binding ends.
+    /// </summary>
+    [SkippableFact]
+    public void TwoLocalsSharingOneBoundTarget_AreUnboundTogether()
+    {
+        TestArtifacts.SkipIf(!_engine.Ready,
+            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
+
+        var root = Root();
+        var scope = new NavScope(root);
+        var target = new Codeunit69003(root);
+        var first = new NavCodeunitHandle(scope, target);
+        _ = first.ALByValue(scope); // a second handle on the same instance, same scope
+
+        SetSubscriptionBound(target, true);
+        var bindings = EventBindings();
+        bindings.Add(target);
+
+        BcRuntime.UnbindLocalManualSubscriptions(scope);
+
+        var stillBound = target.IsSubscriptionBound;
+        SetSubscriptionBound(target, false);
+        bindings.Remove(target);
+
+        Assert.False(stillBound,
+            "Two handles of the disposing scope hold every reference to the instance, so its " +
+            "binding must end with the scope, even though neither alone is the last reference.");
     }
 
     /// <summary>
