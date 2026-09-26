@@ -125,8 +125,8 @@ public sealed class QueryMetadataVirtualTableProviderTests
         var ex = Record.Exception(() => ensure.Invoke(null, new[] { instance }));
         Assert.Null(ex);
 
-        foreach (var field in new[] { "_qmTryGetMetaQuery", "_qmSnapshotOuter", "_qmSnapshotInner",
-                     "_qmEntryType", "_qmObjectTypeEnum" })
+        foreach (var field in new[] { "_qmTryGetMetaQuery", "_qmTryGetMetaApplicationObject",
+                     "_qmSnapshotOuter", "_qmSnapshotInner", "_qmEntryType", "_qmObjectTypeEnum" })
         {
             var value = typeof(RecordPatches).GetField(field, BindingFlags.NonPublic | BindingFlags.Static)!
                 .GetValue(null);

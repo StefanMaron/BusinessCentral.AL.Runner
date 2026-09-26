@@ -243,8 +243,8 @@ public class SnapshotConsumerReachabilityTests
             ids.Add(id);
         }
 
-        // Six today: the four snapshot consumers plus Integer (2000000026) and Date
-        // (2000000007), which take BC's factory too but consume no object snapshot.
+        // The snapshot consumers plus Integer (2000000026) and Date (2000000007), which take
+        // BC's factory too but consume no object snapshot.
         Assert.NotEmpty(ids);
         return ids.ToArray();
     }
@@ -265,8 +265,13 @@ public class SnapshotConsumerReachabilityTests
         return -1;
     }
 
+    /// <summary>
+    /// #4461 added XMLport Metadata (2000000280) as a fifth dispatched snapshot consumer. Its
+    /// XmlPortDataProvider keeps BC's own body exactly as QueryDataProvider does, which is why
+    /// the snapshot substitution carries ObjectType.XmlPort as well as ObjectType.Query.
+    /// </summary>
     [Fact]
-    public void OnlyQueryMetadataAmongTheSnapshotConsumersKeepsBcsOwnWalk()
+    public void OnlyQueryAndXmlPortMetadataAmongTheSnapshotConsumersKeepBcsOwnWalk()
     {
         using var asm = Ncl();
 
@@ -276,11 +281,25 @@ public class SnapshotConsumerReachabilityTests
                 ("PageActionDataProvider", RecordPatches.PageActionVirtualTableId),
                 ("QueryDataProvider", RecordPatches.QueryMetadataVirtualTableId),
                 ("TableRelationDataProvider", RecordPatches.TableRelationsMetadataVirtualTableId),
+                ("XmlPortDataProvider", RecordPatches.XmlPortMetadataVirtualTableId),
             }
             .Where(p => BodyReachesSnapshotWalk(asm, p.Item1))
             .Select(p => p.Item2)
             .ToArray();
 
-        Assert.Equal(new[] { RecordPatches.QueryMetadataVirtualTableId }, stillWalking);
+        Assert.Equal(
+            new[] { RecordPatches.QueryMetadataVirtualTableId, RecordPatches.XmlPortMetadataVirtualTableId },
+            stillWalking);
+    }
+
+    /// <summary>
+    /// The dispatch half of the same claim: 2000000280 is handed to BC's own factory, read out
+    /// of the compiled if-chain like the protected-table theory above. Without it
+    /// XmlPortDataProvider is never constructed and the snapshot entry reaches nothing.
+    /// </summary>
+    [Fact]
+    public void XmlPortMetadataIsRoutedToBcsVirtualProvider()
+    {
+        Assert.Contains(RecordPatches.XmlPortMetadataVirtualTableId, BcVirtualProviderTableIds());
     }
 }
