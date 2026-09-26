@@ -643,18 +643,8 @@ public static class BcArtifacts
     internal static string? DescribeExplicitEngineMinorMismatch(System.Version? builtVersion, System.Version selectedVersion,
         IReadOnlyCollection<System.Version>? measuredMinors)
     {
-        if (builtVersion == null) return null; // older/unstamped binary — nothing to compare
-        if (builtVersion.Major == selectedVersion.Major && builtVersion.Minor == selectedVersion.Minor)
-            return null;
-        var selectedMinor = new System.Version(selectedVersion.Major, selectedVersion.Minor);
-        if (measuredMinors != null && builtVersion.Major == selectedVersion.Major
-            && measuredMinors.Contains(selectedMinor))
-            return null;
-
-        var why = measuredMinors == null
-            ? "this build carries no record of which BC versions CI measures, so the pairing cannot be vouched for"
-            : $"BC {selectedMinor} is not a BC version CI measures (measured: " +
-              $"{string.Join(", ", measuredMinors.OrderBy(v => v))}), so this engine/artifact pairing is untested";
+        var why = UnvouchedPairingReason(builtVersion, selectedVersion, measuredMinors);
+        if (why == null) return null;
         return $"[bc] warning: this binary's engine was built for BC {builtVersion} but BC {selectedVersion} was " +
             $"explicitly selected (--bc-version/--artifact-path) — {why}. Fix with one of: select a measured " +
             $"version, drop --bc-version so the runner auto-selects its own engine's minor " +
@@ -670,6 +660,49 @@ public static class BcArtifacts
     /// </summary>
     public static string? ExplicitEngineMinorMismatchWarning()
         => DescribeExplicitEngineMinorMismatch(EngineBuiltVersion(), SelectedVersion, MeasuredBcMinors());
+
+    /// <summary>
+    /// Why an engine/artifact pairing is not vouched for, or null when it is: the engine's own
+    /// minor, or another minor of its major that <paramref name="measuredMinors"/> lists. A null
+    /// list is "unknown", never "measured". Shared by the explicit and default-fallback warnings
+    /// so the two paths cannot disagree about which pairings CI vouches for (#4547, #4691).
+    /// </summary>
+    internal static string? UnvouchedPairingReason(System.Version? builtVersion, System.Version selectedVersion,
+        IReadOnlyCollection<System.Version>? measuredMinors)
+    {
+        if (builtVersion == null) return null; // older/unstamped binary — nothing to compare
+        if (builtVersion.Major == selectedVersion.Major && builtVersion.Minor == selectedVersion.Minor)
+            return null;
+        var selectedMinor = new System.Version(selectedVersion.Major, selectedVersion.Minor);
+        if (measuredMinors != null && builtVersion.Major == selectedVersion.Major
+            && measuredMinors.Contains(selectedMinor))
+            return null;
+        return measuredMinors == null
+            ? "this build carries no record of which BC versions CI measures, so the pairing cannot be vouched for"
+            : $"BC {selectedMinor} is not a BC version CI measures (measured: " +
+              $"{string.Join(", ", measuredMinors.OrderBy(v => v))}), so this engine/artifact pairing is untested";
+    }
+
+    /// <summary>
+    /// #4691: the default path's major fallback (no --bc-version, the engine's own minor neither
+    /// cached nor fetchable) warns only once the landed minor is known, and only when that minor
+    /// is not vouched for — see <see cref="UnvouchedPairingReason"/>. Pure for
+    /// DefaultFallbackMinorWarningTests.
+    /// </summary>
+    internal static string? DescribeDefaultFallbackMinorMismatch(System.Version? builtVersion,
+        System.Version selectedVersion, IReadOnlyCollection<System.Version>? measuredMinors)
+    {
+        var why = UnvouchedPairingReason(builtVersion, selectedVersion, measuredMinors);
+        if (why == null) return null;
+        return $"[bc] warning: the default selection fell back to BC {selectedVersion} because BC " +
+            $"{builtVersion!.Major}.{builtVersion.Minor}.x (this binary's engine minor) was not available — {why}. " +
+            $"Fix with: al-runner provision --bc-version {builtVersion.Major}.{builtVersion.Minor}";
+    }
+
+    /// <summary>Reads this process's engine, selection and measured list; see
+    /// <see cref="DescribeDefaultFallbackMinorMismatch"/>.</summary>
+    public static string? DefaultFallbackMinorMismatchWarning()
+        => DescribeDefaultFallbackMinorMismatch(EngineBuiltVersion(), SelectedVersion, MeasuredBcMinors());
 
     /// <summary>The BC major.minor versions CI measures (.github/bc-versions.txt, embedded at build
     /// time); null when this build carries no copy, which callers treat as "unknown".</summary>

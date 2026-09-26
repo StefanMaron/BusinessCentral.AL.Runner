@@ -254,14 +254,17 @@ public sealed class UndeterminedCdnProbeTests : IDisposable
     }
 
     /// <summary>
-    /// The mirror case: a tier that demoted on a real 404 must still carry the degraded
-    /// warning. Proving the notices did not all become reassuring.
+    /// The mirror case: a tier that demoted on a real 404 and landed on a minor CI does not
+    /// measure must still warn. Proving the notices did not all become reassuring. Since #4691
+    /// that warning is judged after selection, on the minor actually landed.
     /// </summary>
     [Fact]
-    public void MajorFallbackWarning_IsStillLoudlyDegraded()
+    public void MajorFallback_LandingOnUnmeasuredMinor_IsStillLoudlyWarned()
     {
-        var notice = AlRunner.ProgramSupport.MajorFallbackWarning("28.1.49838.50794", "28.1", "28");
-        Assert.Contains("KNOWN-DEGRADED", notice);
+        var notice = BcArtifacts.DescribeDefaultFallbackMinorMismatch(
+            Engine, new Version(28, 9, 1, 1), new[] { new Version(28, 1), new Version(28, 4) });
+        Assert.NotNull(notice);
         Assert.Contains("warning:", notice);
+        Assert.Contains("not a BC version CI measures", notice);
     }
 }

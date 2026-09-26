@@ -9,12 +9,23 @@ cache first and the CDN second:
 | `cached-exact` / `cached-minor` | already on disk; nothing to fetch |
 | `cdn-exact` / `cdn-minor` | not cached, but the CDN says it has it |
 | `cdn-exact-undetermined` / `cdn-minor-undetermined` | the CDN could not be asked; the tier is **held**, not demoted |
-| `major-fallback` | both probes answered "no" — the genuinely degraded outcome |
-| `major-fallback-offline` | no network step is coming at all (`--no-auto-provision`) |
+| `major-fallback` | both probes answered "no" — falls back to the latest build of the engine's major |
+| `major-fallback-offline` | no network step is coming at all (`--no-auto-provision`) — the same fallback, cache only |
 
-Only `major-fallback` is KNOWN-DEGRADED. #2020 measured it at dozens of extra test failures
-from engine/artifact minor skew (28.1 selected: 1041 pass / 35 fail; 28.2 selected: 996 pass /
-77 fail / 3 error, on the same binary and dep set).
+## <a name="major-fallback"></a>What the major fallback warns about
+
+Both fallback tiers print a plain notice naming the fallback, immediately, so a selection
+failure that follows is explained. Neither claims the result is degraded, because the minor it
+lands on is not known until `BcArtifacts.SelectVersion` resolves the major prefix.
+
+After selection, `BcArtifacts.DescribeDefaultFallbackMinorMismatch` warns only when the landed
+minor is **not vouched for**: a minor of another major, a minor `.github/bc-versions.txt` does
+not list, or a build carrying no embedded copy of that list (unknown is never measured). It
+shares that test with the explicit `--bc-version` warning, so the two paths agree (#4547, #4691).
+
+History: #2020 measured minor skew at dozens of extra failures (Pageworks, 2026-07, when bin
+still carried service-tier assemblies). #4547 re-measured on the corpus: a runner built for 28.5
+gave the same per-test result on BC 28.4 and 28.1 as a runner built for each.
 
 ## <a name="undetermined"></a>Why an unanswered probe holds the tier instead of throwing
 

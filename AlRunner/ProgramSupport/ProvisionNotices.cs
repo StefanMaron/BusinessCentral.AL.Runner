@@ -49,13 +49,22 @@ internal static partial class ProgramSupport
 
     /// <summary>
     /// "major-fallback" tier: neither the engine's exact build nor its minor could be obtained
-    /// from cache or the CDN. Genuinely degraded — but not necessarily Microsoft's doing.
-    /// Reaching this tier now requires both CDN probes to have actually answered (#2981).
+    /// from cache or the CDN. Reaching this tier requires both CDN probes to have answered (#2981).
+    /// No degradation claim here: the landed minor is not known yet, and a CI-measured one is not
+    /// degraded (#4691). BcArtifacts.DescribeDefaultFallbackMinorMismatch warns after selection.
+    /// Printed immediately, so a selection failure that follows is explained.
     /// </summary>
     internal static string MajorFallbackWarning(string engineVersion, string engineMajorMinor, string engineMajor)
-        => $"[bc] warning: BC {engineMajorMinor}.x is not cached and could not be obtained " +
-           $"from the CDN — this binary's engine was built for {engineVersion}, so a different minor is " +
-           $"a KNOWN-DEGRADED configuration (measured: dozens of extra failures from engine/artifact " +
-           $"minor skew). Falling back to the latest {engineMajor}.x. Fix with: al-runner provision " +
-           $"--bc-version {engineMajorMinor}";
+        => $"[bc] BC {engineMajorMinor}.x is not cached and could not be obtained from the CDN " +
+           $"(this binary's engine was built for {engineVersion}) — falling back to the latest {engineMajor}.x. " +
+           $"To run the engine's own minor: al-runner provision --bc-version {engineMajorMinor}";
+
+    /// <summary>
+    /// "major-fallback-offline" tier: <see cref="MajorFallbackWarning"/> without a network step,
+    /// so it speaks only to the cache and never mentions the CDN.
+    /// </summary>
+    internal static string MajorFallbackOfflineNotice(string engineVersion, string engineMajorMinor, string engineMajor)
+        => $"[bc] no cached BC {engineMajorMinor}.x (this binary's engine was built for {engineVersion}) — " +
+           $"falling back to the latest cached {engineMajor}.x. To run the engine's own minor: " +
+           $"al-runner provision --bc-version {engineMajorMinor}";
 }

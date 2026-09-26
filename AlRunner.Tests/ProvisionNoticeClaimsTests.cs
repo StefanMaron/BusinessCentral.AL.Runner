@@ -40,10 +40,11 @@ public sealed class ProvisionNoticeClaimsTests
         Assert.DoesNotContain("not available", notice);
         Assert.DoesNotContain("is not published", notice);
         Assert.Contains("could not be obtained from the CDN", notice);
-        // It stays a warning: this tier IS degraded, whatever the reason for the miss.
-        Assert.Contains("warning:", notice);
-        Assert.Contains("KNOWN-DEGRADED", notice);
-        Assert.Contains("Falling back to the latest 28.x", notice);
+        // #4691: no degradation claim before the landed minor is known — a CI-measured minor is
+        // not degraded. DefaultFallbackMinorWarningTests pins the post-selection warning.
+        Assert.DoesNotContain("KNOWN-DEGRADED", notice);
+        Assert.DoesNotContain("dozens", notice);
+        Assert.Contains("falling back to the latest 28.x", notice);
         Assert.Contains("al-runner provision --bc-version 28.1", notice);
     }
 

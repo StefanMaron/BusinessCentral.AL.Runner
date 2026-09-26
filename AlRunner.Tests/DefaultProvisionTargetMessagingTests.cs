@@ -99,8 +99,9 @@ public sealed class DefaultProvisionTargetMessagingTests
 
             Assert.Equal(2, exit);
             // Must describe the LOCAL CACHE state truthfully...
-            Assert.Contains("[bc] warning: no cached BC", stderr);
-            Assert.Contains("KNOWN-DEGRADED", stderr);
+            Assert.Contains("[bc] no cached BC", stderr);
+            // #4691: nothing was selected, so there is no landed minor to call degraded.
+            Assert.DoesNotContain("KNOWN-DEGRADED", stderr);
             // ...and must NEVER claim network was consulted when --no-auto-provision
             // guarantees it wasn't.
             Assert.DoesNotContain("CDN", stderr);
