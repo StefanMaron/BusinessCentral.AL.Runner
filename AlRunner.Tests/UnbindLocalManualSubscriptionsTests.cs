@@ -220,6 +220,38 @@ public class UnbindLocalManualSubscriptionsTests
     }
 
     /// <summary>
+    /// Two locals of one scope sharing one bound instance (<c>B := A</c>): neither handle is the
+    /// last reference on its own, but together they hold every reference, so the scope's exit
+    /// disposes the instance in BC and the binding ends.
+    /// </summary>
+    [SkippableFact]
+    public void TwoLocalsSharingOneBoundTarget_AreUnboundTogether()
+    {
+        TestArtifacts.SkipIf(!_engine.Ready,
+            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
+
+        var root = Root();
+        var scope = new NavScope(root);
+        var target = new Codeunit69003(root);
+        var first = new NavCodeunitHandle(scope, target);
+        _ = first.ALByValue(scope); // a second handle on the same instance, same scope
+
+        SetSubscriptionBound(target, true);
+        var bindings = EventBindings();
+        bindings.Add(target);
+
+        BcRuntime.UnbindLocalManualSubscriptions(scope);
+
+        var stillBound = target.IsSubscriptionBound;
+        SetSubscriptionBound(target, false);
+        bindings.Remove(target);
+
+        Assert.False(stillBound,
+            "Two handles of the disposing scope hold every reference to the instance, so its " +
+            "binding must end with the scope, even though neither alone is the last reference.");
+    }
+
+    /// <summary>
     /// The sweep survives being called with a scope that has no reflected tree fields
     /// resolved at all (e.g. a unit test host that never bootstrapped the engine) — must
     /// return quietly rather than NRE. Runs unconditionally, mirroring

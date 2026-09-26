@@ -505,19 +505,26 @@ public static partial class BcRuntime
     [MethodImpl(MethodImplOptions.NoInlining)]
     internal static void UnbindLocalManualSubscriptions(object? self)
     {
+        // BC disposes (and so unbinds) an instance only when its LAST reference is released. A
+        // by-value parameter (ALByValue -> CloneReference) or a local assigned out (Out := Local)
+        // leaves another reference alive, so the binding stays (#4737, #4756; corpus 67370).
+        // Trap: count every local handle of one instance together — `B := A` makes two locals
+        // share it, and neither alone is ever the last reference (the #4736 shape).
+        var handlesByTarget = new List<(Microsoft.Dynamics.Nav.Runtime.NavCodeunit Target, List<object> Handles)>();
         ForEachDirectChildHost(self, host =>
         {
             try
             {
-                if (host is Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle cuHandle && cuHandle.HasTarget)
-                {
-                    // Only the LAST reference's release disposes the instance in BC; a by-value
-                    // parameter (ALByValue -> CloneReference) is a second handle on one bound
-                    // instance and must not unbind it at the callee's exit (#4737).
-                    var target = cuHandle.Target;
-                    if (target != null && target.IsSubscriptionBound && IsLastReference(target.Tree, cuHandle))
-                        UnbindManualSubscriptionDirect(target);
-                }
+                if (host is not Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle cuHandle || !cuHandle.HasTarget)
+                    return;
+                var target = cuHandle.Target;
+                if (target == null || !target.IsSubscriptionBound)
+                    return;
+                var entry = handlesByTarget.Find(e => ReferenceEquals(e.Target, target));
+                if (entry.Handles == null)
+                    handlesByTarget.Add((target, new List<object> { cuHandle }));
+                else
+                    entry.Handles.Add(cuHandle);
             }
             catch
             {
@@ -525,6 +532,25 @@ public static partial class BcRuntime
                 // of this scope's children.
             }
         });
+        foreach (var (target, handles) in handlesByTarget)
+        {
+            if (ReleasingAllDisposes(target.Tree, handles))
+                UnbindManualSubscriptionDirect(target);
+        }
+    }
+
+    /// <summary>
+    /// Whether releasing all of <paramref name="references"/> disposes the object
+    /// <paramref name="tree"/> hosts, by BC's two rules in
+    /// <c>InternalRemoveReferenceDisposeIfLast</c>: a shared object when its reference count
+    /// reaches zero, any other when one of the released references is its parent.
+    /// </summary>
+    private static bool ReleasingAllDisposes(Microsoft.Dynamics.Nav.Runtime.TreeHandler tree, List<object> references)
+    {
+        var count = tree.ReferenceCount; // -1 on a non-shared handler
+        return count < 0
+            ? references.Exists(r => ReferenceEquals(tree.Parent, r))
+            : references.Count >= count;
     }
 
     /// <summary>
