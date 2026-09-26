@@ -497,6 +497,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **cache:** pin the dead-owner case of the adopted --no-cache root rule
 - **watch:** slice multi-file watch edits on the cycle that saw the whole edit set
 - **watch:** deflake TddWatch_MissingSymbol cycle-2 PASS observation
 - **startup:** run the startup housekeeping once per invocation, not once per re-exec generation
