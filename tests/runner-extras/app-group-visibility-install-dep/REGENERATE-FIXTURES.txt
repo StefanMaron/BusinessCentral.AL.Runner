@@ -28,6 +28,7 @@ shape under test. Keep it in a scratch dir:
   codeunit 66363 "AGVI Subscriber":
       [EventSubscriber(ObjectType::Table, Database::"Payment Method", 'OnAfterInsertEvent', '', false, false)]
       local procedure OnAfterInsertPaymentMethod(var Rec: Record "Payment Method")
+          if Rec.Code <> 'AGVS-SUB' then exit;   // other suites insert Payment Methods too
           if not AllObj.Get(AllObj."Object Type"::Table, 66360) then
               Error('AGVI subscriber cannot see its own table 66360 in AllObj');
           Rec.Description := 'AGVI SUBSCRIBER RAN';
