@@ -106,7 +106,7 @@ public sealed class RunnerXmlMetadataLoader : INCLObjectXmlMetadataLoader
         // so BC's own XmlPort engine imports/exports against the port's real node schema
         // instead of NREing on an empty skeleton.
         if (objectId.ObjectType == ObjectType.XmlPort
-            && AlXmlPortMetadataRegistry.TryGet(objectId.ObjectNumber, out var xmlPortXml))
+            && RecordPatches.TryGetXmlPortMetadataXml(objectId.ObjectNumber, out var xmlPortXml))
             return Wrap(xmlPortXml, $"runner-xmlport-{objectId.ObjectNumber}");
 
         // XmlPorts living in a PRECOMPILED dependency .app: never source-compiled, so the

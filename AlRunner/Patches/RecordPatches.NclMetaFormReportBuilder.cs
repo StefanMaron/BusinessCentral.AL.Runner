@@ -41,6 +41,27 @@ public static partial class RecordPatches
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, object?> _metaReportCache = new();
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, object?> _metaQueryCache = new();
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, object?> _metaXmlPortCache = new();
+    // An xmlport id several app groups declare, per executing group (#4751): see GetOrBuildMetaXmlPort.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Guid AppGroup, int Id), object?> _metaXmlPortCacheByAppGroup = new();
+
+    /// <summary>
+    /// The NCLMetaXmlPort for <paramref name="xmlPortId"/>. Every reader goes through this, never
+    /// <c>_metaXmlPortCache</c> directly: an id two app groups both declare resolves per executing
+    /// group, so the later group does not read the earlier group's xmlport (#4751).
+    /// </summary>
+    private static object? GetOrBuildMetaXmlPort(int xmlPortId)
+        => AppGroupScopeFor("xmlport", xmlPortId) is { } group
+            ? _metaXmlPortCacheByAppGroup.GetOrAdd((group, xmlPortId), k => BuildNCLMetaXmlPort(k.Id))
+            : _metaXmlPortCache.GetOrAdd(xmlPortId, BuildNCLMetaXmlPort);
+
+    /// <summary>
+    /// The emit-captured XML for <paramref name="xmlPortId"/>: the executing app group's own
+    /// document when several groups declare the id, else the process-wide one (#4751).
+    /// </summary>
+    internal static bool TryGetXmlPortMetadataXml(int xmlPortId, out string xml)
+        => AppGroupScopeFor("xmlport", xmlPortId) is { } group
+           && AlXmlPortMetadataRegistry.TryGetForApp(group, xmlPortId, out xml)
+           || AlXmlPortMetadataRegistry.TryGet(xmlPortId, out xml);
 
     // Type/method handles resolved lazily.
     private static Type? _tNCLMetaForm;

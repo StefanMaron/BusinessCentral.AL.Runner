@@ -12,6 +12,8 @@ public static partial class RecordPatches
     // different app groups declare is in _ambiguousSourceObjects instead and is never hidden.
     private static readonly Dictionary<(string Kind, int Id), Guid> _sourceObjectOwners = new();
     private static readonly HashSet<(string Kind, int Id)> _ambiguousSourceObjects = new();
+    // (normalized kind, id) -> every app group whose source declares it.
+    private static readonly Dictionary<(string Kind, int Id), HashSet<Guid>> _sourceObjectDeclarers = new();
     // App group id -> the app ids its app.json declares as dependencies (implicit floors excluded).
     private static readonly Dictionary<Guid, Guid[]> _sourceAppDependencies = new();
     // Full source dir -> the app group that compiles it; Guid.Empty when two groups share the dir
@@ -88,14 +90,36 @@ public static partial class RecordPatches
         {
             if (AlObjectKindName(obj) is not string kind) continue;
             if (ObjectIdOf(obj) is not int id || id <= 0) continue;
-            RecordObjectOwner(_sourceObjectOwners, _ambiguousSourceObjects, (NormalizeObjectTypeName(kind), id), appId);
+            var key = (NormalizeObjectTypeName(kind), id);
+            RecordObjectOwner(_sourceObjectOwners, _ambiguousSourceObjects, key, appId);
+            if (!_sourceObjectDeclarers.TryGetValue(key, out var declarers))
+                _sourceObjectDeclarers[key] = declarers = new HashSet<Guid>();
+            declarers.Add(appId);
         }
     }
+
+    /// <summary>
+    /// The executing app group, when it is one of SEVERAL source app groups declaring
+    /// (<paramref name="kind"/>, <paramref name="id"/>); otherwise null. A per-id metadata cache
+    /// consults this so each such group gets its own object instead of whichever group resolved
+    /// the id first (#4751).
+    /// </summary>
+    internal static Guid? AppGroupScopeFor(string kind, int id)
+        => AppGroupScopeFor(kind, id, _sourceObjectDeclarers, CurrentAppGroupAppId());
+
+    internal static Guid? AppGroupScopeFor(string kind, int id,
+        IReadOnlyDictionary<(string Kind, int Id), HashSet<Guid>> declarers, Guid? executing)
+        => executing is { } g
+           && declarers.TryGetValue((NormalizeObjectTypeName(kind), id), out var d)
+           && d.Count > 1 && d.Contains(g)
+            ? g
+            : null;
 
     private static void ResetAppGroupObjectVisibilityForReload()
     {
         _sourceObjectOwners.Clear();
         _ambiguousSourceObjects.Clear();
+        _sourceObjectDeclarers.Clear();
         _sourceAppDependencies.Clear();
         _appGroupBySourceDir.Clear();
         _scopeAssembly = null;
