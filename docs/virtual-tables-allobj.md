@@ -232,9 +232,7 @@ listed to every group. `RecordPatches.BuildPackageVisibility` gives those object
 fire under whichever app group is executing, including one that does not declare that dependency.
 `PinInventoryScope` and `CurrentVisibleAppClosure` widen the group's closure by the closure of every
 app whose code is executing: each registered AL assembly with a frame on the call stack
-(`BcRuntime.AppIdsOnCallStack`), plus the installing app, which `InstallExecutionContext.Enter` sets
-through `RecordPatches.EnterInstallingApp` because an awaited install trigger can resume with none
-of its frames on the stack. Without it, an install or a subscriber that reads AllObj for its own
+(`BcRuntime.AppIdsOnCallStack`). Without it, an install or a subscriber that reads AllObj for its own
 table fails in every non-declaring group (a retention-policy registration is that shape). Rows a
 widened read inserts stay in that provider's add-only store, which is what `main` did for them.
 
