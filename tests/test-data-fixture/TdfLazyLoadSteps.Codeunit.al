@@ -21,14 +21,12 @@
 ///   (RecordPatches.AppendBaselineTable). The three assertions fail differently:
 ///     - a baseline that never received the table          -> 0 rows, Get('GB') false
 ///     - a baseline that aliased the live rows             -> GB reads 'MUTATED BY THE TEST'
-///     - a baseline that recorded the rows but not all of them -> Count is below the count the
-///       first-running codeunit recorded in "TDF Backup Row Counts"
+///     - a baseline that recorded the rows but not all of them -> Count is 138, not 139
 /// </summary>
 codeunit 64406 "TDF Lazy Load Steps"
 {
     var
         Assert: Codeunit "TDF Assert";
-        BackupRowCounts: Codeunit "TDF Backup Row Counts";
 
     procedure AssertPristineThenDirty()
     begin
@@ -39,7 +37,7 @@ codeunit 64406 "TDF Lazy Load Steps"
     end;
 
     /// <summary>
-    /// Concrete values, not "some rows exist": an implementation that materialised blank
+    /// Concrete values, not "some rows exist": an implementation that materialised 139 blank
     /// rows, or that restored the table but not its contents, fails here. Run second (which
     /// one of the two calling codeunits always is), every one of these is an assertion about
     /// what the boundary restore put back.
@@ -53,8 +51,8 @@ codeunit 64406 "TDF Lazy Load Steps"
         Assert.AreEqual('Great Britain', CountryRegion.Name, 'GB Name is the backup value, not a mutation');
         Assert.AreEqual('GB', CountryRegion."ISO Code", 'GB ISO Code');
 
-        // A second row with a different Name, so a load that read one row and copied it
-        // would still fail. It is also the row the other codeunit DELETES.
+        // A second row with a different Name, so a load that read one row and copied it 139
+        // times would still fail. It is also the row the other codeunit DELETES.
         Assert.IsTrue(CountryRegion.Get('US'), 'Country/Region US must be present');
         Assert.AreEqual('USA', CountryRegion.Name, 'US Name');
 
@@ -64,7 +62,7 @@ codeunit 64406 "TDF Lazy Load Steps"
 
         // The exact count. A table loaded twice would have duplicated its rows; a table
         // restored without the deleted row would read 138. Get() alone catches neither.
-        BackupRowCounts.CheckCountryRegionCount(CountryRegion.Count());
+        Assert.AreEqual(139, CountryRegion.Count(), 'every Country/Region row the backup holds');
 
         // A row a test INSERTED is not part of the install baseline and must not survive the
         // boundary, while the backup's own rows must. A restore that simply left the previous
@@ -142,6 +140,6 @@ codeunit 64406 "TDF Lazy Load Steps"
         Assert.IsTrue(CountryRegion.Get('GB'), 'GB still exists after the modify');
         Assert.AreEqual('MUTATED BY THE TEST', CountryRegion.Name, 'GB Name was really modified');
         Assert.IsFalse(CountryRegion.Get('US'), 'US was really deleted');
-        Assert.AreEqual(BackupRowCounts.RecordedCountryRegionCount() - 1, CountryRegion.Count(), 'one row fewer after the delete');
+        Assert.AreEqual(138, CountryRegion.Count(), 'one row fewer after the delete');
     end;
 }

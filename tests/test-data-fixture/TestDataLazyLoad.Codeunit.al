@@ -6,7 +6,7 @@
 /// The subjects are picked so nothing earlier in this bundle, and nothing the dependency
 /// install triggers do, has already materialised them, so the first touch really is here in
 /// the middle of a test body:
-///   - "Country/Region" (table 9) — real CRONUS data (139 rows on the 28.1 W1 backup), no tableextension rows and
+///   - "Country/Region" (table 9) — 139 rows of real CRONUS data, no tableextension rows and
 ///     no value type this build refuses.
 ///   - "Shipping Agent" (table 291) — the WRITE subject.
 ///
