@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **testpage:** a Card closes when an action leaves its row deleted; pin the unsaved-new-row refresh cases
 - **metadata:** HelpLink derives from the app manifest's ContextSensitiveHelpUrl
 - **pbt:** a page background task worker runs outside the caller's write transaction
 - **testpage:** an unconsumed TestPage.Trap() is released when its variable leaves scope
