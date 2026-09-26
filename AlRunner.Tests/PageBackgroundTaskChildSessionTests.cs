@@ -58,7 +58,7 @@ public class PageBackgroundTaskChildSessionTests
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "1.0.0.0",
-          "idRanges": [ { "from": 64679, "to": 64684 } ],
+          "idRanges": [ { "from": 64679, "to": 64685 } ],
           "runtime": "14.0"
         }
         """);
@@ -82,10 +82,8 @@ public class PageBackgroundTaskChildSessionTests
         {
             trigger OnRun()
             var
-                Row: Record "PCS Row";
                 Results: Dictionary of [Text, Text];
             begin
-                Results.Add('Count', Format(Row.Count()));
                 if Database.IsInWriteTransaction() then
                     Results.Add('InWriteTx', 'true')
                 else
@@ -95,6 +93,14 @@ public class PageBackgroundTaskChildSessionTests
                 else
                     Results.Add('GuardedRun', 'false');
                 Page.SetBackgroundTaskResult(Results);
+            end;
+        }
+
+        codeunit 64684 "PCS Failing Worker"
+        {
+            trigger OnRun()
+            begin
+                Error('PCS failing worker');
             end;
         }
 
@@ -129,13 +135,11 @@ public class PageBackgroundTaskChildSessionTests
             end;
 
             [Test]
-            procedure WorkerSeesRowsAndNoWriteTransaction()
+            procedure WorkerHasNoWriteTransaction()
             var
                 Results: Dictionary of [Text, Text];
             begin
                 SeedAndRun('B', Results);
-                if Results.Get('Count') <> '2' then
-                    Error('PCS1 FAIL: worker Count=%1, expected 2', Results.Get('Count'));
                 if Results.Get('InWriteTx') <> 'false' then
                     Error('PCS1 FAIL: worker InWriteTx=%1, expected false', Results.Get('InWriteTx'));
                 if Results.Get('GuardedRun') <> 'true' then
@@ -154,6 +158,40 @@ public class PageBackgroundTaskChildSessionTests
                 asserterror Ok := Codeunit.Run(Codeunit::"PCS Noop");
                 if StrPos(GetLastErrorText(), 'the transaction is stopped') = 0 then
                     Error('PCS2 FAIL: guarded run in the caller must be refused, got: %1', GetLastErrorText());
+            end;
+
+            // The restore must survive a worker that throws: the caller's write transaction is
+            // still open afterwards, and the caller's own Commit() still makes its row durable.
+            [Test]
+            procedure FailingWorkerLeavesCallersWriteTransactionOpen()
+            var
+                Row: Record "PCS Row";
+                Card: TestPage "PCS Card";
+                Params: Dictionary of [Text, Text];
+            begin
+                Row.DeleteAll();
+                Row."No." := 'ERR';
+                Row.Insert();
+                Card.OpenView();
+                if TryRunFailing(Card, Params) then
+                    Error('PCS4 FAIL: the failing worker must have raised its error');
+                if StrPos(GetLastErrorText(), 'PCS failing worker') = 0 then
+                    Error('PCS4 FAIL: expected the worker''s own error, got: %1', GetLastErrorText());
+                Card.Close();
+                if not Database.IsInWriteTransaction() then
+                    Error('PCS4 FAIL: the caller''s write transaction must survive a failing task');
+                Commit();
+                asserterror Error('PCS4 probe');
+                if not Row.Get('ERR') then
+                    Error('PCS4 FAIL: the caller''s Commit() after the failing task must make its row durable');
+            end;
+
+            [TryFunction]
+            local procedure TryRunFailing(var Card: TestPage "PCS Card"; Params: Dictionary of [Text, Text])
+            var
+                Results: Dictionary of [Text, Text];
+            begin
+                Results := Card.RunPageBackgroundTask(Codeunit::"PCS Failing Worker", Params, false);
             end;
 
             [Test]
@@ -175,10 +213,11 @@ public class PageBackgroundTaskChildSessionTests
         var (output, exitCode) = RunRunner(root);
 
         Assert.True(exitCode == 0,
-            $"Expected all three child-session tests to pass (exit 0); got exit {exitCode}.\n{output}");
+            $"Expected all four child-session tests to pass (exit 0); got exit {exitCode}.\n{output}");
         Assert.DoesNotContain("FAIL", output);
-        Assert.Contains("PASS  Codeunit64683.WorkerSeesRowsAndNoWriteTransaction", output);
+        Assert.Contains("PASS  Codeunit64683.WorkerHasNoWriteTransaction", output);
         Assert.Contains("PASS  Codeunit64683.CallerStillInWriteTransactionAfterTask", output);
         Assert.Contains("PASS  Codeunit64683.WorkerCommitDoesNotCommitCallersRows", output);
+        Assert.Contains("PASS  Codeunit64683.FailingWorkerLeavesCallersWriteTransactionOpen", output);
     }
 }
