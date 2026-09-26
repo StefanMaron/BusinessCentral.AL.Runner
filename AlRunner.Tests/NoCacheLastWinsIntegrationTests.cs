@@ -242,8 +242,6 @@ public class NoCacheLastWinsIntegrationTests
         // running out of the ncl-shadow directory inside it. Deleting the root at the child's exit
         // took the parent's System.Reflection.Metadata.dll with it; the parent then recursed in the
         // assembly resolver until `Stack overflow.` (exit 134) instead of reporting a failing test.
-        // Here the "ancestor" is a live process named in the root's sidecar, exactly as
-        // ScratchDirs.Reserve names the generation that minted a real root.
         TestArtifacts.SkipIfMissing();
 
         var scratchRoot = TestScratch.Dir("al-runner-nocache-ancestor");
@@ -276,12 +274,11 @@ public class NoCacheLastWinsIntegrationTests
         }
         """);
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-no-cache-ancestor-" + Guid.NewGuid().ToString("N"));
-        using var ancestor = Process.Start(new ProcessStartInfo("sleep", "300") { UseShellExecute = false })!;
+        // TestScratch reserves the root in THIS test host's name: a live process other than the
+        // runner, which is what the runner's minting ancestor is to an adopting child.
+        var root = TestScratch.FlatDir("al-runner-no-cache-ancestor-");
         try
         {
-            Assert.True(AlRunner.Infrastructure.ScratchDirs.TransferOwnership(root, ancestor.Id));
-
             var (output, exit) = RunRunnerCore(bundleDir, absentPackageCache, root, new[] { "--no-cache" });
             Assert.True(exit == 0 && output.Contains("1P/0F/0E"), $"run must pass:\n{output}");
             Assert.Contains(root, output, StringComparison.Ordinal);
@@ -291,9 +288,7 @@ public class NoCacheLastWinsIntegrationTests
         }
         finally
         {
-            try { ancestor.Kill(); } catch { }
             try { if (Directory.Exists(root)) Directory.Delete(root, true); } catch { }
-            try { File.Delete(AlRunner.Infrastructure.ScratchDirs.MarkerPathFor(root)); } catch { }
         }
     }
 }
