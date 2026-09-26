@@ -275,6 +275,17 @@ public static partial class RecordPatches
                 return GetQueryMetadataVirtualDataAccess(self, table);
             }
 
+            // ── XMLport Metadata system virtual table (2000000280) ───────────────
+            // Served by BC's OWN XmlPortDataProvider, the same shape as Query Metadata above:
+            // it walks the object snapshot for ObjectType.XmlPort, which is why the snapshot
+            // substitution carries xmlports too. Before #4461 there was no branch, so every
+            // Record "XMLport Metadata" read answered from an empty temp store.
+            if (IsXmlPortMetadataVirtualTable(table))
+            {
+                return GetBcVirtualDataAccess(self, table,
+                    "every Record \"XMLport Metadata\" read would answer from an empty store");
+            }
+
             // ── All Profile system virtual table (2000000178) ────────────────────────────
             // Virtual on the service tier too: AllProfileDataProvider's rows are every
             // profile every published app declares plus the tenant-owned ones. It is the

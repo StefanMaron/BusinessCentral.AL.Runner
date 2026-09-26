@@ -3,9 +3,9 @@
   "suites": {
     "runner-extras": {
       "groups": {
-        "app-group-visibility-a": { "tests": 27 },
-        "app-group-visibility-b": { "tests": 29 },
-        "app-group-visibility-c": { "tests": 27 },
+        "app-group-visibility-a": { "tests": 30 },
+        "app-group-visibility-b": { "tests": 32 },
+        "app-group-visibility-c": { "tests": 30 },
         "bundle-page-over-dep-table": { "tests": 2 },
         "code-coverage-line-rows": { "tests": 7 },
         "crm-proxy-version": { "tests": 5 },

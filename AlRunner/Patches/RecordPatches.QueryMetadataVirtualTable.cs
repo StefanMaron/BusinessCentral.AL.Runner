@@ -24,7 +24,8 @@
 // ObjectType.Query alone therefore fixes this table with no row-building whatsoever, and BC's
 // own bounds/binary-search/sort-order/obsolete-filter traversal keeps running unchanged.
 //
-// DELIBERATELY QUERY-ONLY — and the reason is NOT the one it first appears to be. That snapshot
+// DELIBERATELY QUERY + XMLPORT ONLY (XMLport Metadata, 2000000280, joined in #4461 — its
+// XmlPortDataProvider has exactly QueryDataProvider's shape) — and the reason is NOT the one it first appears to be. That snapshot
 // has TEN direct callers; #4196's "17" is the count for GetObjectNumberAndInfoWithinRange, a
 // different method one level up, and the two sets are nearly disjoint. Re-derived on bc284
 // (#4447): NINE of the ten are on NCLMetadata/MetadataDataProvider themselves —
@@ -72,6 +73,11 @@ public static partial class RecordPatches
     private static bool IsQueryMetadataVirtualTable(NCLMetaTable? table)
         => table != null && table.TableId == QueryMetadataVirtualTableId;
 
+    internal const int XmlPortMetadataVirtualTableId = 2000000280;
+
+    private static bool IsXmlPortMetadataVirtualTable(NCLMetaTable? table)
+        => table != null && table.TableId == XmlPortMetadataVirtualTableId;
+
     /// <summary>
     /// The DataAccess BC's own factory builds for 2000000142 — one over QueryDataProvider.
     ///
@@ -84,7 +90,7 @@ public static partial class RecordPatches
         => GetBcVirtualDataAccess(dataAccessSource, table,
             "every Record \"Query Metadata\" read would answer from an empty store");
 
-    private static MethodInfo? _qmTryGetMetaQuery;
+    private static MethodInfo? _qmTryGetMetaQuery, _qmTryGetMetaApplicationObject;
     private static Type? _qmSnapshotOuter, _qmSnapshotInner, _qmEntryType, _qmObjectTypeEnum;
 
     /// <summary>
@@ -93,10 +99,10 @@ public static partial class RecordPatches
     /// real impl which NREs in skeleton mode).
     ///
     /// <para>Returns the same <c>SortedList&lt;ObjectType, SortedList&lt;int,
-    /// AllObjectSnapshotEntry&gt;&gt;</c> BC expects, carrying ONE entry —
-    /// <c>ObjectType.Query</c> — populated from <see cref="KnownQueryIdSet"/>. Every other
-    /// object type is absent, so every other caller sees exactly the empty snapshot it sees
-    /// today and cannot change behaviour (#4196 tracks widening this).</para>
+    /// AllObjectSnapshotEntry&gt;&gt;</c> BC expects, carrying TWO entries —
+    /// <c>ObjectType.Query</c> from <see cref="KnownQueryIdSet"/> and <c>ObjectType.XmlPort</c>
+    /// from <see cref="KnownXmlPortIdSet"/> (#4461). Every other object type is absent, so every
+    /// other caller sees exactly the empty snapshot it saw before (#4196 tracks widening this).</para>
     /// </summary>
     public static object NCLMetadata_GetSnapshotOfAllObjects(object self, int arg)
     {
@@ -107,44 +113,68 @@ public static partial class RecordPatches
         // pin the first answer for the process.
         var outer = (IDictionary)Activator.CreateInstance(_qmSnapshotOuter!)!;
 
-        var ids = KnownQueryIdSet();
-        if (ids.Count == 0) return outer;
-
-        var inner = (IDictionary)Activator.CreateInstance(_qmSnapshotInner!)!;
-        // Filtered here, never in KnownQueryIdSet: that set is memoized on a generation tuple
-        // with no app-group term, so a sibling group's query stays in it and a filter applied
-        // there would cache the FIRST group's answer for the process. This loop rebuilds the
-        // snapshot on every call, which is what makes a per-call scope read correct (#4447).
+        // Filtered here, never in KnownQueryIdSet / KnownXmlPortIdSet: both are memoized on a
+        // generation tuple with no app-group term, so a sibling group's object stays in them and
+        // a filter applied there would cache the FIRST group's answer for the process. This
+        // builds the snapshot on every call, which is what makes a per-call scope read correct
+        // (#4447). Both tables' BC providers build every column themselves and reach the ids only
+        // through this snapshot, so the snapshot IS the filter point.
         var visibleApps = CurrentVisibleAppClosure();
 
+        AddSnapshotEntries(outer, ObjectTypeQuery, "Query", KnownQueryIdSet(), visibleApps,
+            id => QueryMetadataResolves(self, id));
+        // #4461: XMLport Metadata (2000000280). XmlPortDataProvider has the same shape as
+        // QueryDataProvider: GetObjectNumberAndInfoWithinRange(ObjectType.XmlPort, …, needNames:
+        // false), then every column from the NCLMetaXmlPort the metadata cache resolves.
+        AddSnapshotEntries(outer, ObjectTypeXmlPort, "XmlPort", KnownXmlPortIdSet(), visibleApps,
+            id => XmlPortMetadataResolves(self, id));
+        return outer;
+    }
+
+    private static void AddSnapshotEntries(IDictionary outer, int objectType, string kind,
+        HashSet<int> ids, HashSet<Guid>? visibleApps, Func<int, bool> resolves)
+    {
+        if (ids.Count == 0) return;
+        var inner = (IDictionary)Activator.CreateInstance(_qmSnapshotInner!)!;
         foreach (var id in ids)
         {
-            // #4447. The three tables #4454 scoped filter inside a runner populate arm; this
-            // table has none -- BC's own QueryDataProvider builds all 13 columns and reaches
-            // the ids only through this snapshot, so the snapshot IS the filter point.
-            if (IsHiddenFromCurrentAppGroup("Query", id, visibleApps)) continue;
+            if (IsHiddenFromCurrentAppGroup(kind, id, visibleApps)) continue;
             // Admitted by BC's own rule, not ours: an id must resolve through the metadata
-            // cache to appear. An id the runner knows exists but cannot build metadata for is
-            // skipped here rather than surfacing as a row whose every column would be empty —
-            // and BC's own body would skip it too, via its catch (NavMetadataNotFoundException).
-            if (!QueryMetadataResolves(self, id)) continue;
-            // Name is left empty, and this is LOAD-BEARING rather than tidiness. BC calls this
-            // walk with needNames:false for ObjectType.Query and reads the name off
-            // NCLMetaQuery instead, so a name here could only disagree with the one the row
-            // carries — but more importantly, an empty name is what keeps this entry out of
-            // EnsureAllObjectNamesWillBeUnique's duplicate-name check, which skips on
-            // IsNullOrWhiteSpace. Populating it would enter these ids into a uniqueness scan
-            // they have never been part of.
+            // cache to appear, as BC's provider bodies skip one that throws
+            // NavMetadataNotFoundException.
+            if (!resolves(id)) continue;
+            // Name is left empty, and this is LOAD-BEARING. Both providers call this walk with
+            // needNames:false and read the name off the metadata object, and an empty name keeps
+            // the entry out of EnsureAllObjectNamesWillBeUnique's duplicate-name check, which
+            // skips on IsNullOrWhiteSpace.
             var entry = Activator.CreateInstance(_qmEntryType!, new object?[] { string.Empty, null, null, string.Empty });
             if (entry != null) inner[id] = entry;
         }
-
-        outer[Enum.ToObject(_qmObjectTypeEnum!, ObjectTypeQuery)] = inner;
-        return outer;
+        outer[Enum.ToObject(_qmObjectTypeEnum!, objectType)] = inner;
     }
 
     /// <summary>ObjectType.Query — 9, the same constant the metadata-cache populator uses.</summary>
     private const int ObjectTypeQuery = 9;
+
+    /// <summary>ObjectType.XmlPort — 6, the same constant the metadata-cache populator uses.</summary>
+    private const int ObjectTypeXmlPort = 6;
+
+    private static bool XmlPortMetadataResolves(object? nclMetadata, int id)
+    {
+        if (nclMetadata == null || _qmTryGetMetaApplicationObject == null) return false;
+        try
+        {
+            // The same call XmlPortDataProvider makes (GetMetaApplicationObject(XmlPort, id,
+            // requireCompiled: false)), through BC's Try wrapper. appGroupId: -1 is BC's default,
+            // passed explicitly because MethodInfo.Invoke does not apply C# defaults.
+            var args = new object?[] { Enum.ToObject(_qmObjectTypeEnum!, ObjectTypeXmlPort), id, null, false, -1 };
+            return (bool)_qmTryGetMetaApplicationObject.Invoke(nclMetadata, args)! && args[2] != null;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     private static bool QueryMetadataResolves(object? nclMetadata, int id)
     {
@@ -195,7 +225,15 @@ public static partial class RecordPatches
             m.Name == "TryGetMetaQueryById" && m.GetParameters().Length == 4
             && m.GetParameters()[0].ParameterType == typeof(int));
 
-        if (outer == null || inner == null || entry == null || objectTypeEnum == null || tryGet == null)
+        // TryGetMetaApplicationObject(ObjectType, int, out NCLMetaApplicationObject, bool, int):
+        // FIVE parameters, the last defaulted — the same arity trap as TryGetMetaQueryById.
+        var tryGetApp = objectTypeEnum == null ? null : t.GetMethods(inst).FirstOrDefault(m =>
+            m.Name == "TryGetMetaApplicationObject" && m.GetParameters().Length == 5
+            && m.GetParameters()[0].ParameterType == objectTypeEnum
+            && m.GetParameters()[1].ParameterType == typeof(int));
+
+        if (outer == null || inner == null || entry == null || objectTypeEnum == null || tryGet == null
+            || tryGetApp == null)
             // BcShapeGapException, not InvalidOperationException: NavMethodScope_AssertError
             // rethrows only this type, so an `asserterror` around a driver hitting this refusal
             // would otherwise SWALLOW it and PASS — inverting the result (#2946).
@@ -203,12 +241,14 @@ public static partial class RecordPatches
                 Surface, "NCLMetadata",
                 "BC does not expose the shape the Query Metadata snapshot substitution drives "
                 + "(GetSnapshotOfAllObjects returning SortedList<ObjectType, SortedList<int, "
-                + "AllObjectSnapshotEntry>>, TryGetMetaQueryById(int, out, bool, int)) — see #4147");
+                + "AllObjectSnapshotEntry>>, TryGetMetaQueryById(int, out, bool, int), "
+                + "TryGetMetaApplicationObject(ObjectType, int, out, bool, int)) — see #4147");
 
         _qmSnapshotOuter = outer;
         _qmSnapshotInner = inner;
         _qmEntryType = entry;
         _qmObjectTypeEnum = objectTypeEnum;
         _qmTryGetMetaQuery = tryGet;
+        _qmTryGetMetaApplicationObject = tryGetApp;
     }
 }

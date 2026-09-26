@@ -276,4 +276,35 @@ codeunit 62622 "AGV C Tests"
         QueryMetadata.SetRange(ID, 62610, 62619);
         Assert.IsTrue(QueryMetadata.IsEmpty(), 'Query Metadata in app group C lists a query in the id range of unrelated app group B');
     end;
+
+    // #4461: XMLport Metadata (2000000280), served like Query Metadata by BC's OWN provider
+    // (XmlPortDataProvider) walking the object snapshot, so the app-group filter sits in the
+    // snapshot builder. The own-xmlport arm is the positive control for the hiding arms.
+    [Test]
+    procedure XmlPortMetadata_OwnXmlPort_IsListed()
+    var
+        XmlPortMetadata: Record "XmlPort Metadata";
+    begin
+        Assert.IsTrue(XmlPortMetadata.Get(62626), 'XMLport Metadata in app group C must list its own xmlport 62626');
+        Assert.AreEqual('AGV C XmlPort', XmlPortMetadata.Name, 'XMLport Metadata row for xmlport 62626');
+    end;
+
+    [Test]
+    procedure XmlPortMetadata_DependencyAXmlPort_IsListed()
+    var
+        XmlPortMetadata: Record "XmlPort Metadata";
+    begin
+        Assert.IsTrue(XmlPortMetadata.Get(62606), 'XMLport Metadata in app group C must list the xmlport of its dependency A, 62606');
+        Assert.AreEqual('AGV A XmlPort', XmlPortMetadata.Name, 'XMLport Metadata row for xmlport 62606');
+    end;
+
+    [Test]
+    procedure XmlPortMetadata_GroupBXmlPort_IsNotListed()
+    var
+        XmlPortMetadata: Record "XmlPort Metadata";
+    begin
+        Assert.IsFalse(XmlPortMetadata.Get(62616), 'XMLport Metadata in app group C lists xmlport 62616 of unrelated app group B');
+        XmlPortMetadata.SetRange(ID, 62610, 62619);
+        Assert.IsTrue(XmlPortMetadata.IsEmpty(), 'XMLport Metadata in app group C lists an xmlport in the id range of unrelated app group B');
+    end;
 }
