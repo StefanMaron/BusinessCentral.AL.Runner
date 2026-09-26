@@ -184,6 +184,7 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
                         exit(Rec.FindFirst());
                     exit(Rec.Find(Which));
                 end;
+                trigger OnAfterGetCurrRecord() begin Trace.Note('AGCR:' + Rec.Code); end;
                 var
                     Trace: Codeunit "TDR Trace";
                     PickFirst: Boolean;
@@ -196,6 +197,15 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
                 Subtype = Test;
                 var
                     Trace: Codeunit "TDR Trace";
+
+                local procedure FindCalls(Recorded: Text) Calls: Text
+                var
+                    Entry: Text;
+                begin
+                    foreach Entry in Recorded.Split(';') do
+                        if Entry.StartsWith('Find:') then
+                            Calls += Entry + ';';
+                end;
 
                 local procedure Seed()
                 var
@@ -426,8 +436,9 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
                     List.Close();
                 end;
 
-                // A List declaring OnFindRecord moves through it, with Which '=><': the trigger
-                // answers A where the default re-read of a deleted middle row lands on C.
+                // A List declaring OnFindRecord moves through it: the trigger answers A where the
+                // default re-read of a deleted middle row lands on C. BC calls it '=', '=>', '='
+                // (corpus 67300 List_DeletedByAction_OnFindRecord_PicksTheRow).
                 [Test]
                 procedure List_OnFindRecord_ActionDeletesAMiddleRow_MovesWhereTheTriggerSays()
                 var
@@ -443,8 +454,10 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
                     List.DeleteAndPickFirst.Invoke();
                     if List.CodeField.Value() <> 'A' then
                         Error('expected the List on A, got: %1; trace %2', List.CodeField.Value(), Trace.Get());
-                    if StrPos(Trace.Get(), 'Find:=><;') = 0 then
-                        Error('expected OnFindRecord with =><, got: %1', Trace.Get());
+                    if FindCalls(Trace.Get()) <> 'Find:=;Find:=>;Find:=;' then
+                        Error('expected OnFindRecord with = then => then =, got: %1', Trace.Get());
+                    if not Trace.Get().EndsWith('AGCR:A;') then
+                        Error('expected OnAfterGetCurrRecord for A last, got: %1', Trace.Get());
                     List.Close();
                 end;
 

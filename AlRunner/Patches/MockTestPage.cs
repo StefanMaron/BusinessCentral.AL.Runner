@@ -87,14 +87,25 @@ internal partial class LiveNavTestPage : MockITestPage
     // next one, else the previous one; and the blank new-row line when the rowset is empty. The
     // row moved to raises OnAfterGetRecord and OnAfterGetCurrRecord; the deleted row raises neither
     // (corpus 67300 List_DeletedByAction_*, #4747). BC raises the pair more than once; the corpus
-    // pins the row and the last trigger, not the count. A declared OnFindRecord answers the move
-    // (BC showed the trigger's row); the Which it passes is unmeasured (docs/testpage-currpage-update.md).
+    // pins the row and the last trigger, not the count.
     // Trap: "=><" is an anchor on the key the buffer still holds -- do not replace it with "-".
     private void MoveOffDeletedRow(NavRecord record)
     {
-        var found = _page!.RaiseOnFindRecord("=><")
-                    ?? record.ALFindAsync(DataError.TrapError, "=><").GetAwaiter().GetResult();
-        if (found) Loaded(true);
+        var page = _page!;
+        var kept = page.RaiseOnFindRecord("=");
+        if (kept is null)
+        {
+            if (record.ALFindAsync(DataError.TrapError, "=><").GetAwaiter().GetResult()) Loaded(true);
+            else EnterNewRowLine(record);
+            return;
+        }
+        // A declared OnFindRecord: BC calls it "=", "=>", "=" and shows the row it answers (corpus
+        // 67300 List_DeletedByAction_OnFindRecord_PicksTheRow, all cloud legs). A trigger answering
+        // false to the first "=" (a pass-through Rec.Find(Which) on the deleted key) is unmeasured;
+        // "=><" through it lands where the default does. docs/testpage-currpage-update.md
+        if (!kept.Value && page.RaiseOnFindRecord("=><") != true) { EnterNewRowLine(record); return; }
+        page.RaiseOnFindRecord("=>");
+        if (page.RaiseOnFindRecord("=") == true) Loaded(true);
         else EnterNewRowLine(record);
     }
 
