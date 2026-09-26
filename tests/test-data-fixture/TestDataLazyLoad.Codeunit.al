@@ -6,8 +6,8 @@
 /// The subjects are picked so nothing earlier in this bundle, and nothing the dependency
 /// install triggers do, has already materialised them, so the first touch really is here in
 /// the middle of a test body:
-///   - "Country/Region" (table 9) — 139 rows of real CRONUS data, no tableextension rows and
-///     no value type this build refuses.
+///   - "Country/Region" (table 9) — real CRONUS data (the row count varies by backup build),
+///     no tableextension rows and no value type this build refuses.
 ///   - "Shipping Agent" (table 291) — the WRITE subject.
 ///
 /// The body is shared with codeunit 64405 on purpose; see "TDF Lazy Load Steps" for why two
