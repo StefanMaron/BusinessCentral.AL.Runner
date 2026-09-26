@@ -48,12 +48,12 @@ public sealed class UserModifyArmBindingTests
             .Select(i => (i.Operand as MethodReference)?.FullName ?? string.Empty)
             .ToList();
 
-    /// <summary>A rewritten Ncl carries the delete arm's prepend, which this class asserts nothing
-    /// about; an un-rewritten one is a skip, never a pass, and never a failure of the subject.</summary>
+    /// <summary>A rewritten Ncl carries NoteRecordInsertWrite on ALInsertAsync, which this class asserts
+    /// nothing about; an un-rewritten one is a skip, never a pass, and never a failure of the subject.</summary>
     private static void SkipUnlessRewritten(ModuleDefinition module)
         => Skip.IfNot(
-            CalledMethods(NavRecordMethod(module, "ALDeleteAsync", "DataError", "Boolean", "Boolean"))
-                .Any(n => n.Contains("UserTableTriggerPatches::OnAfterUserDelete(System.Object)", StringComparison.Ordinal)),
+            CalledMethods(NavRecordMethod(module, "ALInsertAsync", "DataError", "Boolean", "Boolean"))
+                .Any(n => n.Contains("AlRunner.Patches.ALDatabasePatches::NoteRecordInsertWrite(System.Object)", StringComparison.Ordinal)),
             $"'{RewrittenNclPath}' has not been Cecil-rewritten; run the runner once to warm the Cecil cache.");
 
     private static MethodDefinition RecordImplementationMethod(ModuleDefinition module, string name)

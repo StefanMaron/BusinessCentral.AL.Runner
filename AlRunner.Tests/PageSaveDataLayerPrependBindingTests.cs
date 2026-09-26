@@ -86,9 +86,10 @@ public sealed class PageSaveDataLayerPrependBindingTests
     /// </summary>
     private static void SkipUnlessRewritten(ModuleDefinition module)
     {
-        var marker = CalledMethods(NavRecordMethod(module, "ALDeleteAsync", "DataError", "Boolean", "Boolean"))
+        // Was OnAfterUserDelete on ALDeleteAsync until #4766 moved that prepend away.
+        var marker = CalledMethods(NavRecordMethod(module, "ALInsertAsync", "DataError", "Boolean", "Boolean"))
             .Any(name => name.Contains(
-                "AlRunner.Patches.UserTableTriggerPatches::OnAfterUserDelete(System.Object)",
+                "AlRunner.Patches.ALDatabasePatches::NoteRecordInsertWrite(System.Object)",
                 StringComparison.Ordinal));
         Skip.IfNot(marker,
             $"'{RewrittenNclPath}' has not been Cecil-rewritten (no prepends present at all), so "

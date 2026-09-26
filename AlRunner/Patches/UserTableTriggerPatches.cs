@@ -82,9 +82,12 @@
 //       them, and each is its own rule set.
 //     * The commit-time named-user license check both arms flag: the runner has no license
 //       (#4700, docs/limitations.md#environment-type).
-//     * TIMING of the DELETE cascade: it is prepended to NavRecord.ALDeleteAsync, so it runs
-//       before the OnBeforeDelete subscribers and OnDelete triggers; BC cascades after the
-//       delete (#4766). Insert and modify run at BC's point since #4701.
+//     * The exact instant of the DELETE cascade: it is prepended to
+//       RecordImplementation.DeleteRecordAsync, so it runs after the OnBeforeDelete subscribers
+//       and OnDelete triggers and before the OnAfterDelete subscribers, as in BC (#4766, corpus
+//       61210), but just before the row itself goes rather than just after. No AL code runs in
+//       between, so the only difference is a delete that fails inside DeleteRecordAsync itself
+//       (permission / security-filter refusal), which the runner's rollback covers.
 //     * NavSqlRecentRecords.DeleteAllForUser (a SQL-side table the runner has no store for)
 //       and AuthenticationCache.ExpireUser (a tenant cache the skeleton session does not
 //       have). Neither is observable from AL in this runner.
@@ -418,39 +421,17 @@ public static class UserTableTriggerPatches
     }
 
     /// <summary>
-    /// Prepended to NavRecord.ALDeleteAsync(DataError, bool, bool). A no-op for every table but
-    /// User (2000000120); for that one it runs the four table cascades of BC's
-    /// SystemTableTriggers.OnAfterDeleteAsync `case 2000000120:` arm (#2356).
+    /// Prepended to RecordImplementation.DeleteRecordAsync(DataError), on its parentRecord. A no-op
+    /// for every table but User (2000000120); for that one it runs the four table cascades of BC's
+    /// SystemTableTriggers.OnAfterDeleteAsync `case 2000000120:` arm (#2356), at BC's point: after
+    /// the OnBeforeDelete subscribers and OnDelete triggers, before the OnAfterDelete subscribers
+    /// (#4766, corpus 61210). DeleteRecordAsync's only caller is NavRecord.DeleteAsync(4), which
+    /// both Delete() and DeleteAll()'s row loop reach for User (no bulk path: BC's
+    /// TableHasSystemDeleteTrigger lists 2000000120).
     ///
-    /// <para>WHY THIS ONE ENTRY POINT IS ENOUGH, INCLUDING FOR <c>DeleteAll()</c>. #2356 predicted
-    /// that a prepend here would miss <c>User.DeleteAll()</c>, because AL binds that to
-    /// <c>ALDeleteAll(bool)</c> → <c>DeleteAllAsync(bool)</c> rather than to
-    /// <c>ALDeleteAsync</c>. Read against BC's shipped IL that is not what happens for this
-    /// table: <c>DeleteAllAsync</c> takes its bulk path only when
-    /// <c>CanUseBulkDeleteAll(runApplicationTrigger, this)</c> holds, and that predicate ends in
-    /// <c>!SystemTableTriggers.TableHasSystemDeleteTrigger(record)</c> — whose body is a static
-    /// switch listing 2000000120. So for User it is always false, and <c>DeleteAllAsync</c>
-    /// falls to its row loop, which calls <c>record.ALDeleteAsync(DataError.ThrowError,
-    /// runApplicationTrigger, isBulkDelete: true)</c> per row. Both AL surfaces funnel here.
-    /// The <c>UstDeleteAllCascadesTheSameWayDeleteDoes</c> test in
-    /// tests/runner-extras/user-system-table-triggers measures it rather than trusting the
-    /// reading.</para>
-    ///
-    /// <para>WHY IT GUARDS ON THE ROW EXISTING. BC cascades in OnAFTERDelete — i.e. only for a
-    /// delete that happened. A Cecil prepend runs before, so without the guard a refused or
-    /// no-op delete would still take the dependent rows with it.</para>
-    ///
-    /// <para>DELIBERATE DIVERGENCE — "after" here is approximate. This is a PREPEND, so the
-    /// guard above ("does the row exist?") is the closest thing available to BC's
-    /// after-the-fact position. The case it does not cover is a delete that is attempted on a
-    /// row that DOES exist and then fails anyway — an AL <c>OnDelete</c> trigger raising, most
-    /// obviously. There the cascade has already run and BC's would not have. The runner's
-    /// write-transaction rollback covers it in practice, because the raise rolls the cascade
-    /// back with everything else since the last commit point, but that is rollback doing the
-    /// work rather than the guard, and it is not the same statement. Left as-is deliberately:
-    /// moving to a genuine post-delete position would mean owning BC's delete entry point
-    /// rather than prepending to it, which is a much larger change than the divergence costs.
-    /// Listed here alongside the other deliberate divergences in this file's header.</para>
+    /// <para>It guards on the row existing because BC cascades only for a delete that happened,
+    /// and a prepend runs before the write: a delete of a missing row must not take the
+    /// dependent rows with it.</para>
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void OnAfterUserDelete(object? record)

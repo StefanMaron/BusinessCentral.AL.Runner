@@ -17,10 +17,10 @@
 //
 // The same file now also carries the rest of BC's two `case 2000000120:` arms — the insert
 // arm's uniqueness refusals (#2983) and the delete arm's four table cascades (#2356) — so
-// there are TWO prepends to pin: OnBeforeUserInsert on InsertAsync(DataError, bool, bool, bool)
-// and OnAfterUserDelete on ALDeleteAsync(DataError, bool, bool). (The insert one is now on
-// RecordImplementation.InsertRecordAsync.) The delete one is the single
-// funnel for `Delete()` AND `DeleteAll()` on this table, because DeleteAllAsync's bulk path is
+// there are TWO prepends to pin: OnBeforeUserInsert on RecordImplementation.InsertRecordAsync
+// and OnAfterUserDelete on RecordImplementation.DeleteRecordAsync (#4766; it sat on
+// NavRecord.ALDeleteAsync before, ahead of the OnBeforeDelete subscribers). DeleteRecordAsync is
+// reached by `Delete()` AND `DeleteAll()` on this table, because DeleteAllAsync's bulk path is
 // gated on CanUseBulkDeleteAll, which ends in !TableHasSystemDeleteTrigger, whose static switch
 // lists 2000000120.
 //
@@ -182,8 +182,8 @@ public sealed class UserPropertyCompanionRowBindingTests
 
         // BC creates the companion row (and runs the uniqueness refusals) in OnBEFOREInsert
         // only. Modify must not create a second row or re-run the refusals against the row's
-        // own name, and Delete must not create one for a user being removed. Delete DOES carry
-        // its own, different prepend now (OnAfterUserDelete, asserted below); this test is what
+        // own name, and Delete must not create one for a user being removed. The delete arm has
+        // its own, different prepend (OnAfterUserDelete, asserted below); this test is what
         // stops the two from being wired to the same entry point by accident.
         foreach (var name in new[] { "ALModifyAsync", "ALDeleteAsync" })
         {
@@ -215,23 +215,21 @@ public sealed class UserPropertyCompanionRowBindingTests
     }
 
     [SkippableFact]
-    public void AlDeleteEntryPoint_CallsTheCascadeHelperAsItsFirstAct()
+    public void DeleteRecord_CallsTheCascadeHelperOnItsParentRecord_AheadOfTheOriginalBody()
     {
-        // #2356. Same reasoning as the insert binding above: NclCecilRewrite registration is
-        // invisible to the C# call graph, so a lost or misplaced delete prepend would show up
-        // only as orphaned Access Control / User Property / Isolated Storage / Tenant Report
-        // Layout Selection rows, far from the cause.
+        // #2356 / #4766. NclCecilRewrite registration is invisible to the C# call graph, so a
+        // lost or misplaced delete prepend would show up only as orphaned Access Control / User
+        // Property / Isolated Storage / Tenant Report Layout Selection rows, far from the cause.
         Skip.IfNot(File.Exists(RewrittenNclPath),
             $"the rewritten Ncl is not present at '{RewrittenNclPath}'.");
 
         using var module = ModuleDefinition.ReadModule(RewrittenNclPath);
-        // Gate on the INSERT entry point, which carries a prepend that predates all of this:
-        // "the file has not been rewritten yet" is a legitimate skip, "it was rewritten and the
-        // cascade is missing" is the regression.
         SkipUnlessRewritten(NavRecordMethod(module, "ALInsertAsync", "DataError", "Boolean", "Boolean"));
-
-        var alDelete = NavRecordMethod(module, "ALDeleteAsync", "DataError", "Boolean", "Boolean");
-        var instructions = alDelete.Body.Instructions;
+        var deleteRecord = module.GetType("Microsoft.Dynamics.Nav.Runtime.RecordImplementation")?.Methods
+            .FirstOrDefault(m => m.Name == "DeleteRecordAsync" && m.HasBody
+                && m.Parameters.Select(p => p.ParameterType.Name).SequenceEqual(new[] { "DataError" }));
+        Assert.True(deleteRecord != null, "RecordImplementation.DeleteRecordAsync(DataError) not found in Ncl.");
+        var instructions = deleteRecord!.Body.Instructions;
 
         var helperIndex = instructions
             .Select((instruction, index) => (instruction, index))
@@ -241,20 +239,42 @@ public sealed class UserPropertyCompanionRowBindingTests
             .FirstOrDefault();
 
         Assert.True(helperIndex.HasValue,
-            "NavRecord.ALDeleteAsync(DataError, bool, bool) does not call "
+            "RecordImplementation.DeleteRecordAsync does not call "
             + "UserTableTriggerPatches.OnAfterUserDelete — deleting a User would leave its Access "
             + "Control (2000000053), User Property (2000000121), Isolated Storage (2000000107) and "
             + "Tenant Report Layout Selection (2000000233) rows behind, which BC's own "
             + "SystemTableTriggers.OnAfterDeleteAsync `case 2000000120:` arm removes (issue #2356).");
 
-        // Same prefix-shape assertion as the insert side, and for the same reason: it must run
-        // ahead of the original body, and the shape survives another prepend landing here later.
-        Assert.Equal(OpCodes.Ldarg_0, instructions[helperIndex!.Value - 1].OpCode);
+        Assert.Equal(OpCodes.Ldarg_0, instructions[helperIndex!.Value - 2].OpCode);
+        Assert.Equal(OpCodes.Ldfld, instructions[helperIndex.Value - 1].OpCode);
+        Assert.Equal("parentRecord", (instructions[helperIndex.Value - 1].Operand as FieldReference)?.Name);
         for (var i = 0; i < helperIndex.Value; i++)
             Assert.True(
-                instructions[i].OpCode == OpCodes.Ldarg_0 || instructions[i].OpCode == OpCodes.Call,
-                $"instruction {i} of NavRecord.ALDeleteAsync is {instructions[i].OpCode}, so the "
-                + "cascade helper is no longer inside the prepended prefix.");
+                instructions[i].OpCode == OpCodes.Ldarg_0 || instructions[i].OpCode == OpCodes.Ldfld
+                || instructions[i].OpCode == OpCodes.Call,
+                $"instruction {i} of RecordImplementation.DeleteRecordAsync is {instructions[i].OpCode}, "
+                + "so the cascade helper is no longer inside the prepended prefix.");
+    }
+
+    [SkippableFact]
+    public void NavRecordDeleteEntryPoints_DoNotCallTheCascadeHelper()
+    {
+        // #4766: on NavRecord.ALDeleteAsync the cascade ran BEFORE the OnBeforeDelete subscribers
+        // and the OnDelete trigger, so a subscriber reading the user's User Property row found it
+        // gone; BC runs it below DeleteAsync's subscriber and trigger dispatch (corpus 61210).
+        Skip.IfNot(File.Exists(RewrittenNclPath),
+            $"the rewritten Ncl is not present at '{RewrittenNclPath}'.");
+
+        using var module = ModuleDefinition.ReadModule(RewrittenNclPath);
+        SkipUnlessRewritten(NavRecordMethod(module, "ALInsertAsync", "DataError", "Boolean", "Boolean"));
+
+        var navRecord = module.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord")!;
+        var entryPoints = navRecord.Methods
+            .Where(m => (m.Name == "ALDeleteAsync" || m.Name == "DeleteAsync" || m.Name == "DeleteAllAsync") && m.HasBody)
+            .ToList();
+        Assert.NotEmpty(entryPoints);
+        foreach (var method in entryPoints)
+            Assert.DoesNotContain(DeleteHelperFullName, CalledMethods(method));
     }
 
     [SkippableFact]

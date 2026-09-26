@@ -64,14 +64,15 @@ Deliberately **not** moved, and tracked separately (#4325):
 | `ALDatabasePatches.NoteRecordInsertWrite` / `NoteRecordWrite` | `ALInsertAsync`, `ALModifyAsync`, `ALDeleteAsync`, `ALRenameAsync`, `DeleteAllAsync`, `ModifyAllAsync` | bookkeeping, not a field write: its observables are `Database.IsInWriteTransaction()`, the rowversion clock and the rollback snapshot, and each needs its own corpus arm and its own double-count analysis against the bulk entry points |
 | `AllProfileWritePatches.GuardAllProfileInsert` | `ALInsertAsync` | a refusal policy, not a stamp; moving it changes which writes are refused |
 | `PageBackgroundTaskWritePatches.Guard*` | the four `AL*` entry points | same |
-| `UserTableTriggerPatches.OnAfterUserDelete` | `ALDeleteAsync` | the delete route from a page was never measured — see below |
 
 ## What a page DELETE does was not measured
 
 `NavForm.SaveRecordAsync` has no delete branch, so nothing here says whether a page-driven
-delete reaches `ALDeleteAsync` (where the User cascade sits) or `DeleteAsync` directly. #4142's
-body says the same — "I did not check the delete path" — and this change does not check it
-either. Stated as unmeasured rather than resolved either way.
+delete reaches `ALDeleteAsync` or `DeleteAsync` directly. #4142's body says the same — "I did
+not check the delete path". It no longer matters for the User cascade: since #4766
+`OnAfterUserDelete` sits on `RecordImplementation.DeleteRecordAsync`, whose only caller is
+`NavRecord.DeleteAsync(4)` (bc284 `find_callers`), below both routes and after the
+OnBeforeDelete subscribers and OnDelete triggers, where BC runs its own arm (corpus 61210).
 
 ## The xRec ordering consequence, and why it is the right direction
 
