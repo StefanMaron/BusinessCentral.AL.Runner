@@ -208,9 +208,10 @@ public class TestCodeunitOnRunTests
     {
         foreach (var method in new[] { "E_WouldPass", "F_WouldAlsoPass" })
         {
-            var line = output.Split('\n').FirstOrDefault(l => l.Contains($"Codeunit62695.{method}"));
-            Assert.True(line != null, $"no result line for {method}.\n{output}");
-            Assert.DoesNotContain("PASS", line);
+            var entries = RunnerFailureLines.For(output, 62695, method);
+            Assert.True(entries.Count == 1, $"expected one ERROR entry for {method}, got {entries.Count}.\n{output}");
+            Assert.StartsWith("ERROR ", entries[0]);
+            Lacks(output, $"PASS  Codeunit62695.{method}");
         }
         Has(output, "OnRun trigger failed, so none of its test methods ran");
         Has(output, "TOR5 OnRun boom");

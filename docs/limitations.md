@@ -910,6 +910,13 @@ configures its tenant as a Sandbox (`MsDyn365Bc.On.Linux` `scripts/entrypoint.sh
 corpus test cannot pin the runner's default; `tests/runner-extras/environment-type-default` does.
 `IsOnPrem()` is unrelated to both: it is `ApplicationIdentifier() = 'NAV'`.
 
+Platform behaviour gated on the **service topology** rather than on the tenant always takes the
+on-premises branch, because the runner seeds BC's `StandardServiceTopology` and a test's SaaS
+switches do not reach it. For example, the User table's "Authentication Email" normalisation and
+uniqueness rule (`IsUniqueAuthenticationEmailRequired`, #2363) applies even when a test has
+switched to SaaS, and a SaaS tier would skip it. Related: with no license, the User trigger's
+commit-time named-user license count never refuses a write (#4700).
+
 ### `TestPage.Edit()` on a page declaring `Editable = false` — refused by name, not by NRE
 
 <a id="testpage-page-mode-no-edit-action"></a>

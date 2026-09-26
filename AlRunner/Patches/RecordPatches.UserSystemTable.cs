@@ -101,8 +101,8 @@
 //   Refused is reachable from AL rather than only from the exception path. The seed's own
 //   RowWithSameSecurityIdExists skip keeps the session user itself out of that refusal.
 //   tests/runner-extras/user-system-table-triggers measures both refusals and their controls.
-//   Still NOT reproduced from the same arm: ValidateAuthenticationEmailAsync and
-//   ValidateApplicationIdAsync (#2363's subject) — see UserTableTriggerPatches's header.
+//   #2363 added ValidateAuthenticationEmailAsync; ValidateApplicationIdAsync is still not
+//   reproduced — see UserTableTriggerPatches's header.
 //
 // WHAT THE SEED DOES WITH THAT REFUSAL — ADOPT (maintainer decision, 2026-09-06)
 //   Refusing is right about the ROW: BC will not hold two users of one name, so the seed cannot
