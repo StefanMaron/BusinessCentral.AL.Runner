@@ -24,6 +24,12 @@ codeunit 64401 "TDF Assert"
             Error('Assert.AreEqual failed. Expected:<%1>. Actual:<%2>. %3', Expected, Actual, Msg);
     end;
 
+    procedure AreNotEqual(NotExpected: Variant; Actual: Variant; Msg: Text)
+    begin
+        if Format(NotExpected) = Format(Actual) then
+            Error('Assert.AreNotEqual failed. Both were:<%1>. %2', Actual, Msg);
+    end;
+
     /// <summary>
     /// Assert the last error contains <paramref name="ExpectedFragment"/>. A bare
     /// `asserterror` passes for ANY error, including one thrown for a reason the test never
