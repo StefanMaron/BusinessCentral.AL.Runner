@@ -50,8 +50,9 @@ pointed at a deleted file. Two rules keep it bounded:
 - a **versioned** request arriving while a version read is in progress on the same thread is
   refused with a `FileLoadException` naming both requests, never recursed into.
 
-The deletion itself is fixed in `CacheRoots`: only the generation that minted a `--no-cache` root
-deletes it.
+The deletion itself is fixed in `CacheRoots`: a process that adopted a `--no-cache` root deletes it
+only when the root's `.owner` sidecar names no live process other than itself; otherwise the
+generation that minted it does.
 
 ### Why the handler has to check: the runtime does not
 
