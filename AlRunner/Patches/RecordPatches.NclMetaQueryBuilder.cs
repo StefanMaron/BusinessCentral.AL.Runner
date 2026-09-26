@@ -405,8 +405,9 @@ public static partial class RecordPatches
     /// <item><b>The two inherent masks</b> come from the symbol file's own letter string,
     /// decoded by the shared <see cref="TryDecodePermissionMaskLetters"/> so the case-sensitive
     /// spelling cannot drift from the codeunit direction.</item>
-    /// <item><b>HelpLink and the three empty strings</b> are constants BC's emitter writes
-    /// unconditionally — identical on all 7 queries of the bundle.</item>
+    /// <item><b>The three empty strings</b> are constants BC's emitter writes unconditionally —
+    /// identical on all 7 queries of the bundle. <b>HelpLink</b> is derived from the declaring
+    /// app's manifest (#4675).</item>
     /// </list>
     ///
     /// <para>Deliberately NOT set here: <c>APIVersion</c>, which BC answers "beta" for 4 of the
@@ -434,7 +435,13 @@ public static partial class RecordPatches
         if (TryDecodePermissionMaskLetters(sym.InherentPermissions, out var permissions))
             SetProp(mq, "InherentPermissions", permissions);
 
-        TrySetProp(mq, "HelpLink", QueryHelpLink);
+        // #4675: derived like a page's, from the declaring .app's manifest. A query read from a
+        // loose SymbolReference.json (the bundle's own, on a cache HIT without BC's document) has
+        // no .app to read, so only a stated HelpLink is set there (#4744).
+        var appPath = TryGetQuerySymbolAppPath(sym.Id);
+        var helpLink = DeriveHelpLink(sym.HelpLink, sym.ContextSensitiveHelpPage,
+            appPath is null ? null : DependencyAppContextSensitiveHelpUrl(appPath));
+        if (helpLink != null) TrySetProp(mq, "HelpLink", helpLink);
         // BC writes <QueryCategory/>, <APIGroup/> and <APIPublisher/> — an EMPTY element, which
         // its reader turns into "" rather than null. The design object's own default is already
         // "", so these are stated for the same reason the others are: the property is set from
@@ -443,13 +450,6 @@ public static partial class RecordPatches
         TrySetProp(mq, "APIGroup", string.Empty);
         TrySetProp(mq, "APIPublisher", string.Empty);
     }
-
-    /// <summary>
-    /// The documentation URL BC's emitter writes into every query document unconditionally —
-    /// identical on all 7 queries of the System Application ground-truth bundle, and not read
-    /// from anything the AL declares.
-    /// </summary>
-    private const string QueryHelpLink = "https://learn.microsoft.com/dynamics365/business-central/";
 
     /// <summary>
     /// The operator BC states on every <c>&lt;DataItemLink&gt;</c> it emits. AL has no syntax

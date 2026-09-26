@@ -114,7 +114,8 @@ public static partial class RecordPatches
         var methodsProvenComplete =
             appPath is not null && PageAssemblyProvesNoSubscriber(appPath, pageId);
 
-        var xml = EmitPageXml(page, methodsProvenComplete);
+        var xml = EmitPageXml(page, methodsProvenComplete,
+            appPath is null ? null : DependencyAppContextSensitiveHelpUrl(appPath));
         Console.Error.WriteLine(
             $"[RecordPatches] dependency page metadata: synthesized Page {pageId} \"{page.Name}\" "
             + $"(PageType={page.PageType}, SourceTable={page.SourceTableId})");
@@ -122,7 +123,8 @@ public static partial class RecordPatches
     }
 
     private static string EmitPageXml(
-        BcAppSymbolCache.PageSymbol page, bool methodsProvenComplete = false)
+        BcAppSymbolCache.PageSymbol page, bool methodsProvenComplete = false,
+        string? manifestHelpUrl = null)
     {
         var settings = new XmlWriterSettings { Indent = true, Encoding = new UTF8Encoding(false) };
         var sb = new StringBuilder();
@@ -163,7 +165,7 @@ public static partial class RecordPatches
             // pages BC's own emitter writes "0" for, all 105 of which state Extensible = "0"
             // in the symbol file with zero omissions. Same shape as Editable above it.
             w.WriteAttributeString("Extensible", page.Extensible ? "1" : "0");
-            EmitPagePropertiesXml(w, page);
+            EmitPagePropertiesXml(w, page, manifestHelpUrl);
             if (!string.IsNullOrEmpty(page.Caption))
             {
                 w.WriteStartElement("CaptionML");
@@ -457,7 +459,8 @@ public static partial class RecordPatches
     /// docs/dependency-page-properties.md). <c>OnAfterGetCurrentRecordEnabled</c> tracks trigger
     /// presence and is still not written.</para>
     /// </summary>
-    private static void EmitPagePropertiesXml(XmlWriter w, BcAppSymbolCache.PageSymbol page)
+    private static void EmitPagePropertiesXml(
+        XmlWriter w, BcAppSymbolCache.PageSymbol page, string? manifestHelpUrl)
     {
         // Unconditional, carrying the AL default for a page that states nothing — the same
         // shape as Extensible and Editable at the call site.
@@ -469,7 +472,7 @@ public static partial class RecordPatches
         }
 
         Scalar("UsageCategory", page.UsageCategory);
-        EmitPageHelpLink(w, page);
+        EmitPageHelpLink(w, page, manifestHelpUrl);
         // #4282. BC does NOT write the AL expression here -- it writes the fixed marker
         // "DataCaptionExprCode" recording that the page HAS a caption expression, and the
         // expression itself compiles into the page's own IL. Measured over the same 235
@@ -505,36 +508,19 @@ public static partial class RecordPatches
     }
 
     /// <summary>
-    /// The page's <c>HelpLink</c> — which BC's emitter writes on EVERY page, resolving two AL
-    /// properties and a default into one attribute (#4282).
+    /// The page's <c>HelpLink</c>: <see cref="DeriveHelpLink"/> over what the page states and the
+    /// declaring app's manifest URL, and no attribute at all when that is null (#4282, #4675).
+    /// Matched BC on all 235 pages of Business Foundation + System Application at
+    /// 28.1.49838.53910 (docs/dependency-page-properties.md#helplink).
     ///
-    /// <para><b>Observably equivalent:</b> the rule is a total three-way partition over what the
-    /// symbol file states, and it reproduces BC's value on every page with no exceptions.
-    /// Measured over the 235 PageDefinition documents of Business Foundation + System
-    /// Application at BC 28.1.49838.53910 — 6 state <c>HelpLink</c> and BC writes it verbatim;
-    /// 36 state <c>ContextSensitiveHelpPage</c>, a RELATIVE path, and BC writes
-    /// <see cref="HelpLinkBase"/> + that path; the remaining 193 state neither and BC writes the
-    /// bare base. 6 + 36 + 193 = 235, and each arm matched BC's exact string on every page it
-    /// covers. See docs/dependency-page-properties.md#helplink.</para>
-    ///
-    /// <para><b>Trap for a later editor:</b> <c>ContextSensitiveHelpPage</c> is never a URL, and
-    /// an ISV page may state one that already looks absolute. This concatenates unconditionally
-    /// because that is what BC was measured doing on all 36; if a page ever states an absolute
-    /// value, re-measure rather than adding a guess at a scheme check.</para>
+    /// <para><b>Trap for a later editor:</b> <c>ContextSensitiveHelpPage</c> is concatenated
+    /// unconditionally, even when it looks absolute, because that is what BC's emitter does.</para>
     /// </summary>
-    private static void EmitPageHelpLink(XmlWriter w, BcAppSymbolCache.PageSymbol page)
+    private static void EmitPageHelpLink(
+        XmlWriter w, BcAppSymbolCache.PageSymbol page, string? manifestHelpUrl)
     {
-        if (!string.IsNullOrEmpty(page.HelpLink))
-        {
-            w.WriteAttributeString("HelpLink", page.HelpLink);
-            return;
-        }
-
-        w.WriteAttributeString(
-            "HelpLink",
-            string.IsNullOrEmpty(page.ContextSensitiveHelpPage)
-                ? HelpLinkBase
-                : HelpLinkBase + page.ContextSensitiveHelpPage);
+        var helpLink = DeriveHelpLink(page.HelpLink, page.ContextSensitiveHelpPage, manifestHelpUrl);
+        if (helpLink != null) w.WriteAttributeString("HelpLink", helpLink);
     }
 
     /// <summary>
@@ -681,13 +667,6 @@ public static partial class RecordPatches
         }
         yield return text[start..];
     }
-
-    /// <summary>
-    /// The documentation root BC joins a page's relative <c>ContextSensitiveHelpPage</c> to, and
-    /// writes alone for a page declaring no help at all. The trailing slash is part of it:
-    /// BC's own values concatenate with no separator (<c>…/business-central/ui-enter-date-ranges</c>).
-    /// </summary>
-    private const string HelpLinkBase = "https://learn.microsoft.com/dynamics365/business-central/";
 
     /// <summary>
     /// One inherent-permission mask: the symbol file states AL permission LETTERS

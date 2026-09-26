@@ -50,6 +50,9 @@ public static partial class RecordPatches
     private static Dictionary<int, string?>? _bcSymbolTableCaptions;
     // Query symbol index: queryId → QuerySymbol, built from registered .app SymbolReference.json.
     private static Dictionary<int, BcAppSymbolCache.QuerySymbol>? _bcSymbolQueryIndex;
+    // The .app each _bcSymbolQueryIndex entry came from, assigned with it; a query read from a
+    // loose SymbolReference.json has no entry (#4675).
+    private static Dictionary<int, string>? _bcSymbolQueryAppPath;
     // Raw SymbolReference.json files registered as query-symbol-only sources (the bundle's
     // own freshly-compiled query metadata, written by BcCompiler.Emit for source-only
     // bundles that ship no prebuilt .app). Kept separate from _bcAppPaths because these
@@ -191,7 +194,9 @@ public static partial class RecordPatches
         // the previous registration epoch's captions.
         _bcSymbolTableCaptions = null;
         _bcSymbolQueryIndex = null;
+        _bcSymbolQueryAppPath = null;
         _bcSymbolExtensionIndexBuilt = false;
+        ClearAppContextSensitiveHelpUrls();
         // #2889: the synthesized-metadata memos are derived from _bcAppPaths exactly like the
         // indexes above — TryBuildDependencyPageMetadata / TryBuildDependencyReportMetadata
         // GetOrAdd a document built by walking the registered .apps' SymbolReference.json —
@@ -1047,6 +1052,17 @@ public static partial class RecordPatches
         }
     }
 
+    /// <summary>The .app that declared query <paramref name="queryId"/>, or null when it came
+    /// from a loose SymbolReference.json or no source declares it.</summary>
+    internal static string? TryGetQuerySymbolAppPath(int queryId)
+    {
+        lock (_bcTableIndexLock)
+        {
+            EnsureBcSymbolQueryIndex();
+            return _bcSymbolQueryAppPath != null && _bcSymbolQueryAppPath.TryGetValue(queryId, out var p) ? p : null;
+        }
+    }
+
     /// <summary>
     /// Register a loose SymbolReference.json file (NOT a .app) as a query-symbol source.
     /// Used for source-only bundles whose queries we just compiled in-process — the file
@@ -1076,10 +1092,14 @@ public static partial class RecordPatches
         // that dependency declares got "unknown query id" rather than a refusal. Same
         // failure shape EnsureBcSymbolExtensionIndex's "#2712, no catch here" comment
         // describes. See RecordPatches.DependencyAppSymbolWalk.cs.
-        foreach (var (_, symbols) in EnumerateRegisteredBcAppSymbols("queries (query symbol index)"))
+        var appPathById = new Dictionary<int, string>();
+        foreach (var (appPath, symbols) in EnumerateRegisteredBcAppSymbols("queries (query symbol index)"))
             foreach (var q in symbols.Queries)
                 if (!idx.ContainsKey(q.Id))
+                {
                     idx[q.Id] = q;
+                    appPathById[q.Id] = appPath;
+                }
         // Loose SymbolReference.json sources (the bundle's own freshly-compiled queries).
         // Registered AFTER .app sources but only filling gaps (ContainsKey guard), so a
         // prebuilt .app's authoritative ids always win.
@@ -1096,6 +1116,7 @@ public static partial class RecordPatches
                 Console.Error.WriteLine($"[RecordPatches] BcAppFallback: query symbols.json read failed for {Path.GetFileName(jsonPath)}: {ex.Message}");
             }
         }
+        _bcSymbolQueryAppPath = appPathById;
         _bcSymbolQueryIndex = idx;
         if (idx.Count > 0)
             Console.Error.WriteLine($"[RecordPatches] BcAppFallback: indexed {idx.Count} symbol query id(s) across {_bcAppPaths.Count} BC .app file(s)");

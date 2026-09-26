@@ -306,13 +306,10 @@ public class DependencyPagePropertiesFromSymbolTests
             // for a silent page would be a different document from the one BC emits.
             var silent = ReadProperties(SilentPageId);
             Assert.False(silent.HasAttribute("UsageCategory"));
-            // NOT HelpLink (#4282). It is the one scalar in this method BC DERIVES rather than
-            // copies, so a page stating nothing still gets the base URL; asserting its absence
-            // here pinned the defect. Its three arms are
-            // DependencyPageDerivedPropertiesTests' subject.
-            Assert.Equal(
-                "https://learn.microsoft.com/dynamics365/business-central/",
-                silent.GetAttribute("HelpLink"));
+            // HelpLink is DERIVED from the app manifest's ContextSensitiveHelpUrl (#4282, #4675);
+            // this fixture carries no manifest, so it states none and BC would write none.
+            // DependencyPageDerivedPropertiesTests covers the arms.
+            Assert.False(silent.HasAttribute("HelpLink"));
             Assert.False(silent.HasAttribute("AboutTitleML"));
             Assert.False(silent.HasAttribute("AboutTextML"));
             Assert.False(silent.HasAttribute("AdditionalSearchTermsML"));
