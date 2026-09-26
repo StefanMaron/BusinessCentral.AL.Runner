@@ -7,6 +7,8 @@
 //   - RunnerTestClientSession.RereadCallerRow re-reads a caller-positioned row before the
 //     handler gets the page (skipped -> <MEM>);
 //   - RunnerPageInstance.CopyHostRowForTarget re-reads the host's row (skipped -> <B:CALC>).
+// Issue #4762 adds the temporary-record arms, whose BC claim is corpus codeunit 67363: the
+// re-read runs against the temporary table (skipped -> <B:MEM:0>).
 //
 // The fixture declares no "application", per .claude/rules/no-base-app-in-csharp-tests.md.
 
@@ -46,8 +48,8 @@ public sealed class PageOpensOnStoredRowTests : IDisposable
         var (exit, output) = Spawn(_root, pkg);
 
         // Each arm asserts inside AL; the counts distinguish "passed" from "discovered nothing".
-        Assert.True(output.Contains("passed 5 ", StringComparison.Ordinal),
-            $"expected all five arms to pass; exit={exit}\n{output}");
+        Assert.True(output.Contains("passed 7 ", StringComparison.Ordinal),
+            $"expected all seven arms to pass; exit={exit}\n{output}");
         Assert.Matches(@"\bfailed 0\b", output);
         Assert.Matches(@"\berrors 0\b", output);
         Assert.Equal(0, exit);
@@ -62,7 +64,7 @@ public sealed class PageOpensOnStoredRowTests : IDisposable
               "publisher": "AL Runner Tests",
               "version": "1.0.0.0",
               "dependencies": [],
-              "idRanges": [ { "from": 90730, "to": 90734 } ],
+              "idRanges": [ { "from": 90730, "to": 90735 } ],
               "platform": "27.0.0.0",
               "runtime": "15.0",
               "target": "Cloud"
@@ -78,8 +80,24 @@ public sealed class PageOpensOnStoredRowTests : IDisposable
                     field(1; "No."; Code[20]) { }
                     field(2; Descr; Text[50]) { }
                     field(3; Grp; Code[10]) { }
+                    field(4; Cnt; Integer)
+                    {
+                        FieldClass = FlowField;
+                        CalcFormula = count("POSR Child" where(Parent = field("No.")));
+                    }
                 }
                 keys { key(PK; "No.") { Clustered = true; } }
+            }
+
+            table 90735 "POSR Child"
+            {
+                DataClassification = CustomerContent;
+                fields
+                {
+                    field(1; "Entry No."; Integer) { }
+                    field(2; Parent; Code[20]) { }
+                }
+                keys { key(PK; "Entry No.") { Clustered = true; } }
             }
 
             codeunit 90731 "POSR Probe"
@@ -89,12 +107,15 @@ public sealed class PageOpensOnStoredRowTests : IDisposable
                     Edit: Boolean;
                     OpenSeen: Text;
                     Shown: Text;
-                procedure Reset(NewEdit: Boolean) begin Edit := NewEdit; OpenSeen := ''; Shown := ''; end;
+                    ShownFull: Text;
+                procedure Reset(NewEdit: Boolean) begin Edit := NewEdit; OpenSeen := ''; Shown := ''; ShownFull := ''; end;
                 procedure GetEdit(): Boolean begin exit(Edit); end;
                 procedure SetOpenSeen(Value: Text) begin OpenSeen := Value; end;
                 procedure GetOpenSeen(): Text begin exit(OpenSeen); end;
                 procedure SetShown(Value: Text) begin Shown := Value; end;
                 procedure GetShown(): Text begin exit(Shown); end;
+                procedure SetShownFull(Value: Text) begin ShownFull := Value; end;
+                procedure GetShownFull(): Text begin exit(ShownFull); end;
             }
 
             page 90732 "POSR Target"
@@ -111,6 +132,7 @@ public sealed class PageOpensOnStoredRowTests : IDisposable
                             field("No."; Rec."No.") { ApplicationArea = All; }
                             field(Descr; Rec.Descr) { ApplicationArea = All; }
                             field(Grp; Rec.Grp) { ApplicationArea = All; }
+                            field(Cnt; Rec.Cnt) { ApplicationArea = All; }
                         }
                     }
                 }
@@ -164,10 +186,14 @@ public sealed class PageOpensOnStoredRowTests : IDisposable
                 local procedure Seed(Edit: Boolean)
                 var
                     Row: Record "POSR Row";
+                    Child: Record "POSR Child";
                     Probe: Codeunit "POSR Probe";
                 begin
                     Probe.Reset(Edit);
                     Row.DeleteAll();
+                    Child.DeleteAll();
+                    Child."Entry No." := 1; Child.Parent := 'B'; Child.Insert();
+                    Child."Entry No." := 2; Child.Parent := 'B'; Child.Insert();
                     Row."No." := 'A'; Row.Grp := 'G1'; Row.Insert();
                     Row."No." := 'B'; Row.Grp := 'G2'; Row.Insert();
                 end;
@@ -259,12 +285,44 @@ public sealed class PageOpensOnStoredRowTests : IDisposable
                     Check('G1', Probe.GetShown(), 'the page on an unchanged row');
                 end;
 
+                // Fails with <B:MEM:0> when a temporary record skips the re-read: the page must
+                // show the temporary table's row, with its FlowField calculated.
+                [Test]
+                [HandlerFunctions('TargetHandler')]
+                procedure PageRunOnTempRecordShowsTheTemporaryTablesRow()
+                var
+                    TempRow: Record "POSR Row" temporary;
+                    Probe: Codeunit "POSR Probe";
+                begin
+                    Seed(false);
+                    TempRow."No." := 'B'; TempRow.Grp := 'TMP'; TempRow.Insert();
+                    TempRow.Grp := 'MEM';
+                    Page.Run(Page::"POSR Target", TempRow);
+                    Check('B:MEM', Probe.GetOpenSeen(), 'OnOpenPage sees the caller''s temporary record');
+                    Check('B:TMP:2', Probe.GetShownFull(), 'the page on a temporary row with an unsaved Grp');
+                end;
+
+                // Fails with <B:TMP:0> when a temporary record skips the re-read.
+                [Test]
+                [HandlerFunctions('TargetHandler')]
+                procedure PageRunOnTempRecordCalculatesTheFlowField()
+                var
+                    TempRow: Record "POSR Row" temporary;
+                    Probe: Codeunit "POSR Probe";
+                begin
+                    Seed(false);
+                    TempRow."No." := 'B'; TempRow.Grp := 'TMP'; TempRow.Insert();
+                    Page.Run(Page::"POSR Target", TempRow);
+                    Check('B:TMP:2', Probe.GetShownFull(), 'the page on an unchanged temporary row');
+                end;
+
                 [PageHandler]
                 procedure TargetHandler(var Target: TestPage "POSR Target")
                 var
                     Probe: Codeunit "POSR Probe";
                 begin
                     Probe.SetShown(Target.Grp.Value());
+                    Probe.SetShownFull(Target."No.".Value() + ':' + Target.Grp.Value() + ':' + Target.Cnt.Value());
                     if Probe.GetEdit() then begin
                         Target.Descr.SetValue('Written');
                         Target.Close();
