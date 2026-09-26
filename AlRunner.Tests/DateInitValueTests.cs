@@ -1,5 +1,8 @@
 // DateInitValueTests — #4633.
 //
+// DateTime (#4794): `0DT` becomes the text BC's emitter stores for it, which real BC then refuses
+// at Init(); corpus codeunit 67512 pins that error on both metadata routes.
+//
 // A Date field's InitValue reaches the derived metatable as the AL literal (`20260101D`) from
 // both the source parser and SymbolReference.json, and BC evaluates it with format 9, which
 // refuses that spelling. The end-to-end proof is corpus codeunit 67510 (a tableextension on Job
@@ -47,4 +50,25 @@ public sealed class DateInitValueTests
     public void UnrecognisedOrAlreadyCorrect_IsLeftForBcToEvaluate(string input)
         => Assert.False(RecordPatches.TryNormalizeDateInitValue(input, out _),
             "an unrecognised spelling must reach BC's own evaluator unchanged");
+
+    [Theory]
+    [InlineData("0DT")]
+    [InlineData("0dt")]
+    [InlineData(" 0DT ")]
+    public void ZeroDateTime_BecomesTheEmittersText(string input)
+    {
+        Assert.True(RecordPatches.TryNormalizeDateTimeInitValue(input, out var result),
+            $"expected '{input}' to be recognised as a DateTime InitValue");
+        Assert.Equal("01/01/0001 00:00:00", result);
+    }
+
+    [Theory]
+    [InlineData("01/01/0001 00:00:00")]   // already the emitter's text (a symbol-loaded field)
+    [InlineData("")]
+    [InlineData("0D")]
+    [InlineData("0T")]
+    [InlineData("CURRENTDATETIME")]
+    public void DateTime_UnrecognisedOrAlreadyCorrect_IsLeftForBcToEvaluate(string input)
+        => Assert.False(RecordPatches.TryNormalizeDateTimeInitValue(input, out _),
+            "an unrecognised DateTime spelling must reach BC's own evaluator unchanged");
 }

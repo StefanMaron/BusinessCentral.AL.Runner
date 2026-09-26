@@ -873,11 +873,22 @@ public static partial class RecordPatches
                 // alc writes the same text into SymbolReference.json) and format 9 refuses it.
                 // BC's own emitter writes `2026-01-01` for it and omits the property for `0D`,
                 // so this hands BC's evaluator exactly what a bc-document table carries. A
-                // closing date (`C20260101D`) is left alone: the emitter writes it unchanged too.
+                // closing date (`C20260101D`) is left alone: the emitter writes it unchanged
+                // too, and real BC's Init() raises on it as this does (corpus 67512, #4794).
                 else if (tn.Equals("Date", StringComparison.OrdinalIgnoreCase)
                     && TryNormalizeDateInitValue(iv, out var normalizedDate))
                 {
                     iv = normalizedDate;
+                }
+                // #4794 — `0DT` reaches here as the AL literal; BC's emitter writes
+                // DateTime.MinValue.ToString(InvariantCulture) for it, which format 9 refuses, so real
+                // BC's Init() raises "The value '01/01/0001 00:00:00' can't be evaluated into type
+                // DateTime." (corpus 67512, BC 27.5 and 28.5). Handing BC's evaluator the emitter's text
+                // makes this route raise that same error; it must NOT become "no InitValue".
+                else if (tn.Equals("DateTime", StringComparison.OrdinalIgnoreCase)
+                    && TryNormalizeDateTimeInitValue(iv, out var normalizedDateTime))
+                {
+                    iv = normalizedDateTime;
                 }
                 if (iv.Length > 0 || !tn.Equals("Date", StringComparison.OrdinalIgnoreCase))
                 {
@@ -912,6 +923,20 @@ public static partial class RecordPatches
                 DateTimeStyles.None, out var date))
             return false;
         normalized = date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        return true;
+    }
+
+    /// <summary>
+    /// A DateTime field's InitValue as BC's metadata emitter writes it (#4794): the only DateTime
+    /// literal AL has, <c>0DT</c>, becomes <c>DateTime.MinValue.ToString(InvariantCulture)</c>, the
+    /// text the emitter stores for it. Returns false for anything else.
+    /// </summary>
+    internal static bool TryNormalizeDateTimeInitValue(string? text, out string normalized)
+    {
+        normalized = string.Empty;
+        if (!string.Equals((text ?? string.Empty).Trim(), "0DT", StringComparison.OrdinalIgnoreCase))
+            return false;
+        normalized = DateTime.MinValue.ToString(CultureInfo.InvariantCulture);
         return true;
     }
 
