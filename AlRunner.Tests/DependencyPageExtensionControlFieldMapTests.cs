@@ -346,10 +346,17 @@ public class DependencyPageExtensionControlFieldMapTests
         return result;
     }
 
+    private static IDictionary ParsedTables =>
+        (IDictionary)RP.GetField("_parsedTables", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
+
     [Fact]
     public void PageControlField_PrecompiledPageExtensionControls_AreRowsOnTheBasePage()
         => WithDependencyApp(() =>
         {
+            // The rows must populate a precompiled source table themselves, as
+            // GetPageControlFieldMap does, not rely on something else having loaded it first.
+            ParsedTables.Remove(TableId);
+
             var rows = PageControlFieldRows();
             var onPage = rows.Where(r => r.PageNo == PageId).ToList();
 
