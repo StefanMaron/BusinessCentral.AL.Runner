@@ -172,9 +172,24 @@ previous row without a further `Find`, and the third `=` is asked for that row.
 With no row left under the page's filters it is different: arm
 `List_DeletedByAction_PassThroughFind_OnlyRow` (row `A` only, `A` deleted) printed
 `Find:=>;Find:=><;` on all nine cloud legs of corpus run 36260143894 -- no `=` at all -- and the
-page shows no stored row. `MoveOffDeletedRow` checks `IsEmpty` first and asks those two. BC also
-raised `OnAfterGetCurrRecord` for the blank row around those calls (the trace began
-`AGCR:;Find:=>;Find:=><;AGCR:;AGCR:`); the corpus does not pin that, and the runner raises none.
+page shows no stored row. `MoveOffDeletedRow` checks `IsEmpty` first and asks those two.
+
+BC also raises `OnAfterGetCurrRecord` for the blank line, three times, and the corpus pins the
+whole trace after the action (#4777, corpus PR 460):
+
+| page | trace after `ActionEnd` |
+|---|---|
+| 67302, pass-through `OnFindRecord`, `DeletePassThrough` | `AGCR:;Find:=>;Find:=><;AGCR:;AGCR:;` |
+| 67301, no `OnFindRecord`, `DeleteAndUpdate` | `AGCR:;AGCR:;AGCR:;` |
+
+`AGCR:` with an empty code is the blank line; the deleted row raises nothing.
+`MoveOntoBlankLineAfterDelete` enters the blank line first, so each call reads a blank buffer,
+and raises the trigger once before the two `Find` calls and twice after. The first read of this
+trace, in corpus run 36260143894, was a failure message cut off at 200 characters, so it could
+not show the count; the pinned arms use a short message for that reason. A List with no new-row
+line (not editable, or `InsertAllowed = false`) keeps the deleted row in its buffer; the runner
+raises nothing there, and what BC does is unmeasured. So is the default List's `DeleteOnly`
+action on the only row, which the runner handles the same way as `DeleteAndUpdate`.
 
 Measured by corpus codeunit 67300's `List_DeletedByAction_*` arms; runner-side: the same test file.
 
