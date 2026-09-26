@@ -154,7 +154,7 @@ public static partial class RowVersionPatches
     public static void OnBeforeInsert(object? provider, int companyToken, object? recordBuffer)
     {
         // #2573: refuse a second Insert carrying an already-used explicit SystemId
-        // BEFORE BC's own Insert body runs. Must run before Stamp() — the rowversion
+        // BEFORE BC's own Insert body runs. Must run before the stamp — the rowversion
         // stamp is pointless work for an insert that is about to be refused.
         CheckNoDuplicateSystemId(provider, recordBuffer);
         // Always overwrite: a latch left by a refused insert must not stamp the next one.
@@ -191,13 +191,84 @@ public static partial class RowVersionPatches
         // BC's own Modify body runs its unconditional per-field copy (see
         // RowVersionPatches.SystemIdIntegrity.cs for why that copy includes SystemId).
         PreserveSystemIdOnModify(provider, recordBuffer);
-        Stamp(provider, recordBuffer);
+        _pendingModifyRestore = null;
+        _modifyRestored = false;
+        if (ResolveStampIndex(provider, recordBuffer) is not int index) return;
+        var previous = _pItem!.GetValue(recordBuffer, new object[] { index });
+        _pItem.SetValue(recordBuffer, NextRowVersion(), new object[] { index });
+        _pendingModifyRestore = (recordBuffer!, index, previous);
     }
 
-    private static void Stamp(object? provider, object? recordBuffer)
+    // The input buffer of the Modify in flight on this thread, its timestamp slot, and the value
+    // it carried before OnBeforeModify stamped it. Matched by reference, so a latch left by a
+    // failed Modify can never restore a different buffer.
+    [ThreadStatic] private static (object Buffer, int Index, object? Previous)? _pendingModifyRestore;
+
+    /// <summary>
+    /// Cecil prepend on DataAccess.CreateNewBufferFromOutputBufferTransferBlobValuesFromOldRecord
+    /// — (oldRecord). Runs after the provider accepted a Modify and before DataAccess.ModifyAsync
+    /// compares rowversions. Puts the input buffer's pre-stamp rowversion back, so input and output
+    /// differ as they do on SQL (the stored row and the output keep the new one). That difference
+    /// is what makes BC bump the table version and invalidate other variables' open result sets,
+    /// whose next Next() then re-seeks from their current key (#4678; corpus 60367 "FSK Tests").
+    /// The record variable that modified receives the output buffer, never this one.
+    /// </summary>
+    public static void OnModifyOutputBuilt(object? oldRecord)
     {
-        if (ResolveStampIndex(provider, recordBuffer) is not int index) return;
-        _pItem!.SetValue(recordBuffer, NextRowVersion(), new object[] { index });
+        if (_pendingModifyRestore is not { } pending) return;
+        _pendingModifyRestore = null;
+        if (!ReferenceEquals(pending.Buffer, oldRecord)) return;
+        _pItem!.SetValue(pending.Buffer, pending.Previous, new object[] { pending.Index });
+        _modifyRestored = true;
+    }
+
+    // Set when OnModifyOutputBuilt restored a database-backed Modify's input; turned into
+    // _keepOwnResult by the table-version bump that restore always causes, in the same ModifyAsync.
+    [ThreadStatic] private static bool _modifyRestored;
+    [ThreadStatic] private static bool _keepOwnResult;
+    private static FieldInfo? _fBufferedResults; // ResultSet.bufferedResults
+
+    /// <summary>
+    /// Cecil prepend on DataAccess.IncrementBumperTokenWithoutInvalidatingEnumerator. Arms
+    /// <see cref="TryUpdateAtIndex"/> for this bump only when it comes from a database-backed
+    /// Modify; any other bump (Delete, a temporary table's Modify) disarms it.
+    /// </summary>
+    public static void OnTableVersionBump()
+    {
+        _keepOwnResult = _modifyRestored;
+        _modifyRestored = false;
+    }
+
+    /// <summary>
+    /// Replaces ResultSet.TryUpdateAtIndex. BC's body verbatim, plus one case: an unbuffered
+    /// result set answers true once, for the bump of a database-backed Modify.
+    ///
+    /// <para>Observably equivalent: on SQL the modifying record's result set is buffered, so
+    /// BC overwrites the row and the record's own result stays valid (Find() on a record that
+    /// moved itself out of its filter finds it: corpus 60367 OwnFilter_*, Base Application test
+    /// 134932). The runner's result sets are unbuffered and its Next() reads the live store, so
+    /// staying valid without a stored copy is what main did before #4678 for every Modify.
+    /// Trap: SQL's buffer is dropped after ResultSet.MaxBufferedResults (1024) rows, after
+    /// which BC does invalidate; this does not model that.</para>
+    /// </summary>
+    public static bool TryUpdateAtIndex(object resultSet, int index, object? recordBuffer)
+    {
+        bool keep = _keepOwnResult;
+        _keepOwnResult = false;
+        if (_fBufferedResults?.DeclaringType != resultSet.GetType())
+            _fBufferedResults = resultSet.GetType().GetField("bufferedResults",
+                    BindingFlags.NonPublic | BindingFlags.Instance)
+                ?? throw new InvalidOperationException("ResultSet.bufferedResults not found");
+        if (_fBufferedResults.GetValue(resultSet) is Array buffered)
+        {
+            if (index < buffered.Length)
+            {
+                buffered.SetValue(recordBuffer, index);
+                return true;
+            }
+            return false;
+        }
+        return keep;
     }
 
     private static object NextRowVersion()

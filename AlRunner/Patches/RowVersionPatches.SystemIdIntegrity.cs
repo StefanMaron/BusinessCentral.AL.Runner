@@ -105,7 +105,7 @@ public static partial class RowVersionPatches
 
     /// <summary>
     /// Resolves the FieldIndex of the table's SystemId field, or null when the table
-    /// genuinely has none (the one legitimate quiet path — mirrors Stamp()'s
+    /// genuinely has none (the one legitimate quiet path — mirrors ResolveStampIndex()'s
     /// TimestampField handling). Throws on any other resolution failure.
     /// </summary>
     private static int? ResolveSystemIdFieldIndex(object metaTable)

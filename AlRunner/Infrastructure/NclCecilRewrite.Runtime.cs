@@ -952,6 +952,33 @@ public static partial class NclCecilRewrite
                     H(rowVersion, "OnBeforeModify"),
                     argSlots: 3); // this, companyToken, recordBuffer
 
+                // #4678: the Modify stamp above must not stay on the INPUT buffer. DataAccess
+                // .ModifyAsync bumps the table version (invalidating other variables' open
+                // FindSet walks) only when the output rowversion differs from the input's;
+                // SQL leaves the input's old value, so restore it once the output exists.
+                // Both callers of this method are DataAccess.ModifyAsync/InsertAsync.
+                PrependStaticCall(nclMod,
+                    ByParams(Rt + "DataAccess", "CreateNewBufferFromOutputBufferTransferBlobValuesFromOldRecord",
+                        "MutableRecordBuffer", "ReadOnlyRecordBuffer", "Int32"),
+                    H(rowVersion, "OnModifyOutputBuilt"),
+                    argSlots: 1); // oldRecord — the buffer OnBeforeModify stamped
+
+                // That bump also reaches the MODIFYING record's own result set. BC keeps it valid
+                // only if ResultSet.TryUpdateAtIndex can overwrite a buffered row, which on SQL it
+                // can; the SQL stand-in's result sets are unbuffered (buffering would also make
+                // them cacheable in TransactionalDataCache, which test rollback does not reset).
+                // So the bump a database-backed Modify causes arms one TryUpdateAtIndex success.
+                // IncrementBumper... is the only caller of UpdateCurrentRowAndClone, which is the
+                // only caller of TryUpdateAtIndex (bc270..bc284, bodies unchanged).
+                PrependStaticCall(nclMod,
+                    ByParams(Rt + "DataAccess", "IncrementBumperTokenWithoutInvalidatingEnumerator",
+                        "Int32", "NCLMetaTable", "ResultSetEnumerator", "ReadOnlyRecordBuffer"),
+                    H(rowVersion, "OnTableVersionBump"),
+                    argSlots: 0);
+                ReplaceBodyWithHelper(nclMod,
+                    ByParams(Rt + "ResultSet", "TryUpdateAtIndex", "Int32", "ReadOnlyRecordBuffer"),
+                    H(rowVersion, "TryUpdateAtIndex"));
+
                 // ── Rename store-aliasing boundary for `temporary` records (issue #1765) ──
                 // A temporary record's BLOB committed with Modify() is LOST across a
                 // subsequent Rename() on real BC (corpus 60944, green on BC 27.5/28.3) —
