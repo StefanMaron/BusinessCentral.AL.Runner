@@ -4,7 +4,8 @@
 // (corpus codeunit 67300, the Corpus-PR line on the PR that added this file): once an action on
 // a Card returns and the Card's stored row is gone, the TestPage is no longer open. This pins
 // the runner's wiring: the check runs after every action, only a Card closes, a List moves to
-// the next row, else the previous, else its blank line (#4747), and a row the table still holds,
+// the next row, else the previous, else its blank line (#4747) raising OnAfterGetCurrRecord for
+// it (#4777), and a row the table still holds,
 // or never held, leaves the page where it is.
 //
 // The fixture declares no "application", per .claude/rules/no-base-app-in-csharp-tests.md.
@@ -435,11 +436,13 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
                     List.OpenEdit();
                     List.GoToKey('A');
                     Trace.Reset();
-                    List.DeleteOnly.Invoke();
+                    List.DeleteAndUpdate.Invoke();
+                    // The blank line raises OnAfterGetCurrRecord three times and the deleted row
+                    // raises nothing (#4777; corpus 67300 List_DeletedByAction_OnlyRow_ShowsNoStoredRow).
+                    if Trace.Get() <> 'AGCR:;AGCR:;AGCR:;' then
+                        Error('unexpected trace after deleting the only row: %1', Trace.Get());
                     if List.CodeField.Value() <> '' then
                         Error('expected the blank line, got: %1', List.CodeField.Value());
-                    if Trace.Get() <> '' then
-                        Error('expected no trigger for the deleted row, got: %1', Trace.Get());
                     if not Row.IsEmpty() then
                         Error('expected nothing re-inserted');
                     List.Close();
@@ -531,12 +534,12 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
                     List.GoToKey('A');
                     Trace.Reset();
                     List.DeletePassThrough.Invoke();
-                    if FindCalls(Trace.Get()) <> 'Find:=>;Find:=><;' then
-                        Error('unexpected OnFindRecord sequence: %1', Trace.Get());
+                    // The blank line raises OnAfterGetCurrRecord once before the two finds and twice
+                    // after them (#4777; corpus 67300 List_DeletedByAction_PassThroughFind_OnlyRow).
+                    if Trace.Get() <> 'AGCR:;Find:=>;Find:=><;AGCR:;AGCR:;' then
+                        Error('unexpected trace after deleting the only row: %1', Trace.Get());
                     if List.CodeField.Value() <> '' then
                         Error('expected the blank line, got: %1', List.CodeField.Value());
-                    if StrPos(Trace.Get(), 'AGCR:A;') <> 0 then
-                        Error('expected no OnAfterGetCurrRecord for the deleted row, got: %1', Trace.Get());
                     if not Row.IsEmpty() then
                         Error('expected nothing re-inserted');
                     List.Close();
