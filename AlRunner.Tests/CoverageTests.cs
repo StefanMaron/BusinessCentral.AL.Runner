@@ -168,6 +168,55 @@ public sealed class CoverageTests : IDisposable
         Assert.Equal(1, HitsFor(doc, "XRecProbe.Table.al", 29));
     }
 
+    /// <summary>
+    /// #4697: under inline-scope emit an <c>asserterror</c> body compiles into a
+    /// compiler-generated method, which <c>AlScopeKey.BodiesOf</c> must include or its
+    /// statements vanish from the report. Lines 8-9 of the probe and 17-18 of the test sit
+    /// inside <c>asserterror begin ... end</c>; line 11 and 14 are the outer-body controls.
+    /// </summary>
+    [SkippableFact]
+    public void Coverage_StatementsInsideAssertErrorBody_AreInstrumentedAndHit()
+    {
+        TestArtifacts.SkipIfMissing();
+        var fixture = Path.Combine(RepoRoot, "AlRunner.Tests", "Fixtures", "CoverageGeneratedBody");
+        var coveragePath = Path.Combine(_scratch, "generated-body-cobertura.xml");
+
+        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
+        args.Append(TestBuildConfig.BcVersionArg);
+        args.Append(" --no-cache --coverage --coverage-out \"").Append(coveragePath).Append('"');
+        args.Append(" \"").Append(fixture).Append('"');
+        var psi = new ProcessStartInfo
+        {
+            FileName = "dotnet", Arguments = args.ToString(),
+            RedirectStandardOutput = true, RedirectStandardError = true,
+            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
+        };
+        var sb = new StringBuilder();
+        using (var p = Process.Start(psi)!)
+        {
+            p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
+            p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
+            p.BeginOutputReadLine();
+            p.BeginErrorReadLine();
+            Assert.True(p.WaitForExit(SpawnTimeoutMs), $"runner did not exit within {SpawnTimeoutMs / 1000}s");
+            p.WaitForExit();
+            Assert.True(p.ExitCode == 0, $"expected exit 0, got {p.ExitCode}.\n{sb}");
+        }
+
+        Assert.True(File.Exists(coveragePath), $"cobertura.xml was not written.\n{sb}");
+        var doc = XDocument.Load(coveragePath);
+        // Inside the callee's asserterror body.
+        Assert.Equal(1, HitsFor(doc, "CovGenProbe.Codeunit.al", 8));
+        Assert.Equal(1, HitsFor(doc, "CovGenProbe.Codeunit.al", 9));
+        Assert.Equal(1, HitsFor(doc, "CovGenProbe.Codeunit.al", 11));
+        // Inside the test method's own asserterror body.
+        Assert.Equal(1, HitsFor(doc, "CovGenProbeTests.Codeunit.al", 17));
+        Assert.Equal(1, HitsFor(doc, "CovGenProbeTests.Codeunit.al", 18));
+        // The untaken error branch is instrumented and reports zero, so the hits above are
+        // not an "every line is 1" artefact.
+        Assert.Equal(0, HitsFor(doc, "CovGenProbeTests.Codeunit.al", 14));
+    }
+
     [SkippableFact]
     public void Coverage_Disabled_ProducesNoCoberturaFile()
     {

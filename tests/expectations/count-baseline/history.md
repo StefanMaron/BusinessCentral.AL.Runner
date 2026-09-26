@@ -2366,3 +2366,16 @@ runner-specific claim was left for these arms to make.
 Measured 13P/0F/0E on the bundle, not computed from the diff.
 
 Written by an agent (Claude, `stma-auto-3`).
+
+## runner-extras `navapp-moduleinfo-main` 13 -> 15 (#4697)
+
+Two arms for `NavApp.GetCallerModuleInfo` under inline-scope emit, where an `asserterror` body
+runs in a compiler-generated closure frame:
+`DepGetCallerModuleInfo_InsideDepAssertErrorBody_NamesTheBundle` (the dep asks from inside its
+own `asserterror` body; the caller is still the bundle) and the control
+`DepGetCallerModuleInfo_CalledFromBundleAssertErrorBody_NamesTheBundle`. Removing the closure-frame
+skip in `BcRuntime.TryGetImmediateCallerModule` fails the first with `got NavAppModuleInfo Dep`.
+
+Measured 15P/0F/0E on the bundle, not computed from the diff.
+
+Written by an agent (Claude, `stma-auto2-10`).

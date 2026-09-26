@@ -104,6 +104,22 @@ codeunit 61230 "XMI Dep Api"
             exit('');
         exit(Info.Name());
     end;
+    /// <summary>
+    /// #4697: asks for the caller from inside this procedure's own asserterror body. Under
+    /// inline-scope emit that body is a compiler-generated closure frame of this dep; the
+    /// caller is still the bundle, not the dep.
+    /// </summary>
+    procedure CallerNameInsideOwnAssertError(): Text
+    var
+        Info: ModuleInfo;
+    begin
+        asserterror
+        begin
+            NavApp.GetCallerModuleInfo(Info);
+            Error(Info.Name());
+        end;
+        exit(GetLastErrorText());
+    end;
 }
 
 /// <summary>
