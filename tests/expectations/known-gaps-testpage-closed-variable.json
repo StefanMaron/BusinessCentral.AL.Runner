@@ -1,0 +1,34 @@
+[
+  {
+    "codeunitId": 60419,
+    "CodeunitName": "QCV Close Veto Tests",
+    "Method": "AllowedClose_SecondCloseRaisesNotOpen",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4713",
+    "Note": "An error was expected inside an ASSERTERROR statement. BC's NavTestPageBase.Close() calls InternalClear(), which detaches the TestPage variable after every close attempt, allowed or refused, so a later Close() or field read raises 'The TestPage is not open.'. The runner's Cecil rewrite removes that detach and no-ops CheckPageOpened, so the variable keeps working. Measured by corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#431, codeunit 60419; runner PR #4711 made the veto arms of that codeunit pass and left these for #4713."
+  },
+  {
+    "codeunitId": 60419,
+    "CodeunitName": "QCV Close Veto Tests",
+    "Method": "PlainVeto_SecondCloseRaisesNotOpen",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4713",
+    "Note": "An error was expected inside an ASSERTERROR statement. BC's NavTestPageBase.Close() calls InternalClear(), which detaches the TestPage variable after every close attempt, allowed or refused, so a later Close() or field read raises 'The TestPage is not open.'. The runner's Cecil rewrite removes that detach and no-ops CheckPageOpened, so the variable keeps working. Measured by corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#431, codeunit 60419; runner PR #4711 made the veto arms of that codeunit pass and left these for #4713."
+  },
+  {
+    "codeunitId": 60419,
+    "CodeunitName": "QCV Close Veto Tests",
+    "Method": "PlainVeto_FieldReadRaisesNotOpen",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4713",
+    "Note": "An error was expected inside an ASSERTERROR statement. BC's NavTestPageBase.Close() calls InternalClear(), which detaches the TestPage variable after every close attempt, allowed or refused, so a later Close() or field read raises 'The TestPage is not open.'. The runner's Cecil rewrite removes that detach and no-ops CheckPageOpened, so the variable keeps working. Measured by corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#431, codeunit 60419; runner PR #4711 made the veto arms of that codeunit pass and left these for #4713."
+  },
+  {
+    "codeunitId": 60419,
+    "CodeunitName": "QCV Close Veto Tests",
+    "Method": "ErrorConsumedByMessageHandler_SecondCloseRaisesNotOpen",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4713",
+    "Note": "An error was expected inside an ASSERTERROR statement. BC's NavTestPageBase.Close() calls InternalClear(), which detaches the TestPage variable after every close attempt, allowed or refused, so a later Close() or field read raises 'The TestPage is not open.'. The runner's Cecil rewrite removes that detach and no-ops CheckPageOpened, so the variable keeps working. Measured by corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#431, codeunit 60419; runner PR #4711 made the veto arms of that codeunit pass and left these for #4713."
+  }
+]
