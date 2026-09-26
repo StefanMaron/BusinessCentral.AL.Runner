@@ -2379,3 +2379,16 @@ skip in `BcRuntime.TryGetImmediateCallerModule` fails the first with `got NavApp
 Measured 15P/0F/0E on the bundle, not computed from the diff.
 
 Written by an agent (Claude, `stma-auto2-10`).
+
+## runner-extras `testpage-close-message-consumed` 8 -> 7 (#4713)
+
+One arm removed: `CloseAfterQueryCloseError_MessageConsumed_LeavesThePageDrivable`. It asserted
+the TestPage could still be driven after a close `OnQueryClosePage` refused, which is the opposite
+of BC: `NavTestPageBase.Close()` ends in `InternalClear()`, which detaches the variable whatever
+the trigger answered. Corpus codeunit 60419 `ErrorConsumedByMessageHandler_SecondCloseRaisesNotOpen`
+(StefanMaron/BusinessCentral.AL.Language.Tests#431) measured "The TestPage is not open." on every
+cloud leg and on the Windows nightly, so no runner-specific claim was left for this arm to make.
+
+Measured 7P/0F/0E on the bundle, not computed from the diff.
+
+Written by an agent (Claude, `stma-auto2-5`).

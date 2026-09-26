@@ -56,27 +56,11 @@ codeunit 65863 "Tcm Close Message Tests"
             StrSubstNo('The handler must receive the trigger''s own error text, not a runner-invented one; got "%1".', Row."Last Text"));
     end;
 
-    // CLAIM 2: the page is still usable afterwards, which is what "BC left it open" means for a
-    // test that still holds the variable. A runner that returned control but tore the page down
-    // would fail here with BC's own "The TestPage is not open."
-    //
-    // Reading a FIELD, not a status flag: a torn-down page raises on any field read, so this
-    // cannot pass against a page that only claims to be open.
-    [Test]
-    [HandlerFunctions('TcmMessageHandler')]
-    procedure CloseAfterQueryCloseError_MessageConsumed_LeavesThePageDrivable()
-    var
-        Card: TestPage "Tcm Error Card";
-    begin
-        Initialize();
-
-        Card.OpenEdit();
-        Card."Set ID".SetValue(99);
-        Card.Close();
-
-        Assert.AreEqual('99', Format(Card."Set ID".Value()),
-            'The page must still be drivable after a close BC refused -- and must still hold the value set before the close, not a value re-read from a page that was torn down and rebuilt.');
-    end;
+    // CLAIM 2 was removed (#4713). It asserted the page was still drivable after the refused
+    // close, which is the opposite of BC: NavTestPageBase.Close() detaches the variable whatever
+    // the trigger answered, and corpus codeunit 60419
+    // ErrorConsumedByMessageHandler_SecondCloseRaisesNotOpen (StefanMaron/BusinessCentral.AL.Language.Tests#431)
+    // measured "The TestPage is not open." on every cloud leg and the Windows nightly.
 
     // CLAIM 3: the write the page made survives the refused close.
     //
