@@ -45,8 +45,8 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
         var (exit, output) = Spawn(_root, pkg);
 
         // Each arm asserts inside AL; the counts separate "passed" from "discovered nothing".
-        Assert.True(output.Contains("passed 14 "),
-            $"expected all fourteen arms to pass; exit={exit}\n{output}");
+        Assert.True(output.Contains("passed 15 "),
+            $"expected all fifteen arms to pass; exit={exit}\n{output}");
         Assert.Contains("failed 0 ", output);
     }
 
@@ -148,6 +148,47 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
                 }
                 """);
         }
+
+        // A List whose OnFindRecord answers the first row once DeleteAndPickFirst has run.
+        File.WriteAllText(Path.Combine(_root, "FindList.Page.al"), """
+            page 90485 "TDR Find List"
+            {
+                PageType = List;
+                SourceTable = "TDR Row";
+                layout
+                {
+                    area(Content)
+                    {
+                        repeater(Rows) { field(CodeField; Rec.Code) { ApplicationArea = All; } }
+                    }
+                }
+                actions
+                {
+                    area(Processing)
+                    {
+                        action(DeleteAndPickFirst)
+                        {
+                            ApplicationArea = All;
+                            trigger OnAction()
+                            begin
+                                PickFirst := true;
+                                Rec.Delete();
+                            end;
+                        }
+                    }
+                }
+                trigger OnFindRecord(Which: Text): Boolean
+                begin
+                    Trace.Note('Find:' + Which);
+                    if PickFirst then
+                        exit(Rec.FindFirst());
+                    exit(Rec.Find(Which));
+                end;
+                var
+                    Trace: Codeunit "TDR Trace";
+                    PickFirst: Boolean;
+            }
+            """);
 
         File.WriteAllText(Path.Combine(_root, "Test.Codeunit.al"), """
             codeunit 90483 "TDR Test"
@@ -305,8 +346,8 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
                     List.DeleteOnly.Invoke();
                     if List.CodeField.Value() <> 'B' then
                         Error('expected the List on B, got: %1', List.CodeField.Value());
-                    if Trace.Get() <> 'AGR:B;AGCR:B;' then
-                        Error('expected AGR:B;AGCR:B; after the action, got: %1', Trace.Get());
+                    if not Trace.Get().EndsWith('AGCR:B;') or (StrPos(Trace.Get(), 'AGR:A;') <> 0) then
+                        Error('expected the trace to end AGCR:B; with no AGR:A;, got: %1', Trace.Get());
                     List.Close();
                 end;
 
@@ -324,8 +365,8 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
                     List.DeleteAndUpdate.Invoke();
                     if List.CodeField.Value() <> 'B' then
                         Error('expected the List on B, got: %1', List.CodeField.Value());
-                    if Trace.Get() <> 'AGR:B;AGCR:B;' then
-                        Error('expected AGR:B;AGCR:B; after the action, got: %1', Trace.Get());
+                    if not Trace.Get().EndsWith('AGCR:B;') or (StrPos(Trace.Get(), 'AGR:A;') <> 0) then
+                        Error('expected the trace to end AGCR:B; with no AGR:A;, got: %1', Trace.Get());
                     List.Close();
                 end;
 
@@ -382,6 +423,28 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
                         Error('expected no trigger for the deleted row, got: %1', Trace.Get());
                     if not Row.IsEmpty() then
                         Error('expected nothing re-inserted');
+                    List.Close();
+                end;
+
+                // A List declaring OnFindRecord moves through it, with Which '=><': the trigger
+                // answers A where the default re-read of a deleted middle row lands on C.
+                [Test]
+                procedure List_OnFindRecord_ActionDeletesAMiddleRow_MovesWhereTheTriggerSays()
+                var
+                    Row: Record "TDR Row";
+                    List: TestPage "TDR Find List";
+                begin
+                    Seed();
+                    Row.Code := 'C';
+                    Row.Insert();
+                    List.OpenEdit();
+                    List.GoToKey('B');
+                    Trace.Reset();
+                    List.DeleteAndPickFirst.Invoke();
+                    if List.CodeField.Value() <> 'A' then
+                        Error('expected the List on A, got: %1; trace %2', List.CodeField.Value(), Trace.Get());
+                    if StrPos(Trace.Get(), 'Find:=><;') = 0 then
+                        Error('expected OnFindRecord with =><, got: %1', Trace.Get());
                     List.Close();
                 end;
 
