@@ -44,8 +44,8 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
         var (exit, output) = Spawn(_root, pkg);
 
         // Each arm asserts inside AL; the counts separate "passed" from "discovered nothing".
-        Assert.True(output.Contains("passed 5 "),
-            $"expected all five arms to pass; exit={exit}\n{output}");
+        Assert.True(output.Contains("passed 7 "),
+            $"expected all seven arms to pass; exit={exit}\n{output}");
         Assert.Contains("failed 0 ", output);
     }
 
@@ -75,6 +75,18 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
                     field(2; Name; Text[50]) { }
                 }
                 keys { key(PK; Code) { Clustered = true; } }
+            }
+            """);
+
+        File.WriteAllText(Path.Combine(_root, "Trace.Codeunit.al"), """
+            codeunit 90484 "TDR Trace"
+            {
+                SingleInstance = true;
+                var
+                    Order: Text;
+                procedure Reset() begin Order := ''; end;
+                procedure Note(Tag: Text) begin Order += Tag + ';'; end;
+                procedure Get(): Text begin exit(Order); end;
             }
             """);
 
@@ -109,6 +121,15 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
                                     Rec.Delete();
                                 end;
                             }
+                            action(DeleteAndUpdate)
+                            {
+                                ApplicationArea = All;
+                                trigger OnAction()
+                                begin
+                                    Rec.Delete();
+                                    CurrPage.Update(false);
+                                end;
+                            }
                             action(DoNothing)
                             {
                                 ApplicationArea = All;
@@ -118,6 +139,11 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
                             }
                         }
                     }
+                    trigger OnAfterGetRecord() begin Trace.Note('AGR:' + Rec.Code); end;
+                    trigger OnAfterGetCurrRecord() begin Trace.Note('AGCR:' + Rec.Code); end;
+                    trigger OnClosePage() begin Trace.Note('ClosePage'); end;
+                    var
+                        Trace: Codeunit "TDR Trace";
                 }
                 """);
         }
@@ -126,6 +152,8 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
             codeunit 90483 "TDR Test"
             {
                 Subtype = Test;
+                var
+                    Trace: Codeunit "TDR Trace";
 
                 local procedure Seed()
                 var
@@ -196,6 +224,38 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
                     Row.Delete();
                     if Card.CodeField.Value() <> 'A' then
                         Error('expected the Card to still show A, got: %1', Card.CodeField.Value());
+                    Card.Close();
+                end;
+
+                // The close raises OnClosePage, and the CurrPage.Update refresh raises nothing for
+                // the deleted row: corpus 67300 reads no AGR:A and no AGCR after the action.
+                [Test]
+                procedure Card_ActionDeletesAndUpdates_RaisesOnlyOnClosePage()
+                var
+                    Card: TestPage "TDR Card";
+                begin
+                    Seed();
+                    Card.OpenEdit();
+                    Card.GoToKey('A');
+                    Trace.Reset();
+                    Card.DeleteAndUpdate.Invoke();
+                    if Trace.Get() <> 'ClosePage;' then
+                        Error('expected ClosePage; after the action, got: %1', Trace.Get());
+                end;
+
+                // The untouched row OpenNew starts is not in the table, and is not deleted either:
+                // an action on it leaves the Card open (corpus 67300).
+                [Test]
+                procedure Card_OpenNew_ActionOnTheUntouchedRow_StaysOpen()
+                var
+                    Row: Record "TDR Row";
+                    Card: TestPage "TDR Card";
+                begin
+                    Row.DeleteAll();
+                    Card.OpenNew();
+                    Card.DoNothing.Invoke();
+                    if Card.CodeField.Value() <> '' then
+                        Error('expected the blank new row, got: %1', Card.CodeField.Value());
                     Card.Close();
                 end;
 

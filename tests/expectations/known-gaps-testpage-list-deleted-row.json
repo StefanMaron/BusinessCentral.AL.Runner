@@ -1,0 +1,10 @@
+[
+  {
+    "codeunitId": 67300,
+    "CodeunitName": "ALT Page Update Gone Test",
+    "Method": "List_DeletedByAction_WithNeighbour_MovesToTheNeighbour",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4747",
+    "Note": "Expected:<B> Actual:<A>. A List page whose action deletes the current row moves to the neighbouring row on BC (every cloud leg of corpus run 36237936605 passed this arm; round two read the trace as AGR:A;ActionBegin;ActionEnd;AGR:B;AGR:B;AGCR:B;AGR:B;AGR:B;AGCR:B;). The runner keeps the deleted row as the current one. The Card arms of the same codeunit pass: #4727 closes a Card in that shape."
+  }
+]

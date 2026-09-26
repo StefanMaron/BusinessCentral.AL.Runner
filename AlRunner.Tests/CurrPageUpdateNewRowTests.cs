@@ -2,8 +2,8 @@
 //
 // RUNNER-MECHANISM test for RunnerPageInstance.EndTrigger's refresh on an UNSAVED new row.
 // The BC claim is upstream (the Corpus-PR line on the PR that added this file); this pins the
-// runner's wiring: LiveNavTestPage tells its RunnerPageInstance whether the current row is a
-// pending insert the table does not hold, and the realised CurrPage.Update refresh then raises
+// runner's wiring: LiveNavTestPage tells its RunnerPageInstance whether the table holds the
+// current row, and the realised CurrPage.Update refresh then raises
 // no trigger for it: the row's one OnAfterGetCurrRecord is the one it got on becoming current.
 //
 // The shape is Base Application page 9807 "User Card" plus its pageextension 9807: a

@@ -59,27 +59,34 @@ internal partial class LiveNavTestPage : MockITestPage
         _page = page;
         _owner = owner;
         _pageId = pageId;
-        if (page != null) page.IsCurrentRowUnsavedNewRow = IsUnsavedNewRow;
+        if (page != null) page.IsCurrentRowNotStored = IsCurrentRowNotStored;
     }
 
-    // BC's client re-reads the current row after every action, and a Card whose stored row is
-    // gone is closed by it: every later call, Close() included, raises "The TestPage is not
-    // open." -- with or without a CurrPage.Update in the action. A List moves to a neighbour
-    // instead, which the runner does not do yet (#4747). Corpus codeunit 67300, #4727.
-    // A pending insert is not deleted and a temporary source is unmeasured; both stay open.
-    internal void CloseIfCurrentRowDeleted()
+    // BC's client re-reads the current row after every action. A Card whose stored row is gone
+    // raises its OnClosePage and is closed: every later call, Close() included, raises "The
+    // TestPage is not open." -- with or without a CurrPage.Update in the action. The untouched new
+    // row OpenNew starts is not gone, and stays open. A List moves to a neighbour instead, which
+    // the runner does not do yet (#4747); a temporary source is unmeasured. Corpus 67300, #4727.
+    // OnQueryClosePage is not raised: the measured page declares none, so that is unmeasured.
+    internal void CloseIfCurrentRowDeleted(bool wasOnNewRow)
     {
-        if (_pendingNewRow || _record is not { IsTemporary: false } record || RowExistsInTable(record))
+        if (wasOnNewRow || _page == null || _record is not { IsTemporary: false } record
+            || RowExistsInTable(record))
             return;
         if (RecordPatches.TryGetAnyPageType(_pageId) != "Card") return;
+        _page.RaiseOnClosePageTrigger();
         MarkDetached();
+        _page.ForceCloseForm();
     }
 
-    // A temporary row is never in the stored table RowExistsInTable probes, so it is asked of
-    // its own buffer through BC's HasBeenInserted, whose temporary branch is ExistsAsync(ALRecordId).
-    // Corpus codeunit 60872 "ALT Page Update Temp New Test" (#4712).
-    private bool IsUnsavedNewRow()
-        => _pendingNewRow && _record is { } record
+    internal bool IsOnUnsavedNewRow => _pendingNewRow;
+
+    // True for an unsaved new row and for a deleted one alike: the refresh CurrPage.Update asks
+    // for raises neither trigger for either (corpus 60872, 60893, 67300). A temporary row is never
+    // in the stored table RowExistsInTable probes, so it is asked of its own buffer through BC's
+    // HasBeenInserted, whose temporary branch is ExistsAsync(ALRecordId) (#4712).
+    private bool IsCurrentRowNotStored()
+        => _record is { } record
             && !(record.IsTemporary ? record.HasBeenInserted : RowExistsInTable(record));
 
     internal NavRecord? Record => _record;

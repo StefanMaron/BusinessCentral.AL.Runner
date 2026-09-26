@@ -62,21 +62,23 @@ Two things follow, and both are why the fix takes the shape it does:
    these arms recorded only `OnAfterGetCurrRecord` and so could not have told the two apart:
    `saveRecord` changes whether the row is written, not which triggers the refresh raises.
 
-## An unsaved new row gets no refresh triggers
+## A row the table does not hold gets no refresh triggers
 
-Issues #4698 and #4712. When the refresh is realised and the page's current row is a pending
-insert the table does not hold, `EndTrigger` raises neither `OnAfterGetRecord` nor
-`OnAfterGetCurrRecord`. The row already got its `OnAfterGetCurrRecord` when it became current
-(`LiveNavTestPage.NewRowBecameCurrent`), and there is no stored row to re-read.
+Issues #4698, #4712 and #4727. When the refresh is realised and the table does not hold the
+page's current row, `EndTrigger` raises neither `OnAfterGetRecord` nor `OnAfterGetCurrRecord`.
+For an unsaved new row, the row already got its `OnAfterGetCurrRecord` when it became current
+(`LiveNavTestPage.NewRowBecameCurrent`), and there is no stored row to re-read. For a deleted
+row, BC re-reads nothing for it either (next section).
 
 The shape is Base Application's "User Card" (page 9807): its pageextension 9807 calls
 `CurrPage.Update(false)` from `OnAfterGetCurrRecord`, and its `OnAfterGetRecord` runs
 `Rec.TestField("User Name")`, which the blank row `OpenNew` starts fails.
 
-`LiveNavTestPage` answers the question through `RunnerPageInstance.IsCurrentRowUnsavedNewRow`:
-the row is a pending insert **and** a key lookup does not find it. The second half keeps a
-trigger that inserts the row itself and then calls `CurrPage.Update` (Customer Card's insert
-from a template) on the full pair. A temporary source table cannot use that lookup, because
+`LiveNavTestPage` answers the question through `RunnerPageInstance.IsCurrentRowNotStored`: a
+key lookup does not find the row. That keeps a trigger that inserts the row itself and then
+calls `CurrPage.Update` (Customer Card's insert from a template) on the full pair. Until #4727
+the answer also required the row to be a pending insert; corpus 67300 showed a deleted row gets
+no refresh triggers either, so that conjunct went. A temporary source table cannot use that lookup, because
 the stored table never holds a temporary row, so its row is asked of its own buffer through
 BC's `NavRecord.HasBeenInserted`, whose temporary branch is `ExistsAsync(ALRecordId)` (#4712).
 
@@ -84,9 +86,37 @@ Measured by corpus codeunit 60893 "ALT Page Update New Row Test" and, for a temp
 corpus codeunit 60872 "ALT Page Update Temp New Test". On corpus PR #434's first run, all nine
 cloud legs read the temporary-source `OpenNew` trace as `AGCR;`: one `OnAfterGetCurrRecord`, and
 nothing from the refresh. 60893's `OpenNew_TraceIsOneOnAfterGetCurrRecord` asks the same of a
-normal source. Runner-side: `AlRunner.Tests/CurrPageUpdateNewRowTests.cs`. Not measured:
+normal source. Runner-side: `AlRunner.Tests/CurrPageUpdateNewRowTests.cs`.
+
 `CurrPage.Update(false)` from a field's `OnValidate` on a DelayedInsert row that is still
-unsaved (#4727). The same guard applies to it.
+unsaved takes the same guard, and BC agrees: corpus codeunit 67300 "ALT Page Update Gone Test"
+reads the trace as `Validate;` and finds no row saved, with the key set and without, on every
+cloud leg; the same page on a stored row reads `Validate;AGR:A;AGCR:A;` (#4727).
+
+## A Card whose row is gone closes when an action returns
+
+Issue #4727. After an action on a Card returns and the Card's stored row is no longer in the
+table, BC's client closes the page: every later call on the TestPage variable, `Close()`
+included, raises "The TestPage is not open." It does not matter whether the action called
+`CurrPage.Update`, or whether the action or the test deleted the row. A List in the same
+shape moves to the neighbouring row instead (#4747, not reproduced yet).
+
+What BC raises, on every cloud leg: `AGR:A;ActionBegin;ActionEnd;AGR:B;ClosePage;` with a
+neighbour `B`, `AGR:A;ActionBegin;ActionEnd;ClosePage;` without one. So `OnClosePage` runs, and
+nothing runs for the deleted row after the action, `OnAfterGetCurrRecord` included. The
+`OnAfterGetRecord` calls are the client re-reading rows, which the runner does not reproduce
+(see "What is deliberately not reproduced").
+
+The untouched row `OpenNew` starts is not in the table either, but it is not deleted: an action
+on it leaves the Card open, showing the blank row.
+
+`LiveNavTestAction.Invoke` calls `LiveNavTestPage.CloseIfCurrentRowDeleted` after the
+`OnAction` trigger. When the page is a Card, the row was not a pending new row before the action,
+and a key lookup does not find it, that raises `OnClosePage` and detaches the TestPage
+(`MarkDetached`, the same state a `Close()` leaves). `OnQueryClosePage` is not raised: the
+measured page declares none. A temporary source is unmeasured and stays open.
+
+Measured by corpus codeunit 67300; runner-side: `AlRunner.Tests/TestPageDeletedRowCloseTests.cs`.
 
 ## What is deliberately not reproduced
 
