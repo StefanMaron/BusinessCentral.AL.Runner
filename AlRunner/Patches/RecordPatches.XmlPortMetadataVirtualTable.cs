@@ -32,7 +32,7 @@ public static partial class RecordPatches
     /// The xmlports of a registered .app package are not hidden (pinned by runner-extras
     /// xmlport-metadata-floor-app); a precompiled DLL loaded with no registered .app symbols is
     /// not in that set, so its xmlports CAN be hidden from a group whose closure omits it.
-    /// Pinned for ambiguous ids by xmlport-metadata-shared-id-{x,y}.
+    /// Pinned for ambiguous ids by AppGroupObjectVisibilityTests (the shared-id dupX/dupY groups).
     /// </summary>
     private static bool IsCompiledXmlPortOfUnreachableSourceApp(int id, HashSet<Guid>? visibleApps,
         ref Dictionary<int, Guid>? compiledSourceOwners)

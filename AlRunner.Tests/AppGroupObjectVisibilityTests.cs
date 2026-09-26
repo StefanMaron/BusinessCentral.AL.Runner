@@ -274,6 +274,7 @@ public class AppGroupObjectVisibilityTests
             var dir = WriteApp(Path.Combine(root, "dup" + letter), appId, "Dup " + letter, 62680, 62689);
             File.WriteAllText(Path.Combine(dir, "Dup.al"), $$"""
             table 62680 "Dup {{letter}} Table" { fields { field(1; "Code"; Code[20]) { } } keys { key(PK; "Code") { Clustered = true; } } }
+            xmlport 62683 "Dup {{letter}} XmlPort" { schema { textelement(Root) { } } }
             codeunit {{cu}} "Dup {{letter}} Tests"
             {
                 Subtype = Test;
@@ -282,9 +283,13 @@ public class AppGroupObjectVisibilityTests
                 var
                     AllObj: Record AllObj;
                     TableMetadata: Record "Table Metadata";
+                    XmlPortMetadata: Record "XmlPort Metadata";
                 begin
                     if not AllObj.Get(AllObj."Object Type"::Table, 62680) then Error('MISSING: AllObj does not list own table 62680 in {{letter}}');
                     if not TableMetadata.Get(62680) then Error('MISSING: Table Metadata does not list own table 62680 in {{letter}}');
+                    // #4461: an id two groups declare has no single owner, so the group running
+                    // second must not take the first group's compiled xmlport as its owner and hide it.
+                    if not XmlPortMetadata.Get(62683) then Error('MISSING: XMLport Metadata does not list own xmlport 62683 in {{letter}}');
                 end;
             }
             """);
