@@ -3,8 +3,8 @@
 // RUNNER-MECHANISM test for RunnerPageInstance.EndTrigger's refresh on an UNSAVED new row.
 // The BC claim is upstream (the Corpus-PR line on the PR that added this file); this pins the
 // runner's wiring: LiveNavTestPage tells its RunnerPageInstance whether the current row is a
-// pending insert the table does not hold, and the realised CurrPage.Update refresh then skips
-// OnAfterGetRecord for it, exactly as a new row becoming current does.
+// pending insert the table does not hold, and the realised CurrPage.Update refresh then raises
+// no trigger for it: the row's one OnAfterGetCurrRecord is the one it got on becoming current.
 //
 // The shape is Base Application page 9807 "User Card" plus its pageextension 9807: a
 // DelayedInsert card whose OnAfterGetCurrRecord calls CurrPage.Update(false), and whose
@@ -49,8 +49,8 @@ public sealed class CurrPageUpdateNewRowTests : IDisposable
         var (exit, output) = Spawn(_root, pkg);
 
         // Each arm asserts inside AL; the counts separate "passed" from "discovered nothing".
-        Assert.True(output.Contains("passed 5 "),
-            $"expected all five arms to pass; exit={exit}\n{output}");
+        Assert.True(output.Contains("passed 6 "),
+            $"expected all six arms to pass; exit={exit}\n{output}");
         Assert.Contains("failed 0 ", output);
     }
 
@@ -217,17 +217,30 @@ public sealed class CurrPageUpdateNewRowTests : IDisposable
                     Card.Close();
                 end;
 
-                // Temporary source, #4712: the exact trace, so the refresh's own
-                // OnAfterGetCurrRecord is pinned as well as the missing OnAfterGetRecord.
+                // The exact trace: the refresh raises no OnAfterGetCurrRecord of its own either,
+                // so only the one the new row got on becoming current is there.
                 [Test]
-                procedure TempSource_OpenNew_RaisesOnAfterGetCurrRecordOnly()
+                procedure OpenNew_TraceIsOneOnAfterGetCurrRecord()
+                var
+                    Card: TestPage "NRU Card";
+                begin
+                    Trace.Reset();
+                    Card.OpenNew();
+                    if Trace.Get() <> 'AGCR;' then
+                        Error('expected AGCR; for the unsaved row, got: %1', Trace.Get());
+                    Card.Close();
+                end;
+
+                // Temporary source, #4712 (corpus 60872: AGCR; on every cloud leg).
+                [Test]
+                procedure TempSource_OpenNew_TraceIsOneOnAfterGetCurrRecord()
                 var
                     Card: TestPage "NRU Temp Card";
                 begin
                     Trace.Reset();
                     Card.OpenNew();
-                    if Trace.Get() <> 'AGCR;AGCR;' then
-                        Error('expected AGCR;AGCR; for the unsaved temporary row, got: %1', Trace.Get());
+                    if Trace.Get() <> 'AGCR;' then
+                        Error('expected AGCR; for the unsaved temporary row, got: %1', Trace.Get());
                     Card.Close();
                 end;
 

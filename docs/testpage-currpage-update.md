@@ -62,12 +62,12 @@ Two things follow, and both are why the fix takes the shape it does:
    these arms recorded only `OnAfterGetCurrRecord` and so could not have told the two apart:
    `saveRecord` changes whether the row is written, not which triggers the refresh raises.
 
-## An unsaved new row gets `OnAfterGetCurrRecord` only
+## An unsaved new row gets no refresh triggers
 
-Issue #4698. When the refresh is realised and the page's current row is a pending insert the
-table does not hold, `EndTrigger` raises `OnAfterGetCurrRecord` alone, skipping
-`OnAfterGetRecord`. That is the same pair a new row gets when it first becomes current
-(`LiveNavTestPage.NewRowBecameCurrent`): there is no stored row to re-read.
+Issues #4698 and #4712. When the refresh is realised and the page's current row is a pending
+insert the table does not hold, `EndTrigger` raises neither `OnAfterGetRecord` nor
+`OnAfterGetCurrRecord`. The row already got its `OnAfterGetCurrRecord` when it became current
+(`LiveNavTestPage.NewRowBecameCurrent`), and there is no stored row to re-read.
 
 The shape is Base Application's "User Card" (page 9807): its pageextension 9807 calls
 `CurrPage.Update(false)` from `OnAfterGetCurrRecord`, and its `OnAfterGetRecord` runs
@@ -80,11 +80,13 @@ from a template) on the full pair. A temporary source table cannot use that look
 the stored table never holds a temporary row, so its row is asked of its own buffer through
 BC's `NavRecord.HasBeenInserted`, whose temporary branch is `ExistsAsync(ALRecordId)` (#4712).
 
-Measured by corpus codeunit 60893 "ALT Page Update New Row Test", and for a temporary source by
-corpus codeunit 60872 "ALT Page Update Temp New Test", which also pins the exact `OpenNew` trace
-as two `OnAfterGetCurrRecord` and no `OnAfterGetRecord`; runner-side,
-`AlRunner.Tests/CurrPageUpdateNewRowTests.cs`. Not measured: `CurrPage.Update(false)` from a
-field's `OnValidate` on a DelayedInsert row that is still unsaved. The same guard applies to it.
+Measured by corpus codeunit 60893 "ALT Page Update New Row Test" and, for a temporary source,
+corpus codeunit 60872 "ALT Page Update Temp New Test". On corpus PR #434's first run, all nine
+cloud legs read the temporary-source `OpenNew` trace as `AGCR;`: one `OnAfterGetCurrRecord`, and
+nothing from the refresh. 60893's `OpenNew_TraceIsOneOnAfterGetCurrRecord` asks the same of a
+normal source. Runner-side: `AlRunner.Tests/CurrPageUpdateNewRowTests.cs`. Not measured:
+`CurrPage.Update(false)` from a field's `OnValidate` on a DelayedInsert row that is still
+unsaved (#4727). The same guard applies to it.
 
 ## What is deliberately not reproduced
 

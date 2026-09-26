@@ -153,13 +153,12 @@ internal sealed partial class RunnerPageInstance
         _realisingUpdate = true;
         // RaiseOnAfterGetRecord raises OnAfterGetRecord and then OnAfterGetCurrRecord, which is
         // the pair BC produces here — both were observed on 28.4, in that order.
-        // An unsaved new row has nothing to re-read, so it gets OnAfterGetCurrRecord alone, as
-        // when it first became current (#4698: Base Application's "User Card" OpenNew). See
-        // docs/testpage-currpage-update.md#an-unsaved-new-row-gets-onaftergetcurrrecord-only
+        // An unsaved new row gets NEITHER: corpus codeunit 60872 reads the OpenNew trace as one
+        // OnAfterGetCurrRecord on every cloud leg (#4698, #4712). See
+        // docs/testpage-currpage-update.md#an-unsaved-new-row-gets-no-refresh-triggers
         try
         {
-            if (IsCurrentRowUnsavedNewRow?.Invoke() == true) RaiseOnAfterGetCurrRecord();
-            else RaiseOnAfterGetRecord();
+            if (IsCurrentRowUnsavedNewRow?.Invoke() != true) RaiseOnAfterGetRecord();
         }
         finally { _realisingUpdate = false; }
     }
