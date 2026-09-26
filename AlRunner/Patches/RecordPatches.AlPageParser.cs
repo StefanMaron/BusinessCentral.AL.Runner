@@ -560,11 +560,12 @@ public static partial class RecordPatches
     /// SAME source the "Page Control Field" virtual table (#1779) already reads for exactly
     /// this data, so a page miss here now falls back to it via the shared
     /// <see cref="ResolveDependencyControlField"/> resolver — one control resolution rule for
-    /// both consumers, not a second hand-rolled one. Pageextensions are not folded into this
-    /// fallback: a pageextension that extends a dependency-only base page is itself
-    /// AL-source-parsed (or it too ships precompiled and gets its own dependency-symbol
-    /// entry), and <see cref="GetPageExtensionIdsForPage"/> already resolves the base page's
-    /// name through the same dependency fallback for that separate, existing path.</para>
+    /// both consumers, not a second hand-rolled one.</para>
+    /// <para>The fallback folds in the page's pageextensions exactly as the source-parsed arm
+    /// does (#4660): AL-source-parsed ones by name, and precompiled ones through
+    /// <see cref="DependencyPageExtensionFieldControls"/>. Without them a control a
+    /// pageextension adds to a precompiled page — Base Application's own "Serv. VAT Rate
+    /// Change Setup" over "VAT Rate Change Setup" — answered BC's "field not found".</para>
     /// </summary>
     internal static IReadOnlyDictionary<int, int> GetPageControlFieldMap(int pageId)
     {
@@ -587,7 +588,7 @@ public static partial class RecordPatches
         }
 
         var symbol = TryGetDependencyPageSymbol(pageId);
-        if (symbol == null || symbol.SourceTableId == 0 || symbol.Controls == null || symbol.Controls.Count == 0)
+        if (symbol == null || symbol.SourceTableId == 0)
             return new Dictionary<int, int>();
 
         if (!_parsedTables.TryGetValue(symbol.SourceTableId, out var depTable))
@@ -598,11 +599,15 @@ public static partial class RecordPatches
         if (depTable == null) return new Dictionary<int, int>();
 
         var depResult = new Dictionary<int, int>();
-        foreach (var control in symbol.Controls)
+        foreach (var control in (symbol.Controls ?? new List<BcAppSymbolCache.PageControlSymbol>())
+                     .Concat(DependencyPageExtensionFieldControls(symbol.Name)))
         {
             var (_, fieldNo) = ResolveDependencyControlField(control.SourceExpression, symbol.SourceTableId, depTable);
             if (fieldNo != 0) depResult[control.Id] = fieldNo;
         }
+        foreach (var ext in _parsedPageExtensions.Values)
+            if (NamesEqual(ext.BaseName, symbol.Name))
+                BindControls(ext.ControlIdToFieldName, depTable, depResult);
         return depResult;
 
         static void BindControls(IReadOnlyDictionary<int, string> controls, ParsedTable table, Dictionary<int, int> result)
