@@ -15,8 +15,10 @@
 //   ServerUserSettings-backed LRU caches and per-value `NavOption.CreateBypassCache`
 //   calls that aren't necessary just for `GetNames()`/`GetOrdinals()`. Instead
 //   we ship a minimal `NCLOptionMetadata` subclass (`AlEnumOptionMetadata`)
-//   that overrides exactly those two virtuals (and `OrdinalValues`/`Name`/`Id`
-//   for completeness), constructed from the `(name, id, options[], indexes[])`
+//   that overrides those two public virtuals — NOT the internal `OrdinalValues`/
+//   `Name`/`Id`, which an out-of-assembly subclass cannot override; `OrdinalValues`
+//   therefore answers the base `null` (#4788) —
+//   constructed from the `(name, id, options[], indexes[])`
 //   tuple captured by `BcCompiler.CaptureOutputter` at AL emit time.
 //
 // Decompile:
