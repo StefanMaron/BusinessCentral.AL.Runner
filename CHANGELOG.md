@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **testpage:** an unconsumed TestPage.Trap() is released when its variable leaves scope
 - **provisioning:** cover the major-fallback flag on the online route; drop stale KNOWN-DEGRADED comments
 - **testpage:** a never-opened TestPage raises "The TestPage is not open."; pin reopen after a refused Close()
 - **events:** trap an isolated event subscriber's error and roll back its writes
