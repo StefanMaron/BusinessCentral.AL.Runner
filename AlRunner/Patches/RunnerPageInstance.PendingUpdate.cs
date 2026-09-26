@@ -10,6 +10,10 @@ namespace AlRunner.Patches;
 // what is deliberately not reproduced.
 internal sealed partial class RunnerPageInstance
 {
+    /// <summary>Set by the TestPage that owns this instance: true while the current row is a
+    /// pending insert the table does not hold. Null (no TestPage) reads as false.</summary>
+    internal Func<bool>? IsCurrentRowUnsavedNewRow { get; set; }
+
     private bool _updateRequestSubscribed;
     private bool _updateRequested;
     private bool _realisingUpdate;
@@ -149,7 +153,14 @@ internal sealed partial class RunnerPageInstance
         _realisingUpdate = true;
         // RaiseOnAfterGetRecord raises OnAfterGetRecord and then OnAfterGetCurrRecord, which is
         // the pair BC produces here — both were observed on 28.4, in that order.
-        try { RaiseOnAfterGetRecord(); }
+        // An unsaved new row has nothing to re-read, so it gets OnAfterGetCurrRecord alone, as
+        // when it first became current (#4698: Base Application's "User Card" OpenNew). See
+        // docs/testpage-currpage-update.md#an-unsaved-new-row-gets-onaftergetcurrrecord-only
+        try
+        {
+            if (IsCurrentRowUnsavedNewRow?.Invoke() == true) RaiseOnAfterGetCurrRecord();
+            else RaiseOnAfterGetRecord();
+        }
         finally { _realisingUpdate = false; }
     }
 }
