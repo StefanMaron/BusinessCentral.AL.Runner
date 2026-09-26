@@ -41,6 +41,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **test-runner:** run a test codeunit's declared OnRun once before its test methods
 - **cli:** no off-version warning for a BC version CI measures
 - **testpage:** refuse a request-page action invoked from a RequestPageHandler with BC's own not-found error
 - **metadata:** xmlport CalcFields and RequestFilterFields in BC's Field<n> form
