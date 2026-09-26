@@ -65,7 +65,8 @@ public static class ApplicationAreaControlRemoval
             ?? throw Shape($"{p[0].ParameterType.Name}(bool)");
 
         _predicate = Delegate.CreateDelegate(p[4].ParameterType,
-            typeof(ApplicationAreaControlRemoval).GetMethod(nameof(RemoveWhenAreaNotEnabled), S)!);
+            typeof(ApplicationAreaControlRemoval).GetMethod(nameof(RemoveWhenAreaNotEnabled), S)
+                ?? throw Shape("ApplicationAreaControlRemoval.RemoveWhenAreaNotEnabled"));
         _getControl = Delegate.CreateDelegate(p[5].ParameterType,
             (provider.GetMethod("GetControl", S) ?? throw Shape("MetadataProvider.GetControl"))
                 .MakeGenericMethod(typeof(ControlBaseDefinition)));
