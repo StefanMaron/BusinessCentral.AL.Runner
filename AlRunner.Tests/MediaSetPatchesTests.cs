@@ -234,8 +234,8 @@ public sealed class MediaSetPatchesTests
     [Fact]
     public void MediaId_UnboundKey_Refuses_RatherThanAnsweringEmpty()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<AlRunner.Infrastructure.BcShapeGapException>(
             () => MediaSetPatches.NavMediaSet_get_ALMediaId(new NoKeyValue()));
-        Assert.Contains("cannot answer MediaId", ex.Message);
+        Assert.Contains("MediaId cannot be answered", ex.Message);
     }
 }

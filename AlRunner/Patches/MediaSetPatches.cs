@@ -388,8 +388,9 @@ public static class MediaSetPatches
         // An unbound Key would read as Guid.Empty, which is now a real answer; refuse instead.
         var r = Reflectors(self);
         if (r.Key == null || r.NavGuidValue == null)
-            throw new InvalidOperationException(
-                $"MediaSetPatches: {self.GetType().FullName} exposes no Key.Value; cannot answer MediaId (#4775)");
+            throw new AlRunner.Infrastructure.BcShapeGapException(
+                "Media/MediaSet.MediaId()", $"{self.GetType().FullName}.Key.Value",
+                "not found by reflection; Guid.Empty would read as an empty field, so MediaId cannot be answered (#4775)");
         return GetContainerGuid(self);
     }
 }
