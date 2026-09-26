@@ -3,8 +3,9 @@
 // RUNNER-MECHANISM test for LiveNavTestPage.CloseIfCurrentRowDeleted. The BC claim is upstream
 // (corpus codeunit 67300, the Corpus-PR line on the PR that added this file): once an action on
 // a Card returns and the Card's stored row is gone, the TestPage is no longer open. This pins
-// the runner's wiring: the check runs after every action, only a Card closes, and a row the
-// table still holds, or never held, leaves the page open.
+// the runner's wiring: the check runs after every action, only a Card closes, a List moves to
+// the next row, else the previous, else its blank line (#4747), and a row the table still holds,
+// or never held, leaves the page where it is.
 //
 // The fixture declares no "application", per .claude/rules/no-base-app-in-csharp-tests.md.
 
@@ -35,7 +36,7 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
     }
 
     [SkippableFact]
-    public void AnActionThatLeavesTheCardRowDeleted_ClosesTheCard_AndOnlyTheCard()
+    public void AnActionThatLeavesTheRowDeleted_ClosesACard_AndMovesAList()
     {
         TestArtifacts.SkipIfMissing();
         var pkg = TestArtifacts.PlatformAppsDir();
@@ -44,8 +45,8 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
         var (exit, output) = Spawn(_root, pkg);
 
         // Each arm asserts inside AL; the counts separate "passed" from "discovered nothing".
-        Assert.True(output.Contains("passed 9 "),
-            $"expected all nine arms to pass; exit={exit}\n{output}");
+        Assert.True(output.Contains("passed 15 "),
+            $"expected all fifteen arms to pass; exit={exit}\n{output}");
         Assert.Contains("failed 0 ", output);
     }
 
@@ -148,12 +149,63 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
                 """);
         }
 
+        // A List whose OnFindRecord answers the first row once DeleteAndPickFirst has run.
+        File.WriteAllText(Path.Combine(_root, "FindList.Page.al"), """
+            page 90485 "TDR Find List"
+            {
+                PageType = List;
+                SourceTable = "TDR Row";
+                layout
+                {
+                    area(Content)
+                    {
+                        repeater(Rows) { field(CodeField; Rec.Code) { ApplicationArea = All; } }
+                    }
+                }
+                actions
+                {
+                    area(Processing)
+                    {
+                        action(DeleteAndPickFirst)
+                        {
+                            ApplicationArea = All;
+                            trigger OnAction()
+                            begin
+                                PickFirst := true;
+                                Rec.Delete();
+                            end;
+                        }
+                    }
+                }
+                trigger OnFindRecord(Which: Text): Boolean
+                begin
+                    Trace.Note('Find:' + Which);
+                    if PickFirst then
+                        exit(Rec.FindFirst());
+                    exit(Rec.Find(Which));
+                end;
+                trigger OnAfterGetCurrRecord() begin Trace.Note('AGCR:' + Rec.Code); end;
+                var
+                    Trace: Codeunit "TDR Trace";
+                    PickFirst: Boolean;
+            }
+            """);
+
         File.WriteAllText(Path.Combine(_root, "Test.Codeunit.al"), """
             codeunit 90483 "TDR Test"
             {
                 Subtype = Test;
                 var
                     Trace: Codeunit "TDR Trace";
+
+                local procedure FindCalls(Recorded: Text) Calls: Text
+                var
+                    Entry: Text;
+                begin
+                    foreach Entry in Recorded.Split(';') do
+                        if Entry.StartsWith('Find:') then
+                            Calls += Entry + ';';
+                end;
 
                 local procedure Seed()
                 var
@@ -290,19 +342,137 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
                     Card.Close();
                 end;
 
-                // Only a Card closes. A List moves to a neighbour on BC (#4747); the runner does
-                // not yet, but it must not close the List.
+                // Only a Card closes. A List moves to the next row instead (corpus 67300, #4747),
+                // raising OnAfterGetRecord/OnAfterGetCurrRecord for it and nothing for the deleted row.
                 [Test]
-                procedure List_ActionDeletesTheRow_StaysOpen()
+                procedure List_ActionDeletesTheRow_MovesToTheNextRow()
                 var
                     List: TestPage "TDR List";
-                    Probe: Text;
                 begin
                     Seed();
                     List.OpenEdit();
                     List.GoToKey('A');
+                    Trace.Reset();
                     List.DeleteOnly.Invoke();
-                    Probe := List.CodeField.Value();
+                    if List.CodeField.Value() <> 'B' then
+                        Error('expected the List on B, got: %1', List.CodeField.Value());
+                    if not Trace.Get().EndsWith('AGCR:B;') or (StrPos(Trace.Get(), 'AGR:A;') <> 0) then
+                        Error('expected the trace to end AGCR:B; with no AGR:A;, got: %1', Trace.Get());
+                    List.Close();
+                end;
+
+                // The same through CurrPage.Update(false): the refresh raises nothing for the
+                // deleted row, and the move raises the pair once for the row moved to.
+                [Test]
+                procedure List_ActionDeletesAndUpdates_MovesToTheNextRow()
+                var
+                    List: TestPage "TDR List";
+                begin
+                    Seed();
+                    List.OpenEdit();
+                    List.GoToKey('A');
+                    Trace.Reset();
+                    List.DeleteAndUpdate.Invoke();
+                    if List.CodeField.Value() <> 'B' then
+                        Error('expected the List on B, got: %1', List.CodeField.Value());
+                    if not Trace.Get().EndsWith('AGCR:B;') or (StrPos(Trace.Get(), 'AGR:A;') <> 0) then
+                        Error('expected the trace to end AGCR:B; with no AGR:A;, got: %1', Trace.Get());
+                    List.Close();
+                end;
+
+                // The last row has no next one, so the List lands on the row before it.
+                [Test]
+                procedure List_ActionDeletesTheLastRow_MovesToThePreviousRow()
+                var
+                    List: TestPage "TDR List";
+                begin
+                    Seed();
+                    List.OpenEdit();
+                    List.GoToKey('B');
+                    List.DeleteOnly.Invoke();
+                    if List.CodeField.Value() <> 'A' then
+                        Error('expected the List on A, got: %1', List.CodeField.Value());
+                    List.Close();
+                end;
+
+                // A middle row: the List lands on the row after it, not on the first row.
+                [Test]
+                procedure List_ActionDeletesAMiddleRow_MovesToTheNextRow()
+                var
+                    Row: Record "TDR Row";
+                    List: TestPage "TDR List";
+                begin
+                    Seed();
+                    Row.Code := 'C';
+                    Row.Insert();
+                    List.OpenEdit();
+                    List.GoToKey('B');
+                    List.DeleteOnly.Invoke();
+                    if List.CodeField.Value() <> 'C' then
+                        Error('expected the List on C, got: %1', List.CodeField.Value());
+                    List.Close();
+                end;
+
+                // The only row has no neighbour: the List stays open on its blank new-row line.
+                [Test]
+                procedure List_ActionDeletesTheOnlyRow_ShowsTheBlankLine()
+                var
+                    Row: Record "TDR Row";
+                    List: TestPage "TDR List";
+                begin
+                    Row.DeleteAll();
+                    Row.Code := 'A';
+                    Row.Insert();
+                    List.OpenEdit();
+                    List.GoToKey('A');
+                    Trace.Reset();
+                    List.DeleteOnly.Invoke();
+                    if List.CodeField.Value() <> '' then
+                        Error('expected the blank line, got: %1', List.CodeField.Value());
+                    if Trace.Get() <> '' then
+                        Error('expected no trigger for the deleted row, got: %1', Trace.Get());
+                    if not Row.IsEmpty() then
+                        Error('expected nothing re-inserted');
+                    List.Close();
+                end;
+
+                // A List declaring OnFindRecord moves through it: the trigger answers A where the
+                // default re-read of a deleted middle row lands on C. BC calls it '=', '=>', '='
+                // (corpus 67300 List_DeletedByAction_OnFindRecord_PicksTheRow).
+                [Test]
+                procedure List_OnFindRecord_ActionDeletesAMiddleRow_MovesWhereTheTriggerSays()
+                var
+                    Row: Record "TDR Row";
+                    List: TestPage "TDR Find List";
+                begin
+                    Seed();
+                    Row.Code := 'C';
+                    Row.Insert();
+                    List.OpenEdit();
+                    List.GoToKey('B');
+                    Trace.Reset();
+                    List.DeleteAndPickFirst.Invoke();
+                    if List.CodeField.Value() <> 'A' then
+                        Error('expected the List on A, got: %1; trace %2', List.CodeField.Value(), Trace.Get());
+                    if FindCalls(Trace.Get()) <> 'Find:=;Find:=>;Find:=;' then
+                        Error('expected OnFindRecord with = then => then =, got: %1', Trace.Get());
+                    if not Trace.Get().EndsWith('AGCR:A;') then
+                        Error('expected OnAfterGetCurrRecord for A last, got: %1', Trace.Get());
+                    List.Close();
+                end;
+
+                // Control: the List's row is still stored, so the List stays on it.
+                [Test]
+                procedure List_ActionLeavesTheRow_StaysOnIt()
+                var
+                    List: TestPage "TDR List";
+                begin
+                    Seed();
+                    List.OpenEdit();
+                    List.GoToKey('A');
+                    List.DoNothing.Invoke();
+                    if List.CodeField.Value() <> 'A' then
+                        Error('expected the List to stay on A, got: %1', List.CodeField.Value());
                     List.Close();
                 end;
             }

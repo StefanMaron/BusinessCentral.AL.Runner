@@ -99,7 +99,7 @@ Issue #4727. After an action on a Card returns and the Card's stored row is no l
 table, BC's client closes the page: every later call on the TestPage variable, `Close()`
 included, raises "The TestPage is not open." It does not matter whether the action called
 `CurrPage.Update`, or whether the action or the test deleted the row. A List in the same
-shape moves to the neighbouring row instead (#4747, not reproduced yet).
+shape moves to a neighbouring row instead; see the next section.
 
 What BC raises, on every cloud leg: `AGR:A;ActionBegin;ActionEnd;AGR:B;ClosePage;` with a
 neighbour `B`, `AGR:A;ActionBegin;ActionEnd;ClosePage;` without one. So `OnClosePage` runs, and
@@ -122,6 +122,43 @@ that renames the current row through another record variable: the key lookup mis
 runner closes the Card; what BC does there is unmeasured.
 
 Measured by corpus codeunit 67300; runner-side: `AlRunner.Tests/TestPageDeletedRowCloseTests.cs`.
+
+## A List whose row is gone moves to a neighbouring row
+
+Issue #4747. In the same shape a List page stays open and moves: to the next row in the page's
+key order, else the previous row when the deleted row was the last, else the blank new-row line
+when it was the only row. The row moved to raises `OnAfterGetRecord` and `OnAfterGetCurrRecord`;
+the deleted row raises neither. `CurrPage.Update(false)` in the action is not what moves it: an
+action that only deletes moves the page the same way.
+
+BC's first run read `AGR:A;ActionBegin;ActionEnd;AGR:B;AGR:B;AGCR:B;AGR:B;AGR:B;AGCR:B;` for rows
+`A` and `B` with `A` deleted. The corpus pins the row shown and the last trigger, not the count;
+the runner raises the pair once.
+
+`LiveNavTestPage.MoveOffDeletedRow` does it, from the same check as the Card close: it finds with
+`=><` from the key the buffer still holds, and falls back to `EnterNewRowLine`. Other page types,
+and a temporary source, are unmeasured and left where they are.
+
+A List that declares `OnFindRecord` moves through that trigger. Corpus arm
+`List_DeletedByAction_OnFindRecord_PicksTheRow` (page 67302: rows `A`, `B`, `C`, the action
+deletes `B` and from then on the trigger answers the first row) measured it on every cloud leg,
+27.0 through 28.5, in corpus run 36249132626 (corpus head `75a7e80c`), identically:
+
+```
+AGR:C;AGR:A;Find:=;AGR:A;AGCR:A;AGR:C;Find:=>;AGR:A;AGR:C;AGR:A;Find:=;AGR:A;AGCR:A;
+```
+
+So BC calls `OnFindRecord` three times after the action -- `=` for the gone row, `=>` for the
+rows from there on, `=` again for the row it settled on -- and shows `A`, where the default
+re-read of a deleted middle row lands on `C`. The arm pins the three `Which` strings in order,
+the row shown, and `OnAfterGetCurrRecord` for `A` last; `MoveOffDeletedRow` makes the same three
+calls. It does not reproduce the `OnAfterGetRecord` reads of the other rows around them.
+
+Unmeasured: a trigger that answers `false` to the first `=` -- the common pass-through
+`exit(Rec.Find(Which))` does, on the deleted key. The runner then calls it with `=><`, which
+lands a pass-through trigger where the default re-read does.
+
+Measured by corpus codeunit 67300's `List_DeletedByAction_*` arms; runner-side: the same test file.
 
 ## What is deliberately not reproduced
 
