@@ -343,7 +343,8 @@ codeunit 62612 "AGV B Tests"
     // #4448: a PRECOMPILED dependency .app that only a sibling app group declares. In the
     // combined runner-extras run, xmlport-precompiled-dep-metadata declares "XPD Precompiled
     // XmlPort Dep" (table 61600, xmlport 61602) and B declares nothing, so none of its objects
-    // may appear here. The positive control is XPD Tests' own *_OwnPrecompiledDependency_IsListed.
+    // may appear here. The positive control is AGVI Tests (app-group-visibility-install-dep), whose
+    // group declares its package and lists it.
     // In the c+b ordered-bundle step XPD is not registered at all, so these hold trivially there.
     [Test]
     procedure AllObj_PrecompiledDepOfUnrelatedGroup_IsNotListed()

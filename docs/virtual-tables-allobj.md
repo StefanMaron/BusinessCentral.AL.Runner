@@ -237,12 +237,12 @@ EXEC-FAIL in every non-declaring group.
 
 Proven by `tests/runner-extras/app-group-visibility-b` (the `*_PrecompiledDepOfUnrelatedGroup_*`
 tests: nothing of `xmlport-precompiled-dep-metadata`'s or `app-group-visibility-install-dep`'s
-package is listed to B), `xmlport-precompiled-dep-metadata` and `app-group-visibility-install-dep`
-(each declaring group still lists its own package; the latter's install trigger errors unless it
-sees its own table), `app-group-visibility-floor` (Base Application stays listed to a group that
-reaches no floor app), and `AlRunner.Tests/PackageObjectVisibilityTests`. All four runner-extras
-suites are meaningful only in the combined `tests/runner-extras` run, where every one of those
-packages is registered.
+package is listed to B), `app-group-visibility-install-dep` (the declaring group lists its own
+package, and the package's install trigger errors unless it sees its own table),
+`app-group-visibility-floor` (Base Application stays listed to a group that reaches no floor app),
+and `AlRunner.Tests/PackageObjectVisibilityTests`. The runner-extras half is meaningful only in the
+combined `tests/runner-extras` run, where every one of those packages is registered;
+`app-group-visibility-floor` fails when run on its own, because nothing registers Base Application.
 
 <a id="multi-bundle-metatable-cache"></a>
 

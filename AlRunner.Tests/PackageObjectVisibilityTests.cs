@@ -1,7 +1,7 @@
 // #4448: which objects of registered precompiled .app packages the app-group filter may hide.
-// The CLI half is proven by tests/runner-extras (AGV B Tests' *_PrecompiledDepOfUnrelatedGroup_
-// IsNotListed, XPD Tests' AllObj_OwnPrecompiledDependency_IsListed, AGV A Tests'
-// AllObj_MicrosoftFloorTable_StaysVisible); this file pins the decision function.
+// The CLI half is proven by tests/runner-extras (app-group-visibility-b's
+// *_PrecompiledDepOfUnrelatedGroup_IsNotListed, app-group-visibility-install-dep and
+// app-group-visibility-floor); this file pins the decision function.
 using AlRunner;
 using AlRunner.Patches;
 using Xunit;
