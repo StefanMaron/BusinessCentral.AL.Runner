@@ -4,7 +4,7 @@
 // (corpus codeunit 67300, the Corpus-PR line on the PR that added this file): once an action on
 // a Card returns and the Card's stored row is gone, the TestPage is no longer open. This pins
 // the runner's wiring: the check runs after every action, only a Card closes, and a row the
-// table still holds leaves the page open.
+// table still holds, or never held, leaves the page open.
 //
 // The fixture declares no "application", per .claude/rules/no-base-app-in-csharp-tests.md.
 
@@ -44,8 +44,8 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
         var (exit, output) = Spawn(_root, pkg);
 
         // Each arm asserts inside AL; the counts separate "passed" from "discovered nothing".
-        Assert.True(output.Contains("passed 7 "),
-            $"expected all seven arms to pass; exit={exit}\n{output}");
+        Assert.True(output.Contains("passed 9 "),
+            $"expected all nine arms to pass; exit={exit}\n{output}");
         Assert.Contains("failed 0 ", output);
     }
 
@@ -256,6 +256,37 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
                     Card.DoNothing.Invoke();
                     if Card.CodeField.Value() <> '' then
                         Error('expected the blank new row, got: %1', Card.CodeField.Value());
+                    Card.Close();
+                end;
+
+                // A Card that never read a stored row is not closed by an action either: OpenEdit on
+                // an empty table shows a blank row the table never held (corpus 67300).
+                [Test]
+                procedure Card_OpenEdit_EmptyTable_ActionStaysOpen()
+                var
+                    Row: Record "TDR Row";
+                    Card: TestPage "TDR Card";
+                begin
+                    Row.DeleteAll();
+                    Card.OpenEdit();
+                    Card.DoNothing.Invoke();
+                    if Card.CodeField.Value() <> '' then
+                        Error('expected the blank row, got: %1', Card.CodeField.Value());
+                    Card.Close();
+                end;
+
+                // The same for a filter that matches no stored row (corpus 67300).
+                [Test]
+                procedure Card_OpenEdit_FilterMatchesNothing_ActionStaysOpen()
+                var
+                    Card: TestPage "TDR Card";
+                begin
+                    Seed();
+                    Card.OpenEdit();
+                    Card.Filter.SetFilter(Code, 'Q');
+                    Card.DoNothing.Invoke();
+                    if Card.CodeField.Value() = 'A' then
+                        Error('expected the Card not to show the filtered-out row A');
                     Card.Close();
                 end;
 

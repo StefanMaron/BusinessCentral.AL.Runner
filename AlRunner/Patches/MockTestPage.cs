@@ -68,10 +68,12 @@ internal partial class LiveNavTestPage : MockITestPage
     // row OpenNew starts is not gone, and stays open. A List moves to a neighbour instead, which
     // the runner does not do yet (#4747); a temporary source is unmeasured. Corpus 67300, #4727.
     // OnQueryClosePage is not raised: the measured page declares none, so that is unmeasured.
+    // A row the page never read from the table carries no SystemId -- the blank row OpenEdit shows
+    // on an empty table or under a filter matching nothing -- and BC keeps that Card open.
     internal void CloseIfCurrentRowDeleted(bool wasOnNewRow)
     {
         if (wasOnNewRow || _page == null || _record is not { IsTemporary: false } record
-            || RowExistsInTable(record))
+            || record.SystemId.Value == Guid.Empty || RowExistsInTable(record))
             return;
         if (RecordPatches.TryGetAnyPageType(_pageId) != "Card") return;
         _page.RaiseOnClosePageTrigger();

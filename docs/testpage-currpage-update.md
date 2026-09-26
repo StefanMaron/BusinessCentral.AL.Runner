@@ -108,13 +108,18 @@ nothing runs for the deleted row after the action, `OnAfterGetCurrRecord` includ
 (see "What is deliberately not reproduced").
 
 The untouched row `OpenNew` starts is not in the table either, but it is not deleted: an action
-on it leaves the Card open, showing the blank row.
+on it leaves the Card open, showing the blank row. So does a Card opened with `OpenEdit` that
+never showed a stored row: an empty table, or a filter matching nothing.
 
 `LiveNavTestAction.Invoke` calls `LiveNavTestPage.CloseIfCurrentRowDeleted` after the
 `OnAction` trigger. When the page is a Card, the row was not a pending new row before the action,
-and a key lookup does not find it, that raises `OnClosePage` and detaches the TestPage
+the buffer carries a `SystemId` (it was read from, or inserted into, the table; the blank row of
+an empty table or a no-match filter has none), and a key lookup does not find it, that raises
+`OnClosePage` and detaches the TestPage
 (`MarkDetached`, the same state a `Close()` leaves). `OnQueryClosePage` is not raised: the
-measured page declares none. A temporary source is unmeasured and stays open.
+measured page declares none. A temporary source is unmeasured and stays open. So is an action
+that renames the current row through another record variable: the key lookup misses and the
+runner closes the Card; what BC does there is unmeasured.
 
 Measured by corpus codeunit 67300; runner-side: `AlRunner.Tests/TestPageDeletedRowCloseTests.cs`.
 
