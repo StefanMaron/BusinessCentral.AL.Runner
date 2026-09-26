@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **metadata:** serve XMLport Metadata (2000000280) through BC's own XmlPortDataProvider
 - **testpage:** find a precompiled pageextension control bound to a tableextension field
 - **testpage:** a Card closes when an action leaves its row deleted; pin the unsaved-new-row refresh cases
 - **metadata:** HelpLink derives from the app manifest's ContextSensitiveHelpUrl
