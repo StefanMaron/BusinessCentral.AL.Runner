@@ -76,10 +76,13 @@ The shape is Base Application's "User Card" (page 9807): its pageextension 9807 
 `LiveNavTestPage` answers the question through `RunnerPageInstance.IsCurrentRowUnsavedNewRow`:
 the row is a pending insert **and** a key lookup does not find it. The second half keeps a
 trigger that inserts the row itself and then calls `CurrPage.Update` (Customer Card's insert
-from a template) on the full pair. A temporary source table is left on the full pair, because
-the key lookup reads the stored table, which never holds a temporary row.
+from a template) on the full pair. A temporary source table cannot use that lookup, because
+the stored table never holds a temporary row, so its row is asked of its own buffer through
+BC's `NavRecord.HasBeenInserted`, whose temporary branch is `ExistsAsync(ALRecordId)` (#4712).
 
-Measured by corpus codeunit 60893 "ALT Page Update New Row Test"; runner-side,
+Measured by corpus codeunit 60893 "ALT Page Update New Row Test", and for a temporary source by
+corpus codeunit 60872 "ALT Page Update Temp New Test", which also pins the exact `OpenNew` trace
+as two `OnAfterGetCurrRecord` and no `OnAfterGetRecord`; runner-side,
 `AlRunner.Tests/CurrPageUpdateNewRowTests.cs`. Not measured: `CurrPage.Update(false)` from a
 field's `OnValidate` on a DelayedInsert row that is still unsaved. The same guard applies to it.
 

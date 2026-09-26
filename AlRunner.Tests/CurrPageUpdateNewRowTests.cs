@@ -8,7 +8,8 @@
 //
 // The shape is Base Application page 9807 "User Card" plus its pageextension 9807: a
 // DelayedInsert card whose OnAfterGetCurrRecord calls CurrPage.Update(false), and whose
-// OnAfterGetRecord runs Rec.TestField on a field a new row leaves blank.
+// OnAfterGetRecord runs Rec.TestField on a field a new row leaves blank. The temporary-source
+// arms are #4712 (corpus codeunit 60872).
 //
 // The fixture declares no "application", per .claude/rules/no-base-app-in-csharp-tests.md.
 
@@ -48,8 +49,8 @@ public sealed class CurrPageUpdateNewRowTests : IDisposable
         var (exit, output) = Spawn(_root, pkg);
 
         // Each arm asserts inside AL; the counts separate "passed" from "discovered nothing".
-        Assert.True(output.Contains("passed 3 "),
-            $"expected all three arms to pass; exit={exit}\n{output}");
+        Assert.True(output.Contains("passed 5 "),
+            $"expected all five arms to pass; exit={exit}\n{output}");
         Assert.Contains("failed 0 ", output);
     }
 
@@ -137,6 +138,47 @@ public sealed class CurrPageUpdateNewRowTests : IDisposable
             }
             """);
 
+        // The same card over a TEMPORARY source (#4712): the unsaved row is asked of the page's
+        // temporary buffer, which the stored-table probe cannot see.
+        File.WriteAllText(Path.Combine(_root, "TempCard.Page.al"), """
+            page 90474 "NRU Temp Card"
+            {
+                PageType = Card;
+                SourceTable = "NRU Row";
+                SourceTableTemporary = true;
+                DelayedInsert = true;
+                layout
+                {
+                    area(Content)
+                    {
+                        field(NameField; Rec.Name)
+                        {
+                            ApplicationArea = All;
+                            trigger OnValidate()
+                            begin
+                                CurrPage.Update();
+                            end;
+                        }
+                    }
+                }
+                trigger OnInsertRecord(BelowxRec: Boolean): Boolean
+                begin
+                    Rec.Id := CreateGuid();
+                end;
+                trigger OnAfterGetRecord()
+                begin
+                    Trace.Note('AGR:' + Rec.Name);
+                end;
+                trigger OnAfterGetCurrRecord()
+                begin
+                    Trace.Note('AGCR');
+                    CurrPage.Update(false);
+                end;
+                var
+                    Trace: Codeunit "NRU Trace";
+            }
+            """);
+
         File.WriteAllText(Path.Combine(_root, "Test.Codeunit.al"), """
             codeunit 90473 "NRU Test"
             {
@@ -172,6 +214,35 @@ public sealed class CurrPageUpdateNewRowTests : IDisposable
                     Card.NameField.SetValue('NRU4698');
                     if StrPos(Trace.Get(), 'AGR:NRU4698;') = 0 then
                         Error('OnAfterGetRecord must run for the row CurrPage.Update() saved: %1', Trace.Get());
+                    Card.Close();
+                end;
+
+                // Temporary source, #4712: the exact trace, so the refresh's own
+                // OnAfterGetCurrRecord is pinned as well as the missing OnAfterGetRecord.
+                [Test]
+                procedure TempSource_OpenNew_RaisesOnAfterGetCurrRecordOnly()
+                var
+                    Card: TestPage "NRU Temp Card";
+                begin
+                    Trace.Reset();
+                    Card.OpenNew();
+                    if Trace.Get() <> 'AGCR;AGCR;' then
+                        Error('expected AGCR;AGCR; for the unsaved temporary row, got: %1', Trace.Get());
+                    Card.Close();
+                end;
+
+                // Temporary source, the saved side: the row is now in the temporary buffer, so
+                // the refresh re-reads it and OnAfterGetRecord runs.
+                [Test]
+                procedure TempSource_SetValue_SavedByCurrPageUpdate_RaisesOnAfterGetRecord()
+                var
+                    Card: TestPage "NRU Temp Card";
+                begin
+                    Card.OpenNew();
+                    Trace.Reset();
+                    Card.NameField.SetValue('NRU4712');
+                    if StrPos(Trace.Get(), 'AGR:NRU4712;') = 0 then
+                        Error('OnAfterGetRecord must run for the saved temporary row: %1', Trace.Get());
                     Card.Close();
                 end;
 
