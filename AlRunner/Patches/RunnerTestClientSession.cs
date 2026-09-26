@@ -126,7 +126,8 @@ public sealed class RunnerTestClientSession : ITestClientSession
     /// clone) but not the page, so it is neither shown nor stored by the page's save. Corpus
     /// codeunit 67361 (#4752), every cloud leg. A row the table does not hold
     /// keeps the caller's values — a missed Find leaves the fields alone
-    /// (<c>PageOpensOnStoredRowTests</c> pins it).
+    /// (<c>PageOpensOnStoredRowTests</c> pins it). A temporary record re-reads from its temporary
+    /// table, FlowFields included — do not skip it for <c>IsTemporary</c> (corpus codeunit 67363, #4762).
     /// </summary>
     private static void RereadCallerRow(NavRecord record)
         => record.ALFind(DataError.TrapError, "=");
