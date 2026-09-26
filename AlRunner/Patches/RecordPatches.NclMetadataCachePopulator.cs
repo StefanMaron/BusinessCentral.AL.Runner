@@ -432,8 +432,11 @@ public static partial class RecordPatches
     /// PopulateNclMetadataCache eagerly builds every parsed table into it, and .app-fallback
     /// tables enter it the moment anything touches them. A table absent from the cache has
     /// never been instantiated in this run, therefore holds no rows, and BC's propagation
-    /// over it would find nothing to update anyway. Virtual tables (id ≥ 2,000,000,000) are
-    /// excluded exactly as GetSnapshotOfAllNonVirtualMetaTables excludes them.</para>
+    /// over it would find nothing to update anyway.</para>
+    /// <para>System tables are IN that snapshot unless BC classifies them virtual or
+    /// application-database (<see cref="IsInBcNonVirtualSnapshot"/>) — so "User Personalization"
+    /// follows an All Profile rename and "Tenant Profile Page Metadata" a Tenant Profile one
+    /// (#2325). Excluding every id ≥ 2,000,000,000 dropped both.</para>
     /// </summary>
     public static NCLMetaFieldRelation[] NCLMetaTable_ComputeReferencingRelations(
         object appGroup, NCLMetaTable context)
@@ -442,7 +445,7 @@ public static partial class RecordPatches
         foreach (var value in _metaTableCache.Values)
         {
             if (value is not NCLMetaTable child) continue;
-            if (child.TableId >= 2000000000) continue;
+            if (!IsInBcNonVirtualSnapshot(child.TableId)) continue;
             foreach (var field in child.Fields)
             {
                 var relations = field?.FieldRelations;
@@ -454,4 +457,67 @@ public static partial class RecordPatches
         }
         return result.ToArray();
     }
+
+    /// <summary>
+    /// Cecil-rewritten body for the static
+    /// <c>NavRecord.UpdateReferencesOnRenameAsync(NavRecord, NCLMetaTable, NCLMetaField, NavValue)</c>:
+    /// re-key every row of <paramref name="referencingRecord"/> inside the filters BC already set
+    /// on it, setting <paramref name="referencingField"/>'s key slot to <paramref name="valueToSet"/>.
+    /// <para>Observably equivalent: BC's body is the same loop — collect the primary keys of the
+    /// filtered rows, then per key Clear / ChangeCompany / Get / RenameAsync(ThrowError, false,
+    /// false) — with the keys collected through a provider query. TempTableDataProvider answers
+    /// SupportsQueries=false, on which BC's body returns having renamed nothing (a skip meant
+    /// for virtual tables, which the runner's reverse index never hands it). So the keys are
+    /// collected by iterating the record instead; the renames are BC's own.</para>
+    /// </summary>
+    public static System.Threading.Tasks.ValueTask NavRecord_UpdateReferencesOnRenameRows(
+        NavRecord referencingRecord, NCLMetaTable referencingTable, NCLMetaField referencingField, NavValue valueToSet)
+    {
+        var keyFields = referencingTable.PrimaryKey.KeyFieldsList;
+        int slot = keyFields.IndexOf(referencingField);
+        if (slot < 0)
+            throw new BcShapeGapException("rename propagation", "NCLMetaKey.KeyFieldsList",
+                $"field {referencingField.FieldNo} of table {referencingTable.TableId} was routed to the "
+                + "primary-key rename path but is not in the primary key");
+
+        // Collect first, rename after: renaming while iterating would move rows under the cursor.
+        var keys = new List<NavValue[]>();
+        if (referencingRecord.ALFindAsync(DataError.TrapError, "-").GetAwaiter().GetResult())
+        {
+            do
+                keys.Add(keyFields.Select(f => referencingRecord.GetFieldValue(f)).ToArray());
+            while (referencingRecord.ALNextAsync().GetAwaiter().GetResult() != 0);
+        }
+
+        foreach (var key in keys)
+        {
+            string company = referencingRecord.ALCurrentCompany;
+            referencingRecord.Clear();
+            referencingRecord.ALChangeCompany(company);
+            referencingRecord.ALGetAsync(DataError.ThrowError, key).GetAwaiter().GetResult();
+            key[slot] = valueToSet;
+            referencingRecord.RenameAsync(DataError.ThrowError, runApplicationTrigger: false,
+                runGlobalTrigger: false, key).GetAwaiter().GetResult();
+        }
+        return default;
+    }
+
+    /// <summary>
+    /// Would BC's <c>NCLMetadata.GetSnapshotOfAllNonVirtualMetaTables</c> contain this table?
+    /// An app table always; a system table when <c>PlatformMetadataProvider.GetSystemTables()</c>
+    /// lists it with a type other than VirtualTable or ApplicationDatabaseTable — the same
+    /// source and the same filter <c>BuildAllNonVirtualMetaTableSnapshotListFromDatabase</c> uses.
+    /// </summary>
+    internal static bool IsInBcNonVirtualSnapshot(int tableId)
+        => tableId < 2000000000 || BcNonVirtualSystemTableIds.Value.Contains(tableId);
+
+    private static readonly Lazy<HashSet<int>> BcNonVirtualSystemTableIds = new(() =>
+    {
+        var ids = new HashSet<int>();
+        foreach (var entry in PlatformMetadataProvider.Instance.GetSystemTables())
+            if (entry.Value.Type != NavSystemTableType.ApplicationDatabaseTable
+                && entry.Value.Type != NavSystemTableType.VirtualTable)
+                ids.Add(entry.Key);
+        return ids;
+    });
 }

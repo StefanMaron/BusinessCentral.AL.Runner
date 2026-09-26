@@ -1411,6 +1411,44 @@ public static partial class NclCecilRewrite
             ReplaceBodyWithHelper(asm.MainModule, validateAccess, validateHelper);
             Console.Error.WriteLine(
                 "[Cecil] Rewrote CompanyHelper.ValidateUserHasAccessToCompany → single-company check");
+
+            // 8e-2. `session.License.CompanyNameFilter` inside CompanyHelper (its async bodies
+            //     live in nested state machines) → CompanyAccessPatches.UnlicensedCompanyNameFilter.
+            //     Only the license read is redirected; BC's Company-table read around it runs as
+            //     shipped. Stack shape is unchanged: NavSession in, string out (#2325).
+            var filterHelper = asm.MainModule.ImportReference(
+                typeof(AlRunner.Patches.CompanyAccessPatches).GetMethod(
+                    nameof(AlRunner.Patches.CompanyAccessPatches.UnlicensedCompanyNameFilter),
+                    BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] CompanyAccessPatches.UnlicensedCompanyNameFilter not found"));
+            int licenseReads = 0;
+            foreach (var t in new[] { companyHelperType }.Concat(companyHelperType.NestedTypes))
+                foreach (var m in t.Methods.Where(x => x.HasBody))
+                {
+                    var ins = m.Body.Instructions;
+                    for (int i = 0; i + 1 < ins.Count; i++)
+                    {
+                        if (ins[i].Operand is not MethodReference lic
+                            || lic.Name != "get_License"
+                            || lic.DeclaringType.FullName != "Microsoft.Dynamics.Nav.Runtime.NavSession"
+                            || ins[i + 1].Operand is not MethodReference filter
+                            || filter.Name != "get_CompanyNameFilter")
+                            continue;
+                        ins[i].OpCode = OpCodes.Call;
+                        ins[i].Operand = filterHelper;
+                        ins[i + 1].OpCode = OpCodes.Nop;
+                        ins[i + 1].Operand = null;
+                        licenseReads++;
+                    }
+                }
+            // GetAllCompaniesAsync alone reads it once, so zero means BC moved the read.
+            if (licenseReads == 0)
+                throw new InvalidOperationException(
+                    "[Cecil] no session.License.CompanyNameFilter read found in CompanyHelper — "
+                    + "Ncl shape changed; GetAllCompaniesAsync would NRE again. Do not commit.");
+            Console.Error.WriteLine(
+                $"[Cecil] Redirected {licenseReads} CompanyHelper license company-filter read(s) → unlicensed (no filter)");
         }
 
         // 8f. SessionTransactionExtensions.Rollback — see RecordPatches.RollbackToCommitPoint.

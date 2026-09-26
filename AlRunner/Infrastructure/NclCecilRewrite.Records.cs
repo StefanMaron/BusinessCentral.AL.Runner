@@ -1759,6 +1759,26 @@ public static partial class NclCecilRewrite
                     + "write guard - an app-owned profile would silently be deletable.");
             Console.Error.WriteLine(
                 $"[Cecil] Prepended All Profile write guards -> {profileGuarded} NavRecord AL write entry point(s)");
+
+            // An All Profile key change renames the Tenant Profile row on a real tier; run
+            // that row's rename propagation too (#2325). Prepended to the private
+            // UpdateReferencesOnRenameAsync(List, NavRecord) — reached only after a rename
+            // succeeded, with `this` = new key, arg 2 = old key. Its static 4-arg overload
+            // (the per-referencing-row rename) is a different method and is not touched.
+            var updateRefs = navRecordForProfileGuard.Methods.SingleOrDefault(m =>
+                    m.Name == "UpdateReferencesOnRenameAsync" && m.HasThis && m.HasBody
+                    && m.Parameters.Count == 2
+                    && m.Parameters[1].ParameterType.FullName == "Microsoft.Dynamics.Nav.Runtime.NavRecord")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NavRecord.UpdateReferencesOnRenameAsync(List, NavRecord) not found — Ncl shape "
+                    + "changed; a tenant profile rename would silently leave its page metadata behind");
+            PrependStaticCall(asm.MainModule, updateRefs,
+                typeof(AlRunner.Patches.AllProfileWritePatches).GetMethod(
+                    nameof(AlRunner.Patches.AllProfileWritePatches.CascadeTenantProfileRename),
+                    BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "AllProfileWritePatches.CascadeTenantProfileRename not found"),
+                argSlots: 3);
         }
 
         // -- NavDesignerALFunctions.CopyProfile refusal (#2324) ----------------------------

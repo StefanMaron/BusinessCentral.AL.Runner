@@ -1346,6 +1346,19 @@ public static partial class NclCecilRewrite
                 ByParams(Rt + "NCLMetaTable", "ComputeReferencingRelations", "NavAppGroup", "NCLMetaTable"),
                 H(recordPatches, "NCLMetaTable_ComputeReferencingRelations"));
 
+            // ── Rename propagation into a referencing PRIMARY-KEY field (#2325) ──
+            // BC re-keys those rows one by one here (the static UpdateReferencesOnRenameAsync/4),
+            // which skips any table whose provider answers SupportsQueries=false — every
+            // TempTableDataProvider. See RecordPatches.NavRecord_UpdateReferencesOnRenameRows.
+            // Trap: BC's other route, the bulk ModifyOrRenameAllRecordsAsync, is unreachable
+            // today only because CanUseBulkModifyAll reads RequiresSecurityFiltersValidation,
+            // which answers true on the skeleton. If that changes, it will not re-key either:
+            // TempTableDataProvider.ModifyAll never moves a row in its primary tree.
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NavRecord", "UpdateReferencesOnRenameAsync",
+                    "NavRecord", "NCLMetaTable", "NCLMetaField", "NavValue"),
+                H(recordPatches, "NavRecord_UpdateReferencesOnRenameRows"));
+
             // ── RecordLink.MoveLinksAsync(NavRecord,NavRecord) static → ReturnValueTask2 ──
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "RecordLink", "MoveLinksAsync", "NavRecord", "NavRecord"),

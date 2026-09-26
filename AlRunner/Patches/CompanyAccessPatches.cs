@@ -53,6 +53,22 @@ public static class CompanyAccessPatches
             System.StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Stands in for <c>session.License.CompanyNameFilter</c> inside <c>CompanyHelper</c>'s
+    /// Company-table reads (Cecil redirects each <c>get_License</c> → <c>get_CompanyNameFilter</c>
+    /// pair there to this). The runner runs unlicensed, and <c>NavSession.get_License()</c>
+    /// NREs on the skeleton — which took down every caller of
+    /// <c>CompanyHelper.GetAllCompaniesAsync</c>, including rename propagation from a
+    /// per-tenant table into a per-company one (#2325).
+    ///
+    /// <para>Observably equivalent: an empty filter is what a license with no company
+    /// restriction answers, and BC's bodies then read the Company table unfiltered — which is
+    /// exactly what they still do here, over the runner's own Company rows. Trap: a test that
+    /// needs a company-RESTRICTED license cannot be expressed in this runner at all.</para>
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static string? UnlicensedCompanyNameFilter(object? session) => null;
+
     private static FieldInfo? _fCompanyName;
 
     /// <summary>The session's company display name, read off BC's own NavCompany.</summary>
