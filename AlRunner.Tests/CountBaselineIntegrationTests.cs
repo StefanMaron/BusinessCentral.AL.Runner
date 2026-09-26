@@ -218,7 +218,7 @@ public sealed class CountBaselineIntegrationTests : IDisposable
         // The underlying tests themselves must NOT have failed — this exit code is
         // attributable ONLY to the count guard, not to a real test failure. Proves the
         // guard is a distinct signal, not a relabeling of the existing fail-count gate.
-        Assert.DoesNotContain("FAIL  Codeunit", output);
+        Assert.Empty(RunnerFailureLines.All(output));
     }
 
     /// <summary>GREEN (unchanged run): a baseline exactly matching the actual count never fails.</summary>
@@ -259,7 +259,7 @@ public sealed class CountBaselineIntegrationTests : IDisposable
         Assert.Contains("expected 1", output);
         Assert.Contains("actual 2", output);
         Assert.Contains(_baselinePath, output);
-        Assert.DoesNotContain("FAIL  Codeunit", output);
+        Assert.Empty(RunnerFailureLines.All(output));
     }
 
     /// <summary>
@@ -360,7 +360,7 @@ public sealed class CountBaselineIntegrationTests : IDisposable
         // Both conditions genuinely hold in this run — otherwise the assertion below is
         // about nothing. A test really failed:
         Assert.Contains("FailFixtureSecondFailsDeliberately", output);
-        Assert.Contains("FAIL  Codeunit", output);
+        Assert.NotEmpty(RunnerFailureLines.All(output));
         // ...and the count really mismatched:
         Assert.Contains("[count-baseline] DROP", output);
         Assert.Contains($"suite '{_failSuiteKey}'", output);
@@ -391,7 +391,7 @@ public sealed class CountBaselineIntegrationTests : IDisposable
 
         var (output, exit) = RunRunnerOn(_failRoot);
 
-        Assert.Contains("FAIL  Codeunit", output);
+        Assert.NotEmpty(RunnerFailureLines.All(output));
         Assert.DoesNotContain("[count-baseline] DROP", output);
         Assert.DoesNotContain("[count-baseline] GROWTH", output);
         Assert.Equal(1, exit);

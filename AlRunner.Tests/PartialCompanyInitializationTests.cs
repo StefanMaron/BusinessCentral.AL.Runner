@@ -121,8 +121,8 @@ public sealed class PartialCompanyInitializationTests
         var run = RunRunner(cache, injectAbort: true, outPath: outPath, junitPath: junitPath);
 
         // The results are NOT discarded — that is the half of the decision this test protects.
-        Assert.Contains("Tests:         1 total", run.Output);
-        Assert.Contains("pass:        1", run.Output);
+        Assert.Contains("Tests: 1 ", run.Output);
+        Assert.Contains("passed 1 ", run.Output);
 
         // Exit 2 exactly: not 0 (the run is not clean), and not 1, which would say a test
         // failed when none did.
@@ -244,7 +244,7 @@ public sealed class PartialCompanyInitializationTests
         Assert.True(run.Exit == 1,
             $"a failing test earns exit 1; the abort must not replace it with 2. "
             + $"exit={run.Exit}\n{run.Output}");
-        Assert.Contains("fail:        1", run.Output);
+        Assert.Contains("failed 1 ", run.Output);
 
         // The condition is recorded on every surface — none of them is gated on the exit code,
         // and a reader of any one of them has to be able to tell that the failing test ran

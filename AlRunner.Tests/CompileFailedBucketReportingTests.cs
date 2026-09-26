@@ -76,19 +76,15 @@ public sealed class CompileFailedBucketReportingTests
         Assert.Contains(CompileError, output, StringComparison.Ordinal);
     }
 
-    /// <summary>The Tests block — every line from "Tests:" to the timings.</summary>
+    /// <summary>
+    /// The test totals: the counts line up to its `Time:` part (#4562), which carries the wall
+    /// clock and so differs between any two renders.
+    /// </summary>
     private static string TestsBlock(string summary)
     {
-        var lines = summary.Replace("\r\n", "\n").Split('\n');
-        var sb = new System.Text.StringBuilder();
-        bool inBlock = false;
-        foreach (var line in lines)
-        {
-            if (line.StartsWith("Tests:", StringComparison.Ordinal)) inBlock = true;
-            else if (inBlock && line.StartsWith("Time:", StringComparison.Ordinal)) break;
-            if (inBlock) sb.Append(line).Append('\n');
-        }
-        return sb.ToString();
+        var line = summary.Replace("\r\n", "\n").Split('\n')
+            .Single(l => l.StartsWith("Tests:", StringComparison.Ordinal));
+        return line.Split("Time:")[0];
     }
 
     /// <summary>
@@ -147,8 +143,8 @@ public sealed class CompileFailedBucketReportingTests
     {
         var output = Summarise(CleanBucket(), CompileFailedBucket());
 
-        Assert.Contains("Tests:         1 total", output, StringComparison.Ordinal);
-        Assert.Contains("  pass:        1", output, StringComparison.Ordinal);
-        Assert.Contains("  fail:        0", output, StringComparison.Ordinal);
+        Assert.Contains("Tests: 1 ", output, StringComparison.Ordinal);
+        Assert.Contains("passed 1 ", output, StringComparison.Ordinal);
+        Assert.Contains("failed 0 ", output, StringComparison.Ordinal);
     }
 }

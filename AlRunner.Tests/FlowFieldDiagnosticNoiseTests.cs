@@ -91,7 +91,7 @@ public sealed class FlowFieldDiagnosticNoiseTests
 
     private static void AssertFixturePassed(string stdout, string stderr, int exit)
     {
-        Assert.True(exit == 0 && stdout.Contains("pass:        2") && stdout.Contains("fail:        0"),
+        Assert.True(exit == 0 && stdout.Contains("passed 2 ") && stdout.Contains("failed 0 "),
             $"fixture must compile and pass cleanly (exit {exit}):\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}");
     }
 

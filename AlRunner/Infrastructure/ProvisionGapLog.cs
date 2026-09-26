@@ -18,10 +18,13 @@
 //   bottom of the run concludes their AL is broken. It is not; their package cache is
 //   unprovisioned, and the runner said so, 2,600 lines earlier.
 //
-// A COLLECTOR, NOT A REPLACEMENT
-//   Report still writes to stderr exactly as before (.claude/rules/loud-failures.md — nothing
-//   here gets quieter) and only ALSO records. The summary is a second, findable statement of
-//   the same thing, not a relocation of the first.
+// PRINTED ONCE, AT THE END (#4560)
+//   Every gap reaches the "Action needed" block right before the Result line, once per app —
+//   printing each at discovery too repeated it per dependency edge (17 blocks for 7 apps).
+//   --verbose still prints it at discovery. Nothing is dropped: every bucket, including one
+//   that failed to compile or execute, carries its gaps to that block, and an abort out of the
+//   bundle loop prints them first (Reporter.PrintActionNeededOnAbort, #4636). A run that prints no
+//   such block (--output-json, --server) keeps the discovery write: see DeferToActionNeeded.
 namespace AlRunner.Infrastructure;
 
 internal static class ProvisionGapLog
@@ -39,10 +42,23 @@ internal static class ProvisionGapLog
         lock (_lock) _gaps = new List<string>();
     }
 
-    /// <summary>Report one gap: loud on stderr (unchanged), and recorded for the summary.</summary>
+    /// <summary>
+    /// Set only by a run whose closing "Action needed" block will print the collected gaps
+    /// (#4560). Left false — --output-json, --server — every gap is written to stderr at
+    /// discovery, because nothing else would ever print it (loud-failures.md).
+    /// </summary>
+    internal static bool DeferToActionNeeded { get; set; }
+
+    /// <summary>Whether a gap is written at the moment it is found.</summary>
+    internal static bool WriteAtDiscovery => Log.Verbose || !DeferToActionNeeded;
+
+    /// <summary>
+    /// Report one gap: recorded for the run's closing "Action needed" block, which prints it
+    /// once per app (#4560); written at discovery too when <see cref="WriteAtDiscovery"/>.
+    /// </summary>
     internal static void Report(string message)
     {
-        Console.Error.WriteLine(message);
+        if (WriteAtDiscovery) Console.Error.WriteLine(message);
         lock (_lock) _gaps.Add(message);
     }
 

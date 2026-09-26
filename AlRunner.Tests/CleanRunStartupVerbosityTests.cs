@@ -138,7 +138,7 @@ public sealed class CleanRunStartupVerbosityTests
         try
         {
             var (output, exit) = Run(alCacheDir);
-            Assert.True(exit == 0 && output.Contains("pass:        1"),
+            Assert.True(exit == 0 && output.Contains("passed 1 "),
                 $"fixture must compile and pass cleanly:\n{output}");
 
             foreach (var fragment in ColdRunBookkeepingLineFragments)
@@ -162,7 +162,7 @@ public sealed class CleanRunStartupVerbosityTests
         try
         {
             var (output, exit) = Run(alCacheDir, "--verbose");
-            Assert.True(exit == 0 && output.Contains("pass:        1"),
+            Assert.True(exit == 0 && output.Contains("passed 1 "),
                 $"fixture must compile and pass cleanly:\n{output}");
 
             foreach (var fragment in ColdRunBookkeepingLineFragments)
@@ -187,11 +187,11 @@ public sealed class CleanRunStartupVerbosityTests
         try
         {
             var (coldOutput, coldExit) = Run(alCacheDir);
-            Assert.True(coldExit == 0 && coldOutput.Contains("pass:        1"),
+            Assert.True(coldExit == 0 && coldOutput.Contains("passed 1 "),
                 $"cold run must compile and pass cleanly:\n{coldOutput}");
 
             var (warmOutput, warmExit) = Run(alCacheDir);
-            Assert.True(warmExit == 0 && warmOutput.Contains("pass:        1"),
+            Assert.True(warmExit == 0 && warmOutput.Contains("passed 1 "),
                 $"warm run must compile and pass cleanly:\n{warmOutput}");
             Assert.DoesNotContain("[cache] HIT", warmOutput);
             Assert.DoesNotContain("[cache] MISS", warmOutput);
@@ -211,12 +211,12 @@ public sealed class CleanRunStartupVerbosityTests
         try
         {
             var (coldOutput, coldExit) = Run(alCacheDir, "--verbose");
-            Assert.True(coldExit == 0 && coldOutput.Contains("pass:        1"),
+            Assert.True(coldExit == 0 && coldOutput.Contains("passed 1 "),
                 $"cold run must compile and pass cleanly:\n{coldOutput}");
             Assert.Contains("[cache] MISS", coldOutput);
 
             var (warmOutput, warmExit) = Run(alCacheDir, "--verbose");
-            Assert.True(warmExit == 0 && warmOutput.Contains("pass:        1"),
+            Assert.True(warmExit == 0 && warmOutput.Contains("passed 1 "),
                 $"warm run must compile and pass cleanly:\n{warmOutput}");
             Assert.Contains("[cache] HIT", warmOutput);
         }
@@ -239,7 +239,7 @@ public sealed class CleanRunStartupVerbosityTests
         try
         {
             var (output, exit) = Run(alCacheDir);
-            Assert.True(exit == 0 && output.Contains("pass:        1"),
+            Assert.True(exit == 0 && output.Contains("passed 1 "),
                 $"fixture must compile and pass cleanly:\n{output}");
 
             Assert.Contains("[bc] selected BC ", output);
@@ -300,7 +300,7 @@ public sealed class CleanRunStartupVerbosityTests
             var args = new List<string> { "--bc-version", prefix };
             args.AddRange(extraArgs);
             var (output, exit) = RunIn(Path.Combine(scratch, "cwd"), app, cache, artifactsRoot, args.ToArray());
-            Assert.True(exit == 0 && output.Contains("pass:        1"),
+            Assert.True(exit == 0 && output.Contains("passed 1 ", StringComparison.Ordinal),
                 $"fixture must compile and pass cleanly:\n{output}");
             return (output, exit);
         }

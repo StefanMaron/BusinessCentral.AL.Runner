@@ -166,7 +166,7 @@ public class WatchTests
             var cycle1 = Segment(0, m1);
             Assert.Contains("PASS", cycle1);
             Assert.Contains("Insert_OnInsertReadsXRec_BuildsConcreteBeforeImage", cycle1);
-            Assert.DoesNotContain("FAIL  Codeunit", cycle1);
+            Assert.Empty(RunnerFailureLines.All(cycle1));
 
             // Edit ONLY the table trigger (+1 -> +9). The test still asserts '1', so
             // the next cycle MUST now FAIL — proving the edited table was reloaded

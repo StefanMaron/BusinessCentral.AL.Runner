@@ -101,8 +101,8 @@ bundled mode), `--cache`, `--classify`, `--count-baseline`, `--coverage`, `--cov
 `--filter`, `--guide`, `--help`, `--isolation {codeunit|test|disabled}` (alias `--test-isolation`),
 `--no-auto-provision`, `--no-cache`, `--no-strict-exit`, `--out`, `--output-json`,
 `--output-junit`, `--package-cache` (repeatable), `--per-suite`, `--preprocessor-symbols`,
-`--print-cache-key`, `--quiet`, `--server`, `--show-pass` (v1 back-compat; PASS lines are on by
-default in v2), `--strict` (back-compat; the default since the v2 cut), `--tdd`, `--test`,
+`--print-cache-key`, `--quiet`, `--server`, `--show-pass` (PASS lines; off by default since
+#4563), `--strict` (back-compat; the default since the v2 cut), `--tdd`, `--test`,
 `--test-timeout`, `--verbose`, `--version`, `--watch`. Subcommands: `provision`,
 `--precompile <input.app>`.
 

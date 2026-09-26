@@ -245,14 +245,15 @@ public sealed class BundleRootDeduplicationTests : IDisposable
 
         var single = RunRunner(fixture);
         Assert.True(single.exit == 0, single.output);
-        Assert.True(single.output.Contains("Tests:         1 total"), single.output);
+        Assert.True(single.output.Contains("Tests: 1 "), single.output);
 
         var doubled = RunRunner(fixture, fixture);
 
         Assert.True(doubled.exit == 0, doubled.output);
         // The count is the whole point of #2136: two arguments must not double it.
-        Assert.True(doubled.output.Contains("Tests:         1 total"), doubled.output);
-        Assert.True(doubled.output.Contains("Buckets:       1 total"), doubled.output);
+        Assert.True(doubled.output.Contains("Tests: 1 "), doubled.output);
+        // One app in the run: its progress line (printed only for more than one app, #4562) is absent.
+        Assert.True(!doubled.output.Contains("[1/2]") && !doubled.output.Contains("[2/2]"), doubled.output);
         Assert.True(doubled.output.Contains("duplicate bundle argument"), doubled.output);
     }
 
@@ -268,7 +269,7 @@ public sealed class BundleRootDeduplicationTests : IDisposable
         var r = RunRunner(fixture, copy);
 
         Assert.True(r.exit == 0, r.output);
-        Assert.True(r.output.Contains("Tests:         2 total"), r.output);
+        Assert.True(r.output.Contains("Tests: 2 "), r.output);
         Assert.True(!r.output.Contains("duplicate bundle argument"), r.output);
     }
 

@@ -253,9 +253,9 @@ public sealed class TddModeTests : IDisposable
         // The healthy sibling really ran, and the dropped objects' tests are SKIPPED, not
         // FAILED and not absent. `fail: 0` is the one that separates this from a --tdd run.
         Assert.Contains("UnrelatedTest_StillPasses", stdout);
-        Assert.Contains("  pass:        1", stdout);
-        Assert.Contains("  fail:        0", stdout);
-        Assert.Contains("  skipped:     7", stdout);
+        Assert.Contains("passed 1 ", stdout);
+        Assert.Contains("failed 0 ", stdout);
+        Assert.Contains("skipped 7 ", stdout);
         Assert.Contains("MissingProcedure_ReportsFailedNotVanished", stdout);
     }
 

@@ -162,7 +162,7 @@ public sealed class TestIsolationMethodAliasTests : IDisposable
         var (output, exit) = RunRunner("--test-isolation method");
 
         Assert.Equal(0, exit);
-        Assert.DoesNotContain("FAIL  Codeunit", output);
+        Assert.Empty(RunnerFailureLines.All(output));
         Assert.Contains("Step1_InsertsRow", output);
         Assert.Contains("Step2_ExpectsFreshTable", output);
     }
@@ -179,7 +179,7 @@ public sealed class TestIsolationMethodAliasTests : IDisposable
         var (output, exit) = RunRunner("--isolation method");
 
         Assert.Equal(0, exit);
-        Assert.DoesNotContain("FAIL  Codeunit", output);
+        Assert.Empty(RunnerFailureLines.All(output));
     }
 
     /// <summary>

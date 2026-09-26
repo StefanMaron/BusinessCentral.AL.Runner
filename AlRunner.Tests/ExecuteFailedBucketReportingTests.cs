@@ -148,7 +148,7 @@ public sealed class ExecuteFailedBucketReportingTests
 
         Assert.Contains("  exec-fail:   1", output, StringComparison.Ordinal);
         Assert.DoesNotContain("partial:", output, StringComparison.Ordinal);
-        Assert.Contains("Tests:         1 total", output, StringComparison.Ordinal);
-        Assert.Contains("  pass:        1", output, StringComparison.Ordinal);
+        Assert.Contains("Tests: 1 ", output, StringComparison.Ordinal);
+        Assert.Contains("passed 1 ", output, StringComparison.Ordinal);
     }
 }

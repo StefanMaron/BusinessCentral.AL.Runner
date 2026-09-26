@@ -357,7 +357,7 @@ public sealed class RecordRefCompilationTargetScopeTests : IDisposable
         Assert.Contains("PASS  Codeunit62672.AllowListedOnPremSystemTable188_IsAllowed", output);
         Assert.Contains("PASS  Codeunit62672.OrdinaryApplicationTable_IsAllowed", output);
 
-        Assert.DoesNotContain("FAIL  Codeunit", output);
+        Assert.Empty(RunnerFailureLines.All(output));
         Assert.Equal(0, exit);
     }
 
@@ -405,7 +405,7 @@ public sealed class RecordRefCompilationTargetScopeTests : IDisposable
         var (output, exit) = RunRunner(dir);
 
         Assert.Contains("NavNCLNotAllowedForCompilationTargetException: " + BcRefusal, output);
-        Assert.Contains("FAIL  Codeunit62680.OpenInternalSystemTableFromCloud", output);
+        Assert.True(RunnerFailureLines.Failed(output, 62680, "OpenInternalSystemTableFromCloud"), output);
         Assert.NotEqual(0, exit);
     }
 }

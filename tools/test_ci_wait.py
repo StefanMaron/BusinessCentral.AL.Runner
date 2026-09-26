@@ -2150,6 +2150,17 @@ _counts = cw.failing_codeunits(_LOG_27)
 check("#3922: 27.x log spelling -- per-codeunit counts, not a total",
       _counts == {"60285": 2, "60976": 1}, repr(_counts))
 
+# #4566: the runner's failure entry leads with the codeunit NAME, id in the parenthesis.
+_LOG_NAMED = "\n".join([
+    '2026-09-25T10:01:12.1084641Z FAIL  "Probe Customer Test".CustomerNameFails (Codeunit50150, 194 ms)',
+    '2026-09-25T10:01:12.1086594Z FAIL  "Probe Customer Test".Other (Codeunit50150, 3 ms)',
+    '2026-09-25T10:01:12.1090000Z FAIL  "A.B Name".Third (Codeunit60976, 1 ms)',
+    '2026-09-25T10:01:12.1500000Z FAIL  Codeunit60285.NoDisplayName (4 ms)',
+])
+_counts_named = cw.failing_codeunits(_LOG_NAMED)
+check("#4566: a named failure entry still counts per codeunit id",
+      _counts_named == {"50150": 2, "60976": 1, "60285": 1}, repr(_counts_named))
+
 _counts28 = cw.failing_codeunits(_LOG_28)
 check("#3922: 28.x log spelling (one space, a duration) counts too",
       _counts28 == {"60989": 2}, repr(_counts28))

@@ -135,10 +135,10 @@ public sealed class PartialSuiteLossReportingTests
     {
         var summary = Summarize(PartialLossBucket());
 
-        Assert.Contains("Tests:         1 total", summary, StringComparison.Ordinal);
-        Assert.Contains("pass:        1", summary, StringComparison.Ordinal);
-        Assert.Contains("fail:        0", summary, StringComparison.Ordinal);
-        Assert.Contains("error:       0", summary, StringComparison.Ordinal);
+        Assert.Contains("Tests: 1 ", summary, StringComparison.Ordinal);
+        Assert.Contains("passed 1 ", summary, StringComparison.Ordinal);
+        Assert.Contains("failed 0 ", summary, StringComparison.Ordinal);
+        Assert.Contains("errors 0 ", summary, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -153,8 +153,8 @@ public sealed class PartialSuiteLossReportingTests
 
         Assert.DoesNotContain("Suite errors", summary, StringComparison.Ordinal);
         Assert.DoesNotContain("partial:", summary, StringComparison.Ordinal);
-        Assert.Contains("Tests:         1 total", summary, StringComparison.Ordinal);
-        Assert.Contains("pass:        1", summary, StringComparison.Ordinal);
+        Assert.Contains("Tests: 1 ", summary, StringComparison.Ordinal);
+        Assert.Contains("passed 1 ", summary, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -517,7 +517,7 @@ public sealed class PartialSuiteLossReportingTests
 
         // ...and the actual defect: it is stated in the summary, at the bottom, where the
         // reader is — not only on a stderr line above the results.
-        var summaryStart = output.IndexOf("al-runner — test run summary", StringComparison.Ordinal);
+        var summaryStart = output.IndexOf("\nTests: ", StringComparison.Ordinal);
         Assert.True(summaryStart >= 0, $"no summary block in output:\n{output}");
         var summary = output[summaryStart..];
         Assert.Contains("Suite errors: 1", summary, StringComparison.Ordinal);
@@ -525,9 +525,9 @@ public sealed class PartialSuiteLossReportingTests
         Assert.Contains("partial:     1", summary, StringComparison.Ordinal);
 
         // The counts still say what they measured: two survivors ran, one dropped test did not.
-        Assert.Contains("Tests:         3 total", summary, StringComparison.Ordinal);
-        Assert.Contains("  pass:        2", summary, StringComparison.Ordinal);
-        Assert.Contains("  skipped:     1", summary, StringComparison.Ordinal);
+        Assert.Contains("Tests: 3 ", summary, StringComparison.Ordinal);
+        Assert.Contains("passed 2 ", summary, StringComparison.Ordinal);
+        Assert.Contains("skipped 1 ", summary, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -548,6 +548,6 @@ public sealed class PartialSuiteLossReportingTests
         Assert.DoesNotContain("EMIT-EXCLUDED", output, StringComparison.Ordinal);
         Assert.DoesNotContain("Suite errors", output, StringComparison.Ordinal);
         Assert.DoesNotContain("partial:", output, StringComparison.Ordinal);
-        Assert.Contains("Tests:         1 total", output, StringComparison.Ordinal);
+        Assert.Contains("Tests: 1 ", output, StringComparison.Ordinal);
     }
 }

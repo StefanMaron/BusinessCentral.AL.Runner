@@ -201,7 +201,7 @@ internal static partial class ProgramSupport
         w.WriteLine("  Date/DateTime/Time/DateFormula values are rebuilt; BLOB/media values are NOT yet,");
         w.WriteLine("  and a table carrying one is refused whole. Every skipped or refused table is named on");
         w.WriteLine("  stderr with the reason. See docs/limitations.md.");
-        w.WriteLine("  Random(): every run prints `seed: N`. Each [Test] starts from its own RNG, derived");
+        w.WriteLine("  Random(): every run prints `Seed:  N`. Each [Test] starts from its own RNG, derived");
         w.WriteLine("  from N, its codeunit id and its method name, so a test sees the same Random() values");
         w.WriteLine("  alone or in the full suite. To replay a failure: al-runner --seed N --test <id> ...");
         w.WriteLine("  Randomize(seed) is honored as in BC; Randomize() with no seed is reseeded from the");
@@ -431,7 +431,7 @@ internal static partial class ProgramSupport
         w.WriteLine("                          takes precedence over both. On timeout the test fails with");
         w.WriteLine("                          \"Test exceeded {N}s timeout.\" (v1-compatible message text).");
         w.WriteLine("  --seed N                Run seed for AL Random() (default: AL_RUNNER_SEED, else a");
-        w.WriteLine("                          fresh one). Printed as `seed: N`, and in --output-json and");
+        w.WriteLine("                          fresh one). Printed as `Seed:  N`, and in --output-json and");
         w.WriteLine("                          --output-junit; pass it back to replay a run's Random()");
         w.WriteLine("                          values, even for one test alone. See docs/run-seed.md.");
         w.WriteLine();
@@ -684,12 +684,15 @@ internal static partial class ProgramSupport
         w.WriteLine("                          (default ./cobertura.xml) plus a console table after");
         w.WriteLine("                          the run. Off by default; --coverage-out PATH overrides");
         w.WriteLine("                          the Cobertura output path.");
+        w.WriteLine("  --show-pass             Also print a PASS line per passing test. By default a run");
+        w.WriteLine("                          lists only FAIL/ERROR entries, then one counts line, the");
+        w.WriteLine("                          seed, any `Action needed` entries and a `Result:` line. With");
+        w.WriteLine("                          PASS lines on, one app also gets its `=== <app> ===` and");
+        w.WriteLine("                          progress lines (more than one app always does).");
         w.WriteLine("  --failures-only, --quiet");
-        w.WriteLine("                          Print only FAIL/ERROR per-test lines. Default prints both");
-        w.WriteLine("                          PASS and FAIL with stack traces (matches v1).");
-        w.WriteLine("  --show-pass             Accepted for v1 back-compat; PASS lines are on by default");
-        w.WriteLine("                          in v2.");
-        w.WriteLine("  --verbose               Show internal [Component] diagnostic logs.");
+        w.WriteLine("                          No PASS lines, even under --verbose.");
+        w.WriteLine("  --verbose               Show internal [Component] diagnostic logs, PASS lines, the");
+        w.WriteLine("                          per-app rows and the AL emit / C# compile time split.");
         w.WriteLine("  --strict                Accepted for back-compat; this is the default since the v2");
         w.WriteLine("                          cut. Exit codes:");
         w.WriteLine("                            0  all tests passed");
@@ -837,6 +840,7 @@ internal static partial class ProgramSupport
         w.WriteLine("                               subdirectory per BC version) and the same resolution");
         w.WriteLine("                               as AL_RUNNER_ARTIFACTS_ROOT. Read-only to the runner.");
         w.WriteLine("  AL_RUNNER_VERBOSE=1          Same as --verbose.");
+        w.WriteLine("  AL_RUNNER_SHOW_PASS=1        Same as --show-pass.");
         w.WriteLine("  AL_RUNNER_FAILURES_ONLY=1    Same as --failures-only.");
         w.WriteLine("  AL_RUNNER_TRACE_NRE=1        Log every first-chance NullReferenceException with");
         w.WriteLine("                               full stack to stderr before AL `asserterror` swallows it.");

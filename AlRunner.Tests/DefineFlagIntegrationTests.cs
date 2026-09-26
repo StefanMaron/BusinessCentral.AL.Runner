@@ -346,7 +346,7 @@ public sealed class DefineFlagIntegrationTests : IDisposable
 
         Assert.Equal(0, exit);
         Assert.Contains("PASS", output);
-        Assert.DoesNotContain("FAIL  Codeunit", output);
+        Assert.Empty(RunnerFailureLines.All(output));
     }
 
     /// <summary>
@@ -361,7 +361,7 @@ public sealed class DefineFlagIntegrationTests : IDisposable
 
         Assert.Equal(0, exit);
         Assert.Contains("PASS", output);
-        Assert.DoesNotContain("FAIL  Codeunit", output);
+        Assert.Empty(RunnerFailureLines.All(output));
     }
 
     /// <summary>
@@ -381,7 +381,7 @@ public sealed class DefineFlagIntegrationTests : IDisposable
         var (output, exit) = RunRunner();
 
         Assert.NotEqual(0, exit);
-        Assert.Contains("FAIL  Codeunit62100.SymbolDefinedBranchMustBe1", output);
+        Assert.True(RunnerFailureLines.Failed(output, 62100, "SymbolDefinedBranchMustBe1"), output);
     }
 
     /// <summary>
@@ -406,6 +406,6 @@ public sealed class DefineFlagIntegrationTests : IDisposable
         Assert.Contains("PASS  Codeunit62100.DeadBranchFieldIsAbsentFromTableMetadata", output);
         Assert.Contains("PASS  Codeunit62100.ActiveBranchFieldRoundTrips", output);
         Assert.Contains("PASS  Codeunit62100.ActiveBranchFieldOptionMembersMatchEnum", output);
-        Assert.DoesNotContain("FAIL  Codeunit", output);
+        Assert.Empty(RunnerFailureLines.All(output));
     }
 }

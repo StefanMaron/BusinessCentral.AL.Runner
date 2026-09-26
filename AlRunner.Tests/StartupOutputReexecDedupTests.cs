@@ -127,8 +127,8 @@ public sealed class StartupOutputReexecDedupTests
 
         var (output, exit) = Spawn();
         Assert.Equal(0, exit);
-        Assert.Contains("pass:        1", output);
-        Assert.Contains("fail:        0", output);
+        Assert.Contains("passed 1 ", output);
+        Assert.Contains("failed 0 ", output);
 
         Assert.Equal(1, CountOccurrences(output, "[provision] BC "));
         Assert.Equal(1, CountOccurrences(output, "[bc] selected BC "));
@@ -179,8 +179,8 @@ public sealed class StartupOutputReexecDedupTests
 
             var (output, exit) = SpawnAssembly(shadowDll);
             Assert.Equal(0, exit);
-            Assert.Contains("pass:        1", output);
-            Assert.Contains("fail:        0", output);
+            Assert.Contains("passed 1 ", output);
+            Assert.Contains("failed 0 ", output);
 
             Assert.Equal(1, CountOccurrences(output, "[provision] BC "));
             Assert.Equal(1, CountOccurrences(output, "[bc] selected BC "));
@@ -251,8 +251,8 @@ public sealed class StartupOutputReexecDedupTests
             var (output, exit) = Run(psi);
 
             Assert.Equal(0, exit);
-            Assert.Contains("pass:        1", output);
-            Assert.Contains("fail:        0", output);
+            Assert.Contains("passed 1 ", output);
+            Assert.Contains("failed 0 ", output);
 
             // Both re-exec triggers genuinely fired — three generations, not one or two.
             Assert.Equal(1, CountOccurrences(output, "[reexec] Ncl.dll not shipped in this install"));
@@ -337,8 +337,8 @@ public sealed class StartupOutputReexecDedupTests
             var (output, exit) = Run(psi);
 
             Assert.Equal(0, exit);
-            Assert.Contains("pass:        1", output);
-            Assert.Contains("fail:        0", output);
+            Assert.Contains("passed 1 ", output);
+            Assert.Contains("failed 0 ", output);
 
             // Confirm three generations genuinely happened before trusting any of the
             // exactly-once counts below — the same guard the sibling test above uses.
@@ -408,8 +408,8 @@ public sealed class StartupOutputReexecDedupTests
             var (output, exit) = Run(psi);
 
             Assert.Equal(0, exit);
-            Assert.Contains("pass:        1", output);
-            Assert.Contains("fail:        0", output);
+            Assert.Contains("passed 1 ", output);
+            Assert.Contains("failed 0 ", output);
 
             // Zero re-execs of ANY kind fired — this really is the single-generation
             // case, not the fresh-rewrite one masking it.

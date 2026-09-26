@@ -174,7 +174,7 @@ public class WatchPageMetadataReloadTests
             {
                 Assert.Contains("PASS", cycle1);
                 Assert.Contains(PositiveTest, cycle1);
-                Assert.DoesNotContain("FAIL  Codeunit", cycle1);
+                Assert.Empty(RunnerFailureLines.All(cycle1));
             });
 
             // Comment-only edit to R3Driver ONLY — R3Pages, and therefore the page
@@ -200,7 +200,7 @@ public class WatchPageMetadataReloadTests
             CheckCycle("cycle 2", () =>
             {
                 Assert.Contains(PositiveTest, cycle2);
-                Assert.DoesNotContain($"FAIL  Codeunit70025.{PositiveTest}", cycle2);
+                Assert.False(RunnerFailureLines.Failed(cycle2, 70025, PositiveTest), cycle2);
                 Assert.Contains($"PASS  Codeunit70025.{PositiveTest}", cycle2);
 
                 // The negative-direction test stays green on every cycle — proving it
@@ -208,7 +208,7 @@ public class WatchPageMetadataReloadTests
                 // which is exactly how #1957 went unnoticed); it is included here only so
                 // this cycle-2 window is checked in both directions per repo convention.
                 Assert.Contains(NegativeTest, cycle2);
-                Assert.DoesNotContain($"FAIL  Codeunit70025.{NegativeTest}", cycle2);
+                Assert.False(RunnerFailureLines.Failed(cycle2, 70025, NegativeTest), cycle2);
             });
         }
         finally

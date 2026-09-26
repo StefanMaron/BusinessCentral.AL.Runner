@@ -77,8 +77,8 @@ public sealed class StartupJitModeTests : IDisposable
         Assert.Equal(0, exit);
         // Proves the run actually executed the fixture rather than exiting early: the
         // bundle has exactly one test and it must pass.
-        Assert.Contains("pass:        1", output);
-        Assert.Contains("fail:        0", output);
+        Assert.Contains("passed 1 ", output);
+        Assert.Contains("failed 0 ", output);
     }
 
     /// <summary>

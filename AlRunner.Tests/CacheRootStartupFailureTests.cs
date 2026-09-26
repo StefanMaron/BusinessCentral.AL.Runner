@@ -290,7 +290,7 @@ public sealed class CacheRootStartupFailureTests
                 "--verbose",
             });
 
-        Assert.True(exit == 0 && output.Contains("pass:        1", StringComparison.Ordinal),
+        Assert.True(exit == 0 && output.Contains("passed 1 ", StringComparison.Ordinal),
             $"a relative --cache must produce the same passing run an absolute one does:\n{output}");
 
         var wrote = Regex.Match(output, @"\[cache\] WROTE key=\S+ path=(?<path>\S+)");

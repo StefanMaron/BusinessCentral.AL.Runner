@@ -15,7 +15,9 @@ replayed with `--seed`, alone or in the full suite.
 | AL calls `Randomize()` | reseeded from the current test's derived seed, not from entropy; stderr warns once per test |
 | `CreateGuid()` | unchanged, and still nondeterministic |
 
-The run seed is printed as `seed: N` (on stdout, or stderr under `--output-json`), written as
+The run seed is printed in the run summary as `Seed:  N` on stdout — followed, when a test
+failed, by a replay command for the first failure — or as `seed: N` on stderr under
+`--output-json`. It is also written as
 the top-level `seed` field of `--output-json`, and as a `<property name="seed">` on every
 `<testsuite>` of `--output-junit`.
 

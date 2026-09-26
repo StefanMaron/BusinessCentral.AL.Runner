@@ -18,6 +18,7 @@
 // anywhere in this file, so nothing here belongs in the al-language corpus.
 using System;
 using System.IO;
+using AlRunner;
 using AlRunner.Infrastructure;
 using Xunit;
 
@@ -42,6 +43,41 @@ public sealed class ProvisionGapLogTests
         // Loud FIRST, recorded SECOND. .claude/rules/loud-failures.md means the summary is an
         // addition; nothing about this may get quieter, so the stderr half is asserted too.
         Assert.Contains("a gap", captured.ToString());
+        Assert.Equal(new[] { "a gap" }, ProvisionGapLog.Collected);
+    }
+
+    /// <summary>
+    /// #4560 review: a run that prints no closing "Action needed" block (--output-json,
+    /// --server) must still write every gap at discovery, or the gap is printed nowhere.
+    /// Only a run that WILL print the block may defer it there.
+    /// </summary>
+    [Theory]
+    [InlineData(false, false, true)]   // no Action needed block: written at discovery
+    [InlineData(true, false, false)]   // the block will print it: deferred
+    [InlineData(true, true, true)]     // --verbose writes at discovery regardless
+    public void Report_WritesAtDiscovery_UnlessTheActionNeededBlockWillPrintIt(
+        bool deferred, bool verbose, bool expectWritten)
+    {
+        var original = Console.Error;
+        var (savedDefer, savedVerbose) = (ProvisionGapLog.DeferToActionNeeded, AlRunner.Log.Verbose);
+        var captured = new StringWriter();
+        try
+        {
+            ProvisionGapLog.Reset();
+            ProvisionGapLog.DeferToActionNeeded = deferred;
+            AlRunner.Log.Verbose = verbose;
+            Console.SetError(captured);
+            ProvisionGapLog.Report("a gap");
+        }
+        finally
+        {
+            Console.SetError(original);
+            ProvisionGapLog.DeferToActionNeeded = savedDefer;
+            AlRunner.Log.Verbose = savedVerbose;
+        }
+
+        Assert.Equal(expectWritten, captured.ToString().Contains("a gap"));
+        // Recorded either way: the block, when it prints, reads it from here.
         Assert.Equal(new[] { "a gap" }, ProvisionGapLog.Collected);
     }
 
@@ -119,5 +155,54 @@ public sealed class ProvisionGapLogTests
             Assert.Equal(new[] { "a gap" }, read);
         }
         finally { Console.SetError(original); }
+    }
+
+    // ── #4636: the public abort overload Program.cs calls reads this class's state ──
+
+    private static string AbortOverloadOutput(bool deferToActionNeeded)
+    {
+        var original = Console.Error;
+        var (savedDefer, savedVerbose) = (ProvisionGapLog.DeferToActionNeeded, AlRunner.Log.Verbose);
+        var captured = new StringWriter();
+        try
+        {
+            AlRunner.Log.Verbose = false;
+            ProvisionGapLog.DeferToActionNeeded = deferToActionNeeded;
+            ProvisionGapLog.Reset();
+            Console.SetError(TextWriter.Null);
+            ProvisionGapLog.Report("[dep] gap reported during the interrupted dependency load");
+            Console.SetError(captured);
+            Reporter.PrintActionNeededOnAbort(
+                Array.Empty<BucketResult>(), new[] { "[dep] gap the bundle loop collected" });
+        }
+        finally
+        {
+            Console.SetError(original);
+            ProvisionGapLog.DeferToActionNeeded = savedDefer;
+            AlRunner.Log.Verbose = savedVerbose;
+            ProvisionGapLog.Reset();
+        }
+        return captured.ToString();
+    }
+
+    /// <summary>
+    /// A default run defers gaps, so the abort must print them: the bundle's own list AND what
+    /// ProvisionGapLog collected before the abort interrupted the load.
+    /// </summary>
+    [Fact]
+    public void AbortOverload_Deferred_PrintsTheBundlesGapsAndTheCollectedOnes()
+    {
+        var output = AbortOverloadOutput(deferToActionNeeded: true);
+
+        Assert.Contains("Action needed (2):", output);
+        Assert.Contains("[dep] gap the bundle loop collected", output);
+        Assert.Contains("[dep] gap reported during the interrupted dependency load", output);
+    }
+
+    /// <summary>Negative: not deferred, every gap was already written at discovery.</summary>
+    [Fact]
+    public void AbortOverload_NotDeferred_PrintsNothing()
+    {
+        Assert.Equal("", AbortOverloadOutput(deferToActionNeeded: false));
     }
 }

@@ -157,7 +157,7 @@ public sealed class TestIsolationCodeunitVariableSharingTests : IDisposable
         var (output, exit) = RunRunner("--isolation test");
 
         Assert.Equal(0, exit);
-        Assert.DoesNotContain("FAIL  Codeunit", output);
+        Assert.Empty(RunnerFailureLines.All(output));
         Assert.Contains("Step1_IncrementsCounter", output);
         Assert.Contains("Step2_ExpectsFreshCounter", output);
     }

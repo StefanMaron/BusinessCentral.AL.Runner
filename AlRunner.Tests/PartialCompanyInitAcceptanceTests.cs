@@ -59,7 +59,7 @@ public sealed class PartialCompanyInitAcceptanceTests
         Assert.Contains($"[accepted: {AcceptedBecause}]", run.Output);
         Assert.Contains("accept-partial-company-init", run.Output);
         // ...and the tests are still real results.
-        Assert.Contains("pass:        1", run.Output);
+        Assert.Contains("passed 1 ", run.Output);
         // The escalation line only ever explains a MOVED exit code.
         Assert.DoesNotContain("[warn] company-init: 1 company initialization abort(s)", run.Output);
 
@@ -161,7 +161,7 @@ public sealed class PartialCompanyInitAcceptanceTests
         Assert.Contains("is a placeholder", run.Output);
         Assert.Contains("expectations manifest", run.Output);
         // Refused BEFORE the run, so no test result exists to read.
-        Assert.DoesNotContain("pass:        1", run.Output);
+        Assert.DoesNotContain("passed 1 ", run.Output);
     }
 
     /// <summary>

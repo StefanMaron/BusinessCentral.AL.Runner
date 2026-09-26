@@ -153,6 +153,11 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // (#2175), not precision -- it needs to sit well above UnmeasuredWeightSeconds
             // (30) so the collection is scheduled early instead of becoming the #1887 tail.
             ["TransitiveDependencyVisibilityTests"] = 83,
+            // #4562: added by PR #4574. Run 36148859018 measured 131.3s (BC 27.5) and 77.2s
+            // (BC 28.5) with nine runner spawns; the class now shares identical invocations and
+            // spawns six. Recorded at 131, the observed maximum rounded down: an overstatement
+            // only schedules it earlier, while a value near 30 would make it the #1887 tail.
+            ["RunSummaryOutputTests"] = 131,
             // #4204: five collections absent from this table on run 35017043142's BC 28.4
             // leg. FloorOnlyBundleEnumFieldTests at 76.4s crossed the >= 75s band and failed
             // the leg; the other four sat in the >= 60s advisory band, and

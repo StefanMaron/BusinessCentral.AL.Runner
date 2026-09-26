@@ -162,7 +162,7 @@ public sealed class TextSplitVariadicSeparatorsTests : IDisposable
 
     private static int TestCount(string output)
     {
-        var m = Regex.Match(output, @"Tests:\s*(\d+)\s*total");
+        var m = Regex.Match(output, @"(?m)^Tests: (\d+) ");
         Assert.True(m.Success, $"run summary had no test count. Output:\n{output}");
         return int.Parse(m.Groups[1].Value);
     }

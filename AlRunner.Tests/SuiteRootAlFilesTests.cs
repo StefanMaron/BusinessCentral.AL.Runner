@@ -370,10 +370,10 @@ public sealed class SuiteRootAlFilesTests : IDisposable
         lock (sb) return (sb.ToString(), p.ExitCode);
     }
 
-    /// <summary>Reads "Tests:  N total" out of the run summary.</summary>
+    /// <summary>Reads N out of the run summary's counts line, "Tests: N   passed ..." (#4562).</summary>
     private static int TestCount(string output)
     {
-        var m = Regex.Match(output, @"Tests:\s*(\d+)\s*total");
+        var m = Regex.Match(output, @"(?m)^Tests: (\d+) ");
         Assert.True(m.Success, $"run summary had no test count. Output:\n{output}");
         return int.Parse(m.Groups[1].Value);
     }

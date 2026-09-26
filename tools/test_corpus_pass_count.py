@@ -284,6 +284,25 @@ check("PASS (oos) / (known-gap) / (divergence) all count as passes",
 check("...and a FAIL next to them is still a FAIL",
       rq["failed"] == ["Codeunit60101.Broken"], str(rq["failed"]))
 
+# #4566: the runner's failure heading now leads with the codeunit's display name.
+# A default run prints no PASS lines, so this heading can be the ONLY line naming a
+# test -- unread, a log with a failure parses as having none.
+LOG_NAMED_FAIL = """\
+PASS  Codeunit60101.PlainPass (1ms)
+FAIL  "Probe Customer Test".CustomerNameFails (Codeunit60101, 4 ms)
+      customer name: expected Expected, got Actual
+ERROR "Probe Customer Test".Crashes (Codeunit60101, 2 ms)
+FAIL  "Other Codeunit".NotMine (Codeunit60102, 1 ms)
+"""
+rn = cpc.parse_leg(LOG_NAMED_FAIL, "Codeunit60101.")
+check("a named FAIL / ERROR heading counts as a failure, under its Codeunit<id> name",
+      rn["failed"] == ["Codeunit60101.Crashes", "Codeunit60101.CustomerNameFails"],
+      str(rn["failed"]))
+check("...the PASS beside it is still a pass",
+      rn["passed"] == ["Codeunit60101.PlainPass"], str(rn["passed"]))
+check("...and another codeunit's named failure is not attributed to this prefix",
+      "Codeunit60102.NotMine" not in rn["failed"], str(rn["failed"]))
+
 # The additive half: the corpus fixtures must parse to exactly what they did
 # before the pattern learned the local spelling.
 #

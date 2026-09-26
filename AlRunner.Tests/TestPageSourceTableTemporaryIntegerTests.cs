@@ -189,7 +189,7 @@ public sealed class TestPageSourceTableTemporaryIntegerTests : IDisposable
 
         Assert.True(exit == 0,
             $"expected both tests to pass (isTemporary must route to an empty rowset, not the Integer virtual table); exit={exit}\n{output}");
-        Assert.Contains("pass:", output);
+        Assert.Contains("   passed 2 ", output);
         Assert.DoesNotContain("FAIL", output);
     }
 }

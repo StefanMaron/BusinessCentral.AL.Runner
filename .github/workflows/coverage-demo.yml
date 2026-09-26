@@ -56,9 +56,9 @@ jobs:
 
             # Console coverage table + the test-run summary block (see Reporter.cs /
             # AlCoverageReport.FormatConsoleTable — the table rows are `  <file>  n/m  pct%`,
-            # the summary block prints `pass:`/`fail:`).
+            # the summary prints one `Tests: N   passed P   failed F   errors E` line, #4562).
             COVERAGE_LINES=$(echo "$OUTPUT" | grep -E "^  (TOTAL|[A-Za-z])" | head -20)
-            RESULT_LINES=$(echo "$OUTPUT" | grep -E "^  (pass|fail|error):")
+            RESULT_LINES=$(echo "$OUTPUT" | grep -E "^(Tests: [0-9]+ |Result: )")
 
             echo "### ${fixture}" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"

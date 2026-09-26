@@ -384,12 +384,10 @@ telling the reader what to do.
 ## Reporter output
 
 ```
-Tests:         1945 total
-  pass:        1945
+Tests: 1945   passed 1945   failed 0   errors 0        Time: 412.3 s (wall 430.1 s)
     pass-oos:        2
     pass-known-gap:  3
     pass-divergence: 1
-  fail:        0
 ```
 
 The reclassified categories are surfaced separately (and omitted when zero) so

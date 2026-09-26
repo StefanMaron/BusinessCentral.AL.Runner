@@ -83,6 +83,14 @@ _RESULT = re.compile(
     r"\b(PASS|FAIL)\s+(?:\((?:oos|known-gap|divergence)\)\s+)?"
     r"([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*)")
 
+# AL Runner's failure heading since #4566 leads with the codeunit's display NAME:
+# `FAIL  "Probe Customer Test".CustomerNameFails (Codeunit50150, 4 ms)`. _RESULT
+# cannot read it (a quote is not a name character), so without this a runner log
+# with one failure parsed as having none. Normalised to `Codeunit<id>.<Method>`,
+# the spelling the undotted form and every prefix here already use.
+_RESULT_NAMED = re.compile(
+    r'\b(FAIL|ERROR)\s+"[^"]*"\.([A-Za-z0-9_]+)\s+\(Codeunit(\d+)[,)]')
+
 # The harness's own per-leg total, used as an INDEPENDENT second query: it tells
 # a leg that ran a suite apart from one that ran nothing at all.
 _TOTALS = re.compile(
@@ -160,6 +168,11 @@ def parse_leg(log: str, prefix: str) -> dict:
         if not name.startswith(prefix):
             continue
         (passed if verdict == "PASS" else failed).add(name)
+    for _verdict, method, codeunit in _RESULT_NAMED.findall(log):
+        name = f"Codeunit{codeunit}.{method}"
+        all_names.add(name)
+        if name.startswith(prefix):
+            failed.add(name)
 
     total = None
     for m in _TOTALS.finditer(log):

@@ -71,7 +71,7 @@ artifacts are cached, which is not necessarily the version the corpus declares.
 Useful flags (`--guide` and `AlRunner/Program.cs` are the full list):
 
 ```bash
-# Only FAIL/ERROR lines (PASS lines are on by default in v2; --show-pass is a v1 no-op alias)
+# Only FAIL/ERROR lines — the default since #4563; --show-pass (or --verbose) adds PASS lines
 dotnet run --project AlRunner -c Release -- --failures-only tests/al-language/tests/al-language
 
 # Verbose internal logs
