@@ -168,8 +168,14 @@ measured, on the cloud legs of corpus run 36259501382 that finished (27.0, 27.3,
 So `=>` is asked whatever `=` answered. When it finds nothing either, the page still lands on the
 previous row without a further `Find`, and the third `=` is asked for that row.
 `MoveOffDeletedRow` steps back with a direct `Find('<')` on the record, not through the trigger
--- a page that also declares `OnNextRecord` is unmeasured there. The only-row arm pins what
-happens with no row left: `=` and `=>`, then the blank line.
+-- a page that also declares `OnNextRecord` is unmeasured there.
+
+With no row left under the page's filters it is different: arm
+`List_DeletedByAction_PassThroughFind_OnlyRow` (row `A` only, `A` deleted) printed
+`Find:=>;Find:=><;` on all nine cloud legs of corpus run 36260143894 -- no `=` at all -- and the
+page shows no stored row. `MoveOffDeletedRow` checks `IsEmpty` first and asks those two. BC also
+raised `OnAfterGetCurrRecord` for the blank row around those calls (the trace began
+`AGCR:;Find:=>;Find:=><;AGCR:;AGCR:`); the corpus does not pin that, and the runner raises none.
 
 Measured by corpus codeunit 67300's `List_DeletedByAction_*` arms; runner-side: the same test file.
 

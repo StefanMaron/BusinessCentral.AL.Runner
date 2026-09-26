@@ -92,6 +92,15 @@ internal partial class LiveNavTestPage : MockITestPage
     private void MoveOffDeletedRow(NavRecord record)
     {
         var page = _page!;
+        // No row left under the page's filters: a declared OnFindRecord is asked "=>" then "=><",
+        // never "=" (corpus 67300 List_DeletedByAction_PassThroughFind_OnlyRow, all cloud legs).
+        // A page without the trigger answers null here and goes straight to the blank line.
+        if (record.GetALIsEmptyAsync().GetAwaiter().GetResult())
+        {
+            if (page.RaiseOnFindRecord("=>") is not null) page.RaiseOnFindRecord("=><");
+            EnterNewRowLine(record);
+            return;
+        }
         var kept = page.RaiseOnFindRecord("=");
         if (kept is null)
         {
@@ -101,8 +110,8 @@ internal partial class LiveNavTestPage : MockITestPage
         }
         // A declared OnFindRecord: BC calls it "=", "=>", "=" whatever the first "=" answers, and
         // shows the row the last one answers. When neither "=" nor "=>" finds a row it steps back to
-        // the previous row without calling the trigger, then asks "=" for that; with no row left it
-        // stops after "=>" (corpus 67300 List_DeletedByAction_OnFindRecord_PicksTheRow and
+        // the previous row without calling the trigger, then asks "=" for that (corpus 67300
+        // List_DeletedByAction_OnFindRecord_PicksTheRow and
         // List_DeletedByAction_PassThroughFind_*). docs/testpage-currpage-update.md
         var ahead = page.RaiseOnFindRecord("=>") == true;
         if (!kept.Value && !ahead

@@ -516,7 +516,8 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
                     List.Close();
                 end;
 
-                // No row left: '=' and '=>' answer false, and the List shows its blank line.
+                // No row left: BC asks '=>' and '=><', never '=' (corpus 67300
+                // List_DeletedByAction_PassThroughFind_OnlyRow), and the List shows its blank line.
                 [Test]
                 procedure List_PassThroughFind_ActionDeletesTheOnlyRow_ShowsTheBlankLine()
                 var
@@ -530,7 +531,7 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
                     List.GoToKey('A');
                     Trace.Reset();
                     List.DeletePassThrough.Invoke();
-                    if FindCalls(Trace.Get()) <> 'Find:=;Find:=>;' then
+                    if FindCalls(Trace.Get()) <> 'Find:=>;Find:=><;' then
                         Error('unexpected OnFindRecord sequence: %1', Trace.Get());
                     if List.CodeField.Value() <> '' then
                         Error('expected the blank line, got: %1', List.CodeField.Value());
