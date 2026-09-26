@@ -24,6 +24,9 @@
 // probability: the server literally cannot proceed to the next test until
 // the harness says so.
 //
+// The non-interactive --watch loop calls it too, between a cycle and the re-arm, so
+// WatchMidCycleEditTests can edit a source file while no watcher is live (#4706).
+//
 // Deliberately NOT routed through the stdin/stdout JSON protocol under test:
 // using the very channel a test asserts things about to also pace that test's
 // workload would prove nothing about the channel. Filesystem polling is a
