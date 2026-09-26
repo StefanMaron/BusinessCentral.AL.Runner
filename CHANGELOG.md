@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **errors:** a subscriber error collected from Gen. Jnl.-Check Line carries its Context Record ID
 - **metadata:** per-app-group metadata for an xmlport id two groups both declare
 - **testpage:** fold precompiled pageextension controls into declared properties and Page Control Field
 - **testpage:** a RunPageOnRec target reads the stored row, not the host's in-memory values
