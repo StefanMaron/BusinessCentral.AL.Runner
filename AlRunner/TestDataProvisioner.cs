@@ -131,6 +131,10 @@
 //      SymbolStore.FindBaseTableField).
 //   6. A row shape sharing NO column with the target table. Still refused: that is a
 //      mismatch, and hydrating it would insert rows made entirely of defaults.
+//   7. Tenant-wide platform tables (#4770). A table that is not per company hydrates like any
+//      other, read without `--company`; one in the platform's system id range does not, except
+//      the Tenant Media family — see TenantWideSystemTablesHydrated. Counted in the summary and
+//      recorded per table.
 using AlRunner.Infrastructure;
 using AlRunner.Patches;
 using System.Text.Json;
@@ -142,7 +146,8 @@ internal static class TestDataProvisioner
     internal sealed record Summary(
         string BackupPath, string Company, int TablesHydrated, int RowsHydrated,
         int TablesSkippedAmbiguous, int TablesRefused, int TablesRefusedByReader,
-        int ColumnsFromUninstalledApps, int ColumnsNotInThisBuild)
+        int ColumnsFromUninstalledApps, int ColumnsNotInThisBuild,
+        int TenantSystemTablesNotLoaded = 0)
     {
         // "the run touched", not "the backup holds": under the on-demand policy (#2262) a
         // table is only read when something asks for it, so these counts describe what this
@@ -165,6 +170,8 @@ internal static class TestDataProvisioner
                 notes.Add($"{ColumnsFromUninstalledApps} extension column(s) dropped for apps this run does not install");
             if (ColumnsNotInThisBuild > 0)
                 notes.Add($"{ColumnsNotInThisBuild} column(s) dropped that this build's AL tables have no field for");
+            if (TenantSystemTablesNotLoaded > 0)
+                notes.Add($"{TenantSystemTablesNotLoaded} tenant-wide system table(s) not loaded");
             var line = $"Test data: {RowsHydrated} rows loaded from {TablesHydrated} tables"
                 + (notes.Count > 0 ? "; " + string.Join(", ", notes) : string.Empty);
             return verbose ? line + Environment.NewLine + DescribeDetail() : line;
@@ -177,7 +184,8 @@ internal static class TestDataProvisioner
             + $"{TablesRefused} refused (unsupported value types or unknown columns), "
             + $"{TablesRefusedByReader} refused by the backup reader, "
             + $"{ColumnsFromUninstalledApps} extension column(s) dropped for apps this run does not install, "
-            + $"{ColumnsNotInThisBuild} column(s) dropped that this build's AL tables have no field for; "
+            + $"{ColumnsNotInThisBuild} column(s) dropped that this build's AL tables have no field for, "
+            + $"{TenantSystemTablesNotLoaded} tenant-wide system table(s) with rows not loaded (the runner keeps that state itself); "
             + "the `timestamp` (SQL rowversion) column is hydrated and seeds the stamp counter (#4123).";
     }
 
@@ -189,7 +197,8 @@ internal static class TestDataProvisioner
     private sealed record ArmedPlan(
         string Backup, string SymbolKey, IReadOnlyList<string> Symbols, string Company,
         IReadOnlyDictionary<int, BackupTableEntry> ByTableId, int SkippedAmbiguous,
-        IReadOnlyDictionary<int, string> AmbiguousRefusals);
+        IReadOnlyDictionary<int, string> AmbiguousRefusals,
+        IReadOnlyDictionary<int, string> TenantSystemRefusals);
 
     private static ArmedPlan? _armed;
 
@@ -282,12 +291,13 @@ internal static class TestDataProvisioner
         /// <summary>The tallies, read out as the summary a person sees. ONE read of ONE
         /// reference, so the six numbers below are the six numbers that were true together at
         /// one instant — which is the whole point of #3025.</summary>
-        internal Summary Capture(string backupPath, string company, int skippedAmbiguous)
+        internal Summary Capture(string backupPath, string company, int skippedAmbiguous,
+            int tenantSystemTablesNotLoaded = 0)
         {
             var c = Volatile.Read(ref _counts);
             return new Summary(backupPath, company, c.Tables, c.Rows,
                 skippedAmbiguous, c.Refused, c.ReaderRefused,
-                c.DroppedColumns, c.ColumnsNotInThisBuild);
+                c.DroppedColumns, c.ColumnsNotInThisBuild, tenantSystemTablesNotLoaded);
         }
     }
 
@@ -514,7 +524,8 @@ internal static class TestDataProvisioner
         // invocations per loaded table. It stays here, at arm time, where it still runs before
         // any row is hydrated.
         if (plan.MergeProbe != null)
-            AssertMergeIsHonoured(backup, symbols, company, plan.MergeProbe.TableName, plan.MergeProbe.ReadAppId);
+            AssertMergeIsHonoured(backup, symbols, plan.MergeProbe.IsTenantWide ? null : company,
+                plan.MergeProbe.TableName, plan.MergeProbe.ReadAppId);
 
         var byTableId = new Dictionary<int, BackupTableEntry>();
         foreach (var e in plan.Hydratable)
@@ -523,8 +534,17 @@ internal static class TestDataProvisioner
 
         foreach (var (tableId, reason) in plan.AmbiguousRefusals)
             Console.Error.WriteLine($"[test-data] REFUSED table {tableId}: {reason}.");
+        // Counted in every summary line; named here only under --verbose, since the list is the
+        // same platform tables on every backup.
+        if (Log.Verbose)
+            foreach (var (tableId, reason) in plan.TenantSystemRefusals.OrderBy(r => r.Key))
+                Console.Error.WriteLine($"[test-data] NOT LOADED table {tableId}: {reason}.");
 
-        _armed = new ArmedPlan(backup, symbolKey, symbols, company, byTableId, plan.SkippedAmbiguous, plan.AmbiguousRefusals);
+        _armed = new ArmedPlan(backup, symbolKey, symbols, company, byTableId, plan.SkippedAmbiguous,
+            plan.AmbiguousRefusals, plan.TenantSystemRefusals);
+        // The count is known now, before any table loads, so the summary carries it from the start.
+        if (plan.TenantSystemRefusals.Count > 0)
+            _lastSummary = _tallies.Capture(backup, company, plan.SkippedAmbiguous, plan.TenantSystemRefusals.Count);
         InstallLoader();
     }
 
@@ -568,6 +588,11 @@ internal static class TestDataProvisioner
             _tableOutcome[tableId] = $"the backup's rows for it were not loaded — {ambiguity}";
             return;
         }
+        if (armed.TenantSystemRefusals.TryGetValue(tableId, out var tenantSystem))
+        {
+            _tableOutcome[tableId] = $"the backup's rows for it were not loaded — {tenantSystem}";
+            return;
+        }
         if (!armed.ByTableId.TryGetValue(tableId, out var entry))
         {
             // #2240: recorded, not just skipped. "This backup's plan does not offer the table"
@@ -601,9 +626,10 @@ internal static class TestDataProvisioner
                     RecordPatches.AppendBaselineTable(source, tableId, meta, pristineRows);
             }
             _tallies.NoteHydrated(result.Rows, result.ColumnsFromUninstalledApps, result.ColumnsNotInThisBuild);
+            var scope = entry.IsTenantWide ? "(tenant-wide)" : $"company '{armed.Company}'";
             _tableOutcome[tableId] = result.Rows > 0
-                ? $"{result.Rows} row(s) loaded from '{Path.GetFileName(armed.Backup)}' company '{armed.Company}'"
-                : $"'{entry.TableName}' in '{Path.GetFileName(armed.Backup)}' company '{armed.Company}' "
+                ? $"{result.Rows} row(s) loaded from '{Path.GetFileName(armed.Backup)}' {scope}"
+                : $"'{entry.TableName}' in '{Path.GetFileName(armed.Backup)}' {scope} "
                   + "holds no rows, so there was nothing to load";
             PerfTrace.Log(
                 $"TestData.LazyLoad {tableId} '{entry.TableName}' {result.Rows} row(s)");
@@ -626,7 +652,7 @@ internal static class TestDataProvisioner
             Console.Error.WriteLine(
                 $"[test-data] READER REFUSED table '{entry.TableName}': {ex.Message}");
         }
-        _lastSummary = _tallies.Capture(armed.Backup, armed.Company, armed.SkippedAmbiguous);
+        _lastSummary = _tallies.Capture(armed.Backup, armed.Company, armed.SkippedAmbiguous, armed.TenantSystemRefusals.Count);
     }
 
     /// <summary>
@@ -655,10 +681,13 @@ internal static class TestDataProvisioner
         var readArgs = SymbolArgs(
             new[]
             {
-                "read", backup, "--table", entry.TableName, "--company", company, "--format", "json",
+                "read", backup, "--table", entry.TableName, "--format", "json",
                 // HYPHENATED. `--mergeExtensions` is accepted, ignored, and exits 0.
                 "--merge-extensions",
-            }.Concat(entry.ReadAppId == null ? Array.Empty<string>() : new[] { "--app", entry.ReadAppId }).ToArray(),
+            }
+            // A tenant-wide table has no company; naming one makes the reader answer "no table matches".
+            .Concat(entry.IsTenantWide ? Array.Empty<string>() : new[] { "--company", company })
+            .Concat(entry.ReadAppId == null ? Array.Empty<string>() : new[] { "--app", entry.ReadAppId }).ToArray(),
             symbols);
         var json = BackupReaderTool.Run(readArgs);
 
@@ -692,9 +721,10 @@ internal static class TestDataProvisioner
     /// two reads must differ.
     /// </summary>
     internal static void AssertMergeIsHonoured(
-        string backup, IReadOnlyList<string> symbols, string company, string probeTable, string? appId = null)
+        string backup, IReadOnlyList<string> symbols, string? company, string probeTable, string? appId = null)
     {
-        var head = new[] { "read", backup, "--table", probeTable, "--company", company, "--format", "json", "--top", "1" }
+        var head = new[] { "read", backup, "--table", probeTable, "--format", "json", "--top", "1" }
+            .Concat(company == null ? Array.Empty<string>() : new[] { "--company", company })
             .Concat(appId == null ? Array.Empty<string>() : new[] { "--app", appId }).ToArray();
         var plain = ParseRows(BackupReaderTool.Run(SymbolArgs(head, symbols)));
         var merged = ParseRows(BackupReaderTool.Run(
@@ -763,6 +793,10 @@ internal static class TestDataProvisioner
         /// <summary>Why each refused same-named table was refused, by AL table id (#2264).</summary>
         internal IReadOnlyDictionary<int, string> AmbiguousRefusals { get; init; } = new Dictionary<int, string>();
 
+        /// <summary>Tenant-wide system tables with rows that are not loaded, and why, by AL
+        /// table id (#4770).</summary>
+        internal IReadOnlyDictionary<int, string> TenantSystemRefusals { get; init; } = new Dictionary<int, string>();
+
         /// <summary>The planned table with companion rows that the once-per-run merge probe
         /// reads, carrying its `--app` when its name is shared; null when there is none.</summary>
         internal BackupTableEntry? MergeProbe { get; init; }
@@ -775,9 +809,13 @@ internal static class TestDataProvisioner
     internal static Plan BuildPlan(
         IReadOnlyList<BackupTableEntry> entries, string company, IReadOnlyList<AppManifest> closure)
     {
-        var forCompany = entries.Where(e => string.Equals(e.Company, company, StringComparison.Ordinal)).ToList();
+        // The company's tables plus the tenant-wide ones (#4770): a table that is not per company
+        // is the same for every company, so it belongs to this one too.
+        var forCompany = entries
+            .Where(e => e.IsTenantWide || string.Equals(e.Company, company, StringComparison.Ordinal))
+            .ToList();
 
-        // Every candidate per (company, table name). More than one is a name two installed apps
+        // Every candidate per table name, across both scopes. More than one is a name two installed apps
         // both declare (exclusion 1), which the reader will only read with `--app`.
         var candidatesByName = forCompany
             .Where(e => !e.IsExtensionCompanion)
@@ -790,12 +828,21 @@ internal static class TestDataProvisioner
 
         var hydratable = new List<BackupTableEntry>();
         var refusals = new Dictionary<int, string>();
+        var tenantSystem = new Dictionary<int, string>();
         var skippedAmbiguous = 0;
         foreach (var e in forCompany)
         {
             if (e.IsExtensionCompanion) continue;
             if (e.RowCount == 0) continue;
             if (e.AlTableId == null) continue;                 // not defined by this run's app closure
+            if (e.IsTenantWide && IsPlatformSystemTableId(e.AlTableId.Value)
+                && !TenantWideSystemTablesHydrated.Contains(e.AlTableId.Value))
+            {
+                tenantSystem[e.AlTableId.Value] =
+                    $"'{e.TableName}' is a tenant-wide platform table (id {e.AlTableId.Value}); the runner keeps "
+                    + "that state itself, so the backup's rows for it are not loaded";
+                continue;
+            }
             var candidates = candidatesByName[e.TableName];
             if (candidates.Count == 1) { hydratable.Add(e); continue; }
 
@@ -824,11 +871,29 @@ internal static class TestDataProvisioner
         return new Plan(hydratable, extended.Select(e => e.TableName).ToHashSet(StringComparer.Ordinal), skippedAmbiguous)
         {
             AmbiguousRefusals = refusals,
+            TenantSystemRefusals = tenantSystem,
+            // A company table first: the probe is about the reader, and every backup has one.
             MergeProbe = extended
-                .OrderBy(e => e.TableName, StringComparer.Ordinal).ThenBy(e => e.AlTableId)
+                .OrderBy(e => e.IsTenantWide)
+                .ThenBy(e => e.TableName, StringComparer.Ordinal).ThenBy(e => e.AlTableId)
                 .FirstOrDefault(),
         };
     }
+
+    /// <summary>First id of the platform's system tables (2000000000 and up).</summary>
+    private static bool IsPlatformSystemTableId(int alTableId) => alTableId >= 2000000000;
+
+    /// <summary>
+    /// Tenant-wide platform tables that DO hydrate: Tenant Media Set (2000000183), Tenant Media
+    /// (2000000184) and Tenant Media Thumbnails (2000000185) — the rows a hydrated Media or
+    /// MediaSet field's id names (#4770). Plain data tables AL reads through Record; no runner
+    /// provider serves them. Every other tenant-wide platform table (Company, User, Access
+    /// Control, Object Metadata, Published Application, …) is state the runner builds itself,
+    /// several through its own providers (RecordPatches.ObjectMetadataSystemTable,
+    /// RecordPatches.PermissionSystemTable), so it is counted and not loaded.
+    /// </summary>
+    internal static readonly IReadOnlySet<int> TenantWideSystemTablesHydrated =
+        new HashSet<int> { 2000000183, 2000000184, 2000000185 };
 
     /// <summary>
     /// Null when `--app &lt;id&gt;` selects exactly <paramref name="entry"/> among the same-named
