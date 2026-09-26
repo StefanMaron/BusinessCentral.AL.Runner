@@ -41,6 +41,8 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **testpage:** TestPage Filter.SetFilter replaces a group-0 filter OnOpenPage set before leaving another filter group active
+- **report:** bind a precompiled report's request-page SourceTable before OnOpenPage
 - **coverage:** per-test Code Coverage tables 2000000288/2000000289 after recording across a test start
 - **test-runner:** run a test codeunit's declared OnRun once before its test methods
 - **cli:** no off-version warning for a BC version CI measures
