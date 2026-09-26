@@ -196,6 +196,7 @@ public sealed class TestPageClosedVariableTests : IDisposable
                     InsertRow(Row);
                     asserterror Card.GoToRecord(Row);
                     ExpectNotOpen('never-opened GoToRecord');
+                    InsertRow(Row); // asserterror rolled the first insert back
                     Card.OpenView();
                     if not Card.GoToRecord(Row) then Error('opened GoToRecord found nothing');
                     if Card.Descr.Value() <> 'First row' then Error('opened GoToRecord: %1', Card.Descr.Value());
