@@ -213,6 +213,21 @@ public static partial class BcRuntime
     }
 
     /// <summary>
+    /// App ids of every registered AL assembly with a frame on the current call stack — the apps
+    /// whose code is executing. Read by the app-group visibility filter (#4448).
+    /// </summary>
+    internal static HashSet<Guid> AppIdsOnCallStack()
+    {
+        var ids = new HashSet<Guid>();
+        var trace = new System.Diagnostics.StackTrace(fNeedFileInfo: false);
+        for (int i = 0; i < trace.FrameCount; i++)
+            if (trace.GetFrame(i)?.GetMethod()?.DeclaringType?.Assembly is { } asm
+                && _moduleInfoByAssembly.TryGetValue(asm, out var info) && info.AppId != Guid.Empty)
+                ids.Add(info.AppId);
+        return ids;
+    }
+
+    /// <summary>
     /// Stack-walk version of <see cref="GetCallerModuleAppInfoFor"/> for use from the
     /// Cecil patch on <c>ALNavApp.ALGetCallerModuleInfo</c> in precompiled deps.
     /// Prefers the faithful method-scope walk; the assembly stack-walk is the fallback

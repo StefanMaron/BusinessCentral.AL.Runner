@@ -138,10 +138,11 @@ public static partial class RecordPatches
         }
     }
 
-    // Every bundle dependency's install triggers fire under whichever app group is executing, so
-    // they must see their OWN closure or an install reading AllObj for its own table fails in a
-    // group that does not declare it (measured: EXEC-FAIL "cannot see its own table"). Set by
-    // AlRunner.InstallExecutionContext around each app's install triggers.
+    // A bundle dependency's install triggers and event subscribers fire under whichever app group
+    // is executing, so that code must see its OWN closure: otherwise a read of its own table in
+    // AllObj fails in a group that does not declare it (measured for both: EXEC-FAIL / FAIL
+    // "cannot see its own table"). The installing app is set by AlRunner.InstallExecutionContext,
+    // because an awaited install trigger can resume with none of its frames on the stack.
     private static readonly AsyncLocal<Guid?> _installingAppId = new();
 
     internal static IDisposable EnterInstallingApp(Guid appId)
@@ -151,9 +152,26 @@ public static partial class RecordPatches
         return new InstallExecutionContext.Scope(() => _installingAppId.Value = previous);
     }
 
-    private static bool IsVisibleToInstallingApp(Guid owner, PackageVisibility model)
-        => _installingAppId.Value is { } installing
-           && VisibleAppClosure(installing, model.Dependencies).Contains(owner);
+    internal static Guid? CurrentInstallingAppId => _installingAppId.Value;
+
+    /// <summary>
+    /// <paramref name="visible"/> widened by the closure of every app whose code is executing: the
+    /// installing app, and each registered AL assembly with a frame on the call stack. Returns
+    /// <paramref name="visible"/> itself when nothing widens it. Rows a widened read inserts stay in
+    /// that provider's add-only store, which is main's behaviour for them, never a hard failure.
+    /// </summary>
+    private static HashSet<Guid>? WidenForExecutingApps(HashSet<Guid>? visible)
+    {
+        if (visible == null) return null;
+        var executing = AlRunner.BcRuntime.AppIdsOnCallStack();
+        if (_installingAppId.Value is { } installing) executing.Add(installing);
+        HashSet<Guid>? widened = null;
+        foreach (var app in executing)
+            if (!visible.Contains(app))
+                (widened ??= new HashSet<Guid>(visible))
+                    .UnionWith(VisibleAppClosure(app, CurrentPackageVisibility().Dependencies));
+        return widened ?? visible;
+    }
 
     private static void RecordAppGroupDependencyRefs(Guid appId, IEnumerable<DependencyRef> dependencies)
     {

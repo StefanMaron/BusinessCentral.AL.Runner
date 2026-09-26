@@ -16,7 +16,7 @@ codeunit 66341 "AGV Floor Tests"
         AllObj: Record AllObj;
         TableMetadata: Record "Table Metadata";
     begin
-        Assert.IsTrue(AllObj.Get(AllObj."Object Type"::Table, 289), 'AllObj must list Base Application table 289, which the Microsoft floor supplies to every app group');
-        Assert.IsTrue(TableMetadata.Get(289), 'Table Metadata must list Base Application table 289, which the Microsoft floor supplies to every app group');
+        Assert.IsTrue(AllObj.Get(AllObj."Object Type"::Table, 289), 'AllObj must list Base Application table 289, which the Microsoft floor supplies to every app group (meaningful only in the combined tests/runner-extras run, where other app groups register Base Application)');
+        Assert.IsTrue(TableMetadata.Get(289), 'Table Metadata must list Base Application table 289, which the Microsoft floor supplies to every app group (meaningful only in the combined tests/runner-extras run, where other app groups register Base Application)');
     end;
 }

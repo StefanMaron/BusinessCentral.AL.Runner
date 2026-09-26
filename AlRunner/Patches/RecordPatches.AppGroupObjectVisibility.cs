@@ -159,9 +159,7 @@ public static partial class RecordPatches
         var key = (NormalizeObjectTypeName(kind), id);
         if (_sourceObjectOwners.ContainsKey(key) || _ambiguousSourceObjects.Contains(key))
             return IsHiddenFromAppGroup(kind, id, visibleApps, _sourceObjectOwners);
-        var model = CurrentPackageVisibility();
-        return IsHiddenFromAppGroup(kind, id, visibleApps, model.Owners)
-               && !IsVisibleToInstallingApp(model.Owners[key], model);
+        return IsHiddenFromAppGroup(kind, id, visibleApps, CurrentPackageVisibility().Owners);
     }
 
     private sealed class ProviderScope
@@ -188,7 +186,7 @@ public static partial class RecordPatches
             VisibleApps = current is { } id ? VisibleAppClosure(id, CurrentPackageVisibility().Dependencies) : null,
         });
         CheckInventoryScope(scope.AppId, current, table);
-        return scope.VisibleApps;
+        return WidenForExecutingApps(scope.VisibleApps);
     }
 
     /// <summary>
@@ -203,7 +201,8 @@ public static partial class RecordPatches
     /// and then throw for every later group (#4447).</para>
     /// </summary>
     private static HashSet<Guid>? CurrentVisibleAppClosure()
-        => CurrentAppGroupAppId() is { } id ? VisibleAppClosure(id, CurrentPackageVisibility().Dependencies) : null;
+        => WidenForExecutingApps(
+            CurrentAppGroupAppId() is { } id ? VisibleAppClosure(id, CurrentPackageVisibility().Dependencies) : null);
 
     private static Guid? CurrentAppGroupAppId()
     {

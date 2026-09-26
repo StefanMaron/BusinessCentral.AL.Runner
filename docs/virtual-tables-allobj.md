@@ -228,21 +228,25 @@ listed to every group. `RecordPatches.BuildPackageVisibility` gives those object
   `DependencyResolver.TryFind` uses.
 - **A source owner decides first**; the package lookup applies only to an id no source declares.
 
-**Install triggers see their own app's closure.** A bundle's dependency install triggers fire
-under whichever app group is executing, including one that does not declare that dependency.
-`InstallExecutionContext.Enter` calls `RecordPatches.EnterInstallingApp`, and while it is active
-an object owned by a package in the installing app's closure is not hidden. Without it, an
-install that reads AllObj for its own table (a retention-policy registration does) fails with an
-EXEC-FAIL in every non-declaring group.
+**Code sees its own app's closure.** A bundle's dependency install triggers and event subscribers
+fire under whichever app group is executing, including one that does not declare that dependency.
+`PinInventoryScope` and `CurrentVisibleAppClosure` widen the group's closure by the closure of every
+app whose code is executing: each registered AL assembly with a frame on the call stack
+(`BcRuntime.AppIdsOnCallStack`), plus the installing app, which `InstallExecutionContext.Enter` sets
+through `RecordPatches.EnterInstallingApp` because an awaited install trigger can resume with none
+of its frames on the stack. Without it, an install or a subscriber that reads AllObj for its own
+table fails in every non-declaring group (a retention-policy registration is that shape). Rows a
+widened read inserts stay in that provider's add-only store, which is what `main` did for them.
 
 Proven by `tests/runner-extras/app-group-visibility-b` (the `*_PrecompiledDepOfUnrelatedGroup_*`
 tests: nothing of `xmlport-precompiled-dep-metadata`'s or `app-group-visibility-install-dep`'s
 package is listed to B), `app-group-visibility-install-dep` (the declaring group lists its own
-package, and the package's install trigger errors unless it sees its own table),
-`app-group-visibility-floor` (Base Application stays listed to a group that reaches no floor app),
+package, and the package's install trigger errors unless it sees its own table), `app-group-visibility-subscriber` (an unrelated group raises the event the
+package subscribes to, and the subscriber finds its own table), `app-group-visibility-floor` (Base Application stays listed to a group that reaches no floor app),
 and `AlRunner.Tests/PackageObjectVisibilityTests`. The runner-extras half is meaningful only in the
 combined `tests/runner-extras` run, where every one of those packages is registered;
-`app-group-visibility-floor` fails when run on its own, because nothing registers Base Application.
+`app-group-visibility-floor` and `app-group-visibility-subscriber` fail when run on their own, because
+nothing registers Base Application or the package there.
 
 <a id="multi-bundle-metatable-cache"></a>
 

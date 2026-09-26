@@ -196,4 +196,20 @@ public class PackageObjectVisibilityTests
         Assert.False(Hidden(model, GroupA, "Table", 61600));
         Assert.True(Hidden(model, GroupC, "Table", 61600));
     }
+
+    [Fact]
+    public void TheInstallingAppScope_RestoresThePreviousAppOnDispose_LastInFirstOut()
+    {
+        // A scope that never restores would leave an install's closure visible to every later
+        // read in the app group, re-opening the leak for that package.
+        Assert.Null(RecordPatches.CurrentInstallingAppId);
+        using (RecordPatches.EnterInstallingApp(PkgP1))
+        {
+            Assert.Equal(PkgP1, RecordPatches.CurrentInstallingAppId);
+            using (RecordPatches.EnterInstallingApp(PkgP0))
+                Assert.Equal(PkgP0, RecordPatches.CurrentInstallingAppId);
+            Assert.Equal(PkgP1, RecordPatches.CurrentInstallingAppId);
+        }
+        Assert.Null(RecordPatches.CurrentInstallingAppId);
+    }
 }
