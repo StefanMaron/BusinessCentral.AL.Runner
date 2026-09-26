@@ -34,11 +34,16 @@ namespace AlRunner;
 public static class AlXmlPortMetadataRegistry
 {
     private static readonly ConcurrentDictionary<int, string> _xmlById = new();
+    // The same XML keyed by the app compiling it, so two app groups declaring one id each keep
+    // their own document (#4751). _xmlById stays last-wins for every compile-time reader.
+    private static readonly ConcurrentDictionary<(Guid AppId, int Id), string> _xmlByAppAndId = new();
 
     public static void Register(int xmlPortId, string metadataXml)
     {
         if (xmlPortId <= 0 || string.IsNullOrEmpty(metadataXml)) return;
         _xmlById[xmlPortId] = metadataXml;
+        if (BcCompiler.CurrentAppIdForRegistries is { } appId && appId != Guid.Empty)
+            _xmlByAppAndId[(appId, xmlPortId)] = metadataXml;
         var trace = Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_XMLPORT_METADATA");
         if (trace == "1" || trace == "2")
             Console.Out.WriteLine($"[xmlport-metadata] registered xmlport {xmlPortId} ({metadataXml.Length} chars)");
@@ -51,7 +56,15 @@ public static class AlXmlPortMetadataRegistry
 
     public static int Count => _xmlById.Count;
 
-    public static void Clear() => _xmlById.Clear();
+    /// <summary>The document <paramref name="appId"/>'s own compile registered for the id.</summary>
+    public static bool TryGetForApp(Guid appId, int xmlPortId, out string metadataXml)
+        => _xmlByAppAndId.TryGetValue((appId, xmlPortId), out metadataXml!);
+
+    public static void Clear()
+    {
+        _xmlById.Clear();
+        _xmlByAppAndId.Clear();
+    }
 
     /// <summary>Snapshot of the xmlport ids currently registered (diagnostics + dep sidecars).</summary>
     public static int[] Ids => _xmlById.Keys.ToArray();

@@ -464,6 +464,7 @@ public static partial class RecordPatches
         // cached) even after bundle 2 declared it.
         ResetPermissionSetMetadataForReload();
         _metaXmlPortCache.Clear();
+        _metaXmlPortCacheByAppGroup.Clear();
         // #3172: the xmlport side of #1957, never mirrored. Both sets are statements about
         // the specific NCLMetaXmlPort instances _metaXmlPortCache.Clear() has just discarded
         // — see ResetXmlPortMetadataForReload's doc comment, and ResetPageMetadataForReload's
