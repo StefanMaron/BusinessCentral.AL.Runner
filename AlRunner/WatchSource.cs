@@ -287,7 +287,8 @@ internal static class WatchSource
     /// when a watch cycle starts (#4706). The watchers are disposed while a cycle runs and
     /// inotify keeps no backlog, so an edit saved mid-cycle raises no event; comparing this
     /// against a fresh capture at re-arm is what sees it. A same-length rewrite inside one
-    /// timestamp tick is the one edit it cannot see.
+    /// timestamp tick is the one edit it cannot see. Hidden entries are walked, because the
+    /// watcher reports them; only <c>.git</c> is pruned, which holds no <c>.al</c> source.
     /// </summary>
     internal sealed class SourceSnapshot
     {
@@ -302,19 +303,24 @@ internal static class WatchSource
         internal static SourceSnapshot CaptureDirs(IEnumerable<string> dirs)
         {
             var files = new Dictionary<string, (long, long)>(StringComparer.Ordinal);
-            var options = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true };
+            // AttributesToSkip defaults to Hidden|System, which on Unix is every dot-entry.
+            var options = new EnumerationOptions
+            {
+                RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = 0,
+            };
             foreach (var dir in dirs)
             {
                 if (!Directory.Exists(dir)) continue;
-                foreach (var path in Directory.EnumerateFiles(dir, "*", options))
+                var entries = new System.IO.Enumeration.FileSystemEnumerable<(string, long, long)>(
+                    dir, (ref System.IO.Enumeration.FileSystemEntry e) =>
+                        (e.ToFullPath(), e.Length, e.LastWriteTimeUtc.UtcTicks), options)
                 {
-                    if (!path.EndsWith(".al", StringComparison.OrdinalIgnoreCase)) continue;
-                    var info = new FileInfo(path);
-                    // A file deleted between enumeration and this read is simply absent,
-                    // which the comparison reports as a difference.
-                    try { files[path] = (info.Length, info.LastWriteTimeUtc.Ticks); }
-                    catch (IOException) { }
-                }
+                    ShouldIncludePredicate = (ref System.IO.Enumeration.FileSystemEntry e) =>
+                        !e.IsDirectory && e.FileName.EndsWith(".al", StringComparison.OrdinalIgnoreCase),
+                    ShouldRecursePredicate = (ref System.IO.Enumeration.FileSystemEntry e) =>
+                        !e.FileName.SequenceEqual(".git"),
+                };
+                foreach (var (path, length, ticks) in entries) files[path] = (length, ticks);
             }
             return new SourceSnapshot(files);
         }

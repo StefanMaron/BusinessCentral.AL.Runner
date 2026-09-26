@@ -381,4 +381,32 @@ public sealed class WatchSourceTests
         Rewrite(kept, "z", stamp.AddSeconds(1));
         Assert.Equal(kept, before.FirstDifference(AlRunner.WatchSource.SourceSnapshot.CaptureDirs(dirs)));
     }
+
+    // The watcher reports .al files under dot-directories, so the snapshot must see them too,
+    // or an edit there made mid-cycle is lost. .git is the one directory it prunes.
+    [Fact]
+    public void SourceSnapshot_SeesHiddenDirectoriesButNotGit()
+    {
+        var dir = NewTempDir();
+        var hidden = Path.Combine(dir, ".hidden");
+        var git = Path.Combine(dir, ".git");
+        Directory.CreateDirectory(hidden);
+        Directory.CreateDirectory(git);
+        var stamp = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var inHidden = Path.Combine(hidden, "Hidden.Codeunit.al");
+        var dotFile = Path.Combine(dir, ".Dot.Codeunit.al");
+        Rewrite(inHidden, "a", stamp);
+        Rewrite(dotFile, "b", stamp);
+        Rewrite(Path.Combine(git, "Ignored.al"), "c", stamp);
+        var dirs = new[] { dir };
+        var before = AlRunner.WatchSource.SourceSnapshot.CaptureDirs(dirs);
+        Assert.Equal(2, before.FileCount);
+
+        Rewrite(inHidden, "z", stamp.AddSeconds(1));
+        Assert.Equal(inHidden, before.FirstDifference(AlRunner.WatchSource.SourceSnapshot.CaptureDirs(dirs)));
+        Rewrite(inHidden, "a", stamp);
+
+        Rewrite(dotFile, "z", stamp.AddSeconds(1));
+        Assert.Equal(dotFile, before.FirstDifference(AlRunner.WatchSource.SourceSnapshot.CaptureDirs(dirs)));
+    }
 }

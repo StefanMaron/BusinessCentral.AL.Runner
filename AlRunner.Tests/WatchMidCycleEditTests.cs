@@ -34,7 +34,7 @@ public class WatchMidCycleEditTests
         var tablePath = Path.Combine(bundle, "XRecProbe.Table.al");
         // Inside the watched root on purpose: if a cycle wrote .al files into its cache, the
         // snapshot would see them and every cycle would start the next.
-        var cacheDir = Path.Combine(bundle, ".cache");
+        var cacheDir = Path.Combine(bundle, "cachedir");
         var barrierDir = TestScratch.Dir("al-runner-watch-midcycle-barrier");
         Directory.CreateDirectory(barrierDir);
         var release = Path.Combine(barrierDir, "release");

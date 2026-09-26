@@ -4486,9 +4486,9 @@ else
     // so the cycle's results + this marker would otherwise sit unflushed for the
     // entire idle wait. A TTY auto-flushes, but piped consumers must see each cycle
     // as it completes.
+    Console.Out.Flush();
     // Test-only, a no-op unless AL_RUNNER_TEST_BARRIER_DIR is set: holds the process between
     // the cycle and the re-arm so WatchMidCycleEditTests can edit inside that window (#4706).
-    Console.Out.Flush();
     AlRunner.Infrastructure.TestBarrier.WaitForRelease();
     if (!WatchSource.WaitForSourceChange(bundles, onArmed: () =>
         {
