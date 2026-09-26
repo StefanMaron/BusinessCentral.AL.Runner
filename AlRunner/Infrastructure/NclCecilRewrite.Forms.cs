@@ -1562,15 +1562,17 @@ public static partial class NclCecilRewrite
             // (method name, parameter count, helper) — the two pairs, matched on the exact
             // one-line forwarder shape so a renamed or re-signatured Ncl member fails the
             // build here rather than silently leaving a `None` body unable to write.
-            var depthTargets = new (string Name, int ParamCount, System.Reflection.MethodInfo Helper)[]
+            // ArgSlots: only the World end reads an argument — its commit flag, which decides
+            // whether the world's rows are rolled back (#4643).
+            var depthTargets = new (string Name, int ParamCount, System.Reflection.MethodInfo Helper, int ArgSlots)[]
             {
-                ("BeginTransaction", 1, noteBeginHelper),
-                ("EndTransaction", 2, noteEndHelper),
-                ("BeginTransactionWorldAndTransaction", 1, noteBeginWorldHelper),
-                ("EndTransactionWorldAndTransaction", 2, noteEndWorldHelper),
+                ("BeginTransaction", 1, noteBeginHelper, 0),
+                ("EndTransaction", 2, noteEndHelper, 0),
+                ("BeginTransactionWorldAndTransaction", 1, noteBeginWorldHelper, 0),
+                ("EndTransactionWorldAndTransaction", 2, noteEndWorldHelper, 2),
             };
 
-            foreach (var (name, paramCount, helper) in depthTargets)
+            foreach (var (name, paramCount, helper, argSlots) in depthTargets)
             {
                 var target = sessTxType3.Methods
                     .FirstOrDefault(m => m.Name == name && m.IsStatic && m.HasBody
@@ -1579,10 +1581,8 @@ public static partial class NclCecilRewrite
                         $"[Cecil] SessionTransactionExtensions.{name}(…/{paramCount}) not found — "
                         + "Ncl shape changed; do not commit");
 
-                // argSlots: 0 — the counter needs neither the session nor the commit flag, and
-                // forwarding arguments it does not read is what #3328's arity mismatches are
-                // made of.
-                PrependStaticCall(asm.MainModule, target, helper, argSlots: 0);
+                // Forward no argument a helper does not read — #3328's arity mismatches.
+                PrependStaticCall(asm.MainModule, target, helper, argSlots: argSlots);
             }
         }
 
