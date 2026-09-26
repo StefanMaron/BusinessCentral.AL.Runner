@@ -99,7 +99,7 @@ Issue #4727. After an action on a Card returns and the Card's stored row is no l
 table, BC's client closes the page: every later call on the TestPage variable, `Close()`
 included, raises "The TestPage is not open." It does not matter whether the action called
 `CurrPage.Update`, or whether the action or the test deleted the row. A List in the same
-shape moves to the neighbouring row instead (#4747, not reproduced yet).
+shape moves to a neighbouring row instead; see the next section.
 
 What BC raises, on every cloud leg: `AGR:A;ActionBegin;ActionEnd;AGR:B;ClosePage;` with a
 neighbour `B`, `AGR:A;ActionBegin;ActionEnd;ClosePage;` without one. So `OnClosePage` runs, and
@@ -122,6 +122,25 @@ that renames the current row through another record variable: the key lookup mis
 runner closes the Card; what BC does there is unmeasured.
 
 Measured by corpus codeunit 67300; runner-side: `AlRunner.Tests/TestPageDeletedRowCloseTests.cs`.
+
+## A List whose row is gone moves to a neighbouring row
+
+Issue #4747. In the same shape a List page stays open and moves: to the next row in the page's
+key order, else the previous row when the deleted row was the last, else the blank new-row line
+when it was the only row. The row moved to raises `OnAfterGetRecord` and `OnAfterGetCurrRecord`;
+the deleted row raises neither. `CurrPage.Update(false)` in the action is not what moves it: an
+action that only deletes moves the page the same way.
+
+BC's first run read `AGR:A;ActionBegin;ActionEnd;AGR:B;AGR:B;AGCR:B;AGR:B;AGR:B;AGCR:B;` for rows
+`A` and `B` with `A` deleted. The corpus pins the row shown and the last trigger, not the count;
+the runner raises the pair once.
+
+`LiveNavTestPage.MoveOffDeletedRow` does it, from the same check as the Card close: it finds with
+`=><` from the key the buffer still holds (the page's own `OnFindRecord` when it declares one),
+and falls back to `EnterNewRowLine`. Other page types, and a temporary source, are unmeasured and
+left where they are.
+
+Measured by corpus codeunit 67300's `List_DeletedByAction_*` arms; runner-side: the same test file.
 
 ## What is deliberately not reproduced
 
