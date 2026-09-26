@@ -45,8 +45,8 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
         var (exit, output) = Spawn(_root, pkg);
 
         // Each arm asserts inside AL; the counts separate "passed" from "discovered nothing".
-        Assert.True(output.Contains("passed 15 "),
-            $"expected all fifteen arms to pass; exit={exit}\n{output}");
+        Assert.True(output.Contains("passed 18 "),
+            $"expected all eighteen arms to pass; exit={exit}\n{output}");
         Assert.Contains("failed 0 ", output);
     }
 
@@ -149,7 +149,8 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
                 """);
         }
 
-        // A List whose OnFindRecord answers the first row once DeleteAndPickFirst has run.
+        // A List whose OnFindRecord answers the first row once DeleteAndPickFirst has run, and is a
+        // pass-through Rec.Find(Which) otherwise (DeletePassThrough, #4760).
         File.WriteAllText(Path.Combine(_root, "FindList.Page.al"), """
             page 90485 "TDR Find List"
             {
@@ -172,6 +173,14 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
                             trigger OnAction()
                             begin
                                 PickFirst := true;
+                                Rec.Delete();
+                            end;
+                        }
+                        action(DeletePassThrough)
+                        {
+                            ApplicationArea = All;
+                            trigger OnAction()
+                            begin
                                 Rec.Delete();
                             end;
                         }
@@ -458,6 +467,77 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
                         Error('expected OnFindRecord with = then => then =, got: %1', Trace.Get());
                     if not Trace.Get().EndsWith('AGCR:A;') then
                         Error('expected OnAfterGetCurrRecord for A last, got: %1', Trace.Get());
+                    List.Close();
+                end;
+
+                // A pass-through OnFindRecord answers false to '=' on the deleted key, and BC still asks
+                // '=', '=>', '=' (#4760; corpus 67300 List_DeletedByAction_PassThroughFind_*): a middle
+                // row lands on the next row.
+                [Test]
+                procedure List_PassThroughFind_ActionDeletesAMiddleRow_MovesToTheNextRow()
+                var
+                    Row: Record "TDR Row";
+                    List: TestPage "TDR Find List";
+                begin
+                    Seed();
+                    Row.Code := 'C';
+                    Row.Insert();
+                    List.OpenEdit();
+                    List.GoToKey('B');
+                    Trace.Reset();
+                    List.DeletePassThrough.Invoke();
+                    if List.CodeField.Value() <> 'C' then
+                        Error('expected the List on C, got: %1; trace %2', List.CodeField.Value(), Trace.Get());
+                    if FindCalls(Trace.Get()) <> 'Find:=;Find:=>;Find:=;' then
+                        Error('unexpected OnFindRecord sequence: %1', Trace.Get());
+                    if not Trace.Get().EndsWith('AGCR:C;') then
+                        Error('expected OnAfterGetCurrRecord for C last, got: %1', Trace.Get());
+                    List.Close();
+                end;
+
+                // Nothing after the deleted row, so '=>' answers false too: the previous row, and '='
+                // is asked for it.
+                [Test]
+                procedure List_PassThroughFind_ActionDeletesTheLastRow_MovesToThePreviousRow()
+                var
+                    List: TestPage "TDR Find List";
+                begin
+                    Seed();
+                    List.OpenEdit();
+                    List.GoToKey('B');
+                    Trace.Reset();
+                    List.DeletePassThrough.Invoke();
+                    if List.CodeField.Value() <> 'A' then
+                        Error('expected the List on A, got: %1; trace %2', List.CodeField.Value(), Trace.Get());
+                    if FindCalls(Trace.Get()) <> 'Find:=;Find:=>;Find:=;' then
+                        Error('unexpected OnFindRecord sequence: %1', Trace.Get());
+                    if not Trace.Get().EndsWith('AGCR:A;') then
+                        Error('expected OnAfterGetCurrRecord for A last, got: %1', Trace.Get());
+                    List.Close();
+                end;
+
+                // No row left: '=' and '=>' answer false, and the List shows its blank line.
+                [Test]
+                procedure List_PassThroughFind_ActionDeletesTheOnlyRow_ShowsTheBlankLine()
+                var
+                    Row: Record "TDR Row";
+                    List: TestPage "TDR Find List";
+                begin
+                    Row.DeleteAll();
+                    Row.Code := 'A';
+                    Row.Insert();
+                    List.OpenEdit();
+                    List.GoToKey('A');
+                    Trace.Reset();
+                    List.DeletePassThrough.Invoke();
+                    if FindCalls(Trace.Get()) <> 'Find:=;Find:=>;' then
+                        Error('unexpected OnFindRecord sequence: %1', Trace.Get());
+                    if List.CodeField.Value() <> '' then
+                        Error('expected the blank line, got: %1', List.CodeField.Value());
+                    if StrPos(Trace.Get(), 'AGCR:A;') <> 0 then
+                        Error('expected no OnAfterGetCurrRecord for the deleted row, got: %1', Trace.Get());
+                    if not Row.IsEmpty() then
+                        Error('expected nothing re-inserted');
                     List.Close();
                 end;
 

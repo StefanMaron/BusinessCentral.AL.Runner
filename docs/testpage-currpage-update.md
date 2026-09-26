@@ -154,9 +154,22 @@ re-read of a deleted middle row lands on `C`. The arm pins the three `Which` str
 the row shown, and `OnAfterGetCurrRecord` for `A` last; `MoveOffDeletedRow` makes the same three
 calls. It does not reproduce the `OnAfterGetRecord` reads of the other rows around them.
 
-Unmeasured: a trigger that answers `false` to the first `=` -- the common pass-through
-`exit(Rec.Find(Which))` does, on the deleted key. The runner then calls it with `=><`, which
-lands a pass-through trigger where the default re-read does.
+A trigger that answers `false` to the first `=` -- the common pass-through
+`exit(Rec.Find(Which))` does, on the deleted key -- gets the same `Which` strings. Corpus arms
+`List_DeletedByAction_PassThroughFind_*` (the same page's `DeletePassThrough` action; #4760)
+measured, on the cloud legs of corpus run 36259501382 that finished (27.0, 27.3, 27.5, 28.1,
+28.3; the rest were cancelled by the next push, whose run measures every leg):
+
+| rows, deleted | `Which` strings after the action | row shown |
+|---|---|---|
+| `A`, `B`, `C`, delete `B` | `=`, `=>`, `=` | `C` |
+| `A`, `B`, delete `B` | `=`, `=>`, `=` | `A` |
+
+So `=>` is asked whatever `=` answered. When it finds nothing either, the page still lands on the
+previous row without a further `Find`, and the third `=` is asked for that row.
+`MoveOffDeletedRow` steps back with a direct `Find('<')` on the record, not through the trigger
+-- a page that also declares `OnNextRecord` is unmeasured there. The only-row arm pins what
+happens with no row left: `=` and `=>`, then the blank line.
 
 Measured by corpus codeunit 67300's `List_DeletedByAction_*` arms; runner-side: the same test file.
 
