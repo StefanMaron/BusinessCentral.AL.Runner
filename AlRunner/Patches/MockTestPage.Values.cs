@@ -220,7 +220,19 @@ internal static class TestPageOptionValue
     private static string[] Members(object metadata)
         => ReadNonPublic<string[]>(metadata, "Options") ?? Array.Empty<string>();
 
-    private static int[]? Ordinals(object metadata) => ReadNonPublic<int[]>(metadata, "OrdinalValues");
+    // An enum's positions come from GetOrdinals(), the list EnumCaptions is built in: our
+    // AlEnumOptionMetadata cannot override Ncl's internal OrdinalValues, so for it the reflected
+    // read answers null and a position would be taken for the ordinal (#4788).
+    private static int[]? Ordinals(object metadata)
+    {
+        if (metadata is NCLOptionMetadata { IsEnum: true } enumMetadata)
+        {
+            var ordinals = new List<int>();
+            foreach (var ordinal in enumMetadata.GetOrdinals()) ordinals.Add(ordinal);
+            return ordinals.ToArray();
+        }
+        return ReadNonPublic<int[]>(metadata, "OrdinalValues");
+    }
 
     private static int OrdinalAt(int[]? ordinals, int index)
         => ordinals != null && index < ordinals.Length ? ordinals[index] : index;
