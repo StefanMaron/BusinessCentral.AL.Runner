@@ -3267,7 +3267,9 @@ public sealed partial class BcCompiler
                         ResolvedPath: resolved,
                         Caption: cs.Caption ?? string.Empty,
                         Summary: cs.Summary ?? string.Empty,
-                        IsDefault: IsDefaultLayout(name, defaultLayoutName)));
+                        IsDefault: IsDefaultLayout(name, defaultLayoutName),
+                        ObsoleteState: ReadAlPropertyText(member, "ObsoleteState"),
+                        ExcelLayoutMultipleDataSheets: ReadAlPropertyText(member, "ExcelLayoutMultipleDataSheets")));
                 }
             }
             catch (Exception ex)
@@ -3295,15 +3297,22 @@ public sealed partial class BcCompiler
         /// declines to hydrate a multi-layout report, exactly as before this existed.
         /// </summary>
         private static string ReadDefaultRenderingLayoutName(NavCA.IReportTypeSymbol reportSym)
+            => ReadAlPropertyText(reportSym, "DefaultRenderingLayout");
+
+        /// <summary>
+        /// The <c>ValueText</c> of the AL property <paramref name="propertyName"/> in a symbol's
+        /// property bag, as written, or "" when the symbol does not declare it.
+        /// </summary>
+        private static string ReadAlPropertyText(object symbol, string propertyName)
         {
-            if (ReadSymbolProp(reportSym, "Properties") is not System.Collections.IEnumerable bag)
+            if (ReadSymbolProp(symbol, "Properties") is not System.Collections.IEnumerable bag)
                 return string.Empty;
 
             foreach (var entry in bag)
             {
                 if (entry == null) continue;
                 if (!string.Equals(ReadSymbolProp(entry, "Name") as string,
-                        "DefaultRenderingLayout", StringComparison.OrdinalIgnoreCase))
+                        propertyName, StringComparison.OrdinalIgnoreCase))
                     continue;
 
                 var bound = ReadSymbolProp(entry, "Property");

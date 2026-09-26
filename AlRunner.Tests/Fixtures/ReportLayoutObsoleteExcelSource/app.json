@@ -1,0 +1,19 @@
+{
+  "id": "5b1f7e2a-9c34-4d8e-b6a0-3e2f1c7d9a41",
+  "name": "Runner Tests Fixture - Report Layout Obsolete Excel Source",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "#4571: Report Layout List rows for a source-compiled report carry each layout's ObsoleteState and ExcelLayoutMultipleDataSheets, cold and from the compile cache.",
+  "description": "Used by AlRunner.Tests' ReportLayoutObsoleteExcelSourceTests. Deliberately declares no 'application' dependency (see .claude/rules/no-base-app-in-csharp-tests.md).",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [ { "from": 71860, "to": 71869 } ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "features": []
+}
