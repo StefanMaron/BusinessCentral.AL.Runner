@@ -2500,6 +2500,8 @@ void InvalidateMovedWorkspacePackages(IReadOnlyDictionary<Guid, string> implAppP
     DependencyLoader.InvalidateApps(changedImplAppIds);
 }
 
+// #4706: taken before the first cycle reads any source; the loop below retakes it per cycle.
+var watchCycleSources = watchMode ? WatchSource.SourceSnapshot.Capture(bundles) : null;
 {
     var prePassExit = RunDependencyPrePasses();
     if (prePassExit != null) return prePassExit.Value;
@@ -2662,6 +2664,11 @@ if (watchUi) PaintWatchRunning();
 
 while (true)
 {
+// #4706: what this cycle is about to read; the next arm compares against it, because the
+// watchers are disposed until then and an edit saved meanwhile raises no event.
+if (watchMode && watchCycleIndex > 0)
+    watchCycleSources = WatchSource.SourceSnapshot.Capture(bundles);
+
 // A watch rerun is a new execution even though it reuses the process. NumberSequence
 // values deliberately survive bundle and test boundaries within this cycle.
 AlRunner.Patches.NumberSequencePatches.ResetForNewExecution();
@@ -4413,7 +4420,7 @@ if (watchUi)
         {
             lines = RenderDashboardLines(WatchStatus.Idle, idleTs, cycleDur);
             watchScroll = PaintWatchViewport(lines, watchScroll);
-        });
+        }, cycleStart: watchCycleSources);
     if (armed == null) return 0;
     var (signal, watchers, watchActivity) = armed.Value;
     bool changed = false;
@@ -4484,11 +4491,15 @@ else
     // so the cycle's results + this marker would otherwise sit unflushed for the
     // entire idle wait. A TTY auto-flushes, but piped consumers must see each cycle
     // as it completes.
+    Console.Out.Flush();
+    // Test-only, a no-op unless AL_RUNNER_TEST_BARRIER_DIR is set: holds the process between
+    // the cycle and the re-arm so WatchMidCycleEditTests can edit inside that window (#4706).
+    AlRunner.Infrastructure.TestBarrier.WaitForRelease();
     if (!WatchSource.WaitForSourceChange(bundles, onArmed: () =>
         {
             Console.WriteLine("[watch] waiting for AL source changes… (Ctrl+C to quit)");
             Console.Out.Flush();
-        }))
+        }, cycleStart: watchCycleSources))
         return 0;
     Console.WriteLine("[watch] change detected — re-running…");
     Console.Out.Flush();

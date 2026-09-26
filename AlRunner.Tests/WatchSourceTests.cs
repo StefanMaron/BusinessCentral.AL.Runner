@@ -282,4 +282,131 @@ public sealed class WatchSourceTests
         foreach (var w in watchers) { w.EnableRaisingEvents = false; w.Dispose(); }
         signal.Dispose();
     }
+
+    // #4706: the watchers are disposed while a cycle runs, so an edit saved in that window
+    // raises no event. Arming against the cycle-start snapshot must still see it.
+    private static void Rewrite(string path, string text, DateTime stamp)
+    {
+        File.WriteAllText(path, text);
+        File.SetLastWriteTimeUtc(path, stamp); // no reliance on timestamp granularity
+    }
+
+    [Fact]
+    public async Task WaitForSourceChange_EditSavedWhileNoWatcherWasArmed_IsSeenOnReArm()
+    {
+        var dir = NewTempDir();
+        var file = Path.Combine(dir, "Some.Codeunit.al");
+        Rewrite(file, "x", new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        var bundles = new List<string> { dir };
+
+        var cycleStart = AlRunner.WatchSource.SourceSnapshot.Capture(bundles);
+        Assert.Equal(1, cycleStart.FileCount);
+        // The cycle is running and no watcher exists: this is the edit the issue lost.
+        Rewrite(file, "yy", new DateTime(2020, 1, 1, 0, 0, 5, DateTimeKind.Utc));
+
+        var savedErr = Console.Error;
+        var captured = new StringWriter();
+        Console.SetError(captured);
+        Task<bool> task;
+        Task winner;
+        try
+        {
+            task = Task.Run(() => AlRunner.WatchSource.WaitForSourceChange(
+                bundles, onArmed: () => { }, cycleStart: cycleStart));
+            winner = await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(10)));
+        }
+        finally
+        {
+            Console.SetError(savedErr);
+        }
+
+        Assert.True(ReferenceEquals(task, winner),
+            "an edit saved while no watcher was armed was not picked up when the watch re-armed (#4706).");
+        Assert.True(await task);
+        Assert.Contains("Some.Codeunit.al changed while the last cycle was running", captured.ToString());
+    }
+
+    [Fact]
+    public void ArmSourceWatch_NothingChangedSinceCycleStart_DoesNotSignal()
+    {
+        var dir = NewTempDir();
+        var file = Path.Combine(dir, "Some.Codeunit.al");
+        Rewrite(file, "x", new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        // A non-.al file changing mid-cycle is not a source change.
+        var other = Path.Combine(dir, "notes.txt");
+        var bundles = new List<string> { dir };
+        var cycleStart = AlRunner.WatchSource.SourceSnapshot.Capture(bundles);
+        File.WriteAllText(other, "changed");
+
+        var armed = AlRunner.WatchSource.ArmSourceWatch(bundles, cycleStart: cycleStart);
+        Assert.NotNull(armed);
+        var (signal, watchers, _) = armed!.Value;
+        try
+        {
+            Assert.False(signal.IsSet,
+                "an unchanged tree must not start a cycle, or every cycle would trigger the next.");
+        }
+        finally
+        {
+            AlRunner.WatchSource.DisposeWatch(signal, watchers);
+        }
+    }
+
+    [Fact]
+    public void SourceSnapshot_ReportsAddedDeletedAndRewrittenAlFiles()
+    {
+        var dir = NewTempDir();
+        var sub = Path.Combine(dir, "src");
+        Directory.CreateDirectory(sub);
+        var kept = Path.Combine(sub, "Kept.Table.al");
+        var gone = Path.Combine(sub, "Gone.Table.al");
+        var stamp = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        Rewrite(kept, "a", stamp);
+        Rewrite(gone, "b", stamp);
+        var dirs = new[] { dir };
+        var before = AlRunner.WatchSource.SourceSnapshot.CaptureDirs(dirs);
+        Assert.Equal(2, before.FileCount);
+        Assert.Null(before.FirstDifference(AlRunner.WatchSource.SourceSnapshot.CaptureDirs(dirs)));
+
+        File.Delete(gone);
+        Assert.Equal(gone, before.FirstDifference(AlRunner.WatchSource.SourceSnapshot.CaptureDirs(dirs)));
+        Rewrite(gone, "b", stamp);
+
+        var added = Path.Combine(sub, "Added.PAGE.AL");
+        Rewrite(added, "c", stamp);
+        Assert.Equal(added, before.FirstDifference(AlRunner.WatchSource.SourceSnapshot.CaptureDirs(dirs)));
+        File.Delete(added);
+
+        // Same length, later timestamp: a rewrite.
+        Rewrite(kept, "z", stamp.AddSeconds(1));
+        Assert.Equal(kept, before.FirstDifference(AlRunner.WatchSource.SourceSnapshot.CaptureDirs(dirs)));
+    }
+
+    // The watcher reports .al files under dot-directories, so the snapshot must see them too,
+    // or an edit there made mid-cycle is lost. .git is the one directory it prunes.
+    [Fact]
+    public void SourceSnapshot_SeesHiddenDirectoriesButNotGit()
+    {
+        var dir = NewTempDir();
+        var hidden = Path.Combine(dir, ".hidden");
+        var git = Path.Combine(dir, ".git");
+        Directory.CreateDirectory(hidden);
+        Directory.CreateDirectory(git);
+        var stamp = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var inHidden = Path.Combine(hidden, "Hidden.Codeunit.al");
+        var dotFile = Path.Combine(dir, ".Dot.Codeunit.al");
+        Rewrite(inHidden, "a", stamp);
+        Rewrite(dotFile, "b", stamp);
+        Rewrite(Path.Combine(git, "Ignored.al"), "c", stamp);
+        var dirs = new[] { dir };
+        var before = AlRunner.WatchSource.SourceSnapshot.CaptureDirs(dirs);
+        Assert.Equal(2, before.FileCount);
+
+        Rewrite(inHidden, "z", stamp.AddSeconds(1));
+        Assert.Equal(inHidden, before.FirstDifference(AlRunner.WatchSource.SourceSnapshot.CaptureDirs(dirs)));
+        Rewrite(inHidden, "a", stamp);
+
+        Rewrite(dotFile, "z", stamp.AddSeconds(1));
+        Assert.Equal(dotFile, before.FirstDifference(AlRunner.WatchSource.SourceSnapshot.CaptureDirs(dirs)));
+    }
 }
