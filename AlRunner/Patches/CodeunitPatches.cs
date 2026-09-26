@@ -637,8 +637,8 @@ public static partial class BcRuntime
         // mock. Naming it unconditionally is what makes every one of these lines actionable.
         Console.Error.WriteLine(
             $"[warn] TestPage: page {pageId}: {why}; this TestPage is using the navigation mock, "
-            + "whose actions report Enabled and whose Invoke() does nothing");
-        return new MockITestPage();
+            + "whose own actions refuse Invoke() and whose built-in actions do nothing");
+        return new MockITestPage { DiagnosticPageId = pageId };
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]

@@ -2008,6 +2008,10 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   - a **control** bound neither to a source-table field nor to a page variable the runner could
     resolve, and an **Option-bound control** carrying no option metadata;
   - **`OnLookup` / `OnDrillDown`**, when no AL page object was built for the page at all;
+  - a page's own **action** `Invoke()`, when no AL page object was built for the page and no
+    compiled pageextension owns the action — the navigation mock included. Built-in
+    `OK`/`Cancel`/`Edit`/`View` on the navigation mock still return without doing anything
+    ([#4684](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4684));
   - a **`Visible`/`Editable`/`Enabled` expression** that evaluated to a non-Boolean or that the
     runner's expression evaluator could not evaluate
     ([#2596](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2596));

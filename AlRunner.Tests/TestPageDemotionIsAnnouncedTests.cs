@@ -158,8 +158,8 @@ public sealed class TestPageDemotionIsAnnouncedTests
     /// </summary>
     public static TheoryData<string, string> DemotionCallSites() => new()
     {
-        // The navigation mock itself: MockITestPage.GetAction hands back a MockITestAction whose
-        // Enabled is a constant true and whose Invoke() is a literal no-op.
+        // The navigation mock itself: every control answers a default, and a page's own action
+        // refuses on Invoke() (#4684).
         { "AlRunner/Patches/CodeunitPatches.cs", "using the navigation mock" },
 
         // TryCreate — the record-bearing path. Falls back to record-only access, so every control

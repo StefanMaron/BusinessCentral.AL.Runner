@@ -3115,12 +3115,11 @@ internal sealed partial class RunnerPageInstance
     /// silently doing nothing.
     ///
     /// Returns false when no compiled pageextension owns <paramref name="actionId"/> — an id
-    /// that genuinely belongs to the (unbuildable) precompiled base page itself, which the
-    /// caller is expected to keep treating exactly as it did before this method existed
-    /// (that half of the gap is pre-existing and out of #1923's scope: dispatching an action
+    /// that genuinely belongs to the (unbuildable) precompiled base page itself; the caller
+    /// refuses that case (#4684), because dispatching an action
     /// on a page the runner never compiled needs a control tree the runner has no way to
     /// build at all, unlike a pageextension's own trigger, which needs nothing from the base
-    /// page besides its record).
+    /// page besides its record.
     /// </summary>
     internal static bool TryRaiseExtensionOnlyAction(object owner, NavRecord record, int pageId, int actionId)
     {
