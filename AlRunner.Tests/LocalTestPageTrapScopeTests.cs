@@ -1,6 +1,7 @@
 // LocalTestPageTrapScopeTests — issue #4732. BcRuntime.RemoveLocalTestPageTraps
 // (MethodScopePatches.cs) removes the outstanding Trap() of a disposing scope's local TestPage
-// when that variable held the last reference to its page, and leaves the page itself alone. The
+// when the scope's locals held every reference to its page (#4736: several locals may share
+// one page), and leaves the page itself alone. The
 // BC behaviour is adjudicated upstream by corpus codeunit 67150 "Test Page Trap Scope Tests";
 // this pins the runner's own mechanism, including the two boundaries it must not cross.
 using System.Diagnostics;
@@ -100,6 +101,70 @@ public sealed class LocalTestPageTrapScopeTests : IDisposable
                 TrapAndAssignOut(Card);
                 Page.Run(Page::"Tts Card");
                 Card.Close();
+            end;
+
+            // #4736: two locals share one page, so neither is its last reference on its own.
+            [Test]
+            [HandlerFunctions('CardHandler')]
+            procedure TwoLocalsShareThePage_TrapEnds()
+            begin
+                TrapOnTwoLocals();
+                HandlerRan := false;
+                Page.Run(Page::"Tts Card");
+                if not HandlerRan then
+                    Error('PageHandler did not run');
+            end;
+
+            [Test]
+            [HandlerFunctions('CardHandler')]
+            procedure ThreeLocalsShareThePage_TrapEnds()
+            begin
+                TrapOnThreeLocals();
+                HandlerRan := false;
+                Page.Run(Page::"Tts Card");
+                if not HandlerRan then
+                    Error('PageHandler did not run');
+            end;
+
+            // Boundary: two locals share the page and one of them escapes, so the trap survives.
+            [Test]
+            procedure TwoLocalsShareThePageAndOneEscapes_TrapSurvives()
+            var
+                Card: TestPage "Tts Card";
+            begin
+                TrapOnTwoLocalsAndAssignOut(Card);
+                Page.Run(Page::"Tts Card");
+                Card.Close();
+            end;
+
+            local procedure TrapOnTwoLocals()
+            var
+                A: TestPage "Tts Card";
+                B: TestPage "Tts Card";
+            begin
+                A.Trap();
+                B := A;
+            end;
+
+            local procedure TrapOnThreeLocals()
+            var
+                A: TestPage "Tts Card";
+                B: TestPage "Tts Card";
+                C: TestPage "Tts Card";
+            begin
+                A.Trap();
+                B := A;
+                C := B;
+            end;
+
+            local procedure TrapOnTwoLocalsAndAssignOut(var Out: TestPage "Tts Card")
+            var
+                A: TestPage "Tts Card";
+                B: TestPage "Tts Card";
+            begin
+                A.Trap();
+                B := A;
+                Out := B;
             end;
 
             local procedure TrapOnALocal()
@@ -203,6 +268,9 @@ public sealed class LocalTestPageTrapScopeTests : IDisposable
                      "TrapOnALocal_EndsWithItsProcedure",
                      "TrapThroughAVarParameter_SurvivesTheCallee",
                      "TrapAssignedOutOfALocal_Survives",
+                     "TwoLocalsShareThePage_TrapEnds",
+                     "ThreeLocalsShareThePage_TrapEnds",
+                     "TwoLocalsShareThePageAndOneEscapes_TrapSurvives",
                  })
             Assert.Contains("PASS  Codeunit64732." + name, output);
         foreach (var name in new[] { "A_LeavesATrapInItsOwnLocal", "B_ALaterTestReachesItsHandler" })
