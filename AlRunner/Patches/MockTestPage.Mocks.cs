@@ -20,7 +20,7 @@ internal class MockITestPage : ITestPage
 {
     private readonly Dictionary<int, string>      _filters     = new();
     private readonly Dictionary<int, MockITestField>  _fields  = new();
-    private readonly Dictionary<int, MockITestAction> _actions = new();
+    private readonly Dictionary<int, ITestAction> _actions = new();
     private bool   _ascending        = true;
     private int[]? _currentKeyFields;
 
@@ -46,10 +46,18 @@ internal class MockITestPage : ITestPage
         return f;
     }
 
+    /// <summary>
+    /// The page id a refusal from this mock names. CodeunitPatches sets it on the raw
+    /// navigation mock, whose own <see cref="PageId"/> stays 0.
+    /// </summary>
+    internal int DiagnosticPageId { get; init; }
+
+    // #4684: a page's own action refuses on Invoke() — this mock has no AL page object to run
+    // its OnAction on. Built-in actions (GetBuiltInAction/Edit/View) keep the no-op mock.
     public virtual ITestAction GetAction(int id)
     {
         if (!_actions.TryGetValue(id, out var a))
-            _actions[id] = a = new MockITestAction();
+            _actions[id] = a = new UnreachableTestAction(PageId != 0 ? PageId : DiagnosticPageId, id);
         return a;
     }
 
@@ -167,7 +175,10 @@ internal sealed class MockITestField : ITestField
     public string GetOption(int index)            => string.Empty;
 }
 
-/// <summary>Minimal ITestAction implementation — Invoke is a no-op.</summary>
+/// <summary>
+/// The built-in (OK/Cancel/Edit/View) action of a page with no live instance — Invoke is a
+/// no-op. A page's OWN action gets <see cref="UnreachableTestAction"/> instead (#4684).
+/// </summary>
 internal sealed class MockITestAction : ITestAction
 {
     public void Invoke()         { }
@@ -176,13 +187,37 @@ internal sealed class MockITestAction : ITestAction
 }
 
 /// <summary>
+/// A page's own action on a page the runner built no AL page object for, so there is no
+/// OnAction trigger to run. Invoke() refuses rather than returning as though the action ran
+/// (#4684, loud-failures.md). Visible/Enabled keep answering true, as before.
+/// </summary>
+internal sealed class UnreachableTestAction : ITestAction
+{
+    internal int PageId { get; }
+    internal int ActionId { get; }
+
+    public UnreachableTestAction(int pageId, int actionId)
+    {
+        PageId = pageId;
+        ActionId = actionId;
+    }
+
+    public void Invoke() => throw Refusal(PageId, ActionId);
+    public bool Visible => true;
+    public bool Enabled => true;
+
+    internal static Infrastructure.RunnerOutOfScopeException Refusal(int pageId, int actionId)
+        => TestPageShapeGap.Action(
+            $"TestPage action {actionId} on page {pageId}",
+            "no AL page object was built for this page, so its OnAction trigger cannot be reached");
+}
+
+/// <summary>
 /// Dispatches an action against a pageextension's own OnAction trigger when there is no
 /// live RunnerPageInstance for the base page to route LiveNavTestAction through (issue
 /// #1923 — see RunnerPageInstance.TryRaiseExtensionOnlyAction's remarks for why that
-/// happens and what it can and cannot faithfully do). Falls back to a silent no-op, exactly
-/// matching MockITestAction, when no compiled pageextension actually owns this action id —
-/// an id belonging to the (unbuildable) precompiled base page itself, the pre-existing,
-/// narrower gap this deliberately leaves alone rather than expanding scope.
+/// happens and what it can and cannot faithfully do). An action id no compiled
+/// pageextension owns belongs to the unbuildable base page, and refuses (#4684).
 /// </summary>
 internal sealed class ExtensionOnlyTestAction : ITestAction
 {
@@ -204,7 +239,8 @@ internal sealed class ExtensionOnlyTestAction : ITestAction
     public void Invoke()
     {
         _testPage.SaveCurrentRow();
-        RunnerPageInstance.TryRaiseExtensionOnlyAction(_owner, _record, _pageId, _actionId);
+        if (!RunnerPageInstance.TryRaiseExtensionOnlyAction(_owner, _record, _pageId, _actionId))
+            throw UnreachableTestAction.Refusal(_pageId, _actionId);
     }
 
     public bool Visible => true;

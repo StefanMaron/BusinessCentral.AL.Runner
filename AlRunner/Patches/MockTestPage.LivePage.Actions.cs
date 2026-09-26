@@ -408,16 +408,14 @@ internal partial class LiveNavTestPage
 
     /// <summary>
     /// The page action for <paramref name="actionId"/>, wired to the page's own OnAction
-    /// trigger. The base mock returns a MockITestAction whose Invoke() is a literal no-op,
-    /// so an invoked action silently did nothing and the test failed a step later
-    /// complaining about the missing effect rather than about the action.
+    /// trigger. The base mock's action refuses on Invoke() (#4684).
     ///
     /// Issue #1923: <c>_page</c> is null whenever the base page has no compiled type/captured
     /// metadata for the runner to build a RunnerPageInstance from — the case for a page that
     /// ships PRECOMPILED (e.g. Base App "Item Attributes"). A pageextension THIS bundle
     /// compiled can still own <paramref name="actionId"/>'s OnAction even though the base page
     /// itself is unreachable, so that case gets one more chance (ExtensionOnlyTestAction)
-    /// before falling all the way back to the no-op mock.
+    /// before falling back to the base mock's refusing action.
     /// </summary>
     public override ITestAction GetAction(int actionId)
     {
@@ -427,7 +425,7 @@ internal partial class LiveNavTestPage
             // ExtensionOnlyTestAction dispatches through a pageextension's OWN NavFormExtension
             // instance, which is built over the record — a page with no SourceTable at all
             // (this class's null-_record case) has nothing to build that from, so it falls
-            // through to the no-op mock rather than the extension path.
+            // through to the base mock's refusing action rather than the extension path.
             if (_record != null && _owner != null && RecordPatches.GetPageExtensionIdsForPage(_pageId).Count > 0)
                 return new ExtensionOnlyTestAction(this, _owner, _record, _pageId, actionId);
             return base.GetAction(actionId);

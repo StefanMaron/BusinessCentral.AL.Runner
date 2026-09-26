@@ -30,7 +30,8 @@ by `AlRunner.Tests/LiveTestPagePageTypeKnownTests.cs`.
 
 Routes 1 and 2 cannot reach the refusal: a page in neither inventory gets `MockITestPage`, whose
 `View()`/`Edit()` are the base mock's, and `CreateTestPageClient` prints
-`[warn] … navigation mock` when that happens.
+`[warn] … navigation mock` when that happens. A page's own action on that mock refuses on
+`Invoke()` (#4684).
 
 ## <a id="route-3"></a>Route 3 rests on the compile, not on a shape check
 

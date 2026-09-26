@@ -146,6 +146,10 @@ public sealed class TestPageRefusalClaimTests
             ["drilldown-no-page-object"] = (
                 () => TestPageShapeGap.DrillDown("TestPage drilldown on field 7", Detail),
                 "TestPage drilldown on field 7", "testpage-drilldown"),
+            // #4684 — a page's own action with no AL page object to run its OnAction on.
+            ["action-no-page-object"] = (
+                () => TestPageShapeGap.Action("TestPage action 7 on page 60110", Detail),
+                "TestPage action 7 on page 60110", "testpage-action"),
 
             // RunnerPageInstance.cs — four
             ["control-property-frozen-not-boolean"] = (

@@ -242,6 +242,13 @@ internal static class TestPageShapeGap
         => Build(api, "testpage-assist-edit", detail);
 
     /// <summary>
+    /// A page's own action invoked with no AL page object to run its OnAction on (#4684).
+    /// Built-in actions (OK/Cancel/Edit/View) are not routed here.
+    /// </summary>
+    internal static RunnerOutOfScopeException Action(string api, string detail)
+        => Build(api, "testpage-action", detail);
+
+    /// <summary>
     /// Two emitted methods on one object resolving to a single member id. The surface is passed
     /// in because the caller serves OnValidate, OnAction, OnLookup and OnDrillDown from one
     /// method and the anchor names which one was being resolved.
