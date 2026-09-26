@@ -113,7 +113,8 @@ public sealed class MeasuredBcVersionsWarningTests
             var (exit, output) = Run(root, cacheDir, "--no-auto-provision", "--bc-version", selected.ToString());
 
             Assert.True(exit == 0, $"expected a clean run against the aliased engine artifacts. exit={exit}\n{output}");
-            Assert.Contains($"[bc] selected BC {selected} (", output, StringComparison.Ordinal);
+            // #4599: the run header names the BC build at default verbosity.
+            Assert.Contains($" · BC {selected} · ", output, StringComparison.Ordinal);
             var count = Regex.Matches(output, Regex.Escape(WarningFragment)).Count;
             Assert.True(count == 0,
                 $"BC {sibling} is in bc-versions.txt, so an engine built for {engineVersion} must run it " +

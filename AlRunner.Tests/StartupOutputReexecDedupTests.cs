@@ -104,9 +104,7 @@ public sealed class StartupOutputReexecDedupTests
     /// parent — under --verbose (see BuildPsiCore's comment: issue #2239 moved
     /// `[provision]`/`[reexec]` behind --verbose, reversing part of #2038's decision —
     /// a clean run's default output no longer needs its own process topology to read
-    /// its test results). `[bc] selected BC` and the banner stay visible at default
-    /// verbosity too either way, so this class's blanket --verbose does not mask a
-    /// regression in either of those two.
+    /// its test results).
     ///
     /// Unlike its two siblings below, this test does not need Ncl.dll's presence/absence
     /// pinned to a specific value — either a genuine re-exec (trio suppressed once,
@@ -132,7 +130,7 @@ public sealed class StartupOutputReexecDedupTests
 
         Assert.Equal(1, CountOccurrences(output, "[provision] BC "));
         Assert.Equal(1, CountOccurrences(output, "[bc] selected BC "));
-        Assert.Equal(1, CountOccurrences(output, "al-runner — running "));
+        Assert.Equal(1, CountOccurrences(output, " · BC "));
 
         // The re-exec explanation must not have been collapsed away along with the
         // duplicated trio above — it is specifically about the parent and stays there.
@@ -184,7 +182,7 @@ public sealed class StartupOutputReexecDedupTests
 
             Assert.Equal(1, CountOccurrences(output, "[provision] BC "));
             Assert.Equal(1, CountOccurrences(output, "[bc] selected BC "));
-            Assert.Equal(1, CountOccurrences(output, "al-runner — running "));
+            Assert.Equal(1, CountOccurrences(output, " · BC "));
             Assert.DoesNotContain("[reexec]", output);
         }
         finally
@@ -262,7 +260,7 @@ public sealed class StartupOutputReexecDedupTests
             // from the third (truly terminal) generation only.
             Assert.Equal(1, CountOccurrences(output, "[provision] BC "));
             Assert.Equal(1, CountOccurrences(output, "[bc] selected BC "));
-            Assert.Equal(1, CountOccurrences(output, "al-runner — running "));
+            Assert.Equal(1, CountOccurrences(output, " · BC "));
 
             // #2375: the startup housekeeping runs in the outermost generation only — each of
             // the two hops hands it to its child, which skips it.
@@ -417,7 +415,7 @@ public sealed class StartupOutputReexecDedupTests
 
             Assert.Equal(1, CountOccurrences(output, "[provision] BC "));
             Assert.Equal(1, CountOccurrences(output, "[bc] selected BC "));
-            Assert.Equal(1, CountOccurrences(output, "al-runner — running "));
+            Assert.Equal(1, CountOccurrences(output, " · BC "));
         }
         finally
         {
@@ -634,9 +632,8 @@ public sealed class StartupOutputReexecDedupTests
         // so they now require --verbose. This class's tests are specifically about that
         // re-exec/provisioning plumbing (dedup across process generations), which is
         // exactly the detail --verbose exists to surface, so AL_RUNNER_VERBOSE=1 here
-        // rather than removed. `[bc] selected BC ...` and the `al-runner — running ...`
-        // banner (also asserted on below) are unaffected either way — #2239 kept them
-        // visible at default verbosity too, as the one line naming which BC version ran.
+        // rather than removed. `[bc] selected BC ...` also needs --verbose since #4599; the
+        // run header (`al-runner <ver> · BC <build> · N app(s)`) prints at any verbosity.
         psi.Environment["AL_RUNNER_VERBOSE"] = "1";
         psi.Environment.Remove("AL_RUNNER_NCL_SHADOW_DONE");
         psi.Environment.Remove("AL_RUNNER_REEXECED");

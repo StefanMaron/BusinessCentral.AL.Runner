@@ -77,7 +77,7 @@ public sealed class OlderBcVersionSelectionWithNewerProvisionedTests
             var (exit, output) = Run(root, cacheDir, "--no-auto-provision", "--bc-version", engineVersion.ToString());
 
             Assert.DoesNotContain("BC version already selected", output, StringComparison.Ordinal);
-            Assert.Contains($"[bc] selected BC {engineVersion} (", output, StringComparison.Ordinal);
+            Assert.Contains($" · BC {engineVersion} · ", output, StringComparison.Ordinal);
             Assert.True(exit == 0, $"expected a clean run with the older version selected. exit={exit}\n{output}");
         }
         finally
