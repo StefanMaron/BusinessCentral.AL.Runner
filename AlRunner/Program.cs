@@ -874,7 +874,7 @@ if (tddMode && alCacheDir != null)
 //
 // NOT every candidate found by #2097's own audit of this startup path got moved into
 // this list, even though every one of them duplicates the same way on a stacked re-exec.
-// The --tdd cache-disable notice, the "cdn-exact"/"cdn-minor"/KNOWN-DEGRADED branches of
+// The --tdd cache-disable notice, the "cdn-exact"/"cdn-minor"/major-fallback branches of
 // the switch below, and the per-BC-minor-variants-shipped branch's own auto-select line
 // all sit upstream of a LOUD FAILURE that can return from THIS SAME generation before
 // ever reaching the flush point — deferring them risks silently discarding the one
@@ -1307,7 +1307,7 @@ if (bcVersionArg == null && artifactPathArg == null)
             // duplicated once per re-exec generation (before the shadow-hop re-exec AND
             // again in the child that performs it, sometimes a third time on a stacked
             // Cecil-fresh-rewrite re-exec) — this note does not explain a subsequent
-            // failure (unlike the KNOWN-DEGRADED tier branches above), so nothing is
+            // failure (unlike the major-fallback tier branches above), so nothing is
             // lost by holding it to the terminal generation's flush point.
             if (AlRunner.Log.Verbose)
             {
@@ -1424,8 +1424,8 @@ try
     AlRunner.Infrastructure.BcArtifacts.VerifyEngineConsistency(shippedVariants.Count);
     // #2008's root cause: VerifyEngineConsistency only catches a MAJOR mismatch (Ncl.dll's
     // own AssemblyVersion is always major.0.0.0, so it cannot see a same-major
-    // different-minor selection). The auto-select default path above already warns about
-    // minor skew; an EXPLICIT --bc-version/--artifact-path bypassed that warning entirely
+    // different-minor selection). The auto-select default path has its own counterpart just
+    // below (#4691); an EXPLICIT --bc-version/--artifact-path bypassed it entirely
     // and ran a mismatched engine silently. Only warn here for the explicit path.
     //
     // #2037: also only warn when this install ships NO per-BC-minor engine variants at

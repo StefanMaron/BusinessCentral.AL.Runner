@@ -282,9 +282,10 @@ checksum, then `install -D -m 0755 bcdb-linux-x64 "$HOME/.cache/al-runner/bcbak/
 path is shared across every agent on the box, so back up what is there before overwriting it.
 
 **And rebuild the engine for the BC version you select, rather than passing `--bc-version`
-alone.** `--bc-version 28.4` against an engine built for 28.1 prints a KNOWN-DEGRADED warning and
-costs extra failures from minor skew (#2008); `dotnet build AlRunner -c Release
--p:_BCVersion=<full-version>` is the fix.
+alone.** A minor `.github/bc-versions.txt` lists runs without warning on another minor's engine
+(#4547 measured identical per-test corpus results), but a matching build keeps a bucket baseline
+free of any engine/artifact question, and a minor outside that list does warn. `dotnet build
+AlRunner -c Release -p:_BCVersion=<full-version>` builds the matching engine.
 
 ## The configuration that must be exact
 
