@@ -3,11 +3,17 @@
 /// platform fields SystemId, SystemCreatedAt, SystemCreatedBy, SystemModifiedAt and
 /// SystemModifiedBy (2000000000-2000000004), which the reader emits as `$systemId`, ….
 ///
-/// Every value below was read out of the shipped CRONUS backup with the reader itself.
-/// Customer 10000 is the subject because its SystemCreatedAt and SystemModifiedAt DIFFER, so a
-/// codec that wrote one column into both fields fails; a second customer's SystemId catches a
-/// value copied across rows. Before the fix every one of these read the field's default
-/// (a null GUID, a blank DateTime).
+/// NO LITERAL SYSTEMID OR INSTANT. Both are minted when the artifact's demo data is built, so
+/// every backup carries different ones (#4645). What every W1 backup shares, and what these
+/// tests assert instead:
+///   - SQL Server fills SystemId from NEWSEQUENTIALID(), whose last eight bytes (clock
+///     sequence and node) are the same for every row one server minted. So two rows of one
+///     backup — of any table — agree on them, and a codec that minted fresh GUIDs does not.
+///   - Customer 10000's SystemCreatedAt is earlier than its SystemModifiedAt, and earlier than
+///     Customer 20000's, so a codec sending one column to both fields, or copying a value
+///     across rows, fails.
+///   - SystemCreatedBy / SystemModifiedBy are the demo-data user {…-000000000001}.
+/// Before the fix every one of these read the field's default (a null GUID, a blank DateTime).
 ///
 /// NOT RUN BY CI — see README.md in this directory.
 /// </summary>
@@ -22,23 +28,34 @@ codeunit 64410 "Test Data System Fields Tests"
     procedure CustomerSystemIdIsTheBackupsValue()
     var
         Customer: Record Customer;
+        OtherCustomer: Record Customer;
     begin
         Assert.IsTrue(Customer.Get('10000'), 'Customer 10000 must exist after --test-data hydration');
-        Assert.AreEqual('{E89EC9E1-D953-F111-8E26-7CED8D9E4094}', Format(Customer.SystemId), 'Customer 10000 SystemId');
-
-        Assert.IsTrue(Customer.Get('20000'), 'Customer 20000 must exist after --test-data hydration');
-        Assert.AreEqual('{F09EC9E1-D953-F111-8E26-7CED8D9E4094}', Format(Customer.SystemId), 'Customer 20000 SystemId');
+        Assert.IsTrue(OtherCustomer.Get('20000'), 'Customer 20000 must exist after --test-data hydration');
+        Assert.IsFalse(IsNullGuid(Customer.SystemId), 'Customer 10000 SystemId must be the backup''s, not blank');
+        Assert.IsFalse(Customer.SystemId = OtherCustomer.SystemId, 'two customers must not share a SystemId');
+        Assert.AreEqual(SequentialNode(Customer.SystemId), SequentialNode(OtherCustomer.SystemId),
+            'SystemIds one SQL Server minted share their NEWSEQUENTIALID node bytes; a mismatch means the '
+            + 'runner minted at least one of them instead of reading the backup');
     end;
 
     [Test]
     procedure CustomerAuditFieldsAreTheBackupsValues()
     var
         Customer: Record Customer;
+        OtherCustomer: Record Customer;
     begin
         Customer.Get('10000');
-        // Format 9 renders the instant in UTC, which is how BC stores these columns.
-        Assert.AreEqual('2026-05-19T23:24:33.903Z', Format(Customer.SystemCreatedAt, 0, 9), 'Customer 10000 SystemCreatedAt');
-        Assert.AreEqual('2026-05-19T23:24:34.417Z', Format(Customer.SystemModifiedAt, 0, 9), 'Customer 10000 SystemModifiedAt');
+        OtherCustomer.Get('20000');
+        Assert.IsFalse(Customer.SystemCreatedAt = 0DT, 'Customer 10000 SystemCreatedAt must be the backup''s, not blank');
+        Assert.IsTrue(Customer.SystemCreatedAt < Customer.SystemModifiedAt,
+            StrSubstNo('Customer 10000 was modified after it was created in every W1 backup; got created %1, modified %2',
+                Format(Customer.SystemCreatedAt, 0, 9), Format(Customer.SystemModifiedAt, 0, 9)));
+        Assert.IsTrue(Customer.SystemCreatedAt < OtherCustomer.SystemCreatedAt,
+            StrSubstNo('Customer 10000 was created before Customer 20000; got %1 and %2',
+                Format(Customer.SystemCreatedAt, 0, 9), Format(OtherCustomer.SystemCreatedAt, 0, 9)));
+        Assert.IsTrue(Customer.SystemCreatedAt < CurrentDateTime(),
+            'a restored SystemCreatedAt predates this run; one at or after it was stamped by the runner');
         Assert.AreEqual('{00000000-0000-0000-0000-000000000001}', Format(Customer.SystemCreatedBy), 'Customer 10000 SystemCreatedBy');
         Assert.AreEqual('{00000000-0000-0000-0000-000000000001}', Format(Customer.SystemModifiedBy), 'Customer 10000 SystemModifiedBy');
     end;
@@ -47,8 +64,13 @@ codeunit 64410 "Test Data System Fields Tests"
     procedure GetBySystemIdFindsAHydratedRow()
     var
         Customer: Record Customer;
+        CustomerSystemId: Guid;
     begin
-        Assert.IsTrue(Customer.GetBySystemId('{E89EC9E1-D953-F111-8E26-7CED8D9E4094}'),
+        Customer.Get('10000');
+        CustomerSystemId := Customer.SystemId;
+        Assert.IsFalse(IsNullGuid(CustomerSystemId), 'Customer 10000 SystemId must be the backup''s, not blank');
+        Clear(Customer);
+        Assert.IsTrue(Customer.GetBySystemId(CustomerSystemId),
             'GetBySystemId must find the hydrated Customer 10000 by the SystemId the backup holds');
         Assert.AreEqual('10000', Customer."No.", 'GetBySystemId must return Customer 10000');
     end;
@@ -81,7 +103,7 @@ codeunit 64410 "Test Data System Fields Tests"
         // two restored rows must keep the backup's relative order, which per-row stamping
         // destroys (measured: 261652, 100, 500000 became 261653, 261654, 500001).
         Assert.IsTrue(NoSeries.Get('A-BLK'), 'No. Series A-BLK must exist after --test-data hydration');
-        RestoredRowVersion := NoSeries."timestamp";
+        RestoredRowVersion := NoSeries.SystemRowVersion;
         Assert.IsTrue(RestoredRowVersion > 0,
             'a restored row must carry the backup rowversion, not field 0 default (#4123)');
 
@@ -93,7 +115,7 @@ codeunit 64410 "Test Data System Fields Tests"
         OtherNoSeries.SetFilter(Code, '<>%1', 'A-BLK');
         Assert.IsTrue(OtherNoSeries.FindFirst(),
             'the backup must hold a second No. Series row to compare rowversions against');
-        OtherRowVersion := OtherNoSeries."timestamp";
+        OtherRowVersion := OtherNoSeries.SystemRowVersion;
         Assert.AreNotEqual(RestoredRowVersion, OtherRowVersion,
             'two restored rows must not share a rowversion: SQL assigns each row its own, and '
             + 'equal values here mean the stamp overwrote both with consecutive counter values');
@@ -104,7 +126,7 @@ codeunit 64410 "Test Data System Fields Tests"
         NoSeries.Code := 'TDF-RV-1';
         NoSeries.Description := 'rowversion ordering probe';
         NoSeries.Insert();
-        WrittenRowVersion := NoSeries."timestamp";
+        WrittenRowVersion := NoSeries.SystemRowVersion;
 
         Assert.IsTrue(WrittenRowVersion > RestoredRowVersion,
             'a row inserted after the restore must sort AFTER every restored row; real SQL has '
@@ -117,10 +139,28 @@ codeunit 64410 "Test Data System Fields Tests"
     procedure NoSeriesSystemIdIsTheBackupsValue()
     var
         NoSeries: Record "No. Series";
+        Customer: Record Customer;
     begin
         Assert.IsTrue(NoSeries.Get('A-BLK'), 'No. Series A-BLK must exist after --test-data hydration');
-        Assert.AreEqual('{C749D1DB-D953-F111-8E26-7CED8D9E4094}', Format(NoSeries.SystemId), 'A-BLK SystemId');
-        // The backup holds 23:24:22.700; format 9 drops trailing zeros from the milliseconds.
-        Assert.AreEqual('2026-05-19T23:24:22.7Z', Format(NoSeries.SystemCreatedAt, 0, 9), 'A-BLK SystemCreatedAt');
+        Assert.IsTrue(Customer.Get('10000'), 'Customer 10000 must exist after --test-data hydration');
+        Assert.IsFalse(IsNullGuid(NoSeries.SystemId), 'A-BLK SystemId must be the backup''s, not blank');
+        // Another TABLE's row, so this also catches a per-table mapping error the Customer test cannot.
+        Assert.AreEqual(SequentialNode(Customer.SystemId), SequentialNode(NoSeries.SystemId),
+            'A-BLK and Customer 10000 come from one database, so their SystemIds share the NEWSEQUENTIALID node');
+        // Demo data sets up number series before it creates customers.
+        Assert.IsFalse(NoSeries.SystemCreatedAt = 0DT, 'A-BLK SystemCreatedAt must be the backup''s, not blank');
+        Assert.IsTrue(NoSeries.SystemCreatedAt < Customer.SystemCreatedAt,
+            StrSubstNo('A-BLK was created before Customer 10000; got %1 and %2',
+                Format(NoSeries.SystemCreatedAt, 0, 9), Format(Customer.SystemCreatedAt, 0, 9)));
+    end;
+
+    /// <summary>The trailing eight bytes of a NEWSEQUENTIALID GUID: clock sequence and node, the
+    /// same for every id one SQL Server instance mints.</summary>
+    local procedure SequentialNode(Id: Guid): Text
+    var
+        Formatted: Text;
+    begin
+        Formatted := UpperCase(DelChr(Format(Id), '=', '{}'));
+        exit(CopyStr(Formatted, StrLen(Formatted) - 16));
     end;
 }
