@@ -32,15 +32,18 @@ public class WatchSiblingSymbolsIncrementalTests
         }
         """);
 
-    private static void WriteTests(string dir, string marker, string expression, int expected) =>
+    // The procedure name carries the cycle, and --show-pass prints it, so the output says which
+    // version of this file a cycle compiled (#4707).
+    private static string TestName(int cycle) => $"AnswerMatches_Cycle{cycle}";
+
+    private static void WriteTests(string dir, int cycle, string expression, int expected) =>
         WatchEdit.Replace(Path.Combine(dir, "AnswerTests.Codeunit.al"), $$"""
-        // {{marker}}
         codeunit 64065 "WSI Answer Tests"
         {
             Subtype = Test;
 
             [Test]
-            procedure AnswerMatches()
+            procedure {{TestName(cycle)}}()
             var
                 Answer: Codeunit "WSI Answer";
             begin
@@ -93,7 +96,7 @@ public class WatchSiblingSymbolsIncrementalTests
         }
         """);
         WriteDep(depDir, "");
-        WriteTests(testDir, "cycle 1", "Answer.Value()", 42);
+        WriteTests(testDir, 1, "Answer.Value()", 42);
         return (root, depDir, testDir);
     }
 
@@ -148,7 +151,7 @@ public class WatchSiblingSymbolsIncrementalTests
             // The parent directory is the bundle: that is what routes the dependency through
             // EmitSiblingSymbols rather than BuildSiblingSourceDeps.
             Arguments = TestBuildConfig.RunArgs(ProjectPath) + TestBuildConfig.BcVersionArg
-                + $" \"{root}\" --watch --cache \"{cacheDir}\"",
+                + $" \"{root}\" --watch --show-pass --cache \"{cacheDir}\"",
             RedirectStandardOutput = true, RedirectStandardError = true,
             UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
         };
@@ -184,6 +187,23 @@ public class WatchSiblingSymbolsIncrementalTests
 
         string Segment(int from, int to) { lock (lines) return WatchOutputSlicing.MergedJoin(lines, from, to); }
 
+        // One edit writes the dependency, then the tests. A writer stall longer than the quiet
+        // window lets a cycle start between the two (#4707), so an edit can span several cycles:
+        // First is the one after the edit, which saw the dependency write because it lands first;
+        // Final is the one that compiled this edit's tests, the only one that saw the whole edit.
+        async Task<(string First, string Final, int End)> WaitForEdit(int after, int cycle)
+        {
+            int end = await WaitForMarkerAfter(after + 1);
+            var first = Segment(after + 1, end);
+            int start = after + 1;
+            while (!Segment(start, end).Contains(TestName(cycle)))
+            {
+                start = end + 1;
+                end = await WaitForMarkerAfter(start);
+            }
+            return (first, Segment(start, end), end);
+        }
+
         void AssertPassed(string cycle, string label)
         {
             Assert.True(cycle.Contains("PASS"), $"{label} did not pass:\n{cycle}");
@@ -202,31 +222,35 @@ public class WatchSiblingSymbolsIncrementalTests
             // Cycle 2: the dependency gains a public procedure the dependent now calls. The fast
             // path must be taken AND its symbols must carry Extra(), or the dependent cannot bind it.
             WriteDep(depDir, ExtraProcedure);
-            WriteTests(testDir, "cycle 2", "(Answer.Value() + Answer.Extra())", 100);
-            int m2 = await WaitForMarkerAfter(m1 + 1);
-            var cycle2 = Segment(m1 + 1, m2);
-            Assert.True(cycle2.Contains(DepLine + "RAD incremental (fast path)"),
-                "cycle 2 did not take the fast path for the edited sibling:\n" + cycle2);
-            Assert.DoesNotContain(DepLine + "full compile (", cycle2);
+            WriteTests(testDir, 2, "(Answer.Value() + Answer.Extra())", 100);
+            var (dep2, cycle2, m2) = await WaitForEdit(m1, 2);
+            Assert.True(dep2.Contains(DepLine + "RAD incremental (fast path)"),
+                "cycle 2 did not take the fast path for the edited sibling:\n" + dep2);
+            Assert.DoesNotContain(DepLine + "full compile (", dep2);
             AssertPassed(cycle2, "cycle 2");
 
             // Cycle 3: only the dependent changes; the unchanged sibling is not recompiled.
-            WriteTests(testDir, "cycle 3", "(Answer.Value() + Answer.Extra())", 100);
-            int m3 = await WaitForMarkerAfter(m2 + 1);
-            var cycle3 = Segment(m2 + 1, m3);
-            Assert.True(cycle3.Contains(DepLine + "RAD incremental (fast path)"),
-                "cycle 3 recompiled the unchanged sibling:\n" + cycle3);
-            Assert.DoesNotContain(DepLine + "full compile (", cycle3);
+            WriteTests(testDir, 3, "(Answer.Value() + Answer.Extra())", 100);
+            var (dep3, cycle3, m3) = await WaitForEdit(m2, 3);
+            Assert.True(dep3.Contains(DepLine + "RAD incremental (fast path)"),
+                "cycle 3 recompiled the unchanged sibling:\n" + dep3);
+            Assert.DoesNotContain(DepLine + "full compile (", dep3);
             AssertPassed(cycle3, "cycle 3");
 
-            // Cycle 4: an added overload is the #2548 shape the fast path must refuse.
+            // Cycle 4: an added overload is the #2548 shape the fast path must refuse. The writer
+            // stalls here on purpose: the dependency's cycle runs to its end before the tests are
+            // written, so the edit always spans two cycles (#4707). The first still compiles the
+            // cycle-3 tests, which bind against the new surface and pass, so only the procedure
+            // name tells the two cycles apart.
             WriteDep(depDir, ValueOverload);
-            WriteTests(testDir, "cycle 4", "Answer.Value(7)", 7);
-            int m4 = await WaitForMarkerAfter(m3 + 1);
-            var cycle4 = Segment(m3 + 1, m4);
-            Assert.True(cycle4.Contains(DepLine + "full compile ("),
-                "cycle 4 did not fall back for an added overload:\n" + cycle4);
-            Assert.DoesNotContain(DepLine + "RAD incremental", cycle4);
+            int stalled = await WaitForMarkerAfter(m3 + 1);
+            Assert.Contains(TestName(3), Segment(m3 + 1, stalled));
+            WriteTests(testDir, 4, "Answer.Value(7)", 7);
+            var (dep4, cycle4, _) = await WaitForEdit(m3, 4);
+            Assert.True(dep4.Contains(DepLine + "full compile ("),
+                "cycle 4 did not fall back for an added overload:\n" + dep4);
+            Assert.DoesNotContain(DepLine + "RAD incremental", dep4);
+            Assert.Contains(TestName(4), cycle4);
             AssertPassed(cycle4, "cycle 4");
         }
         finally
