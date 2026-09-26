@@ -83,6 +83,88 @@ public static class AllProfileWritePatches
             throw NavCSideError(Message("ModifySpecificFieldsOnAppProfileNotAllowed"), profileId);
     }
 
+    internal const int TenantProfileTableId = 2000000177;
+
+    /// <summary>
+    /// Prepended to NavRecord.UpdateReferencesOnRenameAsync(List&lt;NCLMetaField&gt;, NavRecord),
+    /// which BC's RenameAsync calls after a successful rename with <c>this</c> holding the new
+    /// key and <paramref name="originalValues"/> the old one. A no-op for every table but a
+    /// non-temporary All Profile.
+    ///
+    /// <para>Observably equivalent: on a real tier an All Profile key change is
+    /// <c>TenantProfileTableDataHandler.ModifyAsync</c> → <c>tenantProfile.ALRenameAsync</c> on
+    /// Tenant Profile (2000000177), whose propagation carries every row relating to it —
+    /// "Tenant Profile Page Metadata" (2000000187) among them. The runner keeps tenant profiles
+    /// in All Profile's own store and has no 2000000177 row to rename, so this runs that
+    /// propagation directly: BC's own UpdateReferencesOnRenameAsync, on a 2000000177 record
+    /// carrying the new key, against one carrying the old. Corpus 61207 pins the result (#2325).</para>
+    ///
+    /// <para>Trap: what is NOT reproduced is the 2000000177 rename itself — its OnBefore/OnAfter
+    /// Rename table events and global triggers. System tables have no AL triggers, and a
+    /// subscriber to Tenant Profile's rename events would see nothing here.</para>
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void CascadeTenantProfileRename(object? record, object? changedFields, object? originalValues)
+    {
+        if (Subject(record) is not { } renamed) return;
+        if (originalValues is not NavRecord { IsTemporary: false } before) return;
+
+        var (newAppId, newProfileId) = KeyOf(renamed);
+        var (oldAppId, oldProfileId) = KeyOf(before);
+        bool appIdChanged = newAppId != oldAppId;
+        bool profileIdChanged = !string.Equals(newProfileId, oldProfileId, StringComparison.Ordinal);
+        if (!appIdChanged && !profileIdChanged) return;
+
+        var session = renamed.ParentSession
+            ?? throw RecordPatches.AllProfileShapeGap(
+                "the renamed All Profile record has no session, so the Tenant Profile rename "
+                + "propagation BC runs alongside it cannot be run");
+        if (RecordPatches.EnsureTableInMetadataCache(TenantProfileTableId) == null)
+            throw RecordPatches.AllProfileShapeGap(
+                "Tenant Profile (2000000177) has no metadata in this run, so the rows that relate "
+                + "to it cannot follow the rename");
+
+        using var tpNew = new NavRecord(session, TenantProfileTableId, SecurityFiltering.Ignored);
+        using var tpOld = new NavRecord(session, TenantProfileTableId, SecurityFiltering.Ignored);
+        var tpMeta = tpNew.MetaTable
+            ?? throw RecordPatches.AllProfileShapeGap("Tenant Profile (2000000177) record has no metatable");
+        // GetFieldByNo, not the name lookup's instance: BC matches changed fields by reference
+        // against metaTable.GetFieldByNo(relation.SourceFieldId).
+        var tpAppId = tpMeta.GetFieldByNo(FieldByName(tpMeta, "App ID").FieldNo);
+        var tpProfileId = tpMeta.GetFieldByNo(FieldByName(tpMeta, "Profile ID").FieldNo);
+
+        tpNew.SetFieldValue(tpAppId.FieldNo, renamed.GetFieldValue(_appIdFieldNo));
+        tpNew.SetFieldValue(tpProfileId.FieldNo, renamed.GetFieldValue(_profileIdFieldNo));
+        tpOld.SetFieldValue(tpAppId.FieldNo, before.GetFieldValue(_appIdFieldNo));
+        tpOld.SetFieldValue(tpProfileId.FieldNo, before.GetFieldValue(_profileIdFieldNo));
+
+        var changed = new List<NCLMetaField>();
+        if (appIdChanged) changed.Add(tpAppId);
+        if (profileIdChanged) changed.Add(tpProfileId);
+
+        _mUpdateReferencesOnRename ??= AlRunner.Infrastructure.BcShape.RequiredMethod(
+            typeof(NavRecord), "UpdateReferencesOnRenameAsync",
+            BindingFlags.NonPublic | BindingFlags.Instance,
+            "All Profile rename", "NavRecord.UpdateReferencesOnRenameAsync(List<NCLMetaField>, NavRecord)",
+            "BC's rename propagation, run for the Tenant Profile row an All Profile rename renames",
+            types: new[] { typeof(List<NCLMetaField>), typeof(NavRecord) });
+        try
+        {
+            // Sync-over-async, the same trade every Cecil prepend here makes: a void prepend
+            // has no await point, and the runner executes AL on one thread.
+            var pending = (System.Threading.Tasks.ValueTask)_mUpdateReferencesOnRename.Invoke(
+                tpNew, new object[] { changed, tpOld })!;
+            pending.AsTask().GetAwaiter().GetResult();
+        }
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+            throw;
+        }
+    }
+
+    private static MethodInfo? _mUpdateReferencesOnRename;
+
     /// <summary>
     /// The record under write when it is a NON-TEMPORARY All Profile record, else null.
     /// A `temporary Record "All Profile"` is a plain temp table on a real tier too — it
@@ -111,12 +193,15 @@ public static class AllProfileWritePatches
     }
 
     private static int FieldNoByName(NavRecord rec, string fieldName)
+        => FieldByName(rec.MetaTable!, fieldName).FieldNo;
+
+    private static NCLMetaField FieldByName(NCLMetaTable table, string fieldName)
     {
-        foreach (var f in RecordPatches.GetAllFields(rec.MetaTable!) ?? Enumerable.Empty<NCLMetaField>())
+        foreach (var f in RecordPatches.GetAllFields(table) ?? Enumerable.Empty<NCLMetaField>())
             if (string.Equals(f.FieldName, fieldName, StringComparison.OrdinalIgnoreCase))
-                return f.FieldNo;
+                return f;
         throw RecordPatches.AllProfileShapeGap(
-            $"metatable has no \"{fieldName}\" field, so BC's write rules cannot be applied");
+            $"table {table.TableId} has no \"{fieldName}\" field, so BC's profile write rules cannot be applied");
     }
 
     // Ncl's own resource class (internal, resx-generated). Located by the presence of the

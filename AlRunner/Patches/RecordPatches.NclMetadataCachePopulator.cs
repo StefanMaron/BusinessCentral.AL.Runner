@@ -432,8 +432,11 @@ public static partial class RecordPatches
     /// PopulateNclMetadataCache eagerly builds every parsed table into it, and .app-fallback
     /// tables enter it the moment anything touches them. A table absent from the cache has
     /// never been instantiated in this run, therefore holds no rows, and BC's propagation
-    /// over it would find nothing to update anyway. Virtual tables (id ≥ 2,000,000,000) are
-    /// excluded exactly as GetSnapshotOfAllNonVirtualMetaTables excludes them.</para>
+    /// over it would find nothing to update anyway.</para>
+    /// <para>System tables are IN that snapshot unless BC classifies them virtual or
+    /// application-database (<see cref="IsInBcNonVirtualSnapshot"/>) — so "User Personalization"
+    /// follows an All Profile rename and "Tenant Profile Page Metadata" a Tenant Profile one
+    /// (#2325). Excluding every id ≥ 2,000,000,000 dropped both.</para>
     /// </summary>
     public static NCLMetaFieldRelation[] NCLMetaTable_ComputeReferencingRelations(
         object appGroup, NCLMetaTable context)
@@ -442,7 +445,7 @@ public static partial class RecordPatches
         foreach (var value in _metaTableCache.Values)
         {
             if (value is not NCLMetaTable child) continue;
-            if (child.TableId >= 2000000000) continue;
+            if (!IsInBcNonVirtualSnapshot(child.TableId)) continue;
             foreach (var field in child.Fields)
             {
                 var relations = field?.FieldRelations;
@@ -453,5 +456,78 @@ public static partial class RecordPatches
             }
         }
         return result.ToArray();
+    }
+
+    /// <summary>
+    /// Cecil-rewritten body for the private static <c>NavRecord.CanUseBulkRenameAll</c>, whose
+    /// one caller is rename propagation into a referencing primary-key field. Always false, so
+    /// that propagation takes the row-by-row route below.
+    /// <para>Observably equivalent: BC takes the bulk route only when the referencing table has
+    /// no rename trigger, global rename trigger, rename event subscriber, referencing relations
+    /// or links — exactly the case where renaming each row with triggers off (what the
+    /// row-by-row route does) leaves the same rows and fires nothing. The bulk route itself
+    /// cannot run here: TempTableDataProvider.ModifyAll never re-keys the primary tree, so a
+    /// re-keyed row reads its new value and is still found only under its old key.</para>
+    /// </summary>
+    public static bool NavRecord_CanUseBulkRenameAll(bool runApplicationTrigger, object record, object field)
+        => false;
+
+    /// <summary>
+    /// Cecil-rewritten body for the static
+    /// <c>NavRecord.UpdateReferencesOnRenameAsync(NavRecord, NCLMetaTable, NCLMetaField, NavValue)</c>:
+    /// re-key every row of <paramref name="referencingRecord"/> inside the filters BC already set
+    /// on it, setting <paramref name="referencingField"/>'s key slot to <paramref name="valueToSet"/>.
+    /// <para>Observably equivalent: BC's body is the same loop — collect the primary keys of the
+    /// filtered rows, then per key Clear / ChangeCompany / Get / RenameAsync(ThrowError, false,
+    /// false) — with the keys collected through a provider query. TempTableDataProvider answers
+    /// SupportsQueries=false, on which BC's body returns having renamed nothing (a skip meant
+    /// for virtual tables, which the runner's reverse index never hands it). So the keys are
+    /// collected by iterating the record instead; the renames are BC's own.</para>
+    /// </summary>
+    public static System.Threading.Tasks.ValueTask NavRecord_UpdateReferencesOnRenameRows(
+        NavRecord referencingRecord, NCLMetaTable referencingTable, NCLMetaField referencingField, NavValue valueToSet)
+    {
+        var keyFields = referencingTable.PrimaryKey.KeyFieldsList;
+        int slot = keyFields.IndexOf(referencingField);
+        if (slot < 0)
+            throw new BcShapeGapException("rename propagation", "NCLMetaKey.KeyFieldsList",
+                $"field {referencingField.FieldNo} of table {referencingTable.TableId} was routed to the "
+                + "primary-key rename path but is not in the primary key");
+
+        // Collect first, rename after: renaming while iterating would move rows under the cursor.
+        var keys = new List<NavValue[]>();
+        if (referencingRecord.ALFindAsync(DataError.TrapError, "-").GetAwaiter().GetResult())
+        {
+            do
+                keys.Add(keyFields.Select(f => referencingRecord.GetFieldValue(f)).ToArray());
+            while (referencingRecord.ALNextAsync().GetAwaiter().GetResult() != 0);
+        }
+
+        foreach (var key in keys)
+        {
+            string company = referencingRecord.ALCurrentCompany;
+            referencingRecord.Clear();
+            referencingRecord.ALChangeCompany(company);
+            referencingRecord.ALGetAsync(DataError.ThrowError, key).GetAwaiter().GetResult();
+            key[slot] = valueToSet;
+            referencingRecord.RenameAsync(DataError.ThrowError, runApplicationTrigger: false,
+                runGlobalTrigger: false, key).GetAwaiter().GetResult();
+        }
+        return default;
+    }
+
+    /// <summary>
+    /// Would BC's <c>NCLMetadata.GetSnapshotOfAllNonVirtualMetaTables</c> contain this table?
+    /// An app table always; a system table only when <c>NCLMetaTable.GetTableType</c> — BC's
+    /// own classifier, read off <c>SystemTables</c> — marks it neither Virtual nor App
+    /// (application-database), the two kinds <c>BuildAllNonVirtualMetaTableSnapshotListFromDatabase</c>
+    /// filters out of <c>PlatformMetadataProvider.GetSystemTables()</c>.
+    /// </summary>
+    internal static bool IsInBcNonVirtualSnapshot(int tableId)
+    {
+        if (tableId < 2000000000) return true;
+        var types = NCLMetaTable.GetTableType(tableId);
+        if ((types & NCLMetaTable.TableTypes.System) == 0) return false;   // not a table BC knows at this id
+        return (types & (NCLMetaTable.TableTypes.Virtual | NCLMetaTable.TableTypes.App)) == 0;
     }
 }
