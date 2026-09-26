@@ -395,7 +395,31 @@ public static partial class BcRuntime
         // detach below, while this scope's own child-handler chain is still intact.
         UnbindLocalManualSubscriptions(self);
 
+        // #4732: same reason, for a LOCAL "var X: TestPage ..." — see ReleaseLocalTestPageReferences.
+        ReleaseLocalTestPageReferences(self);
+
         DetachTreeHandlerFromParent(self);
+    }
+
+    /// <summary>
+    /// Releases the page reference held by each LOCAL TestPage variable of a disposing scope, so a
+    /// <c>Trap()</c> nothing consumed ends with its variable instead of capturing a later page run
+    /// (#4732). Observably equivalent to BC: BC's scope exit disposes the scope's tree, whose
+    /// <c>NavTestPageHandle</c> child releases its reference target; the last release disposes the
+    /// <c>NavTestPage</c>, and <c>NavTestPage.Dispose(bool)</c> calls
+    /// <c>TestExecution.RemoveTrap(this)</c> (28.1.49838.53910). <c>ClearReference()</c> is BC's own
+    /// public release, so a page still referenced elsewhere (a var parameter, an assignment) keeps
+    /// its trap exactly as it would there.
+    /// Trap: release only — never Dispose() the handle's subtree; see NavMethodScope_Dispose.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static void ReleaseLocalTestPageReferences(object? self)
+    {
+        ForEachDirectChildHost(self, host =>
+        {
+            if (host is Microsoft.Dynamics.Nav.Runtime.NavTestPageHandle tpHandle && tpHandle.HasTarget)
+                tpHandle.ClearReference();
+        });
     }
 
     /// <summary>
@@ -438,6 +462,33 @@ public static partial class BcRuntime
     [MethodImpl(MethodImplOptions.NoInlining)]
     internal static void UnbindLocalManualSubscriptions(object? self)
     {
+        ForEachDirectChildHost(self, host =>
+        {
+            try
+            {
+                if (host is Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle cuHandle && cuHandle.HasTarget)
+                {
+                    var target = cuHandle.Target;
+                    if (target != null && target.IsSubscriptionBound)
+                        UnbindManualSubscriptionDirect(target);
+                }
+            }
+            catch
+            {
+                // Best-effort: a handle mid-teardown must not abort the sweep for the REST
+                // of this scope's children.
+            }
+        });
+    }
+
+    /// <summary>
+    /// Calls <paramref name="visit"/> with the hostObject of each DIRECT child of self's tree
+    /// handler — the local-variable handles BC's compiler emits on the generated scope class. A
+    /// throw from <paramref name="visit"/> propagates; a visitor that must not abort the walk
+    /// catches for itself.
+    /// </summary>
+    private static void ForEachDirectChildHost(object? self, Action<object?> visit)
+    {
         if (self == null) return;
         if (_fTreeObjTree == null || _fTreeHandlerFirstChildBase == null ||
             _fTreeHandlerNextSiblingBase == null || _fTreeHandlerHostObject == null)
@@ -454,30 +505,13 @@ public static partial class BcRuntime
 
         while (child != null)
         {
-            // Capture the sibling link BEFORE any mutation below, mirroring
-            // DetachTreeHandlerFromParent's own walk — UnbindManualSubscriptionDirect only
-            // touches EventBindings/IsSubscriptionBound, never the tree's sibling chain, but
-            // reading `next` up front keeps this loop robust regardless.
+            // Read the sibling link before visiting, so a visitor that mutates the tree cannot
+            // derail the walk.
             object? next;
             try { next = _fTreeHandlerNextSiblingBase.GetValue(child); }
             catch { next = null; }
 
-            try
-            {
-                if (_fTreeHandlerHostObject.GetValue(child) is
-                        Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle cuHandle
-                    && cuHandle.HasTarget)
-                {
-                    var target = cuHandle.Target;
-                    if (target != null && target.IsSubscriptionBound)
-                        UnbindManualSubscriptionDirect(target);
-                }
-            }
-            catch
-            {
-                // Best-effort: a handle mid-teardown must not abort the sweep for the REST
-                // of this scope's children.
-            }
+            visit(_fTreeHandlerHostObject.GetValue(child));
 
             child = next;
         }
