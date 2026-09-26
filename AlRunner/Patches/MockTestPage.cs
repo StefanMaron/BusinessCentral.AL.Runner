@@ -62,10 +62,12 @@ internal partial class LiveNavTestPage : MockITestPage
         if (page != null) page.IsCurrentRowUnsavedNewRow = IsUnsavedNewRow;
     }
 
-    // A temporary source table is left out: RowExistsInTable probes the stored table, which a
-    // temporary row is never in, so it would read every temporary row as unsaved.
+    // A temporary row is never in the stored table RowExistsInTable probes, so it is asked of
+    // its own buffer through BC's HasBeenInserted, whose temporary branch is ExistsAsync(ALRecordId).
+    // Corpus codeunit 60872 "ALT Page Update Temp New Test" (#4712).
     private bool IsUnsavedNewRow()
-        => _pendingNewRow && _record is { IsTemporary: false } record && !RowExistsInTable(record);
+        => _pendingNewRow && _record is { } record
+            && !(record.IsTemporary ? record.HasBeenInserted : RowExistsInTable(record));
 
     internal NavRecord? Record => _record;
 
