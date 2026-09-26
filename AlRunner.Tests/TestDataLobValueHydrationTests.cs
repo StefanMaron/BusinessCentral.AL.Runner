@@ -219,11 +219,9 @@ public sealed class TestDataLobValueHydrationTests
             Convert(Facts(MediaField), "\"57C8E273-1769-4173-AAED-0A56E3ADCB8D\""));
 
         // ToGuid(), NOT ALMediaId. `NavMediaValueBase::get_ALMediaId/0` is one of the members
-        // NclCecilRewrite replaces, and its replacement SYNTHESISES an id when the container
-        // Guid is empty — so reading the stored value back through it would be reading the
-        // runner's media shim, not this codec's output, and would answer differently depending
-        // on whether the Ncl rewrite happens to be installed in the process. ToGuid() is
-        // NavMediaValueBase's own unrewritten `Key.Value`.
+        // NclCecilRewrite replaces, so reading through it would measure the runner's media
+        // patch rather than this codec's output, and would depend on whether the rewrite is
+        // installed in the process. ToGuid() is NavMediaValueBase's own unrewritten `Key.Value`.
         Assert.Equal(Guid.Parse("57C8E273-1769-4173-AAED-0A56E3ADCB8D"), media.ToGuid());
         Assert.False(media.IsZeroOrEmpty);
 

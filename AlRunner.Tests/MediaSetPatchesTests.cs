@@ -200,4 +200,42 @@ public sealed class MediaSetPatchesTests
         Assert.True(MediaSetPatches.NavMediaSet_ALRemove(self, new object(), mediaId));
         Assert.Equal(1, MediaSetPatches.NavMediaSet_get_ALCount(real));
     }
+
+    // #4775: get_ALMediaId is `Key.Value` in BC (NavMediaValueBase.ALMediaId), so a field
+    // nothing was ever stored in answers Guid.Empty — not an id minted per wrapper.
+    [Fact]
+    public void MediaId_EmptyField_IsGuidEmpty()
+    {
+        var self = new FakeMediaValue();
+        Assert.Equal(Guid.Empty, MediaSetPatches.NavMediaSet_get_ALMediaId(self));
+    }
+
+    [Fact]
+    public void MediaId_EmptyField_TwoWrappersOfOneRow_Agree()
+    {
+        // Two record variables that read one row get two wrapper objects.
+        var first = new FakeMediaValue();
+        var second = new FakeMediaValue();
+        Assert.Equal(MediaSetPatches.NavMediaSet_get_ALMediaId(first),
+            MediaSetPatches.NavMediaSet_get_ALMediaId(second));
+    }
+
+    [Fact]
+    public void MediaId_StoredField_IsTheStoredContainerGuid()
+    {
+        var self = new FakeMediaValue();
+        MediaSetPatches.NavMediaSet_ALInsert(self, new object(), Guid.NewGuid());
+        Assert.NotEqual(Guid.Empty, self.Key.Value);
+        Assert.Equal(self.Key.Value, MediaSetPatches.NavMediaSet_get_ALMediaId(self));
+    }
+
+    private sealed class NoKeyValue { }
+
+    [Fact]
+    public void MediaId_UnboundKey_Refuses_RatherThanAnsweringEmpty()
+    {
+        var ex = Assert.Throws<AlRunner.Infrastructure.BcShapeGapException>(
+            () => MediaSetPatches.NavMediaSet_get_ALMediaId(new NoKeyValue()));
+        Assert.Contains("MediaId cannot be answered", ex.Message);
+    }
 }

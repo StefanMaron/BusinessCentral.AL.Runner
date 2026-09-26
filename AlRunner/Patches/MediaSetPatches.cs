@@ -135,8 +135,6 @@ public static class MediaSetPatches
     /// MediaSetPatchesTests cases down with it (PR #2275).
     /// </summary>
     private sealed record MediaValueReflectors(
-        PropertyInfo? ParentRecord,
-        PropertyInfo? FieldNo,
         PropertyInfo? Key,
         PropertyInfo? NavGuidValue,
         MethodInfo? SaveValueToTableField);
@@ -146,14 +144,6 @@ public static class MediaSetPatches
     private static MediaValueReflectors Reflectors(object self)
         => _reflectorsByType.GetOrAdd(self.GetType(), static t =>
         {
-            var parentRecord = t.GetProperty("ParentRecord",
-                BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance | BindingFlags.FlattenHierarchy)
-                ?? t.BaseType?.GetProperty("ParentRecord",
-                    BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy);
-            var fieldNo = t.GetProperty("FieldNo",
-                BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance | BindingFlags.FlattenHierarchy)
-                ?? t.BaseType?.GetProperty("FieldNo",
-                    BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy);
             var key = t.GetProperty("Key", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy)
                 ?? t.BaseType?.GetProperty("Key", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy);
             var navGuidValue = key?.PropertyType.GetProperty("Value", BindingFlags.Public | BindingFlags.Instance);
@@ -163,7 +153,7 @@ public static class MediaSetPatches
                 ?? t.BaseType?.GetMethod("SaveValueToTableField",
                     BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy,
                     binder: null, types: new[] { typeof(Guid) }, modifiers: null);
-            return new MediaValueReflectors(parentRecord, fieldNo, key, navGuidValue, saveValue);
+            return new MediaValueReflectors(key, navGuidValue, saveValue);
         });
 
     /// <summary>The MediaSet field's own real container Guid (NavMediaValueBase.Key.Value),
@@ -377,44 +367,6 @@ public static class MediaSetPatches
         return 0;
     }
 
-    // ── get_ALMediaId() → Guid  (MediaSet container identity) ───────────────────────────
-    // Declared on NavMediaValueBase. Real body is `return Key.Value` — decompiling
-    // NavMediaSet's real ALImportAsync confirms MediaId()/ImportStream()'s return value
-    // and Key.Value are the SAME container Guid (ImportStream literally returns whatever
-    // AddMediaToSetAsync/SaveValueToTableField just persisted into Key). Now that
-    // AddMediaToSetAsync/ALInsert really populate Key.Value (see #1773 fix above), prefer
-    // it here too — anything else would make MediaId() diverge from what ImportStream()
-    // just returned, which real BC never does.
-    //
-    // The ONLY case Key.Value can't answer is a field nothing has ever been added to
-    // (Key.Value is Guid.Empty for every such field, real BC included) — the archived test
-    // MediaId_ReturnsNonEmptyGuid asserts a non-empty result even then, so that one case
-    // keeps the pre-existing (ParentRecord, FieldNo)-keyed fake as a fallback. Whether real
-    // BC actually agrees with that expectation on an empty set is unverified (the archived
-    // test predates the al-language corpus and was never run against a real service tier);
-    // left as-is rather than guessed at, since it's a separate, unopened question from
-    // #1773.
-
-    private static readonly ConditionalWeakTable<object, Dictionary<int, Guid>> _mediaIds = new();
-
-    public static Guid GetOrCreateMediaId(object self)
-    {
-        var real = GetContainerGuid(self);
-        if (real != Guid.Empty) return real;
-
-        var r = Reflectors(self);
-        var parentRec = r.ParentRecord?.GetValue(self);
-        var fieldNo = r.FieldNo?.GetValue(self) is int fn ? fn : 0;
-        var storeKey = parentRec ?? self;
-        var dict = _mediaIds.GetValue(storeKey, _ => new Dictionary<int, Guid>());
-        lock (dict)
-        {
-            if (!dict.TryGetValue(fieldNo, out var id))
-                dict[fieldNo] = id = Guid.NewGuid();
-            return id;
-        }
-    }
-
     // TEMPORARY (memory-census diagnostic) — total Guid entries stored across all
     // container-Guid keys. See MemoryCensus.cs.
     internal static int CensusEntryCount()
@@ -425,9 +377,20 @@ public static class MediaSetPatches
         return n;
     }
 
+    // ── get_ALMediaId() → Guid ───────────────────────────────────────────────────────────
+    // Observably equivalent: BC's body is `return Key.Value` (NavMediaValueBase.ALMediaId),
+    // and Key.Value is the container Guid ImportStream/Insert persisted — Guid.Empty for a
+    // field nothing was ever stored in, the same on every record variable reading the row.
+    // Pinned by corpus codeunit 60243 "Test Media Empty MediaId" (#4775).
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static Guid NavMediaSet_get_ALMediaId(object self)
     {
-        return GetOrCreateMediaId(self);
+        // An unbound Key would read as Guid.Empty, which is now a real answer; refuse instead.
+        var r = Reflectors(self);
+        if (r.Key == null || r.NavGuidValue == null)
+            throw new AlRunner.Infrastructure.BcShapeGapException(
+                "Media/MediaSet.MediaId()", $"{self.GetType().FullName}.Key.Value",
+                "not found by reflection; Guid.Empty would read as an empty field, so MediaId cannot be answered (#4775)");
+        return GetContainerGuid(self);
     }
 }

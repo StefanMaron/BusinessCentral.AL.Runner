@@ -114,9 +114,9 @@ codeunit 64407 "Test Data LOB Values"
     ///
     /// NO LITERAL ID. Media ids are minted per backup build (#4645: each 28.x W1 artifact
     /// carries different ones), so a literal pins one backup. What every build shares:
-    ///   - the id is the same on every read of the row. A blank stored id (the pre-#2270 bug)
-    ///     does not read back blank in the runner: every read of an empty Media answers a fresh
-    ///     id, so it is two reads disagreeing that catches it, not IsNullGuid;
+    ///   - the id is the same on every read of the row;
+    ///   - a blank stored id (the pre-#2270 bug) reads back as the null GUID on every read, as on
+    ///     BC (#4775), so the two reads agree and it is the version-4 check below that catches it;
     ///   - BC mints a media id with NewGuid, a version-4 GUID, while the row's `$systemId` is a
     ///     NEWSEQUENTIALID that never has that shape, so a codec reading the wrong column fails;
     ///   - two rows do not share an id, so a value copied across rows fails.
@@ -189,8 +189,7 @@ codeunit 64407 "Test Data LOB Values"
         Formatted: Text;
     begin
         TdfAssert.AreEqual(FirstRead, SecondRead,
-            What + ': two reads of one row must answer one stored media id; ids that differ per read '
-            + 'mean nothing was stored and the runner made one up on each read');
+            What + ': two reads of one row must answer one stored media id');
         Formatted := UpperCase(DelChr(Format(FirstRead), '=', '{}'));
         TdfAssert.AreEqual('4', CopyStr(Formatted, 15, 1),
             StrSubstNo('%1 must be the backup''s NewGuid media id (version 4); got %2', What, Formatted));
