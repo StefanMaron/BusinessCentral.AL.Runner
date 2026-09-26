@@ -14,8 +14,6 @@ public static partial class RecordPatches
     private static readonly HashSet<(string Kind, int Id)> _ambiguousSourceObjects = new();
     // (normalized kind, id) -> every app group whose source declares it.
     private static readonly Dictionary<(string Kind, int Id), HashSet<Guid>> _sourceObjectDeclarers = new();
-    // App group id -> the app ids its app.json declares as dependencies (implicit floors excluded).
-    private static readonly Dictionary<Guid, Guid[]> _sourceAppDependencies = new();
     // Full source dir -> the app group that compiles it; Guid.Empty when two groups share the dir
     // or the group has no app id. Not the nearest app.json: a suite compiles a sub-folder carrying
     // its own app.json into itself (CollectSuitePaths).
@@ -30,11 +28,7 @@ public static partial class RecordPatches
         var identity = InProcessAppPackager.ReadIdentity(Path.Combine(suiteDir, "app.json"));
         var appId = identity?.AppId ?? Guid.Empty;
         if (identity != null && appId != Guid.Empty)
-        {
-            _sourceAppDependencies[appId] = identity.Dependencies
-                .Select(d => d.AppId).Where(id => id != Guid.Empty).Distinct().ToArray();
             RecordAppGroupDependencyRefs(appId, identity.Dependencies);
-        }
         foreach (var dir in dirs)
         {
             var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(dir));
@@ -123,7 +117,6 @@ public static partial class RecordPatches
         _sourceObjectOwners.Clear();
         _ambiguousSourceObjects.Clear();
         _sourceObjectDeclarers.Clear();
-        _sourceAppDependencies.Clear();
         _appGroupBySourceDir.Clear();
         _scopeAssembly = null;
         _scopeAppId = Guid.Empty;
