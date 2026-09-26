@@ -667,14 +667,19 @@ public static class ALDatabasePatches
     /// spellings: the static form's wrapper turns the refusal into <c>false</c>, the instance
     /// form raises it.</para>
     ///
-    /// <para>Trap: the refusal must come BEFORE the depth increment. BC calls this outside the
-    /// <c>try</c> whose <c>finally</c> runs the matching End, so a throw after the increment
-    /// would leak one level of depth into every later <c>TransactionModel::None</c> check.</para>
+    /// <para>Trap: the refusal must come BEFORE the depth increment and the scope push. BC
+    /// calls this outside the <c>try</c> whose <c>finally</c> runs the matching End, so a throw
+    /// after either would leak a depth level or an unpopped scope.</para>
+    ///
+    /// <para>The pushed scope is the world's own rollback image, popped by
+    /// <see cref="NoteBcEndTransactionWorld"/> — the same bracket
+    /// <see cref="BeginGuardedRunTransaction"/> gives a guarded <c>Codeunit.Run</c> (#4643).</para>
     /// </summary>
     public static void NoteBcBeginTransactionWorld()
     {
         ThrowIfWriteTransactionStarted();
         EnterRunTransaction();
+        RecordPatches.PushTransactionWorldScope();
     }
 
     /// <summary>The other half, prepended to BC's <c>EndTransactionWorldAndTransaction</c>.
@@ -682,11 +687,23 @@ public static class ALDatabasePatches
     /// none, committed or not: BC's world owned its own logical transaction and ends it here.
     /// Without clearing the flag, rows the import wrote would refuse the next value-consuming
     /// call (corpus 60041 <c>GuardedImport_LeavingImportedRows_DoesNotBlockTheNextGuardedImport</c>;
-    /// the Codeunit.Run shape is #2332).</summary>
-    public static void NoteBcEndTransactionWorld()
+    /// the Codeunit.Run shape is #2332).
+    ///
+    /// <para>Observably equivalent: BC's <c>EndTransactionWorldAndTransaction(false)</c> aborts
+    /// the world's transaction, so every row written inside it is gone; restoring the scope's
+    /// entry image is exactly that, and leaves the caller's committed rows alone. BC reaches
+    /// <c>commit == false</c> from <c>NavXmlPort.Import(DataError)</c>'s TrapError catch.
+    /// Corpus 60041 <c>*GuardedImport_FailingSecondElement_*</c> pins both import spellings
+    /// (#4643).</para></summary>
+    /// <param name="session">BC's extension receiver, forwarded because the commit flag sits
+    /// after it; unused.</param>
+    /// <param name="commit">BC's own verdict on the world: false rolls its writes back.</param>
+    public static void NoteBcEndTransactionWorld(object? session, bool commit)
     {
+        _ = session;
         ExitRunTransaction();
         System.Threading.Volatile.Write(ref _inWriteTransaction, false);
+        RecordPatches.PopTransactionWorldScope(restore: !commit);
     }
 
     /// <summary>The transaction <c>Codeunit.Run</c> begins around the run codeunit — BC's
