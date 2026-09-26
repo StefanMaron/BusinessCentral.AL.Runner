@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **page:** a page opened on a caller's record works on its own copy; a RunPageOnRec host re-reads after
 - **testpage:** two local TestPage handles sharing one page release an unconsumed Trap() at scope exit
 - **metadata:** serve XMLport Metadata (2000000280) through BC's own XmlPortDataProvider
 - **testpage:** find a precompiled pageextension control bound to a tableextension field
