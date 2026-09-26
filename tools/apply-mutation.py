@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 import time
 
@@ -91,6 +92,25 @@ def stamp_path(path: str) -> str:
         d = parent
 
 
+def drop_bytecode(path: str) -> None:
+    """Delete `path`'s own `__pycache__/<stem>.<tag>[.opt-N].pyc`, for any interpreter tag.
+
+    CPython trusts a .pyc whose recorded source mtime (whole seconds) and size still match, so a
+    same-size edit inside one second leaves the old bytecode running (#4598). `python3 -B` does
+    not help: it stops writing bytecode, not reading it. Raises OSError; callers route it to
+    their existing refusal. `foo.bar.*.pyc` belongs to another module and must survive.
+    """
+    if not path.endswith(".py"):
+        return
+    cache = os.path.join(os.path.dirname(os.path.abspath(path)), "__pycache__")
+    if not os.path.isdir(cache):
+        return
+    own = re.compile(re.escape(os.path.basename(path)[:-3]) + r"\.[^.]+(\.opt-\d+)?\.pyc")
+    for name in os.listdir(cache):
+        if own.fullmatch(name):
+            os.remove(os.path.join(cache, name))
+
+
 def apply(path: str, anchor: str, replacement: str) -> tuple[int, str]:
     # A second apply would overwrite the backup with ALREADY-MUTATED content, after which
     # --restore reports success and leaves the first mutation in the file with no recovery
@@ -127,6 +147,7 @@ def apply(path: str, anchor: str, replacement: str) -> tuple[int, str]:
             fh.write(text)
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(text.replace(anchor, replacement, 1))
+        drop_bytecode(path)
     except OSError as exc:
         return REFUSED, f"could not write {path}: {exc}"
 
@@ -160,6 +181,8 @@ def restore(path: str) -> tuple[int, str]:
             text = fh.read()
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(text)
+        # Before the backup goes: a failure here leaves it in place, so --restore can be re-run.
+        drop_bytecode(path)
         os.remove(backup)
     except OSError as exc:
         return REFUSED, f"could not restore {path} from {backup}: {exc} — the backup is left in place"
