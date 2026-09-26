@@ -23,9 +23,39 @@ internal static class ResolvedAssemblyVersionGuard
     /// than the request. An unversioned request is served as before.
     /// </summary>
     internal static Assembly LoadIfSatisfies(AssemblyLoadContext ctx, AssemblyName requested, string path)
+        => LoadIfSatisfies(requested, path, static p => AssemblyName.GetAssemblyName(p).Version, ctx.LoadFromAssemblyPath);
+
+    /// <summary>Seam for <see cref="LoadIfSatisfies(AssemblyLoadContext, AssemblyName, string)"/>.</summary>
+    internal static Assembly LoadIfSatisfies(
+        AssemblyName requested, string path, Func<string, Version?> readVersion, Func<string, Assembly> load)
     {
-        EnsureSatisfies(requested, AssemblyName.GetAssemblyName(path).Version, path);
-        return ctx.LoadFromAssemblyPath(path);
+        // Nothing to compare an unversioned request against, so do not read the file: the read
+        // itself loads System.Reflection.Metadata, which can be the very request being served (#4725).
+        if (requested.Version == null) return load(path);
+        if (_readingVersionFor != null)
+            throw ReenteredWhileReadingVersion(requested, path, _readingVersionFor);
+        Version? served;
+        _readingVersionFor = requested.FullName;
+        try { served = readVersion(path); }
+        finally { _readingVersionFor = null; }
+        EnsureSatisfies(requested, served, path);
+        return load(path);
+    }
+
+    // Reading a version must not need a versioned resolve through this guard: that is an unbounded
+    // recursion ending in `Stack overflow.`, so it is refused by name instead (#4725).
+    [ThreadStatic] private static string? _readingVersionFor;
+
+    private static FileLoadException ReenteredWhileReadingVersion(AssemblyName requested, string path, string outer)
+    {
+        var message =
+            $"Could not load '{requested.FullName}' from '{path}': the runner's assembly resolver was re-entered " +
+            $"while reading the version of the candidate for '{outer}'. Reading a version loads " +
+            "System.Reflection.Metadata, so this means that load could not be served from the runner's own " +
+            "directory (see docs/assembly-resolution.md#version-check).";
+        if (_reported.TryAdd("re-entered:" + requested.FullName, 0))
+            Console.Error.WriteLine("[assembly-resolver] " + message);
+        return new FileLoadException(message, requested.FullName);
     }
 
     /// <summary>Same check for an assembly that is already loaded.</summary>

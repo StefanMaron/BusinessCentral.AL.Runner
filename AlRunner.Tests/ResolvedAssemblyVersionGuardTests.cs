@@ -75,6 +75,54 @@ public sealed class ResolvedAssemblyVersionGuardTests
         Assert.Contains($"older than the requested {higher}", ex.Message);
     }
 
+    // #4725: reading a file's version (AssemblyName.GetAssemblyName) loads System.Reflection.Metadata,
+    // and when that load itself reaches the handler, the handler reads another version: unbounded
+    // recursion and a `Stack overflow.` exit 134. The two tests below drive the version reader as a seam.
+
+    [Fact]
+    public void UnversionedRequest_IsLoadedWithoutReadingTheFileVersion()
+    {
+        var reads = 0;
+        var loaded = new List<string>();
+        var asm = ResolvedAssemblyVersionGuard.LoadIfSatisfies(
+            Request("System.Reflection.Metadata", null), "/artifacts/System.Reflection.Metadata.dll",
+            _ => { reads++; return new Version(9, 0, 0, 0); },
+            path => { loaded.Add(path); return typeof(ResolvedAssemblyVersionGuardTests).Assembly; });
+
+        Assert.Equal(0, reads);
+        Assert.Equal(new[] { "/artifacts/System.Reflection.Metadata.dll" }, loaded);
+        Assert.Same(typeof(ResolvedAssemblyVersionGuardTests).Assembly, asm);
+    }
+
+    [Fact]
+    public void VersionRead_ThatReentersTheGuard_FailsLoudlyInsteadOfRecursing()
+    {
+        var depth = 0;
+        Version? ReenteringRead(string path)
+        {
+            // Bounded, so a missing guard shows up as a wrong answer rather than a crashed test host.
+            if (++depth > 5) return new Version(99, 0, 0, 0);
+            ResolvedAssemblyVersionGuard.LoadIfSatisfies(
+                Request("Some.Metadata.Reader", "9.0.0.0"), "/artifacts/Some.Metadata.Reader.dll",
+                ReenteringRead, _ => typeof(ResolvedAssemblyVersionGuardTests).Assembly);
+            return new Version(99, 0, 0, 0);
+        }
+
+        var ex = Assert.Throws<FileLoadException>(() => ResolvedAssemblyVersionGuard.LoadIfSatisfies(
+            Request("Some.Lib", "8.0.0.0"), "/artifacts/Some.Lib.dll",
+            ReenteringRead, _ => typeof(ResolvedAssemblyVersionGuardTests).Assembly));
+
+        Assert.Equal(1, depth);
+        Assert.Contains("Some.Metadata.Reader, Version=9.0.0.0", ex.Message);
+        Assert.Contains("Some.Lib, Version=8.0.0.0", ex.Message);
+        Assert.Contains("re-entered", ex.Message);
+
+        // The guard is released afterwards: an ordinary request on this thread is served again.
+        ResolvedAssemblyVersionGuard.LoadIfSatisfies(
+            Request("Some.Lib", "8.0.0.0"), "/artifacts/Some.Lib.dll",
+            _ => new Version(8, 0, 0, 0), _ => typeof(ResolvedAssemblyVersionGuardTests).Assembly);
+    }
+
     // End to end through the handler DependencyLoader installs. Both assemblies ship in every artifact
     // directory and nothing in-process loads them, so each request reaches the handler.
     private const string UnloadedArtifactAssembly = "Azure.Messaging.ServiceBus";

@@ -94,6 +94,63 @@ public sealed class CacheRootsDisableForRunTests
     }
 
     [Fact]
+    public void CleanupThrowawayRoot_InAProcessThatAdoptedTheRoot_LeavesItForTheGenerationThatMintedIt()
+    {
+        // #4725: the platform-apps attempt child (DeferredPlatformAppsAttempt), a --jobs worker
+        // and a re-exec child all ADOPT the root through the env var. The first two are not the
+        // terminal generation: their parent keeps running from the same root afterwards, out of
+        // an ncl-shadow directory that lives inside it. A child deleting it at exit left the
+        // parent with no System.Reflection.Metadata.dll on its TPA path.
+        CacheRoots.ResetForTests();
+        var adopted = TestScratch.FlatDir("al-runner-no-cache-test-");
+        var shadow = Path.Combine(adopted, "ncl-shadow");
+        Directory.CreateDirectory(shadow);
+        File.WriteAllText(Path.Combine(shadow, "probe.dll"), "x");
+        // The minting ancestor: a live process other than this one, recorded in the sidecar the
+        // way ScratchDirs.Reserve records the generation that minted a real root.
+        using var ancestor = System.Diagnostics.Process.Start(
+            new System.Diagnostics.ProcessStartInfo("sleep", "120") { UseShellExecute = false })!;
+        Assert.True(ScratchDirs.TransferOwnership(adopted, ancestor.Id));
+        Environment.SetEnvironmentVariable(CacheRoots.NoCacheRootEnvVar, adopted);
+        try
+        {
+            Assert.Equal(adopted, CacheRoots.DisableForRun());
+
+            CacheRoots.CleanupThrowawayRoot();
+
+            Assert.True(File.Exists(Path.Combine(shadow, "probe.dll")),
+                $"an adopting generation deleted {adopted}, which the generation that minted it is still running from");
+        }
+        finally
+        {
+            try { ancestor.Kill(); } catch { }
+            CacheRoots.ResetForTests(); ClearEnvVar();
+            if (Directory.Exists(adopted)) Directory.Delete(adopted, true);
+            File.Delete(ScratchDirs.MarkerPathFor(adopted));
+        }
+    }
+
+    [Fact]
+    public void CleanupThrowawayRoot_InAProcessThatAdoptedARootWithNoLiveOwner_DeletesIt()
+    {
+        // The other side of the rule above: a root handed in from outside (no sidecar, as
+        // NoCacheLastWinsIntegrationTests does) has nobody else to delete it.
+        CacheRoots.ResetForTests();
+        var adopted = TestScratch.FlatDir("al-runner-no-cache-test-");
+        Directory.CreateDirectory(Path.Combine(adopted, "ncl-shadow"));
+        Environment.SetEnvironmentVariable(CacheRoots.NoCacheRootEnvVar, adopted);
+        try
+        {
+            Assert.Equal(adopted, CacheRoots.DisableForRun());
+
+            CacheRoots.CleanupThrowawayRoot();
+
+            Assert.False(Directory.Exists(adopted), $"an unowned adopted root was left behind: {adopted}");
+        }
+        finally { CacheRoots.ResetForTests(); ClearEnvVar(); if (Directory.Exists(adopted)) Directory.Delete(adopted, true); }
+    }
+
+    [Fact]
     public void DisableForRun_CalledTwiceInTheSameProcess_ReturnsTheSameDirectoryBothTimes()
     {
         // Program.cs's own two re-exec decision points can each observe noCacheRequested

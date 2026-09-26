@@ -233,4 +233,62 @@ public class NoCacheLastWinsIntegrationTests
         Assert.False(File.Exists(AlRunner.Infrastructure.ScratchDirs.MarkerPathFor(throwawayRoot)),
             $"the --no-cache run left its throwaway root's .owner sidecar behind: {throwawayRoot}");
     }
+
+    [SkippableFact]
+    public void NoCache_InAChildWhoseRootAnAncestorOwns_LeavesTheRootForThatAncestor()
+    {
+        // #4725: the platform-apps attempt (DeferredPlatformAppsAttempt) and --jobs workers are
+        // children that adopt their parent's --no-cache root and EXIT while the parent keeps
+        // running out of the ncl-shadow directory inside it. Deleting the root at the child's exit
+        // took the parent's System.Reflection.Metadata.dll with it; the parent then recursed in the
+        // assembly resolver until `Stack overflow.` (exit 134) instead of reporting a failing test.
+        TestArtifacts.SkipIfMissing();
+
+        var scratchRoot = TestScratch.Dir("al-runner-nocache-ancestor");
+        var bundleDir = Path.Combine(scratchRoot, "tests-app");
+        var absentPackageCache = Path.Combine(scratchRoot, "no-such-package-cache");
+        Directory.CreateDirectory(bundleDir);
+        File.WriteAllText(Path.Combine(bundleDir, "app.json"), $$"""
+        {
+          "id": "{{Guid.NewGuid()}}",
+          "name": "Repro4725 Adopted Root Tests",
+          "publisher": "Repro4725",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": 61960, "to": 61969 } ],
+          "runtime": "14.0"
+        }
+        """);
+        File.WriteAllText(Path.Combine(bundleDir, "Repro4725AdoptedRootTests.al"), """
+        codeunit 61960 "Repro4725 Adopted Root Test"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure TrivialPass()
+            begin
+                if 1 + 1 <> 2 then
+                    Error('arithmetic is broken');
+            end;
+        }
+        """);
+
+        // TestScratch reserves the root in THIS test host's name: a live process other than the
+        // runner, which is what the runner's minting ancestor is to an adopting child.
+        var root = TestScratch.FlatDir("al-runner-no-cache-ancestor-");
+        try
+        {
+            var (output, exit) = RunRunnerCore(bundleDir, absentPackageCache, root, new[] { "--no-cache" });
+            Assert.True(exit == 0 && output.Contains("1P/0F/0E"), $"run must pass:\n{output}");
+            Assert.Contains(root, output, StringComparison.Ordinal);
+
+            Assert.True(Directory.Exists(Path.Combine(root, "ncl-shadow")),
+                $"the child deleted the --no-cache root its live ancestor owns: {root}\n{output}");
+        }
+        finally
+        {
+            try { if (Directory.Exists(root)) Directory.Delete(root, true); } catch { }
+        }
+    }
 }
