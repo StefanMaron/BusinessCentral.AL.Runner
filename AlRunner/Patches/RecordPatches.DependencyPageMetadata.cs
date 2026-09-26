@@ -249,6 +249,35 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// The field controls every precompiled dependency <c>pageextension</c> of
+    /// <paramref name="basePageName"/> adds, in the shape the base page's own
+    /// <c>PageSymbol.Controls</c> uses, so one resolver serves both (#4660). Same "field
+    /// control" test as <c>CollectPageControlSymbols</c>: a <c>ControlChanges</c> member
+    /// declaring a <c>SourceExpression</c>. A same-numbered source-parsed extension wins, as in
+    /// <see cref="GetPageExtensionIdsForPage"/>, so it is skipped here.
+    /// </summary>
+    internal static IEnumerable<BcAppSymbolCache.PageControlSymbol> DependencyPageExtensionFieldControls(string basePageName)
+    {
+        foreach (var extId in DependencyPageExtensionIdsForPage(basePageName).Distinct().ToList())
+        {
+            if (_parsedPageExtensions.ContainsKey(extId)) continue;
+            var ext = TryGetDependencyPageExtensionSymbol(extId);
+            if (ext?.MemberIdToOrigin is not { } origins) continue;
+            foreach (var (id, origin) in origins.OrderBy(o => o.Value.Sequence))
+            {
+                if (origin.IsAction || origin.DeclaredProperties is not { } props) continue;
+                if (!props.TryGetValue("SourceExpression", out var source)) continue;
+                if (!ext.MemberIdToName.TryGetValue(id, out var name)) continue;
+                props.TryGetValue("Visible", out var visible);
+                props.TryGetValue("Editable", out var editable);
+                props.TryGetValue("Enabled", out var enabled);
+                yield return new BcAppSymbolCache.PageControlSymbol(
+                    id, name, source, visible, editable, enabled, origin.Sequence);
+            }
+        }
+    }
+
+    /// <summary>
     /// Every loaded dependency .app's parsed symbols, in registration order, so the page and
     /// pageextension lookups share one walk and one failure policy.
     ///
