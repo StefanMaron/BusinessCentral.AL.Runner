@@ -869,13 +869,50 @@ public static partial class RecordPatches
                 {
                     iv = normalizedTime;
                 }
-                args[i] = iv;
-                continue;
+                // #4633 — a Date InitValue arrives as the AL literal on both paths (`20260101D`;
+                // alc writes the same text into SymbolReference.json) and format 9 refuses it.
+                // BC's own emitter writes `2026-01-01` for it and omits the property for `0D`,
+                // so this hands BC's evaluator exactly what a bc-document table carries. A
+                // closing date (`C20260101D`) is left alone: the emitter writes it unchanged too.
+                else if (tn.Equals("Date", StringComparison.OrdinalIgnoreCase)
+                    && TryNormalizeDateInitValue(iv, out var normalizedDate))
+                {
+                    iv = normalizedDate;
+                }
+                if (iv.Length > 0 || !tn.Equals("Date", StringComparison.OrdinalIgnoreCase))
+                {
+                    args[i] = iv;
+                    continue;
+                }
+                // `0D`: no InitValue, as though the property were absent.
             }
             if (p.HasDefaultValue) { args[i] = p.DefaultValue; continue; }
             args[i] = p.ParameterType.IsValueType ? Activator.CreateInstance(p.ParameterType) : null;
         }
         return ctor.Invoke(args)!;
+    }
+
+    /// <summary>
+    /// A Date field's InitValue as BC's metadata emitter writes it (#4633): the AL literal
+    /// <c>yyyyMMddD</c> becomes the invariant <c>yyyy-MM-dd</c> that
+    /// <c>ALSystemVariable.EvaluateIntoNavValue(..., 9)</c> parses, and <c>0D</c> becomes the
+    /// empty string, meaning "no InitValue", because the emitter omits the property for it.
+    /// Returns false — leaving the text for BC's evaluator — for anything else, a closing date
+    /// included.
+    /// </summary>
+    internal static bool TryNormalizeDateInitValue(string? text, out string normalized)
+    {
+        normalized = string.Empty;
+        var s = (text ?? string.Empty).Trim();
+        if (s.Length < 2 || s[^1] is not ('D' or 'd')) return false;
+        var body = s[..^1];
+        if (body == "0") return true;
+        if (body.Length != 8 || !body.All(char.IsDigit)) return false;
+        if (!DateTime.TryParseExact(body, "yyyyMMdd", CultureInfo.InvariantCulture,
+                DateTimeStyles.None, out var date))
+            return false;
+        normalized = date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        return true;
     }
 
     /// <summary>
