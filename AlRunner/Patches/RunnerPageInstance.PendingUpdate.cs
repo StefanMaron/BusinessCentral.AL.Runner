@@ -154,7 +154,8 @@ internal sealed partial class RunnerPageInstance
         // RaiseOnAfterGetRecord raises OnAfterGetRecord and then OnAfterGetCurrRecord, which is
         // the pair BC produces here — both were observed on 28.4, in that order.
         // An unsaved new row has nothing to re-read, so it gets OnAfterGetCurrRecord alone, as
-        // when it first became current (#4698: Base Application's "User Card" OpenNew).
+        // when it first became current (#4698: Base Application's "User Card" OpenNew). See
+        // docs/testpage-currpage-update.md#an-unsaved-new-row-gets-onaftergetcurrrecord-only
         try
         {
             if (IsCurrentRowUnsavedNewRow?.Invoke() == true) RaiseOnAfterGetCurrRecord();

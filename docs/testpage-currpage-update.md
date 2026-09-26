@@ -62,6 +62,27 @@ Two things follow, and both are why the fix takes the shape it does:
    these arms recorded only `OnAfterGetCurrRecord` and so could not have told the two apart:
    `saveRecord` changes whether the row is written, not which triggers the refresh raises.
 
+## An unsaved new row gets `OnAfterGetCurrRecord` only
+
+Issue #4698. When the refresh is realised and the page's current row is a pending insert the
+table does not hold, `EndTrigger` raises `OnAfterGetCurrRecord` alone, skipping
+`OnAfterGetRecord`. That is the same pair a new row gets when it first becomes current
+(`LiveNavTestPage.NewRowBecameCurrent`): there is no stored row to re-read.
+
+The shape is Base Application's "User Card" (page 9807): its pageextension 9807 calls
+`CurrPage.Update(false)` from `OnAfterGetCurrRecord`, and its `OnAfterGetRecord` runs
+`Rec.TestField("User Name")`, which the blank row `OpenNew` starts fails.
+
+`LiveNavTestPage` answers the question through `RunnerPageInstance.IsCurrentRowUnsavedNewRow`:
+the row is a pending insert **and** a key lookup does not find it. The second half keeps a
+trigger that inserts the row itself and then calls `CurrPage.Update` (Customer Card's insert
+from a template) on the full pair. A temporary source table is left on the full pair, because
+the key lookup reads the stored table, which never holds a temporary row.
+
+Measured by corpus codeunit 60893 "ALT Page Update New Row Test"; runner-side,
+`AlRunner.Tests/CurrPageUpdateNewRowTests.cs`. Not measured: `CurrPage.Update(false)` from a
+field's `OnValidate` on a DelayedInsert row that is still unsaved. The same guard applies to it.
+
 ## What is deliberately not reproduced
 
 - **The action arm's extra `OnAfterGetRecord` firings.** BC produced three `HostAGR` around the
