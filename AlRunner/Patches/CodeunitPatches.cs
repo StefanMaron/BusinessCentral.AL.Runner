@@ -718,6 +718,39 @@ public static partial class BcRuntime
     }
 
     /// <summary>
+    /// Stands in for BC's <c>testPage = null</c> at the start of <c>InternalClear</c>, on the
+    /// <c>NavTestPageBase.Close()</c> path only: Cecil inserts a call to this just before
+    /// Close()'s own <c>InternalClear()</c>. Observably equivalent: BC's Close() detaches the
+    /// variable whether or not the page agreed to close, and every <c>CheckPageOpened()</c>
+    /// after it raises BC's own NavTestPageNotOpenedException, which
+    /// <see cref="NavTestPageBase_IsDetached"/> reproduces (corpus 60419, PR #431; #4713).
+    /// Trap: not on InternalClear itself, because Open() calls it too, before attaching.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void NavTestPageBase_MarkDetached(object self)
+    {
+        if (self == null) return;
+        var testPageField = FindInstanceField(self.GetType(), "testPage");
+        if (testPageField?.GetValue(self) is LiveNavTestPage live)
+            live.MarkDetached();
+    }
+
+    /// <summary>
+    /// The condition of the rewritten <c>NavTestPageBase.CheckPageOpened()</c>: true when the
+    /// attached page was detached by a Close() and not reopened since. BC's own test is
+    /// <c>testPage == null || !testPage.IsOpened()</c>; the runner attaches at construction
+    /// and hands pages to handlers without marking them opened, so it answers the detach
+    /// directly rather than reading IsOpened (#4713).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static bool NavTestPageBase_IsDetached(object self)
+    {
+        if (self == null) return false;
+        var testPageField = FindInstanceField(self.GetType(), "testPage");
+        return testPageField?.GetValue(self) is LiveNavTestPage live && live.IsDetached;
+    }
+
+    /// <summary>
     /// The page id a NavTestPageBase is standing on — the one thing every reader below needs,
     /// and the one thing <c>pageUnderTestId</c> alone cannot answer for a PART.
     ///

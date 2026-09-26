@@ -71,7 +71,7 @@
         "table-connection-live-oos": { "tests": 2 },
         "task-scheduler-oos": { "tests": 8 },
         "temporary-virtual-table-isolation": { "tests": 9 },
-        "testpage-close-message-consumed": { "tests": 8 },
+        "testpage-close-message-consumed": { "tests": 7 },
         "testpage-lookup-tablerelation-oos": { "tests": 3 },
         "testpage-lookup-tablerelation-served": { "tests": 6 },
         "testpage-precompiled-declared-editable": { "tests": 9 },

@@ -611,7 +611,7 @@ public static partial class NclCecilRewrite
         //  3. CheckPageOpened throws NavTestPageNotOpenedException when testPage.IsOpened()
         //     returns false.  MockITestPage.IsOpened()=false (so the "already open" guard in
         //     NavTestPageBase.Open passes), but that means CheckPageOpened would throw too.
-        //     Rewrite CheckPageOpened to be a no-op: the mock is always usable.
+        //     Rewrite CheckPageOpened to throw only for a variable a Close() detached (#4713).
         //
         //  4. GetField / GetAction / GetDataItem / GetPart / GetBuiltInAction / FindBuiltInAction
         //     pass the raw ITest* result through TestClientProxy<T>.Proxy(), which wraps it in
@@ -688,19 +688,41 @@ public static partial class NclCecilRewrite
             Console.Error.WriteLine("[Cecil] Rewrote NavTestPage.Open → NavTestPageBase.Open + MarkOpened  (skip ClientSession.CreatePage)");
         }
 
-        // 3. CheckPageOpened — replace body with `ret` (no-op).
+        // 3. CheckPageOpened — keep BC's own throw of NavTestPageNotOpenedException, but key it
+        //    on BcRuntime.NavTestPageBase_IsDetached instead of `testPage == null ||
+        //    !testPage.IsOpened()` (a handler's page is never marked opened here). The detach is
+        //    what step 7 records at Close()'s InternalClear (#4713).
         {
             var method = navTestPageBaseType.Methods
                 .FirstOrDefault(m => m.Name == "CheckPageOpened" && m.Parameters.Count == 0)
                 ?? throw new InvalidOperationException("CheckPageOpened not found on NavTestPageBase");
             var body = method.Body;
+            // Reuse BC's own ctor reference: no new member ref for the exception type.
+            var notOpenedCtor = body.Instructions
+                .Where(i => i.OpCode == OpCodes.Newobj && i.Operand is MethodReference mr
+                            && mr.DeclaringType.Name == "NavTestPageNotOpenedException"
+                            && mr.Parameters.Count == 0)
+                .Select(i => (MethodReference)i.Operand)
+                .SingleOrDefault()
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NavTestPageBase.CheckPageOpened no longer constructs NavTestPageNotOpenedException() — Ncl shape changed; do not commit");
+            var isDetachedMi = typeof(AlRunner.BcRuntime).GetMethod(
+                nameof(AlRunner.BcRuntime.NavTestPageBase_IsDetached),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException("[Cecil] BcRuntime.NavTestPageBase_IsDetached not found");
             body.Instructions.Clear();
             body.Variables.Clear();
             body.ExceptionHandlers.Clear();
             var il = body.GetILProcessor();
-            il.Append(il.Create(OpCodes.Ret));
-            body.MaxStackSize = 0;
-            Console.Error.WriteLine("[Cecil] Rewrote NavTestPageBase.CheckPageOpened → no-op (ret)");
+            var ret = il.Create(OpCodes.Ret);
+            il.Append(il.Create(OpCodes.Ldarg_0));
+            il.Append(il.Create(OpCodes.Call, asm.MainModule.ImportReference(isDetachedMi)));
+            il.Append(il.Create(OpCodes.Brfalse, ret));
+            il.Append(il.Create(OpCodes.Newobj, notOpenedCtor));
+            il.Append(il.Create(OpCodes.Throw));
+            il.Append(ret);
+            body.MaxStackSize = 1;
+            Console.Error.WriteLine("[Cecil] Rewrote NavTestPageBase.CheckPageOpened → throw NotOpened when BcRuntime.NavTestPageBase_IsDetached");
         }
 
         // 3b. NavTestExecution.TestHandleModalForm and TestHandleForm — replace the CLIENT
@@ -945,6 +967,35 @@ public static partial class NclCecilRewrite
             il.InsertBefore(first, il.Create(OpCodes.Call, asm.MainModule.ImportReference(flushMi)));
             if (body.MaxStackSize < 1) body.MaxStackSize = 1;
             Console.Error.WriteLine("[Cecil] Prepended pending-new-row flush to NavTestPageBase.Close");
+
+            // ...and mark the variable detached right before Close()'s own InternalClear(),
+            // standing in for the `testPage = null` step 1 removed (#4713). Only on this path:
+            // Open() calls InternalClear too, before it attaches.
+            var internalClearCall = body.Instructions
+                .Where(i => (i.OpCode == OpCodes.Call || i.OpCode == OpCodes.Callvirt)
+                            && i.Operand is MethodReference mr && mr.Name == "InternalClear"
+                            && mr.Parameters.Count == 0)
+                .SingleOrDefault()
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NavTestPageBase.Close() no longer calls InternalClear() exactly once — Ncl shape changed; do not commit");
+            var detachMi = typeof(AlRunner.BcRuntime).GetMethod(
+                nameof(AlRunner.BcRuntime.NavTestPageBase_MarkDetached),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException("[Cecil] BcRuntime.NavTestPageBase_MarkDetached not found");
+            // InternalClear() is an instance call preceded by its own ldarg.0; insert before that
+            // load so no branch target moves off the sequence.
+            var clearThis = internalClearCall.Previous;
+            if (clearThis?.OpCode != OpCodes.Ldarg_0)
+                throw new InvalidOperationException(
+                    "[Cecil] NavTestPageBase.Close(): InternalClear() is not preceded by ldarg.0 — Ncl shape changed; do not commit");
+            var markLoad = il.Create(OpCodes.Ldarg_0);
+            il.InsertBefore(clearThis, markLoad);
+            il.InsertBefore(clearThis, il.Create(OpCodes.Call, asm.MainModule.ImportReference(detachMi)));
+            // A branch that jumped to the old ldarg.0 (the `if` falling through to InternalClear)
+            // must land on the inserted call too.
+            foreach (var ins in body.Instructions)
+                if (ins.Operand == clearThis && ins != markLoad) ins.Operand = markLoad;
+            Console.Error.WriteLine("[Cecil] Inserted BcRuntime.NavTestPageBase_MarkDetached before NavTestPageBase.Close's InternalClear");
         }
 
         // 6. NavTestPageBase.ALGoToRecord(DataError, NavRecord) — delegate to
