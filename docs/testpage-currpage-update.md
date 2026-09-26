@@ -157,7 +157,8 @@ calls. It does not reproduce the `OnAfterGetRecord` reads of the other rows arou
 A trigger that answers `false` to the first `=` -- the common pass-through
 `exit(Rec.Find(Which))` does, on the deleted key -- gets the same `Which` strings. Corpus arms
 `List_DeletedByAction_PassThroughFind_*` (the same page's `DeletePassThrough` action; #4760)
-measured, on every cloud leg of corpus run 36259501382:
+measured, on the cloud legs of corpus run 36259501382 that finished (27.0, 27.3, 27.5, 28.1,
+28.3; the rest were cancelled by the next push, whose run measures every leg):
 
 | rows, deleted | `Which` strings after the action | row shown |
 |---|---|---|
