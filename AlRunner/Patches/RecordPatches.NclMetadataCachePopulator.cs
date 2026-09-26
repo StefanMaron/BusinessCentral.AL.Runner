@@ -459,20 +459,6 @@ public static partial class RecordPatches
     }
 
     /// <summary>
-    /// Cecil-rewritten body for the private static <c>NavRecord.CanUseBulkRenameAll</c>, whose
-    /// one caller is rename propagation into a referencing primary-key field. Always false, so
-    /// that propagation takes the row-by-row route below.
-    /// <para>Observably equivalent: BC takes the bulk route only when the referencing table has
-    /// no rename trigger, global rename trigger, rename event subscriber, referencing relations
-    /// or links — exactly the case where renaming each row with triggers off (what the
-    /// row-by-row route does) leaves the same rows and fires nothing. The bulk route itself
-    /// cannot run here: TempTableDataProvider.ModifyAll never re-keys the primary tree, so a
-    /// re-keyed row reads its new value and is still found only under its old key.</para>
-    /// </summary>
-    public static bool NavRecord_CanUseBulkRenameAll(bool runApplicationTrigger, object record, object field)
-        => false;
-
-    /// <summary>
     /// Cecil-rewritten body for the static
     /// <c>NavRecord.UpdateReferencesOnRenameAsync(NavRecord, NCLMetaTable, NCLMetaField, NavValue)</c>:
     /// re-key every row of <paramref name="referencingRecord"/> inside the filters BC already set
@@ -518,16 +504,20 @@ public static partial class RecordPatches
 
     /// <summary>
     /// Would BC's <c>NCLMetadata.GetSnapshotOfAllNonVirtualMetaTables</c> contain this table?
-    /// An app table always; a system table only when <c>NCLMetaTable.GetTableType</c> — BC's
-    /// own classifier, read off <c>SystemTables</c> — marks it neither Virtual nor App
-    /// (application-database), the two kinds <c>BuildAllNonVirtualMetaTableSnapshotListFromDatabase</c>
-    /// filters out of <c>PlatformMetadataProvider.GetSystemTables()</c>.
+    /// An app table always; a system table when <c>PlatformMetadataProvider.GetSystemTables()</c>
+    /// lists it with a type other than VirtualTable or ApplicationDatabaseTable — the same
+    /// source and the same filter <c>BuildAllNonVirtualMetaTableSnapshotListFromDatabase</c> uses.
     /// </summary>
     internal static bool IsInBcNonVirtualSnapshot(int tableId)
+        => tableId < 2000000000 || BcNonVirtualSystemTableIds.Value.Contains(tableId);
+
+    private static readonly Lazy<HashSet<int>> BcNonVirtualSystemTableIds = new(() =>
     {
-        if (tableId < 2000000000) return true;
-        var types = NCLMetaTable.GetTableType(tableId);
-        if ((types & NCLMetaTable.TableTypes.System) == 0) return false;   // not a table BC knows at this id
-        return (types & (NCLMetaTable.TableTypes.Virtual | NCLMetaTable.TableTypes.App)) == 0;
-    }
+        var ids = new HashSet<int>();
+        foreach (var entry in PlatformMetadataProvider.Instance.GetSystemTables())
+            if (entry.Value.Type != NavSystemTableType.ApplicationDatabaseTable
+                && entry.Value.Type != NavSystemTableType.VirtualTable)
+                ids.Add(entry.Key);
+        return ids;
+    });
 }
