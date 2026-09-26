@@ -416,6 +416,82 @@ public sealed class DependencyResolverTests : IDisposable
         Assert.Contains("5.0", ex.Message);
     }
 
+    // ── #4600: the Action needed entry for an unservable app is at most 3 lines ──
+
+    /// <summary>
+    /// One symbols-only app reached by two dependents: the closing block prints ONE entry of at
+    /// most three lines — the app, where it is and why it cannot run, and the fix naming the
+    /// searched directories — and says where the rest of the diagnosis is.
+    /// </summary>
+    [Fact]
+    public void SymbolsOnlyAppReachedByTwoDependents_IsOneActionNeededEntryOfAtMostThreeLines()
+    {
+        var dir = MakeDir("action-needed-two-dependents");
+        var libId = "b1a5e0c1-0000-4000-8000-000000004600";
+        var aId = "b1a5e0c1-0000-4000-8000-00000000460a";
+        var bId = "b1a5e0c1-0000-4000-8000-00000000460b";
+        WriteApp(dir, "Contoso_Lib.app", libId, "Lib", "Contoso", "2.0.0.0", r2r: false);
+        // A lower, below-minimum copy: the full diagnosis names it, the entry does not.
+        var older = MakeDir("action-needed-older-copy");
+        WriteApp(older, "Contoso_Lib_old.app", libId, "Lib", "Contoso", "1.0.0.0", r2r: false);
+        foreach (var (id, name) in new[] { (aId, "DepA"), (bId, "DepB") })
+            File.WriteAllBytes(Path.Combine(dir, $"Contoso_{name}.app"),
+                MakeMinimalAppWithDeps(id, name, "Contoso", "1.0.0.0", platform: null,
+                    deps: new[] { (libId, "Lib", "Contoso", "2.0.0.0") }));
+
+        var resolver = new DependencyResolver(new[] { dir, older });
+        resolver.Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(aId), "DepA", "Contoso", new Version(1, 0, 0, 0)),
+            new DependencyRef(Guid.Parse(bId), "DepB", "Contoso", new Version(1, 0, 0, 0)),
+        });
+        Assert.NotEmpty(resolver.UnservableDependencies);
+        Assert.Equal(("Contoso/Lib", Path.Combine(dir, "Contoso_Lib.app")), resolver.UnservableApps[0]);
+
+        var w = new StringWriter();
+        Reporter.PrintActionNeeded(new[]
+        {
+            new BucketResult("/bundle", BucketStage.Ran, Array.Empty<string>(), null, Array.Empty<TestResult>(),
+                TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero, 1,
+                // Twice: two dependents hand the collector the same app on two edges.
+                resolver.UnservableDependencies.Concat(resolver.UnservableDependencies).ToList()),
+        }, w);
+        var lines = w.ToString().Replace("\r\n", "\n").Split('\n', StringSplitOptions.RemoveEmptyEntries);
+
+        Assert.Equal("Action needed (1):", lines[0]);
+        var entry = lines.Skip(1).TakeWhile(l => !l.StartsWith("  (--verbose", StringComparison.Ordinal)).ToList();
+        Assert.Equal(3, entry.Count);
+        Assert.Contains("Contoso/Lib v2.0.0.0 resolved to a package with NO IMPLEMENTATION", entry[0]);
+        Assert.Contains(Path.Combine(dir, "Contoso_Lib.app"), entry[1]);
+        Assert.Contains("object with ID 0", entry[1]);
+        Assert.Contains("Fix: put Contoso/Lib v2.0.0.0 or later with AL source or an R2R DLL into one of:", entry[2]);
+        Assert.Contains(older, entry[2]);
+        // Shortened, not dropped: the other copy is in the full diagnosis, and the block says where.
+        Assert.DoesNotContain("v1.0.0.0", w.ToString());
+        Assert.Contains("v1.0.0.0", resolver.UnservableDependencies[0]);
+        Assert.Equal("  (--verbose prints each entry's full diagnosis where it is found)", lines[^1]);
+    }
+
+    /// <summary>The floor gap's entry keeps its repair command within the first three lines.</summary>
+    [Fact]
+    public void UnsuppliableFloor_ActionNeededEntryCarriesTheRepairCommand()
+    {
+        var dir = MakeDir("action-needed-floor");
+        var assertId = "dd0be2ea-f733-4d65-bb34-a28f4624fb14";
+        File.WriteAllBytes(Path.Combine(dir, "Microsoft_Library Assert.app"),
+            MakeMinimalApp(assertId, "Library Assert", "Microsoft", "28.1.49838.54169", r2r: false, alSource: true, platform: "28.0.0.0"));
+        var resolver = new DependencyResolver(new[] { dir });
+        resolver.Resolve(new[] { new DependencyRef(Guid.Parse(assertId), "Library Assert", "Microsoft", new Version(28, 0, 0, 0)) });
+
+        var summary = AlRunner.Infrastructure.ProvisionGapLog.SummaryLines(Assert.Single(resolver.ProvisioningGaps), out var shortened);
+
+        Assert.True(shortened);
+        Assert.Equal(3, summary.Count);
+        Assert.Contains("declares a floor of", summary[0]);
+        Assert.Contains("searched: " + dir, summary[1]);
+        Assert.Contains("Repair: al-runner provision --platform-apps --bc-version", summary[2]);
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────
 
     private string MakeDir(string name)
@@ -687,7 +763,7 @@ public sealed class DependencyResolverTests : IDisposable
         Assert.DoesNotContain("--auto-provision", report);
         Assert.DoesNotContain("--bc-version", report);
         // The remedy it does give names the directories a copy would be found in.
-        Assert.Contains(other, report[report.IndexOf("searched:", StringComparison.Ordinal)..]);
+        Assert.Contains(other, report[report.IndexOf("into one of:", StringComparison.Ordinal)..]);
     }
 
     /// <summary>

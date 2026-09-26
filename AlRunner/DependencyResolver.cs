@@ -62,6 +62,13 @@ public sealed class DependencyResolver
     public IReadOnlyList<string> UnservableDependencies => _unservable;
 
     /// <summary>
+    /// The apps behind <see cref="UnservableDependencies"/>, as <c>Publisher/Name</c> and the
+    /// winning package's path — what lets a failing test name the app it hit (#4600).
+    /// </summary>
+    public IReadOnlyList<(string App, string Path)> UnservableApps => _unservableApps;
+    private readonly List<(string App, string Path)> _unservableApps = new();
+
+    /// <summary>
     /// Provisioning problems that are not certain failures but will produce an unattributable
     /// one if they bite: currently a package that this run may source-compile, declaring a
     /// Platform/Application floor the package caches cannot supply (#3794). Printed
@@ -286,13 +293,12 @@ public sealed class DependencyResolver
         _provisioningGaps.Add(
             $"[dep] {o.Manifest.Publisher}/{o.Manifest.Name} v{o.Manifest.Version} declares a floor of "
             + $"{floor.Publisher}/{floor.Name} >= {floor.Version}, and it cannot be supplied:"
-            + $"\n      {found}"
-            + $"\n      searched: {searched}"
+            + $"\n      {found}; searched: {searched}"
+            + $"\n      Repair: al-runner provision --platform-apps --bc-version <a build >= {floor.Version}>"
             + $"\n      That package carries AL source and no precompiled payload. If this run compiles"
             + $"\n      it — rather than serving it from the compiled-dependency cache, the service-tier"
             + $"\n      DLLs or an already-loaded assembly — the compile has no {floor.Name} symbols and"
-            + $"\n      ends in \"EMIT-ZERO — 0 sources emitted\" naming nothing (#3719)."
-            + $"\n      Repair: al-runner provision --platform-apps --bc-version <a build >= {floor.Version}>");
+            + $"\n      ends in \"EMIT-ZERO — 0 sources emitted\" naming nothing (#3719).");
     }
 
     /// <summary>
@@ -504,7 +510,10 @@ public sealed class DependencyResolver
             // Quiet for Microsoft platform apps, whose runtime is the service-tier DLLs.
             if (Tier(best) == 0
                 && !IsMicrosoftPlatformApp(best.Manifest.Name, best.Manifest.Publisher))
+            {
                 _unservable.Add(BuildUnservableReport(dep, best, candidates, Tier));
+                _unservableApps.Add(($"{best.Manifest.Publisher}/{best.Manifest.Name}", best.Path));
+            }
 
             found = best;
             return true;
@@ -542,18 +551,22 @@ public sealed class DependencyResolver
             ? string.Join(", ", _cacheDirs)
             : "nothing — this run was given no package cache directories";
         var m = best.Manifest;
+        // Lines 1-3 are the Action needed entry (ProvisionGapLog.SummaryLines, #4600); the rest
+        // prints only where the gap is found (--verbose, --output-json, --server).
         return
             $"[dep] {m.Publisher}/{m.Name} v{m.Version} resolved to a package with NO IMPLEMENTATION"
-            + "\n      (no publishedartifacts DLL, no src/*.al, no .deps-bin sidecar DLL):"
-            + $"\n      winner: {best.Path} (highest version at or above the minimum v{dep.Version})"
+            + $"\n      {best.Path}: no DLL, no AL source, so calls into it fail with \"object with ID 0\""
+            + $"\n      Fix: put {m.Publisher}/{m.Name} v{dep.Version} or later with AL source or an R2R DLL"
+            + (_cacheDirs.Count > 0
+                ? $" into one of: {searched}"
+                : " into a --package-cache directory (this run was given none)")
+            + "\n      (no publishedartifacts DLL, no src/*.al, no .deps-bin sidecar DLL);"
+            + $" the winner is the highest version at or above the minimum v{dep.Version}"
             + (others.Count == 0
                 ? "\n      other copies: none in the searched directories"
                 : "\n      other copies:" + string.Concat(others))
-            + $"\n      searched: {searched}"
-            + "\n      Calls into this app will fail with \"The object with ID 0 does not have a member"
-            + "\n      with that ID\". To fix it, put a copy of"
-            + $" {m.Publisher}/{m.Name} v{dep.Version} or later that"
-            + "\n      carries AL source or an R2R DLL into one of the searched directories.";
+            + "\n      Every call into this app fails with \"The object with ID 0 does not have a member"
+            + "\n      with that ID\".";
     }
 
     private void EnsureIndexed()

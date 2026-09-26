@@ -170,6 +170,28 @@ public class UnresolvedCodeunitInvokeTests
     }
 
     /// <summary>
+    /// #4600: both throw sites raise the typed exception carrying the codeunit id, which is what
+    /// lets the console point at the Action needed entry for the app declaring it — the sync
+    /// and async no-op overrides, and CreateTarget itself for an id outside the no-op ranges.
+    /// </summary>
+    [SkippableFact]
+    public void BothThrowSites_RaiseMissingDependencyCodeunitException_WithTheId()
+    {
+        TestArtifacts.SkipIf(!_engine.Ready,
+            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
+
+        var target = new NavCodeunitHandle(Root(), UnresolvableToolkitId).Target;
+        var viaNoOp = Unwrap(Assert.ThrowsAny<Exception>(() => target.Invoke(1234, Array.Empty<object>())));
+        Assert.Equal(UnresolvableToolkitId,
+            Assert.IsType<AlRunner.Infrastructure.MissingDependencyCodeunitException>(viaNoOp).CodeunitId);
+
+        const int outOfRange = 69005;   // outside both no-op ranges, and no Codeunit69005 type exists
+        var viaCreate = Unwrap(Assert.ThrowsAny<Exception>(() => new NavCodeunitHandle(Root(), outOfRange).Target));
+        Assert.Equal(outOfRange,
+            Assert.IsType<AlRunner.Infrastructure.MissingDependencyCodeunitException>(viaCreate).CodeunitId);
+    }
+
+    /// <summary>
     /// Control 1 — the behaviour that must NOT change: <c>Codeunit.Run</c> on a missing
     /// test-toolkit codeunit stays a silent no-op. That is the contract the archived
     /// bucket-1 test `codeunit-runtime/128-codeunit-not-found` pins and the reason
