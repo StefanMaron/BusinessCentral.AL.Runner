@@ -1042,6 +1042,9 @@ if (artifactPathArg != null)
 // BcArtifacts.ExplicitEngineMinorMismatchWarning) does not double-warn a case the
 // auto-select branch already covers with its own, richer message.
 bool bcVersionAutoSelected = false;
+// #4691: the single-build default fell back to the latest build of the engine's major; whether
+// that is worth a warning depends on the minor SelectVersion lands on, so it is judged there.
+bool bcDefaultMajorFallback = false;
 // #4590: app.json application/platform versions are a floor. The default never selects below it;
 // an explicit --bc-version below it runs with a warning (see BcVersionFloor).
 var projectBcFloor = TryDeriveBcFloorFromProject(bundles);
@@ -1218,7 +1221,7 @@ if (bcVersionArg == null && artifactPathArg == null)
             //     so it never has to wait out the real download, and failed hard
             //     (30s timeout) the one time this was deferred here.
             //   - "major-fallback-offline"/default ("major-fallback"): both are a
-            //     KNOWN-DEGRADED warning that commonly precedes an immediate failure
+            //     fallback notice that commonly precedes an immediate failure
             //     in THIS SAME generation (SelectVersion below has nothing durable to
             //     select if nothing at all could be resolved) — deferring would risk
             //     silently discarding the one piece of output that explains WHY the
@@ -1272,18 +1275,15 @@ if (bcVersionArg == null && artifactPathArg == null)
                         engineVersion.ToString(), bcVersionArg ?? engineVersion.ToString()));
                     break;
                 case "major-fallback-offline":
-                    // No network step is coming (--no-auto-provision, or the rare case where
-                    // engineVersion resolved but auto-provisioning is off) — this can only speak
-                    // to what's CACHED, never to CDN availability. Original pre-#2033 wording.
-                    Console.Error.WriteLine($"[bc] warning: no cached BC {engineMajorMinor}.x — this binary's engine " +
-                        $"was built for {engineVersion}, so a different minor is a KNOWN-DEGRADED configuration " +
-                        $"(measured: dozens of extra failures from engine/artifact minor skew). Falling back to the " +
-                        $"latest cached {engineMajor}.x. Fix with: al-runner provision --bc-version {engineMajorMinor}");
+                    // No network step is coming, so this speaks only to the CACHE, never the CDN.
+                    bcDefaultMajorFallback = true;
+                    Console.Error.WriteLine(ProgramSupport.MajorFallbackOfflineNotice(
+                        engineVersion.ToString(), engineMajorMinor, engineMajor.ToString()));
                     break;
                 default: // major-fallback: neither the exact build nor the engine's own minor is
-                         // available from cache or the CDN — a genuine degradation (e.g. #2010,
-                         // Microsoft withdrew the build), not the default-path norm.
+                         // available from cache or the CDN (e.g. #2010, Microsoft withdrew the build).
                     // #2926: see ProgramSupport.MajorFallbackWarning.
+                    bcDefaultMajorFallback = true;
                     Console.Error.WriteLine(ProgramSupport.MajorFallbackWarning(
                         engineVersion.ToString(), engineMajorMinor, engineMajor.ToString()));
                     break;
@@ -1444,6 +1444,11 @@ try
         if (engineMinorMismatchWarning != null)
             deferredStartupLines.Add(() => Console.Error.WriteLine(engineMinorMismatchWarning));
     }
+    // #4691: the default-path counterpart, silent when the landed minor is one CI measures.
+    // Deferred for the same reason as the explicit warning above (#4038).
+    if (bcDefaultMajorFallback
+        && AlRunner.Infrastructure.BcArtifacts.DefaultFallbackMinorMismatchWarning() is { } fallbackMinorWarning)
+        deferredStartupLines.Add(() => Console.Error.WriteLine(fallbackMinorWarning));
     // #2041/#2066: deferred — see `deferredStartupLines`' declaration above. Captured into
     // locals now (the values are fixed the instant SelectVersion above returns) so the
     // closure below reads exactly what THIS generation selected, not whatever the static
