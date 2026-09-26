@@ -19,8 +19,8 @@ codeunit 71931 "SIL Second"
     begin
         if Row.Count() <> 0 then
             Error('the first codeunit''s row survived the boundary: plain record counts %1', Row.Count());
-        if Single.CountAll() <> '0/0/0/0' then
-            Error('SingleInstance records must read the rolled-back store: expected 0/0/0/0, got %1', Single.CountAll());
+        if Single.CountAll() <> '0/0/0/0/0' then
+            Error('SingleInstance records must read the rolled-back store: expected 0/0/0/0/0, got %1', Single.CountAll());
         if Single.Filters() <> 'Key: <>ZZZ|Val: 0' then
             Error('SingleInstance records must keep their filters across the boundary, got %1', Single.Filters());
     end;

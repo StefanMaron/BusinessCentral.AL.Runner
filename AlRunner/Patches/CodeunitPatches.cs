@@ -138,16 +138,15 @@ public static partial class BcRuntime
         if (_singleInstanceCache.IsEmpty) return;
         var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
         foreach (var instance in _singleInstanceCache.Values)
-            RebindRecordsIn(instance, 0, seen);
+            RebindRecordsIn(instance, seen);
     }
 
-    // Depth bounds a codeunit holding a codeunit holding an array; the walk never follows a
-    // field declared on NavCodeunit or below, whose Parent/Session links reach the whole tree.
-    private const int SingleInstanceRebindMaxDepth = 6;
-
-    private static void RebindRecordsIn(object? value, int depth, HashSet<object> seen)
+    // No cut-off, deliberately: a limit would leave a deeper record on the old store in silence.
+    // Every edge followed is an AL variable (a field declared above NavCodeunit, whose
+    // Parent/Session links reach the whole tree and are never followed), and `seen` stops cycles.
+    private static void RebindRecordsIn(object? value, HashSet<object> seen)
     {
-        if (value == null || depth > SingleInstanceRebindMaxDepth || !seen.Add(value)) return;
+        if (value == null || !seen.Add(value)) return;
         switch (value)
         {
             case NavRecord record:
@@ -155,36 +154,36 @@ public static partial class BcRuntime
                 return;
             case NavRecordHandle recordHandle:
                 if (!recordHandle.IsDisposed && recordHandle.HasTarget)
-                    RebindRecordsIn(recordHandle.Target, depth + 1, seen);
+                    RebindRecordsIn(recordHandle.Target, seen);
                 return;
             case NavRecordRef recordRef:
                 if (recordRef.IsOpen)
-                    RebindRecordsIn(recordRef.Record, depth + 1, seen);
+                    RebindRecordsIn(recordRef.Record, seen);
                 return;
             case NavCodeunitHandle codeunitHandle:
                 if (!codeunitHandle.IsDisposed && codeunitHandle.HasTarget)
-                    RebindRecordsIn(codeunitHandle.Target, depth + 1, seen);
+                    RebindRecordsIn(codeunitHandle.Target, seen);
                 return;
             case System.Array array:
                 foreach (var element in array)
-                    RebindRecordsIn(element, depth + 1, seen);
+                    RebindRecordsIn(element, seen);
                 return;
             case NavCodeunit:
-                RebindRecordsInFields(value, depth, seen);
+                RebindRecordsInFields(value, seen);
                 return;
         }
         var type = value.GetType();
         if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(NavArray<>))
-            RebindRecordsInFields(value, depth, seen);
+            RebindRecordsInFields(value, seen);
     }
 
-    private static void RebindRecordsInFields(object value, int depth, HashSet<object> seen)
+    private static void RebindRecordsInFields(object value, HashSet<object> seen)
     {
         for (var t = value.GetType(); t != null && t != typeof(NavCodeunit) && t != typeof(object); t = t.BaseType)
             foreach (var f in t.GetFields(BindingFlags.Instance | BindingFlags.Public
                                           | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
                 if (!f.FieldType.IsValueType && f.FieldType != typeof(string))
-                    RebindRecordsIn(f.GetValue(value), depth + 1, seen);
+                    RebindRecordsIn(f.GetValue(value), seen);
     }
 
     /// <summary>

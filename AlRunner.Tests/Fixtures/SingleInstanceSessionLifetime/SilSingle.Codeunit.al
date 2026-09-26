@@ -9,6 +9,7 @@ codeunit 71921 "SIL Single"
         Rows: array[2] of Record "SIL Row";
         RRef: RecordRef;
         Held: Codeunit "SIL Held";
+        Deep: Codeunit "SIL Deep 1";
 
     procedure Bump()
     begin
@@ -36,6 +37,7 @@ codeunit 71921 "SIL Single"
         Rows[2].SetRange(Val, 0);
         RRef.Open(Database::"SIL Row");
         Held.Touch();
+        Deep.Touch();
     end;
 
     procedure InsertRow(NewKey: Code[10])
@@ -47,7 +49,7 @@ codeunit 71921 "SIL Single"
 
     procedure CountAll(): Text
     begin
-        exit(StrSubstNo('%1/%2/%3/%4', Row.Count(), Rows[2].Count(), RRef.Count(), Held.CountRows()));
+        exit(StrSubstNo('%1/%2/%3/%4/%5', Row.Count(), Rows[2].Count(), RRef.Count(), Held.CountRows(), Deep.CountRows()));
     end;
 
     procedure Filters(): Text

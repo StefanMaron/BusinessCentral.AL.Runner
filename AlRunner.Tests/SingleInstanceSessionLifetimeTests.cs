@@ -5,8 +5,10 @@
 // runner replaces its table store there:
 //   - the SingleInstance instance cache is no longer dropped at the boundary;
 //   - a Record global held by that instance is re-pointed at the replacement store
-//     (RecordPatches.RebindRecordToLiveStore), keeping its filters;
+//     (RecordPatches.RebindRecordToLiveStore), keeping its filters — including one three
+//     codeunits down, since the walk has no depth cut-off;
 //   - the reset after the install seed still keeps install-trigger state from the first test.
+// The bundle-start reset needs two runs in one process: SingleInstanceServerResetTests.
 //
 // The BC claim underneath (a SingleInstance instance lives on the company scope and survives a
 // TestIsolation = Codeunit boundary) was measured on the Windows reference container and an MS
