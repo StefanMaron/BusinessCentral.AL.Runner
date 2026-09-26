@@ -43,6 +43,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **records:** Next() re-seeks after a second variable modifies the table, as on BC
 - **xmlport:** a failed value-consuming XmlPort.Import rolls back its rows
 - **testpage:** a CurrPage.Update refresh of an unsaved new row raises no OnAfterGetRecord
 - **testpage:** an OnQueryClosePage veto on TestPage.Close() returns instead of refusing
