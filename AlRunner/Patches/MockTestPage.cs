@@ -65,8 +65,8 @@ internal partial class LiveNavTestPage : MockITestPage
     // BC's client re-reads the current row after every action. A Card whose stored row is gone
     // raises its OnClosePage and is closed: every later call, Close() included, raises "The
     // TestPage is not open." -- with or without a CurrPage.Update in the action. The untouched new
-    // row OpenNew starts is not gone, and stays open. A List moves to a neighbour instead, which
-    // the runner does not do yet (#4747); a temporary source is unmeasured. Corpus 67300, #4727.
+    // row OpenNew starts is not gone, and stays open. A List moves to a neighbour instead (below);
+    // other page types and a temporary source are unmeasured. Corpus 67300, #4727, #4747.
     // OnQueryClosePage is not raised: the measured page declares none, so that is unmeasured.
     // A row the page never read from the table carries no SystemId -- the blank row OpenEdit shows
     // on an empty table or under a filter matching nothing -- and BC keeps that Card open.
@@ -75,10 +75,26 @@ internal partial class LiveNavTestPage : MockITestPage
         if (wasOnNewRow || _page == null || _record is not { IsTemporary: false } record
             || record.SystemId.Value == Guid.Empty || RowExistsInTable(record))
             return;
-        if (RecordPatches.TryGetAnyPageType(_pageId) != "Card") return;
+        var pageType = RecordPatches.TryGetAnyPageType(_pageId);
+        if (pageType == "List") { MoveOffDeletedRow(record); return; }
+        if (pageType != "Card") return;
         _page.RaiseOnClosePageTrigger();
         MarkDetached();
         _page.ForceCloseForm();
+    }
+
+    // The client re-reads a List's current row from its key with "=><": the row itself, else the
+    // next one, else the previous one; and the blank new-row line when the rowset is empty. The
+    // row moved to raises OnAfterGetRecord and OnAfterGetCurrRecord; the deleted row raises neither
+    // (corpus 67300 List_DeletedByAction_*, #4747). BC raises the pair more than once; the corpus
+    // pins the row and the last trigger, not the count.
+    // Trap: "=><" is an anchor on the key the buffer still holds -- do not replace it with "-".
+    private void MoveOffDeletedRow(NavRecord record)
+    {
+        var found = _page!.RaiseOnFindRecord("=><")
+                    ?? record.ALFindAsync(DataError.TrapError, "=><").GetAwaiter().GetResult();
+        if (found) Loaded(true);
+        else EnterNewRowLine(record);
     }
 
     internal bool IsOnUnsavedNewRow => _pendingNewRow;
