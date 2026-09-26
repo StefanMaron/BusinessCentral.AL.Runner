@@ -7,6 +7,8 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **cli:** one run header line — tool version, BC build, app count
+- **cli:** default run output shows failures, one summary block and a Result line
 - **test-data:** route tables/companies through the serve-mode reader
 - **coverage:** serve Code Coverage (2000000049) line rows from the compiled AL source
 - **coverage:** implement code-coverage recording for CODECOVERAGELOG(TRUE)
