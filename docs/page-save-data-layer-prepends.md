@@ -52,7 +52,10 @@ Moved to the funnels by #4142:
 | `BcRuntime.StampSystemFieldsOnModify` | `NavRecord.ModifyAsync(DataError,bool,bool,bool)` |
 
 `UserTableTriggerPatches.OnBeforeUserInsert` was moved to `InsertAsync(4)` earlier, by #4121,
-for the same reason — it is the precedent this change follows.
+for the same reason — it is the precedent this change follows. Since #4701 it and
+`OnBeforeUserModify` sit one level lower, on `RecordImplementation.InsertRecordAsync` /
+`ModifyRecordAsync`, which the two funnels call after their subscriber and trigger dispatch —
+where BC runs its own User system-table arm (corpus 61208).
 
 Deliberately **not** moved, and tracked separately (#4325):
 
