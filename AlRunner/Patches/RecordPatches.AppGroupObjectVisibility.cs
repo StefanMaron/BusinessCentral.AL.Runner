@@ -83,6 +83,7 @@ public static partial class RecordPatches
     {
         var appId = AppGroupOwningFile(filePath, _appGroupBySourceDir);
         if (appId == Guid.Empty) return;
+        lock (_sourceOwnerApps) _sourceOwnerApps.Add(appId);
         foreach (var obj in ParseAlObjects(text))
         {
             if (AlObjectKindName(obj) is not string kind) continue;

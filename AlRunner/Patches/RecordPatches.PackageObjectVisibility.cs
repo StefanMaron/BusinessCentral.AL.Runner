@@ -21,7 +21,11 @@ public static partial class RecordPatches
     /// </summary>
     internal sealed record PackageVisibility(
         IReadOnlyDictionary<Guid, Guid[]> Dependencies,
-        IReadOnlyDictionary<(string Kind, int Id), Guid> Owners);
+        IReadOnlyDictionary<(string Kind, int Id), Guid> Owners)
+    {
+        /// <summary>Every app that owns a hideable package object.</summary>
+        public HashSet<Guid> OwnerApps { get; } = Owners.Values.ToHashSet();
+    }
 
     // Installed in every tenant: `platform` resolves to Microsoft/System, `application` to the
     // Microsoft/Application umbrella (Base Application, System Application, Business Foundation;
@@ -152,14 +156,35 @@ public static partial class RecordPatches
     private static HashSet<Guid>? WidenForExecutingApps(HashSet<Guid>? visible)
     {
         if (visible == null) return null;
+        var model = CurrentPackageVisibility();
+        // The stack walk is the cost here; skip it when no owner exists that visible lacks. Three
+        // hiding rules read visible: source owners, package owners, and the compiled-module owners
+        // IsCompiledXmlPortOfUnreachableSourceApp reads — all three are checked.
+        bool sourceOwnersVisible;
+        lock (_sourceOwnerApps) sourceOwnersVisible = WideningCannotChangeAnAnswer(visible, _sourceOwnerApps);
+        if (sourceOwnersVisible
+            && WideningCannotChangeAnAnswer(visible, model.OwnerApps)
+            && WideningCannotChangeAnAnswer(visible, AlRunner.BcRuntime.RegisteredModuleAssemblies().Select(m => m.AppId)))
+            return visible;
         var executing = AlRunner.BcRuntime.AppIdsOnCallStack();
         HashSet<Guid>? widened = null;
         foreach (var app in executing)
             if (!visible.Contains(app))
                 (widened ??= new HashSet<Guid>(visible))
-                    .UnionWith(VisibleAppClosure(app, CurrentPackageVisibility().Dependencies));
+                    .UnionWith(VisibleAppClosure(app, model.Dependencies));
         return widened ?? visible;
     }
+
+    /// <summary>
+    /// True when every app that could own a hidden object is already in <paramref name="visible"/>:
+    /// IsHiddenFromAppGroup then answers false for every key, so no widening can change an answer.
+    /// </summary>
+    internal static bool WideningCannotChangeAnAnswer(HashSet<Guid> visible, IEnumerable<Guid> ownerApps)
+        => ownerApps.All(visible.Contains);
+
+    // Every app group that has been recorded as a source owner. A superset (an owner later made
+    // ambiguous stays) only makes WidenForExecutingApps skip less often, never wrongly.
+    private static readonly HashSet<Guid> _sourceOwnerApps = new();
 
     private static void RecordAppGroupDependencyRefs(Guid appId, IEnumerable<DependencyRef> dependencies)
     {
@@ -169,6 +194,7 @@ public static partial class RecordPatches
 
     private static void ResetPackageObjectVisibilityForReload()
     {
+        lock (_sourceOwnerApps) _sourceOwnerApps.Clear();
         lock (_sourceAppDependencyRefs) _sourceAppDependencyRefs.Clear();
         System.Threading.Interlocked.Increment(ref _appGroupRegistrationGeneration);
     }

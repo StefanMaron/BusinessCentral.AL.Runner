@@ -196,4 +196,33 @@ public class PackageObjectVisibilityTests
         Assert.False(Hidden(model, GroupA, "Table", 61600));
         Assert.True(Hidden(model, GroupC, "Table", 61600));
     }
+
+    [Fact]
+    public void TheWideningSkip_FiresOnlyWhenNoKeyCanBeHidden()
+    {
+        // The skip is exact only if "every owner is visible" implies "nothing is hidden". Checked
+        // over every key of a real model, for a group that sees everything and one that does not.
+        var packages = new[]
+        {
+            Pkg(PkgP1, "P1", "Fixtures", new[] { Dep(PkgP0) }, ("Table", 61600)),
+            Pkg(PkgP0, "P0", "Fixtures", Array.Empty<DependencyRef>(), ("Table", 61500)),
+            Pkg(PkgShared, "Shared", "Fixtures", Array.Empty<DependencyRef>(), ("Page", 70000)),
+        };
+        var groups = new Dictionary<Guid, DependencyRef[]>
+        {
+            [GroupA] = new[] { Dep(PkgP1), Dep(PkgShared) },
+            [GroupB] = new[] { Dep(PkgShared) },
+        };
+        var model = RecordPatches.BuildPackageVisibility(packages, groups);
+
+        var seesAll = RecordPatches.VisibleAppClosure(GroupA, model.Dependencies);
+        Assert.True(RecordPatches.WideningCannotChangeAnAnswer(seesAll, model.OwnerApps));
+        Assert.All(model.Owners.Keys, k => Assert.False(
+            RecordPatches.IsHiddenFromAppGroup(k.Kind, k.Id, seesAll, model.Owners)));
+
+        var seesSome = RecordPatches.VisibleAppClosure(GroupB, model.Dependencies);
+        Assert.False(RecordPatches.WideningCannotChangeAnAnswer(seesSome, model.OwnerApps));
+        Assert.Contains(model.Owners.Keys, k =>
+            RecordPatches.IsHiddenFromAppGroup(k.Kind, k.Id, seesSome, model.Owners));
+    }
 }

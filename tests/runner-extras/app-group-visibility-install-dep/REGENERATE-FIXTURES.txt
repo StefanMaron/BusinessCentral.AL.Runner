@@ -31,6 +31,10 @@ shape under test. Keep it in a scratch dir:
           if Rec.Code <> 'AGVS-SUB' then exit;   // other suites insert Payment Methods too
           if not AllObj.Get(AllObj."Object Type"::Table, 66360) then
               Error('AGVI subscriber cannot see its own table 66360 in AllObj');
+          // Base App "Type Helper" reads on this app's behalf, so its frame is the innermost app
+          // frame: only a walk of the WHOLE stack finds AGVI (var TypeHelper: Codeunit "Type Helper")
+          if TypeHelper.GetFieldLength(Database::"AGVI Install Log", 1) <> 20 then
+              Error('AGVI subscriber: Type Helper, called on its behalf, cannot see field 66360.1');
           Rec.Description := 'AGVI SUBSCRIBER RAN';
   a throwaway [Test] codeunit 66362 so the bundle emits a DLL (NOT copied back here)
 
