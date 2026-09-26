@@ -78,6 +78,12 @@ public sealed class ReportRequestPageSubtreeTests
     // States SourceTable on its RequestPage node, as Base Application report 742 does
     // ("SourceTable": "740" beside SaveValues/ShowFilter) — #4659.
     private const int WithSourceTable = 9813;
+    // States AboutTitle / AboutText / ContextSensitiveHelpPage on its RequestPage node, as Base
+    // Application report 3 "G/L Register" states the first two (#4108, #4675).
+    private const int WithAbout = 9814;
+
+    // Not learn.microsoft.com, so a HelpLink can only have come from the manifest (#4675).
+    private const string ManifestHelpUrl = "https://example.invalid/rp-help/";
 
     private static readonly string SymbolReference = $$"""
         {
@@ -151,6 +157,20 @@ public sealed class ReportRequestPageSubtreeTests
                           }
                         },
                         {
+                          "Id": {{WithAbout}},
+                          "Name": "With About",
+                          "DataItems": [],
+                          "RequestPage": {
+                            "Id": 0,
+                            "Name": "RequestOptionsPage",
+                            "Properties": [
+                              { "Name": "AboutTitle", "Value": "About With About" },
+                              { "Name": "AboutText", "Value": "Lists the **entries**, one per row." },
+                              { "Name": "ContextSensitiveHelpPage", "Value": "finance-report" }
+                            ]
+                          }
+                        },
+                        {
                           "Id": {{NoRequestPageNode}},
                           "Name": "No Request Page Node",
                           "DataItems": []
@@ -176,10 +196,10 @@ public sealed class ReportRequestPageSubtreeTests
         return appPath;
     }
 
-    private static XmlElement Emit(BcAppSymbolCache.ReportSymbol report)
+    private static XmlElement Emit(BcAppSymbolCache.ReportSymbol report, string? manifestHelpUrl = null)
     {
         var doc = new XmlDocument();
-        doc.LoadXml(RecordPatches.EmitReportXml(report, sourceExprByColumn: null));
+        doc.LoadXml(RecordPatches.EmitReportXml(report, sourceExprByColumn: null, manifestHelpUrl));
         return doc.DocumentElement!;
     }
 
@@ -268,29 +288,63 @@ public sealed class ReportRequestPageSubtreeTests
         }
     }
 
+    private static XmlElement RequestPageProperties(XmlElement report)
+        => Assert.IsAssignableFrom<XmlElement>(report.SelectSingleNode(
+            "RequestPage/*[local-name()='PageDefinition']/*[local-name()='Properties']"));
+
     /// <summary>
-    /// <c>HelpLink</c> is written, as the constant BC's emitter supplies when AL declares none
-    /// (#4057). Asserted on the document text here; the next test measures the same value
-    /// through BC's own reader, which is the member the metadata-equivalence harness reports.
+    /// The request page's <c>AboutTitle</c> / <c>AboutText</c> are written as
+    /// <c>AboutTitleML</c> / <c>AboutTextML</c>, the form an ordinary page's already take, and
+    /// only when stated (#4108). Corpus codeunit 67250 reads them back through the dataset's
+    /// AboutThisReportTitle/Text on Base Application report 3.
     /// </summary>
     [Fact]
-    public void TheRequestPagePropertiesCarryBcsDefaultHelpLink()
+    public void TheRequestPageCarriesItsStatedAboutTitleAndText()
+    {
+        var dir = TestScratch.Dir("al-runner-report-requestpage-about");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var with = RequestPageProperties(Emit(Report(dir, WithAbout)));
+            Assert.Equal("ENU=About With About", with.GetAttribute("AboutTitleML"));
+            Assert.Equal("ENU=Lists the **entries**, one per row.", with.GetAttribute("AboutTextML"));
+
+            var without = RequestPageProperties(Emit(Report(dir, WithControls)));
+            Assert.False(without.HasAttribute("AboutTitleML"));
+            Assert.False(without.HasAttribute("AboutTextML"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// <c>HelpLink</c> is the declaring app's manifest <c>ContextSensitiveHelpUrl</c>, plus the
+    /// request page's <c>ContextSensitiveHelpPage</c> when it states one, and absent when the
+    /// manifest states no URL — Base Application's case, measured by corpus codeunit 67250
+    /// (#4675). The next test reads the value back through BC's own reader.
+    /// </summary>
+    [Fact]
+    public void TheRequestPageHelpLinkFollowsTheManifestUrl()
     {
         var dir = TestScratch.Dir("al-runner-report-requestpage-helplink");
         Directory.CreateDirectory(dir);
         try
         {
-            // Both reports, because the constant is unconditional: it does not follow
-            // ProcessingOnly, the control tree, or anything the symbol file states.
             foreach (var id in new[] { ChangePassword, WithControls })
             {
-                var properties = Assert.IsAssignableFrom<XmlElement>(
-                    Emit(Report(dir, id)).SelectSingleNode(
-                        "RequestPage/*[local-name()='PageDefinition']/*[local-name()='Properties']"));
-                Assert.Equal(
-                    "https://learn.microsoft.com/dynamics365/business-central/",
-                    properties.GetAttribute("HelpLink"));
+                Assert.Equal(ManifestHelpUrl,
+                    RequestPageProperties(Emit(Report(dir, id), ManifestHelpUrl)).GetAttribute("HelpLink"));
+                // No manifest URL: BC writes no attribute, and its reader answers "".
+                Assert.False(RequestPageProperties(Emit(Report(dir, id))).HasAttribute("HelpLink"));
             }
+
+            // A stated ContextSensitiveHelpPage is joined with no separator...
+            Assert.Equal(ManifestHelpUrl + "finance-report",
+                RequestPageProperties(Emit(Report(dir, WithAbout), ManifestHelpUrl)).GetAttribute("HelpLink"));
+            // ...and is dropped when the manifest states no URL.
+            Assert.False(RequestPageProperties(Emit(Report(dir, WithAbout))).HasAttribute("HelpLink"));
 
             // Negative, and it is what stops the assertion above being satisfied by writing the
             // attribute everywhere: a report declaring NO request page gets no subtree at all,
@@ -371,7 +425,7 @@ public sealed class ReportRequestPageSubtreeTests
         Directory.CreateDirectory(dir);
         try
         {
-            var parsed = ctor!.Invoke(new object?[] { Emit(Report(dir, ChangePassword)), null, 0, 0, null });
+            var parsed = ctor!.Invoke(new object?[] { Emit(Report(dir, WithAbout), ManifestHelpUrl), null, 0, 0, null });
             var definition = requestPage!.GetValue(parsed);
             Assert.NotNull(definition);
 
@@ -383,7 +437,7 @@ public sealed class ReportRequestPageSubtreeTests
             var helpLink = properties!.GetType()
                 .GetProperty("HelpLink", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!
                 .GetValue(properties);
-            Assert.Equal("https://learn.microsoft.com/dynamics365/business-central/", helpLink);
+            Assert.Equal(ManifestHelpUrl + "finance-report", helpLink);
         }
         finally
         {

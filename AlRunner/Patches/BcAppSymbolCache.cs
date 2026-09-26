@@ -326,9 +326,9 @@ internal static partial class BcAppSymbolCache
         List<CodeunitMethodSymbol>? AttributedMethods = null,
         // AL's `ContextSensitiveHelpPage`, verbatim and relative — "ui-enter-date-ranges", never
         // a URL. It is HelpLink's other source, not a property of its own: BC's emitter resolves
-        // the two into the one HelpLink attribute it writes on every page. Which of them wins,
-        // and the base URL the relative form is joined to, is RecordPatches.EmitPageHelpLink's
-        // question — nothing is joined or defaulted here (#4282).
+        // the two, with the app manifest's help URL, into one HelpLink attribute. Which wins,
+        // and what the relative form is joined to, is RecordPatches.DeriveHelpLink's question —
+        // nothing is joined or defaulted here (#4282, #4675).
         string? ContextSensitiveHelpPage = null,
         // AL's `DataCaptionExpression` — the caption EXPRESSION source text, e.g.
         // `Rec."Related Table Caption"`. Carried verbatim and deliberately not parsed: BC's
@@ -696,7 +696,12 @@ internal static partial class BcAppSymbolCache
         // The request page's own `SourceTable`, as the table id the symbol file states (#4659);
         // 0 when it declares none. BC writes it onto the request page's <SourceObject>, and
         // without it the page's Rec is never bound (report 742's OnOpenPage NREs on Rec).
-        int RequestPageSourceTableId = 0);
+        int RequestPageSourceTableId = 0,
+        // The request page's own HelpLink / ContextSensitiveHelpPage, verbatim (#4675) — the
+        // inputs RecordPatches.DeriveHelpLink combines with the app manifest's help URL.
+        string? RequestPageHelpLink = null, string? RequestPageContextSensitiveHelpPage = null,
+        // The request page's AboutTitle / AboutText, verbatim (#4108).
+        string? RequestPageAboutTitle = null, string? RequestPageAboutText = null);
 
     /// <summary>
     /// One node of a precompiled report's request-page control tree (#4661): a field, a group,
@@ -994,7 +999,9 @@ internal static partial class BcAppSymbolCache
     internal sealed record QuerySymbol(
         int Id, string Name, string? QueryType, string? Caption, string? OrderBy,
         int TopNumberOfRowsToReturn, List<QueryDataItemSymbol> DataItems,
-        string? InherentEntitlements = null, string? InherentPermissions = null);
+        string? InherentEntitlements = null, string? InherentPermissions = null,
+        // #4675 — stated verbatim; RecordPatches.DeriveHelpLink combines them with the manifest.
+        string? HelpLink = null, string? ContextSensitiveHelpPage = null);
 
     // DataItemTableFilter (#3571) is the AL `DataItemTableFilter = <Field> = const(...)/
     // filter(...) [, ...]` property, carried verbatim ("Status = const(Open)"). It restricts the
@@ -2477,7 +2484,19 @@ internal static partial class BcAppSymbolCache
             report.TryGetProperty("RequestPage", out var requestPage)
                 && requestPage.ValueKind == JsonValueKind.Object,
             requestPage.ValueKind == JsonValueKind.Object ? ReadRequestPageControls(requestPage) : null,
-            ReadRequestPageSourceTableId(report));
+            ReadRequestPageSourceTableId(report),
+            ReadRequestPageProperty(report, "HelpLink"),
+            ReadRequestPageProperty(report, "ContextSensitiveHelpPage"),
+            ReadRequestPageProperty(report, "AboutTitle"),
+            ReadRequestPageProperty(report, "AboutText"));
+    }
+
+    private static string? ReadRequestPageProperty(JsonElement report, string name)
+    {
+        if (!report.TryGetProperty("RequestPage", out var requestPage)
+            || requestPage.ValueKind != JsonValueKind.Object)
+            return null;
+        return SymbolProperties(requestPage).TryGetValue(name, out var v) && !string.IsNullOrEmpty(v) ? v : null;
     }
 
     /// <summary>
@@ -2662,9 +2681,13 @@ internal static partial class BcAppSymbolCache
                 var di = TryParseQueryDataItem(el);
                 if (di != null) dataItems.Add(di);
             }
+        props.TryGetValue("HelpLink", out var helpLink);
+        props.TryGetValue("ContextSensitiveHelpPage", out var contextSensitiveHelpPage);
         return new QuerySymbol(queryId, name, queryType, caption, orderBy, top, dataItems,
             string.IsNullOrWhiteSpace(inherentEntitlements) ? null : inherentEntitlements.Trim(),
-            string.IsNullOrWhiteSpace(inherentPermissions) ? null : inherentPermissions.Trim());
+            string.IsNullOrWhiteSpace(inherentPermissions) ? null : inherentPermissions.Trim(),
+            string.IsNullOrEmpty(helpLink) ? null : helpLink,
+            string.IsNullOrEmpty(contextSensitiveHelpPage) ? null : contextSensitiveHelpPage);
     }
 
     private static QueryDataItemSymbol? TryParseQueryDataItem(JsonElement el)

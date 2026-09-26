@@ -194,15 +194,19 @@ public sealed class QuerySymbolDerivedMetaQueryPropertiesTests : IDisposable
         }
         """;
 
-    private void Register()
+    // Not learn.microsoft.com, so the value can only have come from the manifest (#4675).
+    private const string ManifestHelpUrl = "https://example.invalid/query-help/";
+
+    private void Register(string? contextSensitiveHelpUrl = ManifestHelpUrl)
     {
         var appPath = Path.Combine(_root, "query-derived.app");
         using (var zip = new FileStream(appPath, FileMode.Create))
         using (var za = new ZipArchive(zip, ZipArchiveMode.Create))
         {
             var entry = za.CreateEntry("SymbolReference.json");
-            using var w = new StreamWriter(entry.Open(), Encoding.UTF8);
-            w.Write(SymbolReference);
+            using (var w = new StreamWriter(entry.Open(), Encoding.UTF8))
+                w.Write(SymbolReference);
+            if (contextSensitiveHelpUrl != null) NavxManifestFixture.Add(za, contextSensitiveHelpUrl);
         }
         RecordPatches.ResetForReload();
         RecordPatches.AddBcAppPath(appPath);
@@ -294,7 +298,8 @@ public sealed class QuerySymbolDerivedMetaQueryPropertiesTests : IDisposable
         Register();
         var design = Design(DeclaresNoMask);
 
-        Assert.Equal("https://learn.microsoft.com/dynamics365/business-central/", Read(design, "HelpLink"));
+        // HelpLink is the declaring app's manifest ContextSensitiveHelpUrl (#4675).
+        Assert.Equal(ManifestHelpUrl, Read(design, "HelpLink"));
 
         // BC writes an EMPTY element for these three, which its own reader turns into "" —
         // never null. Asserted as "" specifically: null would be the value the runner used to
@@ -302,6 +307,18 @@ public sealed class QuerySymbolDerivedMetaQueryPropertiesTests : IDisposable
         Assert.Equal(string.Empty, Read(design, "QueryCategory"));
         Assert.Equal(string.Empty, Read(design, "APIGroup"));
         Assert.Equal(string.Empty, Read(design, "APIPublisher"));
+    }
+
+    /// <summary>
+    /// A query from an app whose manifest states no ContextSensitiveHelpUrl gets no HelpLink:
+    /// BC's QueryMetadataEmitter writes the element only when GetContextSensitiveHelpUrl returns
+    /// a URL (#4675).
+    /// </summary>
+    [Fact]
+    public void HelpLink_is_absent_when_the_manifest_states_no_help_url()
+    {
+        Register(contextSensitiveHelpUrl: null);
+        Assert.Null(Read(Design(DeclaresNoMask), "HelpLink"));
     }
 
     /// <summary>

@@ -46,14 +46,15 @@ namespace AlRunner.Tests;
 [Collection(CacheRootsSerialCollection.Name)]
 public class DependencyPageDerivedPropertiesTests
 {
-    private static string WriteApp(string dir, string symbolReferenceJson)
+    private static string WriteApp(string dir, string symbolReferenceJson, string? contextSensitiveHelpUrl = HelpLinkBase)
     {
         var appPath = Path.Combine(dir, Guid.NewGuid().ToString("N") + ".app");
         using var zip = new FileStream(appPath, FileMode.Create);
         using var za = new ZipArchive(zip, ZipArchiveMode.Create);
         var entry = za.CreateEntry("SymbolReference.json");
-        using var w = new StreamWriter(entry.Open(), Encoding.UTF8);
-        w.Write(symbolReferenceJson);
+        using (var w = new StreamWriter(entry.Open(), Encoding.UTF8))
+            w.Write(symbolReferenceJson);
+        if (contextSensitiveHelpUrl != null) NavxManifestFixture.Add(za, contextSensitiveHelpUrl);
         return appPath;
     }
 
@@ -66,7 +67,9 @@ public class DependencyPageDerivedPropertiesTests
     private const int BothHelpPageId = 88782004;
     private const int NoCaptionPageId = 88782005;
 
-    private const string HelpLinkBase = "https://learn.microsoft.com/dynamics365/business-central/";
+    // Deliberately NOT learn.microsoft.com: the value has to come from the fixture's own
+    // manifest, so a writer still carrying the old constant cannot pass (#4675).
+    private const string HelpLinkBase = "https://example.invalid/help/";
 
     private const string SymbolReference = """
         {
@@ -146,7 +149,7 @@ public class DependencyPageDerivedPropertiesTests
         Directory.CreateDirectory(dir);
         try
         {
-            RecordPatches.AddBcAppPath(WriteApp(dir, SymbolReference));
+            RecordPatches.AddBcAppPath(WriteApp(dir, SymbolReference, HelpLinkBase));
 
             // Arm 1 — a stated HelpLink goes through verbatim, NOT joined to the base.
             Assert.Equal(
@@ -159,8 +162,8 @@ public class DependencyPageDerivedPropertiesTests
                 HelpLinkBase + "ui-enter-date-ranges",
                 ReadProperties(ContextHelpPageId).GetAttribute("HelpLink"));
 
-            // Arm 3 — the 193-page case, and the one the old code got wrong by writing nothing.
-            // An absent attribute and this string are different documents to BC's reader.
+            // Arm 3 — the 193-page case: the manifest URL alone. An absent attribute and this
+            // string are different documents to BC's reader.
             Assert.Equal(HelpLinkBase, ReadProperties(NoHelpPageId).GetAttribute("HelpLink"));
             Assert.True(ReadProperties(NoHelpPageId).HasAttribute("HelpLink"));
 
@@ -174,6 +177,61 @@ public class DependencyPageDerivedPropertiesTests
         }
         finally
         {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    private const int NoUrlStatedHelpLinkPageId = 88782030;
+    private const int NoUrlContextHelpPageId = 88782031;
+
+    private const string NoUrlSymbolReference = """
+        {
+          "RuntimeVersion": "15.1",
+          "Pages": [
+            {
+              "Id": 88782030,
+              "Name": "P4675 No Url Stated HelpLink",
+              "Properties": [
+                { "Name": "PageType", "Value": "Card" },
+                { "Name": "HelpLink", "Value": "https://go.microsoft.com/fwlink/?linkid=2149387" }
+              ]
+            },
+            {
+              "Id": 88782031,
+              "Name": "P4675 No Url Context Help",
+              "Properties": [
+                { "Name": "PageType", "Value": "Card" },
+                { "Name": "ContextSensitiveHelpPage", "Value": "ui-enter-date-ranges" }
+              ]
+            }
+          ]
+        }
+        """;
+
+    /// <summary>
+    /// An app whose manifest states no ContextSensitiveHelpUrl — Base Application, on every build
+    /// from 27.0 to 28.5 — gets no HelpLink unless the page states one (#4675). BC's
+    /// GetContextSensitiveHelpUrl returns null there, even when ContextSensitiveHelpPage is set.
+    /// Corpus codeunit 67250 measures the same rule on a Base Application report.
+    /// </summary>
+    [Fact]
+    public void HelpLink_ManifestStatesNoUrl_OnlyAStatedHelpLinkIsWritten()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-page-derived-4675");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.ResetForReload();
+            RecordPatches.AddBcAppPath(WriteApp(dir, NoUrlSymbolReference, contextSensitiveHelpUrl: null));
+
+            Assert.Equal(
+                "https://go.microsoft.com/fwlink/?linkid=2149387",
+                ReadProperties(NoUrlStatedHelpLinkPageId).GetAttribute("HelpLink"));
+            Assert.False(ReadProperties(NoUrlContextHelpPageId).HasAttribute("HelpLink"));
+        }
+        finally
+        {
+            RecordPatches.ResetForReload();
             Directory.Delete(dir, recursive: true);
         }
     }

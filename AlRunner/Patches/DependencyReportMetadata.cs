@@ -74,7 +74,7 @@ public static partial class RecordPatches
         var (appPath, report) = found.Value;
 
         var sourceExprByColumn = TryReadColumnSourceExpressions(appPath, report);
-        var xml = EmitReportXml(report, sourceExprByColumn);
+        var xml = EmitReportXml(report, sourceExprByColumn, DependencyAppContextSensitiveHelpUrl(appPath));
 
         Console.Error.WriteLine(
             $"[RecordPatches] dependency report metadata: synthesized Report {reportId} "
@@ -246,7 +246,8 @@ public static partial class RecordPatches
     // internal, not private, so DependencyReportDataItemLinkTests can assert the document
     // for one report symbol without a whole loaded dependency set behind it.
     internal static string EmitReportXml(
-        BcAppSymbolCache.ReportSymbol report, Dictionary<string, string>? sourceExprByColumn)
+        BcAppSymbolCache.ReportSymbol report, Dictionary<string, string>? sourceExprByColumn,
+        string? manifestHelpUrl = null)
     {
         var settings = new XmlWriterSettings { Indent = true, Encoding = new UTF8Encoding(false) };
         var sb = new StringBuilder();
@@ -273,7 +274,7 @@ public static partial class RecordPatches
             w.WriteElementString("ID", report.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
             w.WriteElementString("Name", report.Name);
             WriteDerivableReportProperties(w, report);
-            WriteRequestPageXml(w, report);
+            WriteRequestPageXml(w, report, manifestHelpUrl);
 
             // enclosing[d] = DataItemVarName of the innermost open data item at indentation d.
             var enclosing = new List<string>();
@@ -363,15 +364,6 @@ public static partial class RecordPatches
     }
 
     /// <summary>
-    /// The <c>HelpLink</c> BC's emitter writes on every request page. Deliberately a second
-    /// copy of the literal in <c>RecordPatches.NclMetaQueryBuilder.cs</c> rather than a shared
-    /// constant: the two rest on separate measurements (7 of 7 queries there, 660 of 660
-    /// reports here), and sharing one would make a future measurement that splits them look
-    /// like a refactor rather than a finding.
-    /// </summary>
-    private const string RequestPageHelpLink = "https://learn.microsoft.com/dynamics365/business-central/";
-
-    /// <summary>
     /// The <c>&lt;RequestPage&gt;</c> subtree (#3808). Written for a report whose symbol file
     /// states a <c>RequestPage</c> node — 660 of 660 across Base Application and System
     /// Application at 28.1.49838.53910, including all 24 declaring <c>UseRequestPage = 0</c>.
@@ -411,7 +403,8 @@ public static partial class RecordPatches
     /// 660 reports state a control tree, 2,938 nodes, 1,891 SourceExpression values, 247 of
     /// them record-qualified. See docs/report-metadata-from-bc.md#request-page.</para>
     /// </summary>
-    private static void WriteRequestPageXml(XmlWriter w, BcAppSymbolCache.ReportSymbol report)
+    private static void WriteRequestPageXml(
+        XmlWriter w, BcAppSymbolCache.ReportSymbol report, string? manifestHelpUrl)
     {
         if (!report.HasRequestPage) return;
 
@@ -441,13 +434,17 @@ public static partial class RecordPatches
         // See docs/report-metadata-from-bc.md#request-page-promoted-action-categories.
         w.WriteAttributeString("PromotedActionCategoriesML", "");
         w.WriteAttributeString("Editable", "1");
-        // BC's emitter default for a request page, written unconditionally because AL cannot
-        // override it HERE: HelpLink is a real page property (6 System Application pages declare
-        // one), but 0 of 660 reports state it at the report level or on their RequestPage node,
-        // so the constant is the only value this subtree ever takes. Identical on all four
-        // ground-truth builds, which are four distinct Ncl.dll binaries, and the same constant
-        // RecordPatches.NclMetaQueryBuilder.cs already writes for queries. #4057.
-        w.WriteAttributeString("HelpLink", RequestPageHelpLink);
+        // BC's RequestPageMetadataEmitter derives it the same way as a page's (#4675). With no
+        // attribute, the dataset's <ReportHelpLink> is "" — corpus codeunit 67250.
+        var helpLink = DeriveHelpLink(
+            report.RequestPageHelpLink, report.RequestPageContextSensitiveHelpPage, manifestHelpUrl);
+        if (helpLink != null) w.WriteAttributeString("HelpLink", helpLink);
+        // #4108: the MultiLanguage form EmitPagePropertiesXml writes for an ordinary page. The
+        // dataset's AboutThisReportTitle/Text read them back — corpus codeunit 67250.
+        if (!string.IsNullOrEmpty(report.RequestPageAboutTitle))
+            w.WriteAttributeString("AboutTitleML", EnuMultiLanguage(report.RequestPageAboutTitle));
+        if (!string.IsNullOrEmpty(report.RequestPageAboutText))
+            w.WriteAttributeString("AboutTextML", EnuMultiLanguage(report.RequestPageAboutText));
         // Present-but-empty, exactly as BC emits it, and load-bearing:
         // MetadataProvider.ModifyReportRequestPage dereferences
         // pageDefinition.Properties.SourceObject.SaveValues with no null check, and

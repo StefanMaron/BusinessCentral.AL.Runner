@@ -916,7 +916,7 @@ members, now 19 across 4.**
 | `MetaQuery.InherentEntitlements` | 4 | `Execute` | `InherentEntitlements = "X"` in the symbol file |
 | `MetaQuery.InherentPermissions` | 4 | `Execute` | `InherentPermissions = "X"` in the symbol file |
 | `MetaQuery.Caption` | 4 | the object **name** | `Name` — see below |
-| `MetaQuery.HelpLink` | 7 | the docs URL | a constant BC writes unconditionally |
+| `MetaQuery.HelpLink` | 7 | the docs URL | the app manifest's `ContextSensitiveHelpUrl` (#4675) |
 | `MetaQuery.APIGroup` / `APIPublisher` / `QueryCategory` | 7 each | `<empty>` | the same, as `""` |
 | `MetaQueryDataItemLink.LinkOperator` | 4 | `=` | a constant; AL has no other operator |
 
