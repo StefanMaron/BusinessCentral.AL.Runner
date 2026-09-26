@@ -108,17 +108,17 @@ public static partial class BcRuntime
                 var instance = RunnerFormInit.ConstructPage(twoArgCtor, new object?[] { parent, boundRecord });
                 BindPageSourceObjectId(instance, boundRecord.TableID);
 
-                // NavForm.SetSourceTable(record, clone: false) is BC's own binding step —
-                // reused rather than reimplemented, same rationale as
-                // NavFormHandle_CreateTarget. NavForm.RunModalAsync(record, fieldNo) (the
-                // real, unmodified body this construction feeds into) calls
-                // SetSourceTable(record, clone: true, ...) again itself once
-                // CreateObjectInstance returns, so this first bind only has to make the
-                // freshly-constructed instance safe to touch before that point.
+                // NavForm.SetSourceTable is BC's own binding step, reused rather than
+                // reimplemented. A CALLER's record is cloned, as BC's NavForm ctor clones it:
+                // the page works on its own copy, so its moves and filters never reach the
+                // caller (corpus codeunit 67351, #4634). Trap: RunAsync / RunModalAsync's own
+                // later SetSourceTable(record, clone: true, ...) does NOT repair a clone:false
+                // bind here — it returns early when `record` is already the source object.
+                // Only a blank record this method built itself is bound without a copy.
                 var setSourceTable = instance.GetType().GetMethod("SetSourceTable",
                     BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
                     binder: null, types: new[] { typeof(NavRecord), typeof(bool) }, modifiers: null);
-                try { setSourceTable?.Invoke(instance, new object?[] { boundRecord, false }); }
+                try { setSourceTable?.Invoke(instance, new object?[] { boundRecord, record != null }); }
                 catch (TargetInvocationException tie) when (tie.InnerException != null)
                 {
                     Console.Error.WriteLine(
