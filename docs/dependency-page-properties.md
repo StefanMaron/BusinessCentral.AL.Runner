@@ -20,7 +20,7 @@ different questions, and the second is the specification.**
 
 | property | symbol | BC | BC's rule | status |
 |---|---|---|---|---|
-| `Properties/@HelpLink` | 6 | **235** | derived: stated `HelpLink`, else base + `ContextSensitiveHelpPage`, else base | **implemented** |
+| `Properties/@HelpLink` | 6 | **235** | derived: stated `HelpLink`, else manifest URL + `ContextSensitiveHelpPage`, else manifest URL, else none | **implemented** |
 | `@CaptionML` (root) | 196 | 196 | write-iff-stated, `ENU=` + text | **implemented** |
 | `Properties/@DataCaptionExpr` | 32 | 32 | write-iff-stated, constant `DataCaptionExprCode` | **implemented** |
 | `Properties/@AnalysisModeEnabled` | 1 | 94 | derived: stated value, else `1` for List/Worksheet or no stated PageType | **implemented** |
@@ -35,18 +35,27 @@ different questions, and the second is the specification.**
 
 ### HelpLink
 
-A three-way partition, and the one `<Properties>` scalar BC derives rather than copies, and a total rule with no
-exceptions on this build:
+The one `<Properties>` scalar BC derives rather than copies. The base is the declaring app's
+manifest `ContextSensitiveHelpUrl`, not a fixed URL (#4675). Business Foundation and System
+Application both state `https://learn.microsoft.com/dynamics365/business-central/`:
 
 | the page states | count | BC writes |
 |---|---|---|
 | `HelpLink` | 6 | that value, verbatim |
-| `ContextSensitiveHelpPage` (relative) | 36 | `https://learn.microsoft.com/dynamics365/business-central/` + it |
-| neither | 193 | the bare base URL |
+| `ContextSensitiveHelpPage` (relative) | 36 | the manifest URL + it, no separator |
+| neither | 193 | the manifest URL alone |
 
-6 + 36 + 193 = 235, and each arm matched BC's exact string on every page it covers. The obvious
-rule — write it only for the 6 that state it, as `UsageCategory` beside it is written — is
-wrong for **229** pages.
+6 + 36 + 193 = 235 on 28.1.49838.53910, and each arm matched BC's exact string on every page it
+covers. The obvious rule — write it only for the 6 that state it, as `UsageCategory` beside it is
+written — is wrong for **229** pages.
+
+When the manifest states **no** `ContextSensitiveHelpUrl`, BC writes no `HelpLink` unless the page
+states one, even when `ContextSensitiveHelpPage` is set. This is Base Application's case on every
+build from 27.0 to 28.5. The rule is `PageMetadataEmitHelper.GetContextSensitiveHelpUrl` in
+Microsoft.Dynamics.Nav.CodeAnalysis.dll, which the page, request-page and query emitters all call;
+the runner's copy is `RecordPatches.DeriveHelpLink`. Corpus codeunit 67250 measures the no-URL arm
+through a Base Application report's `Report.SaveAs(Xml)` dataset, whose
+`BCReportInformation/ReportMetadata/ReportHelpLink` is the request page's `HelpLink`.
 
 ### `DataCaptionExpr` — write-iff-stated with a constant
 

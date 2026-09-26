@@ -350,14 +350,11 @@ metadata-equivalence differ reach six members it could not see behind a null
 `RequestPageDefinition`. They split two ways, and the split is a measurement rather than a
 preference.
 
-**`HelpLink` is a defect and is fixed.** BC writes it as an attribute on `<Properties>`, and the
-same constant on all four binaries above. It is a genuine AL-declarable page property — 6 System
-Application *pages* declare their own — but **0 of 660 reports state it**, at the report level or
-on their `RequestPage` node, so AL never overrides it here and the constant is the only value this
-subtree ever takes. `WriteRequestPageXml` now writes it unconditionally. The same literal is
-written for queries by `RecordPatches.NclMetaQueryBuilder.cs`; the two are deliberately separate
-constants, because they rest on separate populations (7 of 7 queries, 660 of 660 reports) and a
-future measurement that splits them should read as a finding rather than a refactor.
+**`HelpLink` is a defect and is fixed.** BC writes it as an attribute on `<Properties>`. It is a
+genuine AL-declarable page property — 6 System Application *pages* declare their own — but
+**0 of 660 reports state it**, at the report level or on their `RequestPage` node. The value BC
+writes is derived from the app manifest (see the end of this section), and
+`WriteRequestPageXml` derives it the same way the page and query writers do.
 
 **The four `*TranslationKey` members stay declared, as `outOfScope`** — the same kind, reason and
 `Doc` pointer as the seven `TranslationKey.*` entries that predate them:
@@ -406,7 +403,14 @@ the value comparison could never have seen it missing. It was found by the prese
 
 The same probe showed that `HelpLink` is not a constant. BC writes the app manifest's
 `ContextSensitiveHelpUrl`, which is `https://learn.microsoft.com/dynamics365/business-central/`
-for the two apps the harness measures. That is tracked on #4675.
+for the two apps the harness measures, and nothing for an app whose manifest states none, such as
+Base Application. `WriteRequestPageXml` derives it that way since #4675; see
+[dependency-page-properties.md#helplink](dependency-page-properties.md#helplink).
+
+The request page's `AboutTitle` and `AboutText` are written as `AboutTitleML` / `AboutTextML`
+when stated (#4108). The `Report.SaveAs(Xml)` dataset reads them back as
+`AboutThisReportTitle` / `AboutThisReportText`, which corpus codeunit 67250 asserts on Base
+Application report 3.
 
 ### Why the control tree is not transcribed
 
