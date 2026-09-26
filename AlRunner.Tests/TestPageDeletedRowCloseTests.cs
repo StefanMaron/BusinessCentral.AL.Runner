@@ -45,8 +45,8 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
         var (exit, output) = Spawn(_root, pkg);
 
         // Each arm asserts inside AL; the counts separate "passed" from "discovered nothing".
-        Assert.True(output.Contains("passed 13 "),
-            $"expected all thirteen arms to pass; exit={exit}\n{output}");
+        Assert.True(output.Contains("passed 14 "),
+            $"expected all fourteen arms to pass; exit={exit}\n{output}");
         Assert.Contains("failed 0 ", output);
     }
 
@@ -341,6 +341,24 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
                     List.DeleteOnly.Invoke();
                     if List.CodeField.Value() <> 'A' then
                         Error('expected the List on A, got: %1', List.CodeField.Value());
+                    List.Close();
+                end;
+
+                // A middle row: the List lands on the row after it, not on the first row.
+                [Test]
+                procedure List_ActionDeletesAMiddleRow_MovesToTheNextRow()
+                var
+                    Row: Record "TDR Row";
+                    List: TestPage "TDR List";
+                begin
+                    Seed();
+                    Row.Code := 'C';
+                    Row.Insert();
+                    List.OpenEdit();
+                    List.GoToKey('B');
+                    List.DeleteOnly.Invoke();
+                    if List.CodeField.Value() <> 'C' then
+                        Error('expected the List on C, got: %1', List.CodeField.Value());
                     List.Close();
                 end;
 
