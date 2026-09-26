@@ -3,8 +3,8 @@
   "suites": {
     "runner-extras": {
       "groups": {
-        "app-group-visibility-a": { "tests": 30 },
-        "app-group-visibility-b": { "tests": 32 },
+        "app-group-visibility-a": { "tests": 31 },
+        "app-group-visibility-b": { "tests": 37 },
         "app-group-visibility-c": { "tests": 30 },
         "bundle-page-over-dep-table": { "tests": 2 },
         "code-coverage-line-rows": { "tests": 7 },
@@ -87,7 +87,7 @@
         "xasm-event-dispatch-dep": { "tests": 1 },
         "xasm-event-dispatch-main": { "tests": 1 },
         "xmlport-metadata-floor-app": { "tests": 2 },
-        "xmlport-precompiled-dep-metadata": { "tests": 2 }
+        "xmlport-precompiled-dep-metadata": { "tests": 3 }
       }
     }
   }
