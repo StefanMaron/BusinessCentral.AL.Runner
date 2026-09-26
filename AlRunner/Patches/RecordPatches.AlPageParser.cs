@@ -694,13 +694,19 @@ public static partial class RecordPatches
     /// <para>Null keeps meaning "declares none", which is the AL default of true — the
     /// distinction #3504 is about. Only these three names resolve; anything else answers null
     /// rather than being mapped onto one of them.</para>
+    ///
+    /// <para>Controls a precompiled pageextension adds are folded in through
+    /// <see cref="DependencyPageExtensionFieldControls"/>, the same set
+    /// <see cref="GetPageControlFieldMap"/> binds (#4749). Their ids live in the extension's id
+    /// space, so they cannot collide with the page's own.</para>
     /// </summary>
     internal static string? TryGetDependencyControlDeclaredProperty(int pageId, int controlId, string propertyName)
     {
         var symbol = TryGetDependencyPageSymbol(pageId);
-        if (symbol?.Controls == null || symbol.Controls.Count == 0) return null;
+        if (symbol == null) return null;
 
-        foreach (var control in symbol.Controls)
+        foreach (var control in (symbol.Controls ?? new List<BcAppSymbolCache.PageControlSymbol>())
+                     .Concat(DependencyPageExtensionFieldControls(symbol.Name)))
         {
             if (control.Id != controlId) continue;
             return propertyName switch

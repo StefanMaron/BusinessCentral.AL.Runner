@@ -38,7 +38,9 @@
 //      apps) — read from that .app's SymbolReference.json, which states EVERY field
 //      control's SourceExpression verbatim (Rec.-bound or not) plus its compiler-assigned
 //      control Id, so TableNo/FieldNo are resolved by parsing that text the same way the
-//      source-parsed path does, without the Rec.-bound restriction.
+//      source-parsed path does, without the Rec.-bound restriction. The controls its
+//      pageextensions add — precompiled or compiled here — are rows on the base page's id
+//      too (#4749, corpus 67401).
 //   Source-compiled pages win over symbol-derived ones for the same page id.
 //
 // PRECOMPILED-DLL RESPECT
@@ -85,7 +87,7 @@ public static partial class RecordPatches
     // --watch mode (same bundle, one edited file) that is the NORMAL case, not a corner. The
     // remaining terms stay counts and are sound as counts, because the dictionaries they count
     // are only ever cleared by ResetForReload, which bumps the epoch in the same breath.
-    private static (int Epoch, int Parsed) _pageControlFieldRowsBuiltFrom = (-1, -1);
+    private static (int Epoch, int Parsed, int ParsedExtensions) _pageControlFieldRowsBuiltFrom = (-1, -1, -1);
     private static readonly object _pageControlFieldRowsLock = new();
 
     private static void PopulatePageControlFieldVirtualTable(object dataAccess, NCLMetaTable metaTable)
@@ -152,11 +154,11 @@ public static partial class RecordPatches
 
     private static List<PageControlFieldRow> EnumerateKnownPageControlFields()
     {
-        var generation = (BcAppRegistrationEpoch, _parsedPages.Count);
+        var generation = (BcAppRegistrationEpoch, _parsedPages.Count, _parsedPageExtensions.Count);
         if (_pageControlFieldRows != null && _pageControlFieldRowsBuiltFrom == generation) return _pageControlFieldRows;
         lock (_pageControlFieldRowsLock)
         {
-            generation = (BcAppRegistrationEpoch, _parsedPages.Count);
+            generation = (BcAppRegistrationEpoch, _parsedPages.Count, _parsedPageExtensions.Count);
             if (_pageControlFieldRows != null && _pageControlFieldRowsBuiltFrom == generation) return _pageControlFieldRows;
 
             var rows = new List<PageControlFieldRow>();
@@ -217,7 +219,18 @@ public static partial class RecordPatches
             foreach (var symbol in EnumerateBcAppPageSymbols())
             {
                 if (sourceParsedPageIds.Contains(symbol.Id)) continue;
-                if (symbol.Controls == null || symbol.Controls.Count == 0) continue;
+
+                // The page's own controls, then those its pageextensions add — precompiled ones
+                // from their symbol files, compiled ones from the AL parser — under the BASE
+                // page's id, as corpus 60524 and 67401 measured (#4749).
+                var controls = (symbol.Controls ?? new List<BcAppSymbolCache.PageControlSymbol>())
+                    .Concat(DependencyPageExtensionFieldControls(symbol.Name))
+                    .ToList();
+                var sourceExtensionControls = _parsedPageExtensions.Values
+                    .Where(ext => NamesEqual(ext.BaseName, symbol.Name))
+                    .SelectMany(ext => ext.Controls)
+                    .ToList();
+                if (controls.Count == 0 && sourceExtensionControls.Count == 0) continue;
 
                 // #3750 — a THIRD route value, which the table trace has no analogue for: a
                 // precompiled dependency's page is served from its SymbolReference.json, not
@@ -225,12 +238,21 @@ public static partial class RecordPatches
                 // the compiled-vs-precompiled split the trace exists to measure unreadable.
                 TracePageMetadataSource(symbol.Id, "symbol");
 
+                // Populated on a miss exactly as GetPageControlFieldMap does: a precompiled page's
+                // source table is usually precompiled too, and without it every row of the page
+                // answered TableNo = 0 / FieldNo = 0 (#4749).
+                if (symbol.SourceTableId != 0 && !_parsedTables.ContainsKey(symbol.SourceTableId))
+                    TryPopulateParsedTableFromBcApps(symbol.SourceTableId);
                 var symTable = symbol.SourceTableId != 0 && _parsedTables.TryGetValue(symbol.SourceTableId, out var st)
                     ? st : null;
+                // Once per page, not per control: the tableextension merge scans every
+                // registered extension, and with the table now populated it runs for every
+                // control of every precompiled page.
+                var symFields = symTable != null ? GetAllFieldsIncludingExtensions(symTable).ToList() : null;
 
-                foreach (var c in symbol.Controls)
+                foreach (var c in controls)
                 {
-                    var (tableNo, fieldNo) = ResolveDependencyControlField(c.SourceExpression, symbol.SourceTableId, symTable);
+                    var (tableNo, fieldNo) = ResolveDependencyControlField(c.SourceExpression, symbol.SourceTableId, symTable, symFields);
                     rows.Add(new PageControlFieldRow(
                         symbol.Id, c.Id, c.Name, tableNo, fieldNo,
                         c.EnabledExpr ?? "true",
@@ -241,7 +263,7 @@ public static partial class RecordPatches
                         // `field?.Editable ?? true`.
                         SolveParsedControlEditable(c.EditableExpr,
                             fieldNo != 0
-                                ? symTable?.Fields.FirstOrDefault(f => f.FieldId == fieldNo)?.Editable
+                                ? symFields?.FirstOrDefault(f => f.FieldId == fieldNo)?.Editable
                                 : null),
                         c.VisibleExpr ?? "true",
                         // A dependency page's SymbolReference.json does not state the source
@@ -249,6 +271,19 @@ public static partial class RecordPatches
                         // reconstructs no <Controls> element to read them from, so this stays
                         // the empty string it answered before rather than becoming a guess.
                         c.SourceExpression, string.Empty, c.Sequence));
+                }
+
+                var nextSequence = controls.Count == 0 ? 0 : controls.Max(c => c.Sequence) + 1;
+                foreach (var c in sourceExtensionControls)
+                {
+                    var pField = symFields?.FirstOrDefault(f => NamesEqual(f.FieldName, c.FieldName));
+                    rows.Add(new PageControlFieldRow(
+                        symbol.Id, c.ControlId, c.ControlName,
+                        pField != null ? symbol.SourceTableId : 0, pField?.FieldId ?? 0,
+                        c.EnabledExpr ?? "true",
+                        SolveParsedControlEditable(c.EditableExpr, pField?.Editable),
+                        c.VisibleExpr ?? "true",
+                        c.SourceExpressionText, string.Empty, nextSequence++));
                 }
             }
 
@@ -264,12 +299,13 @@ public static partial class RecordPatches
     /// expression of the exact shape <c>Rec.Field</c> / <c>Rec."Field Name"</c> resolves —
     /// same restriction the source-parsed path applies, for the same reason (a compound or
     /// non-Rec expression is not "bound to that field", so guessing would be a wrong
-    /// answer). Field lookup uses the SOURCE-PARSED table when the runner compiled it
-    /// itself (fields carry real ids there); a table known only from ANOTHER dependency's
-    /// symbol is not consulted here since <c>_parsedTables</c> does not hold those, and
-    /// inventing a field id from a name with no id-bearing source would be a guess.
+    /// answer). Field lookup uses the table as <c>_parsedTables</c> holds it — source-parsed,
+    /// or populated from a dependency's symbols by the caller — never a name with no
+    /// id-bearing source behind it. <paramref name="allFields"/> is the table's fields merged
+    /// with its tableextensions', when the caller has already computed them.
     /// </summary>
-    private static (int TableNo, int FieldNo) ResolveDependencyControlField(string sourceExpression, int sourceTableId, ParsedTable? table)
+    private static (int TableNo, int FieldNo) ResolveDependencyControlField(
+        string sourceExpression, int sourceTableId, ParsedTable? table, IReadOnlyList<ParsedField>? allFields = null)
     {
         if (table == null || sourceTableId == 0) return (0, 0);
         var expr = sourceExpression?.Trim() ?? string.Empty;
@@ -287,7 +323,7 @@ public static partial class RecordPatches
         // GetAllFieldsIncludingExtensions, not table.Fields alone: a dependency page's control
         // can be bound to a field a tableextension added to this table (source-parsed here, in
         // a sibling app, or precompiled in another dependency .app) — see #2490.
-        var field = GetAllFieldsIncludingExtensions(table).FirstOrDefault(f => NamesEqual(f.FieldName, fieldName));
+        var field = (allFields ?? GetAllFieldsIncludingExtensions(table)).FirstOrDefault(f => NamesEqual(f.FieldName, fieldName));
         return field != null ? (sourceTableId, field.FieldId) : (0, 0);
     }
 }

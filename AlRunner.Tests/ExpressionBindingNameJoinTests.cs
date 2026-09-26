@@ -145,4 +145,42 @@ public class ExpressionBindingNameJoinTests
     {
         Assert.Empty(RunnerPageInstance.BuildBindingsByName(new System.Collections.Hashtable()));
     }
+
+    // #4749: a pageextension control bound to a BASE-page member is registered by the extension
+    // as px<extId>p<pageId><name>. Keys as page 5703 "Location Card" registers them with
+    // pageextension 99000756 "Mfg. Location Card" installed (Base Application 28.5.54151.55132).
+    private static System.Collections.IDictionary Page5703Bindings() => new System.Collections.Hashtable
+    {
+        ["p5703p5703ToProductionBinCodeEnable"] = new FakeBinding { Id = "p5703p5703ToProductionBinCodeEnable", Name = "p5703p5703ToProductionBinCodeEnable" },
+        ["px99000756p5703ProdPickWhseHandlingEnable"] = new FakeBinding { Id = "px99000756p5703ProdPickWhseHandlingEnable", Name = "px99000756p5703ProdPickWhseHandlingEnable" },
+        ["px99000756p5703ProdPutawayWhseHandlingEnable"] = new FakeBinding { Id = "px99000756p5703ProdPutawayWhseHandlingEnable", Name = "px99000756p5703ProdPutawayWhseHandlingEnable" },
+        ["px99000756px99000756OwnGlobal"] = new FakeBinding { Id = "px99000756px99000756OwnGlobal", Name = "px99000756px99000756OwnGlobal" },
+    };
+
+    [Fact]
+    public void ABaseMemberAnExtensionRegistersIsFoundUnderItsRawName()
+    {
+        var table = Page5703Bindings();
+        var index = RunnerPageInstance.BuildBaseMemberBindingsViaExtensions(table, 5703);
+
+        Assert.Same(table["px99000756p5703ProdPickWhseHandlingEnable"], index["ProdPickWhseHandlingEnable"]);
+        Assert.Same(table["px99000756p5703ProdPutawayWhseHandlingEnable"], index["ProdPutawayWhseHandlingEnable"]);
+        Assert.Equal(2, index.Count);
+    }
+
+    [Fact]
+    public void ABaseMemberIndexIgnoresOtherPagesThePageItselfAndAnExtensionsOwnGlobal()
+    {
+        var table = Page5703Bindings();
+
+        // Another page's id: nothing registered under p<that id>.
+        Assert.Empty(RunnerPageInstance.BuildBaseMemberBindingsViaExtensions(table, 5704));
+
+        var index = RunnerPageInstance.BuildBaseMemberBindingsViaExtensions(table, 5703);
+        // The page's own p<id>p<id> registration is step 2's, not this index's.
+        Assert.False(index.ContainsKey("ToProductionBinCodeEnable"));
+        // An extension's own global (px<ext>px<ext>) does not say which extension owns it by name.
+        Assert.False(index.ContainsKey("OwnGlobal"));
+        Assert.DoesNotContain(index.Keys, k => k.Contains("OwnGlobal"));
+    }
 }

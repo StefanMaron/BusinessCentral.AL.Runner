@@ -1547,10 +1547,43 @@ internal sealed partial class RunnerPageInstance
         // request page's client-expression globals belong to its report, so the compiler
         // spells them p{id}r{id}{name} (Report296.RequestPage registers p296r296VATDateEnabled).
         return _sourceExpressions[$"p{_pageId}p{_pageId}{name}"]
-               ?? (IsRequestPage ? _sourceExpressions[$"p{_pageId}r{_pageId}{name}"] : null);
+               ?? (IsRequestPage ? _sourceExpressions[$"p{_pageId}r{_pageId}{name}"] : null)
+               ?? (_baseMembersViaExtensions ??= BuildBaseMemberBindingsViaExtensions(_sourceExpressions, _pageId))
+                    .GetValueOrDefault(name);
     }
 
     private Dictionary<string, object>? _bindingsByName;
+    private Dictionary<string, object>? _baseMembersViaExtensions;
+
+    /// <summary>
+    /// Step 3 of <see cref="BindingRegisteredUnderName"/>: a pageextension's control bound to a
+    /// member of the BASE page (<c>Enabled = ProdPickWhseHandlingEnable</c>, a protected var of
+    /// "Location Card" read by "Mfg. Location Card") is registered by the extension as
+    /// <c>px&lt;extId&gt;p&lt;pageId&gt;&lt;name&gt;</c> — measured on Base Application
+    /// 28.5.54151.55132, page 5703 registers <c>px99000756p5703ProdPickWhseHandlingEnable</c> and
+    /// no <c>p5703p5703</c> entry for it. Indexed from the keys that EXIST, never derived, so an
+    /// unmatched name still refuses. Several extensions registering one base member all read the
+    /// same page field, so first wins. An extension's OWN global is a different key shape and is
+    /// deliberately not matched here (which extension owns it is not recoverable from the name).
+    /// </summary>
+    internal static Dictionary<string, object> BuildBaseMemberBindingsViaExtensions(
+        System.Collections.IDictionary expressions, int pageId)
+    {
+        var byName = new Dictionary<string, object>(StringComparer.Ordinal);
+        var member = $"p{pageId}";
+        foreach (System.Collections.DictionaryEntry entry in expressions)
+        {
+            if (entry.Key is not string key || entry.Value is not { } expression) continue;
+            if (!key.StartsWith("px", StringComparison.Ordinal)) continue;
+            var at = 2;
+            while (at < key.Length && char.IsAsciiDigit(key[at])) at++;
+            if (at == 2 || string.CompareOrdinal(key, at, member, 0, member.Length) != 0) continue;
+            var name = key.Substring(at + member.Length);
+            if (name.Length == 0) continue;
+            byName.TryAdd(name, expression);
+        }
+        return byName;
+    }
 
     internal static Dictionary<string, object> BuildBindingsByName(System.Collections.IDictionary expressions)
     {
