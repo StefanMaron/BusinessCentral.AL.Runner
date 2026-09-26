@@ -120,6 +120,58 @@ public sealed class TestPageOptionValueEnumCaptionTests
         Assert.Equal(1, resolved.Value);
     }
 
+    // Issue #4788: an enum whose DECLARED order is not ordinal order — a base value(4) followed
+    // by enumextension values 0, 1, 2, the shape of Base Application's "Job Queue Report Output
+    // Type". AlEnumOptionMetadata cannot override Ncl's internal OrdinalValues, so the member
+    // position of an ordinal has to come from GetOrdinals(); reading the position as the ordinal
+    // itself showed the neighbouring member.
+    private static AlEnumOptionMetadata BuildOutOfOrderEnumMetadata()
+        => new(
+            name: "Out Of Order Kind",
+            id: 4788001,
+            options: new[] { "Zulu", "Alpha", "Beta", "Gamma" },
+            indexes: new[] { 4, 0, 1, 2 },
+            implementations: null,
+            captions: new[] { "Zulu caption", "Alpha caption", "Beta caption", "Gamma caption" });
+
+    [Theory]
+    [InlineData(4, "Zulu caption")]
+    [InlineData(0, "Alpha caption")]
+    [InlineData(1, "Beta caption")]
+    [InlineData(2, "Gamma caption")]
+    public void Display_EnumDeclaredOutOfOrdinalOrder_ShowsTheHeldMembersCaption(int ordinal, string expected)
+    {
+        var option = NavOption.Create(BuildOutOfOrderEnumMetadata(), ordinal);
+
+        Assert.Equal(expected, TestPageOptionValue.Display(option, TestPageOptionValue.EnumCaptions(option)));
+    }
+
+    [Theory]
+    [InlineData("Zulu caption", 4)]
+    [InlineData("Alpha caption", 0)]
+    [InlineData("Beta caption", 1)]
+    [InlineData("Gamma caption", 2)]
+    public void Resolve_EnumDeclaredOutOfOrdinalOrder_StoresTheCaptionsOwnOrdinal(string caption, int expected)
+    {
+        var current = NavOption.Create(BuildOutOfOrderEnumMetadata(), 4);
+
+        var resolved = Assert.IsType<NavOption>(
+            TestPageOptionValue.Resolve(current, caption, TestPageOptionValue.EnumCaptions(current), "test"));
+
+        Assert.Equal(expected, resolved.Value);
+    }
+
+    // A bare number names an ordinal, so one the enum does not declare (3) must be refused
+    // rather than accepted because it happens to be a valid member POSITION.
+    [Fact]
+    public void Resolve_EnumDeclaredOutOfOrdinalOrder_RefusesAnUndeclaredOrdinal()
+    {
+        var current = NavOption.Create(BuildOutOfOrderEnumMetadata(), 4);
+
+        Assert.Throws<RunnerOutOfScopeException>(() =>
+            TestPageOptionValue.Resolve(current, "3", TestPageOptionValue.EnumCaptions(current), "test"));
+    }
+
     // Negative direction of issue #1928, and the actual decision this issue made: real BC
     // refuses the bare member name for an Enum-typed control (verified against a real service
     // tier — see the file header), so the runner must refuse it too rather than silently
