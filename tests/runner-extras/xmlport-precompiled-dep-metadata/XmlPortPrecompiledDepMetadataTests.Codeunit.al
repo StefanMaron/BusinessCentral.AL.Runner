@@ -120,4 +120,24 @@ codeunit 65941 "XPD Tests"
         Assert.Contains(GetLastErrorText(), '65959',
             'an xmlport id that no registered app declares must still raise a real error naming the id — the fix must widen the EXISTENCE set, never abolish the existence check');
     end;
+
+    // #4448, the positive control for app-group visibility: this group DECLARES the precompiled
+    // dependency, so its objects must stay listed here while app group B, which does not, must
+    // not see them (AGV B Tests' *_PrecompiledDepOfUnrelatedGroup_IsNotListed).
+    [Test]
+    procedure AllObj_OwnPrecompiledDependency_IsListed()
+    var
+        AllObj: Record AllObj;
+        TableMetadata: Record "Table Metadata";
+        Field: Record Field;
+        XmlPortMetadata: Record "XmlPort Metadata";
+    begin
+        Assert.IsTrue(AllObj.Get(AllObj."Object Type"::Table, 61600), 'AllObj must list table 61600 of the precompiled dependency this app declares');
+        Assert.Contains(AllObj."Object Name", 'XPDDep Header', 'AllObj row for table 61600');
+        Assert.IsTrue(AllObj.Get(AllObj."Object Type"::XMLport, 61602), 'AllObj must list xmlport 61602 of the precompiled dependency this app declares');
+        Assert.IsTrue(TableMetadata.Get(61600), 'Table Metadata must list table 61600 of the precompiled dependency this app declares');
+        Field.SetRange(TableNo, 61600);
+        Assert.IsFalse(Field.IsEmpty(), 'Field must list the fields of table 61600 of the precompiled dependency this app declares');
+        Assert.IsTrue(XmlPortMetadata.Get(61602), 'XMLport Metadata must list xmlport 61602 of the precompiled dependency this app declares');
+    end;
 }
