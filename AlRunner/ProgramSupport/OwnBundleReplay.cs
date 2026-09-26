@@ -20,8 +20,11 @@ internal static partial class ProgramSupport
     /// <c>BcCompiler.LastBundleQuerySymbolsPath</c>: the incremental emit path does not reset it,
     /// so it can name another module's file.
     /// </param>
+    /// <param name="queryContextSensitiveHelpUrl">The bundle's app.json
+    /// <c>contextSensitiveHelpUrl</c>, registered with the query symbols on replay (#4744).</param>
     internal static OwnBundleRegistryReplay CaptureOwnBundleReplay(
-        Guid appId, string moduleName, string? cacheEnumSidecar, string? querySymbolsJson, string? cacheQuerySidecar)
+        Guid appId, string moduleName, string? cacheEnumSidecar, string? querySymbolsJson, string? cacheQuerySidecar,
+        string? queryContextSensitiveHelpUrl)
     {
         // Test-only seam, same family and gating as AL_RUNNER_TEST_FAIL_COMPANY_INIT: no shipped
         // path sets it, and a capture failure has no other deterministic trigger. Its value
@@ -54,7 +57,7 @@ internal static partial class ProgramSupport
                 File.Copy(querySymbolsJson, queryPath, overwrite: true);
             }
         }
-        return new OwnBundleRegistryReplay(enumPath, queryPath);
+        return new OwnBundleRegistryReplay(enumPath, queryPath, queryContextSensitiveHelpUrl);
     }
 
     /// <summary>
@@ -80,7 +83,8 @@ internal static partial class ProgramSupport
                 throw new FileNotFoundException(
                     $"the query symbols recorded for the reused module are gone: {replay.QuerySymbolsJson}",
                     replay.QuerySymbolsJson);
-            AlRunner.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(replay.QuerySymbolsJson);
+            AlRunner.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(
+                replay.QuerySymbolsJson, replay.QueryContextSensitiveHelpUrl);
         }
         return replayed;
     }

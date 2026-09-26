@@ -58,6 +58,13 @@ public static partial class RecordPatches
     // bundles that ship no prebuilt .app). Kept separate from _bcAppPaths because these
     // are loose .json files, not .app zips.
     private static readonly List<string> _bcQuerySymbolJsonPaths = new();
+    // The owning bundle's app.json contextSensitiveHelpUrl per loose file: a loose file has no
+    // .app manifest to read it from (#4744).
+    private static readonly Dictionary<string, string?> _bcQuerySymbolJsonHelpUrl =
+        new(StringComparer.OrdinalIgnoreCase);
+    // Query id -> that manifest URL, for queries the loose files supplied. Derived with
+    // _bcSymbolQueryIndex and dropped with it.
+    private static Dictionary<int, string?>? _bcSymbolQueryJsonHelpUrlById;
     // Extension index built flag. Data lands directly in _parsedExtensionFields/_extensionIdsByBaseTable.
     private static bool _bcSymbolExtensionIndexBuilt;
     private static readonly object _bcTableIndexLock = new();
@@ -136,6 +143,7 @@ public static partial class RecordPatches
         // its own, and those ids go verbatim to NavQuery.GetColumnValueSafe. A wrong value read
         // out of a real row, not a crash — see BundleQuerySymbolsResetTests.
         _bcQuerySymbolJsonPaths.Clear();
+        _bcQuerySymbolJsonHelpUrl.Clear();
         // #4197: the pending enumextensions go with the paths that produced them. Every one is
         // a per-bundle registration Program.cs re-adds immediately after the reset, so keeping
         // them would carry bundle 1's unresolved extensions into bundle 2 — where the target
@@ -195,6 +203,7 @@ public static partial class RecordPatches
         _bcSymbolTableCaptions = null;
         _bcSymbolQueryIndex = null;
         _bcSymbolQueryAppPath = null;
+        _bcSymbolQueryJsonHelpUrlById = null;
         _bcSymbolExtensionIndexBuilt = false;
         ClearAppContextSensitiveHelpUrls();
         // #2889: the synthesized-metadata memos are derived from _bcAppPaths exactly like the
@@ -1052,15 +1061,21 @@ public static partial class RecordPatches
         }
     }
 
-    /// <summary>The .app that declared query <paramref name="queryId"/>, or null when it came
-    /// from a loose SymbolReference.json or no source declares it.</summary>
-    internal static string? TryGetQuerySymbolAppPath(int queryId)
+    /// <summary>The manifest <c>ContextSensitiveHelpUrl</c> BC derives query
+    /// <paramref name="queryId"/>'s HelpLink from: the declaring .app's, or for a query from a
+    /// loose SymbolReference.json, the URL its bundle registered it with (#4744).</summary>
+    internal static string? TryGetQuerySymbolManifestHelpUrl(int queryId)
     {
+        string? appPath;
         lock (_bcTableIndexLock)
         {
             EnsureBcSymbolQueryIndex();
-            return _bcSymbolQueryAppPath != null && _bcSymbolQueryAppPath.TryGetValue(queryId, out var p) ? p : null;
+            if (_bcSymbolQueryJsonHelpUrlById != null
+                && _bcSymbolQueryJsonHelpUrlById.TryGetValue(queryId, out var url))
+                return url;
+            appPath = _bcSymbolQueryAppPath != null && _bcSymbolQueryAppPath.TryGetValue(queryId, out var p) ? p : null;
         }
+        return appPath is null ? null : DependencyAppContextSensitiveHelpUrl(appPath);
     }
 
     /// <summary>
@@ -1069,13 +1084,20 @@ public static partial class RecordPatches
     /// carries the BC-compiler-assigned column ids that the emitted Query DLL calls
     /// GetColumnByNo with. Idempotent; invalidates the query index so it's re-read.
     /// </summary>
-    public static void RegisterBundleQuerySymbolsJson(string jsonPath)
+    /// <param name="contextSensitiveHelpUrl">The owning bundle's app.json
+    /// <c>contextSensitiveHelpUrl</c> ("" or null when it states none). Required rather than
+    /// defaulted: every caller must pass the bundle's own, or its queries lose the HelpLink BC
+    /// derives from it (#4744).</param>
+    public static void RegisterBundleQuerySymbolsJson(string jsonPath, string? contextSensitiveHelpUrl)
     {
         if (string.IsNullOrEmpty(jsonPath) || !File.Exists(jsonPath)) return;
         lock (_bcTableIndexLock)
         {
             if (!_bcQuerySymbolJsonPaths.Contains(jsonPath, StringComparer.OrdinalIgnoreCase))
                 _bcQuerySymbolJsonPaths.Add(jsonPath);
+            // Overwritten on re-registration: the replay paths re-register one path per run, and
+            // the URL is read from the current app.json each time.
+            _bcQuerySymbolJsonHelpUrl[jsonPath] = contextSensitiveHelpUrl;
             // Always invalidate: the file is overwritten each run, so re-read even if the
             // path was already registered.
             _bcSymbolQueryIndex = null;
@@ -1103,13 +1125,18 @@ public static partial class RecordPatches
         // Loose SymbolReference.json sources (the bundle's own freshly-compiled queries).
         // Registered AFTER .app sources but only filling gaps (ContainsKey guard), so a
         // prebuilt .app's authoritative ids always win.
+        var jsonHelpUrlById = new Dictionary<int, string?>();
         foreach (var jsonPath in _bcQuerySymbolJsonPaths)
         {
             try
             {
+                _bcQuerySymbolJsonHelpUrl.TryGetValue(jsonPath, out var helpUrl);
                 foreach (var q in BcAppSymbolCache.GetFromJson(jsonPath).Queries)
                     if (!idx.ContainsKey(q.Id))
+                    {
                         idx[q.Id] = q;
+                        jsonHelpUrlById[q.Id] = helpUrl;
+                    }
             }
             catch (Exception ex)
             {
@@ -1117,6 +1144,7 @@ public static partial class RecordPatches
             }
         }
         _bcSymbolQueryAppPath = appPathById;
+        _bcSymbolQueryJsonHelpUrlById = jsonHelpUrlById;
         _bcSymbolQueryIndex = idx;
         if (idx.Count > 0)
             Console.Error.WriteLine($"[RecordPatches] BcAppFallback: indexed {idx.Count} symbol query id(s) across {_bcAppPaths.Count} BC .app file(s)");

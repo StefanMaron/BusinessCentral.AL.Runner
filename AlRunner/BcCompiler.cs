@@ -2372,7 +2372,7 @@ public sealed partial class BcCompiler
         string? bundleQuerySymbolsPath = null;
         if (caught == null && outputter.Captured.Count > 0 && BundleDeclaresQuery(alFiles))
         {
-            try { bundleQuerySymbolsPath = EmitAndRegisterBundleQuerySymbols(compilation, moduleName); }
+            try { bundleQuerySymbolsPath = EmitAndRegisterBundleQuerySymbols(compilation, moduleName, manifestInputs.ContextSensitiveHelpUrl); }
             catch (Exception ex)
             {
                 // Never fail the run for this — a query that then can't build its
@@ -2571,12 +2571,13 @@ public sealed partial class BcCompiler
     internal static string BundleQuerySymbolsPathFor(string moduleName)
         => Path.Combine(PerProcessScratch.Dir("al-runner-query-symbols", moduleName), "SymbolReference.json");
 
-    private static string EmitAndRegisterBundleQuerySymbols(NavCA.Compilation compilation, string moduleName)
+    private static string EmitAndRegisterBundleQuerySymbols(
+        NavCA.Compilation compilation, string moduleName, string contextSensitiveHelpUrl)
     {
         var path = BundleQuerySymbolsPathFor(moduleName);
         using (var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None))
             SymbolJsonWriter.WriteSymbolJson(compilation, fs);
-        AlRunner.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(path);
+        AlRunner.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(path, contextSensitiveHelpUrl);
         LastBundleQuerySymbolsPath = path;
         return path;
     }
@@ -3012,6 +3013,14 @@ public sealed partial class BcCompiler
         var appJsonPath = appRootDir != null ? Path.Combine(appRootDir, "app.json") : null;
         return ReadManifestCompilerInputs(appJsonPath).CacheKeyFragment;
     }
+
+    /// <summary>
+    /// The <c>contextSensitiveHelpUrl</c> of the app.json a compile of (<paramref name="appRootDir"/>,
+    /// <paramref name="dirs"/>) reads, or "" when it states none — what an AL-output cache HIT
+    /// registers the bundle's query symbols with, since no compile ran to supply it (#4744).
+    /// </summary>
+    internal static string ReadManifestContextSensitiveHelpUrl(string? appRootDir, IEnumerable<string> dirs)
+        => ReadManifestCompilerInputs(ResolveManifestAppJson(appRootDir, dirs)).ContextSensitiveHelpUrl;
 
     /// <summary>
     /// Resolve symbol-package search dirs. Scans (in order):
