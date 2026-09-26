@@ -92,6 +92,15 @@ internal partial class LiveNavTestPage : MockITestPage
     private void MoveOffDeletedRow(NavRecord record)
     {
         var page = _page!;
+        // No row left under the page's filters: a declared OnFindRecord is asked "=>" then "=><",
+        // never "=" (corpus 67300 List_DeletedByAction_PassThroughFind_OnlyRow, all cloud legs).
+        // A page without the trigger answers null here and goes straight to the blank line.
+        if (record.GetALIsEmptyAsync().GetAwaiter().GetResult())
+        {
+            if (page.RaiseOnFindRecord("=>") is not null) page.RaiseOnFindRecord("=><");
+            EnterNewRowLine(record);
+            return;
+        }
         var kept = page.RaiseOnFindRecord("=");
         if (kept is null)
         {
@@ -99,12 +108,18 @@ internal partial class LiveNavTestPage : MockITestPage
             else EnterNewRowLine(record);
             return;
         }
-        // A declared OnFindRecord: BC calls it "=", "=>", "=" and shows the row it answers (corpus
-        // 67300 List_DeletedByAction_OnFindRecord_PicksTheRow, all cloud legs). A trigger answering
-        // false to the first "=" (a pass-through Rec.Find(Which) on the deleted key) is unmeasured;
-        // "=><" through it lands where the default does. docs/testpage-currpage-update.md
-        if (!kept.Value && page.RaiseOnFindRecord("=><") != true) { EnterNewRowLine(record); return; }
-        page.RaiseOnFindRecord("=>");
+        // A declared OnFindRecord: BC calls it "=", "=>", "=" whatever the first "=" answers, and
+        // shows the row the last one answers. When neither "=" nor "=>" finds a row it steps back to
+        // the previous row without calling the trigger, then asks "=" for that (corpus 67300
+        // List_DeletedByAction_OnFindRecord_PicksTheRow and
+        // List_DeletedByAction_PassThroughFind_*). docs/testpage-currpage-update.md
+        var ahead = page.RaiseOnFindRecord("=>") == true;
+        if (!kept.Value && !ahead
+            && !record.ALFindAsync(DataError.TrapError, "<").GetAwaiter().GetResult())
+        {
+            EnterNewRowLine(record);
+            return;
+        }
         if (page.RaiseOnFindRecord("=") == true) Loaded(true);
         else EnterNewRowLine(record);
     }
