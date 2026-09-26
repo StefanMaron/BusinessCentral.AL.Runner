@@ -45,6 +45,8 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **testpage:** raise OnAfterGetCurrRecord for the blank line after an action deletes a List page's only row
+- **metadata:** a Date field's InitValue literal is normalised before BC evaluates it
 - **metadata:** hide a precompiled dependency's objects from an app group that does not depend on it
 - **testpage:** Value() of a precompiled enum whose declared order is not ordinal order
 - **page:** apply a precompiled pageextension's modify() override of Visible/Editable/Enabled
