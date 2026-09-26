@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **test-data:** hydrate tenant-wide tables and report the ones skipped
 - **testpage:** a trapped page finds expression-bound pageextension controls
 - **user:** run the User system-table trigger arm after OnBeforeInsert/OnBeforeModify subscribers and triggers
 - **errors:** a subscriber error collected from Gen. Jnl.-Check Line carries its Context Record ID
