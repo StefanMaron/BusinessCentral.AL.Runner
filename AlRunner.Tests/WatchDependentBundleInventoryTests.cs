@@ -11,10 +11,9 @@
 // DEPENDS on an earlier bundle then cannot see its dependency's objects. The one-shot CLI path
 // never called the reset at all, which is why the two modes disagreed on identical source.
 //
-// Measured on the fixture this test drives (`app-group-visibility-a` + `-c`, 54 tests):
-//
-//     plain            54 pass / 0 fail
-//     --watch cycle 1  46 pass / 8 fail      <- all 8 are C asserting A's objects are visible
+// Measured on the fixture this test drives (`app-group-visibility-a` + `-c`) at #2684: the plain
+// run passed every test, while --watch cycle 1 failed 8 — all of them C asserting that A's
+// objects are visible.
 //
 // WHY THIS TEST DRIVES --watch AND NOT THE PLAIN PATH
 // ---------------------------------------------------
@@ -30,7 +29,7 @@
 // on, the accumulated known-query id set already contains ids only a LATER bundle declares, so
 // the EARLIER bundle's run asks about them, gets null, and memoizes it; the later bundle is then
 // served "no such query" for its OWN query. Measured while developing the fix: hoisting the
-// reset alone gave cycle 1 = 54/0 but cycles 2 and 3 = 53/1, the one failure being
+// reset alone gave a clean cycle 1 but one failure in cycles 2 and 3, that failure being
 // `QueryMetadata_OwnQuery_IsListed` — C's own query, not a dependency one. That is why
 // `RecordPatches.ResetNegativeQueryMemosForNewBundle()` stays per BUNDLE in the loop.
 //
@@ -129,7 +128,7 @@ public class WatchDependentBundleInventoryTests
 
         void AssertCycleHealthy(string cycle, string label)
         {
-            // Named individually rather than left to the pass/fail bar, because these EIGHT are
+            // Named individually rather than left to the pass/fail bar, because these are
             // the defect: every one of them is bundle C asserting that an object of its declared
             // dependency A is listed. A regression that reddens the cycle some other way must not
             // be able to satisfy this assertion, and a regression that drops exactly these must
@@ -144,6 +143,7 @@ public class WatchDependentBundleInventoryTests
                 "ReportMetadata_DependencyAReport_IsListed",
                 "ReportDataItems_DependencyAReport_IsListed",
                 "QueryMetadata_DependencyAQuery_IsListed",
+                "XmlPortMetadata_DependencyAXmlPort_IsListed",
             })
                 Assert.False(RunnerFailureLines.Failed(cycle, 62622, crossDependencyTest),
                     $"{label}: {crossDependencyTest} failed — the dependent bundle could not see its "
@@ -159,9 +159,8 @@ public class WatchDependentBundleInventoryTests
                 + "cycle was served to this bundle — RecordPatches.ResetNegativeQueryMemosForNewBundle() "
                 + "must run per BUNDLE (#2684).\n" + cycle);
 
-            // The bar: a --watch cycle must answer as the equivalent one-shot CLI run does, which
-            // for this fixture is 54/54.
-            Assert.Contains("passed 54 ", cycle, StringComparison.Ordinal);
+            // The bar: a --watch cycle must answer as the equivalent one-shot CLI run does.
+            Assert.Contains("passed 60 ", cycle, StringComparison.Ordinal);
             Assert.Contains("failed 0 ", cycle, StringComparison.Ordinal);
         }
 

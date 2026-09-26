@@ -2,7 +2,7 @@
 //
 // The question #4196 asked
 // ------------------------
-// NCLMetadata.GetSnapshotOfAllObjects is Cecil-replaced to carry ObjectType.Query only.
+// NCLMetadata.GetSnapshotOfAllObjects was Cecil-replaced to carry ObjectType.Query only.
 // #4196 asked whether that restriction can be lifted so ONE substitution serves all
 // seventeen callers of MetadataDataProvider.GetObjectNumberAndInfoWithinRange, without
 // changing what the six already-correct tables answer — AllObj (2000000038),
@@ -11,44 +11,19 @@
 //
 // What the measurement found: the premise does not hold
 // -----------------------------------------------------
-// Consolidation has nothing to consolidate. Of the seventeen callers, only ONE —
-// QueryDataProvider — is reachable from AL through this runner at all. That is a
-// structural property of two layers, and this file pins both:
-//
-//   1. THE DISPATCH. RecordPatches.DataAccessDispatch routes only six table ids to BC's own
-//      virtual-provider factory: the four that consume the object snapshot (Key 2000000063,
-//      Page Action 2000000143, Query Metadata 2000000142, Table Relations Metadata
-//      2000000141) plus Integer 2000000026 and Date 2000000007, which take that route but
-//      read no snapshot. Every other virtual table — including all six "protected" ones — is
-//      served by a hand-written Populate* over a temp store, so its BC provider is never
-//      constructed and its snapshot call never runs. That set is READ OUT OF THE COMPILED
-//      DISPATCH CHAIN below rather than listed, so adding a branch for a protected table
-//      fails this file instead of silently agreeing with it.
-//
-//   2. THE REWRITE LEVEL. Three of those four are Cecil-replaced at
-//      GetValuesWithinRangeForKeyField, which sits ONE LEVEL ABOVE
-//      GetObjectNumberAndInfoWithinRange. Their replaced bodies never call it, so they
-//      cannot read the snapshot whatever it carries. Only QueryDataProvider keeps BC's own
-//      body and descends into the snapshot.
-//
-// Measured end to end (28.x binary, sha256 6f2cf682…, BC 27.0.38460.53934 at runtime):
-// injecting 716 ObjectType.Table entries into the snapshot left all six protected tables
-// byte-identical — AllObj=9435, AllObjWithCaption=9435, Field(2000000038)=12,
-// TableMetadata=1888, PageMetadata=2855, PageControlField=38449 — while a probe on the
-// helper's entry proved it is not called AT ALL on a run reading only those six, and IS
-// called when Query Metadata is read. The full table is in the PR body for #4196.
-//
-// So the ObjectType.Query restriction is not what protects those six tables; the dispatch
-// is. Widening the snapshot would be a no-op for sixteen of the seventeen callers, and the
-// consolidation #4196 proposed — routing every caller through one substitution — would
-// first require giving each of those tables a BC provider it does not have today.
+// Two layers decide which callers are reachable, and this file pins both: THE DISPATCH (which
+// table ids RecordPatches.GetDataAccessForTableCore hands to BC's own factory, read out of the
+// compiled if-chain) and THE REWRITE LEVEL (which of those providers keep BC's own body and so
+// descend into the snapshot). The protected tables are held by the dispatch, not by the
+// snapshot's ObjectType filter. The measurement behind that is in the PR body for #4196; the
+// set of snapshot-walking providers grew to Query and XmlPort Metadata in #4461.
 //
 // Why these are RUNNER-INTERNAL claims, not BC-behaviour claims
 // ------------------------------------------------------------
 // Both assertions are about which bodies THIS RUNNER replaces and which tables ITS
 // dispatch chain routes to a BC provider. What BC's providers compute is not in question
 // and is not asserted here — that is the corpus's job (codeunit 60913 for Query Metadata,
-// 60936 for Key). A corpus test cannot see a rewrite level or a dispatch branch.
+// 67450 for XmlPort Metadata, 60936 for Key). A corpus test cannot see a rewrite level or a dispatch branch.
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -133,30 +108,27 @@ public class SnapshotConsumerReachabilityTests
             BodyReachesSnapshotWalk(asm, providerType),
             $"{providerType}.GetValuesWithinRangeForKeyField still reaches "
             + "GetObjectNumberAndInfoWithinRange. That would make it a snapshot consumer, "
-            + "so widening NCLMetadata.GetSnapshotOfAllObjects beyond ObjectType.Query could "
+            + "so widening NCLMetadata.GetSnapshotOfAllObjects beyond Query and XmlPort could "
             + "change what this table answers — re-measure #4196 before widening.");
     }
 
     /// <summary>
     /// Claim 2, the positive half — and the control that stops the test above passing
-    /// vacuously. QueryDataProvider keeps BC's OWN body, so it DOES descend into the
-    /// snapshot; that is why filling ObjectType.Query fixed 2000000142 with no row-building.
-    ///
-    /// Without this arm, a reader of the rewrite that stopped reaching the walk for every
-    /// provider — or a Cecil-reading helper that silently answered false — would look
-    /// exactly like the finding above.
+    /// vacuously. These providers keep BC's OWN body, so they DO descend into the snapshot;
+    /// that is why filling the snapshot for their object type serves their table with no
+    /// row-building (Query #4147, XmlPort #4461).
     /// </summary>
-    [Fact]
-    public void QueryDataProviderIsTheOneProviderThatStillReadsTheSnapshot()
+    [Theory]
+    [InlineData("QueryDataProvider")]    // 2000000142
+    [InlineData("XmlPortDataProvider")]  // 2000000280
+    public void BcWalkingProvidersStillReadTheSnapshot(string providerType)
     {
         using var asm = Ncl();
         Assert.True(
-            BodyReachesSnapshotWalk(asm, "QueryDataProvider"),
-            "QueryDataProvider.GetValuesWithinRangeForKeyField no longer reaches "
-            + "GetObjectNumberAndInfoWithinRange. The Query Metadata table (2000000142) is "
-            + "served by filling the object snapshot for ObjectType.Query precisely because "
-            + "BC's own body walks it — if that is no longer true, the #4147 substitution is "
-            + "reaching nothing and the table answers no rows.");
+            BodyReachesSnapshotWalk(asm, providerType),
+            $"{providerType}.GetValuesWithinRangeForKeyField no longer reaches "
+            + "GetObjectNumberAndInfoWithinRange, so the snapshot substitution for its object "
+            + "type reaches nothing and its table answers no rows.");
     }
 
     /// <summary>
@@ -243,8 +215,8 @@ public class SnapshotConsumerReachabilityTests
             ids.Add(id);
         }
 
-        // Six today: the four snapshot consumers plus Integer (2000000026) and Date
-        // (2000000007), which take BC's factory too but consume no object snapshot.
+        // The snapshot consumers plus Integer (2000000026) and Date (2000000007), which take
+        // BC's factory too but consume no object snapshot.
         Assert.NotEmpty(ids);
         return ids.ToArray();
     }
@@ -265,8 +237,13 @@ public class SnapshotConsumerReachabilityTests
         return -1;
     }
 
+    /// <summary>
+    /// #4461 added XMLport Metadata (2000000280) as a fifth dispatched snapshot consumer. Its
+    /// XmlPortDataProvider keeps BC's own body exactly as QueryDataProvider does, which is why
+    /// the snapshot substitution carries ObjectType.XmlPort as well as ObjectType.Query.
+    /// </summary>
     [Fact]
-    public void OnlyQueryMetadataAmongTheSnapshotConsumersKeepsBcsOwnWalk()
+    public void OnlyQueryAndXmlPortMetadataAmongTheSnapshotConsumersKeepBcsOwnWalk()
     {
         using var asm = Ncl();
 
@@ -276,11 +253,25 @@ public class SnapshotConsumerReachabilityTests
                 ("PageActionDataProvider", RecordPatches.PageActionVirtualTableId),
                 ("QueryDataProvider", RecordPatches.QueryMetadataVirtualTableId),
                 ("TableRelationDataProvider", RecordPatches.TableRelationsMetadataVirtualTableId),
+                ("XmlPortDataProvider", RecordPatches.XmlPortMetadataVirtualTableId),
             }
             .Where(p => BodyReachesSnapshotWalk(asm, p.Item1))
             .Select(p => p.Item2)
             .ToArray();
 
-        Assert.Equal(new[] { RecordPatches.QueryMetadataVirtualTableId }, stillWalking);
+        Assert.Equal(
+            new[] { RecordPatches.QueryMetadataVirtualTableId, RecordPatches.XmlPortMetadataVirtualTableId },
+            stillWalking);
+    }
+
+    /// <summary>
+    /// The dispatch half of the same claim: 2000000280 is handed to BC's own factory, read out
+    /// of the compiled if-chain like the protected-table theory above. Without it
+    /// XmlPortDataProvider is never constructed and the snapshot entry reaches nothing.
+    /// </summary>
+    [Fact]
+    public void XmlPortMetadataIsRoutedToBcsVirtualProvider()
+    {
+        Assert.Contains(RecordPatches.XmlPortMetadataVirtualTableId, BcVirtualProviderTableIds());
     }
 }
