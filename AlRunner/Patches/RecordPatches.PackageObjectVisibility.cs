@@ -1,5 +1,8 @@
 // RecordPatches.PackageObjectVisibility — owners for the objects of registered precompiled .app
 // packages, so the app-group visibility filter can hide a package only a sibling group declares.
+// CLAIM: the runner model of #2279 (each app group is its own tenant holding its dependency
+// closure), extended to precompiled packages; not measured BC behaviour, which is tenant-wide.
+// Anything this cannot place (floor, unclaimed, shared id) stays listed, as before.
 // See docs/virtual-tables-allobj.md#precompiled-package-visibility (#4448).
 namespace AlRunner.Patches;
 
@@ -134,6 +137,23 @@ public static partial class RecordPatches
             return model;
         }
     }
+
+    // Every bundle dependency's install triggers fire under whichever app group is executing, so
+    // they must see their OWN closure or an install reading AllObj for its own table fails in a
+    // group that does not declare it (measured: EXEC-FAIL "cannot see its own table"). Set by
+    // AlRunner.InstallExecutionContext around each app's install triggers.
+    private static readonly AsyncLocal<Guid?> _installingAppId = new();
+
+    internal static IDisposable EnterInstallingApp(Guid appId)
+    {
+        var previous = _installingAppId.Value;
+        _installingAppId.Value = appId;
+        return new InstallExecutionContext.Scope(() => _installingAppId.Value = previous);
+    }
+
+    private static bool IsVisibleToInstallingApp(Guid owner, PackageVisibility model)
+        => _installingAppId.Value is { } installing
+           && VisibleAppClosure(installing, model.Dependencies).Contains(owner);
 
     private static void RecordAppGroupDependencyRefs(Guid appId, IEnumerable<DependencyRef> dependencies)
     {

@@ -1,0 +1,18 @@
+{
+  "id": "4448f100-7a1d-4c38-9e25-1f6d8a4c2640",
+  "name": "Runner Extras - App Group Visibility Floor",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #4448: the Microsoft-floor carve-out of app-group visibility. Declares neither `application` nor any dependency, yet must still see Base Application objects that other app groups of the same run reach through theirs.",
+  "description": "Issue #4448. A precompiled .app whose objects only a sibling app group reaches is hidden from every other app group, but the Microsoft floor (Application, Base Application, System Application, Business Foundation, System) is installed in every tenant and stays visible to all of them. This group reaches none of it itself, so it is the observer that pins the carve-out. It is meaningful only in the combined tests/runner-extras run, where other groups register Base Application; it is deliberately not part of any ordered-bundle step. Runner-specific: the corpus runs one app set per service tier.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 66340,
+      "to": 66349
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}

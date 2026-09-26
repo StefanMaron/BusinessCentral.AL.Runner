@@ -148,9 +148,9 @@ public static partial class RecordPatches
 
     /// <summary>
     /// True only when the object's declaring source app is KNOWN and outside
-    /// <paramref name="visibleApps"/>. An object with no recorded owner (a precompiled
-    /// dependency, a platform object) is never hidden: dropping it would remove rows this
-    /// change has no evidence about.
+    /// <paramref name="visibleApps"/>. An object with no recorded owner (a platform object, a
+    /// Microsoft-floor or unclaimed precompiled package) is never hidden: dropping it would
+    /// remove rows this change has no evidence about.
     /// </summary>
     internal static bool IsHiddenFromAppGroup(
         string kind, int id, HashSet<Guid>? visibleApps, IReadOnlyDictionary<(string Kind, int Id), Guid> owners)
@@ -164,9 +164,11 @@ public static partial class RecordPatches
     {
         if (visibleApps == null) return false;
         var key = (NormalizeObjectTypeName(kind), id);
-        return _sourceObjectOwners.ContainsKey(key) || _ambiguousSourceObjects.Contains(key)
-            ? IsHiddenFromAppGroup(kind, id, visibleApps, _sourceObjectOwners)
-            : IsHiddenFromAppGroup(kind, id, visibleApps, CurrentPackageVisibility().Owners);
+        if (_sourceObjectOwners.ContainsKey(key) || _ambiguousSourceObjects.Contains(key))
+            return IsHiddenFromAppGroup(kind, id, visibleApps, _sourceObjectOwners);
+        var model = CurrentPackageVisibility();
+        return IsHiddenFromAppGroup(kind, id, visibleApps, model.Owners)
+               && !IsVisibleToInstallingApp(model.Owners[key], model);
     }
 
     private sealed class ProviderScope

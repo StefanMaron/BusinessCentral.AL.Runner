@@ -33,7 +33,12 @@ internal static class InstallExecutionContext
             session.Tenant, group, metadata, default!, activityId: string.Empty, hasData: false);
 
         session.SetAppInstallationContext(context);
-        return new Scope(session.ClearAppInstallationContext);
+        var visibility = Patches.RecordPatches.EnterInstallingApp(appId);
+        return new Scope(() =>
+        {
+            visibility.Dispose();
+            session.ClearAppInstallationContext();
+        });
     }
 
     /// <summary>Runs <paramref name="clear"/> once, on the first Dispose. FireAll disposes it with

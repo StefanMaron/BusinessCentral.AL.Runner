@@ -352,6 +352,8 @@ codeunit 62612 "AGV B Tests"
     begin
         Assert.IsFalse(AllObj.Get(AllObj."Object Type"::Table, 61600), 'AllObj in app group B lists table 61600 of a precompiled .app only another app group depends on');
         Assert.IsFalse(AllObj.Get(AllObj."Object Type"::XMLport, 61602), 'AllObj in app group B lists xmlport 61602 of a precompiled .app only another app group depends on');
+        // app-group-visibility-install-dep's dependency: its install trigger also fires under B.
+        Assert.IsFalse(AllObj.Get(AllObj."Object Type"::Table, 66360), 'AllObj in app group B lists table 66360 of a precompiled .app only another app group depends on');
     end;
 
     [Test]

@@ -318,18 +318,4 @@ codeunit 62602 "AGV A Tests"
         XmlPortMetadata.SetRange(ID, 62620, 62629);
         Assert.IsTrue(XmlPortMetadata.IsEmpty(), 'XMLport Metadata in app group A lists an xmlport in the id range of unrelated app group C');
     end;
-
-    // #4448: the control on the Microsoft-floor carve-out. A declares neither `application` nor
-    // any dependency, yet the other groups of the combined runner-extras run reach Base
-    // Application through theirs; a floor app is installed in every tenant, so its objects stay
-    // visible to A. In the c+b ordered-bundle step A runs as a sibling source dep, not a bundle.
-    [Test]
-    procedure AllObj_MicrosoftFloorTable_StaysVisible()
-    var
-        AllObj: Record AllObj;
-        TableMetadata: Record "Table Metadata";
-    begin
-        Assert.IsTrue(AllObj.Get(AllObj."Object Type"::Table, 289), 'AllObj in app group A must list Base Application table 289, which the Microsoft floor supplies to every app group');
-        Assert.IsTrue(TableMetadata.Get(289), 'Table Metadata in app group A must list Base Application table 289, which the Microsoft floor supplies to every app group');
-    end;
 }

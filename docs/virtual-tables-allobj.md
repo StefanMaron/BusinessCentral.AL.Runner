@@ -190,9 +190,8 @@ An object is left out when **both** of these hold:
    The executing app group is the app id of `BcRuntime.CurrentTestAssembly`; the closure
    follows each source app's `app.json` `dependencies` transitively.
 
-An object with no recorded owner is always listed. That covers precompiled dependency `.app`
-objects and platform objects, which this filter has no evidence about. Objects of a precompiled
-`.app` registered by a different bundle in the same process are therefore not filtered here.
+An object with no recorded owner is always listed. That covers platform objects, and the
+precompiled `.app` objects the next section leaves unowned.
 
 Table Metadata's cached row list (`EnumerateKnownTableMetadata`) stays process-wide; the filter
 runs on the way into each store, so one group's filtered view is never cached for another.
@@ -205,6 +204,45 @@ CLI and `--server` runs each app group gets a fresh store, so the refusal has no
 
 Proven by `tests/runner-extras/app-group-visibility-{a,b,c}` (C depends on A, so A's table is
 visible to C and B's is not) and `AlRunner.Tests/AppGroupObjectVisibilityTests`.
+
+<a id="precompiled-package-visibility"></a>
+
+### Precompiled dependency packages (#4448)
+
+Every `.app` a bundle resolves is registered process-wide (`_bcAppPaths`), and bundles on one
+command line accumulate them, so without an owner a package only one app group declares was
+listed to every group. `RecordPatches.BuildPackageVisibility` gives those objects one:
+
+- **The owner is the package's own app id**, from its `SymbolReference.json`, the same source
+  `BuildObjectOwnerIndex` uses for the App Package ID column.
+- **Only a claimed package is hideable**: one that some app group's closure reaches. A package no
+  group reaches keeps no owner and stays listed, as before.
+- **The Microsoft floor is never hideable**: packages named `Application`, `System`, `Base
+  Application`, `System Application` or `Business Foundation` (publisher Microsoft) and their
+  closure. Every tenant has them, and their install code writes rows whose `TableRelation`
+  targets AllObjWithCaption (Retention Policy Setup, table 405), so hiding them fails the
+  install of every group that reaches them only implicitly.
+- **An id two packages declare** has no single owner and stays listed.
+- **The closure follows packages too**: a group's `dependencies`, then each package's own
+  manifest dependencies, resolved by app id and else by (name, publisher), the order
+  `DependencyResolver.TryFind` uses.
+- **A source owner decides first**; the package lookup applies only to an id no source declares.
+
+**Install triggers see their own app's closure.** A bundle's dependency install triggers fire
+under whichever app group is executing, including one that does not declare that dependency.
+`InstallExecutionContext.Enter` calls `RecordPatches.EnterInstallingApp`, and while it is active
+an object owned by a package in the installing app's closure is not hidden. Without it, an
+install that reads AllObj for its own table (a retention-policy registration does) fails with an
+EXEC-FAIL in every non-declaring group.
+
+Proven by `tests/runner-extras/app-group-visibility-b` (the `*_PrecompiledDepOfUnrelatedGroup_*`
+tests: nothing of `xmlport-precompiled-dep-metadata`'s or `app-group-visibility-install-dep`'s
+package is listed to B), `xmlport-precompiled-dep-metadata` and `app-group-visibility-install-dep`
+(each declaring group still lists its own package; the latter's install trigger errors unless it
+sees its own table), `app-group-visibility-floor` (Base Application stays listed to a group that
+reaches no floor app), and `AlRunner.Tests/PackageObjectVisibilityTests`. All four runner-extras
+suites are meaningful only in the combined `tests/runner-extras` run, where every one of those
+packages is registered.
 
 <a id="multi-bundle-metatable-cache"></a>
 
