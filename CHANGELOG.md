@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **testpage:** pass-through OnFindRecord after an action deletes the current row
 - **report:** source-compiled Report Layout List rows carry a layout's ObsoleteState and ExcelLayoutMultipleDataSheets
 - **test-data:** hydrate tenant-wide tables and report the ones skipped
 - **testpage:** a trapped page finds expression-bound pageextension controls
