@@ -1025,6 +1025,13 @@ internal sealed partial class RunnerPageInstance
     }
 
     /// <summary>
+    /// Whether BC's application-area pass removed this control from the page's MasterPage for
+    /// the session's areas (#4750; see ApplicationAreaControlRemoval).
+    /// </summary>
+    internal bool ControlRemovedByApplicationArea(int controlId) =>
+        _form is NavForm form && ApplicationAreaControlRemoval.WasRemoved(form.MasterPage, controlId);
+
+    /// <summary>
     /// Whether this control is compile-time eliminated from the runtime page — its own
     /// <c>Visible</c>, or that of ANY group enclosing it, is the compile-time LITERAL
     /// <c>false</c> (never an expression, even one that currently evaluates false). Real BC

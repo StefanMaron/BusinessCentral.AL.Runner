@@ -175,6 +175,8 @@ public static partial class NclCecilRewrite
             ? $"[Cecil] Rewrote {effectiveVersionRewroteCount} EffectiveVersionNumber overload(s) → 0 (no scoped metadata cache in the runner)"
             : "[Cecil] MetadataProvider.EffectiveVersionNumber absent — pre-scoped-metadata-cache BC build");
 
+        RewriteGetMasterPageApplicationAreaRemoval(asm.MainModule, metadataProviderType);
+
         // NavPageDataPersonalizationHelper.LoadPageDataPersonalization<T>(...) → default(T).
         //
         // Reached from MergePageAndTable -> SolveDefaultFilterColumnProperty. It opens the
@@ -1803,6 +1805,59 @@ public static partial class NclCecilRewrite
         }
 
 
+    }
+
+    // MetadataProvider.GetMasterPage (the overload that runs the removal pass): the gate read of
+    // elementRemovalOption and the call to RemoveItemsOnPageBasedOnLicenseAndApplicationArea are
+    // redirected to ApplicationAreaControlRemoval, so the application-area half runs while the
+    // field itself stays None for every other reader (#4750). Token-safety: imports only our own
+    // helper memberRefs; the castclass reuses the replaced call's own MasterPage return typeRef.
+    private static void RewriteGetMasterPageApplicationAreaRemoval(ModuleDefinition module, TypeDefinition metadataProviderType)
+    {
+        var helper = typeof(AlRunner.Patches.ApplicationAreaControlRemoval);
+        var gateRef = module.ImportReference(helper.GetMethod(nameof(AlRunner.Patches.ApplicationAreaControlRemoval.RemovalGate))
+            ?? throw new InvalidOperationException("ApplicationAreaControlRemoval.RemovalGate not found — do not commit"));
+        var removeRef = module.ImportReference(helper.GetMethod(nameof(AlRunner.Patches.ApplicationAreaControlRemoval.RemoveByApplicationArea))
+            ?? throw new InvalidOperationException("ApplicationAreaControlRemoval.RemoveByApplicationArea not found — do not commit"));
+
+        static bool IsRemovalCall(Instruction i) =>
+            (i.OpCode == OpCodes.Call || i.OpCode == OpCodes.Callvirt)
+            && i.Operand is MethodReference m
+            && m.Name == "RemoveItemsOnPageBasedOnLicenseAndApplicationArea";
+        static bool IsGateRead(Instruction i) =>
+            i.OpCode == OpCodes.Ldsfld && i.Operand is FieldReference f && f.Name == "elementRemovalOption";
+
+        var targets = metadataProviderType.Methods
+            .Where(m => m.Name == "GetMasterPage" && m.HasBody && m.Body.Instructions.Any(IsRemovalCall))
+            .ToList();
+        if (targets.Count != 1)
+            throw new InvalidOperationException(
+                $"expected exactly one MetadataProvider.GetMasterPage running the removal pass, found {targets.Count} — Ncl shape changed; do not commit");
+
+        var body = targets[0].Body;
+        var il = body.GetILProcessor();
+        int gates = 0, calls = 0;
+        foreach (var ins in body.Instructions.ToList())
+        {
+            if (IsGateRead(ins))
+            {
+                ins.OpCode = OpCodes.Call;
+                ins.Operand = gateRef;
+                gates++;
+            }
+            else if (IsRemovalCall(ins))
+            {
+                var masterPageType = ((MethodReference)ins.Operand).ReturnType;
+                ins.OpCode = OpCodes.Call;
+                ins.Operand = removeRef;
+                il.InsertAfter(ins, il.Create(OpCodes.Castclass, masterPageType));
+                calls++;
+            }
+        }
+        if (gates != 1 || calls != 1)
+            throw new InvalidOperationException(
+                $"MetadataProvider.GetMasterPage: expected 1 elementRemovalOption read and 1 removal call, found {gates} and {calls} — Ncl shape changed; do not commit");
+        Console.Error.WriteLine("[Cecil] GetMasterPage removal pass → application-area half only (#4750)");
     }
 
     private static void AddFormsOwned(HashSet<string> set)
