@@ -133,17 +133,8 @@ public static partial class RecordPatches
     private static string? EnuFromCaptionMl(string? captionMl)
     {
         if (string.IsNullOrWhiteSpace(captionMl)) return null;
-        string? first = null;
-        foreach (var part in captionMl.Split(';'))
-        {
-            var eq = part.IndexOf('=');
-            if (eq < 0) continue;
-            var lang = part.Substring(0, eq).Trim();
-            var text = part.Substring(eq + 1);
-            first ??= text;
-            if (string.Equals(lang, "ENU", StringComparison.OrdinalIgnoreCase)) return text;
-        }
-        return first ?? captionMl;
+        // BC's own parser: a quoted value containing ';' is not cut there (#4640).
+        return EnuMultiLanguageText.ReadEnu(captionMl, firstIfNoEnu: true) ?? captionMl;
     }
 
     private static bool ParseBcBool(string? value, bool defaultValue)

@@ -164,21 +164,11 @@ public static partial class RecordPatches
 
     /// <summary>
     /// The text of a BC <c>CaptionML</c>/<c>ToolTipML</c> attribute for the ENU language, or
-    /// null when it states none. The value is a semicolon-separated list of
-    /// <c>&lt;lang&gt;=&lt;text&gt;</c> pairs; the runner is single-language and every other
-    /// caption it handles is the ENU one, so this reads ENU and ignores the rest.
+    /// null when it states none. Read by BC's own parser: BC quotes a text containing <c>;</c>,
+    /// <c>=</c> or <c>"</c>, which a split on <c>;</c> cuts and leaves quoted (#4640).
     /// </summary>
     private static string? UnwrapEnuCaption(string captionMl)
-    {
-        foreach (var part in captionMl.Split(';'))
-        {
-            var eq = part.IndexOf('=');
-            if (eq <= 0) continue;
-            if (string.Equals(part.Substring(0, eq).Trim(), "ENU", StringComparison.OrdinalIgnoreCase))
-                return part.Substring(eq + 1);
-        }
-        return null;
-    }
+        => EnuMultiLanguageText.ReadEnu(captionMl, firstIfNoEnu: false);
 
     /// <summary>
     /// Return <paramref name="fields"/> with every <c>modify(...)</c> property change declared

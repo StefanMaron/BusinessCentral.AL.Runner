@@ -299,8 +299,7 @@ public static partial class RecordPatches
     /// then splits it at the <c>;</c> (#4282, page 4312's AboutTextML).
     /// </summary>
     private static string EnuMultiLanguage(string text)
-        => Microsoft.Dynamics.Nav.Types.Metadata.MultiLanguageExtensions.ToMultiLanguageString(
-            Microsoft.Dynamics.Nav.Types.Metadata.MultiLanguage.From(1033, text));
+        => AlRunner.Patches.EnuMultiLanguageText.ToMultiLanguageString(text);
 
     /// <summary>
     /// The page's <c>&lt;Methods&gt;</c> subtree — BC's emitted method table — written only when

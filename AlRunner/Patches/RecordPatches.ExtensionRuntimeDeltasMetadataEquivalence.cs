@@ -279,7 +279,7 @@ public static partial class RecordPatches
         // entries are a separate surface this render does not reach.
         void Ml(string stated, string attribute)
         {
-            if (Stated(stated) is { } v) member.SetAttribute(attribute, "ENU=" + v);
+            if (Stated(stated) is { } v) member.SetAttribute(attribute, EnuMultiLanguageText.ToMultiLanguageString(v));
         }
 
         void BooleanLiteral(string stated, string attribute)

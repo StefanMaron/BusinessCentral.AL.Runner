@@ -600,7 +600,6 @@ public static partial class RecordPatches
         try { SetProp(obj, name, value); } catch { /* optional prop absent on this Types version */ }
     }
 
-    private static MethodInfo? _mMultiLanguageParse;
 
     private static void AddColumn(object dataItem, int id, string name, int fieldNo, int index, string? caption = null, string? method = null, bool reverseSign = false)
     {
@@ -633,17 +632,10 @@ public static partial class RecordPatches
         if (caption != null)
         {
             // MetaQueryColumn.CaptionML (MultiLanguage) feeds NCLMetaQueryColumn.columnCaptions
-            // via CreateFromDesignMetadata; the AL `Caption = '...'` is the ENU value.
-            if (_mMultiLanguageParse == null)
-            {
-                var typesAsm = AppDomain.CurrentDomain.GetAssemblies()
-                    .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Types");
-                var tMl = typesAsm?.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MultiLanguage");
-                _mMultiLanguageParse = tMl?.GetMethod("Parse", BindingFlags.Public | BindingFlags.Static, new[] { typeof(string) });
-            }
-            var ml = _mMultiLanguageParse?.Invoke(null, new object[] { "ENU=" + caption });
-            if (ml != null)
-                col.GetType().GetProperty("CaptionML", BindingFlags.Public | BindingFlags.Instance)?.SetValue(col, ml);
+            // via CreateFromDesignMetadata; the AL `Caption = '...'` is the ENU value. Built with
+            // no parse, so a caption containing ';' is not cut there (#4640).
+            col.GetType().GetProperty("CaptionML", BindingFlags.Public | BindingFlags.Instance)
+                ?.SetValue(col, EnuMultiLanguageText.From(caption));
         }
         GetList(dataItem, "QueryColumns").Add(col);
     }

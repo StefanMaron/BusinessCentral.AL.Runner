@@ -559,21 +559,15 @@ public static partial class RecordPatches
     }
 
     /// <summary>
-    /// A single-language <c>MultiLanguage</c> holding <paramref name="text"/> as ENU — the
-    /// shape BC itself builds when it needs one from a plain string
-    /// (<c>MultiLanguage.Parse("ENU=" + …)</c> in NCLMetaField). Returns null if the type or
-    /// method is not where we expect, so a metadata-shape change degrades to BC's field-name
-    /// fallback rather than throwing during table construction.
+    /// A single-language <c>MultiLanguage</c> holding <paramref name="text"/> as ENU, built by
+    /// <c>MultiLanguage.From</c> with no parse: a parsed <c>"ENU=" + text</c> is cut at the first
+    /// <c>;</c> (#4640). Null when the parameter is not that type, so a metadata-shape change
+    /// degrades to BC's field-name fallback rather than throwing during table construction.
     /// </summary>
     private static object? BuildEnuMultiLanguage(Type mlType, string text)
     {
-        try
-        {
-            var parse = mlType.GetMethod("Parse", BindingFlags.Public | BindingFlags.Static,
-                binder: null, types: new[] { typeof(string) }, modifiers: null);
-            return parse?.Invoke(null, new object[] { "ENU=" + text });
-        }
-        catch { return null; }
+        var ml = EnuMultiLanguageText.From(text);
+        return mlType.IsInstanceOfType(ml) ? ml : null;
     }
 
     private static object BuildMetaField(ParsedField f, int index, bool isPk, ParsedTable? parentTable = null)
