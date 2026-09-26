@@ -110,11 +110,26 @@ public sealed class RunnerTestClientSession : ITestClientSession
         if (record != null)
         {
             if (IsUnpositioned(record)) live.MoveFirstDuringOpen();
-            else live.MarkRowLoadedDuringOpen();
+            else
+            {
+                RereadCallerRow(record);
+                live.MarkRowLoadedDuringOpen();
+            }
         }
 
         return live;
     }
+
+    /// <summary>
+    /// The page shows the caller's row as it is in the table: a value the caller put into its
+    /// record and never saved reaches <c>Page.Run(Id, Rec)</c>'s OnOpenPage (the form's own
+    /// clone) but not the page, so it is neither shown nor stored by the page's save. Corpus
+    /// codeunit 67361 (#4752), every cloud leg. A row the table does not hold
+    /// keeps the caller's values — a missed Find leaves the fields alone
+    /// (<c>PageOpensOnStoredRowTests</c> pins it).
+    /// </summary>
+    private static void RereadCallerRow(NavRecord record)
+        => record.ALFind(DataError.TrapError, "=");
 
     /// <summary>
     /// Whether <paramref name="record"/> is still at its Init() default — every primary-key

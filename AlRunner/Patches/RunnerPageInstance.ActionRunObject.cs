@@ -235,8 +235,11 @@ internal sealed partial class RunnerPageInstance
     }
 
     /// <summary>
-    /// The host's current row, field values included, on a cursor of its own with no filters —
-    /// the bookmark BC hands the target carries the row, not the host's view of the table.
+    /// The host's current row as the table holds it, on a cursor of its own with no filters —
+    /// the bookmark BC hands the target carries the row's position, not the host's view of the
+    /// table and not the values the host holds in memory: the target's OnOpenPage already sees
+    /// the stored row (corpus 67361, every cloud leg). A row the table does not hold keeps the
+    /// host's values.
     /// Trap: handing over <c>_record</c> itself lets the target move and re-filter the host.
     /// </summary>
     private NavRecord? CopyHostRowForTarget()
@@ -250,6 +253,7 @@ internal sealed partial class RunnerPageInstance
         // A temporary host shares its rows, or the target could not find the row at all.
         copy.ALCopy(_record, _record.IsTemporary);
         copy.ALReset();
+        copy.ALFind(Microsoft.Dynamics.Nav.Types.DataError.TrapError, "=");
         return copy;
     }
 
