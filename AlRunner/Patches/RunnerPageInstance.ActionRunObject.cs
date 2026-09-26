@@ -254,17 +254,18 @@ internal sealed partial class RunnerPageInstance
     }
 
     /// <summary>
-    /// Refresh the host's current row after a RunObject page returns: re-read it, retake the
-    /// before-image, and raise OnAfterGetRecord, so the host shows — and later saves over, with
-    /// that xRec — what the target wrote, and keeps what its own trigger computes (corpus
-    /// codeunit 67351). The row was saved before the action ran (LiveNavTestAction.Invoke).
+    /// Refresh the host's current row after a RunObject page returns: re-read it and raise
+    /// OnAfterGetRecord, so the host shows — and later saves over — what the target wrote, and
+    /// keeps what its own trigger computes. The before-image is NOT retaken: the host's next save
+    /// hands OnModify the row as the host loaded it before the action (xRec 'Bravo', Rec
+    /// 'Written'). Corpus codeunit 67351, every cloud leg of corpus PR 443. The row was saved
+    /// before the action ran (LiveNavTestAction.Invoke).
     /// Trap: a re-read without the trigger blanks every value OnAfterGetRecord put into Rec.
     /// </summary>
     private void RereadHostRowAfterTarget()
     {
         if (_record == null || IsCurrentRowUnsavedNewRow?.Invoke() == true) return;
         if (!_record.ALFind(Microsoft.Dynamics.Nav.Types.DataError.TrapError, "=")) return;
-        _record.OldRecord.ALAssign(_record);
         RaiseOnAfterGetRecord();
     }
 
