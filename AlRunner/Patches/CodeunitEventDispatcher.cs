@@ -218,6 +218,7 @@ public static partial class BcRuntime
         // exactly once — dispatch one per (codeunit id, method name, param shape);
         // InvokeOneSubscriber resolves the surviving MethodInfo against the
         // instance's actual runtime type, so which copy survives is irrelevant.
+        bool isolated = IsIsolatedEventScope(scopeType, eventMethodName);
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var sub in subs)
         {
@@ -233,11 +234,11 @@ public static partial class BcRuntime
                     // into an event, e.g. System Application Test Library's 132513
                     // "Confirm Test Library" answering OnBeforeGuiAllowed with false).
                     foreach (var bound in BoundInstancesOf(ExtractCodeunitIdFromTypeName(sub.DeclaringType!)))
-                        InvokeOneSubscriber(publisherScope, scopeType, pubObj, sub, bound);
+                        InvokeSubscriberForEvent(isolated, publisherScope, scopeType, pubObj, sub, bound);
                 }
                 else
                 {
-                    InvokeOneSubscriber(publisherScope, scopeType, pubObj, sub, null);
+                    InvokeSubscriberForEvent(isolated, publisherScope, scopeType, pubObj, sub, null);
                 }
             }
             catch (TargetInvocationException tie)
