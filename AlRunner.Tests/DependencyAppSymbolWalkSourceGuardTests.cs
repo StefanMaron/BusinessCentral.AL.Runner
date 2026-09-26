@@ -58,6 +58,11 @@ public sealed class DependencyAppSymbolWalkSourceGuardTests
         ("AlRunner/Patches/RecordPatches.MetadataPermissionSetVirtualTable.cs", 1,
             "#3031: EnumerateKnownPermissionSets. Same split."),
 
+        ("AlRunner/Infrastructure/ProvisionGapLog.cs", 1,
+            "#4600: RegisterUnservableApp's lazy codeunit-id read, only to NAME the app a failing "
+            + "call hit. Vanished or unreadable -> a [provision-gap] note on stderr and no "
+            + "attribution, so the failure prints its full remedy instead of the pointer."),
+
         ("AlRunner/Patches/EnumMetadataPatches.cs", 1,
             "#3143: AlEnumMetadataRegistry.RegisterFromAppPath — no live callers, but public, "
             + "so its swallow was converted to a refusal rather than left for a future caller "

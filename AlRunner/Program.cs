@@ -2893,10 +2893,7 @@ foreach (var bundle in bundles)
                 }
                 // #4600: so a failing call into one of these apps names it (MissingDependencyCodeunitException).
                 foreach (var (unservableApp, unservablePath) in resolver.UnservableApps)
-                    AlRunner.Infrastructure.ProvisionGapLog.RegisterUnservableApp(unservableApp,
-                        () => AlRunner.Patches.BcAppSymbolCache.Get(unservablePath).Objects
-                            .Where(o => string.Equals(o.Kind.Replace(" ", ""), "Codeunit", StringComparison.OrdinalIgnoreCase))
-                            .Select(o => o.Id));
+                    AlRunner.Infrastructure.ProvisionGapLog.RegisterUnservableApp(unservableApp, unservablePath);
                 // Also always-on, and for the same reason, but a weaker claim than the list
                 // above: a floor this package cache cannot supply for a package that may be
                 // source-compiled (#3794). Kept a separate list on the resolver so

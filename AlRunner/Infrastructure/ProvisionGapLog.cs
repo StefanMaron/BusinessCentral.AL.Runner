@@ -79,6 +79,14 @@ internal static class ProvisionGapLog
         }
     }
 
+    /// <summary>The codeunits of the package at <paramref name="appPath"/>, read from its symbols.</summary>
+    internal static void RegisterUnservableApp(string app, string appPath) =>
+        // A vanished or unreadable package throws here, lazily, and UnservableAppDeclaringCodeunit
+        // says so on stderr and attributes nothing (the failure then prints its full remedy).
+        RegisterUnservableApp(app, () => AlRunner.Patches.BcAppSymbolCache.Get(appPath).Objects
+            .Where(o => string.Equals(o.Kind.Replace(" ", ""), "Codeunit", StringComparison.OrdinalIgnoreCase))
+            .Select(o => o.Id));
+
     /// <summary>
     /// The registered app with no implementation that declares codeunit <paramref name="id"/>,
     /// or null. An app whose symbols cannot be read attributes nothing: the caller then prints
