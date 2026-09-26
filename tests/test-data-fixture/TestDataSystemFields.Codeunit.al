@@ -36,7 +36,8 @@ codeunit 64410 "Test Data System Fields Tests"
         Assert.IsFalse(Customer.SystemId = OtherCustomer.SystemId, 'two customers must not share a SystemId');
         Assert.AreEqual(SequentialNode(Customer.SystemId), SequentialNode(OtherCustomer.SystemId),
             'SystemIds one SQL Server minted share their NEWSEQUENTIALID node bytes; a mismatch means the '
-            + 'runner minted at least one of them instead of reading the backup');
+            + 'runner minted at least one of them instead of reading the backup, or the backup was built '
+            + 'across two SQL sessions');
     end;
 
     [Test]

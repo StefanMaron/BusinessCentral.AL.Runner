@@ -113,11 +113,13 @@ codeunit 64407 "Test Data LOB Values"
     /// own demo-data story cares about.
     ///
     /// NO LITERAL ID. Media ids are minted per backup build (#4645: each 28.x W1 artifact
-    /// carries different ones), so a literal pins one backup. What every build shares: BC mints
-    /// a media id with NewGuid, a version-4 GUID, while the row's `$systemId` next to it is a
-    /// NEWSEQUENTIALID that never has that shape. So the id must be non-blank, differ between
-    /// rows, and be version 4 — which fails a blank (the pre-#2270 bug), a value copied across
-    /// rows, and a codec that read the wrong column.
+    /// carries different ones), so a literal pins one backup. What every build shares:
+    ///   - the id is the same on every read of the row. A blank stored id (the pre-#2270 bug)
+    ///     does not read back blank in the runner: every read of an empty Media answers a fresh
+    ///     id, so it is two reads disagreeing that catches it, not IsNullGuid;
+    ///   - BC mints a media id with NewGuid, a version-4 GUID, while the row's `$systemId` is a
+    ///     NEWSEQUENTIALID that never has that shape, so a codec reading the wrong column fails;
+    ///   - two rows do not share an id, so a value copied across rows fails.
     /// The stronger check, that the id names a Tenant Media row, needs tenant-level tables to
     /// be hydrated, which they are not yet (#4770).</summary>
     [Test]
@@ -127,20 +129,28 @@ codeunit 64407 "Test Data LOB Values"
         MemoTemplate: Record "Word Template";
         Customer: Record Customer;
         OtherCustomer: Record Customer;
+        ReRead: Record "Word Template";
+        ReReadCustomer: Record Customer;
     begin
         WordTemplate.Get('EVENT');
         TdfAssert.AreEqual('Customer Event', WordTemplate.Name, 'Word Template EVENT should be hydrated');
-        AssertStoredMediaId(WordTemplate.Template.MediaId, 'Word Template EVENT.Template');
+        ReRead.Get('EVENT');
+        AssertStoredMediaId(WordTemplate.Template.MediaId, ReRead.Template.MediaId, 'Word Template EVENT.Template');
 
         MemoTemplate.Get('MEMO');
-        AssertStoredMediaId(MemoTemplate.Template.MediaId, 'Word Template MEMO.Template');
+        Clear(ReRead);
+        ReRead.Get('MEMO');
+        AssertStoredMediaId(MemoTemplate.Template.MediaId, ReRead.Template.MediaId, 'Word Template MEMO.Template');
         TdfAssert.IsFalse(MemoTemplate.Template.MediaId = WordTemplate.Template.MediaId,
             'two Word Templates must not share a media id: each row carries its own');
 
         Customer.Get('10000');
+        ReReadCustomer.Get('10000');
+        AssertStoredMediaId(Customer.Image.MediaId, ReReadCustomer.Image.MediaId, 'Customer 10000.Image');
         OtherCustomer.Get('20000');
-        AssertStoredMediaId(Customer.Image.MediaId, 'Customer 10000.Image');
-        AssertStoredMediaId(OtherCustomer.Image.MediaId, 'Customer 20000.Image');
+        Clear(ReReadCustomer);
+        ReReadCustomer.Get('20000');
+        AssertStoredMediaId(OtherCustomer.Image.MediaId, ReReadCustomer.Image.MediaId, 'Customer 20000.Image');
         TdfAssert.IsFalse(Customer.Image.MediaId = OtherCustomer.Image.MediaId,
             'two customers must not share an Image media id');
     end;
@@ -152,29 +162,36 @@ codeunit 64407 "Test Data LOB Values"
     var
         ItemVariant: Record "Item Variant";
         OtherVariant: Record "Item Variant";
+        ReRead: Record "Item Variant";
     begin
         ItemVariant.Get('SP-SCM1006', 'BLACK');
         TdfAssert.AreEqual('AutoDripLite - Black', ItemVariant.Description,
             'Item Variant SP-SCM1006/BLACK should be hydrated');
-        AssertStoredMediaId(ItemVariant.Picture.MediaId, 'Item Variant SP-SCM1006/BLACK.Picture');
+        ReRead.Get('SP-SCM1006', 'BLACK');
+        AssertStoredMediaId(ItemVariant.Picture.MediaId, ReRead.Picture.MediaId, 'Item Variant SP-SCM1006/BLACK.Picture');
 
         OtherVariant.SetRange("Item No.", 'SP-SCM1006');
         OtherVariant.SetFilter(Code, '<>%1', 'BLACK');
         TdfAssert.IsTrue(OtherVariant.FindFirst(), 'SP-SCM1006 has more than one variant in the backup');
-        AssertStoredMediaId(OtherVariant.Picture.MediaId, 'Item Variant SP-SCM1006/' + OtherVariant.Code + '.Picture');
+        Clear(ReRead);
+        ReRead.Get(OtherVariant."Item No.", OtherVariant.Code);
+        AssertStoredMediaId(OtherVariant.Picture.MediaId, ReRead.Picture.MediaId,
+            'Item Variant SP-SCM1006/' + OtherVariant.Code + '.Picture');
         TdfAssert.IsFalse(OtherVariant.Picture.MediaId = ItemVariant.Picture.MediaId,
             'two variants must not share a media-set id');
     end;
 
-    /// <summary>A stored media or media-set id: non-blank, and a version-4 GUID (third group
-    /// starts with 4, fourth with 8, 9, A or B).</summary>
-    local procedure AssertStoredMediaId(MediaId: Guid; What: Text)
+    /// <summary>A stored media or media-set id, read through two record variables: the two
+    /// reads agree, and the id is a version-4 GUID (third group starts with 4, fourth with 8,
+    /// 9, A or B).</summary>
+    local procedure AssertStoredMediaId(FirstRead: Guid; SecondRead: Guid; What: Text)
     var
         Formatted: Text;
     begin
-        TdfAssert.IsFalse(IsNullGuid(MediaId),
-            What + ' stores a media id in the backup, so it must not read back blank');
-        Formatted := UpperCase(DelChr(Format(MediaId), '=', '{}'));
+        TdfAssert.AreEqual(FirstRead, SecondRead,
+            What + ': two reads of one row must answer one stored media id; ids that differ per read '
+            + 'mean nothing was stored and the runner made one up on each read');
+        Formatted := UpperCase(DelChr(Format(FirstRead), '=', '{}'));
         TdfAssert.AreEqual('4', CopyStr(Formatted, 15, 1),
             StrSubstNo('%1 must be the backup''s NewGuid media id (version 4); got %2', What, Formatted));
         TdfAssert.IsTrue(StrPos('89AB', CopyStr(Formatted, 20, 1)) > 0,
