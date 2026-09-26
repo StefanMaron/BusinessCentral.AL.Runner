@@ -932,7 +932,7 @@ public sealed partial class BcCompiler
 
         var radOut = new CaptureOutputter();
         NavEmit.EmitResult? radResult;
-        try { radResult = radComp.Emit(NavCA.EmitOptions.Default, radOut); }
+        try { radResult = radComp.Emit(RunnerEmitOptions, radOut); }
         catch (Exception ex)
         {
             fallbackReason = $"RAD Emit threw: {ex.GetType().Name}: {ex.Message}";

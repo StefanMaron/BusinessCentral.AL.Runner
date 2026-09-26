@@ -36,18 +36,15 @@ public static class AlCoverageInstrumentedStatements
         .ToDictionary(op => unchecked((byte)op.Value));
 
     /// <summary>
-    /// Scans <paramref name="scopeType"/>'s OnRun/OnRunAsync/OnRunEventAsync method body
-    /// (whichever is present — BC emits exactly one per scope class) for
-    /// StmtHit(int)/CStmtHit(int[, bool]) call sites and returns the set of statement
-    /// indices actually instrumented.
+    /// Scans the bodies that run <paramref name="scopeKey"/>'s statements (see
+    /// <see cref="AlScopeKey.BodiesOf"/>) for StmtHit(int)/CStmtHit(int[, bool]) call sites and
+    /// returns the set of statement indices actually instrumented.
     /// </summary>
-    public static HashSet<int> Find(Type scopeType)
+    public static HashSet<int> Find(MemberInfo scopeKey)
     {
         var result = new HashSet<int>();
-        foreach (var m in scopeType.GetMethods(
-            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+        foreach (var m in AlScopeKey.BodiesOf(scopeKey))
         {
-            if (m.Name is not ("OnRun" or "OnRunAsync" or "OnRunEventAsync")) continue;
             byte[]? il;
             try { il = m.GetMethodBody()?.GetILAsByteArray(); }
             catch (Exception) { continue; } // e.g. a method with no body to reflect over

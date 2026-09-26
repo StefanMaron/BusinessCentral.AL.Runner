@@ -45,14 +45,14 @@ public static class AlCoverageTracker
     // once — the caller Join()s, with a timeout, before starting the next).
     private static volatile string? _currentTestKey;
 
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Type ScopeType, int Stmt), int> _hits = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(MemberInfo ScopeType, int Stmt), int> _hits = new();
 
     // Per-test hit buckets (#2135) — one inner dictionary per test key, populated
     // ONLY while PerTestEnabled is true. Keyed by the SAME "{Codeunit}.{Method}"
     // string TestEvent/ToWire(TestResult) already put on the wire as `name`, so a
     // caller can join this back to a specific test with no separate id mapping.
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<
-        string, System.Collections.Concurrent.ConcurrentDictionary<(Type ScopeType, int Stmt), int>> _perTestHits = new();
+        string, System.Collections.Concurrent.ConcurrentDictionary<(MemberInfo ScopeType, int Stmt), int>> _perTestHits = new();
 
     /// <summary>Reset between coverage collections (tests). Exposed for test isolation.</summary>
     public static void Reset()
@@ -120,7 +120,7 @@ public static class AlCoverageTracker
             AlIterationTracker.OnStmtHit(scope, currentStatementNumber, observed);
         if (Enabled)
         {
-            _hits.AddOrUpdate((scope.GetType(), currentStatementNumber), 1, static (_, c) => c + 1);
+            _hits.AddOrUpdate((AlScopeKey.Of(scope), currentStatementNumber), 1, static (_, c) => c + 1);
             Counts.IncrementPart();
         }
         // #2135: per-test attribution — a SEPARATE flag/dictionary from the aggregate
@@ -134,14 +134,14 @@ public static class AlCoverageTracker
             if (testKey != null)
             {
                 var bucket = _perTestHits.GetOrAdd(testKey,
-                    static _ => new System.Collections.Concurrent.ConcurrentDictionary<(Type, int), int>());
-                bucket.AddOrUpdate((scope.GetType(), currentStatementNumber), 1, static (_, c) => c + 1);
+                    static _ => new System.Collections.Concurrent.ConcurrentDictionary<(MemberInfo, int), int>());
+                bucket.AddOrUpdate((AlScopeKey.Of(scope), currentStatementNumber), 1, static (_, c) => c + 1);
             }
         }
     }
 
     /// <summary>Hit count recorded for one (scope type, statement index). 0 if never hit.</summary>
-    public static int GetHitCount(Type scopeType, int stmt) =>
+    public static int GetHitCount(MemberInfo scopeType, int stmt) =>
         _hits.TryGetValue((scopeType, stmt), out var c) ? c : 0;
 
     private static Type? _tSourceSpansAttr;
@@ -196,7 +196,7 @@ public static class AlCoverageTracker
             try { types = asm.GetTypes(); }
             catch (ReflectionTypeLoadException ex) { types = ex.Types.Where(t => t != null).Cast<Type>().ToArray(); }
 
-            foreach (var t in types)
+            foreach (var t in types.SelectMany(type => AlScopeKey.DeclaredBy(type, _tSourceSpansAttr!)))
             {
                 if (Attribute.GetCustomAttribute(t, _tSourceSpansAttr!) is not object srcAttr) continue;
                 if (_piEncodedSpans!.GetValue(srcAttr) is not long[] spans || spans.Length == 0) continue;
@@ -252,7 +252,7 @@ public static class AlCoverageTracker
     /// statement. Keying off _hits sidesteps it: a stale Type recorded nothing this run, so it
     /// is simply absent. <see cref="Collect"/> is CLI-only and single-generation (#2042).</para>
     /// </summary>
-    private static IReadOnlyCollection<Type> GetHitTrackedTypes() =>
+    private static IReadOnlyCollection<MemberInfo> GetHitTrackedTypes() =>
         _hits.Keys.Select(k => k.ScopeType).Distinct().ToArray();
 
     /// <summary>
@@ -305,7 +305,7 @@ public static class AlCoverageTracker
     // LineOffset: what to add to this scope's decoded [SourceSpans] lines to get file lines
     // (#3713, AlSourceLocationMap.LineOffset); 0 for the first object in a file.
     private static (string FilePath, string ScopeName, long[] Spans, int LineOffset)? ResolveScopeInfo(
-        Type type, AlSourceLocationMap sourceMap)
+        MemberInfo type, AlSourceLocationMap sourceMap)
     {
         if (Attribute.GetCustomAttribute(type, _tSourceSpansAttr!) is not object srcAttr) return null;
         if (_piEncodedSpans!.GetValue(srcAttr) is not long[] spans || spans.Length == 0) return null;
@@ -318,7 +318,7 @@ public static class AlCoverageTracker
 
     /// <summary>ResolveScopeInfo with the reflection init done; null for a scope outside the bundle.</summary>
     internal static (string FilePath, string ScopeName, long[] Spans, int LineOffset)? TryResolveScope(
-        Type type, AlSourceLocationMap sourceMap)
+        MemberInfo type, AlSourceLocationMap sourceMap)
     {
         EnsureReflInit();
         AlNavNameReflection.EnsureInit();
@@ -348,7 +348,7 @@ public static class AlCoverageTracker
         EnsureReflInit();
         AlNavNameReflection.EnsureInit();
         var result = new Dictionary<string, List<AlStatementRecord>>();
-        var typeInfo = new Dictionary<Type, (string FilePath, string ScopeName, long[] Spans, int LineOffset)?>();
+        var typeInfo = new Dictionary<MemberInfo, (string FilePath, string ScopeName, long[] Spans, int LineOffset)?>();
 
         foreach (var testEntry in _perTestHits)
         {

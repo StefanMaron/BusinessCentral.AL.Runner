@@ -71,7 +71,7 @@ public static class AlIterationTracker
         if (!Enabled) return;
         var seg = _segmenter;
         if (seg == null) return;
-        var resolved = AlScopeSyntaxResolver.Resolve(scope.GetType());
+        var resolved = AlScopeSyntaxResolver.Resolve(AlScopeKey.Of(scope));
         if (resolved == null) return;
         seg.OnHit(scope, resolved.Loops, currentStatementNumber, observed);
     }
@@ -108,7 +108,7 @@ public static class AlIterationTracker
         {
             int loopId = _idBase + inst.Id;
             if (inst.Id > maxLocalId) maxLocalId = inst.Id;
-            var info = AlScopeSyntaxResolver.Resolve(inst.ScopeInstance.GetType())!;
+            var info = AlScopeSyntaxResolver.Resolve(AlScopeKey.Of((NavMethodScope)inst.ScopeInstance))!;
             var iterations = new List<AlIterationRecord>(inst.Steps.Count);
             foreach (var s in inst.Steps)
             {

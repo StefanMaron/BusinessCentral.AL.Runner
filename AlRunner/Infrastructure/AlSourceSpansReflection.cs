@@ -17,6 +17,9 @@ internal static class AlSourceSpansReflection
     private static PropertyInfo? _piEncodedSpans;
     private static bool _init;
 
+    /// <summary>BC's <c>SourceSpansAttribute</c> type. Call <see cref="EnsureInit"/> first.</summary>
+    public static Type SourceSpansAttribute => _tSourceSpansAttr!;
+
     public static void EnsureInit()
     {
         if (_init) return;
@@ -33,7 +36,7 @@ internal static class AlSourceSpansReflection
     /// <summary>The decoded EncodedSpans array for <paramref name="scopeType"/>, or null
     /// if it doesn't carry [SourceSpansAttribute] (e.g. an Ncl-internal scope class, not
     /// AL-compiler-generated) or the array is empty.</summary>
-    public static long[]? TryGetSpans(Type scopeType)
+    public static long[]? TryGetSpans(MemberInfo scopeType)
     {
         EnsureInit();
         if (Attribute.GetCustomAttribute(scopeType, _tSourceSpansAttr!) is not object srcAttr) return null;

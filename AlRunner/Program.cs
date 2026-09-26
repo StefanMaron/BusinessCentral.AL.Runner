@@ -6336,7 +6336,7 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
     // one object to another in the same file left the first one firing. Keyed by full path
     // with the same comparer DapBreakpointResolver uses for its own path index.
     var registeredScopesBySource =
-        new Dictionary<string, HashSet<Type>>(AlRunner.Infrastructure.DapBreakpointResolver.PathComparer);
+        new Dictionary<string, HashSet<System.Reflection.MemberInfo>>(AlRunner.Infrastructure.DapBreakpointResolver.PathComparer);
     var lastFrames = new List<AlRunner.Infrastructure.AlDapFrame>();
 
     var compiledTcs = new System.Threading.Tasks.TaskCompletionSource<Assembly>(
@@ -6474,7 +6474,7 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
         if (registeredScopesBySource.TryGetValue(fullSrcPath, out var previouslyRegistered))
             foreach (var scope in previouslyRegistered)
                 AlRunner.Infrastructure.AlDapSession.ClearBreakpoints(scope);
-        var nowRegistered = new HashSet<Type>();
+        var nowRegistered = new HashSet<System.Reflection.MemberInfo>();
         foreach (var rb in resolved)
         {
             if (!rb.Verified) continue;

@@ -1172,12 +1172,12 @@ public sealed class TestExecutor
     // mechanism itself.
     //
     // The AL compiler still records the true declaration position even though it does not
-    // preserve it in method order: every compiled procedure gets its own nested
-    // "{MethodName}_Scope_<hash>" type carrying a SignatureSpanAttribute whose EncodedSpan
-    // holds the absolute source line the procedure's own `procedure` keyword sits on — the
-    // same metadata AlCallStackCapture already decodes for stack-trace line numbers. Sorting
-    // by that line recovers true declaration order without touching the compiler's own
-    // (unmodifiable) member ordering.
+    // preserve it in method order: every compiled procedure carries a SignatureSpanAttribute
+    // (on the method in inline-scope emit, on its nested "{MethodName}_Scope_<hash>" type in
+    // scope-class emit) whose EncodedSpan holds the absolute source line the procedure's own
+    // `procedure` keyword sits on — the same metadata AlCallStackCapture already decodes for
+    // stack-trace line numbers. Sorting by that line recovers true declaration order without
+    // touching the compiler's own (unmodifiable) member ordering.
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, MethodInfo[]> _sourceOrderCache = new();
     private static Type? _signatureSpanAttrType;
     private static bool _signatureSpanAttrTypeResolved;
@@ -1426,7 +1426,7 @@ public sealed class TestExecutor
         if (unresolved.Length == 0) return null;
 
         var why = resolverAvailable
-            ? "no \"{procedure}_Scope_<hash>\" nested type carrying a readable SignatureSpanAttribute"
+            ? "neither the method nor a \"{procedure}_Scope_<hash>\" nested type carries a readable SignatureSpanAttribute"
             : $"the {SignatureSpanAttrTypeName} type is not loaded in this process";
         return $"[test-exec] WARNING: {codeunitType.Name}: {unresolved.Length} of {alTests.Length} "
              + $"[Test] procedure(s) have no resolvable AL declaration line ({why}). They run "
@@ -1518,11 +1518,17 @@ public sealed class TestExecutor
         var nested = codeunitType.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic);
         foreach (var m in methods)
         {
-            var scopeType = nested.FirstOrDefault(nt =>
-                nt.Name.StartsWith(m.Name, StringComparison.Ordinal) &&
-                _scopeTypeSuffix.IsMatch(nt.Name[m.Name.Length..]));
-            if (scopeType == null) continue;
-            var attr = scopeType.GetCustomAttribute(tSig);
+            // Inline-scope emit (the runner's mode since #4697) puts the SignatureSpan on the
+            // method itself; the scope-class emit put it on the nested scope type.
+            var attr = m.DeclaringType == codeunitType ? m.GetCustomAttribute(tSig) : null;
+            if (attr == null)
+            {
+                var scopeType = nested.FirstOrDefault(nt =>
+                    nt.Name.StartsWith(m.Name, StringComparison.Ordinal) &&
+                    _scopeTypeSuffix.IsMatch(nt.Name[m.Name.Length..]));
+                if (scopeType == null) continue;
+                attr = scopeType.GetCustomAttribute(tSig);
+            }
             if (attr == null) continue;
             var encoded = (long)(piSig.GetValue(attr) ?? 0L);
             // SignatureSpan layout matches SourceSpan (StructLayout.Explicit, little-endian):

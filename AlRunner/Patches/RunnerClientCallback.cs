@@ -106,7 +106,7 @@ public sealed class RunnerClientCallback : IClientCallback
         if (scope != null)
         {
             Infrastructure.AlNavNameReflection.EnsureInit();
-            scopeName = Infrastructure.AlNavNameReflection.GetAlName(scope.GetType()) ?? scope.GetType().Name;
+            scopeName = Infrastructure.AlNavNameReflection.GetAlName(Infrastructure.AlScopeKey.Of(scope)) ?? scope.ScopeName ?? scope.GetType().Name;
         }
         else
         {

@@ -329,13 +329,14 @@ public static class NavAppResourcePatches
                 var scope = _pCurrentMethodScope?.GetValue(session);
                 while (scope != null)
                 {
-                    _pApplicationObject ??= scope.GetType().GetProperty("ApplicationObject",
+                    // Bound on the base type: the chain mixes ALMethodScope<T> and scope classes (#4697).
+                    _pApplicationObject ??= typeof(Microsoft.Dynamics.Nav.Runtime.NavMethodScope).GetProperty("ApplicationObject",
                         BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
                     var appObj = _pApplicationObject?.GetValue(scope);
                     if (appObj != null
                         && _byAssembly.TryGetValue(appObj.GetType().Assembly, out var s))
                         return s;
-                    _pParentScope ??= scope.GetType().GetProperty("ParentScope",
+                    _pParentScope ??= typeof(Microsoft.Dynamics.Nav.Runtime.NavMethodScope).GetProperty("ParentScope",
                         BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
                     scope = _pParentScope?.GetValue(scope);
                 }

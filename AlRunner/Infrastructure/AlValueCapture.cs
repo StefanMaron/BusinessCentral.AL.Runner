@@ -156,7 +156,7 @@ public static class AlValueCapture
         var state = _frames.GetOrPush(scope).State;
         bool isBaseline = state.LastStatementId < 0;
         var previous = state.LastStatementId;
-        var syntax = AlScopeSyntaxResolver.Resolve(scope.GetType());
+        var syntax = AlScopeSyntaxResolver.Resolve(AlScopeKey.Of(scope));
         var fields = NamedFields(scope);
 
         // A for/foreach statement's own hit: its loop variable was just assigned by it
@@ -220,7 +220,7 @@ public static class AlValueCapture
             // No frame (a body that never called StmtHit): an empty map reports every field once.
             var frame = _frames.Pop(scope);
             var lastKnown = frame?.State.LastKnown ?? new Dictionary<string, (object?, string?)>();
-            var assigned = AlScopeSyntaxResolver.Resolve(scope.GetType())?.Writes.TargetsOf(statementId);
+            var assigned = AlScopeSyntaxResolver.Resolve(AlScopeKey.Of(scope))?.Writes.TargetsOf(statementId);
 
             changed = DiffAndUpdate(scopeName, statementId, NamedFields(scope), lastKnown, isBaseline: false, assigned);
             if (changed.Count > 0)
@@ -232,20 +232,10 @@ public static class AlValueCapture
         AlIterationTracker.OnScopeExit(scope, changed);
     }
 
-    // Every [NavName]-tagged public instance field on the scope, paired with a delegate
-    // that reads its current CLR value — the SAME injectable-delegate shape CaptureField
-    // already uses (below), so DiffAndUpdate is testable without a real NavMethodScope.
-    private static List<(string Name, Func<object?> ReadField)> NamedFields(NavMethodScope scope)
-    {
-        var result = new List<(string, Func<object?>)>();
-        foreach (var f in scope.GetType().GetFields(BindingFlags.Public | BindingFlags.Instance))
-        {
-            var name = AlNavNameReflection.GetAlName(f);
-            if (name == null) continue;
-            result.Add((name, () => f.GetValue(scope)));
-        }
-        return result;
-    }
+    // Every AL local on the scope with a reader of its current value (AlScopeKey.NamedLocals),
+    // the injectable-delegate shape CaptureField uses, so DiffAndUpdate is testable without a scope.
+    private static List<(string Name, Func<object?> ReadField)> NamedFields(NavMethodScope scope) =>
+        AlScopeKey.NamedLocals(scope);
 
     /// <summary>
     /// Core diff engine behind the per-execution series (issue #2074): reads each named

@@ -346,6 +346,18 @@ public sealed partial class BcCompiler
         lock (_refSync) { return _tddMode; }
     }
 
+    /// <summary>
+    /// The emit mode for every AL compile: BC's inline-scope emit, which a service tier uses
+    /// (<c>EnableInlinedMethodCodeGeneration</c>, default true), so runner-compiled AL runs
+    /// on the same <c>ALMethodScope</c> shape as Microsoft's shipped apps (#4697). Readers
+    /// of scope metadata go through <c>AlScopeKey</c>.
+    /// </summary>
+    internal static readonly NavCA.EmitOptions RunnerEmitOptions = NavCA.EmitOptions.Default.WithEmitNoScope(true);
+
+    /// <summary>The <see cref="RunnerEmitOptions"/> term of the AL-output cache key: DLLs
+    /// emitted in the two modes are not interchangeable.</summary>
+    internal const string RunnerEmitModeCacheTerm = "emit:inline-scope";
+
     // Extra preprocessor symbols supplied by the caller via --define / --preprocessor-symbols.
     // Merged with the built-in CLEANSCHEMA1..25 set in BuildParseOptions.
     private static IReadOnlyList<string>? _extraPreprocessorSymbols;
@@ -1874,7 +1886,7 @@ public sealed partial class BcCompiler
             // EmitResult.Success=false because the internal Compile step caught
             // diagnostics rather than throwing. Capture the result so the diag
             // block can surface them — otherwise we have no signal at all.
-            emitResult = compilation.Emit(NavCA.EmitOptions.Default, outputter);
+            emitResult = compilation.Emit(RunnerEmitOptions, outputter);
         }
         catch (Exception ex) { caught = ex; }
         _mark("compilation.Emit (bind + IL gen)");
@@ -1965,7 +1977,7 @@ public sealed partial class BcCompiler
                 var genOutputter = new CaptureOutputter();
                 Exception? genCaught = null;
                 NavEmit.EmitResult? genEmitResult = null;
-                try { genEmitResult = genCompilation.Emit(NavCA.EmitOptions.Default, genOutputter); }
+                try { genEmitResult = genCompilation.Emit(RunnerEmitOptions, genOutputter); }
                 catch (Exception exGen) { genCaught = exGen; }
 
                 Console.Error.WriteLine(
@@ -2184,7 +2196,7 @@ public sealed partial class BcCompiler
                 var retryOutputter = new CaptureOutputter();
                 Exception? retryCaught = null;
                 Microsoft.Dynamics.Nav.CodeAnalysis.Emit.EmitResult? retryEmitResult = null;
-                try { retryEmitResult = retryCompilation.Emit(NavCA.EmitOptions.Default, retryOutputter); }
+                try { retryEmitResult = retryCompilation.Emit(RunnerEmitOptions, retryOutputter); }
                 catch (Exception ex2) { retryCaught = ex2; }
 
                 outputter = retryOutputter;
@@ -3075,7 +3087,7 @@ public sealed partial class BcCompiler
         public string? LastAddedName { get; private set; }
         public int AddCalls { get; private set; }
 
-        public CaptureOutputter() : base(NavCA.EmitOptions.Default) { }
+        public CaptureOutputter() : base(RunnerEmitOptions) { }
 
         public override void InitializeModule(NavCA.IModuleSymbol moduleSymbol) { }
 

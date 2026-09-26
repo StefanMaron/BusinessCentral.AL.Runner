@@ -285,8 +285,13 @@ public static partial class BcRuntime
                 // them shifts the whole walk by one and yields the callee as its own caller.
                 if (type!.Namespace != null
                     && type.Namespace.StartsWith("AlRunnerShim", StringComparison.Ordinal)) continue;
-                // Same AL method, not a caller: fold away the emitted scope frame object.
+                // Same AL method, not a caller: fold away the emitted scope frame object, and
+                // the closure/lambda frames C# splits out of an inline-scope method (an
+                // `asserterror` body runs in `<>c__DisplayClass…` or `<Method>b__…`, #4697).
                 if (type.Name.Contains("_Scope", StringComparison.Ordinal)) continue;
+                if (method!.Name.StartsWith('<')
+                    || (type.IsDefined(typeof(System.Runtime.CompilerServices.CompilerGeneratedAttribute), inherit: false)
+                        && type.Name.StartsWith("<>c", StringComparison.Ordinal))) continue;
                 // #2963 — the PRECOMPILED compile shape of the same thing. Microsoft's AL
                 // compiler emits a method whose body needs one as an `async ValueTask` state
                 // machine, so ONE AL method invocation occupies two managed frames: the

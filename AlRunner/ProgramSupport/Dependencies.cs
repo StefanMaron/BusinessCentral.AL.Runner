@@ -635,6 +635,8 @@ internal static partial class ProgramSupport
         //        than incidental.)
         WriteLine("schema:v14");
         WriteLine($"tdd:{(AlRunner.BcCompiler.IsTddMode() ? "1" : "0")}");
+        // #4697: scope-class and inline-scope DLLs differ in shape for the same source.
+        WriteLine(AlRunner.BcCompiler.RunnerEmitModeCacheTerm);
 
         // 1. Runner assembly fingerprint (content hash, not mtime — see v10 note above) +
         //    the selected BC version, so any rewriter/polyfill/patch change in the runner,
