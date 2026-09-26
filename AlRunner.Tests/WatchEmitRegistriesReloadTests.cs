@@ -158,7 +158,7 @@ public class WatchEmitRegistriesReloadTests
                 var src = await File.ReadAllTextAsync(testsPath);
                 var edited = src.Replace($"// EDIT-MARKER: {n - 1}", $"// EDIT-MARKER: {n}");
                 Assert.NotEqual(src, edited);
-                await File.WriteAllTextAsync(testsPath, edited);
+                WatchEdit.Replace(testsPath, edited);
 
                 int next = await WaitForMarkerAfter(marker + 1, TimeSpan.FromSeconds(300));
                 var window = Segment(marker + 1, next);

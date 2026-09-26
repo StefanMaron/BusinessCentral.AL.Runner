@@ -185,7 +185,7 @@ public class WatchPageMetadataReloadTests
             var driverSrc = await File.ReadAllTextAsync(driverTestsPath);
             var edited = driverSrc.Replace("EDIT-MARKER-V1", $"EDIT-MARKER-V2 {Guid.NewGuid():N}");
             Assert.NotEqual(driverSrc, edited);
-            await File.WriteAllTextAsync(driverTestsPath, edited);
+            WatchEdit.Replace(driverTestsPath, edited);
 
             // Cycle 2 (warm, after the edit). Generous budget: this is "did the cycle
             // finish", not a timing-precision claim — see WatchTests.cs's identical

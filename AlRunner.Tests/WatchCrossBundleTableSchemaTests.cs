@@ -103,7 +103,7 @@ public class WatchCrossBundleTableSchemaTests
     /// back. A cleared schema cannot satisfy this by returning a default.</summary>
     private static void WriteTestSource(string dir, string marker)
     {
-        File.WriteAllText(Path.Combine(dir, "Tests.al"), $$"""
+        WatchEdit.Replace(Path.Combine(dir, "Tests.al"), $$"""
         codeunit {{TestsId}} "Watch Schema Tests"
         {
             Subtype = Test;
@@ -271,7 +271,7 @@ public class WatchCrossBundleTableSchemaTests
 
             // ── Cycle 3. Now edit the DEPENDENCY, which forces it to re-parse and re-emit while
             // the consumer's files are unchanged — the other direction of the same question.
-            File.WriteAllText(Path.Combine(appDir, "Tbl.al"), $$"""
+            WatchEdit.Replace(Path.Combine(appDir, "Tbl.al"), $$"""
             table {{TableId}} "Watch Schema Row"
             {
                 DataClassification = CustomerContent;

@@ -112,7 +112,7 @@ public class WatchRadRealDependencyTests
             var original = await File.ReadAllTextAsync(testsCodeunitPath);
             Assert.Contains("'A1'", original);
             var edited = original.Replace("'A1'", "'A2'");
-            await File.WriteAllTextAsync(testsCodeunitPath, edited);
+            WatchEdit.Replace(testsCodeunitPath, edited);
 
             int m2 = await WaitForMarkerAfter(m1 + 1, TimeSpan.FromSeconds(240));
             var cycle2 = Segment(m1 + 1, m2);

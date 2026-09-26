@@ -95,7 +95,7 @@ public class WatchCrossBundleModuleIdentityTests
     /// an earlier cycle cannot pass.</para>
     /// </summary>
     private static void WriteDepSource(string dir, int stamp) =>
-        File.WriteAllText(Path.Combine(dir, "Dep.al"), $$"""
+        WatchEdit.Replace(Path.Combine(dir, "Dep.al"), $$"""
         table {{SetupTableId}} "WM Setup 2594"
         {
             DataClassification = SystemMetadata;

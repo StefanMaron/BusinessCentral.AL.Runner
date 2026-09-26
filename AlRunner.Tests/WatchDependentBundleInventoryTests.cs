@@ -179,7 +179,7 @@ public class WatchDependentBundleInventoryTests
             var original = File.ReadAllText(dependentSource);
             try
             {
-                File.WriteAllText(dependentSource, "// #2684 watch-cycle-2 edit\n" + original);
+                WatchEdit.Replace(dependentSource, "// #2684 watch-cycle-2 edit\n" + original);
                 int m2 = await WaitForMarkerAfter(m1 + 1, TimeSpan.FromSeconds(600));
                 AssertCycleHealthy(Segment(m1 + 1, m2), "cycle 2 (dependent bundle edited)");
             }
