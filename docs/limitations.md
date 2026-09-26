@@ -2209,6 +2209,13 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
     and the restored maximum seeds the runner's stamp counter so a row written after the restore
     still outranks every restored row —
     [#4123](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4123).
+  - Tables that are not per company (`DataPerCompany = false`) are hydrated too, read without a
+    company — so a hydrated Media or MediaSet field's id names a real `Tenant Media` /
+    `Tenant Media Set` row. Tenant-wide **platform** tables (id 2000000000 and up) other than
+    `Tenant Media`, `Tenant Media Set` and `Tenant Media Thumbnails` are not loaded: `Company`,
+    `User`, `Access Control`, `Object Metadata`, `Published Application` and the like are state
+    the runner builds itself. They are counted in the summary line and named under `--verbose`
+    ([#4770](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4770)).
   - A table whose AL name is declared by two installed apps in the same company is refused
     rather than guessed at —
     [#2264](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2264).

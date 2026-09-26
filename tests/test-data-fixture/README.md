@@ -42,6 +42,10 @@ back through ordinary AL `Record` calls with the right values.
   name; now the candidate the closure resolves (480) is read with `--app` set to its owning app.
   The assertion is the exact count (89) plus one row's values.
 
+- `TestDataTenantTables.Codeunit.al` (#4770) — tables that are not per company, read without a
+  company. The assertions are joins: a hydrated Media / MediaSet id on a company row must name a
+  `Tenant Media` / `Tenant Media Set` row, and a fresh GUID must not.
+
 **CI does not run this bundle, and that is deliberate.** It only passes with `--test-data`
 and a BC sandbox backup on the machine (~1 GB, shipped inside the sandbox artifact). CI runs
 `tests/runner-extras/` wholesale, without the flag — a bundle asserting hydrated rows would
