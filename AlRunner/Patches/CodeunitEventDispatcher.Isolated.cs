@@ -58,7 +58,9 @@ public static partial class BcRuntime
     /// <para>Observably equivalent: the Begin/End pair and <c>HasWriteTransaction</c> are BC's own
     /// members, carrying the runner's rollback-scope prepends (#4643). What is not reproduced is
     /// BC's reporting of the trapped error — <c>NavEventSubscription.ReportErrors</c> over the
-    /// subscription's error reporters, and a telemetry tag — neither of which AL can observe.</para>
+    /// subscription's error reporters, and a telemetry tag — neither of which AL can observe — and
+    /// BC's <c>FlushBufferedWritesAsync</c> inside the try, which is a no-op here because the
+    /// runner's in-memory provider never buffers writes.</para>
     ///
     /// <para>Trap: the runner's own refusals (<see cref="Infrastructure.BcShapeGapException"/>,
     /// <see cref="Infrastructure.BcAppSymbolReadException"/>) can arrive wrapped in a
@@ -67,8 +69,11 @@ public static partial class BcRuntime
     /// </summary>
     internal static void InvokeIsolatedEventSubscriber(Action invoke)
     {
-        if (SkeletonSession is not NavSession session
-            || session.AppInstallationContext != null
+        if (SkeletonSession is not NavSession session)
+            throw new Infrastructure.BcShapeGapException(
+                "isolated event subscriber", "BcRuntime.SkeletonSession",
+                "no NavSession to open the isolated transaction world on; running the subscriber un-isolated would let its error and writes escape (#4721)");
+        if (session.AppInstallationContext != null
             || session.AppUpgradeContext != null
             || session.HasWriteTransaction())
         {
@@ -83,7 +88,7 @@ public static partial class BcRuntime
             invoke();
             result = true;
         }
-        catch (Exception ex) when (IsTrappedByIsolatedEvent(ex, session))
+        catch (Exception ex) when (IsTrappedByIsolatedEvent(ex, session.CancellationToken.IsCancellationRequested))
         {
         }
         finally
@@ -92,11 +97,11 @@ public static partial class BcRuntime
         }
     }
 
-    private static bool IsTrappedByIsolatedEvent(Exception ex, NavSession session)
+    internal static bool IsTrappedByIsolatedEvent(Exception ex, bool sessionCancelled)
     {
         var inner = ex is TargetInvocationException { InnerException: { } ie } ? ie : ex;
         if (Infrastructure.BcShapeGapException.Find(inner) != null) return false;
         if (Infrastructure.BcAppSymbolReadException.Find(inner) != null) return false;
-        return inner is NavBaseException && !session.CancellationToken.IsCancellationRequested;
+        return inner is NavBaseException && !sessionCancelled;
     }
 }

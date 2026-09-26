@@ -1,5 +1,9 @@
 using System;
+using System.IO;
+using System.Reflection;
 using AlRunner;
+using AlRunner.Infrastructure;
+using Microsoft.Dynamics.Nav.Types.Exceptions;
 using Microsoft.Dynamics.Nav.Types;
 using Xunit;
 
@@ -40,4 +44,53 @@ public class IsolatedEventDispatchTests
     [Fact]
     public void PublisherMethodWithoutNavEventAttribute_IsReadAsNotIsolated()
         => Assert.False(BcRuntime.IsIsolatedEventScope(typeof(Publisher.OnUnattributed_Scope), "OnUnattributed"));
+
+    // IsTrappedByIsolatedEvent: which errors an isolated subscriber swallows. BC traps every
+    // NavBaseException unless the session is cancelled; the runner's own refusals must stay loud
+    // even when BC has rewrapped them as a NavBaseException (loud-failures.md).
+
+    private static Exception Wrapped(Exception inner) => new NavALException("wrapped", inner);
+
+    private static BcShapeGapException ShapeGap() => new("surface", "Type.member", "detail");
+
+    private static BcAppSymbolReadException SymbolRead()
+        => new("/x/dep.app", "table symbols", new InvalidDataException("bad json"));
+
+    [Fact]
+    public void PlainNavALException_IsTrapped()
+        => Assert.True(BcRuntime.IsTrappedByIsolatedEvent(new NavALException("subscriber failed"), sessionCancelled: false));
+
+    [Fact]
+    public void PlainNavALException_BehindTargetInvocation_IsTrapped()
+        => Assert.True(BcRuntime.IsTrappedByIsolatedEvent(
+            new TargetInvocationException(new NavALException("subscriber failed")), sessionCancelled: false));
+
+    [Fact]
+    public void ShapeGapWrappedInNavALException_IsNotTrapped()
+        => Assert.False(BcRuntime.IsTrappedByIsolatedEvent(Wrapped(ShapeGap()), sessionCancelled: false));
+
+    [Fact]
+    public void ShapeGapWrappedInNavALException_BehindTargetInvocation_IsNotTrapped()
+        => Assert.False(BcRuntime.IsTrappedByIsolatedEvent(
+            new TargetInvocationException(Wrapped(ShapeGap())), sessionCancelled: false));
+
+    [Fact]
+    public void SymbolReadWrappedInNavALException_IsNotTrapped()
+        => Assert.False(BcRuntime.IsTrappedByIsolatedEvent(Wrapped(SymbolRead()), sessionCancelled: false));
+
+    [Fact]
+    public void SymbolReadWrappedInNavALException_BehindTargetInvocation_IsNotTrapped()
+        => Assert.False(BcRuntime.IsTrappedByIsolatedEvent(
+            new TargetInvocationException(Wrapped(SymbolRead())), sessionCancelled: false));
+
+    [Fact]
+    public void RunnerOutOfScope_IsNotTrapped()
+        => Assert.False(BcRuntime.IsTrappedByIsolatedEvent(
+            new TargetInvocationException(new RunnerOutOfScopeException("NavEmail.Send", "email-smtp")),
+            sessionCancelled: false));
+
+    [Fact]
+    public void NavALException_OnCancelledSession_IsNotTrapped()
+        => Assert.False(BcRuntime.IsTrappedByIsolatedEvent(
+            new NavALException("subscriber failed"), sessionCancelled: true));
 }
