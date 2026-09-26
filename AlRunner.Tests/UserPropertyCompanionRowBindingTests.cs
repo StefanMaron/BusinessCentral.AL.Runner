@@ -1,4 +1,4 @@
-// UserPropertyCompanionRowBindingTests — issues #2355, #2983 and #2356.
+// UserPropertyCompanionRowBindingTests — issues #2355, #2983, #2356 and #4701.
 //
 // This is a RUNNER-MECHANISM test, not a claim about what real BC does. The BC-observable
 // claim ("a User row always has a matching User Property row, created with it, so
@@ -10,15 +10,16 @@
 // SystemTableTriggers.OnBeforeInsertAsync has a `case 2000000120:` arm that inserts the
 // companion User Property (2000000121) row, and the runner bypasses BC's trigger dispatch on
 // insert (RecordWritePatches.NavRecord_InsertAsync), so nothing created that row. The fix
-// prepends UserTableTriggerPatches.OnBeforeUserInsert to
-// NavRecord.InsertAsync(DataError, bool, bool, bool) — where AL's ALInsertAsync and a page's
-// NavForm.SaveRecordAsync (CurrPage.Update on a new record) both arrive. It used to sit on
-// ALInsertAsync(DataError, bool, bool), which the page route never calls (#4121).
+// prepends UserTableTriggerPatches.OnBeforeUserInsert to RecordImplementation.InsertRecordAsync —
+// below NavRecord.InsertAsync(4)'s subscriber and trigger dispatch, where BC's own arm runs
+// (#4701). AL's ALInsertAsync and a page's NavForm.SaveRecordAsync both reach it through
+// InsertAsync(4). It sat on ALInsertAsync until #4121 and on InsertAsync(4) until #4701.
 //
 // The same file now also carries the rest of BC's two `case 2000000120:` arms — the insert
 // arm's uniqueness refusals (#2983) and the delete arm's four table cascades (#2356) — so
 // there are TWO prepends to pin: OnBeforeUserInsert on InsertAsync(DataError, bool, bool, bool)
-// and OnAfterUserDelete on ALDeleteAsync(DataError, bool, bool). The delete one is the single
+// and OnAfterUserDelete on ALDeleteAsync(DataError, bool, bool). (The insert one is now on
+// RecordImplementation.InsertRecordAsync.) The delete one is the single
 // funnel for `Delete()` AND `DeleteAll()` on this table, because DeleteAllAsync's bulk path is
 // gated on CanUseBulkDeleteAll, which ends in !TableHasSystemDeleteTrigger, whose static switch
 // lists 2000000120.
@@ -110,20 +111,19 @@ public sealed class UserPropertyCompanionRowBindingTests
     // in-process; a machine where it cannot (a cold Cecil cache, say) can still answer the
     // question these tests ask, and gating on it hid them behind an unrelated skip.
     [SkippableFact]
-    public void InsertAsyncFunnel_CallsTheCompanionRowHelperAsItsFirstAct()
+    public void InsertRecord_CallsTheInsertArmHelperOnItsParentRecord_AheadOfTheOriginalBody()
     {
         Skip.IfNot(File.Exists(RewrittenNclPath),
             $"the rewritten Ncl is not present at '{RewrittenNclPath}'.");
 
         using var module = ModuleDefinition.ReadModule(RewrittenNclPath);
-        var alInsert = NavRecordMethod(module, "ALInsertAsync", "DataError", "Boolean", "Boolean");
-        SkipUnlessRewritten(alInsert);
-        var insert = NavRecordMethod(module, "InsertAsync", "DataError", "Boolean", "Boolean", "Boolean");
-        var instructions = insert.Body.Instructions;
+        SkipUnlessRewritten(NavRecordMethod(module, "ALInsertAsync", "DataError", "Boolean", "Boolean"));
+        var insertRecord = module.GetType("Microsoft.Dynamics.Nav.Runtime.RecordImplementation")?.Methods
+            .FirstOrDefault(m => m.Name == "InsertRecordAsync" && m.HasBody
+                && m.Parameters.Select(p => p.ParameterType.Name).SequenceEqual(new[] { "DataError" }));
+        Assert.True(insertRecord != null, "RecordImplementation.InsertRecordAsync(DataError) not found in Ncl.");
+        var instructions = insertRecord!.Body.Instructions;
 
-        // The prepend is `ldarg.0; call helper` inserted before the original body, so the
-        // helper call must sit within the first few instructions — not merely somewhere in
-        // the method, which a later, conditional call site would also satisfy.
         var helperIndex = instructions
             .Select((instruction, index) => (instruction, index))
             .Where(x => (x.instruction.OpCode == OpCodes.Call || x.instruction.OpCode == OpCodes.Callvirt)
@@ -132,24 +132,23 @@ public sealed class UserPropertyCompanionRowBindingTests
             .FirstOrDefault();
 
         Assert.True(helperIndex.HasValue,
-            "NavRecord.InsertAsync(DataError, bool, bool, bool) does not call "
+            "RecordImplementation.InsertRecordAsync does not call "
             + "UserTableTriggerPatches.OnBeforeUserInsert — the User Property row BC's "
             + "own User insert trigger creates would never be written, and every AL path that "
             + "reaches UserManagement.DirectSetUserFieldValue would fail with "
             + "\"The User Property does not exist\" (issue #2355).");
 
-        // It must be in the PREPENDED PREFIX, not merely somewhere in the method: the
-        // companion row has to be written before the original body runs, exactly as BC's own
-        // OnBeforeInsertAsync does. Each prepend contributes exactly `ldarg.0; call`, so the
-        // prefix is characterised by its SHAPE — nothing but those two opcodes ahead of us —
-        // rather than by a fixed index that another prepend would invalidate.
-        Assert.Equal(OpCodes.Ldarg_0, instructions[helperIndex!.Value - 1].OpCode);
+        // The helper gets the NavRecord that owns this RecordImplementation, and runs before the
+        // original body: the prefix is only prepends (ldarg.0 / ldfld / call).
+        Assert.Equal(OpCodes.Ldarg_0, instructions[helperIndex!.Value - 2].OpCode);
+        Assert.Equal(OpCodes.Ldfld, instructions[helperIndex.Value - 1].OpCode);
+        Assert.Equal("parentRecord", (instructions[helperIndex.Value - 1].Operand as FieldReference)?.Name);
         for (var i = 0; i < helperIndex.Value; i++)
             Assert.True(
-                instructions[i].OpCode == OpCodes.Ldarg_0 || instructions[i].OpCode == OpCodes.Call,
-                $"instruction {i} of NavRecord.InsertAsync is {instructions[i].OpCode}, so the "
-                + "companion-row helper is no longer inside the prepended prefix — it would run "
-                + "after part of the original body instead of before all of it.");
+                instructions[i].OpCode == OpCodes.Ldarg_0 || instructions[i].OpCode == OpCodes.Ldfld
+                || instructions[i].OpCode == OpCodes.Call,
+                $"instruction {i} of RecordImplementation.InsertRecordAsync is {instructions[i].OpCode}, "
+                + "so the insert-arm helper is no longer inside the prepended prefix.");
     }
 
     [SkippableFact]
@@ -166,6 +165,10 @@ public sealed class UserPropertyCompanionRowBindingTests
         SkipUnlessRewritten(alInsert);
 
         Assert.DoesNotContain(HelperFullName, CalledMethods(alInsert));
+        // #4701: on InsertAsync(4) the arm ran BEFORE the OnBeforeInsert subscribers and the
+        // OnInsert triggers, which BC runs first.
+        Assert.DoesNotContain(HelperFullName, CalledMethods(
+            NavRecordMethod(module, "InsertAsync", "DataError", "Boolean", "Boolean", "Boolean")));
     }
 
     [SkippableFact]
