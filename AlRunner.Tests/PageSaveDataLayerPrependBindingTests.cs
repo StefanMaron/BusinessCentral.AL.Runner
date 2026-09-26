@@ -77,25 +77,9 @@ public sealed class PageSaveDataLayerPrependBindingTests
             .Select(i => (i.Operand as MethodReference)?.FullName ?? string.Empty)
             .ToList();
 
-    /// <summary>
-    /// Tell "the file on disk has not been Cecil-rewritten yet" (a legitimate skip) apart from
-    /// "it was rewritten and the prepend under test is missing" (the regression). The marker is
-    /// a prepend this class asserts nothing about, on a method this class does not move things
-    /// to — so it cannot go absent for the same reason a subject does, which is what would
-    /// convert a real failure into a green skip.
-    /// </summary>
+    // "Was Ncl rewritten at all?" is keyed on no single prepend, and fails rather than skips on CI (#4782).
     private static void SkipUnlessRewritten(ModuleDefinition module)
-    {
-        // Was OnAfterUserDelete on ALDeleteAsync until #4766 moved that prepend away.
-        var marker = CalledMethods(NavRecordMethod(module, "ALInsertAsync", "DataError", "Boolean", "Boolean"))
-            .Any(name => name.Contains(
-                "AlRunner.Patches.ALDatabasePatches::NoteRecordInsertWrite(System.Object)",
-                StringComparison.Ordinal));
-        Skip.IfNot(marker,
-            $"'{RewrittenNclPath}' has not been Cecil-rewritten (no prepends present at all), so "
-            + "there is nothing to assert about the prepend list. Run the runner once to warm the "
-            + "Cecil cache first — CI's bc-tests.yml does exactly that before `dotnet test`.");
-    }
+        => NclRewriteMarker.SkipUnlessRewritten(module, RewrittenNclPath);
 
     private static ModuleDefinition OpenRewrittenNcl()
     {

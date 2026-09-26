@@ -48,13 +48,9 @@ public sealed class UserModifyArmBindingTests
             .Select(i => (i.Operand as MethodReference)?.FullName ?? string.Empty)
             .ToList();
 
-    /// <summary>A rewritten Ncl carries NoteRecordInsertWrite on ALInsertAsync, which this class asserts
-    /// nothing about; an un-rewritten one is a skip, never a pass, and never a failure of the subject.</summary>
+    // "Was Ncl rewritten at all?" is keyed on no single prepend, and fails rather than skips on CI (#4782).
     private static void SkipUnlessRewritten(ModuleDefinition module)
-        => Skip.IfNot(
-            CalledMethods(NavRecordMethod(module, "ALInsertAsync", "DataError", "Boolean", "Boolean"))
-                .Any(n => n.Contains("AlRunner.Patches.ALDatabasePatches::NoteRecordInsertWrite(System.Object)", StringComparison.Ordinal)),
-            $"'{RewrittenNclPath}' has not been Cecil-rewritten; run the runner once to warm the Cecil cache.");
+        => NclRewriteMarker.SkipUnlessRewritten(module, RewrittenNclPath);
 
     private static MethodDefinition RecordImplementationMethod(ModuleDefinition module, string name)
     {
