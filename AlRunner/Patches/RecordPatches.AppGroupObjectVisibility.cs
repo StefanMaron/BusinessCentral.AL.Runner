@@ -115,7 +115,7 @@ public static partial class RecordPatches
         "pageextension" => _parsedPageExtensions.GetValueOrDefault(id),
         "report" => _parsedReports.GetValueOrDefault(id),
         "reportextension" => _parsedReportExtensions.GetValueOrDefault(id),
-        "query" or "queryextension" => _parsedQueries.GetValueOrDefault(id),
+        "query" => _parsedQueries.GetValueOrDefault(id),
         "xmlport" => _parsedXmlPorts.GetValueOrDefault(id),
         _ => _parsedObjectDecls.GetValueOrDefault((kind, id)),
     };

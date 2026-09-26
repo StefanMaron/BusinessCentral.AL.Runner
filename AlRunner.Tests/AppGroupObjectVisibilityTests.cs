@@ -298,7 +298,7 @@ public class AppGroupObjectVisibilityTests
             table 62680 "Dup {{letter}} Table" { fields { field(1; "Code"; Code[20]) { } field(2; "Only{{letter}}"; Integer) { } } keys { key(PK; "Code") { Clustered = true; } } }
             xmlport 62683 "Dup {{letter}} XmlPort" { Caption = 'Dup {{letter}} XmlPort Cap'; schema { textelement(Root{{letter}}) { } } }
             table {{bufferId}} "Dup {{letter}} Buffer" { fields { field(1; PK; Integer) { } field(2; Data; Blob) { } } keys { key(PK; PK) { Clustered = true; } } }
-            report 62686 "Dup {{letter}} Report" { Caption = 'Dup {{letter}} Report Cap'; ProcessingOnly = true; dataset { dataitem(I; Integer) { } } }
+            report 62686 "Dup {{letter}} Report" { Caption = 'Dup {{letter}} Report Cap'; ProcessingOnly = true; dataset { dataitem(T; "Dup {{letter}} Table") { } } }
             page 62687 "Dup {{letter}} Page" { Caption = 'Dup {{letter}} Page Cap'; SourceTable = "Dup {{letter}} Table"; layout { area(Content) { field(C; Rec.Code) { } } } }
             query 62688 "Dup {{letter}} Query" { elements { dataitem(T; "Dup {{letter}} Table") { column(C; Code) { } } } }
             codeunit {{cu}} "Dup {{letter}} Tests"
@@ -373,6 +373,8 @@ public class AppGroupObjectVisibilityTests
                 begin
                     if not ReportMetadata.Get(62686) then Error('MISSING: Report Metadata 62686 in {{letter}}');
                     if ReportMetadata.Name <> 'Dup {{letter}} Report' then Error('WRONG: Report Metadata name for 62686 in {{letter}} is %1', ReportMetadata.Name);
+                    // The dataitem names this group's own table, resolved by name in this group.
+                    if ReportMetadata.FirstDataItemTableID <> 62680 then Error('WRONG: Report Metadata first data item table for 62686 in {{letter}} is %1', ReportMetadata.FirstDataItemTableID);
                     AllObj.Get(AllObj."Object Type"::Report, 62686);
                     if AllObj."Object Name" <> 'Dup {{letter}} Report' then Error('WRONG: AllObjWithCaption report name for 62686 in {{letter}} is %1', AllObj."Object Name");
                     if AllObj."Object Caption" <> 'Dup {{letter}} Report Cap' then Error('WRONG: AllObjWithCaption report caption for 62686 in {{letter}} is %1', AllObj."Object Caption");

@@ -393,7 +393,7 @@ public static partial class RecordPatches
                 if (tableId <= 0) return null;
                 if (!sortFieldMaps.TryGetValue(tableId, out var map))
                 {
-                    map = _parsedTables.TryGetValue(tableId, out var pt) ? BuildSortFieldIndex(InAppGroupScope("table", tableId, pt)) : null;
+                    map = _parsedTables.TryGetValue(tableId, out var pt) ? BuildSortFieldIndex(pt) : null;
                     sortFieldMaps[tableId] = map;
                 }
                 return map == null ? null : identifier => ResolveSortFieldNo(map, identifier);
