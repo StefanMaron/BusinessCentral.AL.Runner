@@ -1,9 +1,11 @@
 // Issue #4660: a control that a PRECOMPILED pageextension adds to a PRECOMPILED page was absent
 // from RecordPatches.GetPageControlFieldMap's dependency fallback, which read only the base
 // page's own symbol controls, so TestPage.GetField answered null and BC raised
-// "The field with ID = N is not found on the page." The end-to-end shape against Base
-// Application is tests/runner-extras/testpage-dep-pageext-tableext-field.
+// "The field with ID = N is not found on the page." End-to-end proof on a real service tier:
+// corpus codeunit 67400 (StefanMaron/BusinessCentral.AL.Language.Tests#444).
+using System.Collections;
 using System.IO.Compression;
+using System.Reflection;
 using System.Text;
 using AlRunner.Patches;
 using Xunit;
@@ -19,6 +21,26 @@ public class DependencyPageExtensionControlFieldMapTests
     private const int ExtControlId = 646600002;
     private const int ExtGhostControlId = 646600003;
     private const int OtherPageExtControlId = 646600004;
+    private const int PrecompiledExtId = 88246603;
+    private const int SourceOtherPageExtId = 88246605;
+
+    private static readonly Type RP = typeof(RecordPatches);
+
+    private static IDictionary ParsedPageExtensions =>
+        (IDictionary)RP.GetField("_parsedPageExtensions", BindingFlags.NonPublic | BindingFlags.Static)!
+            .GetValue(null)!;
+
+    private static void InvokeParser(string methodName, string source)
+        => RP.GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Static)!.InvokeStatic(source);
+
+    /// <summary>The control ids the source parser assigned to a pageextension's field controls.</summary>
+    private static int[] ParsedControlIds(int extId)
+    {
+        var ext = ParsedPageExtensions[extId]
+            ?? throw new InvalidOperationException($"pageextension {extId} was not parsed");
+        var map = (IReadOnlyDictionary<int, string>)ext.GetType().GetProperty("ControlIdToFieldName")!.GetValue(ext)!;
+        return map.Keys.ToArray();
+    }
 
     // The page declares one field control of its own; a pageextension in the same .app adds a
     // control bound to a tableextension field, and one bound to a field nobody declares. A
@@ -156,6 +178,82 @@ public class DependencyPageExtensionControlFieldMapTests
         }
         finally
         {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void SourcePageExtensionOfAnotherPage_DoesNotBindOntoPrecompiledPage()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-pageext-fieldmap-tests");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir));
+            InvokeParser("TryParsePageFile", $$"""
+                pageextension {{SourceOtherPageExtId}} "DPXC Src Other Ext" extends "DPXC Some Other Page"
+                {
+                    layout
+                    {
+                        addlast(content)
+                        {
+                            field("Src Leak"; Rec.Code) { }
+                        }
+                    }
+                }
+                """);
+            var leakIds = ParsedControlIds(SourceOtherPageExtId);
+            Assert.Single(leakIds);
+
+            var map = RecordPatches.GetPageControlFieldMap(PageId);
+
+            Assert.False(map.ContainsKey(leakIds[0]),
+                "a source-parsed pageextension of another page must not bind onto this precompiled page");
+            Assert.Equal(new[] { BaseControlId, ExtControlId }.OrderBy(i => i), map.Keys.OrderBy(i => i));
+        }
+        finally
+        {
+            ParsedPageExtensions.Remove(SourceOtherPageExtId);
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void SameNumberedSourcePageExtension_ReplacesThePrecompiledOne()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-pageext-fieldmap-tests");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir));
+            InvokeParser("TryParsePageFile", $$"""
+                pageextension {{PrecompiledExtId}} "DPXC Dep Page Ext" extends "DPXC Dep Page"
+                {
+                    layout
+                    {
+                        addlast(content)
+                        {
+                            field("Src Code"; Rec.Code) { }
+                        }
+                    }
+                }
+                """);
+            var srcIds = ParsedControlIds(PrecompiledExtId);
+            Assert.Single(srcIds);
+
+            var map = RecordPatches.GetPageControlFieldMap(PageId);
+
+            Assert.False(map.ContainsKey(ExtControlId),
+                "the precompiled extension's Ext Flag control must not appear when a source-parsed " +
+                "extension with the same id replaces it");
+            Assert.True(map.TryGetValue(srcIds[0], out var srcField),
+                "the source-parsed extension's own control must bind onto the precompiled page");
+            Assert.Equal(1, srcField);
+            Assert.Equal(2, map.Count);
+        }
+        finally
+        {
+            ParsedPageExtensions.Remove(PrecompiledExtId);
             Directory.Delete(dir, recursive: true);
         }
     }
