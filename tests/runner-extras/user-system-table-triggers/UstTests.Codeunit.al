@@ -368,12 +368,13 @@ codeunit 65621 "UST Tests"
     [Test]
     procedure UstDeleteAllCascadesTheSameWayDeleteDoes()
     // AL binds `Rec.DeleteAll()` to ALDeleteAll(bool) -> DeleteAllAsync(bool), NOT to the
-    // ALDeleteAsync entry point the cascade is prepended to -- so #2356 predicted this surface
+    // ALDeleteAsync entry point the cascade was first prepended to -- so #2356 predicted this surface
     // would be missed. It is not, and the reason is in BC's own IL: DeleteAllAsync takes its
     // BULK path only when CanUseBulkDeleteAll holds, and that predicate ends in
     // !SystemTableTriggers.TableHasSystemDeleteTrigger(record), whose static switch lists
     // 2000000120. For User it is therefore always false, so DeleteAllAsync falls to its row
-    // loop and calls ALDeleteAsync per row. This test measures that rather than trusting it.
+    // loop and calls ALDeleteAsync -> DeleteAsync -> DeleteRecordAsync (where the cascade sits
+    // since #4766) per row. This test measures that rather than trusting it.
     var
         UserRec: Record User;
         UserProperty: Record "User Property";
@@ -388,6 +389,6 @@ codeunit 65621 "UST Tests"
 
         Assert.IsFalse(
             UserProperty.Get(Sid),
-            'DeleteAll() must cascade exactly as Delete() does -- both funnel through ALDeleteAsync');
+            'DeleteAll() must cascade exactly as Delete() does -- both funnel through DeleteRecordAsync');
     end;
 }

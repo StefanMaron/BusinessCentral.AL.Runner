@@ -1350,28 +1350,31 @@ public static partial class NclCecilRewrite
             Console.Error.WriteLine("[Cecil] Prepended OnBeforeUserInsert → RecordImplementation.InsertRecordAsync(DataError)");
         }
 
-        // ── NavRecord.ALDeleteAsync(DataError, bool, bool) — User system-table delete arm ──
+        // ── RecordImplementation.DeleteRecordAsync(DataError) — User system-table delete arm ──
         // SystemTableTriggers.OnAfterDeleteAsync's `case 2000000120:` arm cascades a User
         // delete into Access Control (2000000053), User Property (2000000121), Isolated
-        // Storage (2000000107) and Tenant Report Layout Selection (2000000233). The runner
-        // bypasses BC's trigger dispatch on writes, so every one of those rows was orphaned
-        // (#2356) — including the very User Property row the insert prepend above creates.
+        // Storage (2000000107) and Tenant Report Layout Selection (2000000233) (#2356). BC runs
+        // it in the data layer under DeleteRecordAsync, i.e. after NavRecord.DeleteAsync(4) has
+        // run the OnBeforeDelete subscribers, the OnDelete triggers and NavGlobalTriggers, and
+        // before the OnAfterDelete subscribers (#4766). DeleteRecordAsync's only caller is
+        // DeleteAsync(4), which Delete() and DeleteAll()'s row loop both reach — User never takes
+        // the bulk path (TableHasSystemDeleteTrigger lists 2000000120).
         //
-        // ALDeleteAsync(DataError,bool,bool) is the single funnel for BOTH `Delete()` and
-        // `DeleteAll()` on this table: DeleteAllAsync's bulk path is gated on
-        // CanUseBulkDeleteAll, which ends in !SystemTableTriggers.TableHasSystemDeleteTrigger,
-        // and that method's static switch lists 2000000120 — so User always falls to the row
-        // loop, which calls ALDeleteAsync per row.
+        // Emits `ldarg.0; ldfld parentRecord; call helper`: parentRecord is a FieldDefinition
+        // of this module, so the ldfld adds no typeRef/memberRef to Ncl (no token shift).
         {
-            var navRecord = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord")
-                ?? throw new InvalidOperationException("NavRecord type not found in Ncl");
-            var alDelete3 = navRecord.Methods.FirstOrDefault(m =>
-                m.Name == "ALDeleteAsync"
-                && m.Parameters.Count == 3
-                && m.Parameters[0].ParameterType.Name == "DataError"
-                && m.Parameters[1].ParameterType.MetadataType == Mono.Cecil.MetadataType.Boolean
-                && m.Parameters[2].ParameterType.MetadataType == Mono.Cecil.MetadataType.Boolean)
-                ?? throw new InvalidOperationException("NavRecord.ALDeleteAsync(DataError,bool,bool) not found");
+            var recImpl = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.RecordImplementation")
+                ?? throw new InvalidOperationException("RecordImplementation type not found in Ncl");
+            var parentRecord = recImpl.Fields.FirstOrDefault(f => f.Name == "parentRecord"
+                    && f.FieldType.FullName == "Microsoft.Dynamics.Nav.Runtime.NavRecord")
+                ?? throw new InvalidOperationException(
+                    "RecordImplementation.parentRecord (NavRecord) not found — the User system-table "
+                    + "delete cascade could not be bound.");
+            var deleteRecord = recImpl.Methods.FirstOrDefault(m =>
+                m.Name == "DeleteRecordAsync"
+                && m.Parameters.Count == 1
+                && m.Parameters[0].ParameterType.Name == "DataError")
+                ?? throw new InvalidOperationException("RecordImplementation.DeleteRecordAsync(DataError) not found");
 
             var helperMi = typeof(AlRunner.Patches.UserTableTriggerPatches).GetMethod(
                 nameof(AlRunner.Patches.UserTableTriggerPatches.OnAfterUserDelete),
@@ -1379,13 +1382,14 @@ public static partial class NclCecilRewrite
                 ?? throw new InvalidOperationException("UserTableTriggerPatches.OnAfterUserDelete not found");
             var helperRef = asm.MainModule.ImportReference(helperMi);
 
-            var body = alDelete3.Body;
+            var body = deleteRecord.Body;
             var il = body.GetILProcessor();
             var firstOriginal = body.Instructions[0];
             il.InsertBefore(firstOriginal, il.Create(OpCodes.Ldarg_0));
+            il.InsertBefore(firstOriginal, il.Create(OpCodes.Ldfld, parentRecord));
             il.InsertBefore(firstOriginal, il.Create(OpCodes.Call, helperRef));
             if (body.MaxStackSize < 1) body.MaxStackSize = 1;
-            Console.Error.WriteLine("[Cecil] Prepended OnAfterUserDelete → NavRecord.ALDeleteAsync(DataError,bool,bool)");
+            Console.Error.WriteLine("[Cecil] Prepended OnAfterUserDelete → RecordImplementation.DeleteRecordAsync(DataError)");
         }
 
         // ── NavRecord.ModifyAsync(DataError, bool, bool, bool) — SystemModified stamp prepend ──
