@@ -196,7 +196,7 @@ public static class AlCoverageTracker
             try { types = asm.GetTypes(); }
             catch (ReflectionTypeLoadException ex) { types = ex.Types.Where(t => t != null).Cast<Type>().ToArray(); }
 
-            foreach (var t in types.SelectMany(type => AlScopeKey.DeclaredBy(type, _tSourceSpansAttr!)))
+            foreach (var t in types.SelectMany(type => AlScopeKey.DeclaredByMapped(type, _tSourceSpansAttr!, sourceMap)))
             {
                 if (Attribute.GetCustomAttribute(t, _tSourceSpansAttr!) is not object srcAttr) continue;
                 if (_piEncodedSpans!.GetValue(srcAttr) is not long[] spans || spans.Length == 0) continue;

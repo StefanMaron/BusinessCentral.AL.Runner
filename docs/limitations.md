@@ -1871,21 +1871,12 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   ([#4666](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4666); corpus
   codeunit 60925). BC fills them in `SingleSessionCodeCoverageRecorder.ProcessStart`, which opens
   a per-test record only for a scope whose `IsTest` flag is set, and keys every row on
-  `IMethodIdProvider.MethodId` (a counter with `-1` is skipped). A service tier compiles with
-  `EnableInlinedMethodCodeGeneration` (default `true` on 27.0 and 28.4), whose
-  `new ALMethodScope(this, name, flags, Method.Id)` carries both; the runner compiles with
-  `EmitOptions.Default`, which emits one `X_Scope_<id>` class per method and never sets
-  `IsTest` (`MethodCodeGenerator.GetMethodScopeFlags` only reaches the inline form). So
-  `AlRunner/Rewriters/ScopeClassIdentity.cs` adds both to each emitted scope class during the
-  compile: `IMethodIdProvider` with the id BC encodes in the class name
-  (`_Scope_<id>`, `_Scope__<abs id>` when negative), and, for the class a `[NavTest]` method
-  constructs, a `GetMethodScopeFlags` override that ORs in `IsTest`. The same method id now
-  also fills the `Method ID` of the `Code Coverage` rows for procedures.
+  `IMethodIdProvider.MethodId` (a counter with `-1` is skipped). Both come from the emit: the
+  runner compiles AL the way a service tier does (`EnableInlinedMethodCodeGeneration`, default
+  `true`), as `new ALMethodScope(this, name, flags, Method.Id)` per method, triggers included
+  ([#4697](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4697)).
 
-  Two gaps remain. A trigger's scope class is named `X_Scope`, with no id, so its method id
-  stays unset and a trigger that runs inside a test has no 2000000288 row
-  ([#4682](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4682)). And a
-  2000000289 row's `Owning Application` reads the empty GUID, because
+  One gap remains. A 2000000289 row's `Owning Application` reads the empty GUID, because
   `NavApplicationObjectBase.AppId` is null for objects the runner compiled
   ([#4676](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4676)).
 

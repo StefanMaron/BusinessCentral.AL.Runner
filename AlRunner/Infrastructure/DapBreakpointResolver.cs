@@ -119,7 +119,7 @@ public static class DapBreakpointResolver
             catch (ReflectionTypeLoadException ex) { types = ex.Types.Where(t => t != null).Cast<Type>().ToArray(); }
 
             AlSourceSpansReflection.EnsureInit();
-            foreach (var t in types.SelectMany(type => AlScopeKey.DeclaredBy(type, AlSourceSpansReflection.SourceSpansAttribute)))
+            foreach (var t in types.SelectMany(type => AlScopeKey.DeclaredByMapped(type, AlSourceSpansReflection.SourceSpansAttribute, sourceMap)))
             {
                 var spans = AlSourceSpansReflection.TryGetSpans(t);
                 if (spans == null) continue;

@@ -69,6 +69,19 @@ internal static class AlScopeKey
     }
 
     /// <summary>
+    /// <see cref="DeclaredBy"/> for a type whose AL object <paramref name="sourceMap"/> maps,
+    /// nothing otherwise — checked first, so a packaged app's methods are never scanned. A type
+    /// whose identity cannot be read (a dependency that does not load) declares nothing.
+    /// </summary>
+    public static IEnumerable<MemberInfo> DeclaredByMapped(Type type, Type sourceSpansAttr, AlSourceLocationMap sourceMap)
+    {
+        bool mapped;
+        try { mapped = sourceMap.ContainsKey(AlCallStackCapture.ParseObjectTypeAndId(type)); }
+        catch (Exception) { mapped = false; }
+        return mapped ? DeclaredBy(type, sourceSpansAttr) : Array.Empty<MemberInfo>();
+    }
+
+    /// <summary>
     /// The outermost type declaring <paramref name="key"/> — the AL object's class
     /// (<c>Codeunit60021</c>, <c>Record18</c>, …).
     /// </summary>
@@ -121,7 +134,7 @@ internal static class AlScopeKey
                 result.Add((names[i], () => index < items.Count
                     ? items[index]
                     : throw new InvalidOperationException(
-                        $"[LocalsNames] names {names.Length} locals but the scope's tuple holds {items.Count}")));
+                        $"LocalsNames declares {names.Length} locals but the scope's tuple holds {items.Count}")));
             }
             return result;
         }
