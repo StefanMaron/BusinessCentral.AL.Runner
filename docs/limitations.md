@@ -190,6 +190,29 @@ it back in the next `[Test]` of the same codeunit, and `Test Isolation Global Va
 and 28.3: the row survives and so do the globals, which is what "rolls back after each
 test codeunit" and "one codeunit instance runs them all" mean in practice.
 
+<a id="test-codeunit-onrun"></a>
+#### A test codeunit's own `OnRun` (#4694)
+
+A test codeunit that declares `trigger OnRun()` has it run before its first executed `[Test]`
+method, as BC's `NavTestCodeunit.DoRunAsync` does: on the codeunit's instance, then committed,
+so the globals it sets and the rows it writes are what the tests start from. Microsoft's
+`Test Runner - Mgt.` runs it whatever the test-method filter says, so `--test` narrowing to one
+method still runs it; a codeunit none of whose tests is selected does not run it.
+
+| `--isolation` | when `OnRun` runs |
+|---|---|
+| `codeunit`, `disabled` | once per codeunit, before the first executed test |
+| `test` | before every test, on that test's fresh instance and after the per-test database reset — each test starts where a codeunit holding only that test would |
+
+If `OnRun` fails, BC rolls its writes back and runs none of the codeunit's test methods. The
+runner does the same and reports **every selected test of that codeunit** as an error whose
+message starts `The test codeunit's OnRun trigger failed, so none of its test methods ran`,
+followed by the AL error — never a silent skip, and never a smaller test count. BC itself logs no
+per-method result in that case; the per-test error is the runner's reporting choice.
+
+The BC half is pinned in the corpus by `Test TestCU OnRun Runs First` (60002); the runner's
+isolation and reporting behaviour by `AlRunner.Tests/TestCodeunitOnRunTests.cs`.
+
 #### A correction worth recording (#2160)
 
 Between #2144 and #2160 this table said something different and wrong: that `codeunit`
