@@ -254,16 +254,18 @@ internal sealed partial class RunnerPageInstance
     }
 
     /// <summary>
-    /// Re-read the host's current row from the table after a RunObject page returns, so the
-    /// host shows — and later saves over — what the target wrote (corpus codeunit 67351). The
-    /// row was saved before the action ran (LiveNavTestAction.Invoke), so no pending edit is
-    /// lost. Values only: whether BC also raises the host's OnAfterGetRecord here is unmeasured.
+    /// Refresh the host's current row after a RunObject page returns: re-read it, retake the
+    /// before-image, and raise OnAfterGetRecord, so the host shows — and later saves over, with
+    /// that xRec — what the target wrote, and keeps what its own trigger computes (corpus
+    /// codeunit 67351). The row was saved before the action ran (LiveNavTestAction.Invoke).
+    /// Trap: a re-read without the trigger blanks every value OnAfterGetRecord put into Rec.
     /// </summary>
     private void RereadHostRowAfterTarget()
     {
         if (_record == null || IsCurrentRowUnsavedNewRow?.Invoke() == true) return;
-        if (_record.ALFind(Microsoft.Dynamics.Nav.Types.DataError.TrapError, "="))
-            _record.OldRecord.ALAssign(_record);
+        if (!_record.ALFind(Microsoft.Dynamics.Nav.Types.DataError.TrapError, "=")) return;
+        _record.OldRecord.ALAssign(_record);
+        RaiseOnAfterGetRecord();
     }
 
     /// <summary>
