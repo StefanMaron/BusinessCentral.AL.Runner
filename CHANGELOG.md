@@ -45,6 +45,8 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **testpage:** unsaved new row on a temporary-source page raises no OnAfterGetRecord on CurrPage.Update
+- **metadata:** quote ';' in one-language MultiLanguage captions
 - **testpage:** a TestPage is not open after Close(); a second Close() or a field read raises
 - **loader:** failing test in a two-app bundle no longer stack-overflows the assembly resolver
 - **records:** Next() re-seeks after a second variable modifies the table, as on BC
