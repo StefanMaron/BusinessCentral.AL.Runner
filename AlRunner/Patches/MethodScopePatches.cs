@@ -402,7 +402,6 @@ public static partial class BcRuntime
     }
 
     private static MethodInfo? _miRemoveTrap;
-    private static FieldInfo? _fSharedRefCount;
 
     /// <summary>
     /// Removes the outstanding <c>Trap()</c> of each LOCAL TestPage variable of a disposing scope
@@ -442,14 +441,8 @@ public static partial class BcRuntime
     /// </summary>
     private static bool IsLastReference(Microsoft.Dynamics.Nav.Runtime.TreeHandler tree, object reference)
     {
-        if (tree.GetType().Name != "TreeSharedObjectHandler")
-            return ReferenceEquals(tree.Parent, reference);
-        _fSharedRefCount ??= tree.GetType().GetField("refCount", BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new AlRunner.Infrastructure.BcShapeGapException(
-                "testpage-trap-scope", "TreeSharedObjectHandler.refCount",
-                "field not found — without it the runner cannot tell whether a local TestPage holds "
-                + "the last reference to its page (#4732)");
-        return (int)_fSharedRefCount.GetValue(tree)! == 1;
+        var count = tree.ReferenceCount; // -1 on a non-shared handler
+        return count < 0 ? ReferenceEquals(tree.Parent, reference) : count == 1;
     }
 
     /// <summary>

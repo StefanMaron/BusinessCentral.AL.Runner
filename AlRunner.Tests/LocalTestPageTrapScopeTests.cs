@@ -128,6 +128,41 @@ public sealed class LocalTestPageTrapScopeTests : IDisposable
                 HandlerRan := true;
             end;
         }
+
+
+        // The disposed scope here is the test method's own: a trap left on a [Test]'s local must
+        // not capture the next test's page run. Declaration order is the run order.
+        codeunit 64733 "Tts Cross"
+        {
+            Subtype = Test;
+
+            var
+                HandlerRan: Boolean;
+
+            [Test]
+            procedure A_LeavesATrapInItsOwnLocal()
+            var
+                Card: TestPage "Tts Card";
+            begin
+                Card.Trap();
+            end;
+
+            [Test]
+            [HandlerFunctions('CardHandler')]
+            procedure B_ALaterTestReachesItsHandler()
+            begin
+                HandlerRan := false;
+                Page.Run(Page::"Tts Card");
+                if not HandlerRan then
+                    Error('PageHandler did not run');
+            end;
+
+            [PageHandler]
+            procedure CardHandler(var Card: TestPage "Tts Card")
+            begin
+                HandlerRan := true;
+            end;
+        }
         """);
     }
 
@@ -170,6 +205,8 @@ public sealed class LocalTestPageTrapScopeTests : IDisposable
                      "TrapAssignedOutOfALocal_Survives",
                  })
             Assert.Contains("PASS  Codeunit64732." + name, output);
+        foreach (var name in new[] { "A_LeavesATrapInItsOwnLocal", "B_ALaterTestReachesItsHandler" })
+            Assert.Contains("PASS  Codeunit64733." + name, output);
         Assert.DoesNotContain("FAIL", output);
     }
 }
