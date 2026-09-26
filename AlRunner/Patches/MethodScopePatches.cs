@@ -449,16 +449,19 @@ public static partial class BcRuntime
     }
 
     /// <summary>
-    /// Whether releasing all of <paramref name="references"/> would dispose the object
-    /// <paramref name="tree"/> hosts, by BC's own two rules for
-    /// <c>InternalRemoveReferenceDisposeIfLast</c>: a shared object when its reference count would
-    /// reach zero, any other when its parent is among the references released.
+    /// Whether releasing all of <paramref name="references"/> would take the shared object
+    /// <paramref name="tree"/> hosts to a reference count of zero, BC's rule for disposing it in
+    /// <c>TreeSharedObjectHandler.InternalRemoveReferenceDisposeIfLast</c>. A TestPage's handler is
+    /// always the shared one (<c>NavTestPageBase</c> implements <c>ITreeSharedObject</c>), so a
+    /// non-shared handler (count -1) is a BC shape change and refuses.
     /// </summary>
     private static bool HoldsEveryReference(Microsoft.Dynamics.Nav.Runtime.TreeHandler tree, List<object> references)
     {
-        var count = tree.ReferenceCount; // -1 on a non-shared handler
+        var count = tree.ReferenceCount;
         if (count < 0)
-            return references.Exists(r => ReferenceEquals(tree.Parent, r));
+            throw new AlRunner.Infrastructure.BcShapeGapException(
+                "TestPage.Trap() scope exit", "NavTestPage.Tree.ReferenceCount",
+                "the page's tree handler is not shared, so the local handles' share of its references cannot be counted (#4736)");
         return references.Count >= count;
     }
 
