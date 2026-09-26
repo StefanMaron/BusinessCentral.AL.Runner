@@ -36,6 +36,23 @@ PR #4585's run 36124578301 the equal-major rule refused that load on BC 27.0.384
 to every caller whatever build it was compiled against, so the whole `Microsoft.Dynamics.*`
 prefix is exempt from the check.
 
+### Reading the version must not re-enter the handler (#4725)
+
+The candidate's version is read with `AssemblyName.GetAssemblyName`, which loads
+`System.Reflection.Metadata` the first time it runs. If that load cannot bind from the TPA list it
+reaches this same handler, which reads another version, and so on until `Stack overflow.` (exit 134).
+Measured on a `--no-cache` run whose platform-apps attempt child deleted the shared throwaway root,
+and with it the parent's `ncl-shadow` directory, so the TPA entry for `System.Reflection.Metadata`
+pointed at a deleted file. Two rules keep it bounded:
+
+- an **unversioned** request is loaded without reading the file, since there is nothing to compare
+  (`GetAssemblyName`'s own request for `System.Reflection.Metadata` carries no version);
+- a **versioned** request arriving while a version read is in progress on the same thread is
+  refused with a `FileLoadException` naming both requests, never recursed into.
+
+The deletion itself is fixed in `CacheRoots`: only the generation that minted a `--no-cache` root
+deletes it.
+
 ### Why the handler has to check: the runtime does not
 
 Measured on .NET 8 (runner host), with a strong-named `VLib` built at 1.0.0.0 and 2.0.0.0 and an

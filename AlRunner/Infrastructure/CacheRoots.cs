@@ -195,20 +195,29 @@ public static class CacheRoots
             Environment.SetEnvironmentVariable(NoCacheRootEnvVar, root);
         }
         _override = root;
-        _throwawayRoot = root;
+        // An adopting child leaves a root whose .owner sidecar names a live other process (#4725):
+        // it is not always the terminal generation — the platform-apps attempt and --jobs workers
+        // exit while their parent keeps running out of the ncl-shadow directory inside this root.
+        // A root with no live owner (handed in from outside) is still this process's to delete.
+        _throwawayRoot = string.IsNullOrEmpty(existing) || !OwnedByALiveOtherProcess(root) ? root : null;
         return root;
     }
+
+    private static bool OwnedByALiveOtherProcess(string root)
+        => ScratchDirs.TryReadOwner(ScratchDirs.MarkerPathFor(root), out var pid, out var ticks, out var jiffies)
+           && pid != Environment.ProcessId
+           && ScratchDirs.IsOwnerAlive(pid, ticks, jiffies);
 
     /// <summary>
     /// Best-effort delete of the directory <see cref="DisableForRun"/> minted (a no-op if
     /// <see cref="DisableForRun"/> was never called, or the directory was never actually
     /// created by anything writing into it). Program.cs registers this on
     /// <c>AppDomain.ProcessExit</c> right after a <c>--no-cache</c> run calls
-    /// <see cref="DisableForRun"/>, so it runs from whichever generation is the terminal
-    /// one for this invocation — an intermediate generation that hands off to a re-exec'd
-    /// child reaches its own <c>ProcessExit</c> only after <c>WaitForExit</c> on that
-    /// child returns, i.e. after the child (which inherited the same directory via
-    /// <see cref="NoCacheRootEnvVar"/>) is completely done with it. Swallows IO errors —
+    /// <see cref="DisableForRun"/>. A child that adopted the root through
+    /// <see cref="NoCacheRootEnvVar"/> while its minting ancestor is alive does nothing: that
+    /// ancestor waits for it and deletes the root itself, and a child that is not terminal (the
+    /// platform-apps attempt, a --jobs worker) would otherwise delete it under a live parent
+    /// (#4725). Swallows IO errors —
     /// cleanup failing should never fail the run whose results it is cleaning up after.
     /// </summary>
     public static void CleanupThrowawayRoot()
