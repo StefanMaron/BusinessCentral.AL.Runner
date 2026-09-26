@@ -131,10 +131,11 @@ public sealed class CacheRootsDisableForRunTests
     }
 
     [Fact]
-    public void CleanupThrowawayRoot_InAProcessThatAdoptedARootWithNoLiveOwner_DeletesIt()
+    public void CleanupThrowawayRoot_InAProcessThatAdoptedARootItselfOwns_DeletesIt()
     {
-        // The other side of the rule above: a root handed in from outside (no sidecar, as
-        // NoCacheLastWinsIntegrationTests does) has nobody else to delete it.
+        // The other side of the rule above. TestScratch.FlatDir reserves the directory in the test
+        // host's own name, so the sidecar names THIS process — the `pid != Environment.ProcessId`
+        // half of the rule. The dead-owner half is the two tests below (#4728).
         CacheRoots.ResetForTests();
         var adopted = TestScratch.FlatDir("al-runner-no-cache-test-");
         Directory.CreateDirectory(Path.Combine(adopted, "ncl-shadow"));
@@ -148,6 +149,53 @@ public sealed class CacheRootsDisableForRunTests
             Assert.False(Directory.Exists(adopted), $"an unowned adopted root was left behind: {adopted}");
         }
         finally { CacheRoots.ResetForTests(); ClearEnvVar(); if (Directory.Exists(adopted)) Directory.Delete(adopted, true); }
+    }
+
+    [Fact]
+    public void CleanupThrowawayRoot_InAProcessThatAdoptedARootWhoseOwnerIsDead_DeletesIt()
+    {
+        // #4728: the sidecar names another process that has exited, so nobody else will delete it.
+        AssertAdopterDeletesRootOwnedBy(adopted =>
+            Assert.True(ScratchDirs.TransferOwnership(adopted, ScratchDirsRunnerStartupTests.FindDeadPid())));
+    }
+
+    [Fact]
+    public void CleanupThrowawayRoot_InAProcessThatAdoptedARootWhoseOwnerPidWasReused_DeletesIt()
+    {
+        // #4728: the pid is live but its start time does not match the sidecar — a different process
+        // wearing the dead owner's pid, which must not keep the root alive.
+        using var impostor = System.Diagnostics.Process.Start(
+            new System.Diagnostics.ProcessStartInfo("sleep", "120") { UseShellExecute = false })!;
+        try
+        {
+            AssertAdopterDeletesRootOwnedBy(adopted =>
+                File.WriteAllText(ScratchDirs.MarkerPathFor(adopted),
+                    $"pid={impostor.Id}\nstart=1\nstartjiffies=1\ncreated={DateTime.UtcNow:O}\n"));
+        }
+        finally { try { impostor.Kill(); } catch { } }
+    }
+
+    private static void AssertAdopterDeletesRootOwnedBy(Action<string> writeSidecar)
+    {
+        CacheRoots.ResetForTests();
+        var adopted = TestScratch.FlatDir("al-runner-no-cache-test-");
+        Directory.CreateDirectory(Path.Combine(adopted, "ncl-shadow"));
+        writeSidecar(adopted);
+        Environment.SetEnvironmentVariable(CacheRoots.NoCacheRootEnvVar, adopted);
+        try
+        {
+            Assert.Equal(adopted, CacheRoots.DisableForRun());
+
+            CacheRoots.CleanupThrowawayRoot();
+
+            Assert.False(Directory.Exists(adopted), $"an adopted root whose owner is not alive was left behind: {adopted}");
+        }
+        finally
+        {
+            CacheRoots.ResetForTests(); ClearEnvVar();
+            if (Directory.Exists(adopted)) Directory.Delete(adopted, true);
+            File.Delete(ScratchDirs.MarkerPathFor(adopted));
+        }
     }
 
     [Fact]
