@@ -53,7 +53,9 @@ public class WatchSiblingSourceDependencyStaleTests
         """);
     }
 
-    // The watcher observes the requested bundle; each cycle's edit touches this file too.
+    // The watcher observes the requested bundle; each cycle's edit touches this file too. Write
+    // it after the dependency: it is then the edit's only watched write, so no cycle can start
+    // on half of the edit (#4707).
     private static void WriteTestSource(string dir, string marker) =>
         WatchEdit.Replace(Path.Combine(dir, "AnswerTests.Codeunit.al"), $$"""
         // {{marker}}
