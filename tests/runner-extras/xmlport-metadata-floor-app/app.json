@@ -1,0 +1,19 @@
+{
+  "id": "31531020-ad11-440e-bc79-4d1b4e5d6070",
+  "name": "Runner Extras - XmlPort Metadata Floor App",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #4461: an app stating only the application floor still sees System Application's xmlports in XMLport Metadata.",
+  "description": "Issue #4461. The XMLport Metadata app-group filter hides a compiled xmlport whose app is outside the executing group's visible closure, and that closure excludes the implicit application floor. Xmlports of a registered .app package are exempt from that rule; without the exemption every Base and System Application xmlport vanished for an app like this one, which declares no explicit dependencies. Runner-specific: app-group visibility is a runner concept.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 66320,
+      "to": 66329
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}

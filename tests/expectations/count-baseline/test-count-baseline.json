@@ -86,6 +86,9 @@
         "windows-language-license-stub": { "tests": 4 },
         "xasm-event-dispatch-dep": { "tests": 1 },
         "xasm-event-dispatch-main": { "tests": 1 },
+        "xmlport-metadata-floor-app": { "tests": 2 },
+        "xmlport-metadata-shared-id-x": { "tests": 1 },
+        "xmlport-metadata-shared-id-y": { "tests": 1 },
         "xmlport-precompiled-dep-metadata": { "tests": 2 }
       }
     }

@@ -1,0 +1,18 @@
+{
+  "id": "98622e77-4615-4efd-9e3b-c9c718046ec0",
+  "name": "Runner Extras - XmlPort Metadata Shared Id X",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #4461, group X of two: declares xmlport 66300, which the other group also declares.",
+  "description": "Issue #4461. Two unrelated app groups each declare xmlport 66300. The runner records such an id as having no single source owner, and an object with no single owner is never hidden from an app group. The XMLport Metadata app-group filter also reads the compiled XmlPort type's app as owner evidence; without the ambiguity check it took the OTHER group's assembly as the owner and hid this group's own xmlport. Runner-specific: the corpus runs one app set per service tier.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 66300,
+      "to": 66309
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}

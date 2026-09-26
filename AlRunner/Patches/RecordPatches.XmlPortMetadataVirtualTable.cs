@@ -29,13 +29,18 @@ public static partial class RecordPatches
     /// compiled <c>XmlPort{id}</c> types, and a --watch cycle clears the source owners while
     /// the previous cycle's assemblies stay loaded, so a later bundle's xmlport reached the
     /// earlier bundle's run unowned and was listed (WatchDependentBundleInventoryTests, cycle 2).
-    /// A precompiled .app's xmlports are never hidden, as <see cref="IsHiddenFromAppGroup"/>
-    /// never hides an object it has no source owner for.
+    /// The xmlports of a registered .app package are not hidden (pinned by runner-extras
+    /// xmlport-metadata-floor-app); a precompiled DLL loaded with no registered .app symbols is
+    /// not in that set, so its xmlports CAN be hidden from a group whose closure omits it.
+    /// Pinned for ambiguous ids by xmlport-metadata-shared-id-{x,y}.
     /// </summary>
     private static bool IsCompiledXmlPortOfUnreachableSourceApp(int id, HashSet<Guid>? visibleApps,
         ref Dictionary<int, Guid>? compiledSourceOwners)
     {
-        if (visibleApps == null || _sourceObjectOwners.ContainsKey(("xmlport", id))) return false;
+        // An id two source groups both declare is ambiguous and never hidden, exactly as in
+        // IsHiddenFromAppGroup — the other group's assembly is not this group's owner.
+        if (visibleApps == null || _sourceObjectOwners.ContainsKey(("xmlport", id))
+            || _ambiguousSourceObjects.Contains(("xmlport", id))) return false;
         if (compiledSourceOwners == null)
         {
             compiledSourceOwners = new Dictionary<int, Guid>();
