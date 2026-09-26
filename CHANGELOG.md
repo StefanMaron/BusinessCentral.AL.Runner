@@ -516,6 +516,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **test-data:** lazy-load fixture asserts the backup's own Country/Region count, not 139
 - **test-data-fixture:** TestDataSystemFields compiles; per-build literals replaced
 - **cache:** pin the dead-owner case of the adopted --no-cache root rule
 - **watch:** slice multi-file watch edits on the cycle that saw the whole edit set
