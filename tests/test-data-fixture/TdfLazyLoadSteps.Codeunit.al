@@ -22,6 +22,7 @@
 ///     - a baseline that never received the table          -> 0 rows, Get('GB') false
 ///     - a baseline that aliased the live rows             -> GB reads 'MUTATED BY THE TEST'
 ///     - a baseline that recorded the damaged rows, not the loaded ones -> US missing, ZZ present
+///     - a baseline that recorded some rows but not all of them -> a sampled code is missing
 ///   No assertion names a row COUNT: the backup's count differs per build (139 on the 28.1-28.3
 ///   W1 backups, 247 on 28.4; #4772), and remembering the first codeunit's count for the second
 ///   needs SingleInstance state across test codeunits, which the runner resets (#4781).
@@ -63,12 +64,31 @@ codeunit 64406 "TDF Lazy Load Steps"
         Assert.IsTrue(CountryRegion.Get('DE'), 'Country/Region DE must be present');
         Assert.AreEqual('DE', CountryRegion."EU Country/Region Code", 'DE EU Country/Region Code');
 
+        AssertSampledRowsArePresent();
+
         // A row a test INSERTED is not part of the install baseline and must not survive the
         // boundary, while the backup's own rows must. A restore that simply left the previous
         // codeunit's store alone would pass every assertion above and fail this one.
         Assert.IsFalse(ShippingAgent.Get('ZZTEST'), 'a row a previous test inserted must not survive the boundary');
         Assert.IsTrue(ShippingAgent.Get('FEDEX'), 'the backup rows must still be there');
         Assert.AreEqual('Federal Express Corporation', ShippingAgent.Name, 'FEDEX Name from the backup');
+    end;
+
+    /// <summary>
+    /// Stands in for the exact row count, which differs per backup build (#4772): a baseline
+    /// that restored only part of the table fails here unless the part it kept happens to hold
+    /// every one of these. Codes spread across the key range, each present in the 27.5, 28.1
+    /// and 28.4 W1 backups (read with `bcbak read --table "Country/Region"`).
+    /// </summary>
+    local procedure AssertSampledRowsArePresent()
+    var
+        CountryRegion: Record "Country/Region";
+        Codes: List of [Code[10]];
+        CountryCode: Code[10];
+    begin
+        Codes.AddRange('AT', 'BE', 'CA', 'CH', 'DK', 'ES', 'FI', 'FR', 'IT', 'JP', 'NL', 'NO', 'PL', 'SE', 'ZA');
+        foreach CountryCode in Codes do
+            Assert.IsTrue(CountryRegion.Get(CountryCode), StrSubstNo('Country/Region %1 must be present', CountryCode));
     end;
 
     /// <summary>The negative case: on-demand loading must not invent rows. Without it, an
