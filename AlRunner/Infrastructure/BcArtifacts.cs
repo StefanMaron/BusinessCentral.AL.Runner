@@ -499,8 +499,7 @@ public static class BcArtifacts
     /// (not cached but the CDN has it — provisioning will fetch exactly this),
     /// "cdn-exact-undetermined"/"cdn-minor-undetermined" (the CDN could not be asked; the tier
     /// is held rather than demoted — issue #2981), or "major-fallback" (neither the engine's
-    /// exact build nor its minor is available from either source — genuinely degraded; the
-    /// caller must warn, per issue #2020).
+    /// exact build nor its minor is available from either source).
     /// </param>
     public static string ResolveProvisionTargetCore(Version engineVersion, string artifactsRoot,
         Func<string, AlRunner.Provisioning.CdnProbeResult> cdnHasExactVersion,
@@ -522,8 +521,7 @@ public static class BcArtifacts
             return exact;
         }
         // Issue #2981: the probe went unanswered, so hold the tier instead of demoting.
-        // Demotion is the only branch here that can hand back a KNOWN-DEGRADED artifact, and
-        // the single observation licensing it is the CDN saying no — which this is not.
+        // The single observation licensing a demotion is the CDN saying no — which this is not.
         // Nothing is swallowed: the download that follows either succeeds (the transient blip
         // #2981 reported) or fails with NetworkDiagnosis's classified observation.
         // Why this rather than throwing, per loud-failures.md: docs/provisioning-tiers.md#undetermined.
@@ -559,9 +557,8 @@ public static class BcArtifacts
 
         // Tier 3: neither the exact build nor the engine's own minor is available from
         // either source (e.g. Microsoft withdrew the build — #2010). Fall back to the bare
-        // major; the caller resolves+downloads the latest build of it and must warn loud —
-        // this is the one genuinely degraded outcome, not the default-path norm. Reaching here
-        // now requires BOTH probes to have actually answered.
+        // major; the caller resolves+downloads the latest build of it. Reaching here
+        // requires BOTH probes to have actually answered.
         tier = "major-fallback";
         return engineVersion.Major.ToString();
     }
@@ -738,8 +735,7 @@ public static class BcArtifacts
     /// This is NOT the same risk as <see cref="DescribeExplicitEngineMinorMismatch"/> above.
     /// That one is a real engine/artifact DLL-version skew (VerifyEngineConsistency's own
     /// MAJOR-only check already refuses a genuine cross-major engine/artifact pairing before
-    /// this point ever runs) — a live compatibility hazard, measured at dozens of extra
-    /// failures. This one compares the app's DECLARED MINIMUM version against whatever major
+    /// this point ever runs). This one compares the app's DECLARED MINIMUM version against whatever major
     /// actually ran it, which are never in tension with each other: AL's `application`/
     /// `platform` fields are minima, not pins (see BcVersionFloorSkipTests), and BC itself is
     /// designed so an app declaring an older minimum runs unmodified on a newer major — that

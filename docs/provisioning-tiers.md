@@ -40,9 +40,8 @@ index was never fetched" were the same `null`.
 
 Three options were on the table.
 
-**Demote anyway (the old behavior).** Rejected: this is the bug. A demotion is the only branch
-in the resolver that can hand the caller a KNOWN-DEGRADED artifact, and the single observation
-that licenses it is a response from the CDN. An unanswered question is not that observation.
+**Demote anyway (the old behavior).** Rejected: this is the bug. The single observation that
+licenses a demotion is a response from the CDN. An unanswered question is not that observation.
 `loud-failures.md` is the general form — a signal must not be reported as a stronger conclusion
 than it supports — and `NetworkDiagnosis`'s own header states the rule this violates: *a claim
 about the remote service requires bytes from the remote service.*

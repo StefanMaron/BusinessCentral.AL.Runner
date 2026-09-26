@@ -48,6 +48,14 @@ internal static partial class ProgramSupport
            $"was withdrawn. If the fault persists the download below will fail and name it.";
 
     /// <summary>
+    /// The two tiers that fell back to the bare major: "major-fallback" (the CDN answered no for
+    /// both the exact build and the engine's minor) and "major-fallback-offline" (cache only).
+    /// Either one arms the post-selection minor-mismatch warning (#4691).
+    /// </summary>
+    internal static bool IsMajorFallbackTier(string tier)
+        => tier is "major-fallback" or "major-fallback-offline";
+
+    /// <summary>
     /// "major-fallback" tier: neither the engine's exact build nor its minor could be obtained
     /// from cache or the CDN. Reaching this tier requires both CDN probes to have answered (#2981).
     /// No degradation claim here: the landed minor is not known yet, and a CI-measured one is not

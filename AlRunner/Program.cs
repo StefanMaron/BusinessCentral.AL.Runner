@@ -1102,8 +1102,8 @@ if (bcVersionArg == null && artifactPathArg == null)
             // null is a loud, immediate `return 2`) — the exact silent-discard-on-error
             // shape proven real by DefaultProvisionTargetMessagingTests below, one
             // if/else branch over. Staying immediate accepts the same "duplicates 3x on
-            // a stacked re-exec" cost the no-variants-shipped switch's KNOWN-DEGRADED
-            // branches also still pay, for the same reason.
+            // a stacked re-exec" cost the no-variants-shipped switch's fallback branches
+            // also still pay, for the same reason.
             //
             // Issue #2239: this is the "which artifact was selected and why" reasoning a
             // clean run does not need to see — the outcome is already named once, later,
@@ -1178,8 +1178,7 @@ if (bcVersionArg == null && artifactPathArg == null)
             // #2024/#2028), ask what it can FETCH — cache, then the CDN, at each tier — not
             // just what's already cached. Otherwise a genuinely empty cache collapses this
             // straight to "major only" before a single byte is downloaded, and provisioning
-            // then fetches "latest in major" (e.g. 28.4) while the engine was built for 28.1,
-            // landing a first run in the exact KNOWN-DEGRADED skew #2020 describes. Without
+            // then fetches "latest in major" (e.g. 28.4) while the engine was built for 28.1. Without
             // --auto-provision there is no network step coming, so stay cache-only exactly as
             // before — that path has nothing to gain from probing a CDN it will never use.
             string tier;
@@ -1276,18 +1275,19 @@ if (bcVersionArg == null && artifactPathArg == null)
                     break;
                 case "major-fallback-offline":
                     // No network step is coming, so this speaks only to the CACHE, never the CDN.
-                    bcDefaultMajorFallback = true;
                     Console.Error.WriteLine(ProgramSupport.MajorFallbackOfflineNotice(
                         engineVersion.ToString(), engineMajorMinor, engineMajor.ToString()));
                     break;
                 default: // major-fallback: neither the exact build nor the engine's own minor is
                          // available from cache or the CDN (e.g. #2010, Microsoft withdrew the build).
                     // #2926: see ProgramSupport.MajorFallbackWarning.
-                    bcDefaultMajorFallback = true;
                     Console.Error.WriteLine(ProgramSupport.MajorFallbackWarning(
                         engineVersion.ToString(), engineMajorMinor, engineMajor.ToString()));
                     break;
             }
+            // Set once, outside the switch, so the offline end-to-end test drives the same line the
+            // CDN route does (#4708).
+            bcDefaultMajorFallback = ProgramSupport.IsMajorFallbackTier(tier);
 
             // #2210: gated on --verbose, not printed at default verbosity at all. The
             // issue asked to decide between "refuse" and "stop warning" for a condition

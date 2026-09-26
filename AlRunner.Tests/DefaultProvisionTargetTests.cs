@@ -8,8 +8,7 @@
 // exact build or its minor, so it falls straight through to "major only" (e.g. "28") BEFORE
 // a single byte has been downloaded. Provisioning then resolved "latest full version for
 // major 28" from the CDN — landing on 28.4 while the shipped engine was built for 28.1,
-// putting a fresh install straight into the KNOWN-DEGRADED engine/artifact skew #2020
-// describes, silently, on the very first run.
+// silently, on the very first run.
 //
 // The fix: when auto-provisioning is going to run anyway, ask the SAME three tiers (exact
 // build, then minor, then major) whether they're available from EITHER the cache or the
@@ -91,9 +90,8 @@ public sealed class DefaultProvisionTargetTests : IDisposable
     }
 
     /// <summary>
-    /// Genuinely degraded: neither the exact build nor the engine's own minor exists
-    /// anywhere (cache or CDN). Only NOW may this fall back to the bare major — and the
-    /// caller (Program.cs) must print the KNOWN-DEGRADED warning for this tier specifically.
+    /// Neither the exact build nor the engine's own minor exists anywhere (cache or CDN).
+    /// Only NOW may this fall back to the bare major.
     /// </summary>
     [Fact]
     public void EmptyCache_CdnHasNeitherExactNorMinor_FallsBackToMajor()
@@ -108,6 +106,28 @@ public sealed class DefaultProvisionTargetTests : IDisposable
 
         Assert.Equal("28", result);
         Assert.Equal("major-fallback", tier);
+    }
+
+    /// <summary>
+    /// #4708: the tier the CDN route really produces must arm the post-selection minor-mismatch
+    /// warning, and so must the cache-only one; no other tier may. The CLI has no seam for a CDN
+    /// 404, so this is the only place the online name is driven through the predicate Program.cs
+    /// reads.
+    /// </summary>
+    [Fact]
+    public void MajorFallbackTiers_AndOnlyThey_ArmTheFallbackMinorWarning()
+    {
+        BcArtifacts.ResolveProvisionTargetCore(
+            new Version("28.1.49838.50794"), _root,
+            cdnHasExactVersion: v => CdnProbeResult.NotPublished,
+            cdnResolvePrefix: p => CdnPrefixResult.NoMatch,
+            out var onlineTier);
+
+        Assert.True(AlRunner.ProgramSupport.IsMajorFallbackTier(onlineTier), $"online tier '{onlineTier}'");
+        Assert.True(AlRunner.ProgramSupport.IsMajorFallbackTier("major-fallback-offline"));
+        foreach (var other in new[] { "cached-exact", "cdn-exact", "cdn-exact-undetermined",
+                     "cached-minor", "cdn-minor", "cdn-minor-undetermined" })
+            Assert.False(AlRunner.ProgramSupport.IsMajorFallbackTier(other), other);
     }
 
     /// <summary>

@@ -3,16 +3,14 @@
 // answer at all (DNS failed, the connect timed out, this host has no route). The third
 // collapsed into `false`, and BcArtifacts.ResolveProvisionTargetCore reads `false` as the
 // first — so a five-second network blip walked a user from `cdn-exact` down to
-// `major-fallback`, a configuration that file's own comment calls "the one genuinely degraded
-// outcome" and #2020 measured at dozens of extra test failures from engine/artifact skew.
+// `major-fallback`.
 //
 // #2926 fixed the reporting half: the notices stopped stating the thing the bool cannot
 // support. What was left is that the runner still BEHAVED identically in both cases. These
 // tests pin the behaviour.
 //
 // The design call, argued at the ResolveProvisionTargetCore call site: an undetermined probe
-// never demotes a tier. Demotion is the only branch that can silently select a KNOWN-DEGRADED
-// artifact, and it is the branch an unanswered question has no licence to take.
+// never demotes a tier: only the CDN answering no licenses a demotion.
 //
 // None of these tests touch the network. Every probe result is injected, so the verdict is a
 // property of the resolver and not of this box's connectivity.
@@ -117,7 +115,7 @@ public sealed class UndeterminedCdnProbeTests : IDisposable
     /// A 404 on the exact build AND an unanswerable prefix resolution. The 404 licenses the
     /// first demotion; the unanswered index fetch does not license the second. Target the
     /// engine's own minor prefix — the tier the probe was asking about — rather than the bare
-    /// major, which is the KNOWN-DEGRADED one.
+    /// major.
     /// </summary>
     [Fact]
     public void EmptyCache_ExactNotPublished_PrefixUndetermined_StopsAtTheEngineMinor()
