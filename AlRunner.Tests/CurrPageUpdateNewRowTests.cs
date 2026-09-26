@@ -2,8 +2,8 @@
 //
 // RUNNER-MECHANISM test for RunnerPageInstance.EndTrigger's refresh on an UNSAVED new row.
 // The BC claim is upstream (the Corpus-PR line on the PR that added this file); this pins the
-// runner's wiring: LiveNavTestPage tells its RunnerPageInstance whether the current row is a
-// pending insert the table does not hold, and the realised CurrPage.Update refresh then raises
+// runner's wiring: LiveNavTestPage tells its RunnerPageInstance whether the table holds the
+// current row, and the realised CurrPage.Update refresh then raises
 // no trigger for it: the row's one OnAfterGetCurrRecord is the one it got on becoming current.
 //
 // The shape is Base Application page 9807 "User Card" plus its pageextension 9807: a
@@ -49,8 +49,8 @@ public sealed class CurrPageUpdateNewRowTests : IDisposable
         var (exit, output) = Spawn(_root, pkg);
 
         // Each arm asserts inside AL; the counts separate "passed" from "discovered nothing".
-        Assert.True(output.Contains("passed 6 "),
-            $"expected all six arms to pass; exit={exit}\n{output}");
+        Assert.True(output.Contains("passed 7 "),
+            $"expected all seven arms to pass; exit={exit}\n{output}");
         Assert.Contains("failed 0 ", output);
     }
 
@@ -179,6 +179,43 @@ public sealed class CurrPageUpdateNewRowTests : IDisposable
             }
             """);
 
+        // A DelayedInsert card whose field OnValidate calls CurrPage.Update(false), which does
+        // not save: the row the refresh would re-read is still unsaved (#4727, corpus 67300).
+        File.WriteAllText(Path.Combine(_root, "ValidateCard.Page.al"), """
+            page 90475 "NRU Validate Card"
+            {
+                PageType = Card;
+                SourceTable = "NRU Row";
+                DelayedInsert = true;
+                layout
+                {
+                    area(Content)
+                    {
+                        field(IdField; Rec.Id) { ApplicationArea = All; }
+                        field(NameField; Rec.Name)
+                        {
+                            ApplicationArea = All;
+                            trigger OnValidate()
+                            begin
+                                Trace.Note('Validate');
+                                CurrPage.Update(false);
+                            end;
+                        }
+                    }
+                }
+                trigger OnAfterGetRecord()
+                begin
+                    Trace.Note('AGR:' + Rec.Name);
+                end;
+                trigger OnAfterGetCurrRecord()
+                begin
+                    Trace.Note('AGCR');
+                end;
+                var
+                    Trace: Codeunit "NRU Trace";
+            }
+            """);
+
         File.WriteAllText(Path.Combine(_root, "Test.Codeunit.al"), """
             codeunit 90473 "NRU Test"
             {
@@ -256,6 +293,26 @@ public sealed class CurrPageUpdateNewRowTests : IDisposable
                     Card.NameField.SetValue('NRU4712');
                     if StrPos(Trace.Get(), 'AGR:NRU4712;') = 0 then
                         Error('OnAfterGetRecord must run for the saved temporary row: %1', Trace.Get());
+                    Card.Close();
+                end;
+
+                // #4727: CurrPage.Update(false) from OnValidate on an unsaved DelayedInsert row
+                // raises neither trigger, and does not save the row (corpus 67300).
+                [Test]
+                procedure UnsavedRow_OnValidateUpdateFalse_RaisesNoRefreshTrigger()
+                var
+                    Row: Record "NRU Row";
+                    Card: TestPage "NRU Validate Card";
+                begin
+                    Card.OpenNew();
+                    Card.IdField.SetValue('{4727A000-0000-0000-0000-000000000001}');
+                    Trace.Reset();
+                    Card.NameField.SetValue('NRU4727');
+                    if Trace.Get() <> 'Validate;' then
+                        Error('expected Validate; on the unsaved row, got: %1', Trace.Get());
+                    Row.SetRange(Name, 'NRU4727');
+                    if not Row.IsEmpty() then
+                        Error('CurrPage.Update(false) must not save the DelayedInsert row');
                     Card.Close();
                 end;
 

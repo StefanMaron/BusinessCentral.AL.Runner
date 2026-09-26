@@ -40,6 +40,7 @@ internal sealed class LiveNavTestAction : ITestAction
     /// </summary>
     public void Invoke()
     {
+        var wasOnNewRow = _testPage.IsOnUnsavedNewRow;
         _testPage.SaveCurrentRow();
 
         // A DISABLED action's Invoke() does nothing, and does not raise. BC's own
@@ -73,6 +74,7 @@ internal sealed class LiveNavTestAction : ITestAction
         }
 
         _page.RaiseOnAction(_actionId);
+        _testPage.CloseIfCurrentRowDeleted(wasOnNewRow);
     }
 
     public bool Visible => _page.ActionVisible(_actionId);

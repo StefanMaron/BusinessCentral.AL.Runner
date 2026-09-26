@@ -2527,6 +2527,11 @@ internal sealed partial class RunnerPageInstance
         return true;
     }
 
+    /// <summary>OnClosePage alone, for a close the client makes without asking the page
+    /// (LiveNavTestPage.CloseIfCurrentRowDeleted, #4727).</summary>
+    internal void RaiseOnClosePageTrigger()
+        => InvokeRecordTrigger("OnClosePage", Type.EmptyTypes, Array.Empty<object>());
+
     /// <summary>
     /// BC's <c>NavTestExecution</c> for this page's session, reached the way BC reaches it —
     /// <c>NavApplicationObjectBase.Session</c> on the form, then <c>NavSession.TestExecution</c>.
