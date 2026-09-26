@@ -75,8 +75,15 @@
 //       2000000233  Tenant Report Layout Selection   field 5 "User ID"           (Guid)
 //
 //   NOT reproduced, and deliberately so:
-//     * ValidateApplicationIdAsync, and the modify arm's super-user / license-type checks:
-//       no issue has needed them, and each is its own rule set.
+//     * ValidateApplicationIdAsync and the modify arm's super-user check: no issue has needed
+//       them, and each is its own rule set.
+//     * The commit-time named-user license check both arms flag: the runner has no license
+//       (#4700, docs/limitations.md#environment-type).
+//     * TIMING: these prepends run at the top of NavRecord.InsertAsync/ModifyAsync, i.e. BEFORE
+//       the OnBeforeInsert/OnBeforeModify subscribers and the table's OnInsert/OnModify
+//       triggers; BC runs its arm inside the record write, after them. So a subscriber on User
+//       sees the normalised email here and the raw one on BC, and an email a subscriber sets
+//       is not normalised here (#4701).
 //     * NavSqlRecentRecords.DeleteAllForUser (a SQL-side table the runner has no store for)
 //       and AuthenticationCache.ExpireUser (a tenant cache the skeleton session does not
 //       have). Neither is observable from AL in this runner.
