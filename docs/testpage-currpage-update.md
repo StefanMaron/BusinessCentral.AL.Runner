@@ -136,9 +136,16 @@ BC's first run read `AGR:A;ActionBegin;ActionEnd;AGR:B;AGR:B;AGCR:B;AGR:B;AGR:B;
 the runner raises the pair once.
 
 `LiveNavTestPage.MoveOffDeletedRow` does it, from the same check as the Card close: it finds with
-`=><` from the key the buffer still holds (the page's own `OnFindRecord` when it declares one),
-and falls back to `EnterNewRowLine`. Other page types, and a temporary source, are unmeasured and
-left where they are.
+`=><` from the key the buffer still holds, and falls back to `EnterNewRowLine`. Other page types,
+and a temporary source, are unmeasured and left where they are.
+
+A List that declares `OnFindRecord` moves through that trigger: the runner calls it with `=><`
+and shows the row it answers. Corpus arm `List_DeletedByAction_OnFindRecord_PicksTheRow` (page
+67302, whose trigger answers the first row after the action) showed `A` on BC 28.2 in corpus run
+36248612615, where the default re-read of a deleted middle row lands on `C`, so BC does route the
+re-read through the trigger. **What `Which` BC passes is unmeasured**: that run's failure message
+was cut off at `...ActionEnd;AGR:C;AGR:A;F`, before the first `Find:`. So `=><` is the runner's
+choice, pinned runner-side only, until that arm reports the full trace.
 
 Measured by corpus codeunit 67300's `List_DeletedByAction_*` arms; runner-side: the same test file.
 

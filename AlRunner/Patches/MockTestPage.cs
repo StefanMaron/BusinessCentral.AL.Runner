@@ -87,7 +87,8 @@ internal partial class LiveNavTestPage : MockITestPage
     // next one, else the previous one; and the blank new-row line when the rowset is empty. The
     // row moved to raises OnAfterGetRecord and OnAfterGetCurrRecord; the deleted row raises neither
     // (corpus 67300 List_DeletedByAction_*, #4747). BC raises the pair more than once; the corpus
-    // pins the row and the last trigger, not the count.
+    // pins the row and the last trigger, not the count. A declared OnFindRecord answers the move
+    // (BC showed the trigger's row); the Which it passes is unmeasured (docs/testpage-currpage-update.md).
     // Trap: "=><" is an anchor on the key the buffer still holds -- do not replace it with "-".
     private void MoveOffDeletedRow(NavRecord record)
     {
