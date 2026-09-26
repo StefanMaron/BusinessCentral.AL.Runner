@@ -215,9 +215,14 @@ internal partial class LiveNavTestPage
     // was wrong in both directions — it would mistranslate a field number that happens to
     // collide with a control id, and it rejected small, perfectly valid field numbers as
     // "not a control" (Pageworks SetFilter(3, …) on PageworksPartial).
+    //
+    // SetFilter writes filter group 0 whatever group Rec was left in; GetFilter reads the first
+    // group that filters the field — see TestFilterUserGroup.
     public override void SetFilter(int fieldNo, string filterValue)
     {
-        RequireRecord("SetFilter()").ALSetFilter(fieldNo, filterValue);
+        var record = RequireRecord("SetFilter()");
+        TestFilterUserGroup.Run(() => record.ALFilterGroup, g => record.ALFilterGroup = g,
+            () => { record.ALSetFilter(fieldNo, filterValue); return 0; });
         RepositionAfterFilterChange();
     }
 
@@ -252,7 +257,16 @@ internal partial class LiveNavTestPage
     }
 
     public override string GetFilter(int fieldNo)
-        => RequireRecord("GetFilter()").ALGetFilter(fieldNo);
+    {
+        var record = RequireRecord("GetFilter()");
+        var group = TestFilterUserGroup.FirstGroupFiltering(
+            record.GetCurrentFilters().Select(g => (g.FilterGroupNo,
+                (g.Filters ?? Array.Empty<NavFilter>()).Select(f => f.FilterField))),
+            fieldNo);
+        if (group is null) return string.Empty;
+        return TestFilterUserGroup.RunIn(group.Value, () => record.ALFilterGroup,
+            g => record.ALFilterGroup = g, () => record.ALGetFilter(fieldNo));
+    }
 
     // ── ITestFilter: the key and the direction the page walks (#3316) ─────────────
     //
@@ -357,5 +371,37 @@ internal partial class LiveNavTestPage
         left = Unwrap(left);
         right = Unwrap(right);
         return Equals(left, right);
+    }
+}
+
+/// <summary>
+/// The filter groups behind a TestPage's <c>Filter</c>. SetFilter writes group 0, the user
+/// filters, whatever group OnOpenPage left active; GetFilter answers the first group, in the
+/// record's own group order, that filters the field — BC's TestFilterProxy.GetFilter reads
+/// NavFilterHelper.GetValueFilter, which returns the first match over NavRecord.GetCurrentFilters.
+/// Observably equivalent: corpus 60919, #4677.
+/// </summary>
+internal static class TestFilterUserGroup
+{
+    internal const int UserFilterGroup = 0;
+
+    internal static T Run<T>(Func<int> getGroup, Action<int> setGroup, Func<T> body)
+        => RunIn(UserFilterGroup, getGroup, setGroup, body);
+
+    /// <summary>Runs <paramref name="body"/> in <paramref name="group"/>, restoring the caller's group even when it throws.</summary>
+    internal static T RunIn<T>(int group, Func<int> getGroup, Action<int> setGroup, Func<T> body)
+    {
+        var saved = getGroup();
+        setGroup(group);
+        try { return body(); }
+        finally { setGroup(saved); }
+    }
+
+    /// <summary>The first group, in the order given, holding a filter on <paramref name="fieldNo"/>; null when none does.</summary>
+    internal static int? FirstGroupFiltering(IEnumerable<(int Group, IEnumerable<int> Fields)> groupsInOrder, int fieldNo)
+    {
+        foreach (var (group, fields) in groupsInOrder)
+            if (fields.Contains(fieldNo)) return group;
+        return null;
     }
 }
