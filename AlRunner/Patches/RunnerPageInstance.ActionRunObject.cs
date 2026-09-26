@@ -264,7 +264,7 @@ internal sealed partial class RunnerPageInstance
     /// </summary>
     private void RereadHostRowAfterTarget()
     {
-        if (_record == null || IsCurrentRowUnsavedNewRow?.Invoke() == true) return;
+        if (_record == null || IsCurrentRowNotStored?.Invoke() == true) return;
         if (!_record.ALFind(Microsoft.Dynamics.Nav.Types.DataError.TrapError, "=")) return;
         RaiseOnAfterGetRecord();
     }
