@@ -115,6 +115,44 @@ public sealed class PageExtensionAdoptionTests
         Assert.DoesNotContain("triggers it declares will not run", warn);
     }
 
+    /// <summary>
+    /// #4738: a page the runner builds for AL (Page.Run / RunModal, a Page variable) binds its
+    /// extensions before its own SetSourceTable, and the constructor ADOPTS those instead of
+    /// binding again. The AL side is corpus codeunit 67470 "PXR Tests"; this pins the adoption,
+    /// whose loss AL sees only through an extension control trigger running on a second instance.
+    /// </summary>
+    [Fact]
+    public void TheConstructor_AdoptsExtensionsBoundBeforeTheMetadataLoad_InsteadOfBindingAgain()
+    {
+        var source = SourceOfRunnerPageInstance();
+        var ctor = source[source.IndexOf(
+            "        Dictionary<int, object?>? boundExtensions)", StringComparison.Ordinal)..];
+        ctor = ctor[..ctor.IndexOf("\n    /// <summary>", StringComparison.Ordinal)];
+
+        var adopt = ctor.IndexOf("else if (PreBoundExtensions.TryGetValue(form, out var preBound))",
+            StringComparison.Ordinal);
+        var bind = ctor.IndexOf("RegisterPageExtensionsOnTheForm()", StringComparison.Ordinal);
+        Assert.True(adopt > 0, "the constructor must adopt extensions a construction site pre-bound");
+        Assert.True(bind > adopt, "the bind must be the fall-through AFTER the pre-bound adoption");
+        Assert.Contains("foreach (var kv in preBound) _extensionInstances[kv.Key] = kv.Value;", ctor);
+    }
+
+    [Theory]
+    [InlineData("FormStaticRunModalPatches.cs", "RunnerPageInstance.BindPageExtensionsBeforeMetadataLoad(instance, boundRecord, id);")]
+    [InlineData("CodeunitPatches.cs", "RunnerPageInstance.BindPageExtensionsBeforeMetadataLoad(instance, record, id);")]
+    public void PagesBuiltForAl_BindTheirExtensions_BeforeSetSourceTable(string file, string bindCall)
+    {
+        var source = File.ReadAllText(Path.Combine(RepoRoot, "AlRunner", "Patches", file));
+        var bind = source.IndexOf(bindCall, StringComparison.Ordinal);
+        Assert.True(bind > 0, $"{file} must bind the page's extensions before its metadata load (#4738)");
+        Assert.Equal(1, CountOccurrences(source, bindCall));
+
+        var setSourceTable = source.IndexOf("\"SetSourceTable\"", bind, StringComparison.Ordinal);
+        var invoke = source.IndexOf("setSourceTable?.Invoke(", bind, StringComparison.Ordinal);
+        Assert.True(setSourceTable > bind && invoke > setSourceTable,
+            "the bind must precede SetSourceTable, which raises OnMetadataLoaded (#4738)");
+    }
+
     private static int CountOccurrences(string haystack, string needle)
     {
         var n = 0;

@@ -97,10 +97,35 @@ internal sealed partial class RunnerPageInstance
             // extension's object number, so a second bind throws ArgumentException.
             foreach (var kv in boundExtensions) _extensionInstances[kv.Key] = kv.Value;
         }
+        else if (PreBoundExtensions.TryGetValue(form, out var preBound))
+        {
+            // A form the runner built on AL's behalf (Page.Run / RunModal, a Page variable) and
+            // bound before its metadata load — see BindPageExtensionsBeforeMetadataLoad. Binding
+            // again would throw on BC's pageExtensionsById, exactly as above (#4738).
+            foreach (var kv in preBound) _extensionInstances[kv.Key] = kv.Value;
+        }
         else
         {
             RegisterPageExtensionsOnTheForm();
         }
+    }
+
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, Dictionary<int, object?>>
+        PreBoundExtensions = new();
+
+    /// <summary>
+    /// Bind <paramref name="pageId"/>'s pageextensions to a form the runner constructed for AL
+    /// (not for a TestPage), between its constructor and the <c>SetSourceTable</c> that raises
+    /// <c>OnMetadataLoaded</c> — BC's own <c>NCLMetaForm.CreateObjectInstance</c> order. Without
+    /// it an extension's expression- or global-bound control never registers its source
+    /// expression, so a TestPage that traps the page cannot find it (#4738). Call it before
+    /// SetSourceTable; <see cref="Adopt"/> then reuses these instances.
+    /// </summary>
+    internal static void BindPageExtensionsBeforeMetadataLoad(object form, NavRecord record, int pageId)
+    {
+        var bound = new Dictionary<int, object?>();
+        RegisterPageExtensionsOnTheForm(form, record, pageId, bound);
+        PreBoundExtensions.AddOrUpdate(form, bound);
     }
 
     /// <summary>

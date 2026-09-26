@@ -107,6 +107,7 @@ public static partial class BcRuntime
             {
                 var instance = RunnerFormInit.ConstructPage(twoArgCtor, new object?[] { parent, boundRecord });
                 BindPageSourceObjectId(instance, boundRecord.TableID);
+                RunnerPageInstance.BindPageExtensionsBeforeMetadataLoad(instance, boundRecord, id);
 
                 // NavForm.SetSourceTable is BC's own binding step, reused rather than
                 // reimplemented. A CALLER's record is cloned, as BC's NavForm ctor clones it:

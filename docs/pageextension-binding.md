@@ -60,6 +60,21 @@ page's metadata load — `SetSourceTable` on the record-bearing path, `EnsureMet
 the record-less one. That call is what raises `OnMetadataLoaded`; an extension registered
 afterwards registers nothing.
 
+## Pages the runner builds for AL, not for a TestPage
+
+`Page.Run` / `Page.RunModal` (`BcRuntime.NCLMetaForm_CreateObjectInstance` →
+`ConstructFormForStaticEntry`) and a Page variable (`CodeunitPatches.NavFormHandle_CreateTarget`)
+construct the page themselves and then call `SetSourceTable`. Both call
+`RunnerPageInstance.BindPageExtensionsBeforeMetadataLoad` between the two, for the reason in
+"Ordering". When a TestPage traps or is handed that page later, `RunnerPageInstance.Adopt`
+reuses those instances instead of binding a second time (#4738).
+
+Before this, the binding happened only at adoption, so on a trapped page an extension's
+expression-bound control (`field(Context; Format(Rec."Context Record ID"))`, Base Application
+pageextension 705 on page 700) and its global-bound controls were not found, and its
+`OnOpenPage` did not run. Corpus codeunit 67470 "PXR Tests"
+(StefanMaron/BusinessCentral.AL.Language.Tests#452) is the service-tier measurement.
+
 ## What is deliberately NOT done
 
 `NavForm.CallInitializeComponentExtensionMethod` also walks `PageExtensions`, calling each
@@ -78,12 +93,11 @@ code and was dropped.
 So the guard stays as it was. If a future change needs extensions bound during construction,
 that needs a different mechanism than a guard widening, and the constraint above is why.
 
-## The subpage part is a separate, still-open case
+## The subpage part
 
-A pageextension adding a global-bound control to a page used as a **subpage part** is not fixed
-by this. `RunnerPageInstance.Adopt` / `AdoptFromHost` wrap a form BC's `NavForm.GetPart` already
-built and initialised, and deliberately do not re-drive `SetSourceTable` — re-registering every
-source expression throws `ArgumentException("An item with the same key has already been added")`.
-So there is no "before the metadata load" left to bind at for that form. Tracked by **#4181**,
-which carries the measured trace and the reproducer; the arm that measured it was removed from
-this suite because it needs a different fix.
+A pageextension control on a page used as a **subpage part** is covered by the same bind.
+The part's form is built through `NavFormHandle.CreateTarget`, the Page-variable path above
+(measured: removing the bind there, and only there, reds the arm below), so its extensions are
+bound before its `SetSourceTable` and `RunnerPageInstance.Adopt` / `AdoptFromHost` reuse them. Corpus codeunit 60980
+`SubPageExtControl_BoundToExtensionGlobal_IsFoundAndReadsItsValue` measures it (#4181, fixed
+together with #4738).

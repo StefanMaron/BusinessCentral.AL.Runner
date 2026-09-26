@@ -899,6 +899,7 @@ public static partial class BcRuntime
                 {
                     var instance = RunnerFormInit.ConstructPage(twoArgCtor, new object?[] { self, record });
                     BindPageSourceObjectId(instance, tableId);
+                    RunnerPageInstance.BindPageExtensionsBeforeMetadataLoad(instance, record, id);
 
                     // NavForm.SetSourceTable(record, clone: false) is BC's own binding
                     // step — it stores `record` as Rec, wires the Notify handler and
