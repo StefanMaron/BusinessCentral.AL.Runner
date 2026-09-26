@@ -59,7 +59,13 @@ internal partial class LiveNavTestPage : MockITestPage
         _page = page;
         _owner = owner;
         _pageId = pageId;
+        if (page != null) page.IsCurrentRowUnsavedNewRow = IsUnsavedNewRow;
     }
+
+    // A temporary source table is left out: RowExistsInTable probes the stored table, which a
+    // temporary row is never in, so it would read every temporary row as unsaved.
+    private bool IsUnsavedNewRow()
+        => _pendingNewRow && _record is { IsTemporary: false } record && !RowExistsInTable(record);
 
     internal NavRecord? Record => _record;
 
