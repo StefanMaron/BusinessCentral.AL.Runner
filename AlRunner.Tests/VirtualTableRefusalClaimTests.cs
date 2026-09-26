@@ -483,7 +483,17 @@ public sealed class VirtualTableRefusalClaimTests
         // — a layout whose ExcelLayoutMultipleDataSheets value is not a boolean refuses rather
         // than defaulting the Report Layout List column to false. 85 was READ OUT of this test's
         // own failure message ("Expected: 84, Actual: 85") after rebasing onto main.
-        Assert.Equal(85, total);
+        //
+        // 85 -> 88 (#2325): three REAL refusal sites in AllProfileWritePatches.cs, all in
+        // CascadeTenantProfileRename, which runs the Tenant Profile (2000000177) rename
+        // propagation an All Profile rename triggers on a real tier:
+        //   the renamed record has no session
+        //   Tenant Profile has no metadata in this run
+        //   the Tenant Profile record has no metatable
+        // Each would otherwise skip the propagation and leave the dependent rows on the old
+        // profile id with nothing said. 88 was READ OUT of this test's own failure message
+        // ("Expected: 85, Actual: 88").
+        Assert.Equal(88, total);
     }
 
     // A refusal SITE is a *call* to a `*ShapeGap(` factory, not only a `throw` of one (#4058).
