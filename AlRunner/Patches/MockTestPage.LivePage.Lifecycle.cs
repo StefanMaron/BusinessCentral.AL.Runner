@@ -158,6 +158,7 @@ internal partial class LiveNavTestPage
     internal void MarkOpened(Microsoft.Dynamics.Nav.Types.Metadata.ViewMode viewMode)
     {
         _opened = true;
+        _detached = false;
         _staticEditableOverride = viewMode != Microsoft.Dynamics.Nav.Types.Metadata.ViewMode.View
                                   && (_page?.PageEditable ?? true);
     }
@@ -233,4 +234,21 @@ internal partial class LiveNavTestPage
     }
 
     public override bool IsOpened() => _opened;
+
+    // BC's NavTestPageBase.Close() ends in InternalClear(), which sets testPage = null: after
+    // ANY Close() -- allowed, vetoed, or refused with a consumed message -- the variable is not
+    // open, and CheckPageOpened raises "The TestPage is not open." The runner keeps the page
+    // attached (it attaches once, at construction), so the detach is this flag instead. Cleared
+    // by MarkOpened, which is how OpenEdit()/OpenView()/OpenNew() reattach in BC. _opened goes
+    // false with it so BC's own already-open guard in Open() sees a detached variable, as it
+    // would see testPage == null. Corpus 60419 (PR #431); #4713.
+    private bool _detached;
+
+    internal bool IsDetached => _detached;
+
+    internal void MarkDetached()
+    {
+        _detached = true;
+        _opened = false;
+    }
 }
