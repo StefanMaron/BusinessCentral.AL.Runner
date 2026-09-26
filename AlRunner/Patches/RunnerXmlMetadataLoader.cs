@@ -120,6 +120,12 @@ public sealed class RunnerXmlMetadataLoader : INCLObjectXmlMetadataLoader
         if (objectId.ObjectType == ObjectType.XmlPort
             && RecordPatches.TryBuildDependencyXmlPortMetadata(objectId.ObjectNumber) is { } depXmlPortXml)
             return Wrap(depXmlPortXml, $"runner-dep-xmlport-{objectId.ObjectNumber}");
+        if (objectId.ObjectType == ObjectType.XmlPort
+            && RecordPatches.DependencyXmlPortRefusal(objectId.ObjectNumber) is { } xmlPortRefusal)
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                $"INCLObjectXmlMetadataLoader.GetMetaObjectXmlMetadata({objectId.ObjectType} {objectId.ObjectNumber})",
+                "not-yet-implemented — a loaded dependency .app declares this xmlport, but its "
+                + "metadata could not be derived: " + xmlPortRefusal);
 
         // Tables: BC's own emitted metadata document, kept per (kind, id) by #3548. This is
         // the entry point for NCLMetaTable.LoadMetadata() — MetaObjectCache.GetMetaTable

@@ -57,7 +57,13 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
-    private static readonly ConcurrentDictionary<int, string?> _depXmlPortMetadataXml = new();
+    /// <summary>
+    /// A projection attempt: the document, or the reason a DECLARED xmlport was refused.
+    /// Both null means no registered .app declares the id.
+    /// </summary>
+    private sealed record XmlPortProjection(string? Xml, string? Refusal);
+
+    private static readonly ConcurrentDictionary<int, XmlPortProjection> _depXmlPortMetadataXml = new();
 
     /// <summary>
     /// Runtime metadata XML for an xmlport declared by a precompiled dependency, or null
@@ -69,12 +75,20 @@ public static partial class RecordPatches
     /// <see cref="TryBuildDependencyReportMetadata"/>.</para>
     /// </summary>
     internal static string? TryBuildDependencyXmlPortMetadata(int xmlPortId)
-        => _depXmlPortMetadataXml.GetOrAdd(xmlPortId, BuildDependencyXmlPortMetadata);
+        => _depXmlPortMetadataXml.GetOrAdd(xmlPortId, BuildDependencyXmlPortMetadata).Xml;
 
-    private static string? BuildDependencyXmlPortMetadata(int xmlPortId)
+    /// <summary>
+    /// Why a dependency DECLARING <paramref name="xmlPortId"/> produced no document, or null
+    /// when it produced one or no dependency declares it. The loader's refusal must carry this
+    /// rather than "no loaded dependency .app declares it" (#4650).
+    /// </summary>
+    internal static string? DependencyXmlPortRefusal(int xmlPortId)
+        => _depXmlPortMetadataXml.GetOrAdd(xmlPortId, BuildDependencyXmlPortMetadata).Refusal;
+
+    private static XmlPortProjection BuildDependencyXmlPortMetadata(int xmlPortId)
     {
         var found = FindDependencyXmlPortSymbol(xmlPortId);
-        if (found == null) return null;
+        if (found == null) return new(null, null);
         var (appPath, port) = found.Value;
 
         var schema = TryReadXmlPortSchema(appPath, port);
@@ -82,14 +96,10 @@ public static partial class RecordPatches
         // claim that the port has no schema, which is worse than the loud refusal it would
         // replace.
         if (schema == null || schema.Count == 0)
-        {
-            Console.Error.WriteLine(
-                $"[RecordPatches] dependency xmlport metadata: XmlPort {xmlPortId} \"{port.Name}\" "
-                + $"declares no recoverable node schema in {Path.GetFileName(appPath)} "
-                + $"(ReferenceSourceFileName={port.ReferenceSourceFileName ?? "<none>"}); "
+            return Refuse(xmlPortId, port.Name,
+                $"XmlPort \"{port.Name}\" in {Path.GetFileName(appPath)} declares no recoverable "
+                + $"node schema (ReferenceSourceFileName={port.ReferenceSourceFileName ?? "<none>"}); "
                 + "refusing rather than handing back an empty document (#3797)");
-            return null;
-        }
 
         string xml;
         try
@@ -100,15 +110,20 @@ public static partial class RecordPatches
         {
             // Same refusal as a missing schema: the AL text is not what BC wrote, and dropping
             // the property would drop the port's sorting and filters (#4471).
-            Console.Error.WriteLine(
-                $"[RecordPatches] dependency xmlport metadata: XmlPort {xmlPortId} \"{port.Name}\" "
-                + $"refused: {ex.Message}");
-            return null;
+            return Refuse(xmlPortId, port.Name,
+                $"XmlPort \"{port.Name}\" in {Path.GetFileName(appPath)} was refused: {ex.Message}");
         }
         Console.Error.WriteLine(
             $"[RecordPatches] dependency xmlport metadata: synthesized XmlPort {xmlPortId} "
             + $"\"{port.Name}\" from {Path.GetFileName(appPath)} ({schema.Count} node(s))");
-        return xml;
+        return new(xml, null);
+    }
+
+    private static XmlPortProjection Refuse(int xmlPortId, string portName, string reason)
+    {
+        Console.Error.WriteLine(
+            $"[RecordPatches] dependency xmlport metadata: XmlPort {xmlPortId} \"{portName}\" refused: {reason}");
+        return new(null, reason);
     }
 
     /// <summary>
@@ -435,6 +450,8 @@ public static partial class RecordPatches
             var enclosing = new List<(string NodeId, int TableId)>();
             // tableelement AL name -> its table, for resolving a later node's LinkTable.
             var tableByNodeName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            // tableelement AL name as looked up -> as declared, for a bound node's SourceField.
+            var tableNodeNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var sequence = XmlPortNodeSequences(schema);
             for (int i = 0; i < schema.Count; i++)
             {
@@ -449,12 +466,13 @@ public static partial class RecordPatches
                     : 0;
                 int linkTableId = n.Properties.TryGetValue("LinkTable", out var linkTable)
                     && tableByNodeName.TryGetValue(LastNameSegment(linkTable), out var linked) ? linked : 0;
-                WriteXmlPortNode(w, n, nodeId, parent.Item1, tableId, parent.Item2, linkTableId);
+                WriteXmlPortNode(w, n, nodeId, parent.Item1, tableId, parent.Item2, linkTableId, tableNodeNames);
 
                 if (tableId > 0)
                 {
                     tableElements.Add((sequence[i], tableId, XmlPortNodeFieldList(n, "RequestFilterFields", tableId)));
                     tableByNodeName[n.Name] = tableId;
+                    tableNodeNames[n.Name] = n.Name;
                 }
 
                 if (n.Indentation < enclosing.Count)
@@ -592,7 +610,8 @@ public static partial class RecordPatches
     /// </summary>
     private static void WriteXmlPortNode(
         XmlWriter w, XmlPortSchemaNode n, string nodeId, string? parentId,
-        int tableId, int enclosingTableId, int linkTableId)
+        int tableId, int enclosingTableId, int linkTableId,
+        IReadOnlyDictionary<string, string>? tableNodeNames = null)
     {
         bool isAttribute = n.Kind is XmlPortNodeKind.TextAttribute or XmlPortNodeKind.FieldAttribute;
         bool isBound = n.Kind is XmlPortNodeKind.FieldElement or XmlPortNodeKind.FieldAttribute;
@@ -619,7 +638,7 @@ public static partial class RecordPatches
         {
             // BC writes `Record::Field`, which is the AL `Record.Field` with the dot replaced
             // and any quoting removed — measured as `Header::No.` for `Header."No."`.
-            if (XmlPortSourceFieldReference(n.Source!) is { } sourceField)
+            if (XmlPortSourceFieldReference(n.Source!, tableNodeNames) is { } sourceField)
                 w.WriteElementString("SourceField", sourceField);
         }
 
@@ -790,8 +809,13 @@ public static partial class RecordPatches
     /// <c>Header."No."</c> -> <c>Header::No.</c>, the spelling BC's emitter writes for a bound
     /// node's SourceField. Returns null for a reference this reader cannot split, so the
     /// element is omitted rather than written with a mangled value.
+    ///
+    /// <para>The record half is spelled as its tableelement DECLARES it: BC wrote
+    /// <c>item::No.</c> for <c>Item."No."</c> under <c>tableelement(item; Item)</c> (Base
+    /// Application xmlport 99000751, BC 28.5.54151.55132; #4651).</para>
     /// </summary>
-    private static string? XmlPortSourceFieldReference(string source)
+    private static string? XmlPortSourceFieldReference(
+        string source, IReadOnlyDictionary<string, string>? tableNodeNames = null)
     {
         var expr = source.Trim();
         if (expr.Length == 0) return null;
@@ -807,6 +831,7 @@ public static partial class RecordPatches
                 var rec = Unquote(expr.Substring(0, i).Trim());
                 var fld = Unquote(expr.Substring(i + 1).Trim());
                 if (rec.Length == 0 || fld.Length == 0) return null;
+                if (tableNodeNames != null && tableNodeNames.TryGetValue(rec, out var declared)) rec = declared;
                 return rec + "::" + fld;
             }
         }
@@ -832,10 +857,24 @@ public static partial class RecordPatches
         var fieldName = reference.Substring(sep + 2);
 
         if (!_parsedTables.TryGetValue(enclosingTableId, out var table)) return null;
-        foreach (var f in table.Fields)
+        // Including tableextension fields: BC folds a same-app extension's fields into the
+        // base table, so 99000751's `Item."Routing No."` (tableextension 99000750) is typed.
+        foreach (var f in GetAllFieldsIncludingExtensions(table))
             if (string.Equals(f.FieldName, fieldName, StringComparison.OrdinalIgnoreCase))
-                return XmlPortDataTypeName(f.TypeName);
+                return XmlPortFieldDataType(f);
         return null;
+    }
+
+    /// <summary>
+    /// An Enum field is <c>Option</c>: BC wrote <c>Option</c> for <c>Item."Costing Method"</c>
+    /// (<c>Enum "Costing Method"</c>) in xmlport 99000751 on BC 28.5.54151.55132 (#4651).
+    /// </summary>
+    private static string? XmlPortFieldDataType(ParsedField f)
+    {
+        if (f.EnumTypeId > 0 || f.EnumTypeName != null
+            || (f.TypeName ?? "").TrimStart().StartsWith("Enum", StringComparison.OrdinalIgnoreCase))
+            return "Option";
+        return XmlPortDataTypeName(f.TypeName);
     }
 
     /// <summary>

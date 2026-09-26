@@ -123,8 +123,11 @@ public static partial class RecordPatches
         return string.Join(",", entries);
     }
 
+    // A namespace-qualified name keeps only its last segment: BC wrote
+    // `tabledata Probe.Alpha.Data."NS Cap Entry" = rimd` as `TableData NS Cap Entry=rimd` (#4650).
     private static readonly Regex XmlPortPermissionEntry = new(
-        @"^\s*tabledata\s+(?<name>""[^""]+""|[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?<perm>[RIMDrimd]+)\s*$",
+        @"^\s*tabledata\s+(?<name>(?:(?:""[^""]+""|[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)*"
+        + @"(?:""[^""]+""|[A-Za-z_][A-Za-z0-9_]*))\s*=\s*(?<perm>[RIMDrimd]+)\s*$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     /// <summary>
@@ -139,7 +142,7 @@ public static partial class RecordPatches
         {
             var m = XmlPortPermissionEntry.Match(entry);
             if (!m.Success) throw NotEncodable("Permissions", portName, entry.Trim());
-            entries.Add($"TableData {XmlPortUnquoteIdentifier(m.Groups["name"].Value)}="
+            entries.Add($"TableData {LastNameSegment(m.Groups["name"].Value)}="
                 + m.Groups["perm"].Value.ToLowerInvariant());
         }
         if (entries.Count == 0) throw NotEncodable("Permissions", portName, alText);
@@ -256,7 +259,7 @@ public static partial class RecordPatches
     {
         var name = XmlPortUnquoteIdentifier(alName.Trim());
         if (tableId > 0 && _parsedTables.TryGetValue(tableId, out var table))
-            foreach (var f in table.Fields)
+            foreach (var f in GetAllFieldsIncludingExtensions(table))
                 if (string.Equals(f.FieldName, name, StringComparison.OrdinalIgnoreCase))
                     return f;
         throw NotEncodable(property, nodeName,
