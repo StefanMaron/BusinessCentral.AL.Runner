@@ -235,13 +235,12 @@ internal partial class LiveNavTestPage
 
     public override bool IsOpened() => _opened;
 
-    // BC's NavTestPageBase.Close() ends in InternalClear(), which sets testPage = null: after
-    // ANY Close() -- allowed, vetoed, or refused with a consumed message -- the variable is not
-    // open, and CheckPageOpened raises "The TestPage is not open." The runner keeps the page
-    // attached (it attaches once, at construction), so the detach is this flag instead. Cleared
-    // by MarkOpened, which is how OpenEdit()/OpenView()/OpenNew() reattach in BC. _opened goes
-    // false with it so BC's own already-open guard in Open() sees a detached variable, as it
-    // would see testPage == null. Corpus 60419 (PR #431); #4713.
+    // Stands in for BC's testPage == null, which the runner never has (it attaches once, at
+    // construction). Set there, because BC's CreateTarget leaves a variable unattached until
+    // OpenEdit()/OpenView()/OpenNew() (#4722), and by every Close(), whose InternalClear()
+    // detaches whether or not the page agreed to close (#4713). Cleared by MarkOpened. _opened
+    // goes false with it so BC's already-open guard in Open() lets a refused-close variable
+    // reopen (#4729). Corpus 60419 and 67040.
     private bool _detached;
 
     internal bool IsDetached => _detached;

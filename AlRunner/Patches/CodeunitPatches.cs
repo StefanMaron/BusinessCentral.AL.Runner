@@ -573,6 +573,13 @@ public static partial class BcRuntime
         if (liveForm != null)
             RunnerServerFormRegistry.Register(testPage, liveForm);
 
+        // BC's own CreateTarget uses the 2-argument ctor, so a TestPage variable starts with
+        // testPage == null: not open until OpenEdit/OpenView/OpenNew attach a page (#4722). Pages
+        // BC attaches through Trap() or hands to a [PageHandler] come from ClientSession.GetPage,
+        // never from here, so they stay open.
+        if (page is LiveNavTestPage live)
+            live.MarkDetached();
+
         return testPage;
     }
 
@@ -674,6 +681,10 @@ public static partial class BcRuntime
         Microsoft.Dynamics.Nav.Types.DataError errorLevel,
         NavRecord record)
     {
+        // BC reaches CheckPageOpened through ALGoToKey's TestPage getter; this replacement
+        // never touches that getter, so ask it directly (#4722).
+        NavTestPageBase_CheckPageOpened(self);
+
         var pageId = GetPageIdFromTestPage(self);
         var tableId = RecordPatches.GetSourceTableIdForPage(pageId);
         var pkFields = RecordPatches.GetPrimaryKeyFieldIdsForTable(tableId);
@@ -735,12 +746,34 @@ public static partial class BcRuntime
             live.MarkDetached();
     }
 
+    private static MethodInfo? _checkPageOpened;
+
+    /// <summary>
+    /// Runs BC's own (Cecil-rewritten) <c>NavTestPageBase.CheckPageOpened()</c> on
+    /// <paramref name="self"/>, so a runner replacement that bypasses BC's <c>TestPage</c> getter
+    /// raises the same NavTestPageNotOpenedException BC would.
+    /// </summary>
+    internal static void NavTestPageBase_CheckPageOpened(object self)
+    {
+        _checkPageOpened ??= AlRunner.Infrastructure.BcShape.RequiredMethod(
+            typeof(NavTestPageBase), "CheckPageOpened",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            "TestPage", "NavTestPageBase.CheckPageOpened",
+            "the guard a never-opened or closed TestPage raises through (#4722)", Type.EmptyTypes);
+        try { _checkPageOpened.Invoke(self, null); }
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(tie.InnerException);
+        }
+    }
+
     /// <summary>
     /// The condition of the rewritten <c>NavTestPageBase.CheckPageOpened()</c>: true when the
-    /// attached page was detached by a Close() and not reopened since. BC's own test is
+    /// variable has no page attached in BC's terms — never opened (#4722), or detached by a
+    /// Close() and not reopened since (#4713). BC's own test is
     /// <c>testPage == null || !testPage.IsOpened()</c>; the runner attaches at construction
     /// and hands pages to handlers without marking them opened, so it answers the detach
-    /// directly rather than reading IsOpened (#4713).
+    /// directly rather than reading IsOpened.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static bool NavTestPageBase_IsDetached(object self)

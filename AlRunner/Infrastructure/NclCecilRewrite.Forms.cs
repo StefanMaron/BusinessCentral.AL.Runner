@@ -611,7 +611,8 @@ public static partial class NclCecilRewrite
         //  3. CheckPageOpened throws NavTestPageNotOpenedException when testPage.IsOpened()
         //     returns false.  MockITestPage.IsOpened()=false (so the "already open" guard in
         //     NavTestPageBase.Open passes), but that means CheckPageOpened would throw too.
-        //     Rewrite CheckPageOpened to throw only for a variable a Close() detached (#4713).
+        //     Rewrite CheckPageOpened to throw only for a detached variable: never opened (#4722),
+        //     or detached by a Close() (#4713).
         //
         //  4. GetField / GetAction / GetDataItem / GetPart / GetBuiltInAction / FindBuiltInAction
         //     pass the raw ITest* result through TestClientProxy<T>.Proxy(), which wraps it in
@@ -691,7 +692,7 @@ public static partial class NclCecilRewrite
         // 3. CheckPageOpened — keep BC's own throw of NavTestPageNotOpenedException, but key it
         //    on BcRuntime.NavTestPageBase_IsDetached instead of `testPage == null ||
         //    !testPage.IsOpened()` (a handler's page is never marked opened here). The detach is
-        //    what step 7 records at Close()'s InternalClear (#4713).
+        //    set at construction (#4722) and at Close()'s InternalClear (step 7, #4713).
         {
             var method = navTestPageBaseType.Methods
                 .FirstOrDefault(m => m.Name == "CheckPageOpened" && m.Parameters.Count == 0)
