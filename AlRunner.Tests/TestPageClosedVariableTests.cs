@@ -1,11 +1,13 @@
-// TestPageClosedVariableTests — issue #4713.
+// TestPageClosedVariableTests — issues #4713, #4722, #4729.
 //
 // Runner mechanism: NavTestPageBase.Close() detaches the TestPage variable (BC's InternalClear sets
 // testPage = null), and the runner stands in for that with LiveNavTestPage's detach flag, read by
 // the rewritten CheckPageOpened. What BC does after a Close() is measured upstream by corpus
 // codeunit 60419 "QCV Close Veto Tests" (StefanMaron/BusinessCentral.AL.Language.Tests#431); this
 // fixture pins the runner's two halves of it: the detach fires after an allowed close and after a
-// refused one, and reopening the same variable clears it.
+// refused one, and reopening the same variable clears it -- after a refused close too (#4729).
+// A variable starts detached (#4722, corpus codeunit 67040): never-opened Close / field read /
+// GoToRecord raise, while pages BC attaches through Trap() or hands to a [PageHandler] are open.
 //
 // The fixture declares no "application", per .claude/rules/no-base-app-in-csharp-tests.md.
 
@@ -37,7 +39,7 @@ public sealed class TestPageClosedVariableTests : IDisposable
     }
 
     [SkippableFact]
-    public void AClosedTestPage_IsNotOpen_UntilItIsOpenedAgain()
+    public void ATestPageVariable_IsOpenOnlyBetweenOpenAndClose()
     {
         TestArtifacts.SkipIfMissing();
         var pkg = TestArtifacts.PlatformAppsDir();
@@ -47,8 +49,8 @@ public sealed class TestPageClosedVariableTests : IDisposable
 
         var m = Regex.Match(output, @"Tests:\s+(\d+)\s+passed\s+(\d+)\s+failed\s+(\d+)");
         Assert.True(m.Success, $"no Tests: summary line; exit={exit}\n{output}");
-        Assert.True(m.Groups[1].Value == "5" && m.Groups[2].Value == "5" && m.Groups[3].Value == "0",
-            $"expected all five arms to pass; exit={exit}\n{output}");
+        Assert.True(m.Groups[1].Value == "11" && m.Groups[2].Value == "11" && m.Groups[3].Value == "0",
+            $"expected all eleven arms to pass; exit={exit}\n{output}");
         Assert.Equal(0, exit);
     }
 
@@ -114,12 +116,130 @@ public sealed class TestPageClosedVariableTests : IDisposable
             }
             """);
 
+        File.WriteAllText(Path.Combine(_root, "Row.Table.al"), """
+            table 90716 "TPCV Row"
+            {
+                fields
+                {
+                    field(1; "No."; Code[20]) { }
+                    field(2; Descr; Text[50]) { }
+                }
+                keys { key(PK; "No.") { Clustered = true; } }
+            }
+            """);
+
+        File.WriteAllText(Path.Combine(_root, "RowCard.Page.al"), """
+            page 90717 "TPCV Row Card"
+            {
+                PageType = Card;
+                SourceTable = "TPCV Row";
+                ApplicationArea = All;
+                UsageCategory = Administration;
+                layout
+                {
+                    area(Content)
+                    {
+                        field("No."; Rec."No.") { ApplicationArea = All; }
+                        field(Descr; Rec.Descr) { ApplicationArea = All; }
+                    }
+                }
+            }
+            """);
+
         File.WriteAllText(Path.Combine(_root, "Tests.Codeunit.al"), """
             codeunit 90715 "TPCV Tests"
             {
                 Subtype = Test;
                 var
                     Probe: Codeunit "TPCV Probe";
+                    HandlerDescr: Text;
+
+                [Test]
+                [HandlerFunctions('ConsumeMessage')]
+                procedure RefusedClose_ReopenIsOpenAgain()
+                var
+                    Card: TestPage "TPCV Card";
+                begin
+                    Probe.Reset(1);
+                    Card.OpenEdit();
+                    Card.Close();
+                    Probe.Reset(0);
+                    Card.OpenView();
+                    if Card.Marker.Value() <> 'OPENED' then Error('reopened after refusal: %1', Card.Marker.Value());
+                end;
+
+                [Test]
+                procedure NeverOpened_CloseRaisesNotOpen()
+                var
+                    Card: TestPage "TPCV Card";
+                begin
+                    asserterror Card.Close();
+                    ExpectNotOpen('never-opened close');
+                end;
+
+                [Test]
+                procedure NeverOpened_FieldReadRaisesNotOpen()
+                var
+                    Card: TestPage "TPCV Card";
+                    Ignored: Text;
+                begin
+                    asserterror Ignored := Card.Marker.Value();
+                    ExpectNotOpen('never-opened field read');
+                end;
+
+                [Test]
+                procedure NeverOpened_GoToRecordRaisesNotOpen()
+                var
+                    Row: Record "TPCV Row";
+                    Card: TestPage "TPCV Row Card";
+                begin
+                    InsertRow(Row);
+                    asserterror Card.GoToRecord(Row);
+                    ExpectNotOpen('never-opened GoToRecord');
+                    InsertRow(Row); // asserterror rolled the first insert back
+                    Card.OpenView();
+                    if not Card.GoToRecord(Row) then Error('opened GoToRecord found nothing');
+                    if Card.Descr.Value() <> 'First row' then Error('opened GoToRecord: %1', Card.Descr.Value());
+                end;
+
+                [Test]
+                procedure Trapped_PageRunIsOpen()
+                var
+                    Row: Record "TPCV Row";
+                    Card: TestPage "TPCV Row Card";
+                begin
+                    InsertRow(Row);
+                    Card.Trap();
+                    Page.Run(Page::"TPCV Row Card", Row);
+                    if Card.Descr.Value() <> 'First row' then Error('trapped: %1', Card.Descr.Value());
+                    Card.Close();
+                end;
+
+                [Test]
+                [HandlerFunctions('RowCardHandler')]
+                procedure PageHandler_PageIsOpen()
+                var
+                    Row: Record "TPCV Row";
+                begin
+                    InsertRow(Row);
+                    HandlerDescr := '';
+                    Page.Run(Page::"TPCV Row Card", Row);
+                    if HandlerDescr <> 'First row' then Error('handler: %1', HandlerDescr);
+                end;
+
+                local procedure InsertRow(var Row: Record "TPCV Row")
+                begin
+                    Row.DeleteAll();
+                    Row."No." := 'R1';
+                    Row.Descr := 'First row';
+                    Row.Insert();
+                end;
+
+                [PageHandler]
+                procedure RowCardHandler(var Card: TestPage "TPCV Row Card")
+                begin
+                    HandlerDescr := Card.Descr.Value();
+                end;
 
                 [Test]
                 procedure AllowedClose_SecondCloseRaisesNotOpen()
