@@ -215,7 +215,7 @@ public sealed class CleanRunStartupVerbosityTests
         try
         {
             var (output, exit) = Run(alCacheDir, "--verbose");
-            Assert.True(exit == 0 && output.Contains("pass:        1"),
+            Assert.True(exit == 0 && output.Contains("passed 1 "),
                 $"fixture must compile and pass cleanly:\n{output}");
 
             var header = RunHeaderLine.Match(output);
