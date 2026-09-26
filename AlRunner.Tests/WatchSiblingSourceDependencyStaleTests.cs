@@ -25,7 +25,7 @@ public class WatchSiblingSourceDependencyStaleTests
         // different finder than the codeunit's. (The page half is covered in --server by
         // ServerSiblingSourceDependencyPageReloadTests; in --watch a sibling dependency's
         // page-variable control reads empty even on cycle 1, a separate gap.)
-        File.WriteAllText(Path.Combine(dir, "Answer.Page.al"), $$"""
+        WatchEdit.Replace(Path.Combine(dir, "Answer.Page.al"), $$"""
         table 64051 "WSS Answer Rec"
         {
             fields
@@ -42,7 +42,7 @@ public class WatchSiblingSourceDependencyStaleTests
         }
 
         """);
-        File.WriteAllText(Path.Combine(dir, "Answer.Codeunit.al"), $$"""
+        WatchEdit.Replace(Path.Combine(dir, "Answer.Codeunit.al"), $$"""
         codeunit 64050 "WSS Answer"
         {
             procedure Value(): Integer
@@ -55,7 +55,7 @@ public class WatchSiblingSourceDependencyStaleTests
 
     // The watcher observes the requested bundle; each cycle's edit touches this file too.
     private static void WriteTestSource(string dir, string marker) =>
-        File.WriteAllText(Path.Combine(dir, "AnswerTests.Codeunit.al"), $$"""
+        WatchEdit.Replace(Path.Combine(dir, "AnswerTests.Codeunit.al"), $$"""
         // {{marker}}
         codeunit 64055 "WSS Answer Tests"
         {

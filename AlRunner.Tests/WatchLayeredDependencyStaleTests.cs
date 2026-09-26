@@ -80,7 +80,7 @@ public class WatchLayeredDependencyStaleTests
     // nothing that could make the dependency's own recompile take a path other than the normal
     // one.
     private static void WriteDepSource(string dir, int answer) =>
-        File.WriteAllText(Path.Combine(dir, "Answer.Codeunit.al"), $$"""
+        WatchEdit.Replace(Path.Combine(dir, "Answer.Codeunit.al"), $$"""
         codeunit 60420 "WLD Answer"
         {
             procedure Value(): Integer
@@ -116,7 +116,7 @@ public class WatchLayeredDependencyStaleTests
     // Asserts the dependency's answer is 42 and names the value it actually saw, so a failure
     // says WHICH compile ran rather than only that one did.
     private static void WriteTestSource(string dir, string extraComment) =>
-        File.WriteAllText(Path.Combine(dir, "AnswerTests.Codeunit.al"), $$"""
+        WatchEdit.Replace(Path.Combine(dir, "AnswerTests.Codeunit.al"), $$"""
         // {{extraComment}}
         codeunit 60430 "WLD Answer Tests"
         {

@@ -163,7 +163,7 @@ public class WatchQuerySymbolsReloadTests
                 var src = await File.ReadAllTextAsync(testsPath);
                 var edited = src.Replace($"// EDIT-MARKER: {cycle - 1}", $"// EDIT-MARKER: {cycle}");
                 Assert.NotEqual(src, edited);
-                await File.WriteAllTextAsync(testsPath, edited);
+                WatchEdit.Replace(testsPath, edited);
 
                 int next = await WaitForMarkerAfter(marker + 1, TimeSpan.FromSeconds(300));
                 var window = Segment(marker + 1, next);

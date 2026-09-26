@@ -21,7 +21,7 @@ public class WatchSiblingSymbolsIncrementalTests
     private const string DepLine = "[sibling-symbols] WSI Sibling Dep 1.0.0.0: ";
 
     private static void WriteDep(string dir, string extraProcedures) =>
-        File.WriteAllText(Path.Combine(dir, "Answer.Codeunit.al"), $$"""
+        WatchEdit.Replace(Path.Combine(dir, "Answer.Codeunit.al"), $$"""
         codeunit 64060 "WSI Answer"
         {
             procedure Value(): Integer
@@ -33,7 +33,7 @@ public class WatchSiblingSymbolsIncrementalTests
         """);
 
     private static void WriteTests(string dir, string marker, string expression, int expected) =>
-        File.WriteAllText(Path.Combine(dir, "AnswerTests.Codeunit.al"), $$"""
+        WatchEdit.Replace(Path.Combine(dir, "AnswerTests.Codeunit.al"), $$"""
         // {{marker}}
         codeunit 64065 "WSI Answer Tests"
         {

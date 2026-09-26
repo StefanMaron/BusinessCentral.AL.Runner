@@ -244,7 +244,7 @@ public class WatchCrossAppOverloadRebindTests
                 + "cycle 2:\n" + cycle1);
 
             // ── Edit ONLY the dependency. The consumer's files are not touched.
-            File.WriteAllText(Path.Combine(appDir, "Lib.al"), LibAfter(c));
+            WatchEdit.Replace(Path.Combine(appDir, "Lib.al"), LibAfter(c));
 
             // ── Cycle 2: same resident process, warm dependencies. A cold run of these sources
             // binds Which(Integer) and answers 2.

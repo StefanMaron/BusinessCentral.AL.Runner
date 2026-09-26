@@ -147,7 +147,7 @@ public class WatchFullRebuildReasonTests
             // this is a reliable, deterministic fallback with a specific, recognisable cause.
             var original = await File.ReadAllTextAsync(testsCodeunitPath);
             var edited = original + "\ncodeunit 60199 \"xRec Probe Extra RXT\"\n{\n}\n";
-            await File.WriteAllTextAsync(testsCodeunitPath, edited);
+            WatchEdit.Replace(testsCodeunitPath, edited);
 
             int m2 = await WaitForMarkerAfter(m1 + 1, TimeSpan.FromSeconds(240));
 

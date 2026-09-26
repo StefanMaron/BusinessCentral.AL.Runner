@@ -174,7 +174,7 @@ public class WatchTests
             var table = await File.ReadAllTextAsync(tablePath);
             var edited = table.Replace("xRec.\"Counter\" + 1", "xRec.\"Counter\" + 9");
             Assert.NotEqual(table, edited);
-            await File.WriteAllTextAsync(tablePath, edited);
+            WatchEdit.Replace(tablePath, edited);
 
             // Cycle 2 (warm, after the edit).
             //

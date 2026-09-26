@@ -182,7 +182,7 @@ public class TddWatchTests
                 + "\n    procedure DoubleIt(X: Integer): Integer\n    begin\n        exit(X * 2);\n    end;\n"
                 + original[lastBrace..];
             Assert.NotEqual(original, edited);
-            await File.WriteAllTextAsync(targetCuPath, edited);
+            WatchEdit.Replace(targetCuPath, edited);
 
             // Cycle 2: DoubleIt's test now compiles against the REAL implementation
             // (no generated member involved at all) and must report PASSED — proving
