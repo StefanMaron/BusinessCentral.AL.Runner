@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **events:** trap an isolated event subscriber's error and roll back its writes
 - **rename:** a tenant profile rename carries its dependent rows; propagation reaches system tables, key fields and per-company tables
 - **testpage:** unsaved new row on a temporary-source page raises no OnAfterGetRecord on CurrPage.Update
 - **metadata:** quote ';' in one-language MultiLanguage captions
