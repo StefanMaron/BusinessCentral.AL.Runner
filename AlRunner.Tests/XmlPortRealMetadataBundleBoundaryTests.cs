@@ -186,8 +186,8 @@ public sealed class XmlPortRealMetadataBundleBoundaryTests : IDisposable
     private static void RecordSuccessfulLoad(int xmlPortId)
     {
         var gate = StaticField("_realXmlPortMetadataLock").GetValue(null)!;
-        var set = (ICollection<int>)StaticField("_xmlPortsWithRealMetadata").GetValue(null)!;
-        lock (gate) set.Add(xmlPortId);
+        var set = (ICollection<(Guid, int)>)StaticField("_xmlPortsWithRealMetadata").GetValue(null)!;
+        lock (gate) set.Add((Guid.Empty, xmlPortId));
     }
 
     /// <summary>Pre-seed the metaxmlport cache so <c>EnsureRealXmlPortMetadata</c> gets a

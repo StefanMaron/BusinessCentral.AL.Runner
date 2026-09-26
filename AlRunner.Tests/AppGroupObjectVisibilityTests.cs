@@ -226,6 +226,28 @@ public class AppGroupObjectVisibilityTests
         Assert.False(RecordPatches.IsHiddenFromAppGroup("Table", 62680, new HashSet<Guid> { AppA }, owners));
     }
 
+    [Fact]
+    public void AppGroupScopeFor_OnlyAnExecutingGroupAmongSeveralDeclarersGetsItsOwnScope()
+    {
+        var declarers = new Dictionary<(string Kind, int Id), HashSet<Guid>>
+        {
+            [("xmlport", 62683)] = new() { AppC, AppD },
+            [("xmlport", 62690)] = new() { AppC },
+        };
+
+        // #4751: each declarer of a shared id is its own scope.
+        Assert.Equal(AppC, RecordPatches.AppGroupScopeFor("XmlPort", 62683, declarers, AppC));
+        Assert.Equal(AppD, RecordPatches.AppGroupScopeFor("xmlport", 62683, declarers, AppD));
+        // A group that does not declare the shared id reads the process-wide object.
+        Assert.Null(RecordPatches.AppGroupScopeFor("xmlport", 62683, declarers, AppA));
+        // One declarer, an unknown id, or no executing group: nothing to separate.
+        Assert.Null(RecordPatches.AppGroupScopeFor("xmlport", 62690, declarers, AppC));
+        Assert.Null(RecordPatches.AppGroupScopeFor("xmlport", 62691, declarers, AppC));
+        Assert.Null(RecordPatches.AppGroupScopeFor("xmlport", 62683, declarers, null));
+        // Keyed by kind as well as id.
+        Assert.Null(RecordPatches.AppGroupScopeFor("report", 62683, declarers, AppC));
+    }
+
     private static string WriteApp(string dir, Guid appId, string name, int from, int to)
     {
         Directory.CreateDirectory(dir);
@@ -269,12 +291,13 @@ public class AppGroupObjectVisibilityTests
         """);
 
         var dirs = new List<string> { outer };
-        foreach (var (letter, appId, cu) in new[] { ("X", AppC, 62681), ("Y", AppD, 62682) })
+        foreach (var (letter, appId, cu, bufferId) in new[] { ("X", AppC, 62681, 62684), ("Y", AppD, 62682, 62685) })
         {
             var dir = WriteApp(Path.Combine(root, "dup" + letter), appId, "Dup " + letter, 62680, 62689);
             File.WriteAllText(Path.Combine(dir, "Dup.al"), $$"""
             table 62680 "Dup {{letter}} Table" { fields { field(1; "Code"; Code[20]) { } } keys { key(PK; "Code") { Clustered = true; } } }
-            xmlport 62683 "Dup {{letter}} XmlPort" { schema { textelement(Root) { } } }
+            xmlport 62683 "Dup {{letter}} XmlPort" { schema { textelement(Root{{letter}}) { } } }
+            table {{bufferId}} "Dup {{letter}} Buffer" { fields { field(1; PK; Integer) { } field(2; Data; Blob) { } } keys { key(PK; PK) { Clustered = true; } } }
             codeunit {{cu}} "Dup {{letter}} Tests"
             {
                 Subtype = Test;
@@ -290,6 +313,28 @@ public class AppGroupObjectVisibilityTests
                     // #4461: an id two groups declare has no single owner, so the group running
                     // second must not take the first group's compiled xmlport as its owner and hide it.
                     if not XmlPortMetadata.Get(62683) then Error('MISSING: XMLport Metadata does not list own xmlport 62683 in {{letter}}');
+                end;
+
+                // #4751: each group reads its OWN xmlport 62683, not whichever group resolved the id first.
+                [Test]
+                procedure OwnXmlPortWithASharedIdIsThisGroupsOwn()
+                var
+                    XmlPortMetadata: Record "XmlPort Metadata";
+                    Buffer: Record "Dup {{letter}} Buffer";
+                    ExpectedApp: Guid;
+                    OutS: OutStream;
+                    InS: InStream;
+                    Exported: Text;
+                begin
+                    Evaluate(ExpectedApp, '{{appId}}');
+                    if not XmlPortMetadata.Get(62683) then Error('MISSING: XMLport Metadata does not list own xmlport 62683 in {{letter}}');
+                    if XmlPortMetadata.Name <> 'Dup {{letter}} XmlPort' then Error('WRONG: XMLport Metadata name for 62683 in {{letter}} is %1', XmlPortMetadata.Name);
+                    if XmlPortMetadata."App ID" <> ExpectedApp then Error('WRONG: XMLport Metadata App ID for 62683 in {{letter}} is %1', XmlPortMetadata."App ID");
+                    Buffer.Data.CreateOutStream(OutS);
+                    Xmlport.Export(62683, OutS);
+                    Buffer.Data.CreateInStream(InS, TextEncoding::UTF16);
+                    InS.Read(Exported);
+                    if StrPos(Exported, '<Root{{letter}}') = 0 then Error('WRONG: xmlport 62683 exported another group''s schema in {{letter}}: %1', Exported);
                 end;
             }
             """);
@@ -324,8 +369,9 @@ public class AppGroupObjectVisibilityTests
         string output;
         lock (sb) output = sb.ToString();
 
-        Assert.Contains("3P/0F/0E across 3 tests", output);
+        Assert.Contains("5P/0F/0E across 5 tests", output);
         Assert.DoesNotContain("MISSING:", output);
+        Assert.DoesNotContain("WRONG:", output);
         Assert.Equal(0, p.ExitCode);
     }
 
@@ -340,7 +386,7 @@ public class AppGroupObjectVisibilityTests
         await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
         var lines = await server.SendRequestStreamingAsync(RunTests(dirs));
         var (events, _) = ProtocolV2Streaming.Split(lines);
-        Assert.Equal(3, events.Count);
+        Assert.Equal(5, events.Count);
         foreach (var e in events)
             Assert.True(e.GetProperty("status").GetString() == "pass", string.Join(" | ", lines));
     }

@@ -77,7 +77,7 @@ public static partial class RecordPatches
     /// </summary>
     private static bool XmlPortMetadataResolves(int id, ref Dictionary<(string Kind, int Id), Guid>? ownerIndex)
     {
-        var meta = _metaXmlPortCache.GetOrAdd(id, BuildNCLMetaXmlPort);
+        var meta = GetOrBuildMetaXmlPort(id);
         if (meta == null) return false;
         // Once per metadata instance: an xmlport no index can place would otherwise rebuild the
         // owner index on every snapshot call.
@@ -108,7 +108,11 @@ public static partial class RecordPatches
         if (ReadOwningApp(meta) != null) return;
 
         ownerIndex ??= BuildObjectOwnerIndex();
-        if (!ownerIndex.TryGetValue(("xmlport", id), out var appId) || appId == Guid.Empty) return;
+        // An id several app groups declare has no single owner in the index; this instance is
+        // the executing group's own (GetOrBuildMetaXmlPort), so that group is its owner (#4751).
+        Guid appId;
+        if (AppGroupScopeFor("xmlport", id) is { } group) appId = group;
+        else if (!ownerIndex.TryGetValue(("xmlport", id), out appId) || appId == Guid.Empty) return;
         if (KnownAppName(appId) is not { } name) return;
         SetOwningApp(meta, appId, name);
     }

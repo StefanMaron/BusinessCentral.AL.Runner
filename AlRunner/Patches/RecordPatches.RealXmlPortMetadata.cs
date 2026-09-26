@@ -39,8 +39,10 @@ public static partial class RecordPatches
     // here, and is deliberately NOT addressed: this file's gate reads
     // AlXmlPortMetadataRegistry and _parsedXmlPorts, neither of which is derived from the
     // registered .app set, so the page side's epoch argument does not transfer unexamined.
-    private static readonly HashSet<int> _xmlPortsWithRealMetadata = new();
-    private static readonly HashSet<int> _xmlPortsRealMetadataFailed = new();
+    // Keyed like GetOrBuildMetaXmlPort's instances: (executing app group, id) for an id several
+    // app groups declare, (Guid.Empty, id) otherwise (#4751).
+    private static readonly HashSet<(Guid AppGroup, int Id)> _xmlPortsWithRealMetadata = new();
+    private static readonly HashSet<(Guid AppGroup, int Id)> _xmlPortsRealMetadataFailed = new();
     private static readonly object _realXmlPortMetadataLock = new();
 
     /// <summary>Whether <paramref name="xmlPortId"/> is recorded as having had its REAL
@@ -49,7 +51,7 @@ public static partial class RecordPatches
     /// <c>NCLMetaXmlPort</c> instances it describes.</summary>
     internal static bool XmlPortHasRealMetadataForTests(int xmlPortId)
     {
-        lock (_realXmlPortMetadataLock) return _xmlPortsWithRealMetadata.Contains(xmlPortId);
+        lock (_realXmlPortMetadataLock) return _xmlPortsWithRealMetadata.Contains((Guid.Empty, xmlPortId));
     }
 
     /// <summary>Whether <paramref name="xmlPortId"/> is recorded as having FAILED its real
@@ -57,7 +59,7 @@ public static partial class RecordPatches
     /// half that suppresses every later attempt for that id until the next reload.</summary>
     internal static bool XmlPortRealMetadataFailedForTests(int xmlPortId)
     {
-        lock (_realXmlPortMetadataLock) return _xmlPortsRealMetadataFailed.Contains(xmlPortId);
+        lock (_realXmlPortMetadataLock) return _xmlPortsRealMetadataFailed.Contains((Guid.Empty, xmlPortId));
     }
 
     /// <summary>
@@ -119,13 +121,14 @@ public static partial class RecordPatches
         if (!AlXmlPortMetadataRegistry.TryGet(xmlPortId, out _)
             && TryBuildDependencyXmlPortMetadata(xmlPortId) == null) return null;
 
-        var meta = _metaXmlPortCache.GetOrAdd(xmlPortId, BuildNCLMetaXmlPort);
+        var key = (AppGroupScopeFor("xmlport", xmlPortId) ?? Guid.Empty, xmlPortId);
+        var meta = GetOrBuildMetaXmlPort(xmlPortId);
         if (meta == null) return null;
 
         lock (_realXmlPortMetadataLock)
         {
-            if (_xmlPortsRealMetadataFailed.Contains(xmlPortId)) return null;
-            if (_xmlPortsWithRealMetadata.Contains(xmlPortId)) return meta;
+            if (_xmlPortsRealMetadataFailed.Contains(key)) return null;
+            if (_xmlPortsWithRealMetadata.Contains(key)) return meta;
 
             try
             {
@@ -141,7 +144,7 @@ public static partial class RecordPatches
                     "XmlPort Metadata read from BC's own xmlport metadata")
                     .Invoke(meta, null);
 
-                _xmlPortsWithRealMetadata.Add(xmlPortId);
+                _xmlPortsWithRealMetadata.Add(key);
                 if (Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_XMLPORT_METADATA") == "1")
                     Console.Out.WriteLine($"[xmlport-metadata] loaded real metadata for xmlport {xmlPortId}");
                 return meta;
@@ -149,7 +152,7 @@ public static partial class RecordPatches
             catch (Exception ex)
             {
                 var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
-                _xmlPortsRealMetadataFailed.Add(xmlPortId);
+                _xmlPortsRealMetadataFailed.Add(key);
                 // Put the flag back so the skeleton behaves exactly as it did before the
                 // attempt — a half-loaded metaxmlport is worse than none.
                 if (_fNCLMetaAppObjMetadataLoaded != null)

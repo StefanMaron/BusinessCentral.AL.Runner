@@ -117,7 +117,7 @@ public static partial class RecordPatches
         // dependency reaches NCLMetadata.GetMetaApplicationObject through exactly the same AL
         // surfaces, and reached it as a not-found throw until #3510.
         PopulateOneObjectType(arr, objectTypeXmlPort, KnownXmlPortIdSet().ToArray(),
-            id => _metaXmlPortCache.GetOrAdd(id, BuildNCLMetaXmlPort), "XmlPort");
+            GetOrBuildMetaXmlPort, "XmlPort");
 
         // W-8b A-prime: now that every publisher table has an NCLMetaTable with its
         // tableTriggerEventHandler field populated, inject AL-emitted [NavEventSubscriber]
@@ -236,7 +236,7 @@ public static partial class RecordPatches
             // NCLMetaApplicationObject.GetMetadataFromLoader). Falls back to the skeleton
             // for an xmlport we have no captured XML for — a precompiled dependency's.
             var meta = EnsureRealXmlPortMetadata(objectId)
-                       ?? _metaXmlPortCache.GetOrAdd(objectId, BuildNCLMetaXmlPort);
+                       ?? GetOrBuildMetaXmlPort(objectId);
             if (meta != null)
                 return meta;
         }

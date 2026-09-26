@@ -414,6 +414,9 @@ public sealed partial class BcCompiler
 
     /// <summary>Set the real app identity of the bundle about to be compiled, so
     /// internalsVisibleTo grants from its deps match. Pass nulls to reset.</summary>
+    /// <summary>The app being compiled now, for registries that keep per-app copies (#4751).</summary>
+    internal static Guid? CurrentAppIdForRegistries { get { lock (_refSync) return _currentAppId; } }
+
     public static void SetCurrentAppIdentity(Guid? appId, string? publisher, Version? version)
     {
         lock (_refSync) { _currentAppId = appId; _currentPublisher = publisher; _currentVersion = version; }
