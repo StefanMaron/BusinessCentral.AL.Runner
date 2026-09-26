@@ -75,6 +75,9 @@ public sealed class ReportRequestPageSubtreeTests
     // Declares no RequestPage node AT ALL. No shipped report does this (660 of 660 carry
     // one), but the parser must not invent a subtree for a report that states none.
     private const int NoRequestPageNode = 9812;
+    // States SourceTable on its RequestPage node, as Base Application report 742 does
+    // ("SourceTable": "740" beside SaveValues/ShowFilter) — #4659.
+    private const int WithSourceTable = 9813;
 
     private static readonly string SymbolReference = $$"""
         {
@@ -130,6 +133,20 @@ public sealed class ReportRequestPageSubtreeTests
                                   }
                                 ]
                               }
+                            ]
+                          }
+                        },
+                        {
+                          "Id": {{WithSourceTable}},
+                          "Name": "With Source Table",
+                          "DataItems": [],
+                          "RequestPage": {
+                            "Id": 0,
+                            "Name": "RequestOptionsPage",
+                            "Properties": [
+                              { "Name": "SaveValues", "Value": "1" },
+                              { "Name": "ShowFilter", "Value": "0" },
+                              { "Name": "SourceTable", "Value": "740" }
                             ]
                           }
                         },
@@ -498,6 +515,108 @@ public sealed class ReportRequestPageSubtreeTests
         finally
         {
             Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// #4659: the request page's <c>SourceTable</c> is read off the symbol file as a table id,
+    /// and a request page that states none reads 0 — including one that states OTHER
+    /// SourceObject properties (SaveValues), so the id is not picked up from a neighbour.
+    /// </summary>
+    [Fact]
+    public void TheSymbolCarriesTheRequestPageSourceTable()
+    {
+        var dir = TestScratch.Dir("al-runner-report-requestpage-sourcetable-symbol");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var reports = BcAppSymbolCache.Get(WriteApp(dir)).Reports;
+            Assert.Equal(740, Assert.Single(reports, r => r.Id == WithSourceTable).RequestPageSourceTableId);
+            Assert.Equal(0, Assert.Single(reports, r => r.Id == WithControls).RequestPageSourceTableId);
+            Assert.Equal(0, Assert.Single(reports, r => r.Id == ChangePassword).RequestPageSourceTableId);
+            Assert.Equal(0, Assert.Single(reports, r => r.Id == NoRequestPageNode).RequestPageSourceTableId);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// #4659: BC writes a declared request-page SourceTable as <c>SourceTable="&lt;id&gt;"</c> on
+    /// <c>&lt;SourceObject&gt;</c> (read off the runner's emit-captured document for a
+    /// source-compiled report). Without it NavForm.SourceTable is null and report 742's
+    /// OnOpenPage NREs on <c>Rec</c>. Negative: no attribute when none is declared.
+    /// </summary>
+    [Fact]
+    public void TheEmittedSourceObjectCarriesTheDeclaredSourceTable()
+    {
+        var dir = TestScratch.Dir("al-runner-report-requestpage-sourcetable-xml");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            Assert.Equal("740", SourceObjectOf(Emit(Report(dir, WithSourceTable))).GetAttribute("SourceTable"));
+            Assert.False(SourceObjectOf(Emit(Report(dir, WithControls))).HasAttribute("SourceTable"));
+            Assert.False(SourceObjectOf(Emit(Report(dir, ChangePassword))).HasAttribute("SourceTable"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    private static XmlElement SourceObjectOf(XmlElement reportRoot)
+        => Assert.IsAssignableFrom<XmlElement>(reportRoot.SelectSingleNode(
+            "RequestPage/*[local-name()='PageDefinition']/*[local-name()='Properties']"
+            + "/*[local-name()='SourceObject']"));
+
+    /// <summary>
+    /// The same through BC's OWN reader: <c>RequestPageDefinition.Properties.SourceObject.SourceTable</c>
+    /// is what the request page's MasterPage takes its source table from, so this proves the
+    /// attribute lands where BC reads it rather than merely appearing in the text.
+    /// </summary>
+    [SkippableFact]
+    public void BcsOwnReaderSeesTheRequestPageSourceTable()
+    {
+        var types = Type.GetType(
+            "Microsoft.Dynamics.Nav.Types.Metadata.MetaReport, Microsoft.Dynamics.Nav.Types");
+        Skip.If(types is null, "Microsoft.Dynamics.Nav.Types is not loadable on this box.");
+
+        var ctor = types!.GetConstructors().FirstOrDefault(
+            c => c.GetParameters() is { Length: 5 } ps && ps[0].ParameterType == typeof(XmlElement));
+        Assert.True(ctor is not null, "MetaReport has no (XmlElement, …) constructor.");
+        var requestPage = types.GetProperty("RequestPageDefinition",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        Assert.True(requestPage is not null, "MetaReport has no RequestPageDefinition property.");
+
+        var dir = TestScratch.Dir("al-runner-report-requestpage-sourcetable-reader");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            Assert.Equal(740, ReadSourceTable(Report(dir, WithSourceTable)));
+            Assert.Equal(0, ReadSourceTable(Report(dir, WithControls)));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+
+        int ReadSourceTable(BcAppSymbolCache.ReportSymbol report)
+        {
+            var parsed = ctor!.Invoke(new object?[] { Emit(report), null, 0, 0, null });
+            var definition = requestPage!.GetValue(parsed)!;
+            var properties = Get(definition, "Properties");
+            var sourceObject = Get(properties, "SourceObject");
+            return Convert.ToInt32(Get(sourceObject, "SourceTable"));
+        }
+
+        static object Get(object o, string name)
+        {
+            var p = o.GetType().GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            Assert.True(p is not null, $"{o.GetType().Name} has no {name} property.");
+            var v = p!.GetValue(o);
+            Assert.NotNull(v);
+            return v!;
         }
     }
 }

@@ -692,7 +692,11 @@ internal static partial class BcAppSymbolCache
         // Visible/Editable/Enabled text the symbol file states for it (#4661). Not emitted
         // into the metadata document (see above); read only to answer a TestRequestPage
         // control's declared property on a report the runner never compiled.
-        List<RequestPageControlSymbol>? RequestPageControls = null);
+        List<RequestPageControlSymbol>? RequestPageControls = null,
+        // The request page's own `SourceTable`, as the table id the symbol file states (#4659);
+        // 0 when it declares none. BC writes it onto the request page's <SourceObject>, and
+        // without it the page's Rec is never bound (report 742's OnOpenPage NREs on Rec).
+        int RequestPageSourceTableId = 0);
 
     /// <summary>
     /// One node of a precompiled report's request-page control tree (#4661): a field, a group,
@@ -2472,7 +2476,8 @@ internal static partial class BcAppSymbolCache
             // reading either would import a value the emitter must then discard.
             report.TryGetProperty("RequestPage", out var requestPage)
                 && requestPage.ValueKind == JsonValueKind.Object,
-            requestPage.ValueKind == JsonValueKind.Object ? ReadRequestPageControls(requestPage) : null);
+            requestPage.ValueKind == JsonValueKind.Object ? ReadRequestPageControls(requestPage) : null,
+            ReadRequestPageSourceTableId(report));
     }
 
     /// <summary>
@@ -2504,6 +2509,23 @@ internal static partial class BcAppSymbolCache
         if (control.TryGetProperty("Controls", out var children) && children.ValueKind == JsonValueKind.Array)
             foreach (var child in children.EnumerateArray())
                 CollectRequestPageControls(child, id != 0 ? id : parentId, into);
+    }
+
+    /// <summary>
+    /// The request page's <c>SourceTable</c>, stated as the numeric table id (Base Application
+    /// 28.1.49838.53910: reports 742, 7314, 8621 declare one). 0 when absent or not numeric —
+    /// the same reading <c>TryParsePageSymbol</c> gives a page's <c>SourceTable</c>.
+    /// </summary>
+    private static int ReadRequestPageSourceTableId(JsonElement report)
+    {
+        if (!report.TryGetProperty("RequestPage", out var requestPage)
+            || requestPage.ValueKind != JsonValueKind.Object)
+            return 0;
+        return SymbolProperties(requestPage).TryGetValue("SourceTable", out var st)
+            && int.TryParse(st, System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out var id) && id > 0
+            ? id
+            : 0;
     }
 
     private static List<ReportLayoutSymbol>? ReadReportLayouts(JsonElement report)
