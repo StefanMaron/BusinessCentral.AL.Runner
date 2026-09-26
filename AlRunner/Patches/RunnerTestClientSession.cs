@@ -112,7 +112,7 @@ public sealed class RunnerTestClientSession : ITestClientSession
             if (IsUnpositioned(record)) live.MoveFirstDuringOpen();
             else
             {
-                RereadCallerRow(form, record);
+                RereadCallerRow(record);
                 live.MarkRowLoadedDuringOpen();
             }
         }
@@ -124,22 +124,12 @@ public sealed class RunnerTestClientSession : ITestClientSession
     /// The page shows the caller's row as it is in the table: a value the caller put into its
     /// record and never saved reaches the target's OnOpenPage (the form's own clone) but not the
     /// page, so it is neither shown nor stored by the page's save. Corpus codeunit 67361 (#4752):
-    /// a RunPageOnRec target and <c>Page.Run(Id, Rec)</c> alike.
-    /// A row the table does not hold (or the caller's filters exclude) keeps the caller's
-    /// values, so the probe runs on a copy first. Trap: a failed Find on <paramref name="record"/>
-    /// itself is not guaranteed to leave its fields alone.
+    /// a RunPageOnRec target and <c>Page.Run(Id, Rec)</c> alike. A row the table does not hold
+    /// keeps the caller's values — a missed Find leaves the fields alone
+    /// (<c>PageOpensOnStoredRowTests</c> pins it).
     /// </summary>
-    private static void RereadCallerRow(object form, NavRecord record)
-    {
-        var probe = TestPageFactory.TryBuildBlankRecord(form, record.TableID, record.IsTemporary, out var why)
-            ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                $"TestPage page {PageIdOf(form)}",
-                $"not-yet-implemented — the page opens on its caller's row as the table holds it, and "
-                + $"the runner could not build a cursor over table {record.TableID} to read it ({why})");
-        probe.ALCopy(record, record.IsTemporary);
-        if (probe.ALFind(DataError.TrapError, "="))
-            record.ALFind(DataError.TrapError, "=");
-    }
+    private static void RereadCallerRow(NavRecord record)
+        => record.ALFind(DataError.TrapError, "=");
 
     /// <summary>
     /// Whether <paramref name="record"/> is still at its Init() default — every primary-key

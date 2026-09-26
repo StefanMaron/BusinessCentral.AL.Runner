@@ -237,6 +237,8 @@ internal sealed partial class RunnerPageInstance
     /// <summary>
     /// The host's current row, field values included, on a cursor of its own with no filters —
     /// the bookmark BC hands the target carries the row, not the host's view of the table.
+    /// The values reach the target's OnOpenPage only; the page re-reads the row
+    /// (<c>RunnerTestClientSession.RereadCallerRow</c>, corpus 67361).
     /// Trap: handing over <c>_record</c> itself lets the target move and re-filter the host.
     /// </summary>
     private NavRecord? CopyHostRowForTarget()
