@@ -97,8 +97,7 @@ internal partial class LiveNavTestPage : MockITestPage
         // A page without the trigger answers null here and goes straight to the blank line.
         if (record.GetALIsEmptyAsync().GetAwaiter().GetResult())
         {
-            if (page.RaiseOnFindRecord("=>") is not null) page.RaiseOnFindRecord("=><");
-            EnterNewRowLine(record);
+            MoveOntoBlankLineAfterDelete(record);
             return;
         }
         var kept = page.RaiseOnFindRecord("=");
@@ -122,6 +121,25 @@ internal partial class LiveNavTestPage : MockITestPage
         }
         if (page.RaiseOnFindRecord("=") == true) Loaded(true);
         else EnterNewRowLine(record);
+    }
+
+    // The blank line is current, so BC raises OnAfterGetCurrRecord for it: once before a declared
+    // OnFindRecord is asked "=>" and "=><", twice after (corpus 67300
+    // List_DeletedByAction_PassThroughFind_OnlyRow, #4777). The deleted row's key is gone from the
+    // buffer by the first one, so the trigger reads a blank row, never the deleted one.
+    // Trap: a List with no new-row line keeps the deleted row in its buffer -- raising there would
+    // hand the trigger that row; unmeasured, so it raises nothing.
+    private void MoveOntoBlankLineAfterDelete(NavRecord record)
+    {
+        var page = _page!;
+        var onBlankLine = EnterNewRowLine(record);
+        if (onBlankLine) page.RaiseOnAfterGetCurrRecord();
+        if (page.RaiseOnFindRecord("=>") is null) return;
+        page.RaiseOnFindRecord("=><");
+        if (!onBlankLine) return;
+        page.RaiseOnAfterGetCurrRecord();
+        page.RaiseOnAfterGetCurrRecord();
+        record.OldRecord.ALAssign(record);
     }
 
     internal bool IsOnUnsavedNewRow => _pendingNewRow;

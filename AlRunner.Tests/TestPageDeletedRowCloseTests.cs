@@ -531,12 +531,12 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
                     List.GoToKey('A');
                     Trace.Reset();
                     List.DeletePassThrough.Invoke();
-                    if FindCalls(Trace.Get()) <> 'Find:=>;Find:=><;' then
-                        Error('unexpected OnFindRecord sequence: %1', Trace.Get());
+                    // The blank line raises OnAfterGetCurrRecord once before the two finds and twice
+                    // after them (#4777; corpus 67300 List_DeletedByAction_PassThroughFind_OnlyRow).
+                    if Trace.Get() <> 'AGCR:;Find:=>;Find:=><;AGCR:;AGCR:;' then
+                        Error('unexpected trace after deleting the only row: %1', Trace.Get());
                     if List.CodeField.Value() <> '' then
                         Error('expected the blank line, got: %1', List.CodeField.Value());
-                    if StrPos(Trace.Get(), 'AGCR:A;') <> 0 then
-                        Error('expected no OnAfterGetCurrRecord for the deleted row, got: %1', Trace.Get());
                     if not Row.IsEmpty() then
                         Error('expected nothing re-inserted');
                     List.Close();
