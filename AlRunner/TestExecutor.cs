@@ -460,10 +460,11 @@ public sealed class TestExecutor
         // instead of re-running this whole attribution exercise.
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-reset-per-test"))
         {
-            AlRunner.Patches.RecordPatches.ResetPerTestState();
             // A new bundle is a new session; the previous bundle's SingleInstance instances
-            // (keyed by codeunit id, and of its assembly's types) must not carry over.
+            // (keyed by codeunit id, and of its assembly's types) must not carry over. First, so
+            // the reset below no longer keeps what those instances held.
             AlRunner.BcRuntime.ResetSingleInstanceCache();
+            AlRunner.Patches.RecordPatches.ResetPerTestState();
         }
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-reset-for-new-bundle"))
         {

@@ -17,5 +17,7 @@ codeunit 71930 "SIL First"
         Single.InsertRow('A');
         if Single.CountAll() <> '1/1/1/1/1' then
             Error('first test codeunit expected 1/1/1/1/1, got %1', Single.CountAll());
+        if Single.CountIndirect() <> '1/1/1/1' then
+            Error('first test codeunit expected 1/1/1/1 through interface/variant/list/dictionary, got %1', Single.CountIndirect());
     end;
 }

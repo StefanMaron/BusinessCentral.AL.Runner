@@ -97,29 +97,35 @@ public static partial class RecordPatches
     private static readonly ConditionalWeakTable<object, RetiredDataAccess> _retiredDataAccess = new();
     private const string SingleInstanceRebindSurface = "SingleInstance record rebind (#4781)";
 
+    // Set once anything has been retired, so the read hook below costs one volatile read until
+    // the first test-codeunit boundary.
+    private static volatile bool _anyRetiredDataAccess;
+
     /// <summary>
-    /// Point a record opened before a store reset at the store that replaced it. Observably
-    /// equivalent to BC: there every record reads the one database, so a SingleInstance
-    /// codeunit's Record global sees the rolled-back rows after a test-codeunit boundary while
-    /// keeping its own buffer and filters (#4781). The runner replaces the per-table store at
-    /// that boundary instead, and RecordImplementation.dataAccess caches the old one — without
-    /// this the record keeps reading the previous codeunit's rows. No-op for a temporary record
-    /// or one already on a live store.
+    /// Stands in for every read of <c>RecordImplementation.dataAccess</c> (Cecil,
+    /// NclCecilRewrite.Records.cs, RewriteNcl_RecordDataAccessReads) and for the runner's own
+    /// reflection reads of that field. Observably equivalent to BC: there every record reads the
+    /// one database, so a record that outlived a test-codeunit boundary — a SingleInstance
+    /// codeunit's Record global, however it is held — sees the rolled-back rows while keeping
+    /// its own buffer and filters (#4781). The runner replaces the per-table store at that
+    /// boundary instead, so a read of a retired store re-points the record at the live one.
+    /// Lazy on purpose: an eager walk over the holders of such records missed interface,
+    /// variant and collection holders (#4793 review). Temporary stores are never retired.
     /// </summary>
-    internal static void RebindRecordToLiveStore(NavRecord record)
+    public static object? RecordImplementation_LiveDataAccess(object recordImplementation, object? dataAccess)
     {
-        var impl = RebindField(typeof(NavRecord), "recordImplementation").GetValue(record);
-        if (impl == null) return;
-        var fDataAccess = RebindField(impl.GetType(), "dataAccess");
-        var dataAccess = fDataAccess.GetValue(impl);
-        if (dataAccess == null || !_retiredDataAccess.TryGetValue(dataAccess, out var retired)) return;
-        var meta = (NCLMetaTable)RebindField(impl.GetType(), "metaTable").GetValue(impl)!;
-        fDataAccess.SetValue(impl, NavDataAccessSource_GetDataAccessForTable(retired.Source, meta, false));
+        if (!_anyRetiredDataAccess || dataAccess == null
+            || !_retiredDataAccess.TryGetValue(dataAccess, out var retired))
+            return dataAccess;
+        var meta = (NCLMetaTable)RebindField(recordImplementation.GetType(), "metaTable").GetValue(recordImplementation)!;
+        var live = NavDataAccessSource_GetDataAccessForTable(retired.Source, meta, false);
+        RebindField(recordImplementation.GetType(), "dataAccess").SetValue(recordImplementation, live);
+        return live;
     }
 
     private static FieldInfo RebindField(Type type, string name)
         => AlRunner.Infrastructure.BcShape.RequiredField(type, name, SingleInstanceRebindSurface,
-            "a SingleInstance codeunit's Record global would keep reading the store of an earlier test codeunit");
+            "a record that outlived a test-codeunit boundary would keep reading the store of an earlier test codeunit");
 
     // ── Temporary-record DataAccess registry (issue #2524) ───────────────────────────────
     // A `Record X temporary` gets its OWN DataAccess from the isTemporary branch of
@@ -1295,9 +1301,13 @@ public static partial class RecordPatches
         foreach (var (source, perTable) in _dataAccessByTable)
         {
             // A SingleInstance codeunit's Record globals outlive this reset (#4781) and still
-            // hold these DataAccess objects; remembered so they can be rebound to the live store.
+            // hold these DataAccess objects; remembered so RecordImplementation_LiveDataAccess
+            // can re-point them at the live store on their next read.
             foreach (var (tableId, dataAccess) in perTable)
+            {
                 _retiredDataAccess.AddOrUpdate(dataAccess, new RetiredDataAccess(source, tableId));
+                _anyRetiredDataAccess = true;
+            }
             perTable.Clear();
         }
 

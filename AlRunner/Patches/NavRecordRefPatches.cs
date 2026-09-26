@@ -45,10 +45,28 @@ public static partial class BcRuntime
     // object) — nothing legitimately needs one of these wrapper objects to survive past
     // the test that created it, since a fresh one is always re-derived from
     // tree.GetReferenceTarget() the next time it's needed.
+    //
+    // Except what a cached SingleInstance codeunit still reaches (#4781): that instance now
+    // outlives the boundary, as on BC, and a List/Dictionary it holds is one of these children.
+    // Disposing it answered `Interface not initialized` for the list's elements. Reachability
+    // is read off BC's own tree — children plus reference targets — never off a list of holder
+    // types, so a holder shape nobody enumerated is kept all the same.
     public static void DisposeSkeletonSharedObjectContainerChildren()
     {
-        if (_skeletonSharedObjectContainer is ITreeObject treeObject)
-            treeObject.Tree?.DisposeAllChildren();
+        if (_skeletonSharedObjectContainer is not ITreeObject treeObject || treeObject.Tree == null)
+            return;
+        var reachable = TreeObjectsReachableFromSingleInstances();
+        if (reachable.Count == 0)
+        {
+            treeObject.Tree.DisposeAllChildren();
+            return;
+        }
+        foreach (var child in treeObject.Tree.Children)
+        {
+            if (reachable.Contains(child) || child.Tree == null || child.Tree.IsDisposed) continue;
+            if (child is IDisposable disposable) disposable.Dispose();
+            else child.Tree.Dispose();
+        }
     }
 
     // TEMPORARY (memory-census diagnostic) — count the container's live child chain

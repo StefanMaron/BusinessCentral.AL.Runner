@@ -1,4 +1,4 @@
-codeunit 71922 "SIL Held"
+codeunit 71922 "SIL Held" implements "SIL Counter"
 {
     var
         Held: Record "SIL Row";

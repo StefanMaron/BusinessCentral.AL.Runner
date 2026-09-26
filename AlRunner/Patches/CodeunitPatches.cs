@@ -128,62 +128,27 @@ public static partial class BcRuntime
     }
 
     /// <summary>
-    /// After a store reset, re-point every Record a cached SingleInstance codeunit holds —
-    /// globals, arrays of them, RecordRefs, and those of codeunits it holds — at the live store
-    /// (RecordPatches.RebindRecordToLiveStore, #4781). Called at the end of every install-baseline
-    /// restore; only the SingleInstance instances survive one, so only their records need it.
+    /// Every tree object a cached SingleInstance codeunit reaches through BC's own tree: its
+    /// children, and the target of every reference among them, transitively. Used to keep those
+    /// objects alive across a store reset (#4781); empty when no SingleInstance instance exists.
     /// </summary>
-    internal static void RebindSingleInstanceRecordsToLiveStore()
+    internal static HashSet<ITreeObject> TreeObjectsReachableFromSingleInstances()
     {
-        if (_singleInstanceCache.IsEmpty) return;
-        var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        var seen = new HashSet<ITreeObject>(ReferenceEqualityComparer.Instance);
+        if (_singleInstanceCache.IsEmpty) return seen;
+        var pending = new Stack<ITreeObject>();
         foreach (var instance in _singleInstanceCache.Values)
-            RebindRecordsIn(instance, seen);
-    }
-
-    // No cut-off, deliberately: a limit would leave a deeper record on the old store in silence.
-    // Every edge followed is an AL variable (a field declared above NavCodeunit, whose
-    // Parent/Session links reach the whole tree and are never followed), and `seen` stops cycles.
-    private static void RebindRecordsIn(object? value, HashSet<object> seen)
-    {
-        if (value == null || !seen.Add(value)) return;
-        switch (value)
+            pending.Push(instance);
+        while (pending.Count > 0)
         {
-            case NavRecord record:
-                RecordPatches.RebindRecordToLiveStore(record);
-                return;
-            case NavRecordHandle recordHandle:
-                if (!recordHandle.IsDisposed && recordHandle.HasTarget)
-                    RebindRecordsIn(recordHandle.Target, seen);
-                return;
-            case NavRecordRef recordRef:
-                if (recordRef.IsOpen)
-                    RebindRecordsIn(recordRef.Record, seen);
-                return;
-            case NavCodeunitHandle codeunitHandle:
-                if (!codeunitHandle.IsDisposed && codeunitHandle.HasTarget)
-                    RebindRecordsIn(codeunitHandle.Target, seen);
-                return;
-            case System.Array array:
-                foreach (var element in array)
-                    RebindRecordsIn(element, seen);
-                return;
-            case NavCodeunit:
-                RebindRecordsInFields(value, seen);
-                return;
+            var node = pending.Pop();
+            if (!seen.Add(node) || node.Tree == null || node.Tree.IsDisposed) continue;
+            if (node.Type == TreeObjectType.ObjectReference && node.Tree.GetReferenceTarget() is { } target)
+                pending.Push(target);
+            foreach (var child in node.Tree.Children)
+                pending.Push(child);
         }
-        var type = value.GetType();
-        if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(NavArray<>))
-            RebindRecordsInFields(value, seen);
-    }
-
-    private static void RebindRecordsInFields(object value, HashSet<object> seen)
-    {
-        for (var t = value.GetType(); t != null && t != typeof(NavCodeunit) && t != typeof(object); t = t.BaseType)
-            foreach (var f in t.GetFields(BindingFlags.Instance | BindingFlags.Public
-                                          | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
-                if (!f.FieldType.IsValueType && f.FieldType != typeof(string))
-                    RebindRecordsIn(f.GetValue(value), seen);
+        return seen;
     }
 
     /// <summary>

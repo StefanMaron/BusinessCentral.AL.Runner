@@ -509,6 +509,9 @@ public static partial class NclCecilRewrite
         RewriteNcl_Metadata(asm);
         RewriteNcl_Reports(asm, oosCtor);
         RewriteNcl_Runtime(asm);
+        // Last: it rewrites every read of RecordImplementation.dataAccess, including any an
+        // earlier pass emitted.
+        RewriteNcl_RecordDataAccessReads(asm);
 
         var outStream = new MemoryStream();
         asm.Write(outStream);
