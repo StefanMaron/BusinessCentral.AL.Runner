@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **cli:** Action needed entries at most 3 lines; a failing test points at the entry
 - **compile:** emit runner AL in BC's inline-scope mode
 - **cli:** one run header line — tool version, BC build, app count
 - **cli:** default run output shows failures, one summary block and a Result line
