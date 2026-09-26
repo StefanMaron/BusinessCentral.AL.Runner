@@ -45,20 +45,4 @@ public sealed class XmlPortMetadataVirtualTableProviderTests
         Assert.Equal(2000000280, tableId);
         Assert.Equal(2000000280, RecordPatches.XmlPortMetadataVirtualTableId);
     }
-
-    [Fact]
-    public void TryGetMetaApplicationObject_StillTakesFiveParameters()
-    {
-        // The last parameter carries a C# default, so decompiled call sites show four
-        // arguments; the snapshot helper binds on five and passes all of them, because
-        // MethodInfo.Invoke does not apply defaults.
-        var objectType = Ncl.GetType("Microsoft.Dynamics.Nav.Runtime.NCLMetadata")!
-            .GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-            .Where(m => m.Name == "TryGetMetaApplicationObject")
-            .Select(m => m.GetParameters().Select(p => p.ParameterType.Name).ToArray())
-            .ToArray();
-
-        Assert.Contains(objectType,
-            p => p.SequenceEqual(new[] { "ObjectType", "Int32", "NCLMetaApplicationObject&", "Boolean", "Int32" }));
-    }
 }

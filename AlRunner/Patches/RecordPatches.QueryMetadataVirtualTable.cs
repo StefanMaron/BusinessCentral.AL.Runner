@@ -73,11 +73,6 @@ public static partial class RecordPatches
     private static bool IsQueryMetadataVirtualTable(NCLMetaTable? table)
         => table != null && table.TableId == QueryMetadataVirtualTableId;
 
-    internal const int XmlPortMetadataVirtualTableId = 2000000280;
-
-    private static bool IsXmlPortMetadataVirtualTable(NCLMetaTable? table)
-        => table != null && table.TableId == XmlPortMetadataVirtualTableId;
-
     /// <summary>
     /// The DataAccess BC's own factory builds for 2000000142 — one over QueryDataProvider.
     ///
@@ -90,7 +85,7 @@ public static partial class RecordPatches
         => GetBcVirtualDataAccess(dataAccessSource, table,
             "every Record \"Query Metadata\" read would answer from an empty store");
 
-    private static MethodInfo? _qmTryGetMetaQuery, _qmTryGetMetaApplicationObject;
+    private static MethodInfo? _qmTryGetMetaQuery;
     private static Type? _qmSnapshotOuter, _qmSnapshotInner, _qmEntryType, _qmObjectTypeEnum;
 
     /// <summary>
@@ -126,8 +121,9 @@ public static partial class RecordPatches
         // #4461: XMLport Metadata (2000000280). XmlPortDataProvider has the same shape as
         // QueryDataProvider: GetObjectNumberAndInfoWithinRange(ObjectType.XmlPort, …, needNames:
         // false), then every column from the NCLMetaXmlPort the metadata cache resolves.
+        Dictionary<(string Kind, int Id), Guid>? ownerIndex = null;
         AddSnapshotEntries(outer, ObjectTypeXmlPort, "XmlPort", KnownXmlPortIdSet(), visibleApps,
-            id => XmlPortMetadataResolves(self, id));
+            id => XmlPortMetadataResolves(id, ref ownerIndex));
         return outer;
     }
 
@@ -155,26 +151,6 @@ public static partial class RecordPatches
 
     /// <summary>ObjectType.Query — 9, the same constant the metadata-cache populator uses.</summary>
     private const int ObjectTypeQuery = 9;
-
-    /// <summary>ObjectType.XmlPort — 6, the same constant the metadata-cache populator uses.</summary>
-    private const int ObjectTypeXmlPort = 6;
-
-    private static bool XmlPortMetadataResolves(object? nclMetadata, int id)
-    {
-        if (nclMetadata == null || _qmTryGetMetaApplicationObject == null) return false;
-        try
-        {
-            // The same call XmlPortDataProvider makes (GetMetaApplicationObject(XmlPort, id,
-            // requireCompiled: false)), through BC's Try wrapper. appGroupId: -1 is BC's default,
-            // passed explicitly because MethodInfo.Invoke does not apply C# defaults.
-            var args = new object?[] { Enum.ToObject(_qmObjectTypeEnum!, ObjectTypeXmlPort), id, null, false, -1 };
-            return (bool)_qmTryGetMetaApplicationObject.Invoke(nclMetadata, args)! && args[2] != null;
-        }
-        catch
-        {
-            return false;
-        }
-    }
 
     private static bool QueryMetadataResolves(object? nclMetadata, int id)
     {
@@ -225,15 +201,7 @@ public static partial class RecordPatches
             m.Name == "TryGetMetaQueryById" && m.GetParameters().Length == 4
             && m.GetParameters()[0].ParameterType == typeof(int));
 
-        // TryGetMetaApplicationObject(ObjectType, int, out NCLMetaApplicationObject, bool, int):
-        // FIVE parameters, the last defaulted — the same arity trap as TryGetMetaQueryById.
-        var tryGetApp = objectTypeEnum == null ? null : t.GetMethods(inst).FirstOrDefault(m =>
-            m.Name == "TryGetMetaApplicationObject" && m.GetParameters().Length == 5
-            && m.GetParameters()[0].ParameterType == objectTypeEnum
-            && m.GetParameters()[1].ParameterType == typeof(int));
-
-        if (outer == null || inner == null || entry == null || objectTypeEnum == null || tryGet == null
-            || tryGetApp == null)
+        if (outer == null || inner == null || entry == null || objectTypeEnum == null || tryGet == null)
             // BcShapeGapException, not InvalidOperationException: NavMethodScope_AssertError
             // rethrows only this type, so an `asserterror` around a driver hitting this refusal
             // would otherwise SWALLOW it and PASS — inverting the result (#2946).
@@ -241,14 +209,12 @@ public static partial class RecordPatches
                 Surface, "NCLMetadata",
                 "BC does not expose the shape the Query Metadata snapshot substitution drives "
                 + "(GetSnapshotOfAllObjects returning SortedList<ObjectType, SortedList<int, "
-                + "AllObjectSnapshotEntry>>, TryGetMetaQueryById(int, out, bool, int), "
-                + "TryGetMetaApplicationObject(ObjectType, int, out, bool, int)) — see #4147");
+                + "AllObjectSnapshotEntry>>, TryGetMetaQueryById(int, out, bool, int)) — see #4147");
 
         _qmSnapshotOuter = outer;
         _qmSnapshotInner = inner;
         _qmEntryType = entry;
         _qmObjectTypeEnum = objectTypeEnum;
         _qmTryGetMetaQuery = tryGet;
-        _qmTryGetMetaApplicationObject = tryGetApp;
     }
 }
