@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **testpage:** fold precompiled pageextension controls into declared properties and Page Control Field
 - **testpage:** a RunPageOnRec target reads the stored row, not the host's in-memory values
 - **testpage:** a List moves to the neighbour row when an action deletes the current row
 - **metadata:** derive a bundle query's HelpLink from app.json on the loose-SymbolReference path
