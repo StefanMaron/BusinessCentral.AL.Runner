@@ -968,4 +968,54 @@ public class AppGroupObjectVisibilityTests
         foreach (var e in events)
             Assert.True(e.GetProperty("status").GetString() == "pass", string.Join(" | ", lines));
     }
+
+    /// <summary>
+    /// #4835: a later --server request running only one declarer of a shared table id must get that
+    /// group's own field trigger, subscribers and AutoIncrement, not what an earlier request's other
+    /// declarer left behind. Only X declares field 4 AutoIncrement; each group's OnValidate marks its letter.
+    /// </summary>
+    [SkippableFact]
+    public async Task Server_SharedTableId_LaterRequestsWithOneDeclarer_RunThatGroupsOwnTriggerAndAutoIncrement()
+    {
+        TestArtifacts.SkipIfMissing();
+        var dirs = WriteRequestSequenceFixture("al-runner-app-group-visibility-edges-server-sequence");
+        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        await AssertRequestSequencePasses(server, dirs[1], dirs[2]);
+    }
+
+    /// <summary>#4835 on a compile cache: the same sequence cold, then again in a second server on
+    /// the same cache root, where every module is a cache HIT.</summary>
+    [SkippableFact]
+    public async Task Server_SharedTableId_LaterRequestsWithOneDeclarer_ColdThenWarmOnOneCacheRoot()
+    {
+        TestArtifacts.SkipIfMissing();
+        var dirs = WriteRequestSequenceFixture("al-runner-app-group-visibility-edges-server-sequence-warm");
+        var cache = TestScratch.Dir("al-runner-app-group-visibility-edges-server-sequence-cache");
+        for (var pass = 0; pass < 2; pass++)
+        {
+            await using var server = await CliServer.StartAsync(new[] { "--cache", cache });
+            await AssertRequestSequencePasses(server, dirs[1], dirs[2]);
+        }
+    }
+
+    private static string[] WriteRequestSequenceFixture(string prefix)
+    {
+        var root = TestScratch.Dir(prefix);
+        Directory.CreateDirectory(root);
+        return WriteOwnershipEdgeFixtures(root, serverRequest: true);
+    }
+
+    private static async Task AssertRequestSequencePasses(CliServer server, string x, string y)
+    {
+        int? perGroup = null;
+        foreach (var (label, request) in new[] { ("[X,Y]", new[] { x, y }), ("[Y,X]", new[] { y, x }), ("[Y]", new[] { y }), ("[X]", new[] { x }) })
+        {
+            var lines = await server.SendRequestStreamingAsync(RunTests(request));
+            var (events, _) = ProtocolV2Streaming.Split(lines);
+            perGroup ??= events.Count / 2;
+            Assert.True(perGroup > 0 && events.Count == perGroup * request.Length, $"{label}: {events.Count} events | " + string.Join(" | ", lines));
+            var failed = events.Where(e => e.GetProperty("status").GetString() != "pass").Select(e => e.ToString()).ToList();
+            Assert.True(failed.Count == 0, $"{label}: " + string.Join(" | ", failed));
+        }
+    }
 }
