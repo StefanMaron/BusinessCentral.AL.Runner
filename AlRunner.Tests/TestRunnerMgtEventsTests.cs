@@ -65,7 +65,7 @@ public sealed class TestRunnerMgtEventsTests
         return dirs!;
     }
 
-    private static string WriteBundle(string name, AppManifest? testRunner, string al)
+    private static string WriteBundle(string name, AppManifest? testRunner, string al, string target = "Cloud")
     {
         var root = TestScratch.Dir(name);
         if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
@@ -81,7 +81,8 @@ public sealed class TestRunnerMgtEventsTests
           "dependencies": [ {{dependency}} ],
           "platform": "27.0.0.0",
           "idRanges": [ { "from": 64810, "to": 64819 }, { "from": 130450, "to": 130459 } ],
-          "runtime": "14.0"
+          "runtime": "14.0",
+          "target": "{{target}}"
         }
         """);
         File.WriteAllText(Path.Combine(root, "Probe.al"), al);
@@ -392,5 +393,106 @@ public sealed class TestRunnerMgtEventsTests
 
         HasLine(output, "PASS", "A_BeforeEventRanForThisTest");
         Lacks(output, "TRS1 FAIL");
+    }
+
+    // #4842: BC raises OnBeforeTestMethodRun/OnAfterTestMethodRun from the test runner's
+    // OnBeforeTestRun/OnAfterTestRun triggers, which NavTestCodeunit.DoRunAsync calls between
+    // EnterTestCodeunit and LeaveTestCodeunit, so NavTestExecution.IsInTestMode() is true there.
+    // 130454.RunTests raises OnBeforeCodeunitRun/OnAfterCodeunitRun around CODEUNIT.Run, outside
+    // that scope, so it is false there. The probe is the gate Permissions Mock 131006 hits.
+    private const string InTestProbes = """
+        dotnet
+        {
+            assembly("Microsoft.Dynamics.Nav.PermissionTestHelper")
+            {
+                type("Microsoft.Dynamics.Nav.Runtime.PermissionTestHelper"; "PermissionTestHelper") { }
+            }
+        }
+
+        codeunit 64811 "TRP Probe Tests"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure A_FirstTest()
+            begin
+            end;
+
+            [Test]
+            procedure B_SecondTest()
+            begin
+            end;
+
+            // Skipped by the subscriber and last in the codeunit: a scope left open on the Skip
+            // path would still be open for OnAfterCodeunitRun, which the TRP-CU-AFTER probe catches.
+            [Test]
+            procedure C_SkippedLast()
+            begin
+                Error('TRP-SKIP FAIL: a test the subscriber skipped ran');
+            end;
+        }
+
+        codeunit 64813 "TRP Subscribers"
+        {
+            [EventSubscriber(ObjectType::Codeunit, Codeunit::"Test Runner - Mgt", 'OnBeforeCodeunitRun', '', false, false)]
+            local procedure BeforeCodeunit()
+            begin
+                if TryAddPermissionSet() then
+                    Error('TRP-CU-BEFORE FAIL: IsInTestMode() was true in OnBeforeCodeunitRun');
+            end;
+
+            [EventSubscriber(ObjectType::Codeunit, Codeunit::"Test Runner - Mgt", 'OnBeforeTestMethodRun', '', false, false)]
+            local procedure BeforeMethod(FunctionName: Text[128]; var Skip: Boolean)
+            begin
+                if not TryAddPermissionSet() then
+                    Error('TRP-M-BEFORE FAIL %1: %2', FunctionName, GetLastErrorText());
+                if FunctionName = 'C_SkippedLast' then
+                    Skip := true;
+            end;
+
+            [EventSubscriber(ObjectType::Codeunit, Codeunit::"Test Runner - Mgt", 'OnAfterTestMethodRun', '', false, false)]
+            local procedure AfterMethod(FunctionName: Text[128])
+            begin
+                if not TryAddPermissionSet() then
+                    Error('TRP-M-AFTER FAIL %1: %2', FunctionName, GetLastErrorText());
+            end;
+
+            [EventSubscriber(ObjectType::Codeunit, Codeunit::"Test Runner - Mgt", 'OnAfterCodeunitRun', '', false, false)]
+            local procedure AfterCodeunit()
+            begin
+                if TryAddPermissionSet() then
+                    Error('TRP-CU-AFTER FAIL: IsInTestMode() was true in OnAfterCodeunitRun');
+            end;
+
+            [TryFunction]
+            local procedure TryAddPermissionSet()
+            var
+                Helper: DotNet PermissionTestHelper;
+            begin
+                Helper := Helper.PermissionTestHelper();
+                Helper.AddEffectivePermissionSet('TRPPROBE');
+                Helper.Clear();
+            end;
+        }
+        """;
+
+    [SkippableTheory]
+    [InlineData("codeunit")]
+    [InlineData("test")]
+    public void MethodEvents_AreRaisedInsideTheTestCodeunitScope_CodeunitEventsOutsideIt(string isolation)
+    {
+        var dirs = RequireProvisioned();
+        var bundle = WriteBundle($"al-runner-test-runner-events-4842-{isolation}", null,
+            StandIns("Test Runner - Mgt", withSkip: true, withResetEnvironment: true) + InTestProbes,
+            target: "OnPrem");
+
+        var (output, _) = RunRunner(bundle, dirs, "--isolation", isolation);
+
+        HasLine(output, "PASS", "A_FirstTest");
+        HasLine(output, "PASS", "B_SecondTest");
+        HasLine(output, "SKIP", "C_SkippedLast");
+        foreach (var marker in new[] { "TRP-M-BEFORE FAIL", "TRP-M-AFTER FAIL", "TRP-CU-BEFORE FAIL", "TRP-CU-AFTER FAIL", "TRP-SKIP FAIL" })
+            Lacks(output, marker);
+        Lacks(output, "BcShapeGap");
     }
 }
