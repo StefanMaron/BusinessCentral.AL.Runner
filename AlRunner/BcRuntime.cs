@@ -301,87 +301,118 @@ public static partial class BcRuntime
     {
         try
         {
-            var trace = new System.Diagnostics.StackTrace(fNeedFileInfo: false);
-            Assembly? currentAlFrame = null;
-            for (int i = 0; i < trace.FrameCount; i++)
-            {
-                var method = trace.GetFrame(i)?.GetMethod();
-                var type = method?.DeclaringType;
-                var asm = type?.Assembly;
-                if (asm == null || !_moduleInfoByAssembly.ContainsKey(asm)) continue;
-                // The polyfill shim is compiled INTO each AL assembly, so its frames pass
-                // the assembly test above while being runner plumbing, not AL. Counting
-                // them shifts the whole walk by one and yields the callee as its own caller.
-                if (type!.Namespace != null
-                    && type.Namespace.StartsWith("AlRunnerShim", StringComparison.Ordinal)) continue;
-                // Same AL method, not a caller: fold away the emitted scope frame object, and
-                // the closure/lambda frames C# splits out of an inline-scope method (an
-                // `asserterror` body runs in `<>c__DisplayClass…` or `<Method>b__…`, #4697).
-                if (type.Name.Contains("_Scope", StringComparison.Ordinal)) continue;
-                if (method!.Name.StartsWith('<')
-                    || (type.IsDefined(typeof(System.Runtime.CompilerServices.CompilerGeneratedAttribute), inherit: false)
-                        && type.Name.StartsWith("<>c", StringComparison.Ordinal))) continue;
-                // #2963 — the PRECOMPILED compile shape of the same thing. Microsoft's AL
-                // compiler emits a method whose body needs one as an `async ValueTask` state
-                // machine, so ONE AL method invocation occupies two managed frames: the
-                // compiler-generated `<Method>d__N.MoveNext` and the outer `<Method>` that
-                // started it. Both are in the callee's own assembly, so leaving MoveNext
-                // unfolded made the walk accept the callee's own outer frame as "the
-                // immediate caller" — and NavApp.GetCallerModuleInfo answered with the
-                // callee's app for every call into a precompiled Microsoft facade.
-                //
-                // Measured on BC 28.1 before this fold, calling
-                // `Reten. Pol. Allowed Tables.AddAllowedTable` from a test app:
-                //   [4] Codeunit3905+<AddAllowedTable_873312463>d__17::MoveNext
-                //   [7] Codeunit3905::AddAllowedTable_873312463
-                // both System Application, and the answer was "System Application" instead of
-                // the calling app. That is what made every ModuleOwnsTable check decline even
-                // once Published Application had rows (#2963).
-                //
-                // Recognised by the state-machine INTERFACE plus [CompilerGenerated], not by
-                // the `d__` name mangling, so it cannot be spoofed by an AL object that
-                // happens to be named that way, and does not depend on Roslyn's naming.
-                if (type.IsDefined(typeof(System.Runtime.CompilerServices.CompilerGeneratedAttribute), inherit: false)
-                    && typeof(System.Runtime.CompilerServices.IAsyncStateMachine).IsAssignableFrom(type)) continue;
-                // #1722 — the CROSS-APP invocation path. Calling an AL procedure in another
-                // app does not land as one managed frame: the AL emit routes it through a
-                // compiler-generated `Codeunit<N>.OnInvoke` dispatcher, and that dispatcher
-                // lives in the CALLEE's own assembly, one frame above the callee's real
-                // method. It is the same AL method invocation, not a caller — exactly what
-                // `_Scope` frames are folded for — but it is a plain method on the codeunit
-                // type, so neither rule above catches it. Left unfolded it is accepted as
-                // "the immediate caller" and the walk answers with the callee's own module,
-                // making GetCallerModuleInfo indistinguishable from GetCurrentModuleInfo for
-                // every library invoked across an app boundary. `OnInvoke` is emitted by the
-                // AL compiler, never authored (AL's codeunit trigger is `OnRun`), so folding
-                // it cannot swallow a genuine AL caller frame.
-                // `OnInvokeAsync` is the same dispatcher in the PRECOMPILED compile shape:
-                // Microsoft's AL compiler emits `Codeunit<N>.OnInvokeAsync` where the runner's
-                // own emit produces `OnInvoke`. Measured on BC 28.1, the managed frames for one
-                // AL call from a test codeunit into `Reten. Pol. Allowed Tables.AddAllowedTable`
-                // are, registered-assembly frames only:
-                //     [4]  Codeunit3905+<AddAllowedTable_…>d__15::MoveNext   (System App)
-                //     [7]  Codeunit3905::AddAllowedTable_…                   (System App)
-                //     [8]  Codeunit3905::OnInvokeAsync                       (System App)
-                //     [11] Codeunit61040+…_Scope__…::OnRun                   (the caller)
-                //     [13] Codeunit61040::OwnTableCanBeRegisteredAsAllowed   (the caller)
-                // Folding [4] but not [8] still answers "System Application" — the callee's own
-                // app — for every call into a precompiled Microsoft facade. Both AL emitters
-                // generate these names; AL's authored codeunit trigger is `OnRun`, so folding
-                // them cannot swallow an AUTHORED AL caller frame. "Authored" is the load-bearing
-                // word for the state-machine fold above too: AL cannot author a
-                // [CompilerGenerated] type implementing IAsyncStateMachine, which is what makes
-                // recognising one safe.
-                if (method!.Name is "OnInvoke" or "OnInvokeAsync") continue;
-
-                if (currentAlFrame == null) { currentAlFrame = asm; continue; }
-                // BC breaks on the FIRST frame after the skipped one — even when it
-                // belongs to the same app. Do not keep searching for a foreign one.
-                return _moduleInfoByAssembly[asm];
-            }
+            using var frames = AlMethodFrameAssemblies().GetEnumerator();
+            // BC breaks on the FIRST frame after the skipped one — even when it
+            // belongs to the same app. Do not keep searching for a foreign one.
+            if (frames.MoveNext() && frames.MoveNext()) return _moduleInfoByAssembly[frames.Current];
         }
         catch { /* fall back */ }
         return null;
+    }
+
+    /// <summary>
+    /// <c>NavApp.GetCallerCallstackModuleInfos</c>, by BC's rule
+    /// (<c>ALNavApp.ALGetCallerCallstackModuleInfos</c>, bc281): skip the asking method's own
+    /// frame only, then each app once, nearest caller first. The asking app IS listed when
+    /// another of its methods is further up the stack. Walks the managed stack for the reason
+    /// <see cref="TryGetImmediateCallerModule"/> does — the runner's CurrentMethodScope is flat.
+    /// </summary>
+    internal static List<(Guid AppId, string Name, string Publisher, string Version)> GetCallerCallstackModules()
+    {
+        var result = new List<(Guid AppId, string Name, string Publisher, string Version)>();
+        var seen = new HashSet<Guid>();
+        bool first = true;
+        foreach (var asm in AlMethodFrameAssemblies())
+        {
+            if (first) { first = false; continue; }
+            var info = _moduleInfoByAssembly[asm];
+            if (info.AppId != Guid.Empty && seen.Add(info.AppId)) result.Add(info);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// The registered AL assembly of each AL METHOD INVOCATION on the managed stack, innermost
+    /// first: one entry per AL method, with the runner's and both AL emitters' plumbing frames
+    /// folded away. Shared by <see cref="TryGetImmediateCallerModule"/> and
+    /// <see cref="GetCallerCallstackModules"/> so the two cannot disagree on what a frame is.
+    /// </summary>
+    private static IEnumerable<Assembly> AlMethodFrameAssemblies()
+    {
+        var trace = new System.Diagnostics.StackTrace(fNeedFileInfo: false);
+        for (int i = 0; i < trace.FrameCount; i++)
+        {
+            var method = trace.GetFrame(i)?.GetMethod();
+            var type = method?.DeclaringType;
+            var asm = type?.Assembly;
+            if (asm == null || !_moduleInfoByAssembly.ContainsKey(asm)) continue;
+            // The polyfill shim is compiled INTO each AL assembly, so its frames pass
+            // the assembly test above while being runner plumbing, not AL. Counting
+            // them shifts the whole walk by one and yields the callee as its own caller.
+            if (type!.Namespace != null
+                && type.Namespace.StartsWith("AlRunnerShim", StringComparison.Ordinal)) continue;
+            // Same AL method, not a caller: fold away the emitted scope frame object, and
+            // the closure/lambda frames C# splits out of an inline-scope method (an
+            // `asserterror` body runs in `<>c__DisplayClass…` or `<Method>b__…`, #4697).
+            if (type.Name.Contains("_Scope", StringComparison.Ordinal)) continue;
+            if (method!.Name.StartsWith('<')
+                || (type.IsDefined(typeof(System.Runtime.CompilerServices.CompilerGeneratedAttribute), inherit: false)
+                    && type.Name.StartsWith("<>c", StringComparison.Ordinal))) continue;
+            // #2963 — the PRECOMPILED compile shape of the same thing. Microsoft's AL
+            // compiler emits a method whose body needs one as an `async ValueTask` state
+            // machine, so ONE AL method invocation occupies two managed frames: the
+            // compiler-generated `<Method>d__N.MoveNext` and the outer `<Method>` that
+            // started it. Both are in the callee's own assembly, so leaving MoveNext
+            // unfolded made the walk accept the callee's own outer frame as "the
+            // immediate caller" — and NavApp.GetCallerModuleInfo answered with the
+            // callee's app for every call into a precompiled Microsoft facade.
+            //
+            // Measured on BC 28.1 before this fold, calling
+            // `Reten. Pol. Allowed Tables.AddAllowedTable` from a test app:
+            //   [4] Codeunit3905+<AddAllowedTable_873312463>d__17::MoveNext
+            //   [7] Codeunit3905::AddAllowedTable_873312463
+            // both System Application, and the answer was "System Application" instead of
+            // the calling app. That is what made every ModuleOwnsTable check decline even
+            // once Published Application had rows (#2963).
+            //
+            // Recognised by the state-machine INTERFACE plus [CompilerGenerated], not by
+            // the `d__` name mangling, so it cannot be spoofed by an AL object that
+            // happens to be named that way, and does not depend on Roslyn's naming.
+            if (type.IsDefined(typeof(System.Runtime.CompilerServices.CompilerGeneratedAttribute), inherit: false)
+                && typeof(System.Runtime.CompilerServices.IAsyncStateMachine).IsAssignableFrom(type)) continue;
+            // #1722 — the CROSS-APP invocation path. Calling an AL procedure in another
+            // app does not land as one managed frame: the AL emit routes it through a
+            // compiler-generated `Codeunit<N>.OnInvoke` dispatcher, and that dispatcher
+            // lives in the CALLEE's own assembly, one frame above the callee's real
+            // method. It is the same AL method invocation, not a caller — exactly what
+            // `_Scope` frames are folded for — but it is a plain method on the codeunit
+            // type, so neither rule above catches it. Left unfolded it is accepted as
+            // "the immediate caller" and the walk answers with the callee's own module,
+            // making GetCallerModuleInfo indistinguishable from GetCurrentModuleInfo for
+            // every library invoked across an app boundary. `OnInvoke` is emitted by the
+            // AL compiler, never authored (AL's codeunit trigger is `OnRun`), so folding
+            // it cannot swallow a genuine AL caller frame.
+            // `OnInvokeAsync` is the same dispatcher in the PRECOMPILED compile shape:
+            // Microsoft's AL compiler emits `Codeunit<N>.OnInvokeAsync` where the runner's
+            // own emit produces `OnInvoke`. Measured on BC 28.1, the managed frames for one
+            // AL call from a test codeunit into `Reten. Pol. Allowed Tables.AddAllowedTable`
+            // are, registered-assembly frames only:
+            //     [4]  Codeunit3905+<AddAllowedTable_…>d__15::MoveNext   (System App)
+            //     [7]  Codeunit3905::AddAllowedTable_…                   (System App)
+            //     [8]  Codeunit3905::OnInvokeAsync                       (System App)
+            //     [11] Codeunit61040+…_Scope__…::OnRun                   (the caller)
+            //     [13] Codeunit61040::OwnTableCanBeRegisteredAsAllowed   (the caller)
+            // Folding [4] but not [8] still answers "System Application" — the callee's own
+            // app — for every call into a precompiled Microsoft facade. Both AL emitters
+            // generate these names; AL's authored codeunit trigger is `OnRun`, so folding
+            // them cannot swallow an AUTHORED AL caller frame. "Authored" is the load-bearing
+            // word for the state-machine fold above too: AL cannot author a
+            // [CompilerGenerated] type implementing IAsyncStateMachine, which is what makes
+            // recognising one safe.
+            if (method!.Name is "OnInvoke" or "OnInvokeAsync") continue;
+
+            yield return asm;
+        }
     }
 
     /// <summary>Module info by AppId across every registered assembly (deps + bundle),

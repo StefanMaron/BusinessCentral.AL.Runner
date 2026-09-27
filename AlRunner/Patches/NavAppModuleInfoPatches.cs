@@ -187,6 +187,19 @@ public static class NavAppModuleInfoPatches
                 "No installed extension was found with ID '{0}'.", moduleId));
     }
 
+    // Cecil patch target: static NavList<NavModuleInfo> ALNavApp.ALGetCallerCallstackModuleInfos().
+    // Observably equivalent for Id, Name, Publisher, AppVersion and PackageId: the same apps in the
+    // same order as BC's scope-chain walk, read from the managed stack because the runner's
+    // CurrentMethodScope is flat (#4868; corpus codeunit 67595). DataVersion and Dependencies are
+    // MakeModuleInfo's, as for every other module-info entry point.
+    public static Microsoft.Dynamics.Nav.Runtime.NavList<Microsoft.Dynamics.Nav.Runtime.NavModuleInfo> ALNavApp_GetCallerCallstackModuleInfos()
+    {
+        var list = Microsoft.Dynamics.Nav.Runtime.NavList<Microsoft.Dynamics.Nav.Runtime.NavModuleInfo>.Default; // a new list per call
+        foreach (var (appId, name, publisher, version) in AlRunner.BcRuntime.GetCallerCallstackModules())
+            list.ALAdd(MakeModuleInfo(appId, name, publisher, version));
+        return list;
+    }
+
     // Cecil patch target: static bool ALNavApp.ALGetCallerModuleInfo(DataError, ByRef<NavModuleInfo>)
     // Uses a stack-walk to identify the "caller" of the current AL module:
     // finds the first registered AL assembly (the precompiled dep = "self"), then
