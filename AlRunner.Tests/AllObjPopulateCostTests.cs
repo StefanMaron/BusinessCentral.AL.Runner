@@ -397,15 +397,18 @@ public class AllObjPopulateCostTests
     // MatrixBase + 30 + i. A path whose write the store's write note misses leaks into the next
     // codeunit, and the probe names the path.
     private const int MatrixBase = 62760;
+    // Every write tolerates a leaked store (a missing row, a key already taken), so each
+    // codeunit writes whatever it found; the Commit after it keeps the write through the test's
+    // own failure, so a leak is visible to every codeunit that follows.
     private static readonly (string Name, string Write)[] WritePaths =
     {
-        ("RecordInsert", "AllObj.Init(); AllObj.\"Object Type\" := AllObj.\"Object Type\"::Table; AllObj.\"Object ID\" := {INS}; AllObj.\"Object Name\" := 'X'; AllObj.Insert();"),
-        ("RecordModify", "AllObj.Get(AllObj.\"Object Type\"::Table, {OWN}); AllObj.\"Object Name\" := 'X'; AllObj.Modify();"),
-        ("RecordDelete", "AllObj.Get(AllObj.\"Object Type\"::Table, {OWN}); AllObj.Delete();"),
-        ("RecordRename", "AllObj.Get(AllObj.\"Object Type\"::Table, {OWN}); AllObj.Rename(AllObj.\"Object Type\"::Table, {REN});"),
-        ("RecordRefInsert", "Ref.Open(Database::AllObj); Ref.Init(); Ref.Field(1).Value := AllObj.\"Object Type\"::Table; Ref.Field(3).Value := {INS}; Ref.Field(4).Value := 'X'; Ref.Insert();"),
-        ("RecordRefModify", "AllObj.Get(AllObj.\"Object Type\"::Table, {OWN}); Ref.GetTable(AllObj); Ref.Field(4).Value := 'X'; Ref.Modify();"),
-        ("RecordRefDelete", "AllObj.Get(AllObj.\"Object Type\"::Table, {OWN}); Ref.GetTable(AllObj); Ref.Delete();"),
+        ("RecordInsert", "AllObj.Init(); AllObj.\"Object Type\" := AllObj.\"Object Type\"::Table; AllObj.\"Object ID\" := {INS}; AllObj.\"Object Name\" := 'X'; if AllObj.Insert() then;"),
+        ("RecordModify", "if AllObj.Get(AllObj.\"Object Type\"::Table, {OWN}) then begin AllObj.\"Object Name\" := 'X'; AllObj.Modify(); end;"),
+        ("RecordDelete", "if AllObj.Get(AllObj.\"Object Type\"::Table, {OWN}) then AllObj.Delete();"),
+        ("RecordRename", "if AllObj.Get(AllObj.\"Object Type\"::Table, {OWN}) then if AllObj.Rename(AllObj.\"Object Type\"::Table, {REN}) then;"),
+        ("RecordRefInsert", "Ref.Open(Database::AllObj); Ref.Init(); Ref.Field(1).Value := AllObj.\"Object Type\"::Table; Ref.Field(3).Value := {INS}; Ref.Field(4).Value := 'X'; if Ref.Insert() then;"),
+        ("RecordRefModify", "if AllObj.Get(AllObj.\"Object Type\"::Table, {OWN}) then begin Ref.GetTable(AllObj); Ref.Field(4).Value := 'X'; Ref.Modify(); end;"),
+        ("RecordRefDelete", "if AllObj.Get(AllObj.\"Object Type\"::Table, {OWN}) then begin Ref.GetTable(AllObj); Ref.Delete(); end;"),
         ("ModifyAll", "AllObj.SetRange(\"Object Type\", AllObj.\"Object Type\"::Table); AllObj.SetRange(\"Object ID\", {OWN}); AllObj.ModifyAll(\"Object Name\", 'X');"),
         ("DeleteAll", "AllObj.SetRange(\"Object Type\", AllObj.\"Object Type\"::Table); AllObj.SetRange(\"Object ID\", {OWN}); AllObj.DeleteAll();"),
     };
@@ -443,13 +446,14 @@ public class AllObjPopulateCostTests
             checks.Append($$"""
                     AllObj.Reset();
                     if not AllObj.Get(AllObj."Object Type"::Table, {{own}}) then
-                        Error('LEAK via {{name}}: table {{own}} is gone');
-                    if AllObj."Object Name" <> 'IT4859 Path {{i}}' then
-                        Error('LEAK via {{name}}: table {{own}} is named <%1>', AllObj."Object Name");
+                        Leaks += 'LEAK via {{name}}: table {{own}} is gone. '
+                    else
+                        if AllObj."Object Name" <> 'IT4859 Path {{i}}' then
+                            Leaks += 'LEAK via {{name}}: table {{own}} is renamed in place. ';
                     if AllObj.Get(AllObj."Object Type"::Table, {{ins}}) then
-                        Error('LEAK via {{name}}: table {{ins}} was inserted by a previous codeunit');
+                        Leaks += 'LEAK via {{name}}: table {{ins}} was inserted by a previous codeunit. ';
                     if AllObj.Get(AllObj."Object Type"::Table, {{ren}}) then
-                        Error('LEAK via {{name}}: table {{ren}} is a previous codeunit''s rename target');
+                        Leaks += 'LEAK via {{name}}: table {{ren}} is a previous codeunit rename target. ';
 
             """);
             writes.Append($$"""
@@ -472,9 +476,15 @@ public class AllObjPopulateCostTests
                     procedure {{name}}{{letter}}()
                     var
                         Probe: Codeunit "IT4859 Path Probe";
+                        Leaks: Text;
                     begin
-                        Probe.CheckClean();
+                        // Read, write and commit, and only then fail: a codeunit that stopped
+                        // before its write, or whose failure rolled it back, would hide its path.
+                        Leaks := Probe.Leaks();
                         Probe.Write{{name}}();
+                        Commit();
+                        if Leaks <> '' then
+                            Error(Leaks);
                     end;
                 }
 
@@ -483,7 +493,8 @@ public class AllObjPopulateCostTests
         al.Append($$"""
         codeunit {{MatrixBase + 90}} "IT4859 Path Probe"
         {
-            procedure CheckClean()
+            // Every leak, not the first: a codeunit reports all paths that leaked into it.
+            procedure Leaks() Leaks: Text
             var
                 AllObj: Record AllObj;
             begin
