@@ -17,10 +17,10 @@
 // The BC claim underneath (a SingleInstance instance lives on the company scope and survives a
 // TestIsolation = Codeunit boundary) was measured on the Windows reference container and an MS
 // SaaS sandbox with corpus codeunit 60600's former assertion — expected 0, got 99 — recorded in
-// corpus issue #213. A corpus test cannot cross a test-codeunit boundary without depending on
-// run order, which the corpus refuses by construction (corpus #261,
-// check-singleinstance-fixture-owners.py). This fixture can, because the runner fixes the order
-// by object id (#2801).
+// corpus issue #213. A corpus test would need one SingleInstance fixture shared by two test
+// codeunits, which the corpus policy check-singleinstance-fixture-owners.py refuses (corpus
+// #261; follow-up #4797). This fixture can share one, because the runner fixes the order by
+// object id (#2801).
 using System.Diagnostics;
 using System.Text;
 using Xunit;
