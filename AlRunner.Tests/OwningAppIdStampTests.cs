@@ -18,7 +18,9 @@ namespace AlRunner.Tests;
 [Collection(BcEngineCollection.Name)]
 public sealed class OwningAppIdStampTests
 {
-    private static readonly ApplicationObjectId Codeunit50000 = new(ObjectType.CodeUnit, 50000);
+    // A property, never a static field: a field of a BC value type makes loading this public class
+    // load Nav.Types, which plain `dotnet test` discovery cannot resolve (#4892).
+    private static ApplicationObjectId Codeunit50000 => new(ObjectType.CodeUnit, 50000);
 
     private static Type DefineProbeType(string label)
     {
