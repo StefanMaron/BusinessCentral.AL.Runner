@@ -43,6 +43,21 @@ public static partial class NclCecilRewrite
                 Console.Error.WriteLine("[Cecil] Rewrote IsolatedStorageRepository.{Set,Get,Contains×2,Delete} → TenantStoragePatches in-memory store");
             }
 
+            // ALIsolatedStorage.GetCurrentApp() — the app id every AL-facing IsolatedStorage
+            // call hands the repository above. Its body reads the flattened CurrentMethodScope
+            // and answered Guid.Empty for every app (#4854); see IsoStorage_GetCurrentApp.
+            {
+                var isoType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.ALIsolatedStorage")
+                    ?? throw new InvalidOperationException("ALIsolatedStorage not found — Ncl shape changed");
+                var m = isoType.Methods.FirstOrDefault(x => x.Name == "GetCurrentApp" && x.IsStatic && x.Parameters.Count == 0)
+                    ?? throw new InvalidOperationException("ALIsolatedStorage.GetCurrentApp/0 not found — Ncl shape changed");
+                var h = typeof(AlRunner.Patches.TenantStoragePatches).GetMethod(
+                        nameof(AlRunner.Patches.TenantStoragePatches.IsoStorage_GetCurrentApp), BindingFlags.Public | BindingFlags.Static)
+                    ?? throw new InvalidOperationException("TenantStoragePatches.IsoStorage_GetCurrentApp not found");
+                ReplaceBodyWithHelper(asm.MainModule, m, h);
+                Console.Error.WriteLine("[Cecil] Rewrote ALIsolatedStorage.GetCurrentApp → owning app of the executing AL code");
+            }
+
             // ALSystemEncryption — same dead-JmpHook migration. Every one of these bodies
             // resolves a tenant RSA/KeyVault encryption provider, and the provider's first
             // act is to read NavTenant.GetEncryptionKeyFileName → NavDatabase.TenantProperties

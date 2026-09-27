@@ -36,9 +36,8 @@
 //     diverges with each random IV).
 //   - The store row is verbatim ciphertext; the REAL (unpatched) ALIsolatedStorage.Get body
 //     decrypts it before returning to AL — see the Repo_Set/Repo_Get comments below.
-//   - DataScope is honoured: Company-scoped entries include a scope-dependent qualifier in
-//     the composite dictionary key so the BC contract (different scope → different store)
-//     holds — see ComposeKey.
+//   - The store is keyed like table 2000000107: app id, DataScope, company, user, key — see
+//     ComposeKey. The app id comes from IsoStorage_GetCurrentApp (#4854).
 //   - Set/Get/Contains/Delete return true on success (matches BC semantics — see
 //     test bucket 314-void-returning-bool which asserts `if not Set(...)` branch is skipped).
 
@@ -63,8 +62,7 @@ public static class TenantStoragePatches
 
     private sealed record Entry(string Ciphertext, Encryption Status, bool IsSecret);
 
-    // Composite key: scope+companyQualifier+userQualifier+key. Companies / users are
-    // scope-dependent — Module ignores both, Company keys on company, User on user.
+    // Keyed by ComposeKey: app, scope, company, user, key — table 2000000107's primary key.
     private static readonly ConcurrentDictionary<string, Entry> _store = new();
 
     public static void ResetForTest()
@@ -138,23 +136,25 @@ public static class TenantStoragePatches
     internal static int CensusEntryCount() => _store.Count;
 
     // ── Key composition ────────────────────────────────────────────────────────
-    private static string ComposeKey(DataScope scope, string key)
-    {
-        // DataScope: Module=0 (no qualifier), Company=1 (company), User=2 (user),
-        // CompanyAndUser=3 (both). Skeleton runner has a fixed default company
-        // ("CRONUS") and user (anonymous SID); but for testing purposes any
-        // consistent qualifier suffices — the BC contract is "different scope →
-        // different store", and that holds as long as the suffix is scope-dependent.
-        string suffix = scope switch
-        {
-            DataScope.Module         => string.Empty,
-            DataScope.Company        => "|co=CRONUS",
-            DataScope.User           => "|u=__skel__",
-            DataScope.CompanyAndUser => "|co=CRONUS|u=__skel__",
-            _                        => "|s=" + (int)scope,
-        };
-        return $"s={(int)scope}|k={key}{suffix}";
-    }
+    // BC's IsolatedStorageRepository keys table 2000000107 on (App ID, Scope, Company, User,
+    // Key), and ALIsolatedStorage already hands it company and user only for the scopes that
+    // use them (GetCompanyByScope / GetUserByScope), so every argument goes into the key as
+    // given. Dropping appId made one app's keys visible to every other app (#4854).
+    private static string ComposeKey(NavGuid appId, DataScope scope, string companyName, NavGuid userId, string key)
+        => $"a={appId.Value:N}|s={(int)scope}|co={companyName}|u={userId.Value:N}|k={key}";
+
+    // ── ALIsolatedStorage.GetCurrentApp() (private static) ─────────────────────
+    // BC's body is `CurrentMethodScope?.ApplicationObject?.GetOwningAppId() ?? Guid.Empty`.
+    // The runner's NavSession.CurrentMethodScope getter always answers the flat skeleton root
+    // scope, whose ApplicationObject is null, so BC's body answered Guid.Empty for every app.
+    // Observably equivalent: GetOwningAppId is the app owning the AL object whose code is
+    // running, and the runner answers that question from the innermost registered AL assembly
+    // on the stack — the same lookup NavApp.GetCurrentModuleInfo and
+    // NavSession.GetCurrentModuleExecutionContext use (NavAppModuleInfoPatches, #4049), so
+    // isolated storage keys on the app GetCurrentModuleInfo reports. Corpus 67580.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static NavGuid IsoStorage_GetCurrentApp()
+        => new NavGuid(BcRuntime.GetCurrentModuleFromCallStack().AppId);
 
     // (Crypto envelopes live in the ALSystemEncryption section below — Encrypt/Decrypt
     // are routed through SysEnc_ALEncrypt / SysEnc_ALDecrypt so AL's
@@ -175,7 +175,7 @@ public static class TenantStoragePatches
     {
         var mode = (Encryption)encryptionStatus;
         var isSecret = targetValueType == 1;
-        _store[ComposeKey(scope, key)] = new Entry(value, mode, isSecret);
+        _store[ComposeKey(appId, scope, companyName, userId, key)] = new Entry(value, mode, isSecret);
         return true;
     }
 
@@ -188,7 +188,7 @@ public static class TenantStoragePatches
                                                     int targetValueType, string companyName, NavGuid userId,
                                                     string key, ByRef<NavText> value)
     {
-        if (!_store.TryGetValue(ComposeKey(scope, key), out var entry))
+        if (!_store.TryGetValue(ComposeKey(appId, scope, companyName, userId, key), out var entry))
         {
             value.Value = new NavText(string.Empty);
             return (false, 0 /* EncryptionStatus.PlainText */);
@@ -203,7 +203,7 @@ public static class TenantStoragePatches
     public static bool Repo_Contains_6(NavGuid appId, DataScope scope, string companyName,
                                        NavGuid userId, string key, ref bool isSecret)
     {
-        if (_store.TryGetValue(ComposeKey(scope, key), out var entry))
+        if (_store.TryGetValue(ComposeKey(appId, scope, companyName, userId, key), out var entry))
         {
             isSecret = entry.IsSecret;
             return true;
@@ -215,14 +215,14 @@ public static class TenantStoragePatches
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static bool Repo_Contains_5(NavGuid appId, DataScope scope, string companyName,
                                        NavGuid userId, string key)
-        => _store.ContainsKey(ComposeKey(scope, key));
+        => _store.ContainsKey(ComposeKey(appId, scope, companyName, userId, key));
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static bool Repo_Delete(DataError de, NavGuid appId, DataScope scope,
                                    string companyName, NavGuid userId, string key)
     {
         // BC's Delete returns true when the key existed (was actually deleted).
-        return _store.TryRemove(ComposeKey(scope, key), out _);
+        return _store.TryRemove(ComposeKey(appId, scope, companyName, userId, key), out _);
     }
 
     // ── ALSystemEncryption.* — the tenant encryption KEY LEDGER, and the in-process
