@@ -217,8 +217,20 @@ replaces the target control's area. The same rule table applies. BC's compiler w
 `ApplicationArea` on an extension control that states none, even when the base page states one at
 object level — it copies the page's area onto the page's own controls only. Corpus codeunits 67535
 (a page compiled in the same app) and 67536 (a precompiled Base Application page) put all three
-rows in front of a service tier. Actions and parts a source pageextension adds are not covered
-yet (#4871).
+rows in front of a service tier.
+
+The same document carries the extension's actions and parts (#4871). Under an `ActionAdd`, each
+`ActionDefinition`, `CustomActionDefinition` and `FileUploadActionDefinition` answers its own area
+or none, including inside an added group; an `ActionRefDefinition` is removed when it states an
+area the session does not enable, or when its target action is removed; an `ActionChange`
+carrying `ApplicationArea` replaces the target action's area. Under a `ControlAdd`, a part answers
+its own area, and an `InfopartPageDefinition` whose `Visible` is literally false is not tested,
+as in `MetadataProvider.RemoveControl`. A pageextension cannot `modify()` a part's or a system
+part's `ApplicationArea` (the compiler refuses it with AL0246), so no change applies to parts. A `modify()`'s verdict needs no base area, which is what
+reaches a precompiled page's action: the runner's MasterPage for such a page carries no actions of
+its own (#4862). Corpus codeunits 67538 (a page compiled in the same app) and 67539 ("Inventory
+Posting Groups", precompiled). A TestPage still cannot reach a part a pageextension adds (#4876),
+nor invoke an extension actionref whose target the same extension adds (#4878).
 
 ## What is deliberately not implemented, and why
 

@@ -1,0 +1,18 @@
+[
+  {
+    "codeunitId": 67538,
+    "CodeunitName": "PAA Ext Action Part Tests",
+    "Method": "ExtPart_OwnAreaEnabled_IsFound",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4876",
+    "Note": "A part added by a pageextension compiled in the bundle cannot be reached by TestPage: RunnerPageInstance.TryGetPartDefinition reads the host MasterPage, which carries no pageextension delta, and refuses with testpage-part not-yet-implemented. The not-found direction works (application-area removal is decided before the lookup, #4871). Real BC finds the part: corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#479 asserts it on a service tier. Tracked as #4876, which stays open after #4871; its fix removes this entry."
+  },
+  {
+    "codeunitId": 67539,
+    "CodeunitName": "PAA Ext Action Part Host Tests",
+    "Method": "ExtPartOnPrecompiledPage_OwnAreaEnabled_IsFound",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4876",
+    "Note": "A part added by a pageextension compiled in the bundle cannot be reached by TestPage: RunnerPageInstance.TryGetPartDefinition reads the host MasterPage, which carries no pageextension delta, and refuses with testpage-part not-yet-implemented. The not-found direction works (application-area removal is decided before the lookup, #4871). Real BC finds the part: corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#479 asserts it on a service tier. Tracked as #4876, which stays open after #4871; its fix removes this entry."
+  }
+]
