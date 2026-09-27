@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **app-groups:** a group depending on one declarer of a shared id sees that declarer's object and subscribers
 - **page:** remove request-page controls and page parts whose ApplicationArea the session has not enabled
 - **metadata:** a table registered by a later bundle's precompiled dependency is no longer answered from a cached absence
 - **app-groups:** events and Page Control Field rows of an id two app groups share stay each group's own
