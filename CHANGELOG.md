@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **testpage:** New() saves the pending edit of the row it leaves
 - **report:** a precompiled report's request page keeps its declared SaveValues and ShowFilter
 - **metadata:** scope table/page/report/query metadata per app group when several groups share an id
 - **metadata:** a tableextension's 0DT InitValue raises BC's own Init() error
