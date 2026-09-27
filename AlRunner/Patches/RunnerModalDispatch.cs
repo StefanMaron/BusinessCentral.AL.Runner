@@ -96,10 +96,12 @@ public static class RunnerModalDispatch
             // Close only what this method opened, and only through BC's own CloseForm, so the
             // form leaves the company's registry exactly the way BC would have left it.
             //
-            // FormResult.None stays deliberate: passing the handler's real result would also
-            // turn on CloseFormAsync's StoreSaveValues(..., persistData: true), a second
-            // behaviour change nothing here has measured.
-            if (opened && IsFormOpen(form)) TryCloseForm(form!, result: null);
+            // A REQUEST page closes with the handler's result, as BC's client does: OK is what
+            // makes CloseFormAsync's StoreSaveValues persist a SaveValues page (#4808; corpus
+            // 67541). Every other page keeps FormResult.None — its StoreSaveValues writes the
+            // per-user page-personalization store, which no corpus test has measured.
+            if (opened && IsFormOpen(form))
+                TryCloseForm(form!, result: IsRequestPage(form) ? result : null);
         }
 
         // The handler's outcome (OK/Cancel) is what the AL that called RunModal receives.
@@ -191,6 +193,21 @@ public static class RunnerModalDispatch
         if (form is not NavForm navForm) return;
         if (!RunnerPendingPageOpenMode.TryConsume(PageIdOf(form), out var readOnly)) return;
         if (readOnly) navForm.Editable = false;
+    }
+
+    /// <summary>
+    /// BC's own <c>NavForm.IsRequestPage</c>. Required: an unreadable answer would silently pick
+    /// which close result a form gets, so it refuses instead.
+    /// </summary>
+    internal static bool IsRequestPage(object form)
+    {
+        var p = form.GetType().GetProperty("IsRequestPage",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                ?? throw new BcShapeGapException(
+                    "TestPage modal dispatch (close result)", $"{form.GetType().Name}.IsRequestPage",
+                    "without it the runner cannot tell a request page, whose OK persists SaveValues, "
+                    + "from a page, whose close it keeps at FormResult.None (#4808)");
+        return p.GetValue(form) is true;
     }
 
     /// <summary>The page number of <paramref name="form"/>, or 0 when it cannot be read.</summary>
@@ -442,19 +459,16 @@ public static class RunnerModalDispatch
     /// <summary>
     /// Close <paramref name="form"/> through BC's own CloseForm, which raises OnClosePage.
     ///
-    /// <para><b>Ordinal 0 — FormResult.None — is the DELIBERATE argument here, not a fallback
-    /// from a failed read.</b> Both call sites pass <c>result: null</c> as a literal, and the
-    /// reason is at the modal one: passing the handler's real result would also turn on
-    /// CloseFormAsync's <c>StoreSaveValues(..., persistData: true)</c>, a second behaviour
-    /// change nothing here has measured. So this line is NOT the #4363 defect, which was
+    /// <para><b>Ordinal 0 — FormResult.None — is the DELIBERATE argument for every non-request
+    /// page, not a fallback from a failed read.</b> The non-modal call site passes
+    /// <c>result: null</c> as a literal, and the modal one does for anything but a request page;
+    /// the reason is at the modal one. So this line is NOT the #4363 defect, which was
     /// <see cref="NonModalCloseResult"/> reaching an ordinal-0 CloseAction from four reflection
     /// exits that had failed — a different route, a different observable (OnQueryClosePage
     /// rather than OnClosePage), and one this method never received.</para>
     ///
-    /// <para>Trap: a later editor who gives this method a non-null caller owes that caller's
-    /// value the same treatment <see cref="NonModalCloseResult"/> now gets — a required read
-    /// that refuses — because the <c>IsInstanceOfType</c> test below silently falls back to
-    /// ordinal 0 for anything it does not recognise.</para>
+    /// <para>A non-null result that is not BC's FormResult refuses rather than falling back to
+    /// ordinal 0: the modal request-page caller relies on OK actually reaching CloseForm.</para>
     /// </summary>
     private static void TryCloseForm(object form, object? result)
     {
@@ -462,9 +476,13 @@ public static class RunnerModalDispatch
             .FirstOrDefault(m => m.Name == "CloseForm" && m.GetParameters().Length == 1);
         if (closeForm == null) return;
         var formResultType = closeForm.GetParameters()[0].ParameterType;
-        var arg = result != null && formResultType.IsInstanceOfType(result)
-            ? result
-            : Enum.ToObject(formResultType, 0);
+        if (result != null && !formResultType.IsInstanceOfType(result))
+            throw new BcShapeGapException(
+                "TestPage modal dispatch (close result)", $"{form.GetType().Name}.CloseForm",
+                $"the handler's result is a {result.GetType().Name}, not the {formResultType.Name} "
+                + "CloseForm takes, so closing with it would silently become FormResult.None and "
+                + "a SaveValues request page would not persist (#4808)");
+        var arg = result ?? Enum.ToObject(formResultType, 0);
         try { Invoke(closeForm, form, new[] { arg }); }
         catch (Exception ex)
         {

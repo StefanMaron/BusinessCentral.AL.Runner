@@ -772,9 +772,9 @@ public static partial class NclCecilRewrite
         // `: base(parent, metaForm)` in Report{N}.InitializeComponent. Rewrite them to
         // bypass the Session.Company.SharedObjects deref by calling NavForm 2-arg ctor
         // directly, which assigns masterPage and runs the rest of NavForm init using
-        // `parent` (the report instance) as the ITreeObject. RequestPageBase.Parent is
-        // left null, and NavReportSync.BindRequestPageOpenedByBc depends on that shape (#4067):
-        // it falls back to the compiled CurrReport field. Setting Parent here is safe for it.
+        // `parent` (the report instance) as the ITreeObject, then `Parent = parent` exactly as
+        // BC's own ctor body does — InitializeRequestPageWithCustomValues reads Parent.Session
+        // to restore saved values (#4808).
         {
             var requestPageBaseT = asm.MainModule.Types
                 .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.RequestPageBase");
@@ -793,6 +793,18 @@ public static partial class NclCecilRewrite
                         && m.Parameters[0].ParameterType.FullName == "Microsoft.Dynamics.Nav.Runtime.ITreeObject"
                         && m.Parameters[1].ParameterType.FullName == "Microsoft.Dynamics.Nav.Types.Metadata.MasterPage"
                         && m.Parameters[2].ParameterType.FullName == "Microsoft.Dynamics.Nav.Runtime.NCLStaticMetadata");
+
+                // BC's own ctor body is `Parent = parent;`. A FieldDefinition in this module, so
+                // storing it adds no TypeRef/MemberRef token (precompiled-dll-respect.md).
+                var parentBacking = requestPageBaseT.Fields.FirstOrDefault(f => f.Name == "<Parent>k__BackingField")
+                    ?? throw new InvalidOperationException(
+                        "RequestPageBase.<Parent>k__BackingField not found — Ncl shape changed; do not commit");
+                void AppendParentStore(ILProcessor il)
+                {
+                    il.Append(il.Create(OpCodes.Ldarg_0));
+                    il.Append(il.Create(OpCodes.Ldarg_1));
+                    il.Append(il.Create(OpCodes.Stfld, parentBacking));
+                }
 
                 int rpRewrites = 0;
                 foreach (var ctor in requestPageBaseT.Methods.Where(m => m.IsConstructor && m.HasBody).ToList())
@@ -813,6 +825,7 @@ public static partial class NclCecilRewrite
                         il.Append(il.Create(OpCodes.Ldarg_1));
                         il.Append(il.Create(OpCodes.Ldarg_2));
                         il.Append(il.Create(OpCodes.Call, navFormCtor2));
+                        AppendParentStore(il);
                         il.Append(il.Create(OpCodes.Ret));
                         body.MaxStackSize = 3;
                         rpRewrites++;
@@ -834,6 +847,7 @@ public static partial class NclCecilRewrite
                         il.Append(il.Create(OpCodes.Ldarg_2));
                         il.Append(il.Create(OpCodes.Ldarg_3));
                         il.Append(il.Create(OpCodes.Call, navFormCtor3));
+                        AppendParentStore(il);
                         il.Append(il.Create(OpCodes.Ret));
                         body.MaxStackSize = 4;
                         rpRewrites++;
@@ -1321,52 +1335,9 @@ public static partial class NclCecilRewrite
                     Console.Error.WriteLine($"[Cecil] Rewrote NavReport..ctor(ITreeObject,int,NCLStaticMetadata) → base ctor chain + set_PreviewCanPrint; skip Company.RegisterReport (base->{baseCtorRef.DeclaringType.Name})");
                 }
 
-                // NavReport.set_RequestOptionsPage — original body:
-                //   if (requestOptionsPage != null && requestOptionsPage.SaveValues) { /* unsub */ }
-                //   new TreeObjectReference(this, value);                  // tree bookkeeping
-                //   requestOptionsPage = value;
-                //   if (requestOptionsPage.SaveValues) { /* +event */ }    // NREs through RequestPage.SaveValues → EnsureMetadataLoaded → ApplicationObjectRootScope ctor
-                // Rewrite: simply assign the backing field. AL only observes the getter
-                // (returns the field). TreeObjectReference is internal disposal bookkeeping;
-                // ApplyReportOptions/GetReportOptions events are internal NCL hooks fired
-                // only when a real UI applies saved options — never on the headless ProcessingOnly
-                // path. SaveValues itself requires service-tier metadata which we don't have.
-                {
-                    var setter = navReportT.Methods.FirstOrDefault(m =>
-                        m.Name == "set_RequestOptionsPage" && !m.IsStatic && m.HasBody && m.Parameters.Count == 1);
-                    if (setter != null)
-                    {
-                        // Find the backing field via the IL: look for `stfld requestOptionsPage`.
-                        FieldReference? backing = null;
-                        foreach (var ins in setter.Body.Instructions)
-                        {
-                            if (ins.OpCode == OpCodes.Stfld && ins.Operand is FieldReference fr
-                                && fr.Name == "requestOptionsPage")
-                            {
-                                backing = fr;
-                                break;
-                            }
-                        }
-                        if (backing == null)
-                        {
-                            Console.Error.WriteLine("[Cecil] WARN: NavReport.set_RequestOptionsPage backing field not found — leaving original IL (will NRE through SaveValues)");
-                        }
-                        else
-                        {
-                            var body = setter.Body;
-                            body.Instructions.Clear();
-                            body.Variables.Clear();
-                            body.ExceptionHandlers.Clear();
-                            var il = body.GetILProcessor();
-                            il.Append(il.Create(OpCodes.Ldarg_0));
-                            il.Append(il.Create(OpCodes.Ldarg_1));
-                            il.Append(il.Create(OpCodes.Stfld, backing));
-                            il.Append(il.Create(OpCodes.Ret));
-                            body.MaxStackSize = 2;
-                            Console.Error.WriteLine("[Cecil] Rewrote NavReport.set_RequestOptionsPage → assign backing field (skip TreeObjectReference + SaveValues event-subscribe; both untriggerable headless)");
-                        }
-                    }
-                }
+                // NavReport.set_RequestOptionsPage is deliberately NOT rewritten: its
+                // GetReportOptions/ApplyReportOptions subscriptions are how a SaveValues request
+                // page stores and restores its values (#4808; corpus 67541, green on real BC).
             }
         }
 
