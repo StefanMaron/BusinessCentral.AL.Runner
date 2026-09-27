@@ -693,7 +693,7 @@ public static partial class RecordPatches
         // immediately after a word with no space, whereas a call always does.
         if (Regex.IsMatch(expr, @"\w\(")) return 0;
 
-        if (!_parsedTables.TryGetValue(tableId, out var table)) return 0;
+        if (!TryGetInAppGroupScope("table", _parsedTables, tableId, out var table)) return 0;
         foreach (var f in GetAllFieldsIncludingExtensions(table))
             if (string.Equals(f.FieldName, expr, StringComparison.OrdinalIgnoreCase))
                 return f.FieldId;

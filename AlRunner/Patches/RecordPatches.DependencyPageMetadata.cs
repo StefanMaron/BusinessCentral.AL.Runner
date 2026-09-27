@@ -76,7 +76,7 @@ public static partial class RecordPatches
     /// a temporary Rec to match.
     /// </summary>
     internal static bool ResolveSourceTableTemporaryForAnyPage(int pageId)
-        => (IsPageParsed(pageId) && _parsedPages.TryGetValue(pageId, out var page) && page.SourceTableTemporary)
+        => (IsPageParsed(pageId) && TryGetInAppGroupScope("page", _parsedPages, pageId, out var page) && page.SourceTableTemporary)
            || TryGetDependencyPageSymbol(pageId)?.SourceTableTemporary == true;
 
     /// <summary>
@@ -347,7 +347,7 @@ public static partial class RecordPatches
     internal static int? TryResolveDependencyFieldId(int tableId, string fieldName)
     {
         if (tableId <= 0 || string.IsNullOrWhiteSpace(fieldName)) return null;
-        if (!_parsedTables.TryGetValue(tableId, out var table))
+        if (!TryGetInAppGroupScope("table", _parsedTables, tableId, out var table))
         {
             TryPopulateParsedTableFromBcApps(tableId);
             _parsedTables.TryGetValue(tableId, out table);

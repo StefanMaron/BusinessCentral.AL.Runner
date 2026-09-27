@@ -24,6 +24,8 @@ namespace AlRunner.Patches;
 public static partial class RecordPatches
 {
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, object?> _realMetaQueryCache = new();
+    // A query id several app groups declare, per executing group (#4767).
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Guid AppGroup, int Id), object?> _realMetaQueryCacheByAppGroup = new();
 
     // Reflection handles for the MetaQuery design model + CreateDynamicQuery.
     private static Type? _tMetaQuery;
@@ -83,7 +85,8 @@ public static partial class RecordPatches
     /// </summary>
     internal static object? BuildRealNCLMetaQuery(int queryId, Type clrType)
     {
-        return _realMetaQueryCache.GetOrAdd(queryId, _ => BuildRealNCLMetaQueryCore(queryId, clrType));
+        return GetOrAddInAppGroupScope(_realMetaQueryCache, _realMetaQueryCacheByAppGroup, "query", queryId,
+            id => BuildRealNCLMetaQueryCore(id, clrType));
     }
 
     private static object? BuildRealNCLMetaQueryCore(int queryId, Type clrType)
@@ -493,7 +496,7 @@ public static partial class RecordPatches
     private static Dictionary<string, int> BuildFieldNameToNoMap(int tableNo)
     {
         var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        if (_parsedTables.TryGetValue(tableNo, out var pt))
+        if (TryGetInAppGroupScope("table", _parsedTables, tableNo, out var pt))
             foreach (var f in pt.Fields)
                 map[f.FieldName] = f.FieldId;
         return map;

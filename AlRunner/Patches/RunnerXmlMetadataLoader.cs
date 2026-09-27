@@ -261,4 +261,21 @@ public sealed class RunnerMetaApplicationObjectLoader : INCLMetaApplicationObjec
     // against the registries, which are the source of truth); the MetaObjectCache half is
     // deliberately NOT — it is BC's own cache and must be shared to be one.
     public static readonly RunnerMetaApplicationObjectLoader Instance = new();
+
+    // One loader, so one MetaObjectCache, per app group that shares an object id with another
+    // group: the cache keys on (package id, object id) and the runner supplies no package id, so
+    // a shared cache hands the first group's parsed definition to every group (#4767).
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, RunnerMetaApplicationObjectLoader> _byAppGroup = new();
+
+    /// <summary>The loader for an object built under <paramref name="appGroupScope"/>
+    /// (<see cref="RecordPatches.AppGroupCacheScope"/>): <see cref="Instance"/> for Guid.Empty.</summary>
+    internal static RunnerMetaApplicationObjectLoader For(Guid appGroupScope)
+        => appGroupScope == Guid.Empty ? Instance : _byAppGroup.GetOrAdd(appGroupScope, _ => new RunnerMetaApplicationObjectLoader());
+
+    /// <summary><see cref="ResetMetaObjectCache"/> on every loader.</summary>
+    internal static void ResetAllMetaObjectCaches()
+    {
+        Instance.ResetMetaObjectCache();
+        _byAppGroup.Clear();
+    }
 }

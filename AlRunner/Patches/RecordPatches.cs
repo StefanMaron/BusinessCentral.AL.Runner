@@ -82,6 +82,10 @@ public static partial class RecordPatches
 
     // Cache: tableId → NCLMetaTable built from AL source.
     private static readonly ConcurrentDictionary<int, object?> _metaTableCache = new();
+    // A table id several app groups declare, per executing group (#4767): see GetOrBuildNCLMetaTable.
+    // Every entry is built lazily while its group executes, after that group's emit, so the
+    // post-emit "...All" passes over _metaTableCache never need to visit it.
+    private static readonly ConcurrentDictionary<(Guid AppGroup, int Id), object?> _metaTableCacheByAppGroup = new();
 
     // Cache: (DataAccessSource, tableId) → DataAccess (with TempTableDataProvider).
     // BC's real GetDataAccessForTable returns one shared TenantDataAccess for all Normal
@@ -317,6 +321,9 @@ public static partial class RecordPatches
     public static void ResetForReload()
     {
         _metaTableCache.Clear();
+        _metaTableCacheByAppGroup.Clear();
+        _fieldTriggersWiredByAppGroup.Clear();
+        _recordTypeCacheByAppGroup.Clear();
         // #3552 — the ledger names LIVE NCLMetaTable instances as already carrying BC's
         // document, so it is meaningless the moment the line above drops them, and leaving it
         // populated would make the next cycle's tables keep the derivation in silence.
@@ -440,7 +447,7 @@ public static partial class RecordPatches
         _fieldTriggersWiredTables.Clear();
         // #4100: BC's page-definition cache keys on (owner package id, page id) and the runner
         // supplies no owner, so every bundle's page N shares one key.
-        RunnerMetaApplicationObjectLoader.Instance.ResetMetaObjectCache();
+        RunnerMetaApplicationObjectLoader.ResetAllMetaObjectCaches();
         _parsedPages.Clear();
         _parsedPageExtensions.Clear();
         _parsedReports.Clear();
@@ -478,6 +485,8 @@ public static partial class RecordPatches
         // ResetPageMetadataForReload's doc comment for the full reasoning.
         ResetPageMetadataForReload();
         _metaReportCache.Clear();
+        _metaFormCacheByAppGroup.Clear();
+        _metaReportCacheByAppGroup.Clear();
         _metaQueryCache.Clear();
         // #3210: the two id-keyed caches of BUILT NCLMetaQuery objects that sit on top of
         // _metaQueryCache and were the only pieces of this chain nothing dropped.
@@ -491,6 +500,8 @@ public static partial class RecordPatches
         // unresolvable stayed null for the rest of the process.
         _realMetaQueryCache.Clear();
         _lazyMetaQueryByGetById.Clear();
+        _realMetaQueryCacheByAppGroup.Clear();
+        _lazyMetaQueryByAppGroup.Clear();
         // Same shape again, one object type over: id -> built NCLMetaPermissionSet, derived
         // from EnumerateKnownPermissionSets() -> _parsedPermissionSets, which this method
         // clears a few lines above. Nothing cleared it, so a permission set an edited bundle
@@ -569,6 +580,8 @@ public static partial class RecordPatches
     {
         _realMetaQueryCache.Clear();
         _lazyMetaQueryByGetById.Clear();
+        _realMetaQueryCacheByAppGroup.Clear();
+        _lazyMetaQueryByAppGroup.Clear();
     }
 
     public static void AddSourceDir(string dir) => AddSourceDirs(new[] { dir });
@@ -812,6 +825,9 @@ public static partial class RecordPatches
             if (!_parsedPages.ContainsKey(kvp.Key) && !_parsedPageExtensions.ContainsKey(kvp.Key)) continue;
             _metaFormCache.TryRemove(kvp.Key, out _);
         }
+        foreach (var kvp in _metaFormCacheByAppGroup)
+            if (kvp.Value == null && (_parsedPages.ContainsKey(kvp.Key.Id) || _parsedPageExtensions.ContainsKey(kvp.Key.Id)))
+                _metaFormCacheByAppGroup.TryRemove(kvp.Key, out _);
 
         foreach (var kvp in _metaReportCache)
         {
@@ -819,6 +835,9 @@ public static partial class RecordPatches
             if (!_parsedReports.ContainsKey(kvp.Key)) continue;
             _metaReportCache.TryRemove(kvp.Key, out _);
         }
+        foreach (var kvp in _metaReportCacheByAppGroup)
+            if (kvp.Value == null && _parsedReports.ContainsKey(kvp.Key.Id))
+                _metaReportCacheByAppGroup.TryRemove(kvp.Key, out _);
     }
 
     /// <summary>
@@ -1157,7 +1176,7 @@ public static partial class RecordPatches
         int id = self.ObjectId.ObjectNumber;
         bool isTemp = _fNavRecordHandleTemp != null && (bool)(_fNavRecordHandleTemp.GetValue(self) ?? false);
 
-        var metaTable = (NCLMetaTable?)_metaTableCache.GetOrAdd(id, BuildNCLMetaTable);
+        var metaTable = GetOrBuildNCLMetaTable(id);
         if (metaTable == null)
         {
             if (id == 0)

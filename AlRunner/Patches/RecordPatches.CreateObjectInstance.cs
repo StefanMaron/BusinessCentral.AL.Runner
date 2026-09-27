@@ -290,7 +290,7 @@ public static partial class RecordPatches
     internal static void RegisterParsedTableExtensions(NavRecord rec, int tableId)
     {
         if (tableId <= 0) return;
-        if (!_parsedTables.TryGetValue(tableId, out var parsed)) return;
+        if (!TryGetInAppGroupScope("table", _parsedTables, tableId, out var parsed)) return;
         if (!_extensionIdsByBaseTable.TryGetValue(parsed.TableName.ToLowerInvariant(), out var extIds)
             || extIds.Count == 0)
             return;

@@ -29,6 +29,14 @@ public static partial class RecordPatches
 
     internal static Type? FindRecordType(int id)
     {
+        // A table id several app groups declare: the executing group's own Record{id}, which
+        // lives in its own module; the process-wide cache holds whichever group resolved first.
+        if (AppGroupCacheScope("table", id) is var group && group != Guid.Empty)
+        {
+            if (_recordTypeCacheByAppGroup.TryGetValue((group, id), out var own)) return own;
+            if (BcRuntime.CurrentTestAssembly is { } asm && FindRecordTypeIn(asm, $"Record{id}") is { } hitOwn)
+                return _recordTypeCacheByAppGroup[(group, id)] = hitOwn;
+        }
         // A hit can be resolved before this request's dependency modules load and retire their
         // previous generation, so a cached type is re-checked rather than trusted (#4099).
         if (_recordTypeCache.TryGetValue(id, out var cached))
@@ -72,8 +80,25 @@ public static partial class RecordPatches
         catch { return null; }
     }
 
+    /// <summary>
+    /// The NCLMetaTable for <paramref name="tableId"/>. Every reader goes through this, never
+    /// <c>_metaTableCache</c> directly: an id several app groups declare resolves per executing
+    /// group, built from that group's own parsed table, record type and document (#4767).
+    /// </summary>
     internal static NCLMetaTable? GetOrBuildNCLMetaTable(int tableId)
-        => (NCLMetaTable?)_metaTableCache.GetOrAdd(tableId, BuildNCLMetaTable);
+        => (NCLMetaTable?)GetOrAddInAppGroupScope(_metaTableCache, _metaTableCacheByAppGroup, "table", tableId, BuildNCLMetaTable);
+
+    /// <summary>Drop every app group's own NCLMetaTable for <paramref name="tableId"/>, beside an
+    /// eviction of the process-wide one.</summary>
+    private static void EvictAppGroupMetaTables(int tableId)
+    {
+        foreach (var key in _metaTableCacheByAppGroup.Keys)
+            if (key.Id == tableId && _metaTableCacheByAppGroup.TryRemove(key, out _))
+                _fieldTriggersWiredByAppGroup.TryRemove(key, out _);
+    }
+
+    // Record{id} types resolved for a table id several app groups declare, per executing group.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Guid AppGroup, int Id), Type> _recordTypeCacheByAppGroup = new();
 
     /// <summary>
     /// The field's AL-declared Caption, straight from the parsed table source — the same
@@ -90,7 +115,7 @@ public static partial class RecordPatches
     /// </summary>
     internal static string? TryGetParsedFieldCaption(int tableId, int fieldNo)
     {
-        if (!_parsedTables.TryGetValue(tableId, out var parsed)) return null;
+        if (!TryGetInAppGroupScope("table", _parsedTables, tableId, out var parsed)) return null;
         foreach (var f in parsed.Fields)
             if (f.FieldId == fieldNo)
                 return string.IsNullOrEmpty(f.Caption) ? null : f.Caption;
@@ -112,7 +137,7 @@ public static partial class RecordPatches
     /// </summary>
     internal static (string? Min, string? Max) TryGetParsedFieldMinMax(int tableId, int fieldNo)
     {
-        if (!_parsedTables.TryGetValue(tableId, out var parsed))
+        if (!TryGetInAppGroupScope("table", _parsedTables, tableId, out var parsed))
         {
             // Extension fields for this base table are tracked separately (see
             // _parsedExtensionFields in BuildNCLMetaTable) and may be the only place a
@@ -143,6 +168,8 @@ public static partial class RecordPatches
                 return null;
         }
         if (_tMetaTable == null || _mCreateFromMetaTable == null) return null;
+        // An id several app groups declare builds from the executing group's own declaration (#4767).
+        parsed = InAppGroupScope("table", tableId, parsed);
 
         try
         {
@@ -2090,6 +2117,7 @@ public static partial class RecordPatches
     // Tables whose field-trigger handlers have been wired, so the per-table call on the hot
     // record-materialisation path is a no-op after the first time.
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, byte> _fieldTriggersWiredTables = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Guid AppGroup, int Id), byte> _fieldTriggersWiredByAppGroup = new();
 
     /// <summary>
     /// Wire a single table's field-trigger handlers (the field OnValidate/OnLookup methods on the
@@ -2103,6 +2131,14 @@ public static partial class RecordPatches
     internal static void WireFieldTriggerHandlersForTable(int tableId, object metaTableObj)
     {
         if (metaTableObj is not NCLMetaTable mt) return;
+        // A group's own instance of a shared table id is wired once for itself (#4767).
+        if (AppGroupCacheScope("table", tableId) is var group && group != Guid.Empty)
+        {
+            if (_fieldTriggersWiredByAppGroup.ContainsKey((group, tableId))) return;
+            if (WireFieldTriggerHandlers(mt, tableId))
+                _fieldTriggersWiredByAppGroup.TryAdd((group, tableId), 1);
+            return;
+        }
         if (_fieldTriggersWiredTables.ContainsKey(tableId)) return; // already wired
         // Called from the record-materialisation path, where the table's own Record
         // CLR type is expected to already be loaded — but only record success (see
@@ -2307,7 +2343,7 @@ public static partial class RecordPatches
         // FieldTriggerShapeGaps.cs. Only the callers' own precondition survives here:
         // WireFieldTriggerHandlers is the sole caller and has already refused if the scan
         // types are absent.
-        if (!_parsedTables.TryGetValue(tableId, out var parsed)) return;
+        if (!TryGetInAppGroupScope("table", _parsedTables, tableId, out var parsed)) return;
         if (!_extensionIdsByBaseTable.TryGetValue(parsed.TableName.ToLowerInvariant(), out var extIds)
             || extIds.Count == 0)
             return;

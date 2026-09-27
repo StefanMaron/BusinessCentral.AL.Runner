@@ -45,7 +45,7 @@ internal static partial class ProgramSupport
                 .Select(i => new
                 {
                     id = i,
-                    xml = AlReportMetadataRegistry.TryGet(i, out var x) ? x : string.Empty,
+                    xml = AlReportMetadataRegistry.TryGetForCompile(i, out var x) ? x : string.Empty,
                 }).ToArray(),
             // v5: per-report rendering-layout declarations captured from the AL
             // compiler's ReportLayoutSymbol — replayed on cache HIT so layout
@@ -60,7 +60,7 @@ internal static partial class ProgramSupport
                 .Select(i => new
                 {
                     id = i,
-                    xml = AlPageMetadataRegistry.TryGet(i, out var x) ? x : string.Empty,
+                    xml = AlPageMetadataRegistry.TryGetForCompile(i, out var x) ? x : string.Empty,
                 }).ToArray(),
             // v8: per-xmlport runtime metadata XML captured from emit — replayed on cache
             // HIT so NCLMetaXmlPort.LoadMetadata() still builds a real node schema on a warm

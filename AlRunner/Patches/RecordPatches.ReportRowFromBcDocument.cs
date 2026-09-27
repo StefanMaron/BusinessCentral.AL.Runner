@@ -86,8 +86,15 @@ public static partial class RecordPatches
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, BcReportDocument?>
         _bcReportDocuments = new();
+    // A report id several app groups declare, per executing group (#4767).
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Guid AppGroup, int Id), BcReportDocument?>
+        _bcReportDocumentsByAppGroup = new();
 
-    internal static void ClearBcReportDocuments() => _bcReportDocuments.Clear();
+    internal static void ClearBcReportDocuments()
+    {
+        _bcReportDocuments.Clear();
+        _bcReportDocumentsByAppGroup.Clear();
+    }
 
     /// <summary>
     /// BC's document for this report, or null when the emitter never captured one. A null
@@ -110,7 +117,7 @@ public static partial class RecordPatches
     /// WordMergeDataItem, ProcessingOnly and data-item tree already came from.</para>
     /// </summary>
     private static BcReportDocument? TryGetBcReportDocument(int reportId)
-        => _bcReportDocuments.GetOrAdd(reportId, static id =>
+        => GetOrAddInAppGroupScope(_bcReportDocuments, _bcReportDocumentsByAppGroup, "report", reportId, static id =>
         {
             if (!AlReportMetadataRegistry.TryGet(id, out var xml) || string.IsNullOrEmpty(xml))
                 return null;

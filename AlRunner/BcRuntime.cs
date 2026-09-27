@@ -86,8 +86,9 @@ public static partial class BcRuntime
     private static MethodInfo? _mNavRecordALInsertAsync3;  // NavRecord.ALInsertAsync(DataError,bool,bool) — hooked for AI
     private static MethodInfo? _mNavRecordALInit;           // NavRecord.ALInit() — hooked for PK reset
     private static MethodInfo? _mNavTextBuilderALInsert;    // NavTextBuilder.ALInsert(DataError,int,string)
-    // AutoIncrement: tableId → AI fieldNo; tableId → last assigned counter value
-    private static readonly ConcurrentDictionary<int, int>  _aiFieldIds  = new();
+    // AutoIncrement: (app-group scope, tableId) → AI fieldNo; tableId → last assigned counter value.
+    // The scope is RecordPatches.AppGroupCacheScope, as for the NCLMetaTable that registered it (#4767).
+    private static readonly ConcurrentDictionary<(Guid AppGroup, int TableId), int> _aiFieldIds = new();
     private static readonly ConcurrentDictionary<int, long> _aiCounters  = new();
 
     internal static IReadOnlyDictionary<int, long> CaptureAutoIncrementBaseline()
@@ -721,6 +722,9 @@ public static partial class BcRuntime
         _formTypeCache.Clear();
         _reportTypeCache.Clear();
         _queryTypeCache.Clear();
+        _formTypeCacheByAppGroup.Clear();
+        _reportTypeCacheByAppGroup.Clear();
+        _queryTypeCacheByAppGroup.Clear();
         _xmlPortTypeCache.Clear();
         _metaReportFallbackCache.Clear();
         // Enum option metadata (this partial class) + the emit-time enum registry.

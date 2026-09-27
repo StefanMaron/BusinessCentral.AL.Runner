@@ -258,7 +258,7 @@ public static partial class RecordPatches
     private static ParsedField XmlPortField(int tableId, string alName, string property, string nodeName)
     {
         var name = XmlPortUnquoteIdentifier(alName.Trim());
-        if (tableId > 0 && _parsedTables.TryGetValue(tableId, out var table))
+        if (tableId > 0 && TryGetInAppGroupScope("table", _parsedTables, tableId, out var table))
             foreach (var f in GetAllFieldsIncludingExtensions(table))
                 if (string.Equals(f.FieldName, name, StringComparison.OrdinalIgnoreCase))
                     return f;

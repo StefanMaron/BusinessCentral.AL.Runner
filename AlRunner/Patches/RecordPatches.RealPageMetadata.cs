@@ -38,7 +38,7 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
-    private static readonly HashSet<int> _pagesWithRealMetadata = new();
+    private static readonly HashSet<(Guid AppGroup, int Id)> _pagesWithRealMetadata = new();
 
     // #3011. The page-side NEGATIVE answers, each stamped with the .app registration epoch
     // (BcAppRegistrationEpoch — RecordPatches.BcAppFallback.cs) it was taken at.
@@ -74,7 +74,7 @@ public static partial class RecordPatches
     // registration does not falsify — and re-running the load on it is exactly what #1957
     // forbids. Its lifetime is still governed by ResetPageMetadataForReload, because a bundle
     // roll discards the instances it describes; the epoch cannot substitute for that.
-    private static readonly Dictionary<int, int> _pageRealMetadataNegativeEpoch = new();
+    private static readonly Dictionary<(Guid AppGroup, int Id), int> _pageRealMetadataNegativeEpoch = new();
 
     // Per-page count of "the registration set moved, so the negative answer was taken again".
     // Test-visible bookkeeping in production code for the same reason
@@ -82,7 +82,7 @@ public static partial class RecordPatches
     // DECISION (was the question re-asked, and exactly once per epoch), and a count is the
     // only way to state it that a no-op implementation cannot satisfy. Written only on the
     // retake path, so it stays empty for every page that never got a negative answer.
-    private static readonly Dictionary<int, int> _pageRealMetadataRetakes = new();
+    private static readonly Dictionary<(Guid AppGroup, int Id), int> _pageRealMetadataRetakes = new();
 
     private static readonly object _realPageMetadataLock = new();
 
@@ -95,7 +95,7 @@ public static partial class RecordPatches
     internal static int? PageRealMetadataNegativeEpochForTests(int pageId)
     {
         lock (_realPageMetadataLock)
-            return _pageRealMetadataNegativeEpoch.TryGetValue(pageId, out var e) ? e : null;
+            return _pageRealMetadataNegativeEpoch.TryGetValue((Guid.Empty, pageId), out var e) ? e : null;
     }
 
     /// <summary>
@@ -107,7 +107,7 @@ public static partial class RecordPatches
     internal static int PageRealMetadataRetakesForTests(int pageId)
     {
         lock (_realPageMetadataLock)
-            return _pageRealMetadataRetakes.TryGetValue(pageId, out var n) ? n : 0;
+            return _pageRealMetadataRetakes.TryGetValue((Guid.Empty, pageId), out var n) ? n : 0;
     }
 
     /// <summary>Whether <paramref name="pageId"/> is recorded as having had its REAL page
@@ -116,7 +116,7 @@ public static partial class RecordPatches
     /// <c>NCLMetaForm</c> instances it describes.</summary>
     internal static bool PageHasRealMetadataForTests(int pageId)
     {
-        lock (_realPageMetadataLock) return _pagesWithRealMetadata.Contains(pageId);
+        lock (_realPageMetadataLock) return _pagesWithRealMetadata.Contains((Guid.Empty, pageId));
     }
 
     /// <summary>
@@ -184,11 +184,14 @@ public static partial class RecordPatches
         // answer against the older epoch — which the next call then retakes. The opposite
         // (a stale answer surviving a bump) is the defect, and cannot happen this way.
         var epoch = BcAppRegistrationEpoch;
+        // Keyed like GetOrBuildMetaForm's instances: (executing app group, id) for an id several
+        // app groups declare, (Guid.Empty, id) otherwise (#4767).
+        var key = (AppGroupCacheScope("page", pageId), pageId);
 
         lock (_realPageMetadataLock)
         {
             object? meta;
-            if (_pageRealMetadataNegativeEpoch.TryGetValue(pageId, out var negativeAt))
+            if (_pageRealMetadataNegativeEpoch.TryGetValue(key, out var negativeAt))
             {
                 // Same registration set the negative answer was taken against: it still
                 // stands, and re-deriving it would be a retry storm on the TestPage path.
@@ -203,17 +206,25 @@ public static partial class RecordPatches
                 // is precisely what must not happen. EvictPageMetaForm drops it from
                 // _metaFormCache AND from BC's own metadataCacheEntries[Page], so the two
                 // cannot disagree about which instance is page N's.
-                _pageRealMetadataNegativeEpoch.Remove(pageId);
-                _pageRealMetadataRetakes[pageId] =
-                    (_pageRealMetadataRetakes.TryGetValue(pageId, out var n) ? n : 0) + 1;
-                EvictPageMetaForm(pageId);
-
-                meta = _metaFormCache.GetOrAdd(pageId, BuildNCLMetaForm);
-                if (meta != null) RefreshPageInMetadataCache(pageId, meta);
+                _pageRealMetadataNegativeEpoch.Remove(key);
+                _pageRealMetadataRetakes[key] =
+                    (_pageRealMetadataRetakes.TryGetValue(key, out var n) ? n : 0) + 1;
+                if (key.Item1 != Guid.Empty)
+                {
+                    // A group's own instance is never in BC's metadataCacheEntries.
+                    _metaFormCacheByAppGroup.TryRemove(key, out _);
+                    meta = GetOrBuildMetaForm(pageId);
+                }
+                else
+                {
+                    EvictPageMetaForm(pageId);
+                    meta = _metaFormCache.GetOrAdd(pageId, BuildNCLMetaForm);
+                    if (meta != null) RefreshPageInMetadataCache(pageId, meta);
+                }
             }
             else
             {
-                meta = _metaFormCache.GetOrAdd(pageId, BuildNCLMetaForm);
+                meta = GetOrBuildMetaForm(pageId);
             }
 
             if (meta == null)
@@ -223,11 +234,11 @@ public static partial class RecordPatches
                 // HasDependencyPageMetadata — so it is stamped rather than memoized forever.
                 // _metaFormCache memoizes the null itself, which is why the retake above has
                 // to evict it before asking again.
-                _pageRealMetadataNegativeEpoch[pageId] = epoch;
+                _pageRealMetadataNegativeEpoch[key] = epoch;
                 return null;
             }
 
-            if (_pagesWithRealMetadata.Contains(pageId)) return meta;
+            if (_pagesWithRealMetadata.Contains(key)) return meta;
 
             try
             {
@@ -243,7 +254,7 @@ public static partial class RecordPatches
                     "Page Metadata read from BC's own page metadata")
                     .Invoke(meta, null);
 
-                _pagesWithRealMetadata.Add(pageId);
+                _pagesWithRealMetadata.Add(key);
                 if (Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PAGE_METADATA") == "1")
                     Console.Out.WriteLine($"[page-metadata] loaded real metadata for page {pageId}");
                 return meta;
@@ -254,7 +265,7 @@ public static partial class RecordPatches
                 // Same record, same stamp, same guard as the "no metaform" branch above —
                 // one mechanism for both negative answers, so neither can be covered while
                 // the other is not (#3011).
-                _pageRealMetadataNegativeEpoch[pageId] = epoch;
+                _pageRealMetadataNegativeEpoch[key] = epoch;
                 // Put the flag back so the skeleton behaves exactly as it did before the
                 // attempt — a half-loaded metaform is worse than none.
                 if (_fNCLMetaAppObjMetadataLoaded != null)

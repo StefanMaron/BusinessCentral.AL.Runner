@@ -25,19 +25,40 @@ namespace AlRunner;
 public static class AlReportMetadataRegistry
 {
     private static readonly ConcurrentDictionary<int, string> _xmlById = new();
+    // The same XML keyed by the app compiling it, so two app groups declaring one id each keep
+    // their own document (#4767). _xmlById stays last-wins for every compile-time reader.
+    private static readonly ConcurrentDictionary<(Guid AppId, int Id), string> _xmlByAppAndId = new();
 
     public static void Register(int reportId, string metadataXml)
     {
         if (reportId <= 0 || string.IsNullOrEmpty(metadataXml)) return;
         _xmlById[reportId] = metadataXml;
+        if (BcCompiler.CurrentAppIdForRegistries is { } appId && appId != Guid.Empty)
+            _xmlByAppAndId[(appId, reportId)] = metadataXml;
     }
 
+    /// <summary>The executing app group's own document when several groups declare the id
+    /// (<see cref="Patches.RecordPatches.AppGroupCacheScope"/>), else the process-wide one.</summary>
     public static bool TryGet(int reportId, out string metadataXml)
-        => _xmlById.TryGetValue(reportId, out metadataXml!);
+        => Patches.RecordPatches.AppGroupCacheScope("report", reportId) is var group && group != Guid.Empty
+           && _xmlByAppAndId.TryGetValue((group, reportId), out metadataXml!)
+           || _xmlById.TryGetValue(reportId, out metadataXml!);
+
+    /// <summary>The document the app being compiled now registered for the id, else the
+    /// process-wide one: for the compile-time and cache-sidecar readers, which run while a
+    /// previous group's test assembly can still be the executing one.</summary>
+    public static bool TryGetForCompile(int reportId, out string metadataXml)
+        => BcCompiler.CurrentAppIdForRegistries is { } appId
+           && _xmlByAppAndId.TryGetValue((appId, reportId), out metadataXml!)
+           || _xmlById.TryGetValue(reportId, out metadataXml!);
 
     public static int Count => _xmlById.Count;
 
-    public static void Clear() => _xmlById.Clear();
+    public static void Clear()
+    {
+        _xmlById.Clear();
+        _xmlByAppAndId.Clear();
+    }
 
     /// <summary>Serialize the registry to a sidecar file. Returns entry count.</summary>
     public static int SaveSidecar(string path)

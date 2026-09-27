@@ -197,6 +197,21 @@ public static partial class EventSubscriberPatches
         }
     }
     private static readonly HashSet<MethodInfo> _injectedSubscriberMethods = new();
+    // The same ledger for the NCLMetaTable an app group builds for itself of a table id several
+    // groups declare (#4767): that instance starts with no subscriptions, so it is injected
+    // independently of the process-wide one. Guarded by _lock like the set above.
+    private static readonly Dictionary<Guid, HashSet<MethodInfo>> _injectedByAppGroup = new();
+
+    /// <summary>The injection ledger for the NCLMetaTable of <paramref name="tableId"/> the
+    /// executing code resolves (RecordPatches.GetOrBuildNCLMetaTable). Caller holds <c>_lock</c>.</summary>
+    private static HashSet<MethodInfo> InjectedLedgerFor(int tableId)
+    {
+        var group = RecordPatches.AppGroupCacheScope("table", tableId);
+        if (group == Guid.Empty) return _injectedSubscriberMethods;
+        if (!_injectedByAppGroup.TryGetValue(group, out var ledger))
+            _injectedByAppGroup[group] = ledger = new HashSet<MethodInfo>();
+        return ledger;
+    }
     // Discovery gate (#2369): AppDomain.AssemblyLoad bumps the epoch, and a scan pass records the
     // epoch it covered. Replaces comparing GetAssemblies().Length, which allocated the whole
     // assembly array on every call — and this runs on every record construction and every event
@@ -515,6 +530,7 @@ public static partial class EventSubscriberPatches
             _tableTypeCache.Clear();
             _objectEventTypeCache.Clear();
             _injectedSubscriberMethods.Clear();
+            _injectedByAppGroup.Clear();
             _seededScopeTypes.Clear();
             _scannedAssemblies.Clear();
             _scannedLoadEpoch = -1;
@@ -552,10 +568,16 @@ public static partial class EventSubscriberPatches
                 foreach (var key in keys)
                     if (_byKey.TryGetValue(key, out var subs))
                         foreach (var sub in subs)
+                        {
                             _injectedSubscriberMethods.Remove(sub.Method);
+                            foreach (var ledger in _injectedByAppGroup.Values) ledger.Remove(sub.Method);
+                        }
             if (idx.ValidateSubsByTable.TryGetValue(tableId, out var validateSubs))
                 foreach (var vs in validateSubs)
+                {
                     _injectedSubscriberMethods.Remove(vs.Handle.Method);
+                    foreach (var ledger in _injectedByAppGroup.Values) ledger.Remove(vs.Handle.Method);
+                }
         }
     }
 
@@ -747,6 +769,7 @@ public static partial class EventSubscriberPatches
 
         lock (_lock)
         {
+            var ledger = InjectedLedgerFor(tableId);
             if (!GetSubscriberIndex().TriggerKeysByTable.TryGetValue(tableId, out var tableKeys)) return;
             int injected = 0, failed = 0;
             foreach (var tableKey in tableKeys)
@@ -763,16 +786,16 @@ public static partial class EventSubscriberPatches
                     var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
                     Console.Error.WriteLine($"[Subscribers] GetEventScope({tableId},{ord}) failed (lazy): " +
                         $"{inner.GetType().Name}: {inner.Message}");
-                    failed += tableSubs.Count(s => !_injectedSubscriberMethods.Contains(s.Method));
+                    failed += tableSubs.Count(s => !ledger.Contains(s.Method));
                     continue;
                 }
-                if (scope == null) { failed += tableSubs.Count(s => !_injectedSubscriberMethods.Contains(s.Method)); continue; }
+                if (scope == null) { failed += tableSubs.Count(s => !ledger.Contains(s.Method)); continue; }
 
                 var existing = (Array?)_fRegisteredSubscriptions!.GetValue(scope);
                 var newOnes = new List<object>();
                 foreach (var sub in tableSubs)
                 {
-                    if (_injectedSubscriberMethods.Contains(sub.Method)) continue;
+                    if (ledger.Contains(sub.Method)) continue;
                     object? subscription;
                     try { subscription = BuildSubscription(sub); }
                     catch (Exception ex)
@@ -781,12 +804,12 @@ public static partial class EventSubscriberPatches
                         Console.Error.WriteLine($"[Subscribers] BuildSubscription failed for " +
                             $"{sub.DiagnosticName}: {inner.GetType().Name}: {inner.Message}");
                         failed++;
-                        _injectedSubscriberMethods.Add(sub.Method);
+                        ledger.Add(sub.Method);
                         continue;
                     }
-                    if (subscription == null) { failed++; _injectedSubscriberMethods.Add(sub.Method); continue; }
+                    if (subscription == null) { failed++; ledger.Add(sub.Method); continue; }
                     newOnes.Add(subscription);
-                    _injectedSubscriberMethods.Add(sub.Method);
+                    ledger.Add(sub.Method);
                     injected++;
                 }
                 if (newOnes.Count == 0) continue;
@@ -830,7 +853,7 @@ public static partial class EventSubscriberPatches
                 catch { metaTable = null; }
                 if (metaTable == null) { skipped++; continue; } // publisher table not built yet — retry / lazy-inject
 
-                TryInjectOneValidateSub(vs, metaTable, ref injected, ref failed);
+                TryInjectOneValidateSub(vs, metaTable, _injectedSubscriberMethods, ref injected, ref failed);
             }
         }
 
@@ -859,11 +882,12 @@ public static partial class EventSubscriberPatches
         lock (_lock)
         {
             if (!GetSubscriberIndex().ValidateSubsByTable.TryGetValue(tableId, out var tableSubs)) return;
+            var ledger = InjectedLedgerFor(tableId);
             int injected = 0, failed = 0;
             foreach (var vs in tableSubs)
             {
-                if (_injectedSubscriberMethods.Contains(vs.Handle.Method)) continue;
-                TryInjectOneValidateSub(vs, metaTable, ref injected, ref failed);
+                if (ledger.Contains(vs.Handle.Method)) continue;
+                TryInjectOneValidateSub(vs, metaTable, ledger, ref injected, ref failed);
             }
             if (injected > 0 || failed > 0)
                 Console.Error.WriteLine($"[Subscribers] validate-inject (table {tableId}, lazy): " +
@@ -875,14 +899,14 @@ public static partial class EventSubscriberPatches
     /// <paramref name="metaTable"/>. Caller holds <c>_lock</c>. Marks the method injected so it is
     /// not double-registered (which would fire the subscriber twice).</summary>
     private static void TryInjectOneValidateSub(ValidateSub vs, NCLMetaTable metaTable,
-        ref int injected, ref int failed)
+        HashSet<MethodInfo> ledger, ref int injected, ref int failed)
     {
         NCLMetaField? metaField = ResolveValidateField(metaTable, vs);
         if (metaField == null)
         {
             // Loud: the subscriber names a field we cannot resolve on the publisher table.
             Console.Error.WriteLine($"[Subscribers] validate target field not found: {vs.Handle.DiagnosticName}");
-            _injectedSubscriberMethods.Add(vs.Handle.Method); // don't retry forever
+            ledger.Add(vs.Handle.Method); // don't retry forever
             failed++;
             return;
         }
@@ -913,13 +937,13 @@ public static partial class EventSubscriberPatches
             Console.Error.WriteLine($"[Subscribers] BuildSubscription failed for " +
                 $"{vs.Handle.DiagnosticName}: {inner.GetType().Name}: {inner.Message}");
             failed++;
-            _injectedSubscriberMethods.Add(vs.Handle.Method);
+            ledger.Add(vs.Handle.Method);
             return;
         }
-        if (subscription == null) { failed++; _injectedSubscriberMethods.Add(vs.Handle.Method); return; }
+        if (subscription == null) { failed++; ledger.Add(vs.Handle.Method); return; }
 
         AppendSubscriptionToScope(scope, subscription);
-        _injectedSubscriberMethods.Add(vs.Handle.Method);
+        ledger.Add(vs.Handle.Method);
         injected++;
     }
 

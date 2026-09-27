@@ -572,7 +572,12 @@ public static partial class BcRuntime
     /// AutoIncrement field, so <see cref="NavRecord_ALInsertAsync3"/> can assign the counter.
     /// </summary>
     public static void RegisterAutoIncrementField(int tableId, int fieldNo)
-        => _aiFieldIds[tableId] = fieldNo;
+        => _aiFieldIds[(AlRunner.Patches.RecordPatches.AppGroupCacheScope("table", tableId), tableId)] = fieldNo;
+
+    /// <summary>The AutoIncrement field the NCLMetaTable the executing code resolves for
+    /// <paramref name="tableId"/> registered: per app group for a table id several groups declare.</summary>
+    private static bool TryGetAutoIncrementField(int tableId, out int fieldNo)
+        => _aiFieldIds.TryGetValue((AlRunner.Patches.RecordPatches.AppGroupCacheScope("table", tableId), tableId), out fieldNo);
 
     /// <summary>
     /// Force this table's storage into existence — and therefore, if --test-data is armed,
@@ -675,7 +680,7 @@ public static partial class BcRuntime
                 return;
 
             int tableId = self.MetaTable.TableId;
-            if (_aiFieldIds.TryGetValue(tableId, out int aiFieldNo)
+            if (TryGetAutoIncrementField(tableId, out int aiFieldNo)
                 && self.MetaTable.TryGetFieldByNo(aiFieldNo, out var aiField))
             {
                 var currentVal = self.GetFieldValue(aiField);
@@ -845,7 +850,7 @@ public static partial class BcRuntime
                 goto InvokeRealBody;
 
             int tableId = self.MetaTable.TableId;
-            if (_aiFieldIds.TryGetValue(tableId, out int aiFieldNo)
+            if (TryGetAutoIncrementField(tableId, out int aiFieldNo)
                 && self.MetaTable.TryGetFieldByNo(aiFieldNo, out var aiField))
             {
                 var currentVal = self.GetFieldValue(aiField);

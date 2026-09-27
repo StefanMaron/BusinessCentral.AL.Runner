@@ -70,7 +70,7 @@ public static partial class BcRuntime
 
     private static object ConstructFormForStaticEntry(int id, NavRecord? record)
     {
-        var formType = _formTypeCache.GetOrAdd(id, FindFormType);
+        var formType = GetFormType(id);
         if (formType == null)
             throw new InvalidOperationException(
                 $"Page{id} is not present in the test assembly or any loaded dependency.");

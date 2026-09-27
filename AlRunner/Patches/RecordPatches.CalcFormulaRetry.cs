@@ -135,6 +135,7 @@ public static partial class RecordPatches
             foreach (var id in ids)
             {
                 _metaTableCache.TryRemove(id, out _);
+                EvictAppGroupMetaTables(id);
                 EvictSkeletonMetadataTableEntry(id);
             }
             Console.Error.WriteLine(
