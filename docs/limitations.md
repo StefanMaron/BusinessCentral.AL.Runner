@@ -213,6 +213,40 @@ per-method result in that case; the per-test error is the runner's reporting cho
 The BC half is pinned in the corpus by `Test TestCU OnRun Runs First` (60002); the runner's
 isolation and reporting behaviour by `AlRunner.Tests/TestCodeunitOnRunTests.cs`.
 
+<a id="test-runner-events"></a>
+#### Microsoft's `Test Runner - Mgt.` events (#4813)
+
+When Microsoft's **Test Runner** app is loaded — the suite declares it as a dependency — the
+runner raises the events codeunit 130454 `Test Runner - Mgt` raises on a service tier, so
+Microsoft's own subscribers run as shipped:
+
+| event | when |
+|---|---|
+| `OnBeforeCodeunitRun` | before a test codeunit's `OnRun` or first executed test; before the first codeunit of the run, 130453's `Initialize` is called |
+| `OnBeforeTestMethodRun` | before each test method, after the database reset and outside the test method; from Test Runner 28.1, where the event has `var Skip`, a subscriber setting `Skip` makes the runner report the test `SKIP` without running it (27.x and 28.0 publish it without `Skip`) |
+| `OnAfterTestMethodRun` | after each test method that ran, with `IsSuccess` |
+| `OnAfterCodeunitRun` | after the codeunit's last test |
+
+So 130453 `ALTestRunner Reset Environment` clears the application areas and `LastError` before
+each test (and runs 130301 `Reset State Before Test Run` when that codeunit is loaded), and puts
+`WorkDate` back after each codeunit. No event is raised for `OnRun`: 130454 itself skips it. The
+`Test Method Line` a subscriber receives is not a stored row: `Test Codeunit`, `Name`,
+`Function`, `Line Type`, `Run` and (after the method) `Result` are set, the rest is blank. A
+subscriber that fails turns that test (or a `<OnBeforeCodeunitRun>`/`<OnAfterCodeunitRun>` entry)
+into an error naming the event. A loaded `Test Runner - Mgt` whose publishers cannot be bound, or
+without 130453 beside it, is refused the same way rather than run without the resets.
+
+**Without the Test Runner app nothing is raised.** On a service tier the app is always installed
+as the test tool; the runner loads only what the suite's dependency closure names, so a suite that
+does not declare it keeps the areas its `OnRun` set, and `WorkDate` and `LastError` carry over
+between tests. Corpus codeunit 67552 is that case; loading the app by default is #4816.
+
+130453's `Initialize` is called once per run, before the first test codeunit, as `RunTests` does.
+130453 is `SingleInstance`, and SingleInstance state survives every codeunit and test boundary
+under every `--isolation` mode (#4781), so the WorkDate it recorded is what `OnAfterCodeunitRun`
+puts back after every codeunit.
+Pinned by `AlRunner.Tests/TestRunnerMgtEventsTests.cs`.
+
 #### A correction worth recording (#2160)
 
 Between #2144 and #2160 this table said something different and wrong: that `codeunit`

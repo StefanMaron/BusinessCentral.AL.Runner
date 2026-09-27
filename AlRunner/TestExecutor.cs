@@ -763,6 +763,9 @@ public sealed class TestExecutor
         // instance under Codeunit isolation is therefore faithful, and Test isolation's
         // fresh instance per test is AL's TestIsolation = Function.
         var perTestInstance = Isolation == TestIsolation.Test;
+        // #4813: Microsoft's "Test Runner - Mgt" events, when the Test Runner app is loaded.
+        _testRunnerEvents = TestRunnerMgtEvents.Resolve();
+        var resetEnvironmentInitialized = false;
         for (int ti = 0; ti < types.Length; ti++)
         {
             var t = types[ti];
@@ -851,6 +854,9 @@ public sealed class TestExecutor
             var onRunTrigger = ResolveDeclaredTestCodeunitOnRun(t);
             var onRunDone = false;
             TestResult? onRunFailure = null;
+            var codeunitEventsRaised = false;
+            var aborted = false;
+            var codeunitObjectId = ParseAlObjectId(t.Name) ?? 0;
 
             // #3575: captured before OnRun, restored after every test method and when the
             // codeunit ends — see RestoreTestCodeunitApplicationAreas.
@@ -957,6 +963,27 @@ public sealed class TestExecutor
                     }
 
                     stageSw.Restart();
+                    if (_testRunnerEvents != null && !codeunitEventsRaised)
+                    {
+                        // 130454.RunTests: Initialize once per run, then OnBeforeCodeunitRun before
+                        // Codeunit.Run of each test codeunit (#4813). 130453 is SingleInstance and
+                        // keeps what Initialize recorded across every boundary (#4781), so never
+                        // call Initialize again mid-run: it would record a WorkDate a test changed.
+                        codeunitEventsRaised = true;
+                        var initialize = !resetEnvironmentInitialized;
+                        resetEnvironmentInitialized = true;
+                        var cuEventFailure = RaiseCodeunitEvent(t.Name, displayName, "OnBeforeCodeunitRun",
+                            () =>
+                            {
+                                if (initialize) _testRunnerEvents.InitializeResetEnvironment();
+                                _testRunnerEvents.RaiseBeforeCodeunitRun(codeunitObjectId, displayName);
+                            });
+                        if (cuEventFailure != null)
+                        {
+                            results.Add(cuEventFailure);
+                            onTestComplete?.Invoke(cuEventFailure);
+                        }
+                    }
                     var baselineRestored = false;
                     if (onRunTrigger != null && (perTestInstance || !onRunDone))
                     {
@@ -973,6 +1000,8 @@ public sealed class TestExecutor
                     var raw = onRunFailure != null
                         ? onRunFailure with { Method = m.Name }
                         : RunOne(t.Name, m, testInstance, displayName, baselineRestored);
+                    if (onRunFailure == null && !IsTimeout(raw))
+                        raw = RaiseAfterTestMethodRun(raw, codeunitObjectId, displayName, m);
                     RestoreTestCodeunitApplicationAreas(areasAtCodeunitStart);
                     methodsMs += stageSw.ElapsedMilliseconds;
                     var result = Expectations != null
@@ -999,6 +1028,7 @@ public sealed class TestExecutor
                     // instead of a quietly-smaller test total.
                     if (IsTimeout(raw))
                     {
+                        aborted = true;
                         RecordAbortedSuite(t, m, displayName, orderedMethods, mi, types, ti, filter, exactFilter);
                         return results;
                     }
@@ -1020,6 +1050,16 @@ public sealed class TestExecutor
                 // FIRST test's instance — every later one was already disposed above,
                 // right after its own test ran.
                 RestoreTestCodeunitApplicationAreas(areasAtCodeunitStart);
+                if (codeunitEventsRaised && !aborted && _testRunnerEvents != null)
+                {
+                    var cuEventFailure = RaiseCodeunitEvent(t.Name, displayName, "OnAfterCodeunitRun",
+                        () => _testRunnerEvents.RaiseAfterCodeunitRun(codeunitObjectId, displayName));
+                    if (cuEventFailure != null)
+                    {
+                        results.Add(cuEventFailure);
+                        onTestComplete?.Invoke(cuEventFailure);
+                    }
+                }
                 stageSw.Restart();
                 (instance as IDisposable)?.Dispose();
                 disposeMs += stageSw.ElapsedMilliseconds;
@@ -1678,6 +1718,89 @@ public sealed class TestExecutor
         }
     }
 
+    private TestRunnerMgtEvents? _testRunnerEvents;
+
+    /// <summary>
+    /// OnBeforeTestMethodRun for <paramref name="m"/>. Null when the test should run; otherwise
+    /// its result — Skipped when a subscriber set <c>Skip</c>, Error when a subscriber failed.
+    /// </summary>
+    private TestResult? RaiseBeforeTestMethodRun(string codeunit, MethodInfo m, string displayName,
+        System.Diagnostics.Stopwatch sw)
+    {
+        try
+        {
+            var skip = _testRunnerEvents!.RaiseBeforeTestMethodRun(ParseAlObjectId(codeunit) ?? 0,
+                displayName, TestAlName(m), TestAttributeValue(m, "TestPermissions"));
+            if (!skip) return null;
+            return new TestResult(codeunit, m.Name, TestOutcome.Skipped,
+                "skipped — an OnBeforeTestMethodRun subscriber of \"Test Runner - Mgt\" set Skip",
+                null, sw.Elapsed, null, displayName);
+        }
+        catch (Exception ex)
+        {
+            var inner = Unwrap(ex);
+            return new TestResult(codeunit, m.Name, TestOutcome.Error,
+                $"An OnBeforeTestMethodRun subscriber of \"Test Runner - Mgt\" failed, so the test did not run: {inner.GetType().Name}: {inner.Message}",
+                inner.ToString(), sw.Elapsed, AlRunner.Infrastructure.AlCallStackCapture.GetCaptured(inner),
+                displayName, inner, InsideTestProc: false);
+        }
+    }
+
+    /// <summary>
+    /// OnAfterTestMethodRun for a test that ran (not one a subscriber skipped). A failing
+    /// subscriber turns the result into an Error naming it.
+    /// </summary>
+    private TestResult RaiseAfterTestMethodRun(TestResult raw, int codeunitObjectId, string displayName, MethodInfo m)
+    {
+        if (_testRunnerEvents == null || raw.Outcome == TestOutcome.Skipped) return raw;
+        try
+        {
+            _testRunnerEvents.RaiseAfterTestMethodRun(codeunitObjectId, displayName, TestAlName(m),
+                TestAttributeValue(m, "TestPermissions"), raw.Outcome == TestOutcome.Pass);
+            return raw;
+        }
+        catch (Exception ex)
+        {
+            var inner = Unwrap(ex);
+            return raw with
+            {
+                Outcome = TestOutcome.Error,
+                Message = $"An OnAfterTestMethodRun subscriber of \"Test Runner - Mgt\" failed: {inner.GetType().Name}: {inner.Message}"
+                          + (raw.Message != null ? $" (test result before it: {raw.Message})" : ""),
+                Exception = inner,
+            };
+        }
+    }
+
+    private static TestResult? RaiseCodeunitEvent(string codeunit, string displayName, string eventName, Action raise)
+    {
+        try
+        {
+            raise();
+            return null;
+        }
+        catch (Exception ex)
+        {
+            var inner = Unwrap(ex);
+            return new TestResult(codeunit, $"<{eventName}>", TestOutcome.Error,
+                $"An {eventName} subscriber of \"Test Runner - Mgt\" failed: {inner.GetType().Name}: {inner.Message}",
+                inner.ToString(), TimeSpan.Zero, AlRunner.Infrastructure.AlCallStackCapture.GetCaptured(inner),
+                displayName, inner, InsideTestProc: false);
+        }
+    }
+
+    // The AL name BC passes as FunctionName (NavTestAttribute.CalName), not the C# method name.
+    private static string TestAlName(MethodInfo m) =>
+        TestAttributeValue(m, "CalName") as string is { Length: > 0 } n ? n : m.Name;
+
+    private static object? TestAttributeValue(MethodInfo m, string property)
+    {
+        var attr = _testAttrCache.GetOrAdd(m, static mi =>
+            mi.GetCustomAttributes(inherit: false)
+              .FirstOrDefault(a => a.GetType().Name is "NavTestAttribute" or "TestAttribute"));
+        return attr?.GetType().GetProperty(property, BindingFlags.Public | BindingFlags.Instance)?.GetValue(attr);
+    }
+
     private TestResult RunOne(string codeunit, MethodInfo m, object instance, string displayName,
                               bool baselineAlreadyRestored = false)
     {
@@ -1701,6 +1824,13 @@ public sealed class TestExecutor
         if (Isolation == TestIsolation.Test && !baselineAlreadyRestored)
         {
             AlRunner.Patches.RecordPatches.RestoreInstallBaseline();
+        }
+        // #4813: BC raises the test runner's OnBeforeTestRun before EnterTestMethod and commits
+        // after it (NavTestExecution.BeforeTestRunAsync); a Skip answer means the method never runs.
+        if (_testRunnerEvents != null)
+        {
+            var skipped = RaiseBeforeTestMethodRun(codeunit, m, displayName, sw);
+            if (skipped != null) return skipped;
         }
         // BC's test framework commits between test methods, whatever the isolation mode.
         // That commit is what a rollback inside this test unwinds to, so an asserterror here

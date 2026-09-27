@@ -190,6 +190,10 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // runner spawns). Locally 3m13s for the class against the 5 cases; recorded as
             // 165 rather than re-measured on a CI leg, which is the number this table wants.
             ["InstallBaselineDiskCacheTests"] = 165,
+            // #4813: 8 tests, each spawning a runner subprocess on a bundle that source-compiles
+            // Microsoft's Test Runner app or stand-ins for it. Absent from this table on its
+            // first CI run (36294813041): 180.2s on both the BC 27.5 and 28.5 legs, rounded down.
+            ["TestRunnerMgtEventsTests"] = 180,
             // #2272: 3 tests, each spawning a real runner subprocess (the app-group one runs
             // two bundles in a single invocation), all with AL_RUNNER_NO_DEP_COMPANY_CACHE=1
             // so every spawn pays the dependency Install triggers + Company-Initialize
