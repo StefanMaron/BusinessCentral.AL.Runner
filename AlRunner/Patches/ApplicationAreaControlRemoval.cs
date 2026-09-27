@@ -35,7 +35,7 @@
 // Source-compiled pageextensions (#4866): the MasterPage carries no extension delta, so the
 // controls one adds, and the area its modify() sets, come from its own delta document
 // (RecordPatches.SourcePageExtensionAreas), on a source-compiled or a precompiled page alike.
-// Corpus codeunits 67535 and 67536.
+// Corpus codeunits 67535 and 67536; actions, actionrefs and parts (#4871): 67538 and 67539.
 using System.Reflection;
 using AlRunner.Infrastructure;
 using Microsoft.Dynamics.Nav.Runtime;
