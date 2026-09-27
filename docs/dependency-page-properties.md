@@ -250,13 +250,12 @@ by Kind:
 | action Kind | area BC's emitter writes |
 |---|---|
 | 2 action | its own, else the **page's** (72 of 72 page-inherited rows; 300 of 300 own) |
-| 4 actionref | its own, else none — never the page's (100 of 100) |
-| 6 system action | its own, else none (4 of 4) |
+| 4 actionref | none of its own — never the page's (100 of 100); at runtime `ActionRefDefinition.SolveApplicationArea` gives it its target's, so it is removed exactly when its target is |
+| 6 system action | emitted with none (4 of 4), but `ActionDefinition.SolveSystemActionType` sets `#All` at runtime (Types 28.4.53241.53955), which every session enables — never removed (corpus 67543, page 332) |
 | 1 group | not area-tested (`RemoveAction` does not test a group) |
 
 Another Kind stating none on a page that states an area had no row in that population, so it
-refuses rather than guess. An actionref is also removed when its target is, as
-`RemoveActionRefDefinition` does. A precompiled pageextension's action answers its own area or
+refuses rather than guess. A precompiled pageextension's action answers its own area or
 none; a precompiled `modify()` replaces the base action's, a source one replaces either, and the
 two disagreeing refuse. Corpus codeunit 67543 ("Package No. Information List").
 

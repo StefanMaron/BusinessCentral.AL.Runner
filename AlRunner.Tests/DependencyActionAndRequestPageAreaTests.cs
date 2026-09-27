@@ -24,7 +24,7 @@ public class DependencyActionAndRequestPageAreaTests
     private const int OwnId = 648620001;        // Kind 2, own "#Service"
     private const int InheritsId = 648620002;   // Kind 2, none of its own; page states "#Jobs"
     private const int RefId = 648620003;        // Kind 4, none of its own, targets OwnId
-    private const int SystemId = 648620004;     // Kind 6, none of its own
+    private const int SystemId = 648620004;     // Kind 6, none of its own: BC solves it to #All
     private const int ModifiedId = 648620005;   // Kind 2, own "#Service"; a precompiled ext modify()s it to "#Suite"
     private const int GroupId = 648620006;      // Kind 1, never area-tested
     private const int ExtOwnId = 648620011;     // added by a precompiled extension, own "#Basic"
@@ -157,13 +157,13 @@ public class DependencyActionAndRequestPageAreaTests
         });
 
     [Fact]
-    public void AnActionRefAndASystemAction_NeverTakeThePagesArea_AndGroupsAreNotAreaTested()
+    public void AnActionRef_TakesNoAreaOfItsOwn_ASystemActionIsAll_AndGroupsAreNotAreaTested()
         => WithDependencyApp(() =>
         {
             var actions = Actions(PageId);
             Assert.Null(actions[RefId].ApplicationArea);
             Assert.Equal(OwnId, actions[RefId].TargetId);
-            Assert.Null(actions[SystemId].ApplicationArea);
+            Assert.Equal("#All", actions[SystemId].ApplicationArea);
             Assert.False(actions.ContainsKey(GroupId));
         });
 
@@ -184,8 +184,8 @@ public class DependencyActionAndRequestPageAreaTests
         {
             var removed = ApplicationAreaControlRemoval.DependencyActionsToRemove(PageId, BasicSuiteSession)
                 .OrderBy(id => id).ToArray();
-            // Kept: ModifiedAct (#Suite after the modify), ExtOwnAct (#Basic).
-            Assert.Equal(new[] { OwnId, InheritsId, RefId, SystemId, ExtNoneId }.OrderBy(id => id).ToArray(), removed);
+            // Kept: ModifiedAct (#Suite after the modify), ExtOwnAct (#Basic), SysAct (#All).
+            Assert.Equal(new[] { OwnId, InheritsId, RefId, ExtNoneId }.OrderBy(id => id).ToArray(), removed);
         });
 
     [Fact]

@@ -202,8 +202,8 @@ public static class ApplicationAreaControlRemoval
                 removedActions.UnionWith(RejectedChanges(extensionAreas.ActionAreaChanges, IsEnabled));
                 // A precompiled page's own actions, from its symbol file (#4862).
                 removedActions.UnionWith(DependencyActionsToRemove(page.ID, IsEnabled, extensionAreas.ActionAreaChanges));
-                // RemoveActionRefDefinition: its own area, then its target's. An actionref stating
-                // no area is judged by its target alone, as a base page's is (corpus 67531).
+                // An actionref follows its target: ActionRefDefinition.SolveApplicationArea gives it
+                // the target's area at runtime (corpus 67531, 67538).
                 removedActions.UnionWith(RejectedActionRefs(extensionAreas.AddedActionRefs, removedActions, IsEnabled));
             }
         }
@@ -270,8 +270,8 @@ public static class ApplicationAreaControlRemoval
 
     /// <summary>
     /// The actions of a precompiled page that <paramref name="isAreaEnabled"/> rejects (#4862):
-    /// an action by its area after a source <c>modify()</c>; an actionref also when its target
-    /// is rejected, as RemoveActionRefDefinition does. A precompiled and a source
+    /// an action by its area after a source <c>modify()</c>; an actionref exactly when its target
+    /// is, because ActionRefDefinition.SolveApplicationArea gives it its target's area. A precompiled and a source
     /// <c>modify()</c> of one action to different areas refuse (#4866's rule).
     /// </summary>
     internal static IEnumerable<int> DependencyActionsToRemove(
@@ -288,8 +288,7 @@ public static class ApplicationAreaControlRemoval
         foreach (var actionRef in actions)
         {
             if (actionRef.Kind != 4) continue;
-            var own = AreaAfterSourceChange(pageId, (actionRef.Id, actionRef.ApplicationArea, actionRef.ModifiedArea), areaChanges);
-            if ((own != null && !isAreaEnabled(own)) || (actionRef.TargetId is { } target && rejected.Contains(target)))
+            if (actionRef.TargetId is { } target && rejected.Contains(target))
                 rejected.Add(actionRef.Id);
         }
         return rejected;
@@ -325,8 +324,7 @@ public static class ApplicationAreaControlRemoval
         IEnumerable<(int Id, string? ApplicationArea, int TargetId)> actionRefs,
         IReadOnlySet<int> removedActions, Func<string?, bool> isAreaEnabled)
         => actionRefs
-            .Where(actionRef => (actionRef.ApplicationArea != null && !isAreaEnabled(actionRef.ApplicationArea))
-                || removedActions.Contains(actionRef.TargetId))
+            .Where(actionRef => removedActions.Contains(actionRef.TargetId))
             .Select(actionRef => actionRef.Id)
             .ToList();
 

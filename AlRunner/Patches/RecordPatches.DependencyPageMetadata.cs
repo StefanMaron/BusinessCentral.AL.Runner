@@ -294,9 +294,12 @@ public static partial class RecordPatches
     /// <para>The rule, measured against BC's emitted documents for every page of System
     /// Application and Business Foundation 28.1.49838.53910 (see
     /// docs/dependency-page-properties.md#action-application-area): an action (Kind 2) answers
-    /// its own area, else the page's; an actionref (Kind 4) and a system action (Kind 6) answer
-    /// their own or none, never the page's. Another action kind stating none on a page that
-    /// states an area was not in that population, so it refuses. A pageextension's action
+    /// its own area, else the page's; an actionref (Kind 4) answers none of its own, because
+    /// BC's ActionRefDefinition.SolveApplicationArea gives it its target's at runtime. A system
+    /// action (Kind 6) answers <c>#All</c>, which every session enables: BC's
+    /// ActionDefinition.SolveSystemActionType sets it at runtime whatever the emitter wrote.
+    /// Another action kind stating none on a page that states an area was not in that
+    /// population, so it refuses. A pageextension's action
     /// answers its own; a <c>modify()</c> replaces it.</para>
     /// </summary>
     internal static IReadOnlyList<DependencyActionArea> DependencyActionAreas(int pageId)
@@ -318,7 +321,7 @@ public static partial class RecordPatches
             page.MemberIdToName!.TryGetValue(action.Id, out var name);
             var modified = name == null ? null
                 : DependencyPageExtensionModifiedProperty(page.Name, name, "ApplicationArea", isAction: true);
-            string? area = action.ApplicationArea;
+            string? area = action.Kind == AreaActionKindSystemAction ? "#All" : action.ApplicationArea;
             if (area == null)
             {
                 if (action.Kind == AreaActionKindAction) area = page.ApplicationArea;
