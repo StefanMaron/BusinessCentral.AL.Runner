@@ -36,11 +36,16 @@ namespace AlRunner;
 public static class AlPageMetadataRegistry
 {
     private static readonly ConcurrentDictionary<int, string> _xmlById = new();
+    // The same XML keyed by the app compiling it, so two app groups declaring one id each keep
+    // their own document (#4767). _xmlById stays last-wins for every compile-time reader.
+    private static readonly ConcurrentDictionary<(Guid AppId, int Id), string> _xmlByAppAndId = new();
 
     public static void Register(int pageId, string metadataXml)
     {
         if (pageId <= 0 || string.IsNullOrEmpty(metadataXml)) return;
         _xmlById[pageId] = metadataXml;
+        if (BcCompiler.CurrentAppIdForRegistries is { } appId && appId != Guid.Empty)
+            _xmlByAppAndId[(appId, pageId)] = metadataXml;
         var trace = Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PAGE_METADATA");
         if (trace == "1" || trace == "2")
             Console.Out.WriteLine($"[page-metadata] registered page {pageId} ({metadataXml.Length} chars of metadata XML)");
@@ -51,12 +56,20 @@ public static class AlPageMetadataRegistry
             Console.Out.WriteLine($"[page-metadata] page {pageId} XML:\n{metadataXml}");
     }
 
+    /// <summary>The executing app group's own document when several groups declare the id
+    /// (<see cref="Patches.RecordPatches.AppGroupCacheScope"/>), else the process-wide one.</summary>
     public static bool TryGet(int pageId, out string metadataXml)
-        => _xmlById.TryGetValue(pageId, out metadataXml!);
+        => Patches.RecordPatches.AppGroupCacheScope("page", pageId) is var group && group != Guid.Empty
+           && _xmlByAppAndId.TryGetValue((group, pageId), out metadataXml!)
+           || _xmlById.TryGetValue(pageId, out metadataXml!);
 
     public static int Count => _xmlById.Count;
 
-    public static void Clear() => _xmlById.Clear();
+    public static void Clear()
+    {
+        _xmlById.Clear();
+        _xmlByAppAndId.Clear();
+    }
 
     /// <summary>Snapshot of the page ids currently registered (diagnostics + dep sidecars).</summary>
     public static int[] Ids => _xmlById.Keys.ToArray();

@@ -43,6 +43,9 @@ public static class AlObjectMetadataRegistry
 {
     private static readonly ConcurrentDictionary<string, AlObjectMetadataEntry> _byKey =
         new(StringComparer.Ordinal);
+    // The same documents keyed by the app compiling them, so two app groups declaring one
+    // (kind, id) each keep their own (#4767). _byKey stays last-wins for every compile-time reader.
+    private static readonly ConcurrentDictionary<(Guid AppId, string Key), AlObjectMetadataEntry> _byAppAndKey = new();
 
     /// <summary>
     /// The identity a document is stored under. Mirrors BcCompiler.Incremental's
@@ -58,7 +61,10 @@ public static class AlObjectMetadataRegistry
         // there is no identity to store it under.
         if (!id.HasValue && string.IsNullOrEmpty(name)) return;
         var key = KeyFor(kind, id, name);
-        _byKey[key] = new AlObjectMetadataEntry(kind, id, name ?? string.Empty, metadataXml);
+        var entry = new AlObjectMetadataEntry(kind, id, name ?? string.Empty, metadataXml);
+        _byKey[key] = entry;
+        if (id.HasValue && BcCompiler.CurrentAppIdForRegistries is { } appId && appId != Guid.Empty)
+            _byAppAndKey[(appId, key)] = entry;
 
         var trace = Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_OBJECT_METADATA");
         if (trace == "1" || trace == "2")
@@ -71,11 +77,16 @@ public static class AlObjectMetadataRegistry
             Console.Out.WriteLine($"[object-metadata] {key} XML:\n{metadataXml}");
     }
 
+    /// <summary>The executing app group's own document when several groups declare the id
+    /// (<see cref="Patches.RecordPatches.AppGroupCacheScope"/>), else the process-wide one.</summary>
     public static bool TryGet(string kind, int id, out string metadataXml)
     {
-        if (_byKey.TryGetValue(KeyFor(kind, id, string.Empty), out var e))
+        var key = KeyFor(kind, id, string.Empty);
+        if (Patches.RecordPatches.AppGroupCacheScope(kind, id) is var group && group != Guid.Empty
+            && _byAppAndKey.TryGetValue((group, key), out var own)
+            || _byKey.TryGetValue(key, out own))
         {
-            metadataXml = e.Xml;
+            metadataXml = own.Xml;
             return true;
         }
         metadataXml = string.Empty;
@@ -95,7 +106,11 @@ public static class AlObjectMetadataRegistry
 
     public static int Count => _byKey.Count;
 
-    public static void Clear() => _byKey.Clear();
+    public static void Clear()
+    {
+        _byKey.Clear();
+        _byAppAndKey.Clear();
+    }
 
     /// <summary>Identity keys currently held — the unit both sidecar scoping and the
     /// --watch shadow snapshot diff on.</summary>

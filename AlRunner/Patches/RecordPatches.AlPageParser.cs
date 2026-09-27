@@ -143,7 +143,7 @@ public static partial class RecordPatches
     /// a lookup miss, the same choice <see cref="TryGetAnyPageType"/>'s null makes.</para>
     /// </summary>
     internal static bool PageDeclaresSystemAction(int pageId, string systemActionName)
-        => _parsedPages.TryGetValue(pageId, out var page)
+        => TryGetInAppGroupScope("page", _parsedPages, pageId, out var page)
            && page.DeclaredSystemActions.Contains(systemActionName);
 
     /// <summary>
@@ -269,7 +269,7 @@ public static partial class RecordPatches
     internal static string? TryGetActionRefTarget(int declaringObjectId, int memberId, bool isExtension)
     {
         var dict = isExtension ? _parsedPageExtensions : _parsedPages;
-        if (dict.TryGetValue(declaringObjectId, out var parsed))
+        if (TryGetInAppGroupScope(isExtension ? "pageextension" : "page", dict, declaringObjectId, out var parsed))
             return parsed.MemberIdToActionRefTarget.TryGetValue(memberId, out var target) ? target : null;
         // Precompiled-dependency fallback — same rule and same reason as TryGetPageMemberName
         // below (#2723): a promoted actionref on a Base Application page points at a target
@@ -307,7 +307,7 @@ public static partial class RecordPatches
     internal static string? TryGetPageMemberName(int declaringObjectId, int memberId, bool isExtension)
     {
         var dict = isExtension ? _parsedPageExtensions : _parsedPages;
-        if (dict.TryGetValue(declaringObjectId, out var parsed))
+        if (TryGetInAppGroupScope(isExtension ? "pageextension" : "page", dict, declaringObjectId, out var parsed))
             return parsed.MemberIdToName.TryGetValue(memberId, out var name) ? name : null;
         var depNames = isExtension
             ? TryGetDependencyPageExtensionSymbol(declaringObjectId)?.MemberIdToName
@@ -328,7 +328,7 @@ public static partial class RecordPatches
     /// </summary>
     internal static bool GetInsertAllowedForPage(int pageId)
     {
-        if (_parsedPages.TryGetValue(pageId, out var page)) return page.InsertAllowed;
+        if (TryGetInAppGroupScope("page", _parsedPages, pageId, out var page)) return page.InsertAllowed;
         return TryGetDependencyPageSymbol(pageId)?.InsertAllowed ?? true;
     }
 
@@ -351,7 +351,7 @@ public static partial class RecordPatches
     /// </summary>
     internal static string? TryGetAnyPageType(int pageId)
     {
-        if (_parsedPages.TryGetValue(pageId, out var page)) return page.PageType;
+        if (TryGetInAppGroupScope("page", _parsedPages, pageId, out var page)) return page.PageType;
         return TryGetDependencyPageSymbol(pageId)?.PageType;
     }
 
@@ -431,12 +431,12 @@ public static partial class RecordPatches
     /// no SourceTable property (BC returns a null NCLMetaTable for those).
     /// </summary>
     internal static bool PageDeclaresSourceTable(int pageId)
-        => _parsedPages.TryGetValue(pageId, out var page)
+        => TryGetInAppGroupScope("page", _parsedPages, pageId, out var page)
            && !string.IsNullOrWhiteSpace(page.SourceTableName);
 
     internal static int GetSourceTableIdForPage(int pageId)
     {
-        if (!_parsedPages.TryGetValue(pageId, out var page)) return 0;
+        if (!TryGetInAppGroupScope("page", _parsedPages, pageId, out var page)) return 0;
         page = InAppGroupScope("page", pageId, page);
         if (string.IsNullOrWhiteSpace(page.SourceTableName)) return 0;
 
@@ -504,7 +504,7 @@ public static partial class RecordPatches
     /// </summary>
     internal static string? TryGetAnyPageName(int pageId)
     {
-        if (_parsedPages.TryGetValue(pageId, out var page)) return page.Name;
+        if (TryGetInAppGroupScope("page", _parsedPages, pageId, out var page)) return page.Name;
         return TryGetDependencyPageSymbol(pageId)?.Name;
     }
 
@@ -570,12 +570,12 @@ public static partial class RecordPatches
     /// </summary>
     internal static IReadOnlyDictionary<int, int> GetPageControlFieldMap(int pageId)
     {
-        if (_parsedPages.TryGetValue(pageId, out var page))
+        if (TryGetInAppGroupScope("page", _parsedPages, pageId, out var page))
         {
             if (string.IsNullOrWhiteSpace(page.SourceTableName))
                 return new Dictionary<int, int>();
 
-            var table = _parsedTables.Values.FirstOrDefault(t => NamesEqual(t.TableName, page.SourceTableName));
+            var table = InAppGroupScope("table", _parsedTables).FirstOrDefault(t => NamesEqual(t.TableName, page.SourceTableName));
             if (table == null) return new Dictionary<int, int>();
 
             var result = new Dictionary<int, int>();
@@ -788,7 +788,7 @@ public static partial class RecordPatches
     internal static List<PageControlRow> GetSourceParsedPageControlRows(int pageId)
     {
         var result = new List<PageControlRow>();
-        if (!_parsedPages.TryGetValue(pageId, out var page)) return result;
+        if (!TryGetInAppGroupScope("page", _parsedPages, pageId, out var page)) return result;
 
         int seq = 0;
         void AddAll(IReadOnlyList<PageControlRow> controls)

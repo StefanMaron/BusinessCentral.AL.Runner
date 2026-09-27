@@ -42,6 +42,19 @@ public static partial class RecordPatches
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, object?> _metaQueryCache = new();
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, object?> _metaXmlPortCache = new();
     // An xmlport id several app groups declare, per executing group (#4751): see GetOrBuildMetaXmlPort.
+    // The page and report siblings are the same for those kinds (#4767): see GetOrBuildMetaForm.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Guid AppGroup, int Id), object?> _metaFormCacheByAppGroup = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Guid AppGroup, int Id), object?> _metaReportCacheByAppGroup = new();
+
+    /// <summary>The NCLMetaForm for <paramref name="pageId"/>, per executing app group for a page id
+    /// several groups declare: its real control tree is loaded from that group's own document (#4767).</summary>
+    private static object? GetOrBuildMetaForm(int pageId)
+        => GetOrAddInAppGroupScope(_metaFormCache, _metaFormCacheByAppGroup, "page", pageId, BuildNCLMetaForm);
+
+    /// <summary>The NCLMetaReport for <paramref name="reportId"/>, per executing app group for a
+    /// report id several groups declare (#4767).</summary>
+    private static object? GetOrBuildMetaReport(int reportId)
+        => GetOrAddInAppGroupScope(_metaReportCache, _metaReportCacheByAppGroup, "report", reportId, BuildNCLMetaReport);
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Guid AppGroup, int Id), object?> _metaXmlPortCacheByAppGroup = new();
 
     /// <summary>
@@ -152,7 +165,7 @@ public static partial class RecordPatches
             // and a null loader NREs there. It answers from AlPageMetadataRegistry — the
             // emit-captured page metadata XML — so the page gets its REAL control tree.
             var meta = _mCreateEmptyNCLMetaForm.Invoke(null,
-                new object?[] { RunnerMetaApplicationObjectLoader.Instance, pageId, _baseAppGroup, -1, string.Empty });
+                new object?[] { RunnerMetaApplicationObjectLoader.For(AppGroupCacheScope("page", pageId)), pageId, _baseAppGroup, -1, string.Empty });
 
             // Mark metadataLoaded=true on the freshly-built skeleton so the shared
             // NCLMetaApplicationObject.Populate path is skipped (in addition to the
@@ -224,7 +237,7 @@ public static partial class RecordPatches
             // the root-cause writeup. A null loader NREs there; this one answers from
             // AlReportMetadataRegistry (the same emit-captured XML NavReportSync already uses).
             var meta = _mCreateEmptyNCLMetaReport.Invoke(null,
-                new object?[] { RunnerMetaApplicationObjectLoader.Instance, reportId, _baseAppGroup, -1, string.Empty });
+                new object?[] { RunnerMetaApplicationObjectLoader.For(AppGroupCacheScope("report", reportId)), reportId, _baseAppGroup, -1, string.Empty });
 
             EnsureCachePopulatorReflection();
             if (meta != null && _fNCLMetaAppObjMetadataLoaded != null)

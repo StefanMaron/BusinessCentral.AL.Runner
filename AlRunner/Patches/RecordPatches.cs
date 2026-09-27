@@ -440,7 +440,7 @@ public static partial class RecordPatches
         _fieldTriggersWiredTables.Clear();
         // #4100: BC's page-definition cache keys on (owner package id, page id) and the runner
         // supplies no owner, so every bundle's page N shares one key.
-        RunnerMetaApplicationObjectLoader.Instance.ResetMetaObjectCache();
+        RunnerMetaApplicationObjectLoader.ResetAllMetaObjectCaches();
         _parsedPages.Clear();
         _parsedPageExtensions.Clear();
         _parsedReports.Clear();
@@ -478,6 +478,8 @@ public static partial class RecordPatches
         // ResetPageMetadataForReload's doc comment for the full reasoning.
         ResetPageMetadataForReload();
         _metaReportCache.Clear();
+        _metaFormCacheByAppGroup.Clear();
+        _metaReportCacheByAppGroup.Clear();
         _metaQueryCache.Clear();
         // #3210: the two id-keyed caches of BUILT NCLMetaQuery objects that sit on top of
         // _metaQueryCache and were the only pieces of this chain nothing dropped.
@@ -491,6 +493,8 @@ public static partial class RecordPatches
         // unresolvable stayed null for the rest of the process.
         _realMetaQueryCache.Clear();
         _lazyMetaQueryByGetById.Clear();
+        _realMetaQueryCacheByAppGroup.Clear();
+        _lazyMetaQueryByAppGroup.Clear();
         // Same shape again, one object type over: id -> built NCLMetaPermissionSet, derived
         // from EnumerateKnownPermissionSets() -> _parsedPermissionSets, which this method
         // clears a few lines above. Nothing cleared it, so a permission set an edited bundle
@@ -569,6 +573,8 @@ public static partial class RecordPatches
     {
         _realMetaQueryCache.Clear();
         _lazyMetaQueryByGetById.Clear();
+        _realMetaQueryCacheByAppGroup.Clear();
+        _lazyMetaQueryByAppGroup.Clear();
     }
 
     public static void AddSourceDir(string dir) => AddSourceDirs(new[] { dir });
@@ -812,6 +818,9 @@ public static partial class RecordPatches
             if (!_parsedPages.ContainsKey(kvp.Key) && !_parsedPageExtensions.ContainsKey(kvp.Key)) continue;
             _metaFormCache.TryRemove(kvp.Key, out _);
         }
+        foreach (var kvp in _metaFormCacheByAppGroup)
+            if (kvp.Value == null && (_parsedPages.ContainsKey(kvp.Key.Id) || _parsedPageExtensions.ContainsKey(kvp.Key.Id)))
+                _metaFormCacheByAppGroup.TryRemove(kvp.Key, out _);
 
         foreach (var kvp in _metaReportCache)
         {
@@ -819,6 +828,9 @@ public static partial class RecordPatches
             if (!_parsedReports.ContainsKey(kvp.Key)) continue;
             _metaReportCache.TryRemove(kvp.Key, out _);
         }
+        foreach (var kvp in _metaReportCacheByAppGroup)
+            if (kvp.Value == null && _parsedReports.ContainsKey(kvp.Key.Id))
+                _metaReportCacheByAppGroup.TryRemove(kvp.Key, out _);
     }
 
     /// <summary>

@@ -161,7 +161,7 @@ public static partial class RecordPatches
             // Cecil-rewritten NCLMetaReport.CreateObjectInstance then constructs the
             // compiled Report{id} directly (real MetaReport comes from
             // AlReportMetadataRegistry in BeginInitialization).
-            var meta = _metaReportCache.GetOrAdd(objectId, BuildNCLMetaReport);
+            var meta = GetOrBuildMetaReport(objectId);
             if (meta != null)
                 return meta;
         }
@@ -172,7 +172,7 @@ public static partial class RecordPatches
             // with its REAL parsed control tree where the runner compiled the page itself,
             // and the skeleton otherwise — a skeleton is still better than "no such page"
             // for the lookup-only callers that were the only ones reaching here before.
-            var meta = EnsureRealPageMetadata(objectId) ?? _metaFormCache.GetOrAdd(objectId, BuildNCLMetaForm);
+            var meta = EnsureRealPageMetadata(objectId) ?? GetOrBuildMetaForm(objectId);
             if (meta != null)
                 return meta;
         }
@@ -292,14 +292,20 @@ public static partial class RecordPatches
     // Cache of lazily-built precompiled-query NCLMetaQuery objects (BuildRealNCLMetaQuery is
     // also cached, but this avoids re-resolving FindQueryType + the cache-entry insert).
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, object?> _lazyMetaQueryByGetById = new();
+    // A query id several app groups declare, per executing group (#4767). Never put into BC's own
+    // metadataCacheEntries, which holds one entry per id: every lookup reaches this method first.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Guid AppGroup, int Id), object?> _lazyMetaQueryByAppGroup = new();
 
     internal static object? EnsureQueryInMetadataCache(int queryId)
     {
-        var meta = _lazyMetaQueryByGetById.GetOrAdd(queryId, id =>
+        static object? Build(int id)
         {
             var clrType = BcRuntime.FindQueryType(id);
             return clrType == null ? null : BuildRealNCLMetaQuery(id, clrType);
-        });
+        }
+        if (AppGroupCacheScope("query", queryId) is var group && group != Guid.Empty)
+            return _lazyMetaQueryByAppGroup.GetOrAdd((group, queryId), k => Build(k.Id));
+        var meta = _lazyMetaQueryByGetById.GetOrAdd(queryId, Build);
         if (meta == null) return null;
 
         var skeleton = BcRuntime.SkeletonNCLMetadata;

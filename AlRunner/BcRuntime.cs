@@ -721,6 +721,9 @@ public static partial class BcRuntime
         _formTypeCache.Clear();
         _reportTypeCache.Clear();
         _queryTypeCache.Clear();
+        _formTypeCacheByAppGroup.Clear();
+        _reportTypeCacheByAppGroup.Clear();
+        _queryTypeCacheByAppGroup.Clear();
         _xmlPortTypeCache.Clear();
         _metaReportFallbackCache.Clear();
         // Enum option metadata (this partial class) + the emit-time enum registry.

@@ -870,9 +870,25 @@ public static partial class BcRuntime
     // Cache: report ID → generated Report Type.
     private static readonly ConcurrentDictionary<int, Type?> _reportTypeCache = new();
 
+    // The three type caches above and _queryTypeCache, per executing app group for an id several
+    // groups declare: their finders prefer CurrentTestAssembly, so the first group to resolve a
+    // shared id would otherwise hand its own type to every other group (#4767).
+    private static readonly ConcurrentDictionary<(Guid AppGroup, int Id), Type?> _formTypeCacheByAppGroup = new();
+    private static readonly ConcurrentDictionary<(Guid AppGroup, int Id), Type?> _reportTypeCacheByAppGroup = new();
+    private static readonly ConcurrentDictionary<(Guid AppGroup, int Id), Type?> _queryTypeCacheByAppGroup = new();
+
+    private static Type? GetFormType(int id) => AlRunner.Patches.RecordPatches.GetOrAddInAppGroupScope(
+        _formTypeCache, _formTypeCacheByAppGroup, "page", id, FindFormType);
+
+    private static Type? GetReportType(int id) => AlRunner.Patches.RecordPatches.GetOrAddInAppGroupScope(
+        _reportTypeCache, _reportTypeCacheByAppGroup, "report", id, FindReportType);
+
+    private static Type? GetQueryType(int id) => AlRunner.Patches.RecordPatches.GetOrAddInAppGroupScope(
+        _queryTypeCache, _queryTypeCacheByAppGroup, "query", id, FindQueryType);
+
     /// <summary>Public accessor for NavReportSync.CreateReportInstance (the Cecil-rewritten
     /// NCLMetaReport.CreateObjectInstance body): report id → compiled Report{id} type.</summary>
-    public static Type? FindReportTypePublic(int id) => _reportTypeCache.GetOrAdd(id, FindReportType);
+    public static Type? FindReportTypePublic(int id) => GetReportType(id);
 
     /// <summary>
     /// Replacement for NavFormHandle.CreateTarget().
@@ -901,7 +917,7 @@ public static partial class BcRuntime
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
         int id = (int)idProp!.GetValue(objId)!;
 
-        var formType = _formTypeCache.GetOrAdd(id, FindFormType);
+        var formType = GetFormType(id);
         if (formType == null)
             throw new InvalidOperationException(
                 $"Page{id} is not present in the test assembly or any loaded dependency.");
@@ -1057,7 +1073,7 @@ public static partial class BcRuntime
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
         int id = (int)idProp!.GetValue(objId)!;
 
-        var reportType = _reportTypeCache.GetOrAdd(id, FindReportType);
+        var reportType = GetReportType(id);
         if (reportType == null)
             throw new InvalidOperationException(
                 $"Report{id} is not present in the test assembly or any loaded dependency.");
@@ -1241,7 +1257,7 @@ public static partial class BcRuntime
     /// </summary>
     private static object ConstructQuery(int id, object self)
     {
-        var queryType = _queryTypeCache.GetOrAdd(id, FindQueryType);
+        var queryType = GetQueryType(id);
         if (queryType == null)
             throw new InvalidOperationException(
                 $"Query{id} is not present in the test assembly or any loaded dependency.");

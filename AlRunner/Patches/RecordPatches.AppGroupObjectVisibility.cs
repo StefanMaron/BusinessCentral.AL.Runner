@@ -133,6 +133,17 @@ public static partial class RecordPatches
             ? mine
             : processWide;
 
+    /// <summary><paramref name="parsed"/>'s entry for <paramref name="id"/>, through
+    /// <see cref="InAppGroupScope{T}(string, int, T)"/>: the lookup every runtime reader of a
+    /// per-kind parsed dictionary uses (#4767).</summary>
+    private static bool TryGetInAppGroupScope<T>(string kind, Dictionary<int, T> parsed, int id, out T value)
+        where T : class
+    {
+        if (!parsed.TryGetValue(id, out value!)) return false;
+        value = InAppGroupScope(kind, id, value);
+        return true;
+    }
+
     /// <summary>Every value of one per-kind parsed dictionary, each through
     /// <see cref="InAppGroupScope{T}(string, int, T)"/>.</summary>
     private static IEnumerable<T> InAppGroupScope<T>(string kind, Dictionary<int, T> parsed) where T : class
@@ -169,6 +180,29 @@ public static partial class RecordPatches
     /// </summary>
     internal static Guid? AppGroupScopeFor(string kind, int id)
         => AppGroupScopeFor(kind, id, _sourceObjectDeclarers, CurrentAppGroupAppId());
+
+    /// <summary>
+    /// The cache-key term for a runtime metadata object or emit-captured document of
+    /// (<paramref name="kind"/>, <paramref name="id"/>): <see cref="AppGroupScopeFor(string, int)"/>,
+    /// or Guid.Empty for every other caller, which keeps sharing the one process-wide entry (#4767).
+    /// Reached on every record operation, so a run where no two groups share an id answers from
+    /// the count check alone.
+    /// </summary>
+    internal static Guid AppGroupCacheScope(string kind, int id)
+        => _appGroupsSharingAnId.Count > 0 && AppGroupScopeFor(kind, id) is { } group ? group : Guid.Empty;
+
+    /// <summary>
+    /// <paramref name="processWide"/>.GetOrAdd, except that an executing app group sharing the id
+    /// with another group gets its own entry in <paramref name="byAppGroup"/>, built while that
+    /// group executes (#4767). Clear both wherever the process-wide cache is cleared.
+    /// </summary>
+    internal static TValue GetOrAddInAppGroupScope<TValue>(
+        System.Collections.Concurrent.ConcurrentDictionary<int, TValue> processWide,
+        System.Collections.Concurrent.ConcurrentDictionary<(Guid AppGroup, int Id), TValue> byAppGroup,
+        string kind, int id, Func<int, TValue> factory)
+        => AppGroupCacheScope(kind, id) is var group && group != Guid.Empty
+            ? byAppGroup.GetOrAdd((group, id), k => factory(k.Id))
+            : processWide.GetOrAdd(id, factory);
 
     internal static Guid? AppGroupScopeFor(string kind, int id,
         IReadOnlyDictionary<(string Kind, int Id), HashSet<Guid>> declarers, Guid? executing)

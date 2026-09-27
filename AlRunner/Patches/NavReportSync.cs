@@ -1443,6 +1443,8 @@ public static partial class NavReportSync
     // reportId → constructed MetaReport (Types.Metadata.MetaReport) or null when
     // no metadata XML is available for that id.
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, object?> _realMetaCache = new();
+    // A report id several app groups declare, per executing group (#4767).
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Guid AppGroup, int Id), object?> _realMetaCacheByAppGroup = new();
     private static ConstructorInfo? _metaReportCtor;          // MetaReport(XmlElement, CreateRequestForm, int, int, RemoveItems…)
     private static MethodInfo? _getDataItemByName;            // MetaReport.GetDataItemByName(string)
     private static PropertyInfo? _metaReportDataItems;        // MetaReport.DataItems
@@ -1451,7 +1453,11 @@ public static partial class NavReportSync
     private static PropertyInfo? _dataItemPrintOnlyIfDetail;  // DataItem.PrintOnlyIfDetail
     private static MethodInfo? _dataItemSetAutoCalcFields;    // DataItem.SetAutoCalcFields()
 
-    public static void ResetMetadataCache() => _realMetaCache.Clear();
+    public static void ResetMetadataCache()
+    {
+        _realMetaCache.Clear();
+        _realMetaCacheByAppGroup.Clear();
+    }
 
     /// <summary>
     /// Build (or fetch cached) the real MetaReport for a report id from the
@@ -1460,7 +1466,8 @@ public static partial class NavReportSync
     public static object? GetRealMetaReport(int reportId)
     {
         if (reportId <= 0) return null;
-        return _realMetaCache.GetOrAdd(reportId, static id =>
+        return AlRunner.Patches.RecordPatches.GetOrAddInAppGroupScope(
+            _realMetaCache, _realMetaCacheByAppGroup, "report", reportId, static id =>
         {
             // Emit-captured XML first (reports the runner compiled). Failing that, a report
             // declared by a precompiled dependency: its metadata is reconstructable from the
