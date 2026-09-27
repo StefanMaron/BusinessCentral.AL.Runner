@@ -2506,6 +2506,7 @@ internal sealed partial class RunnerPageInstance
         // A page's OnOpenPage is entitled to READ the SourceTableView's filters (Base
         // Application page 7016 "Sales Price List" does — see ApplySourceTableViewFilters).
         ApplySourceTableViewFilters();
+        ApplySavedValues();
 
         InvokeRecordTrigger("OnOpenPage", Type.EmptyTypes, Array.Empty<object>());
 
@@ -2596,6 +2597,26 @@ internal sealed partial class RunnerPageInstance
     }
 
     /// <summary>
+    /// The other half of BC's <c>ApplySourceTableViewAndSavedValuesAsync</c>: a page declaring
+    /// SaveValues reads back what <see cref="StoreSaveValuesOnClose"/> saved, through BC's own
+    /// <c>ApplyLatestValues</c> (#4818, corpus codeunit 67545). A request page is left alone: its
+    /// values are restored when the report is built (#4808).
+    /// </summary>
+    private void ApplySavedValues()
+    {
+        if (_form is not NavForm { IsRequestPage: false, MasterPage: not null } form || !form.SaveValues) return;
+        var apply = FindNavFormMethod("ApplyLatestValues", Type.EmptyTypes)
+            ?? throw new BcShapeGapException(
+                "TestPage open (SaveValues)", $"{form.GetType().Name}.ApplyLatestValues()",
+                "without it a SaveValues page would silently reopen on its defaults (#4818)");
+        try { apply.Invoke(form, Array.Empty<object>()); }
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+        }
+    }
+
+    /// <summary>
     /// Reset every field the compiled page TYPE ITSELF declares — its AL <c>var</c> globals —
     /// back to the value a brand-new instance of that type would carry. Fields inherited from
     /// <c>NavForm</c> (the record cursor, control-tree wiring, source-expression table, …) are
@@ -2676,6 +2697,34 @@ internal sealed partial class RunnerPageInstance
         if (queryClose is false) return false;
         InvokeRecordTrigger("OnClosePage", Type.EmptyTypes, Array.Empty<object>());
         return true;
+    }
+
+    /// <summary>
+    /// The save half of BC's <c>NavForm.CloseFormAsync</c>, for a close whose triggers the runner
+    /// has already raised (<see cref="RaiseOnClosePage"/>) and which then ends in
+    /// <see cref="ForceCloseForm"/>, which saves nothing. Same condition and arguments as
+    /// CloseFormAsync, so a SaveValues page reopens on the values it was closed with (#4818,
+    /// corpus codeunit 67545). BC's own <c>StoreSaveValues</c> decides the rest (whether the page
+    /// declares SaveValues, which store it writes).
+    /// </summary>
+    internal void StoreSaveValuesOnClose(Microsoft.Dynamics.Nav.Types.FormResult result)
+    {
+        if (result is Microsoft.Dynamics.Nav.Types.FormResult.Cancel
+            or Microsoft.Dynamics.Nav.Types.FormResult.No
+            or Microsoft.Dynamics.Nav.Types.FormResult.None
+            or Microsoft.Dynamics.Nav.Types.FormResult.Parameters)
+            return;
+        var store = FindNavFormMethod("StoreSaveValues", new[] { typeof(bool), typeof(bool) })
+            ?? throw new BcShapeGapException(
+                "TestPage close (SaveValues)", $"{_form.GetType().Name}.StoreSaveValues(bool, bool)",
+                "without it a page closed by the handler's OK would silently not save its SaveValues (#4818)");
+        var presetApplied = result is not (Microsoft.Dynamics.Nav.Types.FormResult.LookupOK
+            or Microsoft.Dynamics.Nav.Types.FormResult.LookupCancel);
+        try { store.Invoke(_form, new object[] { presetApplied, true }); }
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+        }
     }
 
     /// <summary>OnClosePage alone, for a close the client makes without asking the page

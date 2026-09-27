@@ -185,8 +185,7 @@ public static partial class NclCecilRewrite
         // profile customization added on top of the AL-declared page and registers source
         // expressions for them; it NREs because the skeleton has no customization store.
         //
-        // The runner has no page designer, no profiles and no personalization (the same
-        // reason LoadPageDataPersonalization returns default above), so there are no
+        // The runner has no page designer and no profiles, so there are no
         // customization controls to register — an empty set is not an approximation of the
         // real answer here, it IS the real answer. The AL-declared controls are registered
         // separately, by the page's own OnMetadataLoaded.

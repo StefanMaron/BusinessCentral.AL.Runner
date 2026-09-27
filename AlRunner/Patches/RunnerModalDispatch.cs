@@ -96,12 +96,11 @@ public static class RunnerModalDispatch
             // Close only what this method opened, and only through BC's own CloseForm, so the
             // form leaves the company's registry exactly the way BC would have left it.
             //
-            // A REQUEST page closes with the handler's result, as BC's client does: OK is what
-            // makes CloseFormAsync's StoreSaveValues persist a SaveValues page (#4808; corpus
-            // 67541). Every other page keeps FormResult.None — its StoreSaveValues writes the
-            // per-user page-personalization store, which no corpus test has measured.
+            // Closed with the handler's result, as BC's client does: OK is what makes
+            // CloseFormAsync's StoreSaveValues persist a SaveValues page — a request page's
+            // (#4808; corpus 67541) and an ordinary page's (#4818; corpus 67545).
             if (opened && IsFormOpen(form))
-                TryCloseForm(form!, result: IsRequestPage(form) ? result : null);
+                TryCloseForm(form!, result: result);
         }
 
         // The handler's outcome (OK/Cancel) is what the AL that called RunModal receives.
@@ -168,7 +167,9 @@ public static class RunnerModalDispatch
         }
         finally
         {
-            if (opened && !trapped && IsFormOpen(form)) TryCloseForm(form!, result: null);
+            // The same OK the query-close above uses, so a SaveValues page saves (#4818; corpus
+            // 67545 NonModal_SaveValues_PageHandler_*).
+            if (opened && !trapped && IsFormOpen(form)) TryCloseForm(form!, result: NonModalCloseResult(form!));
         }
     }
 
@@ -193,21 +194,6 @@ public static class RunnerModalDispatch
         if (form is not NavForm navForm) return;
         if (!RunnerPendingPageOpenMode.TryConsume(PageIdOf(form), out var readOnly)) return;
         if (readOnly) navForm.Editable = false;
-    }
-
-    /// <summary>
-    /// BC's own <c>NavForm.IsRequestPage</c>. Required: an unreadable answer would silently pick
-    /// which close result a form gets, so it refuses instead.
-    /// </summary>
-    internal static bool IsRequestPage(object form)
-    {
-        var p = form.GetType().GetProperty("IsRequestPage",
-                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-                ?? throw new BcShapeGapException(
-                    "TestPage modal dispatch (close result)", $"{form.GetType().Name}.IsRequestPage",
-                    "without it the runner cannot tell a request page, whose OK persists SaveValues, "
-                    + "from a page, whose close it keeps at FormResult.None (#4808)");
-        return p.GetValue(form) is true;
     }
 
     /// <summary>The page number of <paramref name="form"/>, or 0 when it cannot be read.</summary>
