@@ -1920,6 +1920,85 @@ public static partial class NclCecilRewrite
         }
     }
 
+    // === Every read of RecordImplementation.dataAccess — #4781 ===
+    // A record that outlives a test-codeunit boundary (a SingleInstance codeunit's Record
+    // global, held directly or through an interface, a variant or a collection) still holds the
+    // per-table store that boundary replaced. Each `ldfld dataAccess` becomes
+    // `dup; ldfld dataAccess; call RecordPatches.RecordImplementation_LiveDataAccess; castclass`,
+    // which re-points the record at the live store on its next read. The original instruction
+    // object becomes the `dup`, so branch targets and handler boundaries that named it stay
+    // valid. An `ldflda` of the field would bypass this, so one refuses the rewrite.
+    // Adds one MemberRef to Ncl (the helper), as every helper-call rewrite here does; it
+    // renames, removes or re-signs nothing precompiled callers bind to.
+    private static void RewriteNcl_RecordDataAccessReads(AssemblyDefinition asm)
+    {
+        var recImpl = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.RecordImplementation")
+            ?? throw new InvalidOperationException(
+                "[Cecil] RecordImplementation type not found — Ncl shape changed; do not commit");
+        var dataAccessField = recImpl.Fields.FirstOrDefault(f => f.Name == "dataAccess" && !f.IsStatic)
+            ?? throw new InvalidOperationException(
+                "[Cecil] RecordImplementation.dataAccess not found — a record could not be re-pointed "
+                + "at the live store after a test-codeunit boundary (#4781); do not commit");
+        var helper = typeof(AlRunner.Patches.RecordPatches).GetMethod(
+            nameof(AlRunner.Patches.RecordPatches.RecordImplementation_LiveDataAccess),
+            BindingFlags.Public | BindingFlags.Static)
+            ?? throw new InvalidOperationException("RecordPatches.RecordImplementation_LiveDataAccess not found");
+        var helperRef = asm.MainModule.ImportReference(helper);
+
+        int reads = 0, methods = 0;
+        foreach (var type in AllTypes(asm.MainModule.Types))
+        foreach (var method in type.Methods)
+        {
+            if (!method.HasBody) continue;
+            var body = method.Body;
+            var hits = body.Instructions
+                .Where(i => (i.OpCode == OpCodes.Ldfld || i.OpCode == OpCodes.Ldflda)
+                            && i.Operand is FieldReference fr && fr.Resolve() == dataAccessField)
+                .ToList();
+            if (hits.Count == 0) continue;
+            // Each read grows by three instructions, so a short branch across one can fall out of
+            // range: widen every branch first and re-shorten after (invalid IL otherwise).
+            Mono.Cecil.Rocks.MethodBodyRocks.SimplifyMacros(body);
+            var il = body.GetILProcessor();
+            foreach (var ins in hits)
+            {
+                if (ins.OpCode == OpCodes.Ldflda)
+                    throw new InvalidOperationException(
+                        $"[Cecil] {method.FullName} takes the address of RecordImplementation.dataAccess, "
+                        + "which the #4781 read hook cannot intercept — do not commit");
+                var fieldRef = (FieldReference)ins.Operand;
+                ins.OpCode = OpCodes.Dup;
+                ins.Operand = null;
+                var load = il.Create(OpCodes.Ldfld, fieldRef);
+                var call = il.Create(OpCodes.Call, helperRef);
+                var cast = il.Create(OpCodes.Castclass, fieldRef.FieldType);
+                il.InsertAfter(ins, load);
+                il.InsertAfter(load, call);
+                il.InsertAfter(call, cast);
+                reads++;
+            }
+            body.MaxStackSize += 1;
+            Mono.Cecil.Rocks.MethodBodyRocks.OptimizeMacros(body);
+            methods++;
+        }
+        if (reads == 0)
+            throw new InvalidOperationException(
+                "[Cecil] no read of RecordImplementation.dataAccess found — Ncl shape changed; do not commit");
+        Console.Error.WriteLine(
+            $"[Cecil] Routed {reads} read(s) of RecordImplementation.dataAccess in {methods} method(s) "
+            + "through RecordPatches.RecordImplementation_LiveDataAccess");
+    }
+
+    private static IEnumerable<TypeDefinition> AllTypes(IEnumerable<TypeDefinition> types)
+    {
+        foreach (var t in types)
+        {
+            yield return t;
+            foreach (var n in AllTypes(t.NestedTypes))
+                yield return n;
+        }
+    }
+
     private static void AddRecordsOwned(HashSet<string> set)
     {
         // IsolatedStorageRepository lowest layer (Cecil-migrated onto the

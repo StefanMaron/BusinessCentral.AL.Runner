@@ -349,7 +349,7 @@ public static partial class BcRuntime
     {
         try
         {
-            var dataAccess = _fRecordImplementationDataAccess?.GetValue(self);
+            var dataAccess = AlRunner.Patches.RecordPatches.RecordImplementation_LiveDataAccess(self, _fRecordImplementationDataAccess?.GetValue(self));
             if (dataAccess == null || _mDataAccessTryGetByPrimaryKeyAsync == null)
                 return new System.Threading.Tasks.ValueTask<bool>(false);
             var taskObj = _mDataAccessTryGetByPrimaryKeyAsync.Invoke(dataAccess, new[] { request });

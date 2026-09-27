@@ -1580,7 +1580,7 @@ public static class FlowFieldPatches
             // creation happened unconditionally before this lookup existed, and callers
             // (RecordImpl_CalcFieldsAsync_3) rely on `parentBuffer[fieldIdx]` always
             // ending up a non-null NavBLOB after this method returns, found-or-not.
-            var dataAccess = _fRecImplDataAccess?.GetValue(self);
+            var dataAccess = RecordPatches.RecordImplementation_LiveDataAccess(self, _fRecImplDataAccess?.GetValue(self));
             var dataProvider = dataAccess != null ? _pDataAccessDataProvider?.GetValue(dataAccess) : null;
             var canLookUp = dataProvider != null && _mTtdpTryGetValue != null && _mMutableBufferGetRecordId != null;
             object? storedBuffer = null;

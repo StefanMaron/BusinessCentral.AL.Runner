@@ -230,9 +230,10 @@ public sealed class TestExecutor
     // that call begins with ResetPerTestState() (RecordPatches.cs), which unconditionally
     // wipes exactly those things: _dataAccessByTable per-table rows (which is where record
     // links live — the Record Link table, #3378), TenantStoragePatches.ResetForTest(),
-    // MediaSetPatches.ResetForTest(), ALDatabasePatches.ResetWriteTransactionState(),
-    // BcRuntime.DisposeSkeletonSharedObjectContainerChildren(), and
-    // BcRuntime.ResetSingleInstanceCache(). So the set of install-seed state that can ever
+    // MediaSetPatches.ResetForTest(), ALDatabasePatches.ResetWriteTransactionState(), and
+    // BcRuntime.DisposeSkeletonSharedObjectContainerChildren() — and SingleInstance codeunit
+    // state is reset once right after CaptureInstallBaseline, before the first test (#4781:
+    // it is no longer reset at codeunit boundaries). So the set of install-seed state that can ever
     // survive to the moment ANY test body runs is exactly
     // {table rows (record links among them), isolated storage, auto-increment} — precisely
     // the three things InstallBaselineSnapshot captures. A non-table side effect of a dependency
@@ -458,7 +459,13 @@ public sealed class TestExecutor
         // so nothing here double-counts) so a follow-up fix knows which of the six to chase
         // instead of re-running this whole attribution exercise.
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-reset-per-test"))
+        {
+            // A new bundle is a new session; the previous bundle's SingleInstance instances
+            // (keyed by codeunit id, and of its assembly's types) must not carry over. First, so
+            // the reset below no longer keeps what those instances held.
+            AlRunner.BcRuntime.ResetSingleInstanceCache();
             AlRunner.Patches.RecordPatches.ResetPerTestState();
+        }
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-reset-for-new-bundle"))
         {
             CompanyInitializer.ResetForNewBundle();
@@ -732,6 +739,11 @@ public sealed class TestExecutor
             InstallTriggerRunner.RunTestAssemblyOnly();
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-capture-baseline"))
             AlRunner.Patches.RecordPatches.CaptureInstallBaseline();
+        // SingleInstance state lives for the whole test session (#4781), so the codeunit
+        // boundaries below no longer reset it. The Install triggers and Company-Initialize above
+        // run in their own session on BC, and on a dep-company cache HIT they do not run at all
+        // here, so their instances must not reach the first test: reset once, after them.
+        AlRunner.BcRuntime.ResetSingleInstanceCache();
         seedSw.Stop();
         PerfTrace.Log($"TestExecutor.InitialInstallSeed {seedSw.ElapsedMilliseconds}ms");
 

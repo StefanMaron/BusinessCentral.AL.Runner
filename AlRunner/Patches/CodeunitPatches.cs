@@ -19,12 +19,10 @@ public static partial class BcRuntime
     private static readonly ConcurrentDictionary<int, Type?> _codeunitTypeCache = new();
 
     // Cache: codeunit ID → the single shared instance, for SingleInstance=true codeunits only.
-    // Real BC gives a SingleInstance codeunit exactly one instance per session, so instance
-    // fields persist across every call/reference within a test. Cleared at the per-test
-    // boundary by ResetSingleInstanceCache() (called from RecordPatches.ResetPerTestState(),
-    // itself invoked at both codeunit- and test-level isolation boundaries in TestExecutor) —
-    // otherwise SingleInstance state would leak from one test into the next, which real BC's
-    // per-test rollback does not allow.
+    // Real BC registers it on the company (NavCompany.singleInstanceCodeunits, cleared only by
+    // NavCompany.Dispose), so its fields persist across every test and test codeunit of the
+    // session — no isolation rollback reaches them (#4781; Windows container and SaaS sandbox,
+    // corpus #213). Cleared by ResetSingleInstanceCache() only per bundle, in TestExecutor.Run.
     private static readonly ConcurrentDictionary<int, Microsoft.Dynamics.Nav.Runtime.NavCodeunit> _singleInstanceCache = new();
 
     // Session-rooted handles that exist ONLY to hold a reference on each cached SingleInstance
@@ -83,7 +81,7 @@ public static partial class BcRuntime
     {
         lock (_singleInstanceBoundHandlesLock)
         {
-            // Under --isolation disabled no reset ever clears the list (#2185), so compact it
+            // Only a bundle reset clears the list (#2185, #4781), so compact it
             // whenever it doubles past what was live at the last compaction.
             if (_singleInstanceBoundHandles.Count >= _singleInstanceBoundHandlesCompactAt)
             {
@@ -102,9 +100,9 @@ public static partial class BcRuntime
     private static int _singleInstanceBoundHandlesCompactAt = SingleInstanceBoundHandlesMinCompactAt;
 
     /// <summary>
-    /// Drop every cached SingleInstance codeunit instance. Must run at the per-test-isolation
-    /// boundary (see RecordPatches.ResetPerTestState) so SingleInstance field state does not
-    /// leak across tests, mirroring real BC's per-test transaction rollback.
+    /// Drop every cached SingleInstance codeunit instance — a new session's worth of state.
+    /// Called per bundle and after the install seed (TestExecutor.Run), never at a test or
+    /// codeunit boundary: BC keeps the instance for the session (#4781).
     /// </summary>
     public static void ResetSingleInstanceCache()
     {
@@ -127,6 +125,30 @@ public static partial class BcRuntime
         }
         _singleInstanceKeepAlive.Clear();
         _singleInstanceCache.Clear();
+    }
+
+    /// <summary>
+    /// Every tree object a cached SingleInstance codeunit reaches through BC's own tree: its
+    /// children, and the target of every reference among them, transitively. Used to keep those
+    /// objects alive across a store reset (#4781); empty when no SingleInstance instance exists.
+    /// </summary>
+    internal static HashSet<ITreeObject> TreeObjectsReachableFromSingleInstances()
+    {
+        var seen = new HashSet<ITreeObject>(ReferenceEqualityComparer.Instance);
+        if (_singleInstanceCache.IsEmpty) return seen;
+        var pending = new Stack<ITreeObject>();
+        foreach (var instance in _singleInstanceCache.Values)
+            pending.Push(instance);
+        while (pending.Count > 0)
+        {
+            var node = pending.Pop();
+            if (!seen.Add(node) || node.Tree == null || node.Tree.IsDisposed) continue;
+            if (node.Type == TreeObjectType.ObjectReference && node.Tree.GetReferenceTarget() is { } target)
+                pending.Push(target);
+            foreach (var child in node.Tree.Children)
+                pending.Push(child);
+        }
+        return seen;
     }
 
     /// <summary>

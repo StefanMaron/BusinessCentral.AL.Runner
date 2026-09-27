@@ -1,0 +1,12 @@
+{
+  "id": "c4e9a2d7-3b1f-4e68-9d05-7a1c2b3e4f81",
+  "name": "Runner Tests Fixture - SingleInstance Session Lifetime",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "#4781: SingleInstance codeunit state survives a test-codeunit boundary, and its Record globals read the rolled-back store.",
+  "description": "AlRunner#4781. Two test codeunits run in id order; the second reads what the first left in a SingleInstance codeunit. The install trigger writes the same codeunit, and the first test must not see that. The runner-side mechanism is pinned in SingleInstanceSessionLifetimeTests.cs.",
+  "idRanges": [ { "from": 71920, "to": 71939 } ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "OnPrem"
+}
