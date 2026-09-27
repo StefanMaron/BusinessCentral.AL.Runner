@@ -140,6 +140,69 @@ internal static partial class ProgramSupport
         return byKey.Values.ToList();
     }
 
+    /// <summary>
+    /// Microsoft's "Test Runner" app — the test tool a service tier runs every test through,
+    /// installed whether or not the test app declares it. Its codeunits 130450/130451 raise the
+    /// "Test Runner - Mgt" events whose subscribers (130453 "ALTestRunner Reset Environment")
+    /// reset areas, LastError and WorkDate between tests (#4816).
+    /// </summary>
+    internal static readonly DependencyRef InstalledTestTool = new(
+        new Guid("23de40a6-dfe8-4f80-80db-d70f83ce8caf"), "Test Runner", "Microsoft", new Version(0, 0, 0, 0),
+        Optional: true);
+
+    /// <summary>
+    /// <paramref name="roots"/> plus <see cref="InstalledTestTool"/> when the package caches hold
+    /// it, neither a dependency nor one of the bundle's own <paramref name="manifests"/> is
+    /// already that app, and no bundle app defines a codeunit Test Runner also defines that the
+    /// runner binds to (130453, 130454): a tier refuses to install two apps with one object id.
+    /// Absent from the caches, the run is what it was before (no root, so no "not found" line).
+    /// Both closure readers — the resolve in Program.cs and the AL-output cache key — go through
+    /// this, so they cannot disagree on what was loaded.
+    /// </summary>
+    internal static List<DependencyRef> WithInstalledTestTool(
+        List<DependencyRef> roots, IReadOnlyList<string> manifests, AlRunner.DependencyResolver resolver)
+    {
+        if (manifests.Any(m => AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(m)?.AppId
+                == InstalledTestTool.AppId))
+            return roots;
+        if (roots.Any(r => r.AppId == InstalledTestTool.AppId
+                || (string.Equals(r.Name, InstalledTestTool.Name, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(r.Publisher, InstalledTestTool.Publisher, StringComparison.OrdinalIgnoreCase))))
+            return roots;
+        if (!resolver.CanResolve(InstalledTestTool)) return roots;
+        if (FindCollidingTestRunnerCodeunit(manifests) is { } clash)
+        {
+            if (_testToolSkipReported.TryAdd(clash.File, 0))
+                Console.Error.WriteLine(
+                    $"test tool: not loading Microsoft's Test Runner app by default, because this suite defines codeunit {clash.Id} itself ({clash.File}).");
+            return roots;
+        }
+        return roots.Append(InstalledTestTool).ToList();
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _testToolSkipReported = new();
+
+    private static readonly System.Text.RegularExpressions.Regex TestRunnerCodeunitDeclaration = new(
+        $@"^\s*codeunit\s+({TestRunnerMgtEvents.ResetEnvironmentId}|{TestRunnerMgtEvents.TestRunnerMgtId})\b",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Multiline
+        | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>The first codeunit 130453/130454 an AL file under a manifest's directory declares.</summary>
+    internal static (int Id, string File)? FindCollidingTestRunnerCodeunit(IReadOnlyList<string> manifests)
+    {
+        foreach (var manifest in manifests)
+        {
+            var dir = Path.GetDirectoryName(Path.GetFullPath(manifest));
+            if (dir == null || !Directory.Exists(dir)) continue;
+            foreach (var file in Directory.EnumerateFiles(dir, "*.al", SearchOption.AllDirectories))
+            {
+                var m = TestRunnerCodeunitDeclaration.Match(File.ReadAllText(file));
+                if (m.Success) return (int.Parse(m.Groups[1].Value), file);
+            }
+        }
+        return null;
+    }
+
     internal static void SetBundleInfoFromAppJson(string appJsonPath)
     {
         // Remember (or clear) the bundle dir for NavApp.GetResource: the emitted test
@@ -804,7 +867,7 @@ internal static partial class ProgramSupport
                 .ToList();
             var resolver = new AlRunner.DependencyResolver(
                 bundlePkgDirs.Concat(packageCacheDirs).Distinct().ToList());
-            var resolvedDeps = resolver.Resolve(roots);
+            var resolvedDeps = resolver.Resolve(WithInstalledTestTool(roots, manifests, resolver));
             var ordered = resolvedDeps
                 // Id:Version alone is NOT a content identity: a sibling source app keeps
                 // its app.json version while its schema evolves during development, so a

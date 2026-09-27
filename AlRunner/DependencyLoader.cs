@@ -769,6 +769,7 @@ public sealed class DependencyLoader
         // reference specs. Without this, the dep's resolved spec (from _resolvedDeps of
         // the PARENT bundle) would be both in the reference list AND in the primary AL
         // source → AL0275 "ambiguous reference". The scope is restored on dispose.
+        BcCompiler.RecordPackageDeclaration(m);
         try { using (BcCompiler.ScopeCurrentAppIdentity(m.AppId, m.Publisher, m.Version))
                   emitOutput = _compiler.Emit(new[] { tempDir }, m.Name, tempDir); }
         catch (Exception ex)

@@ -2839,7 +2839,7 @@ foreach (var bundle in bundles)
                     resolverDirs, AlRunner.Infrastructure.CacheRoots.SourceBuiltPackageDirs(), depRootDir);
                 IReadOnlyList<(AlRunner.AppManifest Manifest, string AppPath)> ordered;
                 using (AlRunner.Infrastructure.PhaseLog.Stage("dep-resolve"))
-                    ordered = resolver.Resolve(roots);
+                    ordered = resolver.Resolve(WithInstalledTestTool(roots, bundleManifests, resolver));
                 bundleResolvedDeps = ordered;
                 bundleDependenciesResolved = true;
                 // Issue #2239: per-bundle dep counts are diagnostic detail — gated behind

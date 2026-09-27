@@ -20,9 +20,24 @@ public sealed partial class BcCompiler
         _declaredReferences[identity.AppId] = identity;
     }
 
+    // Source-compiled dependency packages, by AppId: the NAVX manifest is their declaration.
+    private static readonly ConcurrentDictionary<Guid, AppManifest> _packageDeclarations = new();
+
+    /// <summary>Record the manifest of a dependency package about to be source-compiled, so
+    /// <see cref="NarrowToDeclaredReferences"/> can apply its application floor (#4816).</summary>
+    internal static void RecordPackageDeclaration(AppManifest manifest)
+    {
+        if (manifest.AppId == Guid.Empty) return;
+        _packageDeclarations[manifest.AppId] = manifest;
+    }
+
     /// <summary>Forget every recorded app.json. A --server request calls this first, so a
     /// declaration read for an earlier request's workspace cannot answer for this one.</summary>
-    internal static void ResetDeclaredReferences() => _declaredReferences.Clear();
+    internal static void ResetDeclaredReferences()
+    {
+        _declaredReferences.Clear();
+        _packageDeclarations.Clear();
+    }
 
     /// <summary>
     /// The references <paramref name="appId"/> may see under the declarations recorded now, in
@@ -55,16 +70,33 @@ public sealed partial class BcCompiler
     /// An app with no recorded app.json (a decompiled .app dependency, a bundle with no
     /// identity) is left unnarrowed. Propagation out of a real .app package needs nothing
     /// here: BC reads it from that package's own manifest through the loader.
+    /// <para>One exception for a source-compiled dependency package: one whose manifest names
+    /// no <c>Application</c> and no dependencies at all compiles against the platform
+    /// (<c>System</c>) alone, as it was built — with nothing declared, nothing can propagate the
+    /// application layer to it. Given Base Application too, Microsoft's Test Runner dropped 9 of
+    /// its 47 objects on AL0275: its xmlport "Code Coverage Detailed" is ambiguous with Base
+    /// Application's (#4816).</para>
     /// </summary>
     internal static NavCA.SymbolReferenceSpecification[] NarrowToDeclaredReferences(
         NavCA.SymbolReferenceSpecification[] specs, Guid? currentAppId)
     {
-        if (currentAppId is not Guid selfId || !_declaredReferences.TryGetValue(selfId, out var self))
-            return specs;
+        if (currentAppId is not Guid selfId) return specs;
+        if (!_declaredReferences.TryGetValue(selfId, out var self))
+            return _packageDeclarations.TryGetValue(selfId, out var package) && DeclaresPlatformOnly(package)
+                ? specs.Where(s => !IsApplicationLayerApp(s.Name ?? "", s.Publisher ?? "")).ToArray()
+                : specs;
 
         var allowed = AllowedReferences(self);
         return specs.Where(s => IsAllowed(s, allowed)).ToArray();
     }
+
+    private static bool DeclaresPlatformOnly(AppManifest package)
+        => package.Application == null && package.Dependencies.Count == 0;
+
+    // The Microsoft platform apps above the platform symbols app "System".
+    private static bool IsApplicationLayerApp(string name, string publisher)
+        => DependencyResolver.IsMicrosoftPlatformApp(name, publisher)
+           && !string.Equals(name, "System", StringComparison.OrdinalIgnoreCase);
 
     private static BundleIdentity? FindRecordedIdentity(DependencyRef dep)
     {
