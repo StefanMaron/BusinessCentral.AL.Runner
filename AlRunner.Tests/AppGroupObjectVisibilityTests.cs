@@ -295,9 +295,12 @@ public class AppGroupObjectVisibilityTests
         {
             var dir = WriteApp(Path.Combine(root, "dup" + letter), appId, "Dup " + letter, 62680, 62689);
             File.WriteAllText(Path.Combine(dir, "Dup.al"), $$"""
-            table 62680 "Dup {{letter}} Table" { fields { field(1; "Code"; Code[20]) { } } keys { key(PK; "Code") { Clustered = true; } } }
-            xmlport 62683 "Dup {{letter}} XmlPort" { schema { textelement(Root{{letter}}) { } } }
+            table 62680 "Dup {{letter}} Table" { fields { field(1; "Code"; Code[20]) { } field(2; "Only{{letter}}"; Integer) { } } keys { key(PK; "Code") { Clustered = true; } } }
+            xmlport 62683 "Dup {{letter}} XmlPort" { Caption = 'Dup {{letter}} XmlPort Cap'; schema { textelement(Root{{letter}}) { } } }
             table {{bufferId}} "Dup {{letter}} Buffer" { fields { field(1; PK; Integer) { } field(2; Data; Blob) { } } keys { key(PK; PK) { Clustered = true; } } }
+            report 62686 "Dup {{letter}} Report" { Caption = 'Dup {{letter}} Report Cap'; ProcessingOnly = true; dataset { dataitem(T; "Dup {{letter}} Table") { } } }
+            page 62687 "Dup {{letter}} Page" { Caption = 'Dup {{letter}} Page Cap'; SourceTable = "Dup {{letter}} Table"; layout { area(Content) { field(C; Rec.Code) { } } } }
+            query 62688 "Dup {{letter}} Query" { elements { dataitem(T; "Dup {{letter}} Table") { column(C; Code) { } } } }
             codeunit {{cu}} "Dup {{letter}} Tests"
             {
                 Subtype = Test;
@@ -336,6 +339,69 @@ public class AppGroupObjectVisibilityTests
                     InS.Read(Exported);
                     if StrPos(Exported, '<Root{{letter}}') = 0 then Error('WRONG: xmlport 62683 exported another group''s schema in {{letter}}: %1', Exported);
                 end;
+
+                // #4767: the inventory rows for every kind of object an id two groups both declare are this
+                // group's own. The Field table, RecordRef and Query Metadata read the runtime metadata
+                // objects, which are still shared per id; they are not asserted here.
+                [Test]
+                procedure SharedTableMetadataIsThisGroupsOwn()
+                var
+                    TableMetadata: Record "Table Metadata";
+                    AllObj: Record AllObjWithCaption;
+                begin
+                    TableMetadata.Get(62680);
+                    if TableMetadata.Name <> 'Dup {{letter}} Table' then Error('WRONG: Table Metadata name for 62680 in {{letter}} is %1', TableMetadata.Name);
+                    AllObj.Get(AllObj."Object Type"::Table, 62680);
+                    if AllObj."Object Name" <> 'Dup {{letter}} Table' then Error('WRONG: AllObjWithCaption table name for 62680 in {{letter}} is %1', AllObj."Object Name");
+                end;
+
+                [Test]
+                procedure SharedXmlPortAllObjWithCaptionIsThisGroupsOwn()
+                var
+                    AllObj: Record AllObjWithCaption;
+                begin
+                    AllObj.Get(AllObj."Object Type"::XMLport, 62683);
+                    if AllObj."Object Name" <> 'Dup {{letter}} XmlPort' then Error('WRONG: AllObjWithCaption xmlport name for 62683 in {{letter}} is %1', AllObj."Object Name");
+                    if AllObj."Object Caption" <> 'Dup {{letter}} XmlPort Cap' then Error('WRONG: AllObjWithCaption xmlport caption for 62683 in {{letter}} is %1', AllObj."Object Caption");
+                end;
+
+                [Test]
+                procedure SharedReportMetadataIsThisGroupsOwn()
+                var
+                    ReportMetadata: Record "Report Metadata";
+                    AllObj: Record AllObjWithCaption;
+                begin
+                    if not ReportMetadata.Get(62686) then Error('MISSING: Report Metadata 62686 in {{letter}}');
+                    if ReportMetadata.Name <> 'Dup {{letter}} Report' then Error('WRONG: Report Metadata name for 62686 in {{letter}} is %1', ReportMetadata.Name);
+                    // The dataitem names this group's own table, resolved by name in this group.
+                    if ReportMetadata.FirstDataItemTableID <> 62680 then Error('WRONG: Report Metadata first data item table for 62686 in {{letter}} is %1', ReportMetadata.FirstDataItemTableID);
+                    AllObj.Get(AllObj."Object Type"::Report, 62686);
+                    if AllObj."Object Name" <> 'Dup {{letter}} Report' then Error('WRONG: AllObjWithCaption report name for 62686 in {{letter}} is %1', AllObj."Object Name");
+                    if AllObj."Object Caption" <> 'Dup {{letter}} Report Cap' then Error('WRONG: AllObjWithCaption report caption for 62686 in {{letter}} is %1', AllObj."Object Caption");
+                end;
+
+                [Test]
+                procedure SharedPageMetadataIsThisGroupsOwn()
+                var
+                    PageMetadata: Record "Page Metadata";
+                    AllObj: Record AllObjWithCaption;
+                begin
+                    if not PageMetadata.Get(62687) then Error('MISSING: Page Metadata 62687 in {{letter}}');
+                    if PageMetadata.Name <> 'Dup {{letter}} Page' then Error('WRONG: Page Metadata name for 62687 in {{letter}} is %1', PageMetadata.Name);
+                    if PageMetadata.Caption <> 'Dup {{letter}} Page Cap' then Error('WRONG: Page Metadata caption for 62687 in {{letter}} is %1', PageMetadata.Caption);
+                    if PageMetadata.SourceTable <> 62680 then Error('WRONG: Page Metadata source table for 62687 in {{letter}} is %1', PageMetadata.SourceTable);
+                    AllObj.Get(AllObj."Object Type"::Page, 62687);
+                    if AllObj."Object Name" <> 'Dup {{letter}} Page' then Error('WRONG: AllObjWithCaption page name for 62687 in {{letter}} is %1', AllObj."Object Name");
+                end;
+
+                [Test]
+                procedure SharedQueryAllObjWithCaptionIsThisGroupsOwn()
+                var
+                    AllObj: Record AllObjWithCaption;
+                begin
+                    AllObj.Get(AllObj."Object Type"::Query, 62688);
+                    if AllObj."Object Name" <> 'Dup {{letter}} Query' then Error('WRONG: AllObjWithCaption query name for 62688 in {{letter}} is %1', AllObj."Object Name");
+                end;
             }
             """);
             dirs.Add(dir);
@@ -369,7 +435,7 @@ public class AppGroupObjectVisibilityTests
         string output;
         lock (sb) output = sb.ToString();
 
-        Assert.Contains("5P/0F/0E across 5 tests", output);
+        Assert.Contains("15P/0F/0E across 15 tests", output);
         Assert.DoesNotContain("MISSING:", output);
         Assert.DoesNotContain("WRONG:", output);
         Assert.Equal(0, p.ExitCode);
@@ -386,7 +452,7 @@ public class AppGroupObjectVisibilityTests
         await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
         var lines = await server.SendRequestStreamingAsync(RunTests(dirs));
         var (events, _) = ProtocolV2Streaming.Split(lines);
-        Assert.Equal(5, events.Count);
+        Assert.Equal(15, events.Count);
         foreach (var e in events)
             Assert.True(e.GetProperty("status").GetString() == "pass", string.Join(" | ", lines));
     }

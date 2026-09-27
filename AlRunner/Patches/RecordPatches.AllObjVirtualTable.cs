@@ -200,7 +200,9 @@ public static partial class RecordPatches
     /// </summary>
     private static IEnumerable<(string Kind, int Id, string Name, string? Caption, string? Subtype)> EnumerateKnownAlObjects()
     {
-        foreach (var t in _parsedTables.Values)
+        // Each through InAppGroupScope: an id several app groups declare answers with the
+        // executing group's own declaration (#4767).
+        foreach (var t in InAppGroupScope("table", _parsedTables))
             yield return ("Table", t.TableId, t.TableName, SourceCaptionFor("Table", t.TableId),
                 // A table declaring no TableType is Normal, and BC reports that by name.
                 t.TableTypeName ?? (t.IsTableTypeTemporary ? "Temporary" : AlDefaultTableType));
@@ -208,38 +210,41 @@ public static partial class RecordPatches
         // separate id namespaces (#1710) — both are enumerated, so an app declaring
         // `page N` and `pageextension N` reports BOTH rows instead of only whichever
         // one was parsed last.
-        foreach (var p in _parsedPages.Values)
+        foreach (var p in InAppGroupScope("page", _parsedPages))
             // ParsedPage.PageType already carries AL's own default ("Card") for a page
             // declaring none, applied at parse time — the same value Page Metadata reports.
             yield return ("Page", p.Id, p.Name, SourceCaptionFor("Page", p.Id), p.PageType);
         // The *extension kinds hand their `extends` TARGET NAME through the subtype slot;
         // ObjectSubtypeTextFor resolves it to the id BC reports. See that method, and
         // docs/virtual-tables-allobj.md#object-subtype.
-        foreach (var p in _parsedPageExtensions.Values)
+        foreach (var p in InAppGroupScope("pageextension", _parsedPageExtensions))
             yield return ("PageExtension", p.Id, p.Name, SourceCaptionFor("PageExtension", p.Id), p.BaseName);
-        foreach (var r in _parsedReports.Values)
+        foreach (var r in InAppGroupScope("report", _parsedReports))
             // SourceCaptionFor("Report", …) reads r.Caption itself — AlReportParser is the
             // only pass that parses a report's Caption (#1714). Going through the same
             // accessor as every other kind is what keeps that single source uniform.
             yield return ("Report", r.Id, r.Name, SourceCaptionFor("Report", r.Id), null);
-        foreach (var r in _parsedReportExtensions.Values)
+        foreach (var r in InAppGroupScope("reportextension", _parsedReportExtensions))
             yield return ("ReportExtension", r.Id, r.Name, SourceCaptionFor("ReportExtension", r.Id),
                 r.BaseObjectName);
-        foreach (var q in _parsedQueries.Values)
+        foreach (var q in InAppGroupScope("query", _parsedQueries))
         {
             var kind = q.IsExtension ? "QueryExtension" : "Query";
             yield return (kind, q.Id, q.Name, SourceCaptionFor(kind, q.Id), q.QueryType);
         }
-        foreach (var x in _parsedXmlPorts.Values)
+        foreach (var x in InAppGroupScope("xmlport", _parsedXmlPorts))
             yield return ("XMLport", x.Id, x.Name, SourceCaptionFor("XMLport", x.Id), null);
         // Codeunits / enums / *extension kinds — see RecordPatches.AlObjectDeclParser.cs.
         // ParsedAlObjectDecl.Subtype is populated for Codeunit only and is null for a
         // codeunit declaring none, which is exactly what BC blanks (Normal → empty);
         // BaseObjectName for the *extension kinds only. The two never coexist on one
         // declaration, so one slot carries whichever the kind has.
-        foreach (var d in _parsedObjectDecls.Values)
+        foreach (var (declKey, declValue) in _parsedObjectDecls)
+        {
+            var d = InAppGroupScope(declKey.Kind, declKey.Id, declValue);
             yield return (d.Kind, d.Id, d.Name, SourceCaptionFor(d.Kind, d.Id),
                 d.Subtype ?? d.BaseObjectName);
+        }
         // Enums registered by the emit pipeline and by dependency .app scans.
         foreach (var e in AlEnumMetadataRegistry.Snapshot())
             yield return ("Enum", e.Id, e.Name, SourceCaptionFor("Enum", e.Id), null);

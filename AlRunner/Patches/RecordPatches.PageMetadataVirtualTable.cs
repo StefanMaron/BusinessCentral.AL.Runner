@@ -120,7 +120,8 @@ public static partial class RecordPatches
     // --watch mode (same bundle, one edited file) that is the NORMAL case, not a corner. The
     // remaining terms stay counts and are sound as counts, because the dictionaries they count
     // are only ever cleared by ResetForReload, which bumps the epoch in the same breath.
-    private static (int Epoch, int Parsed) _pageMetaRowsBuiltFrom = (-1, -1);
+    // The Guid term is AppGroupScopeKey(): a group sharing an id with another builds its own rows (#4767).
+    private static (int Epoch, int Parsed, Guid Scope) _pageMetaRowsBuiltFrom = (-1, -1, Guid.Empty);
     private static readonly object _pageMetaRowsLock = new();
 
     // Resolved once per process from the parsed Page Metadata metatable's own "PageType"
@@ -335,11 +336,11 @@ public static partial class RecordPatches
     /// </summary>
     private static List<PageMetaRow> EnumerateKnownPageMetadata()
     {
-        var generation = (BcAppRegistrationEpoch, _parsedPages.Count);
+        var generation = (BcAppRegistrationEpoch, _parsedPages.Count, AppGroupScopeKey());
         if (_pageMetaRows != null && _pageMetaRowsBuiltFrom == generation) return _pageMetaRows;
         lock (_pageMetaRowsLock)
         {
-            generation = (BcAppRegistrationEpoch, _parsedPages.Count);
+            generation = (BcAppRegistrationEpoch, _parsedPages.Count, AppGroupScopeKey());
             if (_pageMetaRows != null && _pageMetaRowsBuiltFrom == generation) return _pageMetaRows;
 
             var rows = new Dictionary<int, PageMetaRow>();
@@ -358,7 +359,7 @@ public static partial class RecordPatches
             }
 
             // 1. Pages the runner source-compiled.
-            foreach (var p in _parsedPages.Values)
+            foreach (var p in InAppGroupScope("page", _parsedPages))
             {
                 rows[p.Id] = new PageMetaRow(
                     p.Id, p.Name,

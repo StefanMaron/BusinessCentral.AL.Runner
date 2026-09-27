@@ -282,17 +282,17 @@ public static partial class RecordPatches
         switch (NormalizeObjectTypeName(kind))
         {
             case "table":
-                foreach (var t in _parsedTables.Values)
+                foreach (var t in InAppGroupScope("table", _parsedTables))
                     if (Same(t.TableName, objectName)) return t.TableId;
                 foreach (var t in EnumerateBcAppTableSymbols())
                     if (Same(t.TableName, objectName)) return t.TableId;
                 return -1;
             case "page":
-                foreach (var p in _parsedPages.Values)
+                foreach (var p in InAppGroupScope("page", _parsedPages))
                     if (Same(p.Name, objectName)) return p.Id;
                 return ResolveDependencyObjectIdByName("Page", objectName);
             case "report":
-                foreach (var r in _parsedReports.Values)
+                foreach (var r in InAppGroupScope("report", _parsedReports))
                     if (Same(r.Name, objectName)) return r.Id;
                 return ResolveDependencyObjectIdByName("Report", objectName);
             case "enum":
@@ -302,9 +302,12 @@ public static partial class RecordPatches
                     if (Same(e.Name, objectName)) return e.Id;
                 return -1;
             case "permissionset":
-                foreach (var d in _parsedObjectDecls.Values)
+                foreach (var (declKey, declValue) in _parsedObjectDecls)
+                {
+                    var d = InAppGroupScope(declKey.Kind, declKey.Id, declValue);
                     if (NormalizeObjectTypeName(d.Kind) == "permissionset" && Same(d.Name, objectName))
                         return d.Id;
+                }
                 return ResolveDependencyObjectIdByName("PermissionSet", objectName);
             default:
                 return -1;

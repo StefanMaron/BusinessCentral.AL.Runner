@@ -136,7 +136,8 @@ public static partial class RecordPatches
     // --watch mode (same bundle, one edited file) that is the NORMAL case, not a corner. The
     // remaining terms stay counts and are sound as counts, because the dictionaries they count
     // are only ever cleared by ResetForReload, which bumps the epoch in the same breath.
-    private static (int Epoch, int Parsed) _reportRowsBuiltFrom = (-1, -1);
+    // The Guid term is AppGroupScopeKey(): a group sharing an id with another builds its own rows (#4767).
+    private static (int Epoch, int Parsed, Guid Scope) _reportRowsBuiltFrom = (-1, -1, Guid.Empty);
     private static readonly object _reportRowsLock = new();
 
     /// <summary>
@@ -352,11 +353,11 @@ public static partial class RecordPatches
     /// </summary>
     private static List<ReportRow> EnumerateKnownReports()
     {
-        var generation = (BcAppRegistrationEpoch, _parsedReports.Count);
+        var generation = (BcAppRegistrationEpoch, _parsedReports.Count, AppGroupScopeKey());
         if (_reportRows != null && _reportRowsBuiltFrom == generation) return _reportRows;
         lock (_reportRowsLock)
         {
-            generation = (BcAppRegistrationEpoch, _parsedReports.Count);
+            generation = (BcAppRegistrationEpoch, _parsedReports.Count, AppGroupScopeKey());
             if (_reportRows != null && _reportRowsBuiltFrom == generation) return _reportRows;
 
             var rows = new Dictionary<int, ReportRow>();
@@ -399,7 +400,7 @@ public static partial class RecordPatches
             }
 
             // 1. Reports the runner source-compiled.
-            foreach (var parsed in _parsedReports.Values)
+            foreach (var parsed in InAppGroupScope("report", _parsedReports))
             {
                 var items = new List<ReportDataItemRow>();
                 bool ok = true;
