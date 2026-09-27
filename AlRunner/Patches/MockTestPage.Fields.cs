@@ -160,7 +160,7 @@ internal sealed class LiveNavTestField : ITestField
         // TryResolve answers false for DateFormula.
         var navValue = CurrentOption() is { } option
             ? TestPageOptionValue.Resolve(option, value, OptionCaptions(),
-                $"TestPage SetValue (field {_fieldNo})")
+                $"TestPage SetValue (field {_fieldNo})", Caption)
             : FieldType == NavType.Boolean
                 ? TestPageBooleanValue.Resolve(value, Caption)
                 : TestPageTemporalValue.TryResolveDateFormula(FieldType, value, out var formula)
@@ -521,7 +521,7 @@ internal sealed class PageVariableTestField : ITestField
         => RunnerPageInstance.GetValue(_expression) switch
         {
             NavOption option => TestPageOptionValue.Resolve(option, value, _page.TryGetOptionCaptions(_controlId, option),
-                $"TestPage SetValue (control {_controlId})"),
+                $"TestPage SetValue (control {_controlId})", Caption),
             NavBoolean => TestPageBooleanValue.Resolve(value, Caption),
             NavCode current => new NavCode(current.MaxLength, value),
             // #3384: NavDate was the only temporal arm here and accepted only the round-trip
