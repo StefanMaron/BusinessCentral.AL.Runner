@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **testpage:** evaluate a precompiled control's raw-AL Rec./:: property expressions
 - **metadata:** a precompiled report's request page states its Caption and InsertAllowed; TestRequestPage.Caption reads the form
 - **metadata:** codeunit projection states EventSubscriberInstance (declared value, else StaticAutomatic)
 - **session:** restore ApplicationAreas at the isolation reset boundary
