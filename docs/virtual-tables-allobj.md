@@ -377,7 +377,9 @@ Both tables share one mechanism, `RecordPatches.ObjectInventoryStore.cs`:
   visible-app set: a read made with another app's code on the call stack widens the set, and
   that store then holds rows a narrower read must not see. The row count tells them apart.
   Writes are seen through `NoteTransactionWriteForTable`, which every AL write entry point
-  reaches before it writes; a written store is never parked.
+  reaches before it writes; a written store is never parked. For Rename that entry point is
+  `NavRecord.RenameAsync(DataError, bool, bool, NavValue[])`, the funnel every rename surface
+  ends in — not `ALRenameAsync`, which the AL compiler's `ALRename` never calls (#4877).
 
 The **stamp** (`ObjectInventoryStamp`) has one term per input the inventory, the visibility
 filter, the owner index and AllObjWithCaption's captions read: the bundle and `.app`
@@ -398,8 +400,11 @@ The tests read the `AL_RUNNER_PERF=1` lines `<table>.Handout`, `.InventoryWalk`,
 
 - `AlRunner.Tests/AllObjPopulateCostTests.cs`: one walk, one fill and one reuse per table across
   two codeunits of many handouts, on a cold and a warm run; a store AL wrote to is not carried
-  into the next codeunit; a `--server` second request that renames objects answers with the new
-  names.
+  into the next codeunit, for each of Record Insert/Modify/Delete/Rename, RecordRef
+  Insert/Modify/Delete, ModifyAll and DeleteAll, with the leaking path named; a `--server`
+  second request that renames objects answers with the new names.
+- `AlRunner.Tests/RenameWriteNoteTests.cs`: a Rename inside `asserterror` is rolled back, and a
+  Rename moves `Database.LastUsedRowVersion` (#4877).
 - `AlRunner.Tests/ObjectInventoryStoreReuseRuleTests.cs`: each clause of the reuse rule,
   including the widened store no platform-only fixture can produce.
 - `AlRunner.Tests/AllObjInventoryStampTests.cs`: a registered, replaced or extended enum moves the
