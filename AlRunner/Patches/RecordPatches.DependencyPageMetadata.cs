@@ -291,19 +291,23 @@ public static partial class RecordPatches
     /// (docs/dependency-page-properties.md#field-control-application-area). A pageextension's
     /// control answers its own; a <c>modify()</c> replaces either (#4761's rule).</para>
     /// </summary>
-    internal static IEnumerable<(int Id, string? ApplicationArea)> DependencyFieldControlAreas(int pageId)
+    /// <para><c>ModifiedArea</c> is the precompiled extensions' <c>modify()</c> value alone, so a
+    /// source extension's <c>modify()</c> of the same control can be checked against it (#4866).</para>
+    internal static IEnumerable<(int Id, string? ApplicationArea, string? ModifiedArea)> DependencyFieldControlAreas(int pageId)
     {
         if (AlPageMetadataRegistry.TryGet(pageId, out _)) yield break;
         var page = TryGetDependencyPageSymbol(pageId);
         if (page == null) yield break;
         foreach (var control in page.Controls ?? new List<BcAppSymbolCache.PageControlSymbol>())
-            yield return (control.Id,
-                DependencyPageExtensionModifiedProperty(page.Name, control.Name, "ApplicationArea", isAction: false)
-                ?? control.ApplicationArea ?? page.ApplicationArea);
+        {
+            var modified = DependencyPageExtensionModifiedProperty(page.Name, control.Name, "ApplicationArea", isAction: false);
+            yield return (control.Id, modified ?? control.ApplicationArea ?? page.ApplicationArea, modified);
+        }
         foreach (var control in DependencyPageExtensionFieldControls(page.Name))
-            yield return (control.Id,
-                DependencyPageExtensionModifiedProperty(page.Name, control.Name, "ApplicationArea", isAction: false)
-                ?? control.ApplicationArea);
+        {
+            var modified = DependencyPageExtensionModifiedProperty(page.Name, control.Name, "ApplicationArea", isAction: false);
+            yield return (control.Id, modified ?? control.ApplicationArea, modified);
+        }
     }
 
     /// <summary>

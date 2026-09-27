@@ -170,6 +170,32 @@ public class DependencyFieldControlApplicationAreaTests
                 ApplicationAreaControlRemoval.DependencyFieldControlsToRemove(NoAreaPageId, BasicSuiteSession));
         });
 
+    // #4866: a source pageextension's modify() of ApplicationArea, applied on the precompiled path.
+    [Fact]
+    public void SourceModifyOfApplicationArea_ReplacesAPrecompiledControlsArea()
+        => WithDependencyApp(() =>
+        {
+            var changes = new Dictionary<int, string> { [InheritsId] = "#Service", [ServiceId] = "#Suite" };
+            var removed = ApplicationAreaControlRemoval.DependencyFieldControlsToRemove(PageId, BasicSuiteSession, changes)
+                .OrderBy(id => id).ToArray();
+            // InheritsCtl moves out of #Basic,#Suite and is removed; ServiceCtl moves into #Suite and is kept.
+            Assert.Equal(new[] { InheritsId, ModifiedId, ExtOwnId, ExtNoneId }.OrderBy(id => id).ToArray(), removed);
+        });
+
+    [Fact]
+    public void SourceAndPrecompiledModifyToDifferentAreas_Refuse_ToTheSameAreaDoNot()
+        => WithDependencyApp(() =>
+        {
+            var ex = Assert.Throws<AlRunner.Infrastructure.RunnerOutOfScopeException>(() =>
+                ApplicationAreaControlRemoval.DependencyFieldControlsToRemove(
+                    PageId, BasicSuiteSession, new Dictionary<int, string> { [ModifiedId] = "#Suite" }).ToList());
+            Assert.Contains("'#Jobs'", ex.Message, StringComparison.Ordinal);
+            Assert.Contains("'#Suite'", ex.Message, StringComparison.Ordinal);
+
+            Assert.Contains(ModifiedId, ApplicationAreaControlRemoval.DependencyFieldControlsToRemove(
+                PageId, BasicSuiteSession, new Dictionary<int, string> { [ModifiedId] = "#Jobs" }));
+        });
+
     [Fact]
     public void PageTheRunnerCompiled_ContributesNothing_BcsOwnPassReadsItsRealControls()
         => WithDependencyApp(() =>

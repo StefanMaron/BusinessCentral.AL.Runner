@@ -207,6 +207,19 @@ pageextensions add states its own area, and one `modify()` across the platform a
 A group's `ApplicationArea` does not reach the fields inside it: `MetadataProvider.RemoveControl`
 tests a `ControlDefinition` only, and a group is a `ControlGroupDefinition`.
 
+### Source-compiled pageextensions (#4866)
+
+The runner's `MasterPage` carries no pageextension delta, on any host page, so a pageextension
+compiled in the bundle is read from its own emitted `MetadataRuntimeDeltas` document instead
+(`RecordPatches.SourcePageExtensionAreas`): each `ControlDefinition` under a `ControlAdd` answers
+its own `ApplicationArea` attribute or none, and a `ControlChange` carrying `ApplicationArea`
+replaces the target control's area. The same rule table applies. BC's compiler writes no
+`ApplicationArea` on an extension control that states none, even when the base page states one at
+object level — it copies the page's area onto the page's own controls only. Corpus codeunits 67535
+(a page compiled in the same app) and 67536 (a precompiled Base Application page) put all three
+rows in front of a service tier. Actions and parts a source pageextension adds are not covered
+yet (#4871).
+
 ## What is deliberately not implemented, and why
 
 - **`ActionContainers` / `ViewContainers`.** BC writes `ActionContainers` on all 235 pages

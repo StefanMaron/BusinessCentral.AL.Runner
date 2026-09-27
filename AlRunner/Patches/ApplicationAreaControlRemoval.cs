@@ -31,6 +31,11 @@
 // control's area comes from the symbol file (RecordPatches.DependencyFieldControlAreas) and is
 // tested with the same IsApplicationAreaEnabled. Corpus codeunit 67534;
 // docs/dependency-page-properties.md#field-control-application-area.
+//
+// Source-compiled pageextensions (#4866): the MasterPage carries no extension delta, so the
+// controls one adds, and the area its modify() sets, come from its own delta document
+// (RecordPatches.SourcePageExtensionAreas), on a source-compiled or a precompiled page alike.
+// Corpus codeunits 67535 and 67536.
 using System.Reflection;
 using AlRunner.Infrastructure;
 using Microsoft.Dynamics.Nav.Runtime;
@@ -144,6 +149,9 @@ public static class ApplicationAreaControlRemoval
         var removedActions = new HashSet<int>();
         _removing = removed;
         _removingActions = removedActions;
+        // Not for a request page: its ID is a report's, which can equal a page's.
+        var extensionAreas = isRequestPage ? null : RecordPatches.SourcePageExtensionAreas(page.ID);
+        _areaChanges = extensionAreas?.AreaChanges;
         void Remove(IList<ControlBaseDefinition>? controls, Delegate selector)
         {
             if (controls == null) return;
@@ -177,14 +185,18 @@ public static class ApplicationAreaControlRemoval
             Remove(page.InfopartsArea?.Controls, _getPart!);
             // A precompiled page's metadata carries no field controls (DependencyPageMetadataXml),
             // so their areas come from its symbol file, through the same BC predicate (#4796).
-            // Not for a request page: its ID is a report's, which can equal a page's.
-            if (!isRequestPage)
-                removed.UnionWith(DependencyFieldControlsToRemove(page.ID, area => _isApplicationAreaEnabled!(area!, null!)));
+            if (extensionAreas != null)
+            {
+                bool IsEnabled(string? area) => _isApplicationAreaEnabled!(area!, null!);
+                removed.UnionWith(DependencyFieldControlsToRemove(page.ID, IsEnabled, extensionAreas.AreaChanges));
+                removed.UnionWith(SourceExtensionFieldControlsToRemove(extensionAreas, IsEnabled));
+            }
         }
         finally
         {
             _removing = null;
             _removingActions = null;
+            _areaChanges = null;
         }
         if (removed.Count > 0) RemovedIds.AddOrUpdate(page, removed);
         if (removedActions.Count > 0) RemovedActionIds.AddOrUpdate(page, removedActions);
@@ -220,16 +232,45 @@ public static class ApplicationAreaControlRemoval
     /// RemoveControl's ControlDefinition arm, over areas read from the page's symbol file. A
     /// symbol-file control has no ResourceIdentifier, so the area alone decides (#4796).
     /// </summary>
-    internal static IEnumerable<int> DependencyFieldControlsToRemove(int pageId, Func<string?, bool> isAreaEnabled)
+    internal static IEnumerable<int> DependencyFieldControlsToRemove(
+        int pageId, Func<string?, bool> isAreaEnabled, IReadOnlyDictionary<int, string>? areaChanges = null)
         => RecordPatches.DependencyFieldControlAreas(pageId)
-            .Where(control => !isAreaEnabled(control.ApplicationArea))
+            .Where(control => !isAreaEnabled(AreaAfterSourceChange(pageId, control, areaChanges)))
             .Select(control => control.Id);
+
+    // A precompiled and a source extension modify()ing one control to different areas refuse, as
+    // two extensions within either set do: which BC applies has not been measured (#4866).
+    private static string? AreaAfterSourceChange(
+        int pageId, (int Id, string? ApplicationArea, string? ModifiedArea) control, IReadOnlyDictionary<int, string>? areaChanges)
+    {
+        if (areaChanges == null || !areaChanges.TryGetValue(control.Id, out var changed)) return control.ApplicationArea;
+        if (control.ModifiedArea != null && !string.Equals(control.ModifiedArea, changed, StringComparison.Ordinal))
+            throw TestPageShapeGap.ControlProperty(
+                $"TestPage ApplicationArea on page {pageId} control {control.Id}",
+                $"a precompiled pageextension modifies it to '{control.ModifiedArea}' and a source pageextension "
+                + $"to '{changed}', and which one BC applies has not been measured (#4866)");
+        return changed;
+    }
+
+    /// <summary>
+    /// The field controls source-compiled pageextensions add that <paramref name="isAreaEnabled"/>
+    /// rejects: a control's own area, or none — it does not take the base page's (#4866).
+    /// </summary>
+    internal static IEnumerable<int> SourceExtensionFieldControlsToRemove(
+        RecordPatches.SourcePageExtensionAreaSet areas, Func<string?, bool> isAreaEnabled)
+        => areas.AddedFieldControls
+            .Where(control => !isAreaEnabled(AreaAfterChanges(control.Id, control.ApplicationArea, areas.AreaChanges)))
+            .Select(control => control.Id);
+
+    private static string? AreaAfterChanges(int controlId, string? area, IReadOnlyDictionary<int, string>? areaChanges)
+        => areaChanges != null && areaChanges.TryGetValue(controlId, out var changed) ? changed : area;
 
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<MasterPage, HashSet<int>> RemovedIds = new();
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<MasterPage, HashSet<int>> RemovedActionIds = new();
 
     [ThreadStatic] private static HashSet<int>? _removing;
     [ThreadStatic] private static HashSet<int>? _removingActions;
+    [ThreadStatic] private static IReadOnlyDictionary<int, string>? _areaChanges;
 
     private static IList<ActionBaseDefinition> ActionChildren(ActionBaseDefinition node) => node.Actions;
 
@@ -249,7 +290,8 @@ public static class ApplicationAreaControlRemoval
         switch (element)
         {
             case ControlDefinition control:
-                return !_isApplicationAreaEnabled!(control.ApplicationArea, control.ResourceIdentifier);
+                return !_isApplicationAreaEnabled!(
+                    AreaAfterChanges(control.ID, control.ApplicationArea, _areaChanges)!, control.ResourceIdentifier);
             case InfopartPageDefinition part when !_propertyIsFalse!(part.Visible):
                 return !_isApplicationAreaEnabled!(part.ApplicationArea, part.ResourceIdentifier);
             case InfopartSystemDefinition systemPart:
