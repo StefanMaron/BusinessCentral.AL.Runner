@@ -127,8 +127,10 @@ public static class ApplicationAreaControlRemoval
     /// Mirrors that method's control lists; the removal itself is BC's RemoveInList.
     /// </summary>
     public static object RemoveByApplicationArea(object provider, object masterPage, object? relatedMasterPages)
+        => Remove((MasterPage)masterPage, relatedMasterPages, isRequestPage: false);
+
+    private static MasterPage Remove(MasterPage page, object? relatedMasterPages, bool isRequestPage)
     {
-        var page = (MasterPage)masterPage;
         if (_removeInList == null) throw new InvalidOperationException("ApplicationAreaControlRemoval.Bind was not called");
         if (NavCurrentThread.Session is not { } session || session.IsApplicationAreaEnabled(null!)) return page;
 
@@ -168,6 +170,11 @@ public static class ApplicationAreaControlRemoval
             Remove(page.PromptOptionsArea?.Controls, _getControl!);
             Remove(page.UserControlHostNavigationArea?.Controls, _getControl!);
             Remove(page.InfopartsArea?.Controls, _getPart!);
+            // A precompiled page's metadata carries no field controls (DependencyPageMetadataXml),
+            // so their areas come from its symbol file, through the same BC predicate (#4796).
+            // Not for a request page: its ID is a report's, which can equal a page's.
+            if (!isRequestPage)
+                removed.UnionWith(DependencyFieldControlsToRemove(page.ID, area => _isApplicationAreaEnabled!(area!, null!)));
         }
         finally
         {
@@ -184,7 +191,7 @@ public static class ApplicationAreaControlRemoval
     /// with no ContentArea is the runner's own request-page stub (NavReportSync), left as is.
     /// </summary>
     public static MasterPage RemoveFromRequestPage(MasterPage page) =>
-        page.ContentArea == null ? page : (MasterPage)RemoveByApplicationArea(null!, page, null);
+        page.ContentArea == null ? page : Remove(page, null, isRequestPage: true);
 
     /// <summary>
     /// Whether this page's application-area pass removed the control. The runner's TestPage
@@ -202,6 +209,16 @@ public static class ApplicationAreaControlRemoval
     /// </summary>
     public static bool WasActionRemoved(MasterPage? page, int actionId) =>
         page != null && RemovedActionIds.TryGetValue(page, out var ids) && ids.Contains(actionId);
+
+    /// <summary>
+    /// The field controls of a precompiled page that <paramref name="isAreaEnabled"/> rejects —
+    /// RemoveControl's ControlDefinition arm, over areas read from the page's symbol file. A
+    /// symbol-file control has no ResourceIdentifier, so the area alone decides (#4796).
+    /// </summary>
+    internal static IEnumerable<int> DependencyFieldControlsToRemove(int pageId, Func<string?, bool> isAreaEnabled)
+        => RecordPatches.DependencyFieldControlAreas(pageId)
+            .Where(control => !isAreaEnabled(control.ApplicationArea))
+            .Select(control => control.Id);
 
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<MasterPage, HashSet<int>> RemovedIds = new();
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<MasterPage, HashSet<int>> RemovedActionIds = new();

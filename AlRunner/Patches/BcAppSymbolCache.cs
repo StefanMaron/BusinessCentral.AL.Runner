@@ -654,7 +654,10 @@ internal static partial class BcAppSymbolCache
     /// </summary>
     internal sealed record PageControlSymbol(
         int Id, string Name, string SourceExpression,
-        string? VisibleExpr, string? EditableExpr, string? EnabledExpr, int Sequence);
+        string? VisibleExpr, string? EditableExpr, string? EnabledExpr, int Sequence,
+        // The control's OWN ApplicationArea, verbatim; null when it states none. Inheriting the
+        // host page's is the consumer's job (#4796, RecordPatches.DependencyFieldControlAreas).
+        string? ApplicationArea = null);
 
     /// <summary>
     /// A precompiled dependency's report, as far as SymbolReference.json states it. Feeds
@@ -2035,6 +2038,7 @@ internal static partial class BcAppSymbolCache
                 props.TryGetValue("Visible", out var visible);
                 props.TryGetValue("Editable", out var editable);
                 props.TryGetValue("Enabled", out var enabled);
+                props.TryGetValue("ApplicationArea", out var applicationArea);
                 // 0-based, POST-increment (#3631). BC numbers its FindAll walk with
                 // `Select((cd, i) => …)`, an index captured before the OrderBy that sorts by
                 // control id, so the first control is 0. This path was left 1-based when
@@ -2043,7 +2047,7 @@ internal static partial class BcAppSymbolCache
                 // because Page Control Field's Sequence then meant different things for a
                 // source-compiled and a precompiled-dependency page and AL cannot see which
                 // it has.
-                into.Add(new PageControlSymbol(id, name!, srcExpr, visible, editable, enabled, sequence++));
+                into.Add(new PageControlSymbol(id, name!, srcExpr, visible, editable, enabled, sequence++, applicationArea));
             }
         }
 
