@@ -20,7 +20,7 @@
 // UpdateClonedActionsFromOriginates, with the application-area branches of RemoveAction and its
 // four RemoveXxxDefinition helpers (decompiled bc284). Corpus codeunit 67531
 // "PAA Area Action Tests". Request pages are not filtered: they are built outside GetMasterPage
-// (NavReportSync.GetRealMetaReport) and cached per report, not per session.
+// (NavReportSync.GetRealMetaReport) and cached per report, not per session (#4829).
 using System.Reflection;
 using AlRunner.Infrastructure;
 using Microsoft.Dynamics.Nav.Runtime;

@@ -105,6 +105,38 @@ public sealed class ApplicationAreaControlRemovalTests : IDisposable
                     }
                 }
             }
+            actions
+            {
+                area(Processing)
+                {
+                    action(BasicAction)
+                    {
+                        ApplicationArea = Basic;
+                        trigger OnAction()
+                        begin
+                            Rec."Basic Value" := 'ACT';
+                            Rec.Modify();
+                        end;
+                    }
+                    action(ServiceAction)
+                    {
+                        ApplicationArea = Service;
+                        trigger OnAction()
+                        begin
+                        end;
+                    }
+                    group(Functions)
+                    {
+                        action(NestedServiceAction)
+                        {
+                            ApplicationArea = Service;
+                            trigger OnAction()
+                            begin
+                            end;
+                        }
+                    }
+                }
+            }
         }
 
         codeunit 90751 "AACR Test"
@@ -176,6 +208,70 @@ public sealed class ApplicationAreaControlRemovalTests : IDisposable
                     Error('the #Basic control must write its field, got %1', R."Basic Value");
             end;
 
+            // #4795: actions go through the same pass, and a removed one is BC's own
+            // "The action with ID = ... is not found on the page."
+            local procedure InvokeServiceActionUnder(Areas: Text; Nested: Boolean): Text
+            var
+                R: Record "AACR Record";
+                P: TestPage "AACR Card";
+                Prev: Text;
+            begin
+                MakeRecord(R);
+                Prev := ApplicationArea();
+                ApplicationArea(Areas);
+                P.OpenEdit();
+                P.GoToRecord(R);
+                ClearLastError();
+                if Nested then
+                    asserterror P.NestedServiceAction.Invoke()
+                else
+                    asserterror P.ServiceAction.Invoke();
+                ApplicationArea(Prev);
+                exit(GetLastErrorText());
+            end;
+
+            [Test]
+            procedure AreaNotEnabled_ServiceActionIsNotFound()
+            var
+                Err: Text;
+            begin
+                Err := InvokeServiceActionUnder('#Basic,#Suite', false);
+                if StrPos(Err, 'The action with ID = ') = 0 then
+                    Error('expected the #Service action to be not found, got: %1', Err);
+                if StrPos(Err, 'is not found on the page.') = 0 then
+                    Error('expected the #Service action to be not found, got: %1', Err);
+            end;
+
+            [Test]
+            procedure AreaNotEnabled_NestedServiceActionIsNotFound()
+            var
+                Err: Text;
+            begin
+                Err := InvokeServiceActionUnder('#Basic,#Suite', true);
+                if StrPos(Err, 'The action with ID = ') = 0 then
+                    Error('expected the nested #Service action to be not found, got: %1', Err);
+            end;
+
+            [Test]
+            procedure AreaNotEnabled_BasicActionRuns()
+            var
+                R: Record "AACR Record";
+                P: TestPage "AACR Card";
+                Prev: Text;
+            begin
+                MakeRecord(R);
+                Prev := ApplicationArea();
+                ApplicationArea('#Basic,#Suite');
+                P.OpenEdit();
+                P.GoToRecord(R);
+                P.BasicAction.Invoke();
+                P.Close();
+                ApplicationArea(Prev);
+                R.Get('A');
+                if R."Basic Value" <> 'ACT' then
+                    Error('the #Basic action must run its OnAction, got %1', R."Basic Value");
+            end;
+
             [Test]
             procedure AreaEnabled_ServiceControlIsFound()
             begin
@@ -194,15 +290,15 @@ public sealed class ApplicationAreaControlRemovalTests : IDisposable
     }
 
     [SkippableFact]
-    public void TestPage_ControlWhoseAreaIsNotEnabled_IsNotFound_OthersAre()
+    public void TestPage_ControlOrActionWhoseAreaIsNotEnabled_IsNotFound_OthersAre()
     {
         WriteFixture();
         var (output, exit) = RunRunner(_root);
         TestArtifacts.SkipIf(output.Contains("no BC artifact") || output.Contains("[bc] no engines"),
             "no BC engine artifact provisioned in this environment");
 
-        Assert.True(exit == 0, $"expected all four AL tests to pass; exit={exit}\n{output}");
-        Assert.Contains("   passed 4 ", output);
+        Assert.True(exit == 0, $"expected all seven AL tests to pass; exit={exit}\n{output}");
+        Assert.Contains("   passed 7 ", output);
         Assert.DoesNotContain("FAIL", output);
     }
 }
