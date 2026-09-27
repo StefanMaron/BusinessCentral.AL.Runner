@@ -98,6 +98,52 @@ public class RenameWriteGuardTests
             end;
 
             [Test]
+            procedure RenameAppOwnedProfileToItsOwnKey_Succeeds()
+            var
+                AllProfile: Record "All Profile";
+                ThisModule: ModuleInfo;
+            begin
+                NavApp.GetCurrentModuleInfo(ThisModule);
+                AllProfile.Get(AllProfile.Scope::Tenant, ThisModule.Id(), 'IT4879 PROFILE');
+
+                // Not a key change, so BC's IsRecordKeyChange guard never reaches its refusal.
+                AllProfile.Rename(AllProfile.Scope::Tenant, ThisModule.Id(), 'IT4879 PROFILE');
+
+                Clear(AllProfile);
+                if not AllProfile.Get(AllProfile.Scope::Tenant, ThisModule.Id(), 'IT4879 PROFILE') then
+                    Error('a Rename onto its own key must leave the profile where it is');
+            end;
+
+            [Test]
+            procedure RenameTenantProfileOntoAnAppId_IsRefused()
+            var
+                AllProfile: Record "All Profile";
+                ThisModule: ModuleInfo;
+                EmptyGuid: Guid;
+            begin
+                NavApp.GetCurrentModuleInfo(ThisModule);
+                AllProfile.Init();
+                AllProfile.Scope := AllProfile.Scope::Tenant;
+                AllProfile."Profile ID" := 'IT4879 TENANT X';
+                AllProfile."Role Center ID" := Page::"IT4879 RC";
+                AllProfile.Enabled := false;
+                AllProfile.Insert();
+                // asserterror rolls back to the last commit point, which would take the Insert too.
+                Commit();
+
+                // The App ID the row is renamed TO is an installed app's: BC judges the new key.
+                asserterror AllProfile.Rename(AllProfile.Scope::Tenant, ThisModule.Id(), 'IT4879 TENANT X');
+                if StrPos(GetLastErrorText(), 'part of an installed app') = 0 then
+                    Error('REFUSAL: expected the installed-app refusal, got <%1>', GetLastErrorText());
+
+                Clear(AllProfile);
+                if not AllProfile.Get(AllProfile.Scope::Tenant, EmptyGuid, 'IT4879 TENANT X') then
+                    Error('a refused Rename must leave the tenant profile under its old key');
+                if AllProfile.Get(AllProfile.Scope::Tenant, ThisModule.Id(), 'IT4879 TENANT X') then
+                    Error('a refused Rename must not create the new key');
+            end;
+
+            [Test]
             procedure RenameTenantOwnedProfile_Succeeds()
             var
                 AllProfile: Record "All Profile";
@@ -171,8 +217,8 @@ public class RenameWriteGuardTests
             foreach (var pass in new[] { "cold", "warm" })
             {
                 var (output, exit) = AllObjPopulateCostTests.RunRunner(cache, app);
-                Assert.True(exit == 0 && output.Contains("3P/0F/0E"),
-                    $"{pass} run: expected all 3 rename-guard tests to pass (exit {exit}), got:\n{output}");
+                Assert.True(exit == 0 && output.Contains("5P/0F/0E"),
+                    $"{pass} run: expected all 5 rename-guard tests to pass (exit {exit}), got:\n{output}");
             }
         }
         finally

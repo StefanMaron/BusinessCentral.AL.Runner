@@ -81,7 +81,9 @@ public static class AllProfileWritePatches
     /// <para>Observably equivalent to TenantProfileTableDataHandler.ModifyAsync on a key change: it
     /// reads App ID and Profile ID off the record being written — the key it is renamed TO — and
     /// refuses a non-tenant App ID with ModifySpecificFieldsOnAppProfileNotAllowed naming the new
-    /// Profile ID. Corpus: 60907 AllProfile_RenameAppOwnedProfile_IsRefused.</para>
+    /// Profile ID — only when App ID or Profile ID actually changes (IsRecordKeyChange). Corpus:
+    /// 60907 AllProfile_RenameAppOwnedProfile_IsRefused, _RenameAppOwnedProfileToItsOwnKey_Succeeds,
+    /// _RenameTenantProfileOntoAnAppId_IsRefused.</para>
     /// <para>Not reproduced: the empty-Profile-ID refusal BC makes next for a tenant profile.</para>
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -89,6 +91,11 @@ public static class AllProfileWritePatches
     {
         if (Subject(record) is not { } rec) return;
         var (appId, profileId) = NewKeyOf(rec, newKey);
+        // BC refuses only inside `if (IsRecordKeyChange(recordBuffer))`: a Rename onto the
+        // row's own App ID and Profile ID changes nothing it judges (#4883 review).
+        var (oldAppId, oldProfileId) = KeyOf(rec);
+        if (appId == oldAppId && string.Equals(profileId, oldProfileId, StringComparison.Ordinal))
+            return;
         if (appId != RecordPatches.AllProfileTenantAppId)
             throw NavCSideError(Message("ModifySpecificFieldsOnAppProfileNotAllowed"), profileId);
     }
