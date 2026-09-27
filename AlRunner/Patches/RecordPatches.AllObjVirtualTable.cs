@@ -192,10 +192,17 @@ public static partial class RecordPatches
     private readonly record struct AllObjInventoryRow(int TypeOrdinal, int Id, Array Values);
 
     // Rows per (app group, visibility) for ONE stamp; a new stamp drops them all. The metatable is
-    // kept beside them because the rows are laid out by its field indexes.
+    // kept beside them because the rows are laid out by its field indexes. A class holding it as
+    // `object`, never a tuple: a static whose signature names a value type with a Nav field loads
+    // CodeAnalysis before --bc-version is parsed (ProgramMustNotNameNavCaValueTypesTests).
+    private sealed class AllObjInventoryEntry
+    {
+        public required object MetaTable;
+        public required AllObjInventoryRow[] Rows;
+    }
     private static readonly object _aovInventoryLock = new();
     private static AllObjInventoryStamp? _aovInventoryStamp;
-    private static readonly Dictionary<(Guid? AppGroup, string Visibility), (NCLMetaTable MetaTable, AllObjInventoryRow[] Rows)> _aovInventory = new();
+    private static readonly Dictionary<(Guid? AppGroup, string Visibility), AllObjInventoryEntry> _aovInventory = new();
     private static readonly ConditionalWeakTable<object, HashSet<AllObjInventoryKey>> _aovAppliedByProvider = new();
 
     /// <summary>Full inventory walks and AllObj data-access handouts since process start — what
@@ -264,7 +271,7 @@ public static partial class RecordPatches
                 _aovInventory.Clear();
                 _aovInventoryStamp = key.Stamp;
             }
-            _aovInventory[(key.AppGroup, key.Visibility)] = (allObjMetaTable, built);
+            _aovInventory[(key.AppGroup, key.Visibility)] = new AllObjInventoryEntry { MetaTable = allObjMetaTable, Rows = built };
         }
         return built;
     }
