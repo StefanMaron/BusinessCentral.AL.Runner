@@ -1577,7 +1577,7 @@ public static partial class NavReportSync
                 if (removeSlot < 0)
                     throw new InvalidOperationException("MetaReport ctor has no RemoveItemsOnPageBasedOnLicenseAndApplicationArea slot — BC metadata shape changed (#4829)");
                 args[removeSlot] = Delegate.CreateDelegate(ps2[removeSlot].ParameterType,
-                    typeof(AlRunner.Patches.ApplicationAreaControlRemoval).GetMethod(nameof(AlRunner.Patches.ApplicationAreaControlRemoval.RemoveFromRequestPage))!);
+                    ((Func<Microsoft.Dynamics.Nav.Types.Metadata.MasterPage, Microsoft.Dynamics.Nav.Types.Metadata.MasterPage>)AlRunner.Patches.ApplicationAreaControlRemoval.RemoveFromRequestPage).Method);
                 var meta = _metaReportCtor.Invoke(args);
 
                 // Force the request-page master page NOW rather than on first use, so a
