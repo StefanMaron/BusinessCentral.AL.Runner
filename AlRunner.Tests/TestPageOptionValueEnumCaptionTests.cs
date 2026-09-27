@@ -239,6 +239,19 @@ public sealed class TestPageOptionValueEnumCaptionTests
         Assert.Contains("declares no OptionCaption", ex.Message);
     }
 
+    // #4669 left the Enum branch alone: an Enum control with known captions still refuses an
+    // undeclared value as out-of-scope, even when a control caption is available.
+    [Fact]
+    public void Resolve_EnumControlWithKnownCaptions_StillRefusesOutOfScope()
+    {
+        var current = NavOption.Create(BuildEnumMetadata(), 0);
+
+        var ex = Assert.Throws<RunnerOutOfScopeException>(() =>
+            TestPageOptionValue.Resolve(current, "Not A Kind", TestPageOptionValue.EnumCaptions(current),
+                "test", controlCaption: "Kind"));
+        Assert.Contains("Enum-typed control", ex.Message);
+    }
+
     // ── DisplayOrdinal — issue #2367 ────────────────────────────────────────────────
     //
     // The runner-mechanism half of #2367. The BC-behaviour claim ("AssertEquals on an
