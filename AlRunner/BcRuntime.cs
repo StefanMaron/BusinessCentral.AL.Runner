@@ -189,6 +189,14 @@ public static partial class BcRuntime
     public static (Guid AppId, string Name, string Publisher, string Version) GetModuleAppInfoFor(Assembly asm)
         => _moduleInfoByAssembly.TryGetValue(asm, out var info) ? info : _currentBundleInfo;
 
+    /// <summary>The app id <paramref name="asm"/> was registered under; false for an unregistered
+    /// assembly or one registered without an app id. No fallback to the current bundle.</summary>
+    internal static bool TryGetModuleAppId(Assembly asm, out Guid appId)
+    {
+        appId = _moduleInfoByAssembly.TryGetValue(asm, out var info) ? info.AppId : Guid.Empty;
+        return appId != Guid.Empty;
+    }
+
     /// <summary>
     /// Stack-walk version of <see cref="GetModuleAppInfoFor"/> for use from the Cecil
     /// patch on <c>ALNavApp.ALGetCurrentModuleInfo</c> in precompiled deps (where

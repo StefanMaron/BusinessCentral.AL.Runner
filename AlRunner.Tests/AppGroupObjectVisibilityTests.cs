@@ -303,11 +303,24 @@ public class AppGroupObjectVisibilityTests
                 fields
                 {
                     field(1; "Code"; Code[20]) { }
-                    field(2; "Only{{letter}}"; Integer) { trigger OnValidate() begin Mark := 'V{{letter}}'; end; }
+                    field(2; "Only{{letter}}"; Integer) { Editable = {{(xOnly == "true" ? "false" : "true")}}; trigger OnValidate() begin Mark := 'V{{letter}}'; end; }
                     field(3; Mark; Code[10]) { }
                     field(4; Seq; Integer) { AutoIncrement = {{autoIncrement}}; }
                 }
                 keys { key(PK; "Code") { Clustered = true; } }
+                // #4834: one event name both groups declare on their table 62680, and one only this group does.
+                procedure RaiseShared(): Text
+                var
+                    Tag: Text;
+                begin
+                    OnShared(Tag);
+                    OnOwn{{letter}}(Tag);
+                    exit(Tag);
+                end;
+                [IntegrationEvent(false, false)]
+                local procedure OnShared(var Tag: Text) begin end;
+                [IntegrationEvent(false, false)]
+                local procedure OnOwn{{letter}}(var Tag: Text) begin end;
             }
             codeunit {{subsId}} "Dup {{letter}} Subs"
             {
@@ -317,7 +330,25 @@ public class AppGroupObjectVisibilityTests
                 local procedure OnAfterInsert(var Rec: Record "Dup {{letter}} Table")
                 begin
                     Fired += 'S{{letter}}';
+                    // #4834: a Z-coded row inserted by the OTHER group must never reach this subscriber.
+                    if (CopyStr(Rec.Code, 1, 1) = 'Z') and (Rec.Code <> 'Z{{letter}}') then
+                        Error('LEAK: the OnAfterInsert subscriber of {{letter}} fired for row %1', Rec.Code);
                 end;
+                [EventSubscriber(ObjectType::Table, Database::"Dup {{letter}} Table", 'OnAfterValidateEvent', 'Code', false, false)]
+                local procedure OnAfterValidateCode(var Rec: Record "Dup {{letter}} Table")
+                begin
+                    if (CopyStr(Rec.Code, 1, 1) = 'Z') and (Rec.Code <> 'Z{{letter}}') then
+                        Error('LEAK: the OnAfterValidate subscriber of {{letter}} fired for row %1', Rec.Code);
+                    Fired += 'W{{letter}}';
+                end;
+                [EventSubscriber(ObjectType::Table, Database::"Dup {{letter}} Table", 'OnShared', '', false, false)]
+                local procedure OnSharedEvent(var Tag: Text) begin Tag += 'E{{letter}}'; end;
+                [EventSubscriber(ObjectType::Table, Database::"Dup {{letter}} Table", 'OnOwn{{letter}}', '', false, false)]
+                local procedure OnOwnEvent(var Tag: Text) begin Tag += 'O{{letter}}'; end;
+                [EventSubscriber(ObjectType::Report, Report::"Dup {{letter}} Report", 'OnReportShared', '', false, false)]
+                local procedure OnReportSharedEvent(var Tag: Text) begin Tag += 'R{{letter}}'; end;
+                [EventSubscriber(ObjectType::Codeunit, Codeunit::"Dup {{letter}} Pub", 'OnCodeunitShared', '', false, false)]
+                local procedure OnCodeunitSharedEvent(var Tag: Text) begin Tag += 'C{{letter}}'; end;
                 procedure Take(): Text
                 var
                     T: Text;
@@ -336,6 +367,27 @@ public class AppGroupObjectVisibilityTests
                 UseRequestPage = {{(xOnly == "true" ? "false" : "true")}};
                 dataset { dataitem(T{{letter}}; "Dup {{letter}} Table") { } }
                 trigger OnPreReport() begin Error('RAN REPORT {{letter}}'); end;
+                procedure RaiseShared(): Text
+                var
+                    Tag: Text;
+                begin
+                    OnReportShared(Tag);
+                    exit(Tag);
+                end;
+                [IntegrationEvent(false, false)]
+                local procedure OnReportShared(var Tag: Text) begin end;
+            }
+            codeunit 62689 "Dup {{letter}} Pub"
+            {
+                procedure RaiseShared(): Text
+                var
+                    Tag: Text;
+                begin
+                    OnCodeunitShared(Tag);
+                    exit(Tag);
+                end;
+                [IntegrationEvent(false, false)]
+                local procedure OnCodeunitShared(var Tag: Text) begin end;
             }
             page 62687 "Dup {{letter}} Page"
             {
@@ -344,6 +396,10 @@ public class AppGroupObjectVisibilityTests
                 DelayedInsert = {{xOnly}};
                 RefreshOnActivate = {{xOnly}};
                 layout { area(Content) { field(C{{letter}}; Rec.Code) { } field(O{{letter}}; Rec."Only{{letter}}") { } } }
+            }
+            pageextension 62689 "Dup {{letter}} PageExt" extends "Dup {{letter}} Page"
+            {
+                layout { addlast(Content) { field(E{{letter}}; Rec.Seq) { } } }
             }
             query 62688 "Dup {{letter}} Query" { elements { dataitem(T; "Dup {{letter}} Table") { column(C; Code) { } } } }
             codeunit {{cu}} "Dup {{letter}} Tests"
@@ -513,6 +569,63 @@ public class AppGroupObjectVisibilityTests
                     if PageMetadata.RefreshOnActivate <> {{xOnly}} then Error('WRONG: Page Metadata RefreshOnActivate for 62687 in {{letter}} is %1', PageMetadata.RefreshOnActivate);
                 end;
 
+                // #4834: an event declared on an object of a shared id reaches this group's own
+                // subscribers, and only those.
+                [Test]
+                procedure SharedTableDeclaredEventReachesOnlyThisGroupsSubscribers()
+                var
+                    Rec: Record "Dup {{letter}} Table";
+                    Got: Text;
+                begin
+                    Got := Rec.RaiseShared();
+                    if Got <> 'E{{letter}}O{{letter}}' then Error('WRONG: table-declared events on 62680 in {{letter}} reached subscribers %1', Got);
+                end;
+
+                [Test]
+                procedure SharedReportAndCodeunitEventsReachOnlyThisGroupsSubscribers()
+                var
+                    Rep: Report "Dup {{letter}} Report";
+                    Pub: Codeunit "Dup {{letter}} Pub";
+                    Got: Text;
+                begin
+                    Got := Rep.RaiseShared();
+                    if Got <> 'R{{letter}}' then Error('WRONG: report-declared event on 62686 in {{letter}} reached subscribers %1', Got);
+                    Got := Pub.RaiseShared();
+                    if Got <> 'C{{letter}}' then Error('WRONG: codeunit-declared event on 62689 in {{letter}} reached subscribers %1', Got);
+                end;
+
+                [Test]
+                procedure SharedTableTriggerEventReachesOnlyThisGroupsSubscribers()
+                var
+                    Rec: Record "Dup {{letter}} Table";
+                    Subs: Codeunit "Dup {{letter}} Subs";
+                begin
+                    Subs.Take();
+                    Rec.Validate(Code, 'Z{{letter}}');
+                    Rec.Insert();
+                    if Subs.Take() <> 'W{{letter}}S{{letter}}' then Error('WRONG: own OnAfterValidate and OnAfterInsert subscribers on 62680 did not fire once each in {{letter}}');
+                end;
+
+                // #4833: the Page Control Field rows for the shared page id are this group's controls.
+                [Test]
+                procedure SharedPageControlFieldIsThisGroupsOwn()
+                var
+                    PCF: Record "Page Control Field";
+                    Names: Text;
+                begin
+                    PCF.SetRange(PageNo, 62687);
+                    if PCF.FindSet() then
+                        repeat
+                            Names += PCF.ControlName + '=' + PCF.Editable + ',';
+                        until PCF.Next() = 0;
+                    // Only X declares field 2 Editable = false; each group's pageextension 62689 adds E.
+                    // Rows come in control-id order, and those ids differ between the groups.
+                    if (PCF.Count() <> 3) or (StrPos(Names, 'C{{letter}}=True,') = 0)
+                       or (StrPos(Names, 'O{{letter}}={{(xOnly == "true" ? "False" : "True")}},') = 0) or (StrPos(Names, 'E{{letter}}=True,') = 0)
+                    then
+                        Error('WRONG: Page Control Field names for 62687 in {{letter}} are %1', Names);
+                end;
+
                 [Test]
                 procedure SharedQueryAllObjWithCaptionIsThisGroupsOwn()
                 var
@@ -581,7 +694,7 @@ public class AppGroupObjectVisibilityTests
     {
         var (output, exitCode) = run;
         // The whole runner output as the message, so a red names the failing test and its WRONG: line.
-        Assert.True(output.Contains("23P/0F/0E across 23 tests"), output);
+        Assert.True(output.Contains("31P/0F/0E across 31 tests"), output);
         Assert.DoesNotContain("MISSING:", output);
         Assert.DoesNotContain("WRONG:", output);
         Assert.Equal(0, exitCode);
@@ -598,7 +711,7 @@ public class AppGroupObjectVisibilityTests
         await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
         var lines = await server.SendRequestStreamingAsync(RunTests(dirs));
         var (events, _) = ProtocolV2Streaming.Split(lines);
-        Assert.Equal(23, events.Count);
+        Assert.Equal(31, events.Count);
         foreach (var e in events)
             Assert.True(e.GetProperty("status").GetString() == "pass", string.Join(" | ", lines));
     }

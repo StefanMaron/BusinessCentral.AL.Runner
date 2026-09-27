@@ -476,7 +476,7 @@ public static partial class RecordPatches
         if (string.IsNullOrEmpty(baseName)) return new List<int>();
 
         var result = new List<int>();
-        foreach (var ext in _parsedPageExtensions.Values)
+        foreach (var ext in InAppGroupScope("pageextension", _parsedPageExtensions))
             if (NamesEqual(ext.BaseName, baseName))
                 result.Add(ext.Id);
         // Issue #2723's pageextension arm: a pageextension that itself ships PRECOMPILED in a

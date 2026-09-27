@@ -212,6 +212,30 @@ public static partial class RecordPatches
             ? g
             : null;
 
+    /// <summary>True when several source app groups declare (<paramref name="kind"/>,
+    /// <paramref name="id"/>), so each group's emitted assembly holds its own class for it (#4834).</summary>
+    internal static bool IsDeclaredBySeveralAppGroups(string kind, int id)
+        => _appGroupsSharingAnId.Count > 0
+           && _sourceObjectDeclarers.TryGetValue((NormalizeObjectTypeName(kind), id), out var d)
+           && d.Count > 1;
+
+    /// <summary>
+    /// True when a subscriber in <paramref name="subscriberAssembly"/> must not see an event of
+    /// <paramref name="publisherGroup"/>'s (<paramref name="kind"/>, <paramref name="id"/>): the
+    /// subscriber's own app group declares that id too, so it subscribes to its own object (#4834).
+    /// </summary>
+    internal static bool SubscribesToAnotherAppGroupsObject(string kind, int id, Guid publisherGroup, System.Reflection.Assembly subscriberAssembly)
+        => _appGroupsSharingAnId.Count > 0
+           && publisherGroup != Guid.Empty
+           && AlRunner.BcRuntime.TryGetModuleAppId(subscriberAssembly, out var subscriberGroup)
+           && SubscribesToAnotherAppGroupsObject(kind, id, publisherGroup, subscriberGroup, _sourceObjectDeclarers);
+
+    internal static bool SubscribesToAnotherAppGroupsObject(string kind, int id, Guid publisherGroup, Guid subscriberGroup,
+        IReadOnlyDictionary<(string Kind, int Id), HashSet<Guid>> declarers)
+        => subscriberGroup != publisherGroup
+           && declarers.TryGetValue((NormalizeObjectTypeName(kind), id), out var d)
+           && d.Contains(publisherGroup) && d.Contains(subscriberGroup);
+
     private static void ResetAppGroupObjectVisibilityForReload()
     {
         _sourceObjectOwners.Clear();
