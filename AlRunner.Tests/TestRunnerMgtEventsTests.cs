@@ -65,8 +65,7 @@ public sealed class TestRunnerMgtEventsTests
         return dirs!;
     }
 
-    private static string WriteBundle(string name, AppManifest? testRunner, string al, string target = "Cloud",
-        bool ownsTestRunnerRange = true)
+    private static string WriteBundle(string name, AppManifest? testRunner, string al, string target = "Cloud")
     {
         var root = TestScratch.Dir(name);
         if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
@@ -81,7 +80,7 @@ public sealed class TestRunnerMgtEventsTests
           "version": "1.0.0.0",
           "dependencies": [ {{dependency}} ],
           "platform": "27.0.0.0",
-          "idRanges": [ { "from": 64810, "to": 64819 }{{(ownsTestRunnerRange ? ", { \"from\": 130450, \"to\": 130459 }" : "")}} ],
+          "idRanges": [ { "from": 64810, "to": 64819 }, { "from": 130450, "to": 130459 } ],
           "runtime": "14.0",
           "target": "{{target}}"
         }
@@ -226,7 +225,7 @@ public sealed class TestRunnerMgtEventsTests
     public void TestRunnerNotDeclared_IsLoadedAsTheInstalledTestTool()
     {
         var dirs = RequireProvisioned();
-        var bundle = WriteBundle("al-runner-test-runner-events-4816-undeclared", null, ownsTestRunnerRange: false, al: """
+        var bundle = WriteBundle("al-runner-test-runner-events-4816-undeclared", null, """
             codeunit 64811 "TRE Undeclared Tests"
             {
                 Subtype = Test;
@@ -264,6 +263,8 @@ public sealed class TestRunnerMgtEventsTests
         HasLine(output, "PASS", "C_StartsWithLastErrorCleared");
         Lacks(output, "TRE6 FAIL");
         Lacks(output, "TRE7 FAIL");
+        // Test Runner compiles against System alone, so none of its objects is excluded on AL0275.
+        Lacks(output, "AL0275");
         Assert.Equal(0, exit);
     }
 
@@ -290,15 +291,28 @@ public sealed class TestRunnerMgtEventsTests
         var kept = ProgramSupport.WithInstalledTestTool(new List<DependencyRef> { declared }, Array.Empty<string>(), holding);
         Assert.Single(kept);
 
-        // A bundle app whose idRanges cover 130454 keeps its own objects there; one that does not, does not.
-        var covering = Path.Combine(empty, "covering.json");
-        File.WriteAllText(covering, """{ "id": "b4816000-0000-4000-8000-000000004816", "idRanges": [ { "from": 130450, "to": 130459 } ] }""");
-        var beside = Path.Combine(empty, "beside.json");
-        File.WriteAllText(beside, """{ "id": "b4816000-0000-4000-8000-000000004817", "idRanges": [ { "from": 130455, "to": 130459 } ] }""");
+        // Only a codeunit the suite itself defines at 130453/130454 keeps Microsoft's app out; an
+        // id range covering 130454 with nothing there does not (Microsoft's Email - SMTP test apps
+        // declare 100000-150000).
+        var defines130454 = WriteApp("defines-130454", "codeunit 130454 \"My Test Mgt\" { }");
+        var defines130453 = WriteApp("defines-130453", "codeunit 130453 \"My Reset\" { }");
+        var rangeOnly = WriteApp("range-only", "// codeunit 130454 is not declared here\ncodeunit 130455 \"Beside\" { }");
         Assert.Equal(new[] { other.AppId },
-            ProgramSupport.WithInstalledTestTool(new List<DependencyRef> { other }, new[] { covering }, holding).Select(r => r.AppId));
+            ProgramSupport.WithInstalledTestTool(new List<DependencyRef> { other }, new[] { defines130454 }, holding).Select(r => r.AppId));
+        Assert.Equal(new[] { other.AppId },
+            ProgramSupport.WithInstalledTestTool(new List<DependencyRef> { other }, new[] { defines130453 }, holding).Select(r => r.AppId));
         Assert.Equal(new[] { other.AppId, tool.AppId },
-            ProgramSupport.WithInstalledTestTool(new List<DependencyRef> { other }, new[] { beside }, holding).Select(r => r.AppId));
+            ProgramSupport.WithInstalledTestTool(new List<DependencyRef> { other }, new[] { rangeOnly }, holding).Select(r => r.AppId));
+
+        string WriteApp(string name, string al)
+        {
+            var dir = Path.Combine(empty, name);
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Combine(dir, "Objects.al"), al);
+            var appJson = Path.Combine(dir, "app.json");
+            File.WriteAllText(appJson, $$"""{ "id": "{{Guid.NewGuid()}}", "idRanges": [ { "from": 100000, "to": 150000 } ] }""");
+            return appJson;
+        }
     }
 
     // Stand-ins for Microsoft's 130454/130453 and table 130450, compiled from source inside the
@@ -407,6 +421,7 @@ public sealed class TestRunnerMgtEventsTests
         HasLine(output, "PASS", "A_BeforeEventRanForThisTest");
         Lacks(output, "TRS1 FAIL");
         Lacks(output, "BcShapeGap");
+        Assert.Contains("not loading Microsoft's Test Runner app by default, because this suite defines codeunit", output, StringComparison.Ordinal);
         if (withSkip)
         {
             HasLine(output, "SKIP", "D_SkippedBySubscriber");

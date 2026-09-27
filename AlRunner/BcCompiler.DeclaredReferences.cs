@@ -71,17 +71,18 @@ public sealed partial class BcCompiler
     /// identity) is left unnarrowed. Propagation out of a real .app package needs nothing
     /// here: BC reads it from that package's own manifest through the loader.
     /// <para>One exception for a source-compiled dependency package: one whose manifest names
-    /// no <c>Application</c> and no Microsoft platform app compiles against the platform
-    /// (<c>System</c>) alone, as it was built. Given Base Application too, Microsoft's Test Runner
-    /// dropped 9 of its 47 objects on AL0275 — its own xmlport "Code Coverage Detailed" is
-    /// ambiguous with Base Application's (#4816).</para>
+    /// no <c>Application</c> and no dependencies at all compiles against the platform
+    /// (<c>System</c>) alone, as it was built — with nothing declared, nothing can propagate the
+    /// application layer to it. Given Base Application too, Microsoft's Test Runner dropped 9 of
+    /// its 47 objects on AL0275: its xmlport "Code Coverage Detailed" is ambiguous with Base
+    /// Application's (#4816).</para>
     /// </summary>
     internal static NavCA.SymbolReferenceSpecification[] NarrowToDeclaredReferences(
         NavCA.SymbolReferenceSpecification[] specs, Guid? currentAppId)
     {
         if (currentAppId is not Guid selfId) return specs;
         if (!_declaredReferences.TryGetValue(selfId, out var self))
-            return _packageDeclarations.TryGetValue(selfId, out var package) && !DeclaresApplicationLayer(package)
+            return _packageDeclarations.TryGetValue(selfId, out var package) && DeclaresPlatformOnly(package)
                 ? specs.Where(s => !IsApplicationLayerApp(s.Name ?? "", s.Publisher ?? "")).ToArray()
                 : specs;
 
@@ -89,9 +90,8 @@ public sealed partial class BcCompiler
         return specs.Where(s => IsAllowed(s, allowed)).ToArray();
     }
 
-    private static bool DeclaresApplicationLayer(AppManifest package)
-        => package.Application != null
-           || package.Dependencies.Any(d => DependencyResolver.IsMicrosoftPlatformApp(d.Name, d.Publisher));
+    private static bool DeclaresPlatformOnly(AppManifest package)
+        => package.Application == null && package.Dependencies.Count == 0;
 
     // The Microsoft platform apps above the platform symbols app "System".
     private static bool IsApplicationLayerApp(string name, string publisher)

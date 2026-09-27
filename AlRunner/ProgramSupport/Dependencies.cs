@@ -153,7 +153,8 @@ internal static partial class ProgramSupport
     /// <summary>
     /// <paramref name="roots"/> plus <see cref="InstalledTestTool"/> when the package caches hold
     /// it, neither a dependency nor one of the bundle's own <paramref name="manifests"/> is
-    /// already that app, and no bundle app declares an id range covering codeunit 130454.
+    /// already that app, and no bundle app defines a codeunit Test Runner also defines that the
+    /// runner binds to (130453, 130454): a tier refuses to install two apps with one object id.
     /// Absent from the caches, the run is what it was before (no root, so no "not found" line).
     /// Both closure readers — the resolve in Program.cs and the AL-output cache key — go through
     /// this, so they cannot disagree on what was loaded.
@@ -164,42 +165,42 @@ internal static partial class ProgramSupport
         if (manifests.Any(m => AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(m)?.AppId
                 == InstalledTestTool.AppId))
             return roots;
-        // An app may only number objects inside its idRanges (AL0297), so one whose range covers
-        // 130454 may carry its own "Test Runner - Mgt"; a tier could not install Microsoft's
-        // beside it, so the suite keeps its own and nothing is added.
-        if (manifests.Any(m => DeclaresIdRangeCovering(m, TestRunnerMgtEvents.TestRunnerMgtId)))
-            return roots;
         if (roots.Any(r => r.AppId == InstalledTestTool.AppId
                 || (string.Equals(r.Name, InstalledTestTool.Name, StringComparison.OrdinalIgnoreCase)
                     && string.Equals(r.Publisher, InstalledTestTool.Publisher, StringComparison.OrdinalIgnoreCase))))
             return roots;
         if (!resolver.CanResolve(InstalledTestTool)) return roots;
+        if (FindCollidingTestRunnerCodeunit(manifests) is { } clash)
+        {
+            if (_testToolSkipReported.TryAdd(clash.File, 0))
+                Console.Error.WriteLine(
+                    $"test tool: not loading Microsoft's Test Runner app by default, because this suite defines codeunit {clash.Id} itself ({clash.File}).");
+            return roots;
+        }
         return roots.Append(InstalledTestTool).ToList();
     }
 
-    private static bool DeclaresIdRangeCovering(string appJsonPath, int id)
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _testToolSkipReported = new();
+
+    private static readonly System.Text.RegularExpressions.Regex TestRunnerCodeunitDeclaration = new(
+        $@"^\s*codeunit\s+({TestRunnerMgtEvents.ResetEnvironmentId}|{TestRunnerMgtEvents.TestRunnerMgtId})\b",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Multiline
+        | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>The first codeunit 130453/130454 an AL file under a manifest's directory declares.</summary>
+    internal static (int Id, string File)? FindCollidingTestRunnerCodeunit(IReadOnlyList<string> manifests)
     {
-        System.Text.Json.JsonDocument doc;
-        try { doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(appJsonPath)); }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
-        { return false; }
-        using (doc)
+        foreach (var manifest in manifests)
         {
-            var ranges = new List<System.Text.Json.JsonElement>();
-            foreach (var p in doc.RootElement.EnumerateObject())
+            var dir = Path.GetDirectoryName(Path.GetFullPath(manifest));
+            if (dir == null || !Directory.Exists(dir)) continue;
+            foreach (var file in Directory.EnumerateFiles(dir, "*.al", SearchOption.AllDirectories))
             {
-                if (string.Equals(p.Name, "idRanges", StringComparison.OrdinalIgnoreCase)
-                    && p.Value.ValueKind == System.Text.Json.JsonValueKind.Array)
-                    ranges.AddRange(p.Value.EnumerateArray());
-                else if (string.Equals(p.Name, "idRange", StringComparison.OrdinalIgnoreCase)
-                    && p.Value.ValueKind == System.Text.Json.JsonValueKind.Object)
-                    ranges.Add(p.Value);
+                var m = TestRunnerCodeunitDeclaration.Match(File.ReadAllText(file));
+                if (m.Success) return (int.Parse(m.Groups[1].Value), file);
             }
-            return ranges.Any(r => r.ValueKind == System.Text.Json.JsonValueKind.Object
-                && r.TryGetProperty("from", out var f) && f.TryGetInt32(out var from)
-                && r.TryGetProperty("to", out var t) && t.TryGetInt32(out var to)
-                && from <= id && id <= to);
         }
+        return null;
     }
 
     internal static void SetBundleInfoFromAppJson(string appJsonPath)
