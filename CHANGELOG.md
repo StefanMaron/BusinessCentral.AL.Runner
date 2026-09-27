@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **page:** remove actions whose ApplicationArea the session has not enabled
 - **metadata:** per-app-group table, page, report and query metadata for a shared object id
 - **report:** a SaveValues request page reopens on the values confirmed in the previous run
 - **testpage:** evaluate a precompiled control's raw-AL Rec./:: property expressions
