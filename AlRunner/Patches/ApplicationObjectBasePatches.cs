@@ -100,14 +100,21 @@ public static partial class BcRuntime
     /// </summary>
     private static void StampOwningAppId(object self, object objectId)
     {
-        if (objectId is Microsoft.Dynamics.Nav.Types.ApplicationObjectId { IsDynamic: true }) return;
-        if (!TryGetModuleAppId(self.GetType().Assembly, out var appId)) return;
+        if (OwningAppIdFor(self.GetType(), objectId) is not { } appId) return;
         if (_fAoAppId == null)
             throw new BcShapeGapException(
                 "NavApplicationObjectBase.AppId (the object's owning app)",
                 "NavApplicationObjectBase.<AppId>k__BackingField",
                 "field not found — BC's auto-property backing field for AppId moved");
         FieldPoke.SetInstance(_fAoAppId, self, (Guid?)appId);
+    }
+
+    /// <summary>The AppId <see cref="StampOwningAppId"/> writes for an object of
+    /// <paramref name="objectType"/>; null for a dynamic object or an unregistered assembly.</summary>
+    internal static Guid? OwningAppIdFor(Type objectType, object objectId)
+    {
+        if (objectId is Microsoft.Dynamics.Nav.Types.ApplicationObjectId { IsDynamic: true }) return null;
+        return TryGetModuleAppId(objectType.Assembly, out var appId) ? appId : null;
     }
 
     private static FieldInfo? _fAoExecPermValidated; // NavApplicationObjectBase.executePermissionsValidated : bool?
