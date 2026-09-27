@@ -38,6 +38,10 @@ internal partial class LiveNavTestPage
         // distinction and the ancestor walk.
         if (_page?.ControlIsCompileTimeEliminated(id) == true) return null!;
 
+        // Removed from the MasterPage because its ApplicationArea is not enabled for the
+        // session (#4750): same null, same BC exception.
+        if (_page?.ControlRemovedByApplicationArea(id) == true) return null!;
+
         // A control bound to a Rec field resolves against the record, as before. Non-null:
         // _controlIdToFieldNo is only ever populated (RecordPatches.GetPageControlFieldMap)
         // for a page that declares a SourceTable, so a hit here implies _record is set.

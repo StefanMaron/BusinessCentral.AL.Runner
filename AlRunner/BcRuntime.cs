@@ -1020,6 +1020,7 @@ public static partial class BcRuntime
         // Without this, every page's merged MasterPage arrives with its whole control tree
         // removed — see MetadataProviderElementRemoval.cs.
         AlRunner.Patches.MetadataProviderElementRemoval.Apply(navNcl);
+        AlRunner.Patches.ApplicationAreaControlRemoval.Bind(navNcl);
 
         // NavEnvironment.cctor — replace WindowsIdentity-touching init
         Hook(envType.TypeInitializer!, nameof(NavEnvironmentCctorReplacement), "NavEnvironment..cctor");
