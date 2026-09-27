@@ -841,6 +841,65 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// Drop every cached NULL a table, page, report or xmlport lookup left behind, because a
+    /// dependency .app has just been registered (#4783). The source-parse twins are
+    /// <see cref="EvictCachedNullsForNewlyParsedTables"/> and
+    /// <see cref="EvictCachedNullsForNewlyParsedObjects"/> (#4450, #4452).
+    ///
+    /// <para>Each of these four builders decides existence from the registered .app set as well
+    /// as from parsed source: tables through <c>TryPopulateParsedTableFromBcApps</c>, pages through
+    /// <c>HasDependencyPageMetadata</c>, reports and xmlports through <c>KnownReportIdSet</c> /
+    /// <c>KnownXmlPortIdSet</c>. So a null is only true for the set registered when it was cached,
+    /// and an earlier bundle asking about an id a later bundle's dependency declares left that
+    /// later bundle unable to use its own dependency. Queries are not here: <c>BuildNCLMetaQuery</c>
+    /// reads parsed source only, which a registration cannot change.
+    /// See docs/virtual-tables-allobj.md#multi-bundle-metatable-cache-app-registration.</para>
+    ///
+    /// <para>Only null entries go, so a live NCL object precompiled callers may hold is never
+    /// swapped under them (precompiled-dll-respect.md). Every null goes, not just the new .app's
+    /// ids: an absence that is still true costs one rebuild on its next lookup.</para>
+    /// </summary>
+    internal static void EvictCachedNullsOnAppRegistration()
+    {
+        foreach (var kvp in _metaTableCache)
+        {
+            if (kvp.Value != null) continue;
+            if (!_metaTableCache.TryRemove(kvp.Key, out _)) continue;
+            EventSubscriberPatches.ForgetInjectedForTable(kvp.Key);
+            _fieldTriggersWiredTables.TryRemove(kvp.Key, out _);
+        }
+        foreach (var kvp in _metaTableCacheByAppGroup)
+            if (kvp.Value == null && _metaTableCacheByAppGroup.TryRemove(kvp.Key, out _))
+                _fieldTriggersWiredByAppGroup.TryRemove(kvp.Key, out _);
+        RemoveCachedNulls(_metaFormCache);
+        RemoveCachedNulls(_metaFormCacheByAppGroup);
+        RemoveCachedNulls(_metaReportCache);
+        RemoveCachedNulls(_metaReportCacheByAppGroup);
+        RemoveCachedNulls(_metaXmlPortCache);
+        RemoveCachedNulls(_metaXmlPortCacheByAppGroup);
+    }
+
+    private static void RemoveCachedNulls<TKey>(
+        System.Collections.Concurrent.ConcurrentDictionary<TKey, object?> cache) where TKey : notnull
+    {
+        foreach (var kvp in cache)
+            if (kvp.Value == null) cache.TryRemove(kvp.Key, out _);
+    }
+
+    /// <summary>Test seam for #4783: the process-wide and per-app-group metadata caches of one
+    /// object kind (<c>table</c>, <c>page</c>, <c>report</c>, <c>xmlport</c>).</summary>
+    internal static (System.Collections.Concurrent.ConcurrentDictionary<int, object?> ProcessWide,
+        System.Collections.Concurrent.ConcurrentDictionary<(Guid AppGroup, int Id), object?> ByAppGroup)
+        MetadataCachesForTests(string kind) => kind switch
+    {
+        "table" => (_metaTableCache, _metaTableCacheByAppGroup),
+        "page" => (_metaFormCache, _metaFormCacheByAppGroup),
+        "report" => (_metaReportCache, _metaReportCacheByAppGroup),
+        "xmlport" => (_metaXmlPortCache, _metaXmlPortCacheByAppGroup),
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
+    };
+
+    /// <summary>
     /// Reflect on the BC assemblies and build NCLMetaTable objects from any AL sources added so far.
     /// Must be called after ForceLoadBcDlls() but before any test runs.
     /// </summary>

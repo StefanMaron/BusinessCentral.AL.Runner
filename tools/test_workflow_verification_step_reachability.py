@@ -119,6 +119,15 @@ REVIEWED: dict[tuple[str, str], dict[str, str | None]] = {
                "and a skipped step reports success. Both compare against the YAML on every "
                "run, so neither can drift silently.",
     },
+    ("bc-tests.yml", "Run precompiled-dep-cache-null as ordered bundles"): {
+        "step_if": "${{ always() && hashFiles('tests/runner-extras/precompiled-dep-cache-null-first/**/*.al') != '' }}",
+        "job_if": None, "step_coe": None, "job_coe": TEST_JOB_COE,
+        "why": "#4783. Same profile and same reason as the metatable-cache-null entry above: "
+               "AlRunner.Tests/PrecompiledDepCacheNullBundleShapeTests pins the step's shape, "
+               "order and per-test PASS checks and resolves the glob against real files. This "
+               "is the only invocation where a bundle asks about an id before the .app "
+               "declaring it is registered, so narrowing it retires the coverage silently.",
+    },
     ("bc-tests.yml", "Run app-group-visibility c+b as ordered bundles"): {
         "step_if": "${{ always() && hashFiles('tests/runner-extras/app-group-visibility-c/**/*.al') != '' }}",
         "job_if": None, "step_coe": None, "job_coe": TEST_JOB_COE,

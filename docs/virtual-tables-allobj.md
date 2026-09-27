@@ -307,3 +307,22 @@ That step exists because no other CI invocation can observe this: the combined
 `tests/runner-extras` run builds **one** bundle, so there is no earlier bundle to do the
 poisoning, and the `dep-tableext-platform-base` pair is a *dependency* pair whose dep loads as a
 package rather than as an unrelated sibling.
+
+<a id="multi-bundle-metatable-cache-app-registration"></a>
+
+### The same absence, arriving through a dependency .app (#4783)
+
+A source dir is not the only thing that makes an object exist. `BuildNCLMetaTable` also finds a
+table a registered dependency `.app` declares, and the page, report and xmlport builders consult
+the registered `.app` set the same way (`HasDependencyPageMetadata`, `KnownReportIdSet`,
+`KnownXmlPortIdSet`). So bundle A asking about table 61600 before bundle B's precompiled
+dependency is registered cached a `null` that `EvictCachedNullsForNewlyParsedTables` never looked
+at: nothing was *parsed*, a `.app` was *registered*. B's own use of the table then raised
+`NavMetadataNotFoundException`.
+
+`EvictCachedNullsOnAppRegistration`, called at the end of `AddBcAppPath`, drops every `null`
+entry of those four caches, process-wide and per app group. Every null rather than only the new
+`.app`'s ids, because an absence that is still true costs one rebuild. Queries are left alone:
+`BuildNCLMetaQuery` reads parsed source only. Proven by `bc-tests.yml`'s *Run
+precompiled-dep-cache-null as ordered bundles* step and
+`AlRunner.Tests/AppRegistrationEvictsCachedNullsTests.cs`.

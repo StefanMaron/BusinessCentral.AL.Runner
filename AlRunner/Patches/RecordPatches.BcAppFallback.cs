@@ -537,6 +537,8 @@ public static partial class RecordPatches
         // now rebuildable, so they are passed in rather than rediscovered through the symbol
         // index this method just invalidated.
         RetryUnresolvedCalcFormulaTables(registeredTableNames);
+        // #4783: an absence cached before this .app was registered is no longer an answer.
+        EvictCachedNullsOnAppRegistration();
     }
 
     /// <summary>
