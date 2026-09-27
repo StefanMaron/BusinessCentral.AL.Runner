@@ -2109,8 +2109,14 @@ public static partial class RecordPatches
             // assembly does load. Only a table whose type actually resolved is
             // recorded, so later calls retry the rest.
             if (_fieldTriggersWiredTables.ContainsKey(kvp.Key)) continue;
-            if (kvp.Value is NCLMetaTable mt && WireFieldTriggerHandlers(mt, kvp.Key))
-                _fieldTriggersWiredTables.TryAdd(kvp.Key, 1);
+            // A load-time walk: an id whose declarer the registered group cannot decide (#4844)
+            // throws again, inside the test, on the lazy per-table path.
+            try
+            {
+                if (kvp.Value is NCLMetaTable mt && WireFieldTriggerHandlers(mt, kvp.Key))
+                    _fieldTriggersWiredTables.TryAdd(kvp.Key, 1);
+            }
+            catch (AlRunner.Infrastructure.RunnerOutOfScopeException) { }
         }
     }
 
