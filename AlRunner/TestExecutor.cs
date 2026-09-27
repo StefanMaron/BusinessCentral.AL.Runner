@@ -1001,7 +1001,7 @@ public sealed class TestExecutor
                         ? onRunFailure with { Method = m.Name }
                         : RunOne(t.Name, m, testInstance, displayName, baselineRestored);
                     if (onRunFailure == null && !IsTimeout(raw))
-                        raw = RaiseAfterTestMethodRun(raw, codeunitObjectId, displayName, m);
+                        raw = RaiseAfterTestMethodRun(raw, codeunitObjectId, displayName, m, testInstance);
                     RestoreTestCodeunitApplicationAreas(areasAtCodeunitStart);
                     methodsMs += stageSw.ElapsedMilliseconds;
                     var result = Expectations != null
@@ -1750,9 +1750,12 @@ public sealed class TestExecutor
     /// OnAfterTestMethodRun for a test that ran (not one a subscriber skipped). A failing
     /// subscriber turns the result into an Error naming it.
     /// </summary>
-    private TestResult RaiseAfterTestMethodRun(TestResult raw, int codeunitObjectId, string displayName, MethodInfo m)
+    private TestResult RaiseAfterTestMethodRun(TestResult raw, int codeunitObjectId, string displayName, MethodInfo m,
+        object instance)
     {
         if (_testRunnerEvents == null || raw.Outcome == TestOutcome.Skipped) return raw;
+        // #4842: BC's AfterTestRunAsync runs inside the test codeunit (InTest true) after LeaveTestMethod.
+        BcRuntime.EnterTestExecutionScope(instance, null);
         try
         {
             _testRunnerEvents.RaiseAfterTestMethodRun(codeunitObjectId, displayName, TestAlName(m),
@@ -1769,6 +1772,10 @@ public sealed class TestExecutor
                           + (raw.Message != null ? $" (test result before it: {raw.Message})" : ""),
                 Exception = inner,
             };
+        }
+        finally
+        {
+            BcRuntime.LeaveTestExecutionScope();
         }
     }
 
@@ -1827,10 +1834,17 @@ public sealed class TestExecutor
         }
         // #4813: BC raises the test runner's OnBeforeTestRun before EnterTestMethod and commits
         // after it (NavTestExecution.BeforeTestRunAsync); a Skip answer means the method never runs.
+        // #4842: inside the test codeunit (EnterTestCodeunit precedes it in NavTestCodeunit.DoRunAsync),
+        // so IsInTestMode() is true for subscribers, but before EnterTestMethod.
         if (_testRunnerEvents != null)
         {
+            BcRuntime.EnterTestExecutionScope(instance, null);
             var skipped = RaiseBeforeTestMethodRun(codeunit, m, displayName, sw);
-            if (skipped != null) return skipped;
+            if (skipped != null)
+            {
+                BcRuntime.LeaveTestExecutionScope();
+                return skipped;
+            }
         }
         // BC's test framework commits between test methods, whatever the isolation mode.
         // That commit is what a rollback inside this test unwinds to, so an asserterror here
