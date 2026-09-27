@@ -98,6 +98,11 @@ public static class AlEnumMetadataRegistry
     /// <summary>Last-writer-wins for the base enum itself; bundle-wide enum-id
     /// collisions are quarantined upstream. Enumextension values are tracked
     /// separately — see <see cref="RegisterExtension"/>.</summary>
+    // Bumped by every mutation below, so a memo over the registered set can tell a replaced entry
+    // from an unchanged one — a count cannot (#4851).
+    private static int _version;
+    internal static int Version => System.Threading.Volatile.Read(ref _version);
+
     public static void Register(int id, string name, string[] options, int[] indexes, int[][]? implementations = null, string?[]? captions = null,
         int[]? defaultImplementations = null, int[]? unknownImplementations = null, bool? extensible = null)
     {
@@ -110,6 +115,7 @@ public static class AlEnumMetadataRegistry
             captions = null;
         _byId[id] = new Entry(id, name ?? string.Empty, options, indexes, implementations, captions,
             defaultImplementations, unknownImplementations, extensible);
+        System.Threading.Interlocked.Increment(ref _version);
     }
 
     /// <summary>
@@ -134,6 +140,7 @@ public static class AlEnumMetadataRegistry
             targetId,
             ImmutableList.Create(entry),
             (_, list) => list.Add(entry));
+        System.Threading.Interlocked.Increment(ref _version);
     }
 
     /// <summary>
@@ -199,6 +206,7 @@ public static class AlEnumMetadataRegistry
     {
         _byId.Clear();
         _extByTargetId.Clear();
+        System.Threading.Interlocked.Increment(ref _version);
     }
 
     /// <summary>
