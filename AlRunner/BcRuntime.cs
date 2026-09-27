@@ -515,7 +515,8 @@ public static partial class BcRuntime
 
     /// <summary>
     /// <see cref="CurrentTestAssembly"/>, then every other assembly registered for the bundle
-    /// now loading (its dependency modules), newest first. Empty before the first registration.
+    /// now loading (its dependency modules), newest first, the executing app group's dependency
+    /// closure ahead of the rest (#4844). Empty before the first registration.
     /// </summary>
     internal static IReadOnlyList<Assembly> CurrentBundleAssemblies()
     {
@@ -524,7 +525,7 @@ public static partial class BcRuntime
         lock (_currentBundleAssemblies)
             for (var i = _currentBundleAssemblies.Count - 1; i >= 0; i--)
                 if (!ordered.Contains(_currentBundleAssemblies[i])) ordered.Add(_currentBundleAssemblies[i]);
-        return ordered;
+        return AlRunner.Patches.RecordPatches.ExecutingClosureModulesFirst(ordered);
     }
 
     /// <summary>

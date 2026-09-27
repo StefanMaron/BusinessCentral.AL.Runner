@@ -29,13 +29,15 @@ public static partial class RecordPatches
 
     internal static Type? FindRecordType(int id)
     {
-        // A table id several app groups declare: the executing group's own Record{id}, which
-        // lives in its own module; the process-wide cache holds whichever group resolved first.
+        // A table id several app groups declare: the Record{id} of the declarer the executing group
+        // sees, in its own module or the one it depends on (#4844); the process-wide cache holds
+        // whichever group resolved first.
         if (AppGroupCacheScope("table", id) is var group && group != Guid.Empty)
         {
             if (_recordTypeCacheByAppGroup.TryGetValue((group, id), out var own)) return own;
-            if (BcRuntime.CurrentTestAssembly is { } asm && FindRecordTypeIn(asm, $"Record{id}") is { } hitOwn)
-                return _recordTypeCacheByAppGroup[(group, id)] = hitOwn;
+            foreach (var asm in BcRuntime.CurrentBundleAssemblies())
+                if (BcRuntime.TryGetModuleAppId(asm, out var app) && app == group && FindRecordTypeIn(asm, $"Record{id}") is { } hitOwn)
+                    return _recordTypeCacheByAppGroup[(group, id)] = hitOwn;
         }
         // A hit can be resolved before this request's dependency modules load and retire their
         // previous generation, so a cached type is re-checked rather than trusted (#4099).
@@ -2109,8 +2111,14 @@ public static partial class RecordPatches
             // assembly does load. Only a table whose type actually resolved is
             // recorded, so later calls retry the rest.
             if (_fieldTriggersWiredTables.ContainsKey(kvp.Key)) continue;
-            if (kvp.Value is NCLMetaTable mt && WireFieldTriggerHandlers(mt, kvp.Key))
-                _fieldTriggersWiredTables.TryAdd(kvp.Key, 1);
+            // A load-time walk: an id whose declarer the registered group cannot decide (#4844)
+            // throws again, inside the test, on the lazy per-table path.
+            try
+            {
+                if (kvp.Value is NCLMetaTable mt && WireFieldTriggerHandlers(mt, kvp.Key))
+                    _fieldTriggersWiredTables.TryAdd(kvp.Key, 1);
+            }
+            catch (AlRunner.Infrastructure.RunnerOutOfScopeException) { }
         }
     }
 

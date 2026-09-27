@@ -20,6 +20,7 @@ public class AppGroupObjectVisibilityTests
     private static readonly Guid AppB = new("3b0e6f52-0000-4c38-9e25-00000000000b");
     private static readonly Guid AppC = new("3b0e6f52-0000-4c38-9e25-00000000000c");
     private static readonly Guid AppD = new("3b0e6f52-0000-4c38-9e25-00000000000d");
+    private static readonly Guid AppE = new("3b0e6f52-0000-4c38-9e25-00000000000e");
 
     [Fact]
     public void VisibleAppClosure_FollowsDeclaredDependenciesTransitively_AndNothingElse()
@@ -235,17 +236,44 @@ public class AppGroupObjectVisibilityTests
             [("xmlport", 62690)] = new() { AppC },
         };
 
+        var none = new Dictionary<Guid, Guid[]>();
+
         // #4751: each declarer of a shared id is its own scope.
-        Assert.Equal(AppC, RecordPatches.AppGroupScopeFor("XmlPort", 62683, declarers, AppC));
-        Assert.Equal(AppD, RecordPatches.AppGroupScopeFor("xmlport", 62683, declarers, AppD));
-        // A group that does not declare the shared id reads the process-wide object.
-        Assert.Null(RecordPatches.AppGroupScopeFor("xmlport", 62683, declarers, AppA));
+        Assert.Equal(AppC, RecordPatches.AppGroupScopeFor("XmlPort", 62683, declarers, AppC, none));
+        Assert.Equal(AppD, RecordPatches.AppGroupScopeFor("xmlport", 62683, declarers, AppD, none));
+        // A group that neither declares the shared id nor depends on a declarer reads the process-wide object.
+        Assert.Null(RecordPatches.AppGroupScopeFor("xmlport", 62683, declarers, AppA, none));
         // One declarer, an unknown id, or no executing group: nothing to separate.
-        Assert.Null(RecordPatches.AppGroupScopeFor("xmlport", 62690, declarers, AppC));
-        Assert.Null(RecordPatches.AppGroupScopeFor("xmlport", 62691, declarers, AppC));
-        Assert.Null(RecordPatches.AppGroupScopeFor("xmlport", 62683, declarers, null));
+        Assert.Null(RecordPatches.AppGroupScopeFor("xmlport", 62690, declarers, AppC, none));
+        Assert.Null(RecordPatches.AppGroupScopeFor("xmlport", 62691, declarers, AppC, none));
+        Assert.Null(RecordPatches.AppGroupScopeFor("xmlport", 62683, declarers, null, none));
         // Keyed by kind as well as id.
-        Assert.Null(RecordPatches.AppGroupScopeFor("report", 62683, declarers, AppC));
+        Assert.Null(RecordPatches.AppGroupScopeFor("report", 62683, declarers, AppC, none));
+    }
+
+    [Fact]
+    public void AppGroupScopeFor_AGroupDependingOnOneDeclarerSeesThatDeclarer_AndOnTwoRefuses()
+    {
+        var declarers = new Dictionary<(string Kind, int Id), HashSet<Guid>> { [("table", 62680)] = new() { AppC, AppD } };
+        var deps = new Dictionary<Guid, Guid[]>
+        {
+            [AppA] = new[] { AppB },
+            [AppB] = new[] { AppC },
+            [AppD] = new[] { AppC },
+            [AppE] = new[] { AppC, AppD },
+        };
+
+        // #4844: the declarer found through the closure, transitively, is the one it compiled against.
+        Assert.Equal(AppC, RecordPatches.AppGroupScopeFor("table", 62680, declarers, AppA, deps));
+        Assert.Equal(AppC, RecordPatches.AppGroupScopeFor("table", 62680, declarers, AppB, deps));
+        // A declarer depending on the other declarer still sees its own object.
+        Assert.Equal(AppD, RecordPatches.AppGroupScopeFor("table", 62680, declarers, AppD, deps));
+        // Two declarers in one closure: loud, naming the id and both declarers.
+        var ex = Assert.Throws<RunnerOutOfScopeException>(
+            () => RecordPatches.AppGroupScopeFor("table", 62680, declarers, AppE, deps));
+        Assert.Contains("62680", ex.Message);
+        Assert.Contains(AppC.ToString(), ex.Message);
+        Assert.Contains(AppD.ToString(), ex.Message);
     }
 
     [Fact]
@@ -256,23 +284,32 @@ public class AppGroupObjectVisibilityTests
             [("table", 62680)] = new() { AppC, AppD },
         };
 
+        // AppA depends on the declarer AppC; AppB depends on nothing.
+        var deps = new Dictionary<Guid, Guid[]> { [AppA] = new[] { AppC } };
+
         // #4834: a declarer of the shared id subscribes to its own object, never the other one's.
-        Assert.True(RecordPatches.SubscribesToAnotherAppGroupsObject("Table", 62680, AppC, AppD, declarers));
-        Assert.True(RecordPatches.SubscribesToAnotherAppGroupsObject("table", 62680, AppD, AppC, declarers));
-        Assert.False(RecordPatches.SubscribesToAnotherAppGroupsObject("table", 62680, AppC, AppC, declarers));
-        // A subscriber whose group does not declare the id keeps reaching every publisher.
-        Assert.False(RecordPatches.SubscribesToAnotherAppGroupsObject("table", 62680, AppC, AppA, declarers));
+        Assert.True(RecordPatches.SubscribesToAnotherAppGroupsObject("Table", 62680, AppC, AppD, declarers, deps));
+        Assert.True(RecordPatches.SubscribesToAnotherAppGroupsObject("table", 62680, AppD, AppC, declarers, deps));
+        Assert.False(RecordPatches.SubscribesToAnotherAppGroupsObject("table", 62680, AppC, AppC, declarers, deps));
+        // #4844: a subscriber whose group depends on one declarer belongs to that declarer's object only.
+        Assert.False(RecordPatches.SubscribesToAnotherAppGroupsObject("table", 62680, AppC, AppA, declarers, deps));
+        Assert.True(RecordPatches.SubscribesToAnotherAppGroupsObject("table", 62680, AppD, AppA, declarers, deps));
+        // A group that sees no declarer cannot name the object; nothing to decide, so it is not excluded.
+        Assert.False(RecordPatches.SubscribesToAnotherAppGroupsObject("table", 62680, AppD, AppB, declarers, deps));
         // An id only one group declares, or the same id of another kind: nothing to separate.
-        Assert.False(RecordPatches.SubscribesToAnotherAppGroupsObject("table", 62681, AppC, AppD, declarers));
-        Assert.False(RecordPatches.SubscribesToAnotherAppGroupsObject("codeunit", 62680, AppC, AppD, declarers));
+        Assert.False(RecordPatches.SubscribesToAnotherAppGroupsObject("table", 62681, AppC, AppD, declarers, deps));
+        Assert.False(RecordPatches.SubscribesToAnotherAppGroupsObject("codeunit", 62680, AppC, AppD, declarers, deps));
     }
 
-    private static string WriteApp(string dir, Guid appId, string name, int from, int to)
+    private static string WriteApp(string dir, Guid appId, string name, int from, int to, (Guid Id, string Name)? dependsOn = null)
     {
         Directory.CreateDirectory(dir);
+        var deps = dependsOn is { } d
+            ? $$"""[ { "id": "{{d.Id}}", "name": "{{d.Name}}", "publisher": "AL Runner", "version": "1.0.0.0" } ]"""
+            : "[]";
         File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
         { "id": "{{appId}}", "name": "{{name}}", "publisher": "AL Runner", "version": "1.0.0.0",
-          "dependencies": [], "platform": "1.0.0.0", "idRanges": [ { "from": {{from}}, "to": {{to}} } ], "runtime": "14.0" }
+          "dependencies": {{deps}}, "platform": "1.0.0.0", "idRanges": [ { "from": {{from}}, "to": {{to}} } ], "runtime": "14.0" }
         """);
         return dir;
     }
@@ -315,6 +352,13 @@ public class AppGroupObjectVisibilityTests
         foreach (var (letter, appId, cu, bufferId, subsId, autoIncrement, secondSeq, xOnly) in new[]
                  { ("X", AppC, 62681, 62684, 62690, "true", 2, "true"), ("Y", AppD, 62682, 62685, 62691, "false", 0, "false") })
         {
+            // #4844: group Z depends on X, so X's subscribers see Z's row ZZ in X's table and every
+            // X event also reaches Z's subscriber; Y sees neither.
+            var alsoOwn = letter == "X" ? " and (Rec.Code <> 'ZZ')" : "";
+            string Reached(string got, string own, string z)
+                => letter == "X"
+                    ? $"(StrLen({got}) <> {own.Length + z.Length}) or (StrPos({got}, '{own[..2]}') = 0) or (StrPos({got}, '{z}') = 0)" + (own.Length > 2 ? $" or (StrPos({got}, '{own[2..]}') = 0)" : "")
+                    : $"{got} <> '{own}'";
             var dir = WriteApp(Path.Combine(root, "dup" + letter), appId, "Dup " + letter, 62680, 62699);
             File.WriteAllText(Path.Combine(dir, "Dup.al"), $$"""
             table 62680 "Dup {{letter}} Table"
@@ -350,13 +394,13 @@ public class AppGroupObjectVisibilityTests
                 begin
                     Fired += 'S{{letter}}';
                     // #4834: a Z-coded row inserted by the OTHER group must never reach this subscriber.
-                    if (CopyStr(Rec.Code, 1, 1) = 'Z') and (Rec.Code <> 'Z{{letter}}') then
+                    if (CopyStr(Rec.Code, 1, 1) = 'Z') and (Rec.Code <> 'Z{{letter}}'){{alsoOwn}} then
                         Error('LEAK: the OnAfterInsert subscriber of {{letter}} fired for row %1', Rec.Code);
                 end;
                 [EventSubscriber(ObjectType::Table, Database::"Dup {{letter}} Table", 'OnAfterValidateEvent', 'Code', false, false)]
                 local procedure OnAfterValidateCode(var Rec: Record "Dup {{letter}} Table")
                 begin
-                    if (CopyStr(Rec.Code, 1, 1) = 'Z') and (Rec.Code <> 'Z{{letter}}') then
+                    if (CopyStr(Rec.Code, 1, 1) = 'Z') and (Rec.Code <> 'Z{{letter}}'){{alsoOwn}} then
                         Error('LEAK: the OnAfterValidate subscriber of {{letter}} fired for row %1', Rec.Code);
                     Fired += 'W{{letter}}';
                 end;
@@ -597,7 +641,7 @@ public class AppGroupObjectVisibilityTests
                     Got: Text;
                 begin
                     Got := Rec.RaiseShared();
-                    if Got <> 'E{{letter}}O{{letter}}' then Error('WRONG: table-declared events on 62680 in {{letter}} reached subscribers %1', Got);
+                    if {{Reached("Got", "E" + letter + "O" + letter, "EZ")}} then Error('WRONG: table-declared events on 62680 in {{letter}} reached subscribers %1', Got);
                 end;
 
                 [Test]
@@ -607,7 +651,7 @@ public class AppGroupObjectVisibilityTests
                     Got: Text;
                 begin
                     Got := Rep.RaiseShared();
-                    if Got <> 'R{{letter}}' then Error('WRONG: report-declared event on 62686 in {{letter}} reached subscribers %1', Got);
+                    if {{Reached("Got", "R" + letter, "RZ")}} then Error('WRONG: report-declared event on 62686 in {{letter}} reached subscribers %1', Got);
                 end;
 
                 [Test]
@@ -617,7 +661,7 @@ public class AppGroupObjectVisibilityTests
                     Got: Text;
                 begin
                     Got := Pub.RaiseShared();
-                    if Got <> 'C{{letter}}' then Error('WRONG: codeunit-declared event on 62689 in {{letter}} reached subscribers %1', Got);
+                    if {{Reached("Got", "C" + letter, "CZ")}} then Error('WRONG: codeunit-declared event on 62689 in {{letter}} reached subscribers %1', Got);
                 end;
 
                 [Test]
@@ -664,7 +708,125 @@ public class AppGroupObjectVisibilityTests
             """);
             dirs.Add(dir);
         }
+        dirs.Add(WriteDependentGroupFixture(root));
         return dirs.ToArray();
+    }
+
+    /// <summary>
+    /// #4844: group Z declares none of the shared ids and depends on X, so every shared id it names
+    /// is X's object: its subscribers belong to X's publishers only, and it reads X's metadata.
+    /// </summary>
+    private static string WriteDependentGroupFixture(string root)
+    {
+        var dir = WriteApp(Path.Combine(root, "depZ"), AppE, "Dep Z", 62700, 62719, (AppC, "Dup X"));
+        File.WriteAllText(Path.Combine(dir, "Z.al"), """
+        codeunit 62700 "Dep Z Subs"
+        {
+            SingleInstance = true;
+            var Fired: Text;
+            [EventSubscriber(ObjectType::Table, Database::"Dup X Table", 'OnShared', '', false, false)]
+            local procedure OnSharedEvent(var Tag: Text) begin Tag += 'EZ'; end;
+            [EventSubscriber(ObjectType::Report, Report::"Dup X Report", 'OnReportShared', '', false, false)]
+            local procedure OnReportSharedEvent(var Tag: Text) begin Tag += 'RZ'; end;
+            [EventSubscriber(ObjectType::Codeunit, Codeunit::"Dup X Pub", 'OnCodeunitShared', '', false, false)]
+            local procedure OnCodeunitSharedEvent(var Tag: Text) begin Tag += 'CZ'; end;
+            [EventSubscriber(ObjectType::Table, Database::"Dup X Table", 'OnAfterInsertEvent', '', false, false)]
+            local procedure OnAfterInsert(var Rec: Record "Dup X Table")
+            begin
+                if (CopyStr(Rec.Code, 1, 1) = 'Z') and (Rec.Code <> 'ZX') and (Rec.Code <> 'ZZ') then
+                    Error('LEAK: the OnAfterInsert subscriber of Z fired for row %1', Rec.Code);
+                Fired += 'SZ';
+            end;
+            [EventSubscriber(ObjectType::Table, Database::"Dup X Table", 'OnAfterValidateEvent', 'Code', false, false)]
+            local procedure OnAfterValidateCode(var Rec: Record "Dup X Table")
+            begin
+                if (CopyStr(Rec.Code, 1, 1) = 'Z') and (Rec.Code <> 'ZX') and (Rec.Code <> 'ZZ') then
+                    Error('LEAK: the OnAfterValidate subscriber of Z fired for row %1', Rec.Code);
+                Fired += 'WZ';
+            end;
+            procedure Take(): Text
+            var
+                T: Text;
+            begin
+                T := Fired;
+                Fired := '';
+                exit(T);
+            end;
+        }
+        codeunit 62701 "Dep Z Tests"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure DependentGroupRaisingTheDeclarersEventReachesOnlyItsSubscribers()
+            var
+                Rec: Record "Dup X Table";
+                Rep: Report "Dup X Report";
+                Pub: Codeunit "Dup X Pub";
+                Got: Text;
+            begin
+                Got := Rec.RaiseShared();
+                if (StrLen(Got) <> 6) or (StrPos(Got, 'EX') = 0) or (StrPos(Got, 'EZ') = 0) or (StrPos(Got, 'OX') = 0) then
+                    Error('WRONG: table-declared events on 62680 raised in Z reached subscribers %1', Got);
+                Got := Rep.RaiseShared();
+                if (StrLen(Got) <> 4) or (StrPos(Got, 'RX') = 0) or (StrPos(Got, 'RZ') = 0) then
+                    Error('WRONG: report-declared event on 62686 raised in Z reached subscribers %1', Got);
+                Got := Pub.RaiseShared();
+                if (StrLen(Got) <> 4) or (StrPos(Got, 'CX') = 0) or (StrPos(Got, 'CZ') = 0) then
+                    Error('WRONG: codeunit-declared event on 62689 raised in Z reached subscribers %1', Got);
+            end;
+
+            [Test]
+            procedure DependentGroupInsertingIntoTheDeclarersTableReachesOnlyItsSubscribers()
+            var
+                Rec: Record "Dup X Table";
+                XSubs: Codeunit "Dup X Subs";
+                ZSubs: Codeunit "Dep Z Subs";
+                Got: Text;
+            begin
+                XSubs.Take();
+                ZSubs.Take();
+                Rec.Validate(Code, 'ZZ');
+                Rec.Insert();
+                Got := XSubs.Take();
+                if Got <> 'WXSX' then Error('WRONG: X''s OnAfterValidate and OnAfterInsert subscribers on 62680 fired %1 for Z''s row', Got);
+                Got := ZSubs.Take();
+                if Got <> 'WZSZ' then Error('WRONG: Z''s OnAfterValidate and OnAfterInsert subscribers on 62680 fired %1 for Z''s row', Got);
+            end;
+
+            [Test]
+            procedure DependentGroupReadsTheDeclarersMetadata()
+            var
+                TableMetadata: Record "Table Metadata";
+                AllObj: Record AllObjWithCaption;
+                Fld: Record Field;
+                ReportMetadata: Record "Report Metadata";
+                PageMetadata: Record "Page Metadata";
+                XmlPortMetadata: Record "XmlPort Metadata";
+                QueryMetadata: Record "Query Metadata";
+                RecRef: RecordRef;
+            begin
+                TableMetadata.Get(62680);
+                if TableMetadata.Name <> 'Dup X Table' then Error('WRONG: Table Metadata name for 62680 in Z is %1', TableMetadata.Name);
+                AllObj.Get(AllObj."Object Type"::Table, 62680);
+                if AllObj."Object Name" <> 'Dup X Table' then Error('WRONG: AllObjWithCaption table name for 62680 in Z is %1', AllObj."Object Name");
+                RecRef.Open(62680);
+                if RecRef.Name <> 'Dup X Table' then Error('WRONG: RecordRef name for 62680 in Z is %1', RecRef.Name);
+                RecRef.Close();
+                Fld.Get(62680, 2);
+                if Fld.FieldName <> 'OnlyX' then Error('WRONG: Field name for 62680/2 in Z is %1', Fld.FieldName);
+                ReportMetadata.Get(62686);
+                if ReportMetadata.Name <> 'Dup X Report' then Error('WRONG: Report Metadata name for 62686 in Z is %1', ReportMetadata.Name);
+                PageMetadata.Get(62687);
+                if PageMetadata.Name <> 'Dup X Page' then Error('WRONG: Page Metadata name for 62687 in Z is %1', PageMetadata.Name);
+                XmlPortMetadata.Get(62683);
+                if XmlPortMetadata.Name <> 'Dup X XmlPort' then Error('WRONG: XMLport Metadata name for 62683 in Z is %1', XmlPortMetadata.Name);
+                QueryMetadata.Get(62688);
+                if QueryMetadata.Name <> 'Dup X Query' then Error('WRONG: Query Metadata name for 62688 in Z is %1', QueryMetadata.Name);
+            end;
+        }
+        """);
+        return dir;
     }
 
     [SkippableFact]
@@ -720,7 +882,7 @@ public class AppGroupObjectVisibilityTests
     {
         var (output, exitCode) = run;
         // The whole runner output as the message, so a red names the failing test and its WRONG: line.
-        Assert.True(output.Contains("33P/0F/0E across 33 tests"), output);
+        Assert.True(output.Contains("36P/0F/0E across 36 tests"), output);
         Assert.DoesNotContain("MISSING:", output);
         Assert.DoesNotContain("WRONG:", output);
         Assert.Equal(0, exitCode);
@@ -737,7 +899,7 @@ public class AppGroupObjectVisibilityTests
         await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
         var lines = await server.SendRequestStreamingAsync(RunTests(dirs));
         var (events, _) = ProtocolV2Streaming.Split(lines);
-        Assert.Equal(33, events.Count);
+        Assert.Equal(36, events.Count);
         foreach (var e in events)
             Assert.True(e.GetProperty("status").GetString() == "pass", string.Join(" | ", lines));
     }

@@ -164,22 +164,31 @@ public static partial class RecordPatches
 
     /// <summary>
     /// A term for a per-process row cache built from the per-kind parsed dictionaries: the
-    /// executing app group when it shares an id with another group, else Guid.Empty, so only
-    /// such a group rebuilds the cache for itself (#4767).
+    /// executing app group when it declares, or depends on a group declaring, an id another group
+    /// also declares, else Guid.Empty, so only such a group rebuilds the cache for itself (#4767,
+    /// #4844).
     /// </summary>
     private static Guid AppGroupScopeKey()
-        => _appGroupsSharingAnId.Count > 0 && CurrentAppGroupAppId() is { } g && _appGroupsSharingAnId.Contains(g)
+        => _appGroupsSharingAnId.Count > 0 && CurrentAppGroupAppId() is { } g
+           && (_appGroupsSharingAnId.Contains(g)
+               || VisibleAppClosure(g, CurrentPackageVisibility().Dependencies).Overlaps(_appGroupsSharingAnId))
             ? g
             : Guid.Empty;
 
     /// <summary>
-    /// The executing app group, when it is one of SEVERAL source app groups declaring
-    /// (<paramref name="kind"/>, <paramref name="id"/>); otherwise null. A per-id metadata cache
-    /// consults this so each such group gets its own object instead of whichever group resolved
-    /// the id first (#4751).
+    /// The declarer of (<paramref name="kind"/>, <paramref name="id"/>) the executing app group
+    /// sees, when SEVERAL source app groups declare it; otherwise null. A per-id metadata cache
+    /// consults this so each group gets the object it compiled against instead of whichever group
+    /// resolved the id first (#4751, #4844).
     /// </summary>
     internal static Guid? AppGroupScopeFor(string kind, int id)
-        => AppGroupScopeFor(kind, id, _sourceObjectDeclarers, CurrentAppGroupAppId());
+    {
+        if (_appGroupsSharingAnId.Count == 0 || CurrentAppGroupAppId() is not { } executing) return null;
+        if (!_sourceObjectDeclarers.TryGetValue((NormalizeObjectTypeName(kind), id), out var d) || d.Count < 2) return null;
+        return d.Contains(executing)
+            ? executing
+            : AppGroupScopeFor(kind, id, _sourceObjectDeclarers, executing, CurrentPackageVisibility().Dependencies);
+    }
 
     /// <summary>
     /// The cache-key term for a runtime metadata object or emit-captured document of
@@ -204,13 +213,30 @@ public static partial class RecordPatches
             ? byAppGroup.GetOrAdd((group, id), k => factory(k.Id))
             : processWide.GetOrAdd(id, factory);
 
+    /// <summary>
+    /// The declarer of a shared (<paramref name="kind"/>, <paramref name="id"/>) that
+    /// <paramref name="group"/> compiles against: itself when it declares the id, else the one
+    /// declarer in its dependency closure. Null when the id is not shared or the group sees no
+    /// declarer. A closure holding two declarers throws: BC installs no such pair into one tenant,
+    /// and the runner cannot tell which object the group's code names (#4844).
+    /// </summary>
     internal static Guid? AppGroupScopeFor(string kind, int id,
-        IReadOnlyDictionary<(string Kind, int Id), HashSet<Guid>> declarers, Guid? executing)
-        => executing is { } g
-           && declarers.TryGetValue((NormalizeObjectTypeName(kind), id), out var d)
-           && d.Count > 1 && d.Contains(g)
-            ? g
-            : null;
+        IReadOnlyDictionary<(string Kind, int Id), HashSet<Guid>> declarers, Guid? group,
+        IReadOnlyDictionary<Guid, Guid[]> dependencies)
+    {
+        if (group is not { } g
+            || !declarers.TryGetValue((NormalizeObjectTypeName(kind), id), out var d) || d.Count < 2) return null;
+        if (d.Contains(g)) return g;
+        var seen = VisibleAppClosure(g, dependencies);
+        seen.IntersectWith(d);
+        if (seen.Count <= 1) return seen.Count == 1 ? seen.First() : null;
+        throw new RunnerOutOfScopeException(
+            $"{kind} {id}",
+            $"app group {g} depends on {string.Join(" and ", seen.OrderBy(x => x))}, which each declare "
+            + $"{kind} {id}; BC cannot install both into one tenant, so which object this group's code "
+            + "names is undefined — see AlRunner#4844",
+            "docs/virtual-tables-allobj.md#app-group-visibility");
+    }
 
     /// <summary>True when several source app groups declare (<paramref name="kind"/>,
     /// <paramref name="id"/>), so each group's emitted assembly holds its own class for it (#4834).</summary>
@@ -222,19 +248,38 @@ public static partial class RecordPatches
     /// <summary>
     /// True when a subscriber in <paramref name="subscriberAssembly"/> must not see an event of
     /// <paramref name="publisherGroup"/>'s (<paramref name="kind"/>, <paramref name="id"/>): the
-    /// subscriber's own app group declares that id too, so it subscribes to its own object (#4834).
+    /// subscriber's app group compiled against another declarer of that id — its own (#4834) or
+    /// the one it depends on (#4844).
     /// </summary>
     internal static bool SubscribesToAnotherAppGroupsObject(string kind, int id, Guid publisherGroup, System.Reflection.Assembly subscriberAssembly)
         => _appGroupsSharingAnId.Count > 0
            && publisherGroup != Guid.Empty
            && AlRunner.BcRuntime.TryGetModuleAppId(subscriberAssembly, out var subscriberGroup)
-           && SubscribesToAnotherAppGroupsObject(kind, id, publisherGroup, subscriberGroup, _sourceObjectDeclarers);
+           && subscriberGroup != publisherGroup
+           && SubscribesToAnotherAppGroupsObject(kind, id, publisherGroup, subscriberGroup, _sourceObjectDeclarers,
+               CurrentPackageVisibility().Dependencies);
 
     internal static bool SubscribesToAnotherAppGroupsObject(string kind, int id, Guid publisherGroup, Guid subscriberGroup,
-        IReadOnlyDictionary<(string Kind, int Id), HashSet<Guid>> declarers)
+        IReadOnlyDictionary<(string Kind, int Id), HashSet<Guid>> declarers, IReadOnlyDictionary<Guid, Guid[]> dependencies)
         => subscriberGroup != publisherGroup
            && declarers.TryGetValue((NormalizeObjectTypeName(kind), id), out var d)
-           && d.Contains(publisherGroup) && d.Contains(subscriberGroup);
+           && d.Contains(publisherGroup)
+           && AppGroupScopeFor(kind, id, declarers, subscriberGroup, dependencies) is { } bound
+           && bound != publisherGroup;
+
+    /// <summary>
+    /// <paramref name="ordered"/> with the modules of the executing app group's dependency closure
+    /// first, order otherwise kept: a group that does not declare a shared id finds the declarer
+    /// it depends on before any other group's same-named type (#4844). Unchanged when no two
+    /// groups share an id.
+    /// </summary>
+    internal static List<System.Reflection.Assembly> ExecutingClosureModulesFirst(List<System.Reflection.Assembly> ordered)
+    {
+        if (_appGroupsSharingAnId.Count == 0 || CurrentAppGroupAppId() is not { } g) return ordered;
+        var closure = VisibleAppClosure(g, CurrentPackageVisibility().Dependencies);
+        bool InClosure(System.Reflection.Assembly a) => AlRunner.BcRuntime.TryGetModuleAppId(a, out var id) && closure.Contains(id);
+        return ordered.Where(InClosure).Concat(ordered.Where(a => !InClosure(a))).ToList();
+    }
 
     private static void ResetAppGroupObjectVisibilityForReload()
     {
