@@ -247,7 +247,7 @@
     },
     {
       "member": "MetaField.Caption",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed. It also covers a field that DECLARES a Caption (#4857): BC states it only as CaptionML and leaves this null, while the runner passes the declared text here as well. NCLMetaField's caption read is the merged CaptionML (RecordPatches.BuildMetaField), so the plain string is not what FieldCaption answers from.",
       "issue": 3568
     },
     {
@@ -257,7 +257,7 @@
     },
     {
       "member": "MetaField.CaptionOriginal",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed. It also covers a field that DECLARES a Caption (#4857): BC states it only as CaptionML and leaves this null, while the runner passes the declared text here as well. NCLMetaField's caption read is the merged CaptionML (RecordPatches.BuildMetaField), so the plain string is not what FieldCaption answers from.",
       "issue": 3568
     },
     {
@@ -474,12 +474,6 @@
       "member": "MetaFilter.FilterValue",
       "reason": "Where a CalcFormula filter compares against an enum or a boolean, BC stores the ordinal (0, 1) and the runner stores the source text (System, true).",
       "issue": 3568
-    },
-    {
-      "member": "MetaField.OptionCaptionML.<presence>",
-      "reason": "The option-caption half of MetaField.CaptionML.<presence>. Direction-scoped to BC-present / runner-absent.",
-      "issue": 3568,
-      "direction": "bc-only"
     },
     {
       "member": "MetaField.NotBlank",

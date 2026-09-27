@@ -6,7 +6,9 @@
 // symbol-file readers and the AL-source parser carry the declaration into ParsedField,
 // BuildMetaField hands it to MetaField as OptionCaptionML (which BC's
 // NCLMetaField.CreateFromMetaField reads, and nothing else), and a control with no
-// ControlDefinition falls back to its bound value's captions.
+// ControlDefinition falls back to its bound value's captions. The same symbol readers dropped
+// a field's declared Caption, so FieldCaption on a precompiled table answered the field name;
+// the symbol tests pin that too.
 using System.IO.Compression;
 using System.Reflection;
 using System.Text;
@@ -41,6 +43,7 @@ public sealed class TableFieldOptionCaptionSymbolTests
                   "TypeDefinition": { "Name": "Option" },
                   "Properties": [
                     { "Name": "OptionMembers", "Value": "Draft,In Process,Validaton in Process" },
+                    { "Name": "Caption", "Value": "Correction Status" },
                     { "Name": "OptionCaption", "Value": "Draft,In Process,Validation in Process" }
                   ]
                 },
@@ -67,6 +70,7 @@ public sealed class TableFieldOptionCaptionSymbolTests
                       "TypeDefinition": { "Name": "Option" },
                       "Properties": [
                         { "Name": "OptionMembers", "Value": "Draft,In Process,Validaton in Process" },
+                        { "Name": "Caption", "Value": "Ext Correction Status" },
                         { "Name": "OptionCaption", "Value": "Draft,In Process,Validation in Process" }
                       ]
                     },
@@ -96,7 +100,7 @@ public sealed class TableFieldOptionCaptionSymbolTests
     }
 
     [Fact]
-    public void TableLoop_ReadsTheFieldsOptionCaption_AndNullWhenNoneDeclared()
+    public void TableLoop_ReadsTheFieldsOptionCaptionAndCaption_AndNullWhenNoneDeclared()
     {
         var table = Assert.Single(BcAppSymbolCache.Get(WriteApp()).Tables, t => t.TableId == 64857);
 
@@ -104,15 +108,20 @@ public sealed class TableFieldOptionCaptionSymbolTests
         Assert.Equal(TableFieldOptionCaptionFixture.Members, status.OptionMembers);
         Assert.Equal(TableFieldOptionCaptionFixture.Captions, status.OptionCaption);
         Assert.Null(table.Fields.Single(f => f.FieldId == 3).OptionCaption);
+        // The field Caption, dropped by the same reader: FieldCaption answered the name.
+        Assert.Equal("Correction Status", status.Caption);
+        Assert.Null(table.Fields.Single(f => f.FieldId == 3).Caption);
     }
 
     [Fact]
-    public void TableExtensionLoop_ReadsTheFieldsOptionCaption_AndNullWhenNoneDeclared()
+    public void TableExtensionLoop_ReadsTheFieldsOptionCaptionAndCaption_AndNullWhenNoneDeclared()
     {
         var ext = Assert.Single(BcAppSymbolCache.GetTableExtensions(WriteApp()));
 
         Assert.Equal(TableFieldOptionCaptionFixture.Captions, ext.Fields.Single(f => f.FieldId == 64800).OptionCaption);
         Assert.Null(ext.Fields.Single(f => f.FieldId == 64801).OptionCaption);
+        Assert.Equal("Ext Correction Status", ext.Fields.Single(f => f.FieldId == 64800).Caption);
+        Assert.Null(ext.Fields.Single(f => f.FieldId == 64801).Caption);
     }
 }
 
