@@ -372,10 +372,11 @@ Two memos now carry it, both in `RecordPatches.AllObjVirtualTable.cs`:
 The **stamp** (`AllObjInventoryStamp`) has one term per input the inventory, the visibility
 filter and the owner index read: the bundle and `.app` registration epochs, the app-group
 generation, the module and enum registries, and the size of each parsed-object registry. A
-reload moves an epoch. Within one bundle the registries only grow, which a count sees. The live
-case is the enum registry: `EnsureSystemEnumsRegistered` adds BC's platform enums on the first
-enum-field metadata read, which can come after an AllObj lookup, and only the registry's mutation
-counter (`AlEnumMetadataRegistry.Version`) notices. A dependency `.app` deleted from disk mid-process
+reload moves an epoch. Within one bundle the registries only grow, which a count sees. The lazy
+`EnsureSystemEnumsRegistered` path moves the stamp only for platform enums the symbols did not
+supply; a registration after a lookup was not observed on a platform-only fixture (#4855 review),
+and the registry's mutation counter (`AlEnumMetadataRegistry.Version`) is the term that would
+notice it. A dependency `.app` deleted from disk mid-process
 is not a term: its rows stay until the next reload, as they did before #4851.
 `ResetForReload` also drops the rows outright. **Trap:** a new source read by
 `EnumerateKnownAlObjects`, `IsHiddenFromCurrentAppGroup` or `BuildObjectOwnerIndex` needs a term

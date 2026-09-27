@@ -2,14 +2,10 @@
 // "already filled" set are keyed on RecordPatches.CurrentAllObjInventoryStamp(), so an input that
 // grows WITHIN one bundle reaches AllObj only if the stamp moves when it grows.
 //
-// The live case is the enum registry: BcRuntime.EnsureSystemEnumsRegistered registers BC's
-// platform enums lazily, on the first enum-field metadata read, and with Test Runner loaded that
-// comes after Test Runner's first AllObj lookup. Only the stamp's enum-registry term sees it.
-//
-// Why in-process rather than an AL fixture: on a platform-only fixture the platform enums are
-// already registered before any test body runs (measured: the first inventory walk already lists
-// them), so an AL test cannot place a lookup before the registration. The two AllObj tests in
-// AllObjPopulateCostTests prove the key drives the memo end to end; this pins the term.
+// Defensive: an enum registered after a lookup was not observed on a platform-only fixture
+// (#4855 review); this pins the stamp's enum-registry term. In-process, because there the
+// platform enums arrive with the symbols before any test body runs, so no AL test can put a
+// lookup ahead of them. AllObjPopulateCostTests prove the key drives the memo end to end.
 using System.Reflection;
 using AlRunner.Patches;
 using Xunit;
