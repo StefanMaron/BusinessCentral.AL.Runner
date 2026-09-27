@@ -235,7 +235,7 @@ public static partial class RecordPatches
             $"app group {g} depends on {string.Join(" and ", seen.OrderBy(x => x))}, which each declare "
             + $"{kind} {id}; BC cannot install both into one tenant, so which object this group's code "
             + "names is undefined — see AlRunner#4844",
-            "docs/virtual-tables-allobj.md#app-group-visibility");
+            "docs/virtual-tables-allobj.md#shared-id-declarers");
     }
 
     /// <summary>True when several source app groups declare (<paramref name="kind"/>,

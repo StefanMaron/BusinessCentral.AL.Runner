@@ -205,6 +205,29 @@ CLI and `--server` runs each app group gets a fresh store, so the refusal has no
 Proven by `tests/runner-extras/app-group-visibility-{a,b,c}` (C depends on A, so A's table is
 visible to C and B's is not) and `AlRunner.Tests/AppGroupObjectVisibilityTests`.
 
+<a id="shared-id-declarers"></a>
+
+### An id several app groups declare (#4767, #4834, #4844)
+
+When two app groups each declare the same `(kind, id)`, each has its own object, and
+`RecordPatches.AppGroupScopeFor` decides which one the executing group gets:
+
+| executing group | gets |
+|---|---|
+| declares the id | its own object |
+| declares none, and exactly one declarer is in its dependency closure | that declarer's object, which is the one its code compiled against |
+| declares none, and no declarer is in its closure | the process-wide object; its code cannot name the id |
+| declares none, and two declarers are in its closure | `RunnerOutOfScopeException` in every test that reaches the id |
+
+The same resolution decides event dispatch. A subscriber reaches a publisher of a shared id only
+when the subscriber's group resolves to that publisher's group. A group that depends on X
+therefore subscribes to X's object, never to Y's.
+
+The last row is loud on purpose. BC does not install two apps that declare the same object id
+into one tenant, so nothing says which object such a group's code names. The load-time
+field-trigger walk skips that id, and the test that touches it fails with the id and both
+declarers (`AppGroupObjectVisibilityTests.Cli_GroupDependingOnTwoDeclarersOfOneId_*`).
+
 <a id="precompiled-package-visibility"></a>
 
 ### Precompiled dependency packages (#4448)
