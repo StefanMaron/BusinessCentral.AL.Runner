@@ -489,22 +489,14 @@ public static partial class RecordPatches
 
     /// <summary>
     /// The tables the executing code sees: for an id several app groups declare, that group's own
-    /// NCLMetaTable, never the process-wide one another group built (#4828). An id only another
-    /// group has built, and that the executing group does not resolve for itself, is left out.
+    /// NCLMetaTable, never the process-wide one another group built (#4828). Every parsed table
+    /// has a process-wide entry (PopulateNclMetadataCache), so walking its keys covers them all.
     /// </summary>
     private static IEnumerable<NCLMetaTable> ReferencingRelationCandidates()
     {
-        var seen = new HashSet<int>();
         foreach (var (id, value) in _metaTableCache)
-        {
-            seen.Add(id);
-            var own = AppGroupCacheScope("table", id) != Guid.Empty ? GetOrBuildNCLMetaTable(id) : value as NCLMetaTable;
-            if (own != null) yield return own;
-        }
-        foreach (var key in _metaTableCacheByAppGroup.Keys)
-            if (seen.Add(key.Id) && AppGroupCacheScope("table", key.Id) != Guid.Empty
-                && GetOrBuildNCLMetaTable(key.Id) is { } own)
-                yield return own;
+            if ((AppGroupCacheScope("table", id) != Guid.Empty ? GetOrBuildNCLMetaTable(id) : value) is NCLMetaTable table)
+                yield return table;
     }
 
     /// <summary>
