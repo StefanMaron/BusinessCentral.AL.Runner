@@ -152,8 +152,7 @@ public static partial class BcRuntime
     /// </summary>
     public static IReadOnlyList<(Assembly Assembly, Guid AppId)> RegisteredModuleAssemblies()
         => _moduleInfoByAssembly
-            // A stale generation owns nothing, whichever order this dictionary enumerates (#4835).
-            .Where(kv => kv.Value.AppId != Guid.Empty && !IsStaleBundleAssembly(kv.Key))
+            .Where(kv => kv.Value.AppId != Guid.Empty)
             .Select(kv => (kv.Key, kv.Value.AppId))
             .ToList();
 
