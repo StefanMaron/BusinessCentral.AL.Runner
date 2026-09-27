@@ -172,9 +172,6 @@ public sealed class EnumSidecarOwnContributionEndToEndTests
         WriteTests(tests, "cold");
 
         var (cold, _) = RunRunner(tests, cache);
-        Assert.Contains("[deps] source-cache WROTE: Gap3579 Mid", cold);
-        Assert.Contains("[deps] source-cache WROTE: Gap3579 Mid v1.0.0.0", cold);
-        Assert.Matches(@"source-cache WROTE: Gap3579 Mid v1\.0\.0\.0 .* 1 enum-registry entries", cold);
         Assert.Matches(@"(?m)^PASS\s+\S*BaseAndExtensionSurviveReplay", cold);
 
         // Warm: both dependencies come from the cache; the changed test source misses the
@@ -185,5 +182,10 @@ public sealed class EnumSidecarOwnContributionEndToEndTests
         Assert.Contains("[deps] source-cache HIT: Gap3579 Mid", warm);
         Assert.DoesNotContain("GAP3579 FAIL", warm);
         Assert.Matches(@"(?m)^PASS\s+\S*BaseAndExtensionSurviveReplay", warm);
+
+        // Each dependency's sidecar holds its own registration only: Mid's is the extension,
+        // not a copy of Base's enum.
+        Assert.Matches(@"source-cache WROTE: Gap3579 Base v1\.0\.0\.0 .* 1 enum-registry entries", cold);
+        Assert.Matches(@"source-cache WROTE: Gap3579 Mid v1\.0\.0\.0 .* 1 enum-registry entries", cold);
     }
 }
