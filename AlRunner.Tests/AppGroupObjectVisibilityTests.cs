@@ -704,6 +704,35 @@ public class AppGroupObjectVisibilityTests
                     AllObj.Get(AllObj."Object Type"::Query, 62688);
                     if AllObj."Object Name" <> 'Dup {{letter}} Query' then Error('WRONG: AllObjWithCaption query name for 62688 in {{letter}} is %1', AllObj."Object Name");
                 end;
+
+                // #4845: the Event Subscription rows for a publisher id two groups declare are the
+                // subscriptions to this group's object: its own, and Z's in X, never the other group's.
+                [Test]
+                procedure SharedIdEventSubscriptionsAreThisGroupsOwn()
+                var
+                    ES: Record "Event Subscription";
+                begin
+                    ES.SetRange("Publisher Object Type", ES."Publisher Object Type"::Table);
+                    CheckSubscribers(ES, 62680, 'table');
+                    ES.SetRange("Publisher Object Type", ES."Publisher Object Type"::Codeunit);
+                    CheckSubscribers(ES, 62689, 'codeunit');
+                    ES.SetRange("Publisher Object Type", ES."Publisher Object Type"::Report);
+                    CheckSubscribers(ES, 62686, 'report');
+                end;
+
+                local procedure CheckSubscribers(var ES: Record "Event Subscription"; PublisherId: Integer; Kind: Text)
+                var
+                    Got: Text;
+                begin
+                    ES.SetRange("Publisher Object ID", PublisherId);
+                    if ES.FindSet() then
+                        repeat
+                            if StrPos(Got, Format(ES."Subscriber Codeunit ID", 0, 9) + ',') = 0 then
+                                Got += Format(ES."Subscriber Codeunit ID", 0, 9) + ',';
+                        until ES.Next() = 0;
+                    if {{(letter != "X" ? "Got <> '62691,'" : serverRequest ? "Got.Replace('62700,', '') <> '62690,'" : "Got <> '62690,62700,'")}} then
+                        Error('WRONG: Event Subscription subscribers of %1 %2 in {{letter}} are %3', Kind, PublisherId, Got);
+                end;
             }
             """);
             dirs.Add(dir);
@@ -824,6 +853,24 @@ public class AppGroupObjectVisibilityTests
                 QueryMetadata.Get(62688);
                 if QueryMetadata.Name <> 'Dup X Query' then Error('WRONG: Query Metadata name for 62688 in Z is %1', QueryMetadata.Name);
             end;
+
+            // #4845: Z binds 62680 to X's table, so it lists the subscriptions to X's table, Y's none.
+            [Test]
+            procedure DependentGroupListsTheDeclarersEventSubscriptions()
+            var
+                ES: Record "Event Subscription";
+                Got: Text;
+            begin
+                ES.SetRange("Publisher Object Type", ES."Publisher Object Type"::Table);
+                ES.SetRange("Publisher Object ID", 62680);
+                if ES.FindSet() then
+                    repeat
+                        if StrPos(Got, Format(ES."Subscriber Codeunit ID", 0, 9) + ',') = 0 then
+                            Got += Format(ES."Subscriber Codeunit ID", 0, 9) + ',';
+                    until ES.Next() = 0;
+                if Got <> '62690,62700,' then
+                    Error('WRONG: Event Subscription subscribers of table 62680 in Z are %1', Got);
+            end;
         }
         """);
         return dir;
@@ -880,6 +927,12 @@ public class AppGroupObjectVisibilityTests
                 fields { field(1; "Code"; Code[20]) { } }
                 keys { key(PK; "Code") { Clustered = true; } }
             }
+            // #4845: a subscription to the id, so group H's Event Subscription read reaches the ambiguity.
+            codeunit 62742 "Two {{letter}} Subs"
+            {
+                [EventSubscriber(ObjectType::Table, Database::"Two {{letter}} Table", 'OnAfterInsertEvent', '', false, false)]
+                local procedure OnAfterInsert(var Rec: Record "Two {{letter}} Table") begin end;
+            }
             codeunit 62741 "Two {{letter}} Tests"
             {
                 Subtype = Test;
@@ -909,6 +962,15 @@ public class AppGroupObjectVisibilityTests
             end;
 
             [Test]
+            procedure ListsTheAmbiguousTablesEventSubscriptions()
+            var
+                ES: Record "Event Subscription";
+            begin
+                ES.SetRange("Publisher Object ID", 62740);
+                if ES.FindFirst() then;
+            end;
+
+            [Test]
             procedure TouchesNothingShared()
             begin
             end;
@@ -917,7 +979,10 @@ public class AppGroupObjectVisibilityTests
 
         var (output, exitCode) = RunCli($" --no-cache \"{root}\"");
         Assert.DoesNotContain("Unhandled exception", output);
-        Assert.True(output.Contains("3P/1F/0E across 4 tests"), output);
+        Assert.True(output.Contains("3P/2F/0E across 5 tests"), output);
+        // #4845: the Event Subscription read fails on the ambiguity itself, not on anything else.
+        var esFailure = output[output.IndexOf("FAIL  \"Both H Tests\".ListsTheAmbiguousTablesEventSubscriptions", StringComparison.Ordinal)..];
+        Assert.Contains($"depends on {appF} and {appG}, which each declare Table 62740", esFailure.Split('\n')[1]);
         Assert.Contains($"depends on {appF} and {appG}, which each declare table 62740", output);
         Assert.DoesNotContain("WRONG:", output);
         Assert.Equal(1, exitCode);
@@ -947,7 +1012,7 @@ public class AppGroupObjectVisibilityTests
     {
         var (output, exitCode) = run;
         // The whole runner output as the message, so a red names the failing test and its WRONG: line.
-        Assert.True(output.Contains("36P/0F/0E across 36 tests"), output);
+        Assert.True(output.Contains("39P/0F/0E across 39 tests"), output);
         Assert.DoesNotContain("MISSING:", output);
         Assert.DoesNotContain("WRONG:", output);
         Assert.Equal(0, exitCode);
@@ -964,7 +1029,7 @@ public class AppGroupObjectVisibilityTests
         await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
         var lines = await server.SendRequestStreamingAsync(RunTests(dirs));
         var (events, _) = ProtocolV2Streaming.Split(lines);
-        Assert.Equal(36, events.Count);
+        Assert.Equal(39, events.Count);
         foreach (var e in events)
             Assert.True(e.GetProperty("status").GetString() == "pass", string.Join(" | ", lines));
     }

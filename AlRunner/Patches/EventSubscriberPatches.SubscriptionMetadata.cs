@@ -112,6 +112,9 @@ public static partial class EventSubscriberPatches
             var list = EnsureSubscriptionMetadataRegistry();
             if (list == null) return;
 
+            // Hidden rows are still this run's rows: back into the registry before the
+            // previous-bundle drop and the append examine it. The next 2000000140 read re-scopes.
+            RestoreRowsHiddenFromExecutingAppGroup(list);
             DropRowsFromPreviousBundles(list);
 
             foreach (var handle in EnumerateSubscriberHandles())
@@ -148,6 +151,72 @@ public static partial class EventSubscriberPatches
                 Console.Error.WriteLine(
                     $"[Subscribers] EventSubscriptionMetadata seeded: rows={list.Count}");
         }
+    }
+
+    // #4845: rows of BC's registry the executing app group must not list, and the (group, row
+    // set) they were computed for. See docs/virtual-tables-allobj.md#shared-id-declarers.
+    private static readonly List<object> _rowsHiddenFromExecutingAppGroup = new();
+    private static readonly Dictionary<object, (string Kind, int Id)> _publisherByRow =
+        new(ReferenceEqualityComparer.Instance);
+    private static Guid? _rowsScopedFor;
+    private static bool _rowsScoped;
+
+    /// <summary>
+    /// Scope BC's registry to the executing app group before AL reads 2000000140. BC's own
+    /// provider filters only on NavAppGroup id (GetDistinctEventSubscriptions), and BuildSubscription
+    /// puts every subscription in the base group, so a publisher id two app groups declare would
+    /// list both groups' subscribers (#4845).
+    /// <para>Observably equivalent: BC installs one declarer of an id per tenant, so its registry
+    /// holds only subscriptions bound to that declarer; the rows hidden here are exactly the ones
+    /// bound to another. A group depending on two declarers throws here, inside the reading test.</para>
+    /// </summary>
+    internal static void ScopeSubscriptionMetadataToExecutingAppGroup()
+    {
+        if (!RecordPatches.AnyIdSharedByAppGroups) return;
+        lock (_lock)
+        {
+            if (_subscriptionMetadataList is { } list) ScopeRowsToExecutingAppGroup(list);
+        }
+    }
+
+    private static void ScopeRowsToExecutingAppGroup(IList list)
+    {
+        var group = RecordPatches.ExecutingAppGroup;
+        if (_rowsScoped && _rowsScopedFor == group) return;
+
+        RestoreRowsHiddenFromExecutingAppGroup(list);
+        var hide = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        foreach (var row in list)
+        {
+            if (TryReadSubscriptionMethod(row) is not { DeclaringType: { } declaring }) continue;
+            var (kind, id) = PublisherOf(row!);
+            if (RecordPatches.SubscriptionIsToAnotherDeclarerThanExecutingGroups(kind, id, declaring.Assembly))
+                hide.Add(row!);
+        }
+        for (var i = list.Count - 1; i >= 0 && hide.Count > 0; i--)
+        {
+            if (!hide.Contains(list[i]!)) continue;
+            _rowsHiddenFromExecutingAppGroup.Add(list[i]!);
+            list.RemoveAt(i);
+        }
+        (_rowsScoped, _rowsScopedFor) = (true, group);
+    }
+
+    private static void RestoreRowsHiddenFromExecutingAppGroup(IList list)
+    {
+        _rowsScoped = false;
+        if (_rowsHiddenFromExecutingAppGroup.Count == 0) return;
+        foreach (var row in _rowsHiddenFromExecutingAppGroup) list.Add(row);
+        _rowsHiddenFromExecutingAppGroup.Clear();
+    }
+
+    // The publisher as BC's own NavEventSubscription ctor derived it from the subscriber attribute:
+    // the same (type, number) the provider projects into "Publisher Object Type"/"Publisher Object ID".
+    private static (string Kind, int Id) PublisherOf(object row)
+    {
+        if (_publisherByRow.TryGetValue(row, out var known)) return known;
+        var publisher = ((Microsoft.Dynamics.Nav.EventSubscription.NavEventSubscription)row).OriginalApplicationObjectId;
+        return _publisherByRow[row] = (publisher.ObjectType.ToString(), publisher.ObjectNumber);
     }
 
     /// <summary>
@@ -188,6 +257,7 @@ public static partial class EventSubscriberPatches
             if (declaring == null || !staleSet.Contains(declaring)) continue;
             list.RemoveAt(i);
             _subscriptionMethodByRow.Remove(row!);
+            _publisherByRow.Remove(row!);
         }
         foreach (var m in stale) _subscriptionMetadataSeeded.Remove(m);
 

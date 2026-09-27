@@ -259,6 +259,25 @@ public static partial class RecordPatches
            && SubscribesToAnotherAppGroupsObject(kind, id, publisherGroup, subscriberGroup, _sourceObjectDeclarers,
                CurrentPackageVisibility().Dependencies);
 
+    /// <summary>True when some id is declared by more than one source app group; every scoping
+    /// decision below is a no-op otherwise.</summary>
+    internal static bool AnyIdSharedByAppGroups => _appGroupsSharingAnId.Count > 0;
+
+    /// <summary>The executing app group's app id, or null outside a registered module.</summary>
+    internal static Guid? ExecutingAppGroup => CurrentAppGroupAppId();
+
+    /// <summary>
+    /// True when the executing app group must not list a subscription of
+    /// <paramref name="subscriberAssembly"/> to (<paramref name="kind"/>, <paramref name="id"/>):
+    /// several groups declare the id and the subscriber is bound to another declarer than the one
+    /// the executing group is (#4845). Throws, like <see cref="AppGroupScopeFor(string, int)"/>,
+    /// when either group depends on two declarers.
+    /// </summary>
+    internal static bool SubscriptionIsToAnotherDeclarerThanExecutingGroups(string kind, int id, System.Reflection.Assembly subscriberAssembly)
+        => _appGroupsSharingAnId.Count > 0
+           && AppGroupScopeFor(kind, id) is { } bound
+           && SubscribesToAnotherAppGroupsObject(kind, id, bound, subscriberAssembly);
+
     internal static bool SubscribesToAnotherAppGroupsObject(string kind, int id, Guid publisherGroup, Guid subscriberGroup,
         IReadOnlyDictionary<(string Kind, int Id), HashSet<Guid>> declarers, IReadOnlyDictionary<Guid, Guid[]> dependencies)
         => subscriberGroup != publisherGroup

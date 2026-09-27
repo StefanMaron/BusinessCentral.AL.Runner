@@ -533,6 +533,9 @@ public static partial class EventSubscriberPatches
             // it would keep every dropped row object alive and let a stale entry answer for a
             // row index that now belongs to a freshly-seeded subscription.
             _subscriptionMethodByRow.Clear();
+            _publisherByRow.Clear();
+            _rowsHiddenFromExecutingAppGroup.Clear();
+            _rowsScoped = false;
             _codeunitTypeCache.Clear();
             _tableTypeCache.Clear();
             _objectEventTypeCache.Clear();

@@ -223,6 +223,13 @@ The same resolution decides event dispatch. A subscriber reaches a publisher of 
 when the subscriber's group resolves to that publisher's group. A group that depends on X
 therefore subscribes to X's object, never to Y's.
 
+The `Event Subscription` virtual table (2000000140) lists the same pairs (#4845). BC's provider
+reads one process-wide registry, so before each handout of that table the runner removes the
+rows whose subscriber resolves the publisher id to a different declarer than the executing
+group does. X lists its own subscriptions and those of a group depending on X; Y lists only its
+own. A row whose subscriber, or the executing group, depends on two declarers makes the read
+throw, as the table's last row does.
+
 The last row is loud on purpose. BC does not install two apps that declare the same object id
 into one tenant, so nothing says which object such a group's code names. The load-time
 field-trigger walk skips that id, and the test that touches it fails with the id and both

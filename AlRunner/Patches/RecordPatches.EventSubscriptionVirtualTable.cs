@@ -55,6 +55,10 @@ public static partial class RecordPatches
     /// </remarks>
     internal static object GetEventSubscriptionVirtualDataAccess(
         object dataAccessSource, NCLMetaTable table)
-        => GetBcVirtualDataAccess(dataAccessSource, table,
+    {
+        // #4845: the registry is process-wide, so rows are scoped to the executing app group here.
+        EventSubscriberPatches.ScopeSubscriptionMetadataToExecutingAppGroup();
+        return GetBcVirtualDataAccess(dataAccessSource, table,
             "every Record \"Event Subscription\" read would answer from an empty store");
+    }
 }
