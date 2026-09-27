@@ -1897,7 +1897,7 @@ internal sealed partial class RunnerPageInstance
                 foreach (var d in defs as System.Collections.IEnumerable ?? Array.Empty<object>())
                     Console.Out.WriteLine($"[option-captions]   have {d?.GetType().Name} ID={ReadProperty(d!, "ID")} Name={ReadProperty(d!, "Name")}");
             }
-            return TestPageOptionValue.EnumCaptions(boundOption);
+            return DependencyOptionCaptions(controlId) ?? TestPageOptionValue.EnumCaptions(boundOption);
         }
         if (trace)
             Console.Out.WriteLine(
@@ -1915,6 +1915,27 @@ internal sealed partial class RunnerPageInstance
         // Option's OptionCaptionML is empty for an Enum-typed control by construction (see
         // the doc comment above) — fall back to the enum's own metadata.
         return TestPageOptionValue.EnumCaptions(boundOption);
+    }
+
+    /// <summary>
+    /// A precompiled object's control has no ControlDefinition (its synthesized metadata carries
+    /// no control tree), so its OptionCaption is read from the symbol file (#4669): the report's
+    /// request-page tree for a request page, whose id is the report's, and the page's own
+    /// controls otherwise.
+    /// </summary>
+    private string[]? DependencyOptionCaptions(int controlId)
+    {
+        string? stated;
+        if (IsRequestPage)
+        {
+            stated = null;
+            foreach (var node in RecordPatches.TryGetDependencyRequestPageControls(_pageId)
+                     ?? (IReadOnlyList<BcAppSymbolCache.RequestPageControlSymbol>)Array.Empty<BcAppSymbolCache.RequestPageControlSymbol>())
+                if (node.Id == controlId) { stated = node.OptionCaption; break; }
+        }
+        else
+            stated = RecordPatches.TryGetDependencyControlOptionCaption(_pageId, controlId);
+        return string.IsNullOrEmpty(stated) ? null : stated.Split(',');
     }
 
     /// <summary>

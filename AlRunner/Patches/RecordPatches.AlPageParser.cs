@@ -727,6 +727,24 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// The <c>OptionCaption</c> a control of a PRECOMPILED dependency page states, with a
+    /// precompiled pageextension's <c>modify(&lt;control&gt;)</c> value winning, or null when
+    /// it states none (#4669). The synthesized metadata carries no control tree, so
+    /// <c>RunnerPageInstance.TryGetOptionCaptions</c> has no ControlDefinition to read it from.
+    /// </summary>
+    internal static string? TryGetDependencyControlOptionCaption(int pageId, int controlId)
+    {
+        var symbol = TryGetDependencyPageSymbol(pageId);
+        if (symbol == null) return null;
+        foreach (var control in (symbol.Controls ?? new List<BcAppSymbolCache.PageControlSymbol>())
+                     .Concat(DependencyPageExtensionFieldControls(symbol.Name)))
+            if (control.Id == controlId)
+                return DependencyPageExtensionModifiedProperty(symbol.Name, control.Name, "OptionCaption", isAction: false)
+                       ?? control.OptionCaption;
+        return null;
+    }
+
+    /// <summary>
     /// The <c>Enabled</c> / <c>Visible</c> an ACTION of a PRECOMPILED dependency page
     /// DECLARES, exactly as the compiler wrote it, or null when it declares none (issue
     /// #2460).

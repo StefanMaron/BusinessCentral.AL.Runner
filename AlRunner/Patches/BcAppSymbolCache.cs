@@ -657,7 +657,9 @@ internal static partial class BcAppSymbolCache
         string? VisibleExpr, string? EditableExpr, string? EnabledExpr, int Sequence,
         // The control's OWN ApplicationArea, verbatim; null when it states none. Inheriting the
         // host page's is the consumer's job (#4796, RecordPatches.DependencyFieldControlAreas).
-        string? ApplicationArea = null);
+        string? ApplicationArea = null,
+        // The control's own OptionCaption, verbatim; null when it states none (#4669).
+        string? OptionCaption = null);
 
     /// <summary>
     /// A precompiled dependency's report, as far as SymbolReference.json states it. Feeds
@@ -729,7 +731,9 @@ internal static partial class BcAppSymbolCache
     /// metadata the runner does not have. A null property means the AL declares none.
     /// </summary>
     internal sealed record RequestPageControlSymbol(
-        int Id, int ParentId, string? VisibleExpr, string? EditableExpr, string? EnabledExpr);
+        int Id, int ParentId, string? VisibleExpr, string? EditableExpr, string? EnabledExpr,
+        // The control's own OptionCaption, verbatim; null when it states none (#4669).
+        string? OptionCaption = null);
 
     /// <summary>
     /// One <c>layout(Name) { Type; MimeType; LayoutFile; Caption; Summary; ObsoleteState;
@@ -2047,7 +2051,9 @@ internal static partial class BcAppSymbolCache
                 // because Page Control Field's Sequence then meant different things for a
                 // source-compiled and a precompiled-dependency page and AL cannot see which
                 // it has.
-                into.Add(new PageControlSymbol(id, name!, srcExpr, visible, editable, enabled, sequence++, applicationArea));
+                props.TryGetValue("OptionCaption", out var optionCaption);
+                into.Add(new PageControlSymbol(id, name!, srcExpr, visible, editable, enabled, sequence++,
+                    ApplicationArea: applicationArea, OptionCaption: optionCaption));
             }
         }
 
@@ -2583,7 +2589,8 @@ internal static partial class BcAppSymbolCache
             props.TryGetValue("Visible", out var visible);
             props.TryGetValue("Editable", out var editable);
             props.TryGetValue("Enabled", out var enabled);
-            into.Add(new RequestPageControlSymbol(id, parentId, visible, editable, enabled));
+            props.TryGetValue("OptionCaption", out var optionCaption);
+            into.Add(new RequestPageControlSymbol(id, parentId, visible, editable, enabled, optionCaption));
         }
 
         if (control.TryGetProperty("Controls", out var children) && children.ValueKind == JsonValueKind.Array)

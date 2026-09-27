@@ -83,7 +83,8 @@ public class DependencyPageExtensionModifyTests
               "Id": 88247611, "Name": "MDX Page Ext", "TargetObject": "MDX Page",
               "ControlChanges": [
                 { "Anchor": "CodeCtl", "ChangeKind": 9,
-                  "Properties": [ { "Name": "Enabled", "Value": "Rec.Code <> ''" } ] }
+                  "Properties": [ { "Name": "Enabled", "Value": "Rec.Code <> ''" },
+                                  { "Name": "OptionCaption", "Value": "Ext A,Ext B" } ] }
               ],
               "ActionChanges": [
                 { "Anchor": "DoIt", "ChangeKind": 9,
@@ -152,6 +153,15 @@ public class DependencyPageExtensionModifyTests
             // A property the extension does not modify keeps the control's own answer (none).
             Assert.Null(RecordPatches.TryGetDependencyControlDeclaredProperty(PageId, ModifiedControlId, "Editable"));
             Assert.Equal("false", RecordPatches.TryGetDependencyControlDeclaredProperty(PageId, UntouchedControlId, "Enabled"));
+        });
+
+    [Fact]
+    public void ModifiedControl_AnswersTheExtensionsOptionCaption()
+        => WithDependencyApp(() =>
+        {
+            // #4669: the OptionCaption resolver honours modify() the same way.
+            Assert.Equal("Ext A,Ext B", RecordPatches.TryGetDependencyControlOptionCaption(PageId, ModifiedControlId));
+            Assert.Null(RecordPatches.TryGetDependencyControlOptionCaption(PageId, UntouchedControlId));
         });
 
     [Fact]

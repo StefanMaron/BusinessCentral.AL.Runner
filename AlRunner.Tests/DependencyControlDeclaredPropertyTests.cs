@@ -49,6 +49,7 @@ public class DependencyControlDeclaredPropertyTests
     private const int ExpressionId = 640646003;     // Editable = "not IsCommentLine"
     private const int UndeclaredId = 640646004;     // declares no Editable at all
     private const int VisibleEnabledId = 640646005; // Visible + Enabled, no Editable
+    private const int OptionCaptionId = 640646006;  // OptionCaption, as page 6520 "Item Tracing" states it
     private const int UnknownControlId = 640646099; // declared by nothing
 
     // Modelled attribute-for-attribute on Base Application page 46 "Sales Order Subform", read
@@ -115,6 +116,15 @@ public class DependencyControlDeclaredPropertyTests
                         { "Name": "SourceExpression", "Value": "Rec.\"Tax Liable\"" },
                         { "Name": "Visible", "Value": "ShowTaxLiable" },
                         { "Name": "Enabled", "Value": "false" }
+                      ]
+                    },
+                    {
+                      "Kind": 8,
+                      "Id": 640646006,
+                      "Name": "TraceMethod",
+                      "Properties": [
+                        { "Name": "OptionCaption", "Value": "Origin -> Usage,Usage -> Origin" },
+                        { "Name": "SourceExpression", "Value": "TraceMethod" }
                       ]
                     }
                   ]
@@ -235,5 +245,25 @@ public class DependencyControlDeclaredPropertyTests
             // caller cannot silently get Editable's value for a different question.
             Assert.Null(
                 RecordPatches.TryGetDependencyControlDeclaredProperty(PageId, LiteralFalseId, "Caption"));
+        });
+
+    // ── OptionCaption (#4669): what TestPage SetValue/Value resolve an Option control by ────
+
+    [Fact]
+    public void OptionCaption_IsReadBackVerbatim()
+        => WithDependencyApp(() =>
+        {
+            Assert.Equal("Origin -> Usage,Usage -> Origin",
+                RecordPatches.TryGetDependencyControlOptionCaption(PageId, OptionCaptionId));
+        });
+
+    [Fact]
+    public void OptionCaption_NotStatedOrNotDeclared_AnswersNull()
+        => WithDependencyApp(() =>
+        {
+            // Null is "states none": the caller then resolves by the option's member names.
+            Assert.Null(RecordPatches.TryGetDependencyControlOptionCaption(PageId, UndeclaredId));
+            Assert.Null(RecordPatches.TryGetDependencyControlOptionCaption(PageId, UnknownControlId));
+            Assert.Null(RecordPatches.TryGetDependencyControlOptionCaption(88330502, OptionCaptionId));
         });
 }
