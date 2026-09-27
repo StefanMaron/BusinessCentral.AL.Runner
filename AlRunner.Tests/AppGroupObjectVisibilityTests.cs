@@ -291,8 +291,10 @@ public class AppGroupObjectVisibilityTests
         """);
 
         var dirs = new List<string> { outer };
-        foreach (var (letter, appId, cu, bufferId, subsId, autoIncrement, secondSeq) in new[]
-                 { ("X", AppC, 62681, 62684, 62690, "true", 2), ("Y", AppD, 62682, 62685, 62691, "false", 0) })
+        // Only X states AutoIncrement, UseRequestPage = false, DelayedInsert and RefreshOnActivate,
+        // so each group's answer differs from the other's (#4767).
+        foreach (var (letter, appId, cu, bufferId, subsId, autoIncrement, secondSeq, xOnly) in new[]
+                 { ("X", AppC, 62681, 62684, 62690, "true", 2, "true"), ("Y", AppD, 62682, 62685, 62691, "false", 0, "false") })
         {
             var dir = WriteApp(Path.Combine(root, "dup" + letter), appId, "Dup " + letter, 62680, 62699);
             File.WriteAllText(Path.Combine(dir, "Dup.al"), $$"""
@@ -331,6 +333,7 @@ public class AppGroupObjectVisibilityTests
             {
                 Caption = 'Dup {{letter}} Report Cap';
                 ProcessingOnly = true;
+                UseRequestPage = {{(xOnly == "true" ? "false" : "true")}};
                 dataset { dataitem(T{{letter}}; "Dup {{letter}} Table") { } }
                 trigger OnPreReport() begin Error('RAN REPORT {{letter}}'); end;
             }
@@ -338,6 +341,8 @@ public class AppGroupObjectVisibilityTests
             {
                 Caption = 'Dup {{letter}} Page Cap';
                 SourceTable = "Dup {{letter}} Table";
+                DelayedInsert = {{xOnly}};
+                RefreshOnActivate = {{xOnly}};
                 layout { area(Content) { field(C{{letter}}; Rec.Code) { } field(O{{letter}}; Rec."Only{{letter}}") { } } }
             }
             query 62688 "Dup {{letter}} Query" { elements { dataitem(T; "Dup {{letter}} Table") { column(C; Code) { } } } }
@@ -476,7 +481,12 @@ public class AppGroupObjectVisibilityTests
 
                 [Test]
                 procedure SharedReportRunsThisGroupsOwn()
+                var
+                    ReportMetadata: Record "Report Metadata";
                 begin
+                    // Read from the report's emitted document, not from the AL parse.
+                    ReportMetadata.Get(62686);
+                    if ReportMetadata.UseRequestPage = {{xOnly}} then Error('WRONG: Report Metadata UseRequestPage for 62686 in {{letter}} is %1', ReportMetadata.UseRequestPage);
                     asserterror Report.Run(62686, false, false);
                     if GetLastErrorText() <> 'RAN REPORT {{letter}}' then Error('WRONG: Report.Run(62686) in {{letter}} ended with: %1', GetLastErrorText());
                 end;
@@ -484,6 +494,7 @@ public class AppGroupObjectVisibilityTests
                 [Test]
                 procedure SharedPageTestPageIsThisGroupsOwn()
                 var
+                    PageMetadata: Record "Page Metadata";
                     TP: TestPage "Dup {{letter}} Page";
                     Rec: Record "Dup {{letter}} Table";
                 begin
@@ -496,6 +507,10 @@ public class AppGroupObjectVisibilityTests
                     if TP.O{{letter}}.AsInteger() <> 5 then Error('WRONG: TestPage control O of 62687 in {{letter}} reads %1', TP.O{{letter}}.Value);
                     if TP.Caption <> 'Dup {{letter}} Page Cap' then Error('WRONG: TestPage caption of 62687 in {{letter}} is %1', TP.Caption);
                     TP.Close();
+                    // Page Metadata's <SourceObject> and <Properties> columns come from the loaded page metadata.
+                    PageMetadata.Get(62687);
+                    if PageMetadata.DelayedInsert <> {{xOnly}} then Error('WRONG: Page Metadata DelayedInsert for 62687 in {{letter}} is %1', PageMetadata.DelayedInsert);
+                    if PageMetadata.RefreshOnActivate <> {{xOnly}} then Error('WRONG: Page Metadata RefreshOnActivate for 62687 in {{letter}} is %1', PageMetadata.RefreshOnActivate);
                 end;
 
                 [Test]
