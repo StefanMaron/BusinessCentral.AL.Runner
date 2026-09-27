@@ -741,6 +741,19 @@ public static partial class NclCecilRewrite
                 }
             }
 
+            // BC walks CurrentMethodScope, which the runner keeps flat, so the list came back empty (#4868).
+            var mCallstack = alNavAppModuleType?.Methods.FirstOrDefault(x =>
+                x.Name == "ALGetCallerCallstackModuleInfos" && x.Parameters.Count == 0 && x.IsStatic);
+            if (mCallstack == null)
+                throw new InvalidOperationException(
+                    "[Cecil] ALNavApp.ALGetCallerCallstackModuleInfos() not found; "
+                    + "NavApp.GetCallerCallstackModuleInfos would answer an empty list (#4868)");
+            ReplaceBodyWithHelper(asm.MainModule, mCallstack,
+                typeof(AlRunner.Patches.NavAppModuleInfoPatches).GetMethod(
+                    nameof(AlRunner.Patches.NavAppModuleInfoPatches.ALNavApp_GetCallerCallstackModuleInfos),
+                    BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException("[Cecil] NavAppModuleInfoPatches.ALNavApp_GetCallerCallstackModuleInfos not found"));
+
             // ALNavApp.ALNavAppLoadPackageData: BC's early return outside install is kept; during
             // install it refuses by name instead of failing inside BC's package retriever (#4061).
             var mLoadPackageData = alNavAppModuleType?.Methods.FirstOrDefault(x =>
