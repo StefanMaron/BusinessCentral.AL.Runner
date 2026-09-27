@@ -235,8 +235,22 @@ public static class ApplicationAreaControlRemoval
     internal static IEnumerable<int> DependencyFieldControlsToRemove(
         int pageId, Func<string?, bool> isAreaEnabled, IReadOnlyDictionary<int, string>? areaChanges = null)
         => RecordPatches.DependencyFieldControlAreas(pageId)
-            .Where(control => !isAreaEnabled(AreaAfterChanges(control.Id, control.ApplicationArea, areaChanges)))
+            .Where(control => !isAreaEnabled(AreaAfterSourceChange(pageId, control, areaChanges)))
             .Select(control => control.Id);
+
+    // A precompiled and a source extension modify()ing one control to different areas refuse, as
+    // two extensions within either set do: which BC applies has not been measured (#4866).
+    private static string? AreaAfterSourceChange(
+        int pageId, (int Id, string? ApplicationArea, string? ModifiedArea) control, IReadOnlyDictionary<int, string>? areaChanges)
+    {
+        if (areaChanges == null || !areaChanges.TryGetValue(control.Id, out var changed)) return control.ApplicationArea;
+        if (control.ModifiedArea != null && !string.Equals(control.ModifiedArea, changed, StringComparison.Ordinal))
+            throw TestPageShapeGap.ControlProperty(
+                $"TestPage ApplicationArea on page {pageId} control {control.Id}",
+                $"a precompiled pageextension modifies it to '{control.ModifiedArea}' and a source pageextension "
+                + $"to '{changed}', and which one BC applies has not been measured (#4866)");
+        return changed;
+    }
 
     /// <summary>
     /// The field controls source-compiled pageextensions add that <paramref name="isAreaEnabled"/>

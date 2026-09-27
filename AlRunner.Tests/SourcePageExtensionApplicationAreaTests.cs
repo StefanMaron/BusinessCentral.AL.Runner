@@ -189,6 +189,21 @@ public sealed class SourcePageExtensionApplicationAreaTests : IDisposable
     }
 
     [SkippableFact]
+    public void SourceExtensionWhoseDeltaDocumentIsMissing_Refuses_RatherThanRemovingNothing()
+    {
+        TestArtifacts.SkipIf(!_engine.Ready,
+            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
+        Emit(FixtureAl);
+        Assert.NotEmpty(RecordPatches.SourcePageExtensionAreas(PageId).AddedFieldControls);
+
+        AlObjectMetadataRegistry.Clear();
+
+        var ex = Assert.Throws<RunnerOutOfScopeException>(() => RecordPatches.SourcePageExtensionAreas(PageId));
+        Assert.Contains($"pageextension {ExtensionId}", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("delta document", ex.Message, StringComparison.Ordinal);
+    }
+
+    [SkippableFact]
     public void PageWithNoSourceExtension_ContributesNothing()
     {
         TestArtifacts.SkipIf(!_engine.Ready,

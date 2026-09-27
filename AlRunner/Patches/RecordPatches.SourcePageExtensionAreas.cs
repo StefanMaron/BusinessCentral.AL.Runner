@@ -39,8 +39,13 @@ public static partial class RecordPatches
         var changedBy = new Dictionary<int, int>();
         foreach (var extId in extensionIds)
         {
+            // Parsed but never captured is "could not measure", never "adds nothing".
             if (!AlObjectMetadataRegistry.TryGet(BcPageExtensionMetadataKind, extId, out var xml) || string.IsNullOrEmpty(xml))
-                continue;
+                throw TestPageShapeGap.ControlProperty(
+                    $"TestPage ApplicationArea on page {pageId}",
+                    $"pageextension {extId} was compiled from source, but BC's emitted delta document for it "
+                    + "is not in the metadata registry, so the areas of the controls it adds or modifies "
+                    + "cannot be read (#4866)");
             var doc = new XmlDocument();
             doc.LoadXml(xml);
             foreach (XmlNode node in doc.DocumentElement!.ChildNodes)
