@@ -710,7 +710,10 @@ internal static partial class BcAppSymbolCache
         // inputs RecordPatches.DeriveHelpLink combines with the app manifest's help URL.
         string? RequestPageHelpLink = null, string? RequestPageContextSensitiveHelpPage = null,
         // The request page's AboutTitle / AboutText, verbatim (#4108).
-        string? RequestPageAboutTitle = null, string? RequestPageAboutText = null);
+        string? RequestPageAboutTitle = null, string? RequestPageAboutText = null,
+        // The request page's SaveValues / ShowFilter as the symbol file states them (#4667);
+        // null when it states none, which BC's emitter writes as no attribute at all.
+        bool? RequestPageSaveValues = null, bool? RequestPageShowFilter = null);
 
     /// <summary>
     /// One node of a precompiled report's request-page control tree (#4661): a field, a group,
@@ -2520,7 +2523,18 @@ internal static partial class BcAppSymbolCache
             ReadRequestPageProperty(report, "HelpLink"),
             ReadRequestPageProperty(report, "ContextSensitiveHelpPage"),
             ReadRequestPageProperty(report, "AboutTitle"),
-            ReadRequestPageProperty(report, "AboutText"));
+            ReadRequestPageProperty(report, "AboutText"),
+            ReadRequestPageBool(report, "SaveValues"),
+            ReadRequestPageBool(report, "ShowFilter"));
+    }
+
+    // "1"/"0" (or true/false) -> the value; absent -> null. An unreadable spelling also reads
+    // null: no Microsoft symbol file measured states a request-page boolean any other way.
+    private static bool? ReadRequestPageBool(JsonElement report, string name)
+    {
+        List<string>? unreadable = null;
+        var v = ReadRequestPageProperty(report, name);
+        return v is null ? null : SymbolBoolOrNull(new() { [name] = v }, name, ref unreadable);
     }
 
     private static string? ReadRequestPageProperty(JsonElement report, string name)

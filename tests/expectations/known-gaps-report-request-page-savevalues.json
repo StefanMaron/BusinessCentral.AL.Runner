@@ -1,0 +1,18 @@
+[
+  {
+    "codeunitId": 67541,
+    "CodeunitName": "Rpt RequestPage SaveValues",
+    "Method": "PrecompiledReport_SaveValues_NextRunShowsTheConfirmedValue",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4808",
+    "Note": "Expected:<Receive> Actual:<Ship>. The runner neither stores a request page's confirmed values on OK nor restores them on the next open: NavReport.set_RequestOptionsPage is rewritten to a bare field store (no GetReportOptions/ApplyReportOptions subscriptions) and RunnerModalDispatch closes the form with FormResult.None, so StoreSaveValues never persists. #4667's fix is the precompiled half's prerequisite (the report document now carries SaveValues), not the whole of it."
+  },
+  {
+    "codeunitId": 67541,
+    "CodeunitName": "Rpt RequestPage SaveValues",
+    "Method": "SourceReport_SaveValues_NextRunShowsTheConfirmedValue",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4808",
+    "Note": "Expected:<rpsv-saved-67540> Actual:<>. Same cause as the precompiled arm: the save/restore round trip is cut in two places in the runner (#4808). A source-compiled report already carries SaveValues from BC's own emitter, so this arm fails on main independent of #4667."
+  }
+]
