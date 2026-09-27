@@ -67,7 +67,7 @@ public sealed class AlCacheWriterDependencyCacheOrderingTests
                 reportLayoutSidecar,
                 pageMetadataSidecar, Array.Empty<int>(),
                 xmlPortMetadataSidecar, Array.Empty<int>(),
-                enumRegistrySidecar, Array.Empty<int>(),
+                enumRegistrySidecar, Array.Empty<(AlEnumMetadataRegistry.Entry, int?)>(),
                 objectMetadataSidecar, Array.Empty<string>());
 
             Assert.Equal(0, sidecarCount);
@@ -121,7 +121,7 @@ public sealed class AlCacheWriterDependencyCacheOrderingTests
                 reportLayoutSidecar,
                 pageMetadataSidecar, Array.Empty<int>(),
                 xmlPortMetadataSidecar, Array.Empty<int>(),
-                enumRegistrySidecar, Array.Empty<int>(),
+                enumRegistrySidecar, Array.Empty<(AlEnumMetadataRegistry.Entry, int?)>(),
                 objectMetadataSidecar, Array.Empty<string>(),
                 onSidecarsPublishedBeforeDll: () =>
                 {

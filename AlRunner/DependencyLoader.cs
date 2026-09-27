@@ -762,7 +762,7 @@ public sealed class DependencyLoader
         var reportIdsBeforeEmit = new HashSet<int>(AlReportMetadataRegistry.Ids);
         var pageIdsBeforeEmit = new HashSet<int>(AlPageMetadataRegistry.Ids);
         var xmlPortIdsBeforeEmit = new HashSet<int>(AlXmlPortMetadataRegistry.Ids);
-        var enumIdsBeforeEmit = new HashSet<int>(AlEnumMetadataRegistry.Ids);
+        var enumsBeforeEmit = AlEnumMetadataRegistry.Mark();
         var objectKeysBeforeEmit = new HashSet<string>(AlObjectMetadataRegistry.Keys, StringComparer.Ordinal);
         // Scope _currentAppId to the dep's own identity for the duration of this compile.
         // GetSharedReferences uses _currentAppId to exclude the "current app" from its
@@ -856,7 +856,7 @@ public sealed class DependencyLoader
                 xmlPortMetadataSidecar,
                 AlXmlPortMetadataRegistry.Ids.Where(i => !xmlPortIdsBeforeEmit.Contains(i)).ToArray(),
                 enumRegistrySidecar,
-                AlEnumMetadataRegistry.Ids.Where(i => !enumIdsBeforeEmit.Contains(i)),
+                AlEnumMetadataRegistry.RegisteredSince(enumsBeforeEmit),
                 objectMetadataSidecar,
                 AlObjectMetadataRegistry.Keys.Where(k => !objectKeysBeforeEmit.Contains(k)).ToArray(),
                 emitExcludedSidecar: emitExcludedSidecar, emitExcludedReport: emitExcludedReport);
@@ -917,7 +917,7 @@ public sealed class DependencyLoader
         string reportLayoutSidecar,
         string pageMetadataSidecar, int[] ownPageIds,
         string xmlPortMetadataSidecar, int[] ownXmlPortIds,
-        string enumRegistrySidecar, IEnumerable<int> ownEnumIds,
+        string enumRegistrySidecar, IReadOnlyList<(AlEnumMetadataRegistry.Entry Entry, int? ExtendsTargetId)> ownEnumEntries,
         string objectMetadataSidecar, IEnumerable<string> ownObjectKeys,
         Action? onSidecarsPublishedBeforeDll = null,
         string? emitExcludedSidecar = null, string? emitExcludedReport = null)
@@ -941,7 +941,7 @@ public sealed class DependencyLoader
         AlCacheWriter.AtomicPublish(xmlPortMetadataSidecar,
             tmp => AlXmlPortMetadataRegistry.SaveSidecar(tmp, ownXmlPortIds));
         int enumSidecarCount = AlCacheWriter.AtomicPublish(enumRegistrySidecar,
-            tmp => AlEnumMetadataRegistry.SaveSidecar(tmp, ownEnumIds));
+            tmp => AlEnumMetadataRegistry.SaveSidecar(tmp, ownEnumEntries));
         AlCacheWriter.AtomicPublish(objectMetadataSidecar,
             tmp => AlObjectMetadataRegistry.SaveSidecar(tmp, ownObjectKeys));
         onSidecarsPublishedBeforeDll?.Invoke();

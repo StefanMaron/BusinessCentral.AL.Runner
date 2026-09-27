@@ -300,20 +300,6 @@ public static class AlEnumMetadataRegistry
         return result.OrderBy(e => e.Id).ToList();
     }
 
-    /// <summary>Every enum id currently registered (base ids ∪ enumextension target
-    /// ids) — used by <see cref="DependencyLoader"/> to snapshot "before this dep's
-    /// emit" / "after this dep's emit" sets so a source-dep compile can persist only
-    /// the entries IT contributed to its own cache sidecar (issue #1731's fix).</summary>
-    public static int[] Ids
-    {
-        get
-        {
-            var ids = new HashSet<int>(_byId.Keys);
-            ids.UnionWith(_extByTargetId.Keys);
-            return ids.ToArray();
-        }
-    }
-
     /// <summary>
     /// Raw (unmerged) entries for serialization: each base registration paired with
     /// <c>ExtendsTargetId = null</c>, and each enumextension's OWN values (never
@@ -354,6 +340,36 @@ public static class AlEnumMetadataRegistry
         }
     }
 
+    /// <summary>The registrations present at one moment: base ids, and the extension entries
+    /// themselves by reference, because an extension can land under an id that already exists.</summary>
+    public sealed class RawMark
+    {
+        internal HashSet<int> BaseIds { get; } = new();
+        internal HashSet<Entry> Extensions { get; } = new(ReferenceEqualityComparer.Instance);
+    }
+
+    public static RawMark Mark()
+    {
+        var mark = new RawMark();
+        mark.BaseIds.UnionWith(_byId.Keys);
+        foreach (var list in _extByTargetId.Values)
+            foreach (var ext in list)
+                mark.Extensions.Add(ext);
+        return mark;
+    }
+
+    /// <summary>
+    /// The raw entries registered since <paramref name="mark"/>: a base enum whose id had no base
+    /// then, and every extension entry that did not exist then — including one extending a base
+    /// registered earlier by another app (#3579), which an id difference cannot see.
+    /// </summary>
+    public static IReadOnlyList<(Entry Entry, int? ExtendsTargetId)> RegisteredSince(RawMark mark)
+        => SnapshotRaw()
+            .Where(r => r.ExtendsTargetId is null
+                ? !mark.BaseIds.Contains(r.Entry.Id)
+                : !mark.Extensions.Contains(r.Entry))
+            .ToList();
+
     /// <summary>
     /// Serialize the given enum ids' RAW (unmerged) entries — see
     /// <see cref="SnapshotRaw"/> for why raw, not merged — to a sidecar file (schema
@@ -365,8 +381,11 @@ public static class AlEnumMetadataRegistry
     /// Returns the number of entries written.
     /// </summary>
     public static int SaveSidecar(string path, IEnumerable<int> onlyIds)
+        => SaveSidecar(path, SnapshotRaw(onlyIds).ToList());
+
+    /// <summary>Serialize exactly <paramref name="raw"/>; see <see cref="RegisteredSince"/>.</summary>
+    public static int SaveSidecar(string path, IReadOnlyList<(Entry Entry, int? ExtendsTargetId)> raw)
     {
-        var raw = SnapshotRaw(onlyIds).ToList();
 
         var dto = new
         {
