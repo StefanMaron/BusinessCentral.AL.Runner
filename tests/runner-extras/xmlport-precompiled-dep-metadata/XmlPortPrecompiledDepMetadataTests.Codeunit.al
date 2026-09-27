@@ -99,6 +99,31 @@ codeunit 65941 "XPD Tests"
             'the fieldelement bound to Description must reach the output as a derived node');
     end;
 
+    // #4783: the dependency's TABLE, used directly. In CI this suite also runs as the second
+    // of two ordered bundles, after tests/runner-extras/precompiled-dep-cache-null-first has
+    // asked about 61600 before this bundle's dependency .app was registered. That lookup
+    // recorded the table as absent, and registering the .app did not drop the record, so this
+    // bundle's own use of the table raised NavMetadataNotFoundException. Run alone, or in the
+    // combined runner-extras bundle, nothing asks early and this passes either way.
+    [Test]
+    procedure DependencyTable_IsDescribedAndUsable()
+    var
+        TempHeader: Record "XPDDep Header" temporary;
+        RecRef: RecordRef;
+    begin
+        RecRef.Open(61600);
+        Assert.AreEqual('XPDDep Header', RecRef.Name, 'RecordRef.Name for the dependency table 61600');
+        RecRef.Close();
+
+        TempHeader.Init();
+        TempHeader."No." := 'PDCN-4783';
+        TempHeader.Description := 'declared by a later bundle';
+        TempHeader.Insert();
+        TempHeader.Reset();
+        Assert.IsTrue(TempHeader.Get('PDCN-4783'), 'a row inserted into the dependency table 61600 must be readable back');
+        Assert.AreEqual('declared by a later bundle', TempHeader.Description, 'Description read back from the dependency table 61600');
+    end;
+
     // Negative, same surface: an id no app declares must still fail loudly, so the fix
     // cannot be "hand out a document for anything anyone asks about" — that would turn
     // every genuinely-missing object into a silent success, which is the failure mode

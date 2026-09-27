@@ -1,0 +1,18 @@
+{
+  "id": "4f1c7d2a-9e35-4b86-a0d1-6c2e8b5f4783",
+  "name": "Runner Extras - Precompiled Dep Cache Null First",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #4783, the first of two ordered bundles: asks about table 61600, which only the second bundle's precompiled dependency declares.",
+  "description": "Issue #4783. Run before tests/runner-extras/xmlport-precompiled-dep-metadata, this bundle asks for table 61600 while no registered .app declares it, so the runner's table metadata cache records it as absent. The second bundle's dependency .app declares the table; registering it must drop that absence, or the second bundle's own use of the table fails with NavMetadataNotFoundException. Runner-specific: the corpus runs one app set per service tier and has no second bundle in the same process.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 66400,
+      "to": 66409
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}
