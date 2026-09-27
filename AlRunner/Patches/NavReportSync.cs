@@ -341,7 +341,7 @@ public static partial class NavReportSync
         {
             // offersOk: true — RunRequestPage opens the page with ReportIntent.Parameters, where a
             // plain OK means "these are the parameters" and is available on every request page.
-            confirmed = RunRequestPageForHandler(report, reportId, parameters, offersOk: true);
+            confirmed = RunRequestPageForHandler(report, reportId, parameters, offersOk: true, parametersOnly: true);
         }
         catch
         {
@@ -522,7 +522,7 @@ public static partial class NavReportSync
                 "the runner could not construct report " + reportId + " to run it");
 
         var parent = BcRuntime.SkeletonSession;
-        var instance = CreateReportInstance(meta, parent!, skipRestoreSavedReportSettings: true);
+        var instance = CreateReportInstance(meta, parent!, skipRestoreSavedReportSettings: false);
 
         // BC's NavReport.RunReportAsync: `if (requestWindow.HasValue) UseRequestForm =
         // requestWindow.Value;`. Only the one-argument overloads pass null (#4665); for the
@@ -563,7 +563,7 @@ public static partial class NavReportSync
     /// <param name="offersOk">Whether the request page has a plain OK built-in action —
     /// see RequestPageTestPage.GetBuiltInAction. True for the parameters-capture entry point
     /// (RunRequestPage); for Report.Run() only when the report is ProcessingOnly.</param>
-    private static bool RunRequestPageForHandler(object report, int reportId, string? parameters, bool offersOk)
+    private static bool RunRequestPageForHandler(object report, int reportId, string? parameters, bool offersOk, bool parametersOnly = false)
     {
         var pRequestPage = FindProperty(report.GetType(), "RequestOptionsPage");
         if (pRequestPage == null) return true;
@@ -607,6 +607,9 @@ public static partial class NavReportSync
         // previously been registered"). An earlier revision did pre-register, because back
         // then dispatch was never reached and the unregistered-handle lookup was the
         // visible failure — that is no longer the path taken.
+        SubscribeOnSaveValues(report);
+        if (parametersOnly) MarkParametersOnly(requestPage);
+
         var runModal = requestPage.GetType().GetMethod("RunModal",
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
             binder: null, types: Type.EmptyTypes, modifiers: null);
@@ -634,6 +637,55 @@ public static partial class NavReportSync
         }
 
         return testPage.Confirmed;
+    }
+
+    /// <summary>
+    /// The two steps BC's <c>NavReport.RunRequestPageCoreAsync</c> takes before it opens the
+    /// request page: <c>requestPageVariables = null; SubscribeOnSaveValues();</c>. The
+    /// subscription is what hands the page's values to <c>GetReportParameters</c> when
+    /// <c>StoreSaveValues</c> raises <c>OnSaveValues</c> on close; without it a SaveValues
+    /// request page persists its data-item views and none of its fields (#4808).
+    /// </summary>
+    private static void SubscribeOnSaveValues(object report)
+    {
+        const string Surface = "Report request page (SaveValues)";
+        var navReport = report.GetType();
+        while (navReport != null && navReport.FullName != "Microsoft.Dynamics.Nav.Runtime.NavReport")
+            navReport = navReport.BaseType;
+        if (navReport == null)
+            throw AlRunner.Patches.RunnerShapeGap.RequestPageReport(
+                Surface, "the request page's owner " + report.GetType().FullName + " is not a NavReport");
+        const BindingFlags Inst = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        var variables = navReport.GetField("requestPageVariables", Inst)
+            ?? throw new AlRunner.Infrastructure.BcShapeGapException(Surface, "NavReport.requestPageVariables",
+                "without it a previous run's request-page values could leak into this run's parameters");
+        var subscribe = navReport.GetMethod("SubscribeOnSaveValues", Inst, binder: null, types: Type.EmptyTypes, modifiers: null)
+            ?? throw new AlRunner.Infrastructure.BcShapeGapException(Surface, "NavReport.SubscribeOnSaveValues",
+                "without it the request page's field values never reach GetReportParameters");
+        variables.SetValue(report, null);
+        Invoke(subscribe, report, Array.Empty<object?>());
+    }
+
+    /// <summary>
+    /// <c>RequestOptionsPage.ReportRunOptions.RunMode = ParametersOnly</c>, what BC's
+    /// <c>InitReportRunOptions</c> answers for <c>ReportIntent.Parameters</c> (Ncl
+    /// <c>ReportExtensions.Map</c>) and <c>RunRequestPageCoreAsync</c> hands the page. It is
+    /// what makes <c>StoreSaveValues</c> return before persisting, so Report.RunRequestPage
+    /// hands back the page's values without saving them for the next run (#4808).
+    /// </summary>
+    private static void MarkParametersOnly(object requestPage)
+    {
+        const string Surface = "Report.RunRequestPage (SaveValues)";
+        const string Detail = "without it confirming a RunRequestPage would persist its values as "
+            + "a SaveValues request page's saved settings, which BC does not do";
+        const BindingFlags Inst = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        var options = FindProperty(requestPage.GetType(), "ReportRunOptions")?.GetValue(requestPage)
+            ?? throw new AlRunner.Infrastructure.BcShapeGapException(Surface, "NavForm.ReportRunOptions", Detail);
+        var runMode = options.GetType().GetProperty("RunMode", Inst);
+        if (runMode == null || !runMode.CanWrite || !runMode.PropertyType.IsEnum
+            || !Enum.TryParse(runMode.PropertyType, "ParametersOnly", out var parametersOnly))
+            throw new AlRunner.Infrastructure.BcShapeGapException(Surface, "ReportRunOptions.RunMode", Detail);
+        runMode.SetValue(options, parametersOnly);
     }
 
     /// <summary>Register a form with the skeleton company, ignoring an already-registered one.</summary>
@@ -1923,44 +1975,35 @@ public static partial class NavReportSync
             throw new InvalidOperationException(
                 $"Report{id} has no (ITreeObject[, NCLMetaReport]) constructor");
 
-        // Seed the skeleton state BEFORE the saved-settings restore, exactly as this
-        // method did before CompleteReportConstruction was factored out — the restore
-        // walk reads session/ObjectId state. Both seeds are idempotent, so the
-        // CompleteReportConstruction call below is a no-op for them.
-        SeedSessionSystemTenant(parent);
-        SeedObjectId(instance, id);
-
-        // InitializeReportValues restores SAVED request-page values
-        // (requestOptionsPage.InitializeRequestPageWithCustomValues). The runner has
-        // no saved report settings store, and BC itself skips the restore when
-        // skipRestoreSavedReportSettings=true (the static SaveAs path passes true
-        // for empty parameters). The request-page ctor chain is null-safe-minimal
-        // on the skeleton, so the restore walk NREs — skipping it is observably
-        // equivalent to a tenant with no saved settings.
-        try
-        {
-            if (!skipRestoreSavedReportSettings)
-            {
-                var init = instance.GetType().GetMethod("InitializeReportValues",
-                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                try { init?.Invoke(instance, null); }
-                catch (TargetInvocationException tie) when (tie.InnerException is NullReferenceException)
-                {
-                    // Saved-settings restore walked skeleton request-page state; no
-                    // saved settings exist in the runner — equivalent to none stored.
-                }
-            }
-        }
-        catch (TargetInvocationException tie) when (tie.InnerException != null)
-        {
-            // Not `throw tie.InnerException` (#2948): a bare rethrow RESETS the stack trace
-            // to this line, erasing every BC frame below it. Same form as Invoke() above.
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
-            throw; // unreachable
-        }
+        if (!skipRestoreSavedReportSettings)
+            RestoreSavedRequestPageValues(instance, parent, id);
 
         CompleteReportConstruction(instance, parent, id);
         return instance;
+    }
+
+    /// <summary>
+    /// BC's <c>NavReport.InitializeReportValues</c>, the step <c>NCLMetaReport.CreateObjectInstance</c>
+    /// runs unless its caller asked to skip saved settings: a request page declaring
+    /// <c>SaveValues</c> reopens on the values confirmed on its previous run, read back from
+    /// the <c>Object Options</c> table through BC's own <c>ApplyReportOptions</c> handler.
+    /// Both construction paths call it — BC's <c>NavReportHandle.CreateTarget</c> (a report
+    /// variable) and the static <c>Report.Run</c> both pass no skip (#4808; corpus 67541, green
+    /// on real BC). Not wrapped: an error here is BC's, and hiding it would reopen the page on
+    /// its defaults with nothing said.
+    /// </summary>
+    public static void RestoreSavedRequestPageValues(object instance, object? parent, int reportId)
+    {
+        // The restore reads the session and ObjectId (NavObjectOptions keys on the report id);
+        // both seeds are idempotent, so CompleteReportConstruction repeating them is harmless.
+        SeedSessionSystemTenant(parent);
+        SeedObjectId(instance, reportId);
+
+        var init = AlRunner.Infrastructure.BcShape.RequiredMethod(instance.GetType(), "InitializeReportValues",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            "Report request page (SaveValues)", "NavReport.InitializeReportValues",
+            "without it a SaveValues request page never reopens on the values confirmed before");
+        Invoke(init, instance, Array.Empty<object?>());
     }
 
     /// <summary>

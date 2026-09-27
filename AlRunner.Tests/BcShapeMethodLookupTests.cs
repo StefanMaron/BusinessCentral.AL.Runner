@@ -339,13 +339,18 @@ public sealed class BcShapeMethodLookupTests
     // RemapToALExceptionAndThrow lookup and is deliberately untouched. A conversion moves BOTH
     // counters, per the #3581 note above — BcInternalsNullForgivingGuardTests' `converted` is
     // computed from the source, so it needs no edit here, but check it when the next one lands.
+    //
+    // 64 -> 63 by #4808, a CONVERSION: NavReportSync.CreateReportInstance resolved
+    // NavReport.InitializeReportValues name-only and invoked it through `init?.Invoke`, so a null
+    // silently skipped restoring saved request-page values. The restore moved to
+    // RestoreSavedRequestPageValues, which binds it with BcShape.RequiredMethod.
 
     /// <summary>
     /// Every remaining name-only method lookup that could reach a Microsoft-shipped type. Lower
     /// it as sites are converted; it may never rise. On a mismatch the assertion prints the
     /// per-file breakdown, which is the number to put here.
     /// </summary>
-    private const int NameOnlyBcTypedMethodLookups = 64;
+    private const int NameOnlyBcTypedMethodLookups = 63;
 
     /// <summary>The floor is not cosmetic: a scan that silently narrowed to a handful of files
     /// would report a small number and read as progress. AlRunner/ holds ~195 sources.</summary>

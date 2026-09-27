@@ -1103,6 +1103,8 @@ public static partial class BcRuntime
         // runs — this path bypasses that method, and without FinalizeDataItemLoading the
         // report's TableViewIsSet array stays null, so AL's Report.SetTableView(Rec) NREs
         // inside BC's own DataItemIterator.SetTableView (issue #1718).
+        // BC's CreateTarget passes no skip, so saved request-page values are restored too (#4808).
+        AlRunner.NavReportSync.RestoreSavedRequestPageValues(instance, self, id);
         AlRunner.NavReportSync.CompleteReportConstruction(instance, self, id);
         return instance;
     }
