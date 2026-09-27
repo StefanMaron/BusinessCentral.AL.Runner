@@ -127,8 +127,9 @@ public static class RunnerModalDispatch
     {
         var field = testExecution.GetType().GetField("testClientSession",
             BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException(
-                "NavTestExecution.testClientSession not found — Ncl shape changed; do not commit");
+            ?? throw new AlRunner.Infrastructure.BcShapeGapException(
+                "NavTestExecution", "NavTestExecution.testClientSession",
+                "field not found, so the test page client BC released cannot be rebuilt");
         if (field.GetValue(testExecution) != null) return;
         var session = BcRuntime.SkeletonSession
             ?? throw new InvalidOperationException(

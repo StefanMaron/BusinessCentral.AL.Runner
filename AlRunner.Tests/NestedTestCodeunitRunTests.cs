@@ -14,7 +14,8 @@ namespace AlRunner.Tests;
 /// pins is the wiring: the failure carries BC's own exception type,
 /// <c>NavNCLTestCodeUnitNestedInvocationException</c>, which only BC's guard raises, and
 /// <c>CodeunitPatches.NavCodeunit_RunCodeunit</c> is still the path a plain codeunit takes.
-/// It also pins that a modal page opened after the refused run still reaches its handler:
+/// It also pins that a modal page and a non-modal page opened after the refused run still reach
+/// their handlers:
 /// BC's refused <c>DoRunAsync</c> releases the test page client, which
 /// <c>RunnerModalDispatch.EnsureTestClientSession</c> rebuilds as BC's own getter does.
 ///
@@ -77,7 +78,7 @@ public class NestedTestCodeunitRunTests
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "1.0.0.0",
-          "idRanges": [ { "from": 64827, "to": 64830 } ],
+          "idRanges": [ { "from": 64827, "to": 64831 } ],
           "runtime": "14.0"
         }
         """);
@@ -105,12 +106,18 @@ public class NestedTestCodeunitRunTests
             PageType = StandardDialog;
         }
 
+        page 64831 "NTC4827 Card"
+        {
+            PageType = Card;
+        }
+
         codeunit 64829 "NTC4827 Outer Tests"
         {
             Subtype = Test;
 
             var
                 DialogHandled: Boolean;
+                CardHandled: Boolean;
 
             [Test]
             procedure StaticRun_Unguarded()
@@ -147,6 +154,22 @@ public class NestedTestCodeunitRunTests
             end;
 
             [Test]
+            [HandlerFunctions('CardHandler')]
+            procedure Page_AfterRefusedNestedRun_ReachesItsPageHandler()
+            begin
+                asserterror Codeunit.Run(Codeunit::"NTC4827 Inner Tests");
+                Page.Run(Page::"NTC4827 Card");
+                if not CardHandled then
+                    Error('NTC4827 page handler did not run after the refused nested run');
+            end;
+
+            [PageHandler]
+            procedure CardHandler(var Card: TestPage "NTC4827 Card")
+            begin
+                CardHandled := true;
+            end;
+
+            [Test]
             procedure PlainRun_Succeeds()
             begin
                 if not Codeunit.Run(Codeunit::"NTC4827 Plain") then
@@ -170,7 +193,8 @@ public class NestedTestCodeunitRunTests
         Assert.Null(FailureDetail(output, "PlainRun_Succeeds"));
         Assert.Null(FailureDetail(output, "InnerTest_Runs"));
         Assert.Null(FailureDetail(output, "ModalPage_AfterRefusedNestedRun_ReachesItsHandler"));
-        Assert.Contains("Tests: 5", output);
+        Assert.Null(FailureDetail(output, "Page_AfterRefusedNestedRun_ReachesItsPageHandler"));
+        Assert.Contains("Tests: 6", output);
         Assert.DoesNotContain("NTC4827 unguarded nested run was not refused", output);
         Assert.DoesNotContain("NTC4827 guarded nested run returned", output);
     }
