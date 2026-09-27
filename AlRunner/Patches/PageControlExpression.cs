@@ -28,8 +28,10 @@
 //     table at all. Which of those the caller answers is the caller's decision -- this parser only
 //     asks. RunnerPageInstance answers registered expressions only; see issue #2596 for what real
 //     BC does with a field reference, which is not what reading the live record would give.
-//   - An enum or option comparand is already an ORDINAL (`Kind = 1`), so nothing here has to
-//     resolve an enum member.
+//   - An enum or option comparand is already an ORDINAL (`Kind = 1`) in the emitted spelling.
+//     A PRECOMPILED page's symbol file keeps the RAW AL instead (`Rec.Kind = Rec.Kind::Second`),
+//     so `Rec.<field>` and `<owner>::<member>` are read too and handed to their own resolvers
+//     (#4787); the member resolves to its ordinal, which is what the emitted spelling carries.
 //   - A name needing quoting keeps its AL double quotes (`"Spaced Name"`).
 //   - Tokens are separated by single spaces, but nothing may depend on that: the tokenizer reads
 //     the text character by character.
@@ -77,13 +79,29 @@ internal static class PageControlExpression
         ResolveIdentifier resolve,
         out bool value,
         out string? failure)
+        => TryEvaluateBoolean(text, resolve, resolveField: null, resolveMember: null, out value, out failure);
+
+    /// <summary>
+    /// The same, for text that may carry the RAW AL spelling a precompiled page's symbol file
+    /// keeps (#4787): <c>Rec.&lt;field&gt;</c> goes to <paramref name="resolveField"/> only, and
+    /// <c>&lt;owner&gt;::&lt;member&gt;</c> to <paramref name="resolveMember"/>, which answers the
+    /// member's ordinal. A null resolver means "this property does not resolve that shape", and
+    /// the text refuses naming it.
+    /// </summary>
+    internal static bool TryEvaluateBoolean(
+        string text,
+        ResolveIdentifier resolve,
+        ResolveField? resolveField,
+        ResolveMember? resolveMember,
+        out bool value,
+        out string? failure)
     {
         value = false;
         failure = null;
 
         if (!TryTokenize(text, out var tokens, out failure)) return false;
 
-        var parser = new Parser(tokens, resolve);
+        var parser = new Parser(tokens, resolve, resolveField, resolveMember);
         if (!parser.TryParse(out var result, out failure)) return false;
 
         if (result is not bool b)
@@ -104,9 +122,30 @@ internal static class PageControlExpression
     /// </summary>
     internal delegate bool ResolveIdentifier(string name, bool quoted, out object? value);
 
+    /// <summary>Resolve <c>Rec.&lt;name&gt;</c>: a source-table field and nothing else.</summary>
+    internal delegate bool ResolveField(string name, out object? value);
+
+    /// <summary>What stands left of <c>::</c>.</summary>
+    internal enum MemberOwnerKind
+    {
+        /// <summary><c>Rec.&lt;field&gt;::&lt;member&gt;</c>.</summary>
+        Field,
+        /// <summary><c>&lt;name&gt;::&lt;member&gt;</c> — a page global, or an unqualified field.</summary>
+        Name,
+        /// <summary><c>Enum::&lt;type&gt;::&lt;member&gt;</c>.</summary>
+        EnumType,
+    }
+
+    /// <summary>
+    /// Resolve <c>&lt;owner&gt;::&lt;member&gt;</c> to the member's ORDINAL — the number the AL
+    /// compiler lowers it to in the emitted spelling (<c>Kind = 1</c>). False when the owner or
+    /// the member cannot be resolved.
+    /// </summary>
+    internal delegate bool ResolveMember(MemberOwnerKind kind, string owner, string member, out object? ordinal);
+
     // ---- tokens -------------------------------------------------------------------------------
 
-    internal enum TokenKind { Identifier, QuotedIdentifier, Number, String, Operator, LeftParen, RightParen }
+    internal enum TokenKind { Identifier, QuotedIdentifier, Number, String, Operator, LeftParen, RightParen, FieldReference, MemberAccess }
 
     internal readonly record struct Token(TokenKind Kind, string Text);
 
@@ -183,8 +222,31 @@ internal static class PageControlExpression
             {
                 var start = i;
                 while (i < text.Length && (char.IsLetterOrDigit(text[i]) || text[i] == '_')) i++;
-                tokens.Add(new Token(TokenKind.Identifier, text[start..i]));
+                var word = text[start..i];
+
+                // `Rec.<field>` — the RAW AL spelling a precompiled page's symbol file keeps
+                // (#4787). Only the `Rec` qualifier: any other `X.` still reaches the '.' refusal.
+                if (i < text.Length && text[i] == '.'
+                    && string.Equals(word, "Rec", StringComparison.OrdinalIgnoreCase))
+                {
+                    i++;
+                    if (!TryReadName(text, ref i, out var field, out failure))
+                    {
+                        failure ??= "'Rec.' is not followed by a field name";
+                        return false;
+                    }
+                    tokens.Add(new Token(TokenKind.FieldReference, field));
+                    continue;
+                }
+
+                tokens.Add(new Token(TokenKind.Identifier, word));
                 continue;
+            }
+
+            // `<owner>::<member>` — an option/enum member literal in the raw AL spelling (#4787).
+            if (c == ':' && i + 1 < text.Length && text[i + 1] == ':')
+            {
+                tokens.Add(new Token(TokenKind.MemberAccess, "::")); i += 2; continue;
             }
 
             // Two-character operators first, so <> and <= are not read as < followed by junk.
@@ -209,6 +271,40 @@ internal static class PageControlExpression
         return true;
     }
 
+    /// <summary>A plain or double-quoted AL name at <paramref name="i"/>, as the field of a
+    /// <c>Rec.</c> qualifier. False, with no failure, when nothing name-shaped is there.</summary>
+    private static bool TryReadName(string text, ref int i, out string name, out string? failure)
+    {
+        name = "";
+        failure = null;
+        if (i >= text.Length) return false;
+
+        if (text[i] == '"')
+        {
+            i++;
+            var quoted = new System.Text.StringBuilder();
+            while (i < text.Length)
+            {
+                if (text[i] == '"')
+                {
+                    if (i + 1 < text.Length && text[i + 1] == '"') { quoted.Append('"'); i += 2; continue; }
+                    i++;
+                    name = quoted.ToString();
+                    return name.Length > 0;
+                }
+                quoted.Append(text[i]); i++;
+            }
+            failure = "it contains an unterminated quoted name";
+            return false;
+        }
+
+        if (!(char.IsLetter(text[i]) || text[i] == '_')) return false;
+        var start = i;
+        while (i < text.Length && (char.IsLetterOrDigit(text[i]) || text[i] == '_')) i++;
+        name = text[start..i];
+        return true;
+    }
+
     // ---- parser -------------------------------------------------------------------------------
 
     // AL's precedence, lowest binding first. This is Pascal's, not C's: `and` sits with the
@@ -223,13 +319,17 @@ internal static class PageControlExpression
     {
         private readonly List<Token> _tokens;
         private readonly ResolveIdentifier _resolve;
+        private readonly ResolveField? _resolveField;
+        private readonly ResolveMember? _resolveMember;
         private int _at;
         private string? _failure;
 
-        internal Parser(List<Token> tokens, ResolveIdentifier resolve)
+        internal Parser(List<Token> tokens, ResolveIdentifier resolve, ResolveField? resolveField, ResolveMember? resolveMember)
         {
             _tokens = tokens;
             _resolve = resolve;
+            _resolveField = resolveField;
+            _resolveMember = resolveMember;
         }
 
         internal bool TryParse(out object? result, out string? failure)
@@ -388,7 +488,13 @@ internal static class PageControlExpression
 
                 case TokenKind.QuotedIdentifier:
                     _at++;
+                    if (NextIsMemberAccess) return Member(MemberOwnerKind.Name, t.Value.Text);
                     return Resolve(t.Value.Text, quoted: true);
+
+                case TokenKind.FieldReference:
+                    _at++;
+                    if (NextIsMemberAccess) return Member(MemberOwnerKind.Field, t.Value.Text);
+                    return ResolveFieldReference(t.Value.Text);
 
                 case TokenKind.Identifier:
                 {
@@ -398,8 +504,26 @@ internal static class PageControlExpression
                     if (string.Equals(t.Value.Text, "true", StringComparison.OrdinalIgnoreCase)) { _at++; return true; }
                     if (string.Equals(t.Value.Text, "false", StringComparison.OrdinalIgnoreCase)) { _at++; return false; }
                     _at++;
+                    if (NextIsMemberAccess)
+                    {
+                        // `Enum::"Type"::Member` names the type through the `Enum` keyword.
+                        if (string.Equals(t.Value.Text, "Enum", StringComparison.OrdinalIgnoreCase)
+                            && _at + 2 < _tokens.Count
+                            && _tokens[_at + 1].Kind is TokenKind.Identifier or TokenKind.QuotedIdentifier
+                            && _tokens[_at + 2].Kind == TokenKind.MemberAccess)
+                        {
+                            _at++;
+                            var type = _tokens[_at++].Text;
+                            return Member(MemberOwnerKind.EnumType, type);
+                        }
+                        return Member(MemberOwnerKind.Name, t.Value.Text);
+                    }
                     return Resolve(t.Value.Text, quoted: false);
                 }
+
+                case TokenKind.MemberAccess:
+                    _failure = "a '::' has no option or enum on its left";
+                    return null;
 
                 default:
                     _failure = $"'{t.Value.Text}' cannot start a value";
@@ -411,6 +535,47 @@ internal static class PageControlExpression
         {
             if (_resolve(name, quoted, out var value)) return value;
             _failure = $"'{name}' is not a name the page publishes a binding for";
+            return null;
+        }
+
+        private bool NextIsMemberAccess => Peek is { Kind: TokenKind.MemberAccess };
+
+        private object? ResolveFieldReference(string name)
+        {
+            if (_resolveField == null)
+            {
+                _failure = $"'Rec.{name}' reads the source record, which this property does not resolve "
+                         + "(what BC answers for a control's own Visible bound to a field is issue #2596)";
+                return null;
+            }
+            if (_resolveField(name, out var value)) return value;
+            _failure = $"'Rec.{name}' is not a source-table field the runner can read for this property";
+            return null;
+        }
+
+        /// <summary>Consume <c>:: &lt;member&gt;</c> after an owner and answer its ordinal.</summary>
+        private object? Member(MemberOwnerKind kind, string owner)
+        {
+            _at++; // '::'
+            var spelled = kind switch
+            {
+                MemberOwnerKind.Field => $"Rec.{owner}",
+                MemberOwnerKind.EnumType => $"Enum::{owner}",
+                _ => owner,
+            };
+            if (Peek is not { Kind: TokenKind.Identifier or TokenKind.QuotedIdentifier } m)
+            {
+                _failure = $"'{spelled}::' is not followed by a member name";
+                return null;
+            }
+            _at++;
+            if (NextIsMemberAccess)
+            {
+                _failure = $"'{spelled}::{m.Text}' is followed by another '::', which is not a member literal this can read";
+                return null;
+            }
+            if (_resolveMember != null && _resolveMember(kind, owner, m.Text, out var ordinal)) return ordinal;
+            _failure = $"'{spelled}::{m.Text}' is not an option or enum member the runner can resolve to its ordinal";
             return null;
         }
 
