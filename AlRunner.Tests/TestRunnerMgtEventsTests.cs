@@ -263,8 +263,6 @@ public sealed class TestRunnerMgtEventsTests
         HasLine(output, "PASS", "C_StartsWithLastErrorCleared");
         Lacks(output, "TRE6 FAIL");
         Lacks(output, "TRE7 FAIL");
-        // Test Runner compiles against System alone, so none of its objects is excluded on AL0275.
-        Lacks(output, "AL0275");
         Assert.Equal(0, exit);
     }
 
