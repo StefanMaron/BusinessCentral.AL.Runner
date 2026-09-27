@@ -1391,9 +1391,14 @@ internal sealed partial class RunnerPageInstance
         // AL compiler writes the source text of these properties into the metadata with the
         // identifiers already resolved to their emitted spelling — see PageControlExpression for
         // the measured shapes and the grammar.
+        // A precompiled page's text is the raw AL (`Rec.F = Rec.F::M`, #4787). `Rec.F` is a field
+        // read, so at open (a control's own Visible) it stays unresolved — the #2596 rule, the same
+        // one the emitted spelling gets through ResolveExpressionIdentifierAtOpen.
         if (PageControlExpression.TryEvaluateBoolean(
                 raw,
                 atOpen ? ResolveExpressionIdentifierAtOpen : ResolveExpressionIdentifierLive,
+                atOpen ? null : TryResolveSourceTableField,
+                ResolveMemberOrdinal,
                 out var evaluated, out var why))
             return evaluated;
 
@@ -1717,6 +1722,81 @@ internal sealed partial class RunnerPageInstance
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// The ordinal of <c>&lt;owner&gt;::&lt;member&gt;</c> in a precompiled page's raw AL text
+    /// (#4787), read off the owner's own live <see cref="NavOption"/> — for an enum BC's
+    /// <c>ALNames</c> and <c>ALOrdinals</c>, the pair AL's <c>Names()</c>/<c>Ordinals()</c> answer,
+    /// and for a plain Option its <c>OptionString</c> position — so enum
+    /// extensions and non-contiguous ordinals come out as BC merged them, and the runner keeps no
+    /// member table of its own. Owner order mirrors <see cref="ResolveExpressionIdentifierLive"/>:
+    /// a registered binding, then a source-table field. An <c>Enum::"Type"</c> owner, or anything
+    /// not an option, answers false so the caller refuses naming the expression.
+    /// </summary>
+    private bool ResolveMemberOrdinal(
+        PageControlExpression.MemberOwnerKind kind, string owner, string member, out object? ordinal)
+    {
+        ordinal = null;
+        NavValue? holder = kind switch
+        {
+            PageControlExpression.MemberOwnerKind.Field => SourceTableFieldValue(owner),
+            PageControlExpression.MemberOwnerKind.Name =>
+                (_sourceExpressions[owner] ?? BindingRegisteredUnderName(owner)) is { } binding
+                    ? GetValue(binding)
+                    : SourceTableFieldValue(owner),
+            _ => null,
+        };
+        if (holder is not NavOption option || !TryOrdinalOfMember(option, member, out var found)) return false;
+        ordinal = found;
+        return true;
+    }
+
+    /// <summary>A source-table field's current value, by name, for its option metadata only.</summary>
+    private NavValue? SourceTableFieldValue(string name)
+    {
+        if (_record?.MetaTable == null) return null;
+        foreach (var field in RecordPatches.GetAllFields(_record.MetaTable) ?? Enumerable.Empty<NCLMetaField>())
+            if (string.Equals(field.FieldName, name, StringComparison.OrdinalIgnoreCase))
+                return _record.GetFieldValue(field.FieldNo);
+        return null;
+    }
+
+    /// <summary>
+    /// <paramref name="member"/>'s ordinal in <paramref name="option"/>'s own names, matched as AL
+    /// matches a member name — case-insensitively. False unless exactly one name matches, so an
+    /// unknown member refuses rather than reading as ordinal 0. Internal so AlRunner.Tests can pin it
+    /// on a real NavOption without a live page.
+    /// </summary>
+    internal static bool TryOrdinalOfMember(NavOption option, string member, out int ordinal)
+    {
+        ordinal = 0;
+        List<string?> names;
+        List<int> ordinals;
+        if (option.NavOptionMetadata is { IsEnum: false } plain)
+        {
+            // A plain Option has no Names()/Ordinals() (GetNames throws NotSupported); its ordinal
+            // IS its position in the option string.
+            names = (plain.OptionString ?? "").Split(',').Select(n => (string?)n.Trim()).ToList();
+            ordinals = Enumerable.Range(0, names.Count).ToList();
+        }
+        else
+        {
+            names = option.ALNames.Select(n => n?.ToString()).ToList();
+            ordinals = option.ALOrdinals.ToList();
+        }
+        if (names.Count != ordinals.Count) return false;
+
+        var hit = -1;
+        for (var i = 0; i < names.Count; i++)
+        {
+            if (!string.Equals(names[i], member, StringComparison.OrdinalIgnoreCase)) continue;
+            if (hit >= 0) return false;
+            hit = i;
+        }
+        if (hit < 0) return false;
+        ordinal = ordinals[hit];
+        return true;
     }
 
     /// <summary>
