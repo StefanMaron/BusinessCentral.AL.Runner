@@ -194,6 +194,10 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // Microsoft's Test Runner app or stand-ins for it. Absent from this table on its
             // first CI run (36294813041): 180.2s on both the BC 27.5 and 28.5 legs, rounded down.
             ["TestRunnerMgtEventsTests"] = 180,
+            // #4834/#4833: the dupX/dupY fixture, spawned cold, cold-then-warm and in server mode.
+            // Absent from this table on PR #4839's first CI run (36301236496): 75.3s on the
+            // BC 28.5 leg, one leg only, rounded down.
+            ["AppGroupObjectVisibilityTests"] = 75,
             // #2272: 3 tests, each spawning a real runner subprocess (the app-group one runs
             // two bundles in a single invocation), all with AL_RUNNER_NO_DEP_COMPANY_CACHE=1
             // so every spawn pays the dependency Install triggers + Company-Initialize
