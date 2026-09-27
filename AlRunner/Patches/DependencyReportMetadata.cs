@@ -110,6 +110,26 @@ public static partial class RecordPatches
     internal static IReadOnlyList<BcAppSymbolCache.RequestPageControlSymbol>? TryGetDependencyRequestPageControls(int reportId)
         => FindDependencyReportSymbol(reportId)?.Report.RequestPageControls;
 
+    private const int RequestPageFieldKind = 8;
+
+    /// <summary>
+    /// The field controls of a precompiled report's request page with the <c>ApplicationArea</c>
+    /// BC's emitter writes for each: its own, else the report's (#4863; measured on BC's own
+    /// emitter, docs/dependency-page-properties.md#request-page-application-area). Empty for a
+    /// report the runner compiled itself, whose request page carries its real controls.
+    /// </summary>
+    internal static IEnumerable<(int Id, string? ApplicationArea)> DependencyRequestPageFieldAreas(int reportId)
+    {
+        if (AlReportMetadataRegistry.TryGet(reportId, out _)) yield break;
+        if (FindDependencyReportSymbol(reportId)?.Report is not { } report) yield break;
+        foreach (var control in report.RequestPageControls ?? new List<BcAppSymbolCache.RequestPageControlSymbol>())
+        {
+            // A field states Kind 8; a group states 1; the content-area node states no Kind.
+            if (control.Kind == RequestPageFieldKind)
+                yield return (control.Id, control.ApplicationArea ?? report.ApplicationArea);
+        }
+    }
+
     // ── ProcessingOnly for a report the runner never source-compiled ─────────
 
     /// <summary>

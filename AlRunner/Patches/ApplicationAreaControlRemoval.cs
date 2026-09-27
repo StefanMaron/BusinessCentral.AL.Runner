@@ -186,6 +186,9 @@ public static class ApplicationAreaControlRemoval
             Remove(page.InfopartsArea?.Controls, _getPart!);
             // A precompiled page's metadata carries no field controls (DependencyPageMetadataXml),
             // so their areas come from its symbol file, through the same BC predicate (#4796).
+            // A precompiled report's request page carries no field controls either (#4863).
+            if (isRequestPage)
+                removed.UnionWith(DependencyRequestPageFieldsToRemove(page.ID, area => _isApplicationAreaEnabled!(area!, null!)));
             if (extensionAreas != null)
             {
                 bool IsEnabled(string? area) => _isApplicationAreaEnabled!(area!, null!);
@@ -197,6 +200,8 @@ public static class ApplicationAreaControlRemoval
                 // area. That is what reaches a precompiled page's action, which the runner's
                 // MasterPage does not carry (#4862).
                 removedActions.UnionWith(RejectedChanges(extensionAreas.ActionAreaChanges, IsEnabled));
+                // A precompiled page's own actions, from its symbol file (#4862).
+                removedActions.UnionWith(DependencyActionsToRemove(page.ID, IsEnabled, extensionAreas.ActionAreaChanges));
                 // RemoveActionRefDefinition: its own area, then its target's. An actionref stating
                 // no area is judged by its target alone, as a base page's is (corpus 67531).
                 removedActions.UnionWith(RejectedActionRefs(extensionAreas.AddedActionRefs, removedActions, IsEnabled));
@@ -262,6 +267,42 @@ public static class ApplicationAreaControlRemoval
                 + $"to '{changed}', and which one BC applies has not been measured (#4866)");
         return changed;
     }
+
+    /// <summary>
+    /// The actions of a precompiled page that <paramref name="isAreaEnabled"/> rejects (#4862):
+    /// an action by its area after a source <c>modify()</c>; an actionref also when its target
+    /// is rejected, as RemoveActionRefDefinition does. A precompiled and a source
+    /// <c>modify()</c> of one action to different areas refuse (#4866's rule).
+    /// </summary>
+    internal static IEnumerable<int> DependencyActionsToRemove(
+        int pageId, Func<string?, bool> isAreaEnabled, IReadOnlyDictionary<int, string>? areaChanges = null)
+    {
+        var actions = RecordPatches.DependencyActionAreas(pageId);
+        var rejected = new HashSet<int>();
+        foreach (var action in actions)
+        {
+            if (action.Kind == 4) continue;
+            if (!isAreaEnabled(AreaAfterSourceChange(pageId, (action.Id, action.ApplicationArea, action.ModifiedArea), areaChanges)))
+                rejected.Add(action.Id);
+        }
+        foreach (var actionRef in actions)
+        {
+            if (actionRef.Kind != 4) continue;
+            var own = AreaAfterSourceChange(pageId, (actionRef.Id, actionRef.ApplicationArea, actionRef.ModifiedArea), areaChanges);
+            if ((own != null && !isAreaEnabled(own)) || (actionRef.TargetId is { } target && rejected.Contains(target)))
+                rejected.Add(actionRef.Id);
+        }
+        return rejected;
+    }
+
+    /// <summary>
+    /// The request-page field controls of a precompiled report that <paramref name="isAreaEnabled"/>
+    /// rejects (#4863). Keyed by REPORT id, which is what a request page's MasterPage.ID is.
+    /// </summary>
+    internal static IEnumerable<int> DependencyRequestPageFieldsToRemove(int reportId, Func<string?, bool> isAreaEnabled)
+        => RecordPatches.DependencyRequestPageFieldAreas(reportId)
+            .Where(control => !isAreaEnabled(control.ApplicationArea))
+            .Select(control => control.Id);
 
     /// <summary>
     /// The field controls source-compiled pageextensions add that <paramref name="isAreaEnabled"/>

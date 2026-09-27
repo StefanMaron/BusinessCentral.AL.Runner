@@ -349,7 +349,15 @@ internal static partial class BcAppSymbolCache
         string? ApplicationArea = null,
         // The .app-relative AL source file the symbol file says this page was compiled from;
         // read only to recover a shared-name RunObject's kind (#4622). Null when not stated.
-        string? ReferenceSourceFileName = null);
+        string? ReferenceSourceFileName = null,
+        // Every action node's Kind, own ApplicationArea and (for an actionref) target NAME, in
+        // declaration order (#4862). Inheriting the page's area is the consumer's job
+        // (RecordPatches.DependencyActionAreas). Null means the payload predates the field.
+        List<PageActionAreaSymbol>? ActionAreas = null);
+
+    /// <summary>One action node of a precompiled page: its Kind (BC's ActionKind ordinal),
+    /// its OWN ApplicationArea verbatim or null, and an actionref's target NAME (#4862).</summary>
+    internal sealed record PageActionAreaSymbol(int Id, int Kind, string? ApplicationArea, string? TargetName);
 
     /// <summary>
     /// The <c>Enabled</c> / <c>Visible</c> one action DECLARES, exactly as the compiler wrote
@@ -722,7 +730,10 @@ internal static partial class BcAppSymbolCache
         // The request page's own Caption and InsertAllowed as stated (#4811); null when not.
         // Its Permissions is deliberately not read: BC's emitter writes nothing for it into
         // the document (docs/report-metadata-from-bc.md#request-page-caption-insertallowed-permissions).
-        string? RequestPageCaption = null, bool? RequestPageInsertAllowed = null);
+        string? RequestPageCaption = null, bool? RequestPageInsertAllowed = null,
+        // The report's own ApplicationArea, verbatim; null when not stated. BC's emitter copies
+        // it onto request-page controls that state none (#4863).
+        string? ApplicationArea = null);
 
     /// <summary>
     /// One node of a precompiled report's request-page control tree (#4661): a field, a group,
@@ -733,7 +744,11 @@ internal static partial class BcAppSymbolCache
     internal sealed record RequestPageControlSymbol(
         int Id, int ParentId, string? VisibleExpr, string? EditableExpr, string? EnabledExpr,
         // The control's own OptionCaption, verbatim; null when it states none (#4669).
-        string? OptionCaption = null);
+        string? OptionCaption = null,
+        // The node's own ApplicationArea verbatim, null when it states none, and its Kind
+        // (8 = field control), so the field controls BC's RemoveControl tests can be told
+        // from groups (#4863).
+        string? ApplicationArea = null, int? Kind = null);
 
     /// <summary>
     /// One <c>layout(Name) { Type; MimeType; LayoutFile; Caption; Summary; ObsoleteState;
@@ -1762,7 +1777,31 @@ internal static partial class BcAppSymbolCache
             AnalysisModeEnabled: analysisModeEnabled,
             Permissions: OrNullIfBlank(permissions),
             ApplicationArea: OrNullIfBlank(pageApplicationArea),
-            ReferenceSourceFileName: ReadReferenceSourceFileName(page));
+            ReferenceSourceFileName: ReadReferenceSourceFileName(page),
+            ActionAreas: ReadActionAreas(page));
+    }
+
+    private static List<PageActionAreaSymbol> ReadActionAreas(JsonElement page)
+    {
+        var into = new List<PageActionAreaSymbol>();
+        if (page.TryGetProperty("Actions", out var actions) && actions.ValueKind == JsonValueKind.Array)
+            foreach (var a in actions.EnumerateArray())
+                CollectActionAreas(a, into);
+        return into;
+    }
+
+    private static void CollectActionAreas(JsonElement node, List<PageActionAreaSymbol> into)
+    {
+        if (node.TryGetProperty("Id", out var idProp) && idProp.TryGetInt32(out var id) && id != 0
+            && node.TryGetProperty("Kind", out var kindProp) && kindProp.TryGetInt32(out var kind))
+        {
+            SymbolProperties(node).TryGetValue("ApplicationArea", out var area);
+            var target = node.TryGetProperty("TargetName", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString() : null;
+            into.Add(new PageActionAreaSymbol(id, kind, string.IsNullOrWhiteSpace(area) ? null : area, string.IsNullOrEmpty(target) ? null : target));
+        }
+        if (node.TryGetProperty("Actions", out var children) && children.ValueKind == JsonValueKind.Array)
+            foreach (var child in children.EnumerateArray())
+                CollectActionAreas(child, into);
     }
 
     private static string? ReadReferenceSourceFileName(JsonElement node)
@@ -2546,7 +2585,9 @@ internal static partial class BcAppSymbolCache
             ReadRequestPageBool(report, "SaveValues"),
             ReadRequestPageBool(report, "ShowFilter"),
             ReadRequestPageProperty(report, "Caption"),
-            ReadRequestPageBool(report, "InsertAllowed"));
+            ReadRequestPageBool(report, "InsertAllowed"),
+            string.IsNullOrWhiteSpace(props.TryGetValue("ApplicationArea", out var reportArea) ? reportArea : null)
+                ? null : reportArea);
     }
 
     // "1"/"0" (or true/false) -> the value; absent -> null. An unreadable spelling also reads
@@ -2590,7 +2631,10 @@ internal static partial class BcAppSymbolCache
             props.TryGetValue("Editable", out var editable);
             props.TryGetValue("Enabled", out var enabled);
             props.TryGetValue("OptionCaption", out var optionCaption);
-            into.Add(new RequestPageControlSymbol(id, parentId, visible, editable, enabled, optionCaption));
+            props.TryGetValue("ApplicationArea", out var applicationArea);
+            int? kind = control.TryGetProperty("Kind", out var kindProp) && kindProp.TryGetInt32(out var k) ? k : null;
+            into.Add(new RequestPageControlSymbol(id, parentId, visible, editable, enabled, optionCaption,
+                string.IsNullOrWhiteSpace(applicationArea) ? null : applicationArea, kind));
         }
 
         if (control.TryGetProperty("Controls", out var children) && children.ValueKind == JsonValueKind.Array)

@@ -280,6 +280,77 @@ public static partial class RecordPatches
         }
     }
 
+    /// <summary>One action a precompiled page (or a precompiled pageextension of it) carries, with
+    /// the area BC's emitter would write for it and, for an actionref, its target's member id.</summary>
+    internal sealed record DependencyActionArea(
+        int Id, int Kind, string? ApplicationArea, string? ModifiedArea, int? TargetId);
+
+    private const int AreaActionKindAction = 2, AreaActionKindActionRef = 4, AreaActionKindSystemAction = 6;
+
+    /// <summary>
+    /// The actions of a precompiled page, with the <c>ApplicationArea</c> BC's emitter writes for
+    /// each (#4862). Empty for a page the runner compiled itself.
+    ///
+    /// <para>The rule, measured against BC's emitted documents for every page of System
+    /// Application and Business Foundation 28.1.49838.53910 (see
+    /// docs/dependency-page-properties.md#action-application-area): an action (Kind 2) answers
+    /// its own area, else the page's; an actionref (Kind 4) and a system action (Kind 6) answer
+    /// their own or none, never the page's. Another action kind stating none on a page that
+    /// states an area was not in that population, so it refuses. A pageextension's action
+    /// answers its own; a <c>modify()</c> replaces it.</para>
+    /// </summary>
+    internal static IReadOnlyList<DependencyActionArea> DependencyActionAreas(int pageId)
+    {
+        if (AlPageMetadataRegistry.TryGet(pageId, out _)) return Array.Empty<DependencyActionArea>();
+        var page = TryGetDependencyPageSymbol(pageId);
+        if (page == null) return Array.Empty<DependencyActionArea>();
+        if (page.ActionAreas == null)
+            throw TestPageShapeGap.ControlProperty($"TestPage ApplicationArea on page {pageId}",
+                "the cached symbols for this page predate its action areas; clear the symbol cache");
+
+        var result = new List<DependencyActionArea>();
+        var idByName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (id, name) in page.MemberIdToName ?? new Dictionary<int, string>()) idByName.TryAdd(name, id);
+
+        foreach (var action in page.ActionAreas)
+        {
+            if (action.Kind is not (AreaActionKindAction or AreaActionKindActionRef or AreaActionKindSystemAction or >= 5)) continue;
+            page.MemberIdToName!.TryGetValue(action.Id, out var name);
+            var modified = name == null ? null
+                : DependencyPageExtensionModifiedProperty(page.Name, name, "ApplicationArea", isAction: true);
+            string? area = action.ApplicationArea;
+            if (area == null)
+            {
+                if (action.Kind == AreaActionKindAction) area = page.ApplicationArea;
+                else if (action.Kind is not (AreaActionKindActionRef or AreaActionKindSystemAction) && page.ApplicationArea != null && modified == null)
+                    throw TestPageShapeGap.ControlProperty(
+                        $"TestPage ApplicationArea on page {pageId} action {action.Id}",
+                        $"an action of Kind {action.Kind} states no ApplicationArea on a page that states "
+                        + $"'{page.ApplicationArea}', and whether BC's emitter gives it the page's has not been measured (#4862)");
+            }
+            int? target = action.TargetName != null && idByName.TryGetValue(action.TargetName, out var t) ? t : null;
+            result.Add(new DependencyActionArea(action.Id, action.Kind, modified ?? area, modified, target));
+        }
+
+        foreach (var extId in DependencyPageExtensionIdsForPage(page.Name).Distinct().ToList())
+        {
+            if (_parsedPageExtensions.ContainsKey(extId)) continue;
+            var ext = TryGetDependencyPageExtensionSymbol(extId);
+            if (ext?.MemberIdToOrigin is not { } origins) continue;
+            foreach (var (id, origin) in origins)
+            {
+                if (!origin.IsAction || origin.Kind is not (AreaActionKindAction or AreaActionKindActionRef)) continue;
+                string? own = null;
+                origin.DeclaredProperties?.TryGetValue("ApplicationArea", out own);
+                ext.MemberIdToName.TryGetValue(id, out var name);
+                var modified = name == null ? null
+                    : DependencyPageExtensionModifiedProperty(page.Name, name, "ApplicationArea", isAction: true);
+                result.Add(new DependencyActionArea(id, origin.Kind.Value, modified ?? own, modified, origin.ActionRefTargetId));
+            }
+        }
+        return result;
+    }
+
     /// <summary>
     /// The <c>ApplicationArea</c> BC's page metadata carries for each field control of a page
     /// whose runtime metadata is the symbol-derived <see cref="TryBuildDependencyPageMetadata"/>
