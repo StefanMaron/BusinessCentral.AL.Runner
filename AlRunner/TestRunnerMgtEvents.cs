@@ -59,19 +59,28 @@ internal sealed class TestRunnerMgtEvents
         return new TestRunnerMgtEvents(
             Bind(t, "OnBeforeCodeunitRun", 1),
             Bind(t, "OnAfterCodeunitRun", 1),
-            Bind(t, "OnBeforeTestMethodRun", 6),
+            // `var Skip` exists from Test Runner 28.1; 27.x and 28.0 publish five parameters.
+            Bind(t, "OnBeforeTestMethodRun", 6, 5),
             Bind(t, "OnAfterTestMethodRun", 6));
     }
 
-    private static MethodInfo Bind(Type t, string name, int arity)
+    private static MethodInfo Bind(Type t, string name, params int[] arities)
     {
-        var m = t.GetMethods(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
-            .FirstOrDefault(x => x.Name == name && x.GetParameters().Length == arity);
-        return m ?? throw new AlRunner.Infrastructure.BcShapeGapException(
+        var candidates = t.GetMethods(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
+            .Where(x => x.Name == name).ToArray();
+        foreach (var arity in arities)
+        {
+            var m = candidates.FirstOrDefault(x => x.GetParameters().Length == arity);
+            if (m != null) return m;
+        }
+        throw new AlRunner.Infrastructure.BcShapeGapException(
             $"Codeunit{TestRunnerMgtId} \"{TestRunnerMgtObjectName}\"", name,
-            $"the loaded Test Runner app has no event publisher {name} with {arity} parameter(s), "
+            $"the loaded Test Runner app has no event publisher {name} with {string.Join(" or ", arities)} parameter(s), "
             + "so its per-test subscribers (130453 \"ALTestRunner Reset Environment\") cannot be raised.");
     }
+
+    /// <summary>True when the bound OnBeforeTestMethodRun carries <c>var Skip</c> (Test Runner 28.1+).</summary>
+    internal bool BeforeTestMethodRunHasSkip => _onBeforeTestMethodRun.GetParameters().Length == 6;
 
     private NavDate? _workDateAtInitialize;
 
@@ -110,7 +119,13 @@ internal sealed class TestRunnerMgtEvents
 
     private static void InvokeInitialize()
     {
-        if (BcRuntime.FindCodeunitTypePublic(ResetEnvironmentId) == null) return;
+        // 130453 ships in the same app as 130454, so Microsoft's 130454 without it is a changed
+        // app, not an absent one: refuse rather than run without the WorkDate reset.
+        if (BcRuntime.FindCodeunitTypePublic(ResetEnvironmentId) == null)
+            throw new AlRunner.Infrastructure.BcShapeGapException(
+                $"Codeunit{ResetEnvironmentId} \"ALTestRunner Reset Environment\"", "Initialize",
+                $"codeunit {TestRunnerMgtId} \"{TestRunnerMgtObjectName}\" is loaded but codeunit "
+                + $"{ResetEnvironmentId} from the same Test Runner app is not.");
         using var handle = NewHandle(ResetEnvironmentId);
         var target = handle.Target;
         var init = target.GetType().GetMethod("Initialize", BindingFlags.Instance | BindingFlags.Public,
@@ -139,6 +154,7 @@ internal sealed class TestRunnerMgtEvents
     /// <summary>
     /// OnBeforeTestMethodRun. Returns the subscribers' <c>Skip</c>: true means BC's
     /// <c>PlatformBeforeTestRun</c> answers false and the platform does not run the method.
+    /// Always false for the five-parameter publisher, which has no Skip.
     /// </summary>
     internal bool RaiseBeforeTestMethodRun(int codeunitId, string codeunitName, string functionName,
         object? functionTestPermissions)
@@ -147,13 +163,15 @@ internal sealed class TestRunnerMgtEvents
         var mgt = mgtHandle.Target;
         var line = NewLine(mgt, codeunitId, codeunitName, functionName, LineTypeFunction);
         var skip = false;
-        var byRefType = _onBeforeTestMethodRun.GetParameters()[5].ParameterType;
-        var byRef = CreateBoolByRef(byRefType, () => skip, v => skip = v);
-        Invoke(_onBeforeTestMethodRun, mgt, new object?[]
+        var args = new List<object?>
         {
             line, codeunitId, new NavText(Truncate(codeunitName, 30)), new NavText(Truncate(functionName, 128)),
-            TestPermissionsOrDefault(functionTestPermissions), byRef,
-        });
+            TestPermissionsOrDefault(functionTestPermissions),
+        };
+        if (BeforeTestMethodRunHasSkip)
+            args.Add(CreateBoolByRef(_onBeforeTestMethodRun.GetParameters()[5].ParameterType,
+                () => skip, v => skip = v));
+        Invoke(_onBeforeTestMethodRun, mgt, args.ToArray());
         return skip;
     }
 

@@ -223,7 +223,7 @@ Microsoft's own subscribers run as shipped:
 | event | when |
 |---|---|
 | `OnBeforeCodeunitRun` | before a test codeunit's `OnRun` or first executed test; 130453's `Initialize` is called first |
-| `OnBeforeTestMethodRun` | before each test method, after the database reset and outside the test method; a subscriber setting `Skip` makes the runner report the test `SKIP` without running it |
+| `OnBeforeTestMethodRun` | before each test method, after the database reset and outside the test method; from Test Runner 28.1, where the event has `var Skip`, a subscriber setting `Skip` makes the runner report the test `SKIP` without running it (27.x and 28.0 publish it without `Skip`) |
 | `OnAfterTestMethodRun` | after each test method that ran, with `IsSuccess` |
 | `OnAfterCodeunitRun` | after the codeunit's last test |
 
@@ -233,7 +233,8 @@ each test (and runs 130301 `Reset State Before Test Run` when that codeunit is l
 `Test Method Line` a subscriber receives is not a stored row: `Test Codeunit`, `Name`,
 `Function`, `Line Type`, `Run` and (after the method) `Result` are set, the rest is blank. A
 subscriber that fails turns that test (or a `<OnBeforeCodeunitRun>`/`<OnAfterCodeunitRun>` entry)
-into an error naming the event.
+into an error naming the event. A loaded `Test Runner - Mgt` whose publishers cannot be bound, or
+without 130453 beside it, is refused the same way rather than run without the resets.
 
 **Without the Test Runner app nothing is raised.** On a service tier the app is always installed
 as the test tool; the runner loads only what the suite's dependency closure names, so a suite that
