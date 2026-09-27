@@ -218,6 +218,10 @@ internal partial class LiveNavTestPage
     /// <see cref="GetPart"/>, which caches nothing for it. Anything else — an AL Error() in the
     /// part's OnOpenPage above all — fails the host's open, as it does on BC (corpus codeunit
     /// 67010, #4903).
+    /// <para>One BC exception is absorbed too: "Callback functions are not allowed", which a
+    /// part's OnOpenPage raises here when it asks for a client capability (Camera.IsAvailable on
+    /// the Salesperson/Purchaser card's picture FactBox). BC answers false there and opens the
+    /// host; the runner's missing client is #2772. Remove it from the filter when #2772 lands.</para>
     /// </summary>
     internal void EagerlyBuildParts()
     {
@@ -236,7 +240,8 @@ internal partial class LiveNavTestPage
     private static bool IsRunnerBuildRefusal(Exception ex)
     {
         for (Exception? e = ex; e != null; e = e.InnerException)
-            if (e is AlRunner.Infrastructure.RunnerOutOfScopeException or AlRunner.Infrastructure.BcShapeGapException)
+            if (e is AlRunner.Infrastructure.RunnerOutOfScopeException or AlRunner.Infrastructure.BcShapeGapException
+                or Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLCallbackNotAllowedException)
                 return true;
         return false;
     }
