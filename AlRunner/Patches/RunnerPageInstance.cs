@@ -2213,36 +2213,42 @@ internal sealed partial class RunnerPageInstance
     /// </summary>
     private TriggerMatch? FindTriggerThroughActionRef(int actionId)
     {
-        var visited = new HashSet<(int, int)>();
+        var visited = new HashSet<(DeclaringObject, int)>();
         var resolved = TryResolveActionRef(actionId);
-        while (resolved is { } step && visited.Add((step.DeclaringObjectId, actionId)))
+        while (resolved is { } step && visited.Add((step.Declaring, actionId)))
         {
-            var match = FindTriggerByName(step.TargetName, step.DeclaringObjectId, "_OnAction", "OnAction");
+            var match = FindTriggerByName(step.TargetName, step.Declaring, "_OnAction", "OnAction");
             if (match != null) return match;
 
             // The target names an actionref rather than an action — keep following. Legal AL
             // rarely does this, but a chain that silently stopped here would report the same
             // misleading "declares no trigger" the whole fix exists to remove.
-            actionId = MemberId(step.DeclaringObjectId, step.TargetName);
+            actionId = MemberId(step.Declaring.Id, step.TargetName);
             resolved = TryResolveActionRef(actionId);
         }
         return null;
     }
 
     /// <summary>
+    /// A page or pageextension by object id AND kind: the two are separate AL object-type id
+    /// spaces, so a pageextension may carry its base page's own number (#4878).
+    /// </summary>
+    private readonly record struct DeclaringObject(int Id, bool IsExtension);
+
+    /// <summary>
     /// The object that declares the <c>actionref</c> <paramref name="memberId"/> and the NAME
     /// of the action it points at, or null when the member is not an actionref of this page or
     /// of any pageextension that extends it.
     /// </summary>
-    private (int DeclaringObjectId, string TargetName)? TryResolveActionRef(int memberId)
+    private (DeclaringObject Declaring, string TargetName)? TryResolveActionRef(int memberId)
     {
         var own = RecordPatches.TryGetActionRefTarget(_pageId, memberId, isExtension: false);
-        if (own != null) return (_pageId, own);
+        if (own != null) return (new DeclaringObject(_pageId, false), own);
 
         foreach (var extensionId in RecordPatches.GetPageExtensionIdsForPage(_pageId))
         {
             var target = RecordPatches.TryGetActionRefTarget(extensionId, memberId, isExtension: true);
-            if (target != null) return (extensionId, target);
+            if (target != null) return (new DeclaringObject(extensionId, true), target);
         }
         return null;
     }
@@ -2258,28 +2264,29 @@ internal sealed partial class RunnerPageInstance
     /// is searched first, mirroring AL's own scoping: a pageextension's actionref may target
     /// either its own action or a base-page action, and its own is the nearer binding.</para>
     /// </summary>
-    private TriggerMatch? FindTriggerByName(string name, int preferredObjectId, string suffix, string surface,
+    private TriggerMatch? FindTriggerByName(string name, DeclaringObject preferred, string suffix, string surface,
         int arity = 0)
     {
-        foreach (var objectId in CandidateDeclaringObjectIds(preferredObjectId))
+        foreach (var candidate in CandidateDeclaringObjects(preferred))
         {
-            var instance = objectId == _pageId ? _form : GetOrCreateExtensionInstance(objectId);
+            var instance = candidate.IsExtension ? GetOrCreateExtensionInstance(candidate.Id) : _form;
             if (instance == null) continue;
-            var match = FindTriggerOnTarget(instance, objectId, MemberId(objectId, name),
+            var match = FindTriggerOnTarget(instance, candidate.Id, MemberId(candidate.Id, name),
                 suffix, surface, arity, name);
             if (match != null) return match;
         }
         return null;
     }
 
-    /// <summary>Preferred object, then the base page, then every pageextension — deduped.</summary>
-    private IEnumerable<int> CandidateDeclaringObjectIds(int preferredObjectId)
+    /// <summary>Preferred object, then the base page, then every pageextension — deduped by
+    /// id and kind, never by id alone (#4878).</summary>
+    private IEnumerable<DeclaringObject> CandidateDeclaringObjects(DeclaringObject preferred)
     {
-        var seen = new HashSet<int> { preferredObjectId };
-        yield return preferredObjectId;
-        if (seen.Add(_pageId)) yield return _pageId;
+        var seen = new HashSet<DeclaringObject> { preferred };
+        yield return preferred;
+        if (seen.Add(new DeclaringObject(_pageId, false))) yield return new DeclaringObject(_pageId, false);
         foreach (var extensionId in RecordPatches.GetPageExtensionIdsForPage(_pageId))
-            if (seen.Add(extensionId)) yield return extensionId;
+            if (seen.Add(new DeclaringObject(extensionId, true))) yield return new DeclaringObject(extensionId, true);
     }
 
     /// <summary>

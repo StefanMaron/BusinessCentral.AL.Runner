@@ -670,15 +670,15 @@ internal sealed partial class RunnerPageInstance
     {
         yield return actionId;
 
-        var visited = new HashSet<(int, int)>();
+        var visited = new HashSet<(DeclaringObject, int)>();
         var current = actionId;
         var resolved = TryResolveActionRef(current);
-        while (resolved is { } step && visited.Add((step.DeclaringObjectId, current)))
+        while (resolved is { } step && visited.Add((step.Declaring, current)))
         {
-            foreach (var objectId in CandidateDeclaringObjectIds(step.DeclaringObjectId))
-                yield return MemberId(objectId, step.TargetName);
+            foreach (var candidate in CandidateDeclaringObjects(step.Declaring))
+                yield return MemberId(candidate.Id, step.TargetName);
 
-            current = MemberId(step.DeclaringObjectId, step.TargetName);
+            current = MemberId(step.Declaring.Id, step.TargetName);
             resolved = TryResolveActionRef(current);
         }
     }
