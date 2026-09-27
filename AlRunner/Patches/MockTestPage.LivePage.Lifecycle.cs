@@ -212,12 +212,12 @@ internal partial class LiveNavTestPage
     /// for the first time from <see cref="Loaded"/>'s own refresh once the host DOES have a
     /// row, not from here.
     ///
-    /// Each control is isolated in its own try/catch: a part the runner cannot build (a
-    /// precompiled Base App page the runner has no metadata for, an unsupported shape) must
-    /// not prevent the HOST from opening, or every card carrying one unbuildable FactBox
-    /// would refuse OpenView entirely. An AL test that genuinely touches such a part still
-    /// gets the normal named refusal through <see cref="GetPart"/> — this only skips the
-    /// EAGER attempt, it does not swallow the refusal a real touch would raise.
+    /// Only the runner's own refusal to BUILD a part is absorbed: a part it cannot build (a
+    /// precompiled Base App page it has no metadata for, an unsupported shape) must not keep the
+    /// HOST from opening, and a test that touches that part still gets the refusal through
+    /// <see cref="GetPart"/>, which caches nothing for it. Anything else — an AL Error() in the
+    /// part's OnOpenPage above all — fails the host's open, as it does on BC (corpus codeunit
+    /// 67010, #4903).
     /// </summary>
     internal void EagerlyBuildParts()
     {
@@ -225,12 +225,20 @@ internal partial class LiveNavTestPage
         foreach (var controlId in _page.AllPartControlIds())
         {
             try { GetPart(controlId); }
-            catch (Exception ex)
+            catch (Exception ex) when (IsRunnerBuildRefusal(ex))
             {
                 if (Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PAGE_METADATA") == "1")
                     Console.Out.WriteLine($"[MockTestPage.EagerlyBuildParts] control {controlId} on page {_pageId}: {ex.GetType().Name}: {ex.Message}");
             }
         }
+    }
+
+    private static bool IsRunnerBuildRefusal(Exception ex)
+    {
+        for (Exception? e = ex; e != null; e = e.InnerException)
+            if (e is AlRunner.Infrastructure.RunnerOutOfScopeException or AlRunner.Infrastructure.BcShapeGapException)
+                return true;
+        return false;
     }
 
     public override bool IsOpened() => _opened;
