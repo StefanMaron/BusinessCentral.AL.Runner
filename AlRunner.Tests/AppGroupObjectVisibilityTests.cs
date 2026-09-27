@@ -291,7 +291,8 @@ public class AppGroupObjectVisibilityTests
         """);
 
         var dirs = new List<string> { outer };
-        foreach (var (letter, appId, cu, bufferId, subsId) in new[] { ("X", AppC, 62681, 62684, 62690), ("Y", AppD, 62682, 62685, 62691) })
+        foreach (var (letter, appId, cu, bufferId, subsId, autoIncrement, secondSeq) in new[]
+                 { ("X", AppC, 62681, 62684, 62690, "true", 2), ("Y", AppD, 62682, 62685, 62691, "false", 0) })
         {
             var dir = WriteApp(Path.Combine(root, "dup" + letter), appId, "Dup " + letter, 62680, 62699);
             File.WriteAllText(Path.Combine(dir, "Dup.al"), $$"""
@@ -302,6 +303,7 @@ public class AppGroupObjectVisibilityTests
                     field(1; "Code"; Code[20]) { }
                     field(2; "Only{{letter}}"; Integer) { trigger OnValidate() begin Mark := 'V{{letter}}'; end; }
                     field(3; Mark; Code[10]) { }
+                    field(4; Seq; Integer) { AutoIncrement = {{autoIncrement}}; }
                 }
                 keys { key(PK; "Code") { Clustered = true; } }
             }
@@ -455,6 +457,12 @@ public class AppGroupObjectVisibilityTests
                     Rec.Get('A');
                     if Rec."Only{{letter}}" <> 7 then Error('WRONG: stored value of 62680 field 2 in {{letter}} is %1', Rec."Only{{letter}}");
                     if Rec.Mark <> 'V{{letter}}' then Error('WRONG: field OnValidate of 62680 in {{letter}} set Mark to %1', Rec.Mark);
+                    // Only X declares field 4 AutoIncrement.
+                    Rec.Init();
+                    Rec.Code := 'B';
+                    Rec.Insert();
+                    Rec.Get('B');
+                    if Rec.Seq <> {{secondSeq}} then Error('WRONG: AutoIncrement Seq of the second row of 62680 in {{letter}} is %1', Rec.Seq);
                 end;
 
                 [Test]
