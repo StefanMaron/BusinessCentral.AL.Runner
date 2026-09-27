@@ -296,20 +296,6 @@ public static class AlEnumMetadataRegistry
         return result.OrderBy(e => e.Id).ToList();
     }
 
-    /// <summary>Every enum id currently registered (base ids ∪ enumextension target
-    /// ids) — used by <see cref="DependencyLoader"/> to snapshot "before this dep's
-    /// emit" / "after this dep's emit" sets so a source-dep compile can persist only
-    /// the entries IT contributed to its own cache sidecar (issue #1731's fix).</summary>
-    public static int[] Ids
-    {
-        get
-        {
-            var ids = new HashSet<int>(_byId.Keys);
-            ids.UnionWith(_extByTargetId.Keys);
-            return ids.ToArray();
-        }
-    }
-
     /// <summary>
     /// Raw (unmerged) entries for serialization: each base registration paired with
     /// <c>ExtendsTargetId = null</c>, and each enumextension's OWN values (never
