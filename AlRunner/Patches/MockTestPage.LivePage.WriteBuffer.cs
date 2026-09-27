@@ -1054,6 +1054,9 @@ internal partial class LiveNavTestPage
         // "QCM Query Close Msg Tests" (the error arm, #3179) and 60419 "QCV Close Veto Tests"
         // (the veto arm, #4710). What the variable is left as afterwards is #4713.
         if (_page != null && !_page.RaiseOnClosePage(_formResult)) return;
+        // With the same result the triggers saw, so a SaveValues page saves (#4818; corpus
+        // 67545 TestOpened_SaveValues_*).
+        _page?.StoreSaveValuesOnClose(_formResult);
         _opened = false;
 
         // The triggers above are this page's close, so BC's own form state has to agree that

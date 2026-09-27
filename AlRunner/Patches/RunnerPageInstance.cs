@@ -2506,6 +2506,7 @@ internal sealed partial class RunnerPageInstance
         // A page's OnOpenPage is entitled to READ the SourceTableView's filters (Base
         // Application page 7016 "Sales Price List" does — see ApplySourceTableViewFilters).
         ApplySourceTableViewFilters();
+        ApplySavedValues();
 
         InvokeRecordTrigger("OnOpenPage", Type.EmptyTypes, Array.Empty<object>());
 
@@ -2591,6 +2592,26 @@ internal sealed partial class RunnerPageInstance
             // A filter the page's own metadata declares that BC's filter parser rejects is
             // the page's own error and belongs to the AL test unwrapped, exactly like an
             // Error() raised in a trigger.
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+        }
+    }
+
+    /// <summary>
+    /// The other half of BC's <c>ApplySourceTableViewAndSavedValuesAsync</c>: a page declaring
+    /// SaveValues reads back what <see cref="StoreSaveValuesOnClose"/> saved, through BC's own
+    /// <c>ApplyLatestValues</c> (#4818, corpus codeunit 67545). A request page is left alone: its
+    /// values are restored when the report is built (#4808).
+    /// </summary>
+    private void ApplySavedValues()
+    {
+        if (_form is not NavForm { IsRequestPage: false, MasterPage: not null } form || !form.SaveValues) return;
+        var apply = FindNavFormMethod("ApplyLatestValues", Type.EmptyTypes)
+            ?? throw new BcShapeGapException(
+                "TestPage open (SaveValues)", $"{form.GetType().Name}.ApplyLatestValues()",
+                "without it a SaveValues page would silently reopen on its defaults (#4818)");
+        try { apply.Invoke(form, Array.Empty<object>()); }
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
         }
     }

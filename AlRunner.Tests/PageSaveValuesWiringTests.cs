@@ -58,18 +58,22 @@ public class PageSaveValuesWiringTests
     // LiveNavTestPage.AttemptHandlerDrivenClose, which raises the close triggers and then
     // ForceClose — which saves nothing. The save has to sit between the two: after the triggers
     // (BC's CloseFormAsync order) and before the form is gone.
-    [Fact]
-    public void HandlerDrivenClose_StoresSaveValues_AfterTheTriggers_BeforeForceClose()
+    //
+    // TestPage.Close() on a page the test opened itself (LiveNavTestPage.Close) ends the same way.
+    [Theory]
+    [InlineData("AttemptHandlerDrivenClose")]
+    [InlineData("Close")]
+    public void RunnerDrivenClose_StoresSaveValues_AfterTheTriggers_BeforeForceClose(string closeMethod)
     {
         var module = ModuleDefinition.ReadModule(typeof(AlRunner.TestExecutor).Assembly.Location);
         var method = module.GetTypes().Single(t => t.FullName == "AlRunner.LiveNavTestPage")
-            .Methods.Single(m => m.Name == "AttemptHandlerDrivenClose");
+            .Methods.Single(m => m.Name == closeMethod);
 
         var raise = IndexOfCallTo(method, "RaiseOnClosePage");
         var store = IndexOfCallTo(method, "StoreSaveValuesOnClose");
         var force = IndexOfCallTo(method, "ForceCloseForm");
 
-        Assert.True(store >= 0, "AttemptHandlerDrivenClose must call StoreSaveValuesOnClose (#4818)");
+        Assert.True(store >= 0, $"{closeMethod} must call StoreSaveValuesOnClose (#4818)");
         Assert.True(raise >= 0 && raise < store,
             $"StoreSaveValuesOnClose (IL {store}) must follow RaiseOnClosePage (IL {raise})");
         Assert.True(force > store,
