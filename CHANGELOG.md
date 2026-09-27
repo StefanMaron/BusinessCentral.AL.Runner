@@ -541,6 +541,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **ci:** record AppGroupObjectVisibilityTests and NoCacheLastWinsIntegrationTests collection weights
 - **metadata:** pin CollectDeclaredProperties' nested-member recursion
 - **engine:** binding-test rewrite marker keys on no single prepend and fails on CI instead of skipping
 - **page:** Page.Run on a temporary record re-reads the temporary table's row
