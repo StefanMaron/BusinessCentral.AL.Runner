@@ -686,6 +686,9 @@ public static partial class RecordPatches
         // EnumerateWithPrefix materialised a RuntimeType per match.
         foreach (var (asm, appId) in AlRunner.BcRuntime.RegisteredModuleAssemblies())
         {
+            // An earlier generation, or an earlier --server request's module, owns nothing here;
+            // left in, which of two same-id declarers wins depends on enumeration order (#4835).
+            if (AlRunner.BcRuntime.IsStaleBundleAssembly(asm)) continue;
             var asmName = SafeAssemblyName(asm);
             AlRunner.Infrastructure.AssemblyTypeIndex typeIndex;
             // #3117: NOT swallowed, for the reason on the symbol-reference read above. A throw

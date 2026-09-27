@@ -465,6 +465,9 @@ public sealed class TestExecutor
             // the reset below no longer keeps what those instances held.
             AlRunner.BcRuntime.ResetSingleInstanceCache();
             AlRunner.Patches.RecordPatches.ResetPerTestState();
+            // #4835: the counters number the rows just discarded. Kept, they reach the
+            // dependency-company snapshot captured below, which a later group restores.
+            AlRunner.BcRuntime.RestoreAutoIncrementBaseline(null);
         }
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-reset-for-new-bundle"))
         {

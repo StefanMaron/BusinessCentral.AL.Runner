@@ -505,12 +505,19 @@ public static partial class BcRuntime
     // keep its same-id objects from answering; a finder asks this set first instead.
     private static readonly List<Assembly> _currentBundleAssemblies = new();
 
+    // #4835: every module SetTestAssembly has loaded in this process, and the assemblies noted
+    // since the last ResetForNewBundleReload. A workspace module in the first and not the second
+    // belongs to an earlier --server request only, so IsStaleBundleAssembly hides it.
+    private static readonly ConcurrentDictionary<Assembly, byte> _workspaceModules = new();
+    private static readonly ConcurrentDictionary<Assembly, byte> _notedSinceReset = new();
+
     /// <summary>Add <paramref name="asm"/> to <see cref="CurrentBundleAssemblies"/> without
     /// re-registering its generation — for a dependency module reused as-is (#4100).</summary>
     internal static void NoteCurrentBundleAssembly(Assembly asm)
     {
         lock (_currentBundleAssemblies)
             if (!_currentBundleAssemblies.Contains(asm)) _currentBundleAssemblies.Add(asm);
+        _notedSinceReset[asm] = 0;
         // The single choke point every registration route reaches, which is why the #4222
         // bundle stamp is written here rather than at each caller — see BcRuntime.BundleEpoch.cs.
         // Outside the list's `if`: a reused dependency is re-noted deliberately, and must be
@@ -556,10 +563,13 @@ public static partial class BcRuntime
     /// for why the old current-assembly-only check missed cross-app calls). Returns false
     /// for an assembly whose simple name was never registered (e.g. a genuine
     /// service-tier/dependency DLL, or normal one-shot mode with no reload).
+    /// Also true for a workspace module an earlier --server request loaded and this one has not
+    /// (#4835): its same-id objects would otherwise answer for this request's.
     /// </summary>
     internal static bool IsStaleBundleAssembly(Assembly asm)
     {
         if (_retiredGenerations.ContainsKey(asm)) return true;
+        if (_workspaceModules.ContainsKey(asm) && !_notedSinceReset.ContainsKey(asm)) return true;
         var name = SimpleName(asm);
         return name != null
             && _latestGenerationByAssemblyName.TryGetValue(name, out var latest)
@@ -594,6 +604,7 @@ public static partial class BcRuntime
         // happen for every app SetTestAssembly loads, not only whichever one ends up being
         // CurrentTestAssembly when a cross-app call actually needs to resolve it.
         RegisterAssemblyGeneration(asm);
+        _workspaceModules[asm] = 0;
         _codeunitTypeCache.Clear();
         // NavApp.GetResource: bind this emitted assembly to the current bundle dir
         // (its app.json resourceFolders are where the app's resource bytes live).
@@ -728,7 +739,11 @@ public static partial class BcRuntime
     {
         _currentTestAssembly = null;
         lock (_currentBundleAssemblies) _currentBundleAssemblies.Clear();
+        _notedSinceReset.Clear();
         ResetBundleEpochStamps();
+        // #4835: a group running at process-wide scope registers its AutoIncrement field under
+        // Guid.Empty; the tables that registered it are rebuilt, and re-register, next request.
+        _aiFieldIds.Clear();
         // AL-output type caches that live on this partial class (CodeunitPatches,
         // XmlPortPatches). Their finders already prefer CurrentTestAssembly; the
         // caches just need dropping so the rebuild re-resolves against the new asm.
