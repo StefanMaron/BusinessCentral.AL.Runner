@@ -291,15 +291,53 @@ public class AppGroupObjectVisibilityTests
         """);
 
         var dirs = new List<string> { outer };
-        foreach (var (letter, appId, cu, bufferId) in new[] { ("X", AppC, 62681, 62684), ("Y", AppD, 62682, 62685) })
+        foreach (var (letter, appId, cu, bufferId, subsId) in new[] { ("X", AppC, 62681, 62684, 62690), ("Y", AppD, 62682, 62685, 62691) })
         {
-            var dir = WriteApp(Path.Combine(root, "dup" + letter), appId, "Dup " + letter, 62680, 62689);
+            var dir = WriteApp(Path.Combine(root, "dup" + letter), appId, "Dup " + letter, 62680, 62699);
             File.WriteAllText(Path.Combine(dir, "Dup.al"), $$"""
-            table 62680 "Dup {{letter}} Table" { fields { field(1; "Code"; Code[20]) { } field(2; "Only{{letter}}"; Integer) { } } keys { key(PK; "Code") { Clustered = true; } } }
+            table 62680 "Dup {{letter}} Table"
+            {
+                fields
+                {
+                    field(1; "Code"; Code[20]) { }
+                    field(2; "Only{{letter}}"; Integer) { trigger OnValidate() begin Mark := 'V{{letter}}'; end; }
+                    field(3; Mark; Code[10]) { }
+                }
+                keys { key(PK; "Code") { Clustered = true; } }
+            }
+            codeunit {{subsId}} "Dup {{letter}} Subs"
+            {
+                SingleInstance = true;
+                var Fired: Text;
+                [EventSubscriber(ObjectType::Table, Database::"Dup {{letter}} Table", 'OnAfterInsertEvent', '', false, false)]
+                local procedure OnAfterInsert(var Rec: Record "Dup {{letter}} Table")
+                begin
+                    Fired += 'S{{letter}}';
+                end;
+                procedure Take(): Text
+                var
+                    T: Text;
+                begin
+                    T := Fired;
+                    Fired := '';
+                    exit(T);
+                end;
+            }
             xmlport 62683 "Dup {{letter}} XmlPort" { Caption = 'Dup {{letter}} XmlPort Cap'; schema { textelement(Root{{letter}}) { } } }
             table {{bufferId}} "Dup {{letter}} Buffer" { fields { field(1; PK; Integer) { } field(2; Data; Blob) { } } keys { key(PK; PK) { Clustered = true; } } }
-            report 62686 "Dup {{letter}} Report" { Caption = 'Dup {{letter}} Report Cap'; ProcessingOnly = true; dataset { dataitem(T; "Dup {{letter}} Table") { } } }
-            page 62687 "Dup {{letter}} Page" { Caption = 'Dup {{letter}} Page Cap'; SourceTable = "Dup {{letter}} Table"; layout { area(Content) { field(C; Rec.Code) { } } } }
+            report 62686 "Dup {{letter}} Report"
+            {
+                Caption = 'Dup {{letter}} Report Cap';
+                ProcessingOnly = true;
+                dataset { dataitem(T{{letter}}; "Dup {{letter}} Table") { } }
+                trigger OnPreReport() begin Error('RAN REPORT {{letter}}'); end;
+            }
+            page 62687 "Dup {{letter}} Page"
+            {
+                Caption = 'Dup {{letter}} Page Cap';
+                SourceTable = "Dup {{letter}} Table";
+                layout { area(Content) { field(C{{letter}}; Rec.Code) { } field(O{{letter}}; Rec."Only{{letter}}") { } } }
+            }
             query 62688 "Dup {{letter}} Query" { elements { dataitem(T; "Dup {{letter}} Table") { column(C; Code) { } } } }
             codeunit {{cu}} "Dup {{letter}} Tests"
             {
@@ -341,8 +379,7 @@ public class AppGroupObjectVisibilityTests
                 end;
 
                 // #4767: the inventory rows for every kind of object an id two groups both declare are this
-                // group's own. The Field table, RecordRef and Query Metadata read the runtime metadata
-                // objects, which are still shared per id; they are not asserted here.
+                // group's own.
                 [Test]
                 procedure SharedTableMetadataIsThisGroupsOwn()
                 var
@@ -394,6 +431,65 @@ public class AppGroupObjectVisibilityTests
                     if AllObj."Object Name" <> 'Dup {{letter}} Page' then Error('WRONG: AllObjWithCaption page name for 62687 in {{letter}} is %1', AllObj."Object Name");
                 end;
 
+                // #4767, runtime half: the Field table, RecordRef, the record's own field trigger and
+                // its table subscriber all read this group's NCLMetaTable of the shared id.
+                [Test]
+                procedure SharedTableRuntimeMetadataIsThisGroupsOwn()
+                var
+                    Fld: Record Field;
+                    RecRef: RecordRef;
+                    Rec: Record "Dup {{letter}} Table";
+                    Subs: Codeunit "Dup {{letter}} Subs";
+                begin
+                    if not Fld.Get(62680, 2) then Error('MISSING: Field 62680/2 in {{letter}}');
+                    if Fld.FieldName <> 'Only{{letter}}' then Error('WRONG: Field name for 62680/2 in {{letter}} is %1', Fld.FieldName);
+                    RecRef.Open(62680);
+                    if RecRef.Name <> 'Dup {{letter}} Table' then Error('WRONG: RecordRef name for 62680 in {{letter}} is %1', RecRef.Name);
+                    if RecRef.Field(2).Name <> 'Only{{letter}}' then Error('WRONG: RecordRef field 2 name for 62680 in {{letter}} is %1', RecRef.Field(2).Name);
+                    RecRef.Close();
+                    Subs.Take();
+                    Rec.Code := 'A';
+                    Rec.Validate("Only{{letter}}", 7);
+                    Rec.Insert();
+                    if StrPos(Subs.Take(), 'S{{letter}}') = 0 then Error('WRONG: own OnAfterInsert subscriber on 62680 did not fire in {{letter}}');
+                    Rec.Get('A');
+                    if Rec."Only{{letter}}" <> 7 then Error('WRONG: stored value of 62680 field 2 in {{letter}} is %1', Rec."Only{{letter}}");
+                    if Rec.Mark <> 'V{{letter}}' then Error('WRONG: field OnValidate of 62680 in {{letter}} set Mark to %1', Rec.Mark);
+                end;
+
+                [Test]
+                procedure SharedQueryMetadataIsThisGroupsOwn()
+                var
+                    QueryMetadata: Record "Query Metadata";
+                begin
+                    if not QueryMetadata.Get(62688) then Error('MISSING: Query Metadata 62688 in {{letter}}');
+                    if QueryMetadata.Name <> 'Dup {{letter}} Query' then Error('WRONG: Query Metadata name for 62688 in {{letter}} is %1', QueryMetadata.Name);
+                end;
+
+                [Test]
+                procedure SharedReportRunsThisGroupsOwn()
+                begin
+                    asserterror Report.Run(62686, false, false);
+                    if GetLastErrorText() <> 'RAN REPORT {{letter}}' then Error('WRONG: Report.Run(62686) in {{letter}} ended with: %1', GetLastErrorText());
+                end;
+
+                [Test]
+                procedure SharedPageTestPageIsThisGroupsOwn()
+                var
+                    TP: TestPage "Dup {{letter}} Page";
+                    Rec: Record "Dup {{letter}} Table";
+                begin
+                    Rec.Code := 'P';
+                    Rec."Only{{letter}}" := 5;
+                    Rec.Insert();
+                    TP.OpenView();
+                    TP.GoToRecord(Rec);
+                    if TP.C{{letter}}.Value <> 'P' then Error('WRONG: TestPage control C of 62687 in {{letter}} reads %1', TP.C{{letter}}.Value);
+                    if TP.O{{letter}}.AsInteger() <> 5 then Error('WRONG: TestPage control O of 62687 in {{letter}} reads %1', TP.O{{letter}}.Value);
+                    if TP.Caption <> 'Dup {{letter}} Page Cap' then Error('WRONG: TestPage caption of 62687 in {{letter}} is %1', TP.Caption);
+                    TP.Close();
+                end;
+
                 [Test]
                 procedure SharedQueryAllObjWithCaptionIsThisGroupsOwn()
                 var
@@ -435,7 +531,8 @@ public class AppGroupObjectVisibilityTests
         string output;
         lock (sb) output = sb.ToString();
 
-        Assert.Contains("15P/0F/0E across 15 tests", output);
+        // The whole runner output as the message, so a red names the failing test and its WRONG: line.
+        Assert.True(output.Contains("23P/0F/0E across 23 tests"), output);
         Assert.DoesNotContain("MISSING:", output);
         Assert.DoesNotContain("WRONG:", output);
         Assert.Equal(0, p.ExitCode);
@@ -452,7 +549,7 @@ public class AppGroupObjectVisibilityTests
         await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
         var lines = await server.SendRequestStreamingAsync(RunTests(dirs));
         var (events, _) = ProtocolV2Streaming.Split(lines);
-        Assert.Equal(15, events.Count);
+        Assert.Equal(23, events.Count);
         foreach (var e in events)
             Assert.True(e.GetProperty("status").GetString() == "pass", string.Join(" | ", lines));
     }
