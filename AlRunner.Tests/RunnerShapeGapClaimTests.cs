@@ -377,7 +377,12 @@ public sealed class RunnerShapeGapClaimTests
         // refusal, WITH a Sites entry above — a new surface, not a third call of an existing one:
         // it is about the KIND of filter expression on a column of a query the executor otherwise
         // takes, where every other query anchor here is about the join's own shape.
-        Assert.Equal(22, total);
+        // 22 -> 23 (#4808): NavReportSync.SubscribeOnSaveValues, refusing when the request page's
+        // owner is not a NavReport. NO new Sites entry, for the #4089 reason: a second call of the
+        // SAME factory and surface (`RunnerShapeGap.RequestPageReport`) that BindRequestPageOpenedByBc
+        // already pins. Nothing was deleted: #4808 removed a Cecil rewrite and a swallowed-NRE
+        // catch, neither of which was a RunnerShapeGap refusal.
+        Assert.Equal(23, total);
     }
 
     // ── The nine sites the issue's own measurement could not see ─────────────────────────

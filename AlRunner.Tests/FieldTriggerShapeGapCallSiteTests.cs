@@ -1010,9 +1010,13 @@ public sealed class FieldTriggerShapeGapCallSiteTests : IDisposable
         // 12 -> 13 / 15 -> 16 (#4089): NavReportSync.SyncExecuteOrPrint, the Report.Execute /
         // Report.Print seam, refusing when the by-id overloads cannot build the report. Both
         // numbers READ OUT of this test's own failure message, per the #3015 note above.
-        Assert.Equal(13, runnerShapeGapSites);
+        //
+        // 13 -> 14 / 16 -> 17 (#4808): NavReportSync.SubscribeOnSaveValues, a request page whose
+        // owner is not a NavReport when the runner wires BC's OnSaveValues subscription. Both
+        // numbers READ OUT of this test's own failure message.
+        Assert.Equal(14, runnerShapeGapSites);
         Assert.Equal(3, installGapSites);
-        Assert.Equal(16, total);
+        Assert.Equal(17, total);
 
         var limitations = File.ReadAllText(Path.Combine(RepoRoot, "docs", "limitations.md"));
         Assert.Contains($"{total} further guards raise `RunnerOutOfScopeException`", limitations,
