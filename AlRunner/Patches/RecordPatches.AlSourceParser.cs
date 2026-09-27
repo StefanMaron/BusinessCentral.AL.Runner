@@ -1288,6 +1288,7 @@ public static partial class RecordPatches
     /// </summary>
     internal static string? TableViewText(string? view)
     {
+        view = CollapseLineBreaks(view);
         if (string.IsNullOrEmpty(view) || view.IndexOf('"') < 0) return view;
 
         var sb = new System.Text.StringBuilder(view.Length + 8);
@@ -1322,6 +1323,44 @@ public static partial class RecordPatches
         }
         return sb.ToString();
     }
+
+    /// <summary>
+    /// Each whitespace run holding a line break or a tab, outside a quoted identifier or
+    /// literal, becomes one space (#4668). A symbol file states a view as the AL source wrote
+    /// it, and <c>TableViewParser</c> pads its tokens with <c>[ ]*</c> only, so a view split
+    /// over lines is refused whole. Equivalent: AL reads such a run as a token separator, and
+    /// neither an AL identifier nor a string literal can span a line.
+    /// </summary>
+    private static string? CollapseLineBreaks(string? view)
+    {
+        if (string.IsNullOrEmpty(view) || view.IndexOfAny(LineBreakChars) < 0) return view;
+
+        var sb = new System.Text.StringBuilder(view.Length);
+        for (int i = 0; i < view.Length; i++)
+        {
+            var c = view[i];
+            if (c is '"' or '\'')
+            {
+                var end = view.IndexOf(c, i + 1);
+                end = end < 0 ? view.Length : end + 1;
+                sb.Append(view, i, end - i);
+                i = end - 1;
+                continue;
+            }
+            if (!char.IsWhiteSpace(c)) { sb.Append(c); continue; }
+
+            var runEnd = i;
+            while (runEnd < view.Length && char.IsWhiteSpace(view[runEnd])) runEnd++;
+            if (view.IndexOfAny(LineBreakChars, i, runEnd - i) >= 0)
+                sb.Append(' ');
+            else
+                sb.Append(view, i, runEnd - i);
+            i = runEnd - 1;
+        }
+        return sb.ToString();
+    }
+
+    private static readonly char[] LineBreakChars = { '\r', '\n', '\t' };
 
     /// <summary>Index just past the closing quote of the AL quoted identifier starting at
     /// <paramref name="i"/> (which must be the opening <c>"</c>), treating <c>""</c> as an

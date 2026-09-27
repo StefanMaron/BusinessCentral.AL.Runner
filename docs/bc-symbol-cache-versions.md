@@ -166,6 +166,17 @@ v1 and v2 predate this record.
 
   43 was confirmed free immediately before pushing: origin/main read 42, and a sweep of every remote branch carrying this file found none above 42.
 
+- **v45**: a report data item's `DataItemTableView` and `DataItemLink` have each whitespace
+  run holding a line break or a tab collapsed to one space (#4668), because BC's
+  `TableViewParser` pads tokens with `[ ]*` only and refused Base Application report 302's
+  multi-line views outright. The same trap as v35 through v43: `ReportDataItemSymbol` holds a
+  string either way, so `PayloadShape` cannot see the value change. Measured, not inferred: a
+  `--cache` root warmed by the unfixed binary kept failing report 302 with the fixed binary at
+  v44, and a cold root on the same binary passed.
+
+  45 was confirmed free immediately before pushing: `origin/main` read 44, and a sweep of every
+  remote `agent/*` branch carrying this file found none above 44.
+
 ## Changes that deliberately did not bump
 
 - No CacheVersion bump of its own for PageSymbol.TableView (#2820), deliberately — the numbered bumps above belong to other changes (v28 to #2518, v29 to #2973), and this one rides whatever the current integer is without moving it. That member is reachable from CachePayload, so PayloadShape (issue #2335, merged as #2856) already gives it a different cache key than any payload written without it — the stale-entry hazard every entry in the version history describes is closed by construction, and bumping as well would only be ceremony. CacheVersion means what RecordShapeFingerprint's own summary says it means: the PARSE changed while the SHAPE did not, which no structural hash can see — v28 and v29 are both exactly that case, and this change is the other one. Verified rather than assumed: a cold run of this build wrote fresh entries and a warm second run read them back, on the SHARED ~/.cache/al-runner/bc-symbols with no --cache isolation, and the precompiled-page corpus arm (Base App page 1710) passed in both.
