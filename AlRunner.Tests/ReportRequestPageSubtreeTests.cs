@@ -84,6 +84,11 @@ public sealed class ReportRequestPageSubtreeTests
     // States SaveValues / ShowFilter as their AL DEFAULTS ("0" / "1") — stated all the same, so
     // BC's emitter writes them (#4667), and a writer emitting only non-defaults would drop both.
     private const int WithDefaultFlags = 9815;
+    // States Caption / InsertAllowed = 0 / Permissions on its RequestPage node, as Base
+    // Application reports 7315 (Caption), 7314 (InsertAllowed) and 5600 (Permissions) do (#4811).
+    private const int WithCaptionInsertPermissions = 9816;
+    // States InsertAllowed as its AL default ("1") — stated, so BC writes it (#4811).
+    private const int WithInsertAllowedDefault = 9817;
 
     // Not learn.microsoft.com, so a HelpLink can only have come from the manifest (#4675).
     private const string ManifestHelpUrl = "https://example.invalid/rp-help/";
@@ -183,6 +188,33 @@ public sealed class ReportRequestPageSubtreeTests
                             "Properties": [
                               { "Name": "SaveValues", "Value": "0" },
                               { "Name": "ShowFilter", "Value": "1" }
+                            ]
+                          }
+                        },
+                        {
+                          "Id": {{WithCaptionInsertPermissions}},
+                          "Name": "With Caption Insert Permissions",
+                          "DataItems": [],
+                          "RequestPage": {
+                            "Id": 0,
+                            "Name": "RequestOptionsPage",
+                            "Properties": [
+                              { "Name": "Caption", "Value": "Calculate Inventory" },
+                              { "Name": "InsertAllowed", "Value": "0" },
+                              { "Name": "Permissions", "Value": "TableData \"FA Setup\" = r" },
+                              { "Name": "SourceTable", "Value": "740" }
+                            ]
+                          }
+                        },
+                        {
+                          "Id": {{WithInsertAllowedDefault}},
+                          "Name": "With Insert Allowed Default",
+                          "DataItems": [],
+                          "RequestPage": {
+                            "Id": 0,
+                            "Name": "RequestOptionsPage",
+                            "Properties": [
+                              { "Name": "InsertAllowed", "Value": "1" }
                             ]
                           }
                         },
@@ -755,6 +787,128 @@ public sealed class ReportRequestPageSubtreeTests
             return v!;
         }
     }
+
+    /// <summary>
+    /// #4811: the symbol side of a request page's Caption and InsertAllowed — the stated text and
+    /// value, a stated AL default included, and null when the node states neither.
+    /// </summary>
+    [Fact]
+    public void TheSymbolCarriesTheRequestPageCaptionAndInsertAllowed()
+    {
+        var dir = TestScratch.Dir("al-runner-report-requestpage-caption-symbol");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var reports = BcAppSymbolCache.Get(WriteApp(dir)).Reports;
+            var stated = Assert.Single(reports, r => r.Id == WithCaptionInsertPermissions);
+            Assert.Equal("Calculate Inventory", stated.RequestPageCaption);
+            Assert.False(stated.RequestPageInsertAllowed);
+
+            var statedDefault = Assert.Single(reports, r => r.Id == WithInsertAllowedDefault);
+            Assert.Null(statedDefault.RequestPageCaption);
+            Assert.True(statedDefault.RequestPageInsertAllowed);
+
+            var changePassword = Assert.Single(reports, r => r.Id == ChangePassword);
+            Assert.Null(changePassword.RequestPageCaption);
+            Assert.Null(changePassword.RequestPageInsertAllowed);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// #4811: BC's emitter writes a stated request-page Caption as <c>CaptionML="ENU=…"</c> on
+    /// <c>&lt;PageDefinition&gt;</c> and a stated InsertAllowed as the FIRST attribute of
+    /// <c>&lt;SourceObject&gt;</c> (probe app compiled by BC 27.5 and 28.1:
+    /// <c>&lt;SourceObject InsertAllowed="0" SaveValues="1" ShowFilter="0" SourceTable="70000"/&gt;</c>).
+    /// It writes NOTHING for a request page's Permissions, anywhere in the report document, so
+    /// neither does the runner.
+    /// </summary>
+    [Fact]
+    public void TheEmittedDocumentCarriesTheDeclaredCaptionAndInsertAllowedAndNoPermissions()
+    {
+        var dir = TestScratch.Dir("al-runner-report-requestpage-caption-xml");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var stated = Emit(Report(dir, WithCaptionInsertPermissions));
+            Assert.Equal("ENU=Calculate Inventory", PageDefinitionOf(stated).GetAttribute("CaptionML"));
+            var sourceObject = SourceObjectOf(stated);
+            Assert.Equal("0", sourceObject.GetAttribute("InsertAllowed"));
+            Assert.Equal("InsertAllowed", sourceObject.Attributes[0].Name);
+            Assert.Empty(stated.SelectNodes("//@*[local-name()='Permissions'] | //*[local-name()='Permissions']")!.Cast<XmlNode>());
+
+            var statedDefault = Emit(Report(dir, WithInsertAllowedDefault));
+            Assert.False(PageDefinitionOf(statedDefault).HasAttribute("CaptionML"));
+            Assert.Equal("1", SourceObjectOf(statedDefault).GetAttribute("InsertAllowed"));
+
+            var changePassword = Emit(Report(dir, ChangePassword));
+            Assert.False(PageDefinitionOf(changePassword).HasAttribute("CaptionML"));
+            Assert.False(SourceObjectOf(changePassword).HasAttribute("InsertAllowed"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// The same through BC's OWN reader: the request page's <c>MetaPageDefinition</c> reads the
+    /// Caption back as stated (<c>CaptionMLString</c>) and <c>SourceObject.InsertAllowed</c> as stated, in both directions.
+    /// InsertAllowed has no AL-observable effect found on a TestRequestPage (it has no New), so
+    /// this is its proving test, as for ShowFilter in #4667.
+    /// </summary>
+    [SkippableFact]
+    public void BcsOwnReaderSeesTheRequestPageCaptionAndInsertAllowed()
+    {
+        var types = Type.GetType(
+            "Microsoft.Dynamics.Nav.Types.Metadata.MetaReport, Microsoft.Dynamics.Nav.Types");
+        Skip.If(types is null, "Microsoft.Dynamics.Nav.Types is not loadable on this box.");
+
+        var ctor = types!.GetConstructors().FirstOrDefault(
+            c => c.GetParameters() is { Length: 5 } ps && ps[0].ParameterType == typeof(XmlElement));
+        Assert.True(ctor is not null, "MetaReport has no (XmlElement, …) constructor.");
+        var requestPage = types.GetProperty("RequestPageDefinition",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        Assert.True(requestPage is not null, "MetaReport has no RequestPageDefinition property.");
+
+        var dir = TestScratch.Dir("al-runner-report-requestpage-caption-reader");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            Assert.Equal(("ENU=Calculate Inventory", false), Read(Report(dir, WithCaptionInsertPermissions)));
+            Assert.Equal(("", true), Read(Report(dir, WithInsertAllowedDefault)));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+
+        (string Caption, bool InsertAllowed) Read(BcAppSymbolCache.ReportSymbol report)
+        {
+            var definition = requestPage!.GetValue(ctor!.Invoke(new object?[] { Emit(report), null, 0, 0, null }))!;
+            var caption = definition.GetType()
+                .GetProperty("CaptionMLString", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            Assert.True(caption is not null, $"{definition.GetType().Name} has no CaptionMLString property.");
+            var sourceObject = Get(Get(definition, "Properties"), "SourceObject");
+            return (caption!.GetValue(definition) as string ?? "", (bool)Get(sourceObject, "InsertAllowed"));
+        }
+
+        static object Get(object o, string name)
+        {
+            var p = o.GetType().GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            Assert.True(p is not null, $"{o.GetType().Name} has no {name} property.");
+            var v = p!.GetValue(o);
+            Assert.NotNull(v);
+            return v!;
+        }
+    }
+
+    private static XmlElement PageDefinitionOf(XmlElement reportRoot)
+        => Assert.IsAssignableFrom<XmlElement>(reportRoot.SelectSingleNode(
+            "RequestPage/*[local-name()='PageDefinition']"));
 
     private static XmlElement SourceObjectOf(XmlElement reportRoot)
         => Assert.IsAssignableFrom<XmlElement>(reportRoot.SelectSingleNode(

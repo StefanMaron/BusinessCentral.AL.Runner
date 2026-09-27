@@ -200,6 +200,11 @@ internal sealed class RequestPageTestPage : MockITestPage
     /// </summary>
     public override ITestAction GetAction(int id) => null!;
 
+    // TestRequestPage.Caption() (#4811): NavTestPageBase.ALCaption returns TestPage.Caption.
+    // The request-page form's own NavForm.PageCaption, seeded by BC's InitializeFromMetadata
+    // from the document's CaptionML — the same read MockTestPage.Caption makes for a page.
+    public override string Caption => PageInstance()?.PageCaption ?? string.Empty;
+
     /// <summary>
     /// The request page wrapped as a <see cref="RunnerPageInstance"/>. <c>Adopt</c>, never
     /// <c>TryCreate</c>: the form is already live — NavReportSync constructed it and BC's

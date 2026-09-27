@@ -412,6 +412,40 @@ when stated (#4108). The `Report.SaveAs(Xml)` dataset reads them back as
 `AboutThisReportTitle` / `AboutThisReportText`, which corpus codeunit 67250 asserts on Base
 Application report 3.
 
+<a id="request-page-caption-insertallowed-permissions"></a>
+### `Caption` and `InsertAllowed` are written; `Permissions` has nothing to write (#4811)
+
+A probe app compiled with BC's own compiler (`tools/metadata-ground-truth`, 27.5.46862.53931 and
+28.1.49838.53910, identical output) settled where BC writes each of the three:
+
+```xml
+<PageDefinition … Name="RP Order" CaptionML="ENU=RP Order Request" CaptionTranslationKey="…">
+  <Properties …>
+    <SourceObject InsertAllowed="0" SaveValues="1" ShowFilter="0" SourceTable="70000" />
+```
+
+- **`Caption`** becomes `CaptionML="ENU=…"` on `<PageDefinition>`, only when stated.
+- **`InsertAllowed`** is the first attribute of `<SourceObject>`, only when stated, a stated
+  default (`1`) included.
+- **`Permissions`** declared on a request page appears **nowhere** in the report document —
+  not on the request page and not at report level — for `r` or `RIMD`. So the symbol file's
+  value (report 5600 states one) has no counterpart to write, and it is not read.
+
+`WriteRequestPageXml` writes the first two the same way from the symbol file.
+
+**What AL observes.** `TestRequestPage.Caption()` returns the request-page form's
+`NavForm.PageCaption`. BC's `MetadataProvider.CreatePage` sets that from the REPORT's
+`CaptionML` and falls back to the request page's own caption only when the report states none
+(bc284). Every Base Application report that states a request-page `Caption` also states a
+report caption, so for Microsoft's reports the written `CaptionML` does not change what AL sees;
+it matters for a precompiled report that states only the request-page caption. Corpus codeunit
+67560 covers all four shapes. `TestRequestPage.Caption()` itself answered an empty string in the
+runner for every report before #4811, source-compiled ones included.
+
+No AL-observable effect of `InsertAllowed` was found (a `TestRequestPage` has no `New`), so
+`BcsOwnReaderSeesTheRequestPageCaptionAndInsertAllowed` pins it through BC's reader, as #4667 did
+for `ShowFilter`.
+
 ### Why the control tree is not transcribed
 
 The symbol file does carry one: 2,938 control nodes over those 466 reports, with 1,891
