@@ -115,19 +115,6 @@ public static class RunnerModalDispatch
     }
 
     /// <summary>
-    /// Called from the rewritten NavTestExecution.TestHandleForm in place of the client
-    /// callback — the NON-MODAL twin of <see cref="FormRunModal"/>. Signature matches the call
-    /// site's stack shape: the NavTestExecution (left by the original `ldarg.0`) and the
-    /// FormRunRequest.
-    ///
-    /// BC's own callback for this direction is ShowForm(handle), which a real client reaches
-    /// after opening the page. ShowForm decides everything that matters: whether the page was
-    /// trapped by the test (attach it and let the test drive it), or whether a [PageHandler]
-    /// answers it (build a NavTestPage and invoke the handler), or neither — in which case BC
-    /// raises its own NavTestPageInvokedWithoutHandlerException. None of that logic is
-    /// duplicated here.
-    /// </summary>
-    /// <summary>
     /// The side effect of the <c>get_ServiceConnection</c> call the Cecil rewrite removes from
     /// this call site: BC's <c>NavTestExecution.ServiceConnection</c> reads <c>ClientSession</c>,
     /// which re-creates <c>testClientSession</c> when it is null. <c>ReleaseTestPageClient</c>
@@ -149,6 +136,19 @@ public static class RunnerModalDispatch
         AlRunner.Infrastructure.FieldPoke.SetInstance(field, testExecution, new RunnerTestClientSession(session));
     }
 
+    /// <summary>
+    /// Called from the rewritten NavTestExecution.TestHandleForm in place of the client
+    /// callback — the NON-MODAL twin of <see cref="FormRunModal"/>. Signature matches the call
+    /// site's stack shape: the NavTestExecution (left by the original `ldarg.0`) and the
+    /// FormRunRequest.
+    ///
+    /// BC's own callback for this direction is ShowForm(handle), which a real client reaches
+    /// after opening the page. ShowForm decides everything that matters: whether the page was
+    /// trapped by the test (attach it and let the test drive it), or whether a [PageHandler]
+    /// answers it (build a NavTestPage and invoke the handler), or neither — in which case BC
+    /// raises its own NavTestPageInvokedWithoutHandlerException. None of that logic is
+    /// duplicated here.
+    /// </summary>
     public static void FormRun(object testExecution, object runRequest)
     {
         if (testExecution == null || runRequest == null)
