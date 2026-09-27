@@ -422,6 +422,14 @@ public sealed class TestRunnerMgtEventsTests
             procedure B_SecondTest()
             begin
             end;
+
+            // Skipped by the subscriber and last in the codeunit: a scope left open on the Skip
+            // path would still be open for OnAfterCodeunitRun, which the TRP-CU-AFTER probe catches.
+            [Test]
+            procedure C_SkippedLast()
+            begin
+                Error('TRP-SKIP FAIL: a test the subscriber skipped ran');
+            end;
         }
 
         codeunit 64813 "TRP Subscribers"
@@ -434,10 +442,12 @@ public sealed class TestRunnerMgtEventsTests
             end;
 
             [EventSubscriber(ObjectType::Codeunit, Codeunit::"Test Runner - Mgt", 'OnBeforeTestMethodRun', '', false, false)]
-            local procedure BeforeMethod(FunctionName: Text[128])
+            local procedure BeforeMethod(FunctionName: Text[128]; var Skip: Boolean)
             begin
                 if not TryAddPermissionSet() then
                     Error('TRP-M-BEFORE FAIL %1: %2', FunctionName, GetLastErrorText());
+                if FunctionName = 'C_SkippedLast' then
+                    Skip := true;
             end;
 
             [EventSubscriber(ObjectType::Codeunit, Codeunit::"Test Runner - Mgt", 'OnAfterTestMethodRun', '', false, false)]
@@ -480,7 +490,8 @@ public sealed class TestRunnerMgtEventsTests
 
         HasLine(output, "PASS", "A_FirstTest");
         HasLine(output, "PASS", "B_SecondTest");
-        foreach (var marker in new[] { "TRP-M-BEFORE FAIL", "TRP-M-AFTER FAIL", "TRP-CU-BEFORE FAIL", "TRP-CU-AFTER FAIL" })
+        HasLine(output, "SKIP", "C_SkippedLast");
+        foreach (var marker in new[] { "TRP-M-BEFORE FAIL", "TRP-M-AFTER FAIL", "TRP-CU-BEFORE FAIL", "TRP-CU-AFTER FAIL", "TRP-SKIP FAIL" })
             Lacks(output, marker);
         Lacks(output, "BcShapeGap");
     }
