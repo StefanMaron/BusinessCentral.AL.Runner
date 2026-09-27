@@ -82,6 +82,10 @@ public static partial class RecordPatches
 
     // Cache: tableId → NCLMetaTable built from AL source.
     private static readonly ConcurrentDictionary<int, object?> _metaTableCache = new();
+    // A table id several app groups declare, per executing group (#4767): see GetOrBuildNCLMetaTable.
+    // Every entry is built lazily while its group executes, after that group's emit, so the
+    // post-emit "...All" passes over _metaTableCache never need to visit it.
+    private static readonly ConcurrentDictionary<(Guid AppGroup, int Id), object?> _metaTableCacheByAppGroup = new();
 
     // Cache: (DataAccessSource, tableId) → DataAccess (with TempTableDataProvider).
     // BC's real GetDataAccessForTable returns one shared TenantDataAccess for all Normal
@@ -317,6 +321,9 @@ public static partial class RecordPatches
     public static void ResetForReload()
     {
         _metaTableCache.Clear();
+        _metaTableCacheByAppGroup.Clear();
+        _fieldTriggersWiredByAppGroup.Clear();
+        _recordTypeCacheByAppGroup.Clear();
         // #3552 — the ledger names LIVE NCLMetaTable instances as already carrying BC's
         // document, so it is meaningless the moment the line above drops them, and leaving it
         // populated would make the next cycle's tables keep the derivation in silence.
@@ -1169,7 +1176,7 @@ public static partial class RecordPatches
         int id = self.ObjectId.ObjectNumber;
         bool isTemp = _fNavRecordHandleTemp != null && (bool)(_fNavRecordHandleTemp.GetValue(self) ?? false);
 
-        var metaTable = (NCLMetaTable?)_metaTableCache.GetOrAdd(id, BuildNCLMetaTable);
+        var metaTable = GetOrBuildNCLMetaTable(id);
         if (metaTable == null)
         {
             if (id == 0)

@@ -307,7 +307,7 @@ public sealed partial class BcCompiler
             if (AlObjectMetadataRegistry.TryGetByKey(objKey, out var objEntry))
                 objects[objKey] = objEntry;
             if (id == null) continue;
-            if (sym.Kind == NavCA.SymbolKind.Page && AlPageMetadataRegistry.TryGet(id.Value, out var pageXml))
+            if (sym.Kind == NavCA.SymbolKind.Page && AlPageMetadataRegistry.TryGetForCompile(id.Value, out var pageXml))
                 pages[id.Value] = pageXml;
             else if (sym.Kind == NavCA.SymbolKind.XmlPort && AlXmlPortMetadataRegistry.TryGet(id.Value, out var xpXml))
                 xmlPorts[id.Value] = xpXml;
@@ -399,7 +399,7 @@ public sealed partial class BcCompiler
                 objects[objKey] = objEntry;
             CaptureRadEnumEntries(enums, rawEnums, c.Kind, c.Id, c.Name);
             if (c.Id is not { } id) continue;
-            if (c.Kind == NavCA.SymbolKind.Page && AlPageMetadataRegistry.TryGet(id, out var pageXml))
+            if (c.Kind == NavCA.SymbolKind.Page && AlPageMetadataRegistry.TryGetForCompile(id, out var pageXml))
                 pages[id] = pageXml;
             else if (c.Kind == NavCA.SymbolKind.XmlPort && AlXmlPortMetadataRegistry.TryGet(id, out var xpXml))
                 xmlPorts[id] = xpXml;
@@ -455,7 +455,7 @@ public sealed partial class BcCompiler
     private static void CaptureRadReport(
         Dictionary<int, string> reports, Dictionary<int, AlReportLayoutInfo[]> layouts, int id)
     {
-        if (AlReportMetadataRegistry.TryGet(id, out var xml)) reports[id] = xml; else reports.Remove(id);
+        if (AlReportMetadataRegistry.TryGetForCompile(id, out var xml)) reports[id] = xml; else reports.Remove(id);
         var own = AlReportLayoutRegistry.Get(id);
         if (own.Count > 0) layouts[id] = own.ToArray(); else layouts.Remove(id);
     }

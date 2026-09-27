@@ -120,7 +120,7 @@ public static partial class RecordPatches
 
         var built = (NCLMetaTable?)_mCreateEmptyNCLMetaTable!.Invoke(null, new object?[]
         {
-            RunnerMetaApplicationObjectLoader.Instance, tableId, baseGroup, -1, string.Empty,
+            RunnerMetaApplicationObjectLoader.For(AppGroupCacheScope("table", tableId)), tableId, baseGroup, -1, string.Empty,
         }) ?? throw new BcShapeGapException(
             "AL table metadata construction",
             "NCLMetaTable.CreateEmptyNCLMetaTable",

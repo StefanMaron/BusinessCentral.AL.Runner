@@ -496,7 +496,7 @@ public static partial class RecordPatches
     private static Dictionary<string, int> BuildFieldNameToNoMap(int tableNo)
     {
         var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        if (_parsedTables.TryGetValue(tableNo, out var pt))
+        if (TryGetInAppGroupScope("table", _parsedTables, tableNo, out var pt))
             foreach (var f in pt.Fields)
                 map[f.FieldName] = f.FieldId;
         return map;

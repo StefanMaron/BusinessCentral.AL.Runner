@@ -724,7 +724,7 @@ public static partial class RecordPatches
     {
         if (string.IsNullOrEmpty(tableName)) return null;
         // Already parsed?
-        var existing = _parsedTables.Values.FirstOrDefault(t =>
+        var existing = InAppGroupScope("table", _parsedTables).FirstOrDefault(t =>
             string.Equals(t.TableName, tableName, StringComparison.OrdinalIgnoreCase));
         if (existing != null) return existing;
 
@@ -793,7 +793,7 @@ public static partial class RecordPatches
                 }
             }
         }
-        return _parsedTables.Values.FirstOrDefault(t =>
+        return InAppGroupScope("table", _parsedTables).FirstOrDefault(t =>
                    string.Equals(t.TableName, tableName, StringComparison.OrdinalIgnoreCase))
                ?? TryPopulateParsedTableByName(tableName);
     }

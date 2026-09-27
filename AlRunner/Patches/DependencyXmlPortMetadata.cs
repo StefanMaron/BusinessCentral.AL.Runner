@@ -856,7 +856,7 @@ public static partial class RecordPatches
         if (sep <= 0) return null;
         var fieldName = reference.Substring(sep + 2);
 
-        if (!_parsedTables.TryGetValue(enclosingTableId, out var table)) return null;
+        if (!TryGetInAppGroupScope("table", _parsedTables, enclosingTableId, out var table)) return null;
         // Including tableextension fields: BC folds a same-app extension's fields into the
         // base table, so 99000751's `Item."Routing No."` (tableextension 99000750) is typed.
         foreach (var f in GetAllFieldsIncludingExtensions(table))

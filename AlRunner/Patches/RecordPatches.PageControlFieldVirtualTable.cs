@@ -194,7 +194,7 @@ public static partial class RecordPatches
                 TracePageMetadataSource(page.Id, "derived");
 
                 var tableId = GetSourceTableIdForPage(page.Id);
-                var table = tableId != 0 && _parsedTables.TryGetValue(tableId, out var t) ? t : null;
+                var table = tableId != 0 && TryGetInAppGroupScope("table", _parsedTables, tableId, out var t) ? t : null;
 
                 foreach (var c in GetSourceParsedPageControlRows(page.Id))
                 {
@@ -243,7 +243,7 @@ public static partial class RecordPatches
                 // answered TableNo = 0 / FieldNo = 0 (#4749).
                 if (symbol.SourceTableId != 0 && !_parsedTables.ContainsKey(symbol.SourceTableId))
                     TryPopulateParsedTableFromBcApps(symbol.SourceTableId);
-                var symTable = symbol.SourceTableId != 0 && _parsedTables.TryGetValue(symbol.SourceTableId, out var st)
+                var symTable = symbol.SourceTableId != 0 && TryGetInAppGroupScope("table", _parsedTables, symbol.SourceTableId, out var st)
                     ? st : null;
                 // Once per page, not per control: the tableextension merge scans every
                 // registered extension, and with the table now populated it runs for every

@@ -152,7 +152,7 @@ public static partial class RecordPatches
         foreach (var loaded in BcLoadedTableExtensionTypes(metaTable))
             if (!types.Contains(loaded)) types.Add(loaded);
 
-        if (!_parsedTables.TryGetValue(tableId, out var parsed)) return types;
+        if (!TryGetInAppGroupScope("table", _parsedTables, tableId, out var parsed)) return types;
         if (!_extensionIdsByBaseTable.TryGetValue(parsed.TableName.ToLowerInvariant(), out var extIds))
             return types;
 

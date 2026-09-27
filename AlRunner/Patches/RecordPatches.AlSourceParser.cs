@@ -1059,6 +1059,7 @@ public static partial class RecordPatches
         {
             if (!string.Equals(kvp.Value.TableName, baseTableName, StringComparison.OrdinalIgnoreCase))
                 continue;
+            EvictAppGroupMetaTables(kvp.Key);
             if (_metaTableCache.TryRemove(kvp.Key, out _))
             {
                 EventSubscriberPatches.ForgetInjectedForTable(kvp.Key);

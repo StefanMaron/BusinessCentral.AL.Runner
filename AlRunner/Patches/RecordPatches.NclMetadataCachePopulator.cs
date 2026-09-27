@@ -76,7 +76,7 @@ public static partial class RecordPatches
 
         // Tables — existing §O path.
         PopulateOneObjectType(arr, objectTypeTable, _parsedTables.Keys.ToArray(),
-            id => _metaTableCache.GetOrAdd(id, BuildNCLMetaTable), "Table");
+            id => GetOrBuildNCLMetaTable(id), "Table");
 
         // Pages — §P, mirror via BuildNCLMetaForm using NCLMetaForm.CreateEmptyNCLMetaForm.
         // Pageextension ids are included alongside page ids: they used to share _parsedPages
@@ -260,9 +260,13 @@ public static partial class RecordPatches
 
     internal static NCLMetaTable? EnsureTableInMetadataCache(int tableId)
     {
-        var meta = (NCLMetaTable?)_metaTableCache.GetOrAdd(tableId, BuildNCLMetaTable);
+        var meta = GetOrBuildNCLMetaTable(tableId);
         if (meta == null)
             return null;
+        // A group's own instance stays out of BC's metadataCacheEntries, which holds one entry per
+        // id: every lookup reaches this method first (#4767).
+        if (AppGroupCacheScope("table", tableId) != Guid.Empty)
+            return meta;
 
         var skeleton = BcRuntime.SkeletonNCLMetadata;
         if (skeleton == null)

@@ -347,7 +347,7 @@ public static partial class RecordPatches
     internal static int? TryResolveDependencyFieldId(int tableId, string fieldName)
     {
         if (tableId <= 0 || string.IsNullOrWhiteSpace(fieldName)) return null;
-        if (!_parsedTables.TryGetValue(tableId, out var table))
+        if (!TryGetInAppGroupScope("table", _parsedTables, tableId, out var table))
         {
             TryPopulateParsedTableFromBcApps(tableId);
             _parsedTables.TryGetValue(tableId, out table);

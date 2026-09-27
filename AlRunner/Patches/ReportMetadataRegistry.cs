@@ -44,6 +44,14 @@ public static class AlReportMetadataRegistry
            && _xmlByAppAndId.TryGetValue((group, reportId), out metadataXml!)
            || _xmlById.TryGetValue(reportId, out metadataXml!);
 
+    /// <summary>The document the app being compiled now registered for the id, else the
+    /// process-wide one: for the compile-time and cache-sidecar readers, which run while a
+    /// previous group's test assembly can still be the executing one.</summary>
+    public static bool TryGetForCompile(int reportId, out string metadataXml)
+        => BcCompiler.CurrentAppIdForRegistries is { } appId
+           && _xmlByAppAndId.TryGetValue((appId, reportId), out metadataXml!)
+           || _xmlById.TryGetValue(reportId, out metadataXml!);
+
     public static int Count => _xmlById.Count;
 
     public static void Clear()

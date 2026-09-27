@@ -63,6 +63,14 @@ public static class AlPageMetadataRegistry
            && _xmlByAppAndId.TryGetValue((group, pageId), out metadataXml!)
            || _xmlById.TryGetValue(pageId, out metadataXml!);
 
+    /// <summary>The document the app being compiled now registered for the id, else the
+    /// process-wide one: for the compile-time and cache-sidecar readers, which run while a
+    /// previous group's test assembly can still be the executing one.</summary>
+    public static bool TryGetForCompile(int pageId, out string metadataXml)
+        => BcCompiler.CurrentAppIdForRegistries is { } appId
+           && _xmlByAppAndId.TryGetValue((appId, pageId), out metadataXml!)
+           || _xmlById.TryGetValue(pageId, out metadataXml!);
+
     public static int Count => _xmlById.Count;
 
     public static void Clear()

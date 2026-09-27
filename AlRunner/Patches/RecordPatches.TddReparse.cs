@@ -35,6 +35,7 @@ public static partial class RecordPatches
     {
         TryParseTableFile(tableObjectText);
         _metaTableCache.TryRemove(tableId, out _);
+        EvictAppGroupMetaTables(tableId);
 
         // Shared with the #3121 CalcFormula rebuild — same eviction, same reason.
         EvictSkeletonMetadataTableEntry(tableId);

@@ -592,7 +592,7 @@ public static partial class RecordPatches
         if (symbol == null || symbol.SourceTableId == 0)
             return new Dictionary<int, int>();
 
-        if (!_parsedTables.TryGetValue(symbol.SourceTableId, out var depTable))
+        if (!TryGetInAppGroupScope("table", _parsedTables, symbol.SourceTableId, out var depTable))
         {
             TryPopulateParsedTableFromBcApps(symbol.SourceTableId);
             _parsedTables.TryGetValue(symbol.SourceTableId, out depTable);
@@ -805,7 +805,7 @@ public static partial class RecordPatches
     }
 
     internal static int[] GetPrimaryKeyFieldIdsForTable(int tableId)
-        => _parsedTables.TryGetValue(tableId, out var table)
+        => TryGetInAppGroupScope("table", _parsedTables, tableId, out var table)
             ? table.PkFieldIds.ToArray()
             : Array.Empty<int>();
 
