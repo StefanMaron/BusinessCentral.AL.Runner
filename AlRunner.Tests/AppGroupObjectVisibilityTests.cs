@@ -248,6 +248,25 @@ public class AppGroupObjectVisibilityTests
         Assert.Null(RecordPatches.AppGroupScopeFor("report", 62683, declarers, AppC));
     }
 
+    [Fact]
+    public void SubscribesToAnotherAppGroupsObject_OnlyASubscriberDeclaringTheSharedIdItselfIsExcluded()
+    {
+        var declarers = new Dictionary<(string Kind, int Id), HashSet<Guid>>
+        {
+            [("table", 62680)] = new() { AppC, AppD },
+        };
+
+        // #4834: a declarer of the shared id subscribes to its own object, never the other one's.
+        Assert.True(RecordPatches.SubscribesToAnotherAppGroupsObject("Table", 62680, AppC, AppD, declarers));
+        Assert.True(RecordPatches.SubscribesToAnotherAppGroupsObject("table", 62680, AppD, AppC, declarers));
+        Assert.False(RecordPatches.SubscribesToAnotherAppGroupsObject("table", 62680, AppC, AppC, declarers));
+        // A subscriber whose group does not declare the id keeps reaching every publisher.
+        Assert.False(RecordPatches.SubscribesToAnotherAppGroupsObject("table", 62680, AppC, AppA, declarers));
+        // An id only one group declares, or the same id of another kind: nothing to separate.
+        Assert.False(RecordPatches.SubscribesToAnotherAppGroupsObject("table", 62681, AppC, AppD, declarers));
+        Assert.False(RecordPatches.SubscribesToAnotherAppGroupsObject("codeunit", 62680, AppC, AppD, declarers));
+    }
+
     private static string WriteApp(string dir, Guid appId, string name, int from, int to)
     {
         Directory.CreateDirectory(dir);
@@ -582,14 +601,21 @@ public class AppGroupObjectVisibilityTests
                 end;
 
                 [Test]
-                procedure SharedReportAndCodeunitEventsReachOnlyThisGroupsSubscribers()
+                procedure SharedReportEventReachesOnlyThisGroupsSubscribers()
                 var
                     Rep: Report "Dup {{letter}} Report";
-                    Pub: Codeunit "Dup {{letter}} Pub";
                     Got: Text;
                 begin
                     Got := Rep.RaiseShared();
                     if Got <> 'R{{letter}}' then Error('WRONG: report-declared event on 62686 in {{letter}} reached subscribers %1', Got);
+                end;
+
+                [Test]
+                procedure SharedCodeunitEventReachesOnlyThisGroupsSubscribers()
+                var
+                    Pub: Codeunit "Dup {{letter}} Pub";
+                    Got: Text;
+                begin
                     Got := Pub.RaiseShared();
                     if Got <> 'C{{letter}}' then Error('WRONG: codeunit-declared event on 62689 in {{letter}} reached subscribers %1', Got);
                 end;
@@ -694,7 +720,7 @@ public class AppGroupObjectVisibilityTests
     {
         var (output, exitCode) = run;
         // The whole runner output as the message, so a red names the failing test and its WRONG: line.
-        Assert.True(output.Contains("31P/0F/0E across 31 tests"), output);
+        Assert.True(output.Contains("33P/0F/0E across 33 tests"), output);
         Assert.DoesNotContain("MISSING:", output);
         Assert.DoesNotContain("WRONG:", output);
         Assert.Equal(0, exitCode);
@@ -711,7 +737,7 @@ public class AppGroupObjectVisibilityTests
         await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
         var lines = await server.SendRequestStreamingAsync(RunTests(dirs));
         var (events, _) = ProtocolV2Streaming.Split(lines);
-        Assert.Equal(31, events.Count);
+        Assert.Equal(33, events.Count);
         foreach (var e in events)
             Assert.True(e.GetProperty("status").GetString() == "pass", string.Join(" | ", lines));
     }
