@@ -38,11 +38,31 @@ public class AllObjPopulateCostTests
     private static readonly Regex CaptionWalkLine = new(@"^PERF AllObjWithCaption\.InventoryWalk (\d+) row\(s\)$", RegexOptions.Multiline);
     private static readonly Regex CaptionReuseLine = new(@"^PERF AllObjWithCaption\.Reuse$", RegexOptions.Multiline);
 
+    private static string TestAppsDir()
+        => Path.Combine(TestArtifacts.HomeDir() ?? string.Empty, ".al-runner", "test-apps");
+
+    /// <summary>
+    /// Whether Microsoft's Test Runner loads is not left to whatever the box has lying around:
+    /// its AllObj lookups add a visible-app key, so the exact counts below depend on it (#4888).
+    /// The workflow provisions ~/.al-runner/test-apps, so a missing Test Runner there fails a CI
+    /// leg and skips a dev box, as TestArtifacts.SkipIfMissingIn does.
+    /// </summary>
+    private static void RequireTestRunnerApp()
+    {
+        var dir = TestAppsDir();
+        if (File.Exists(Path.Combine(dir, "Microsoft_Test Runner.app"))) return;
+        var reason = $"Microsoft's Test Runner is not provisioned: '{dir}/Microsoft_Test Runner.app' does not exist.";
+        if (TestArtifacts.RunningOnCi) Assert.Fail(TestArtifacts.CiMissingArtifactsMessage(reason));
+        TestArtifacts.SkipIf(true, reason);
+    }
+
     internal static (string output, int exit) RunRunner(string cacheDir, string app)
     {
+        RequireTestRunnerApp();
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
         args.Append(" --package-cache \"").Append(TestArtifacts.PlatformAppsDir()).Append('"');
+        args.Append(" --package-cache \"").Append(TestAppsDir()).Append('"');
         args.Append(" --cache \"").Append(cacheDir).Append('"');
         args.Append(" \"").Append(app).Append('"');
         var psi = new ProcessStartInfo
@@ -214,10 +234,14 @@ public class AllObjPopulateCostTests
                 Assert.True(exit == 0 && output.Contains("2P/0F/0E"),
                     $"{pass} run: expected both tests to pass (exit {exit}), got:\n{output}");
 
-                foreach (var (table, handoutLine, walkLine, topUpLine, reuseLine) in new[]
+                // Test Runner is pinned (RunRunner), and its AllObj lookups run with its own code on
+                // the call stack, which widens the visible-app set: a second key for AllObj, and
+                // so a second walk and a second top-up that inserts nothing. AllObjWithCaption is
+                // looked up only by the fixture: one key.
+                foreach (var (table, handoutLine, walkLine, topUpLine, reuseLine, keys) in new[]
                          {
-                             ("AllObj", HandoutLine, WalkLine, TopUpLine, ReuseLine),
-                             ("AllObjWithCaption", CaptionHandoutLine, CaptionWalkLine, CaptionTopUpLine, CaptionReuseLine),
+                             ("AllObj", HandoutLine, WalkLine, TopUpLine, ReuseLine, 2),
+                             ("AllObjWithCaption", CaptionHandoutLine, CaptionWalkLine, CaptionTopUpLine, CaptionReuseLine, 1),
                          })
                 {
                     var handouts = handoutLine.Matches(output).Count;
@@ -230,16 +254,17 @@ public class AllObjPopulateCostTests
                     Assert.True(handouts >= 2 * Lookups,
                         $"{pass} run: expected at least {2 * Lookups} {table} handouts, got {handouts}:\n{output}");
 
-                    // [THEN] The rows were built once for the run: one visibility, one inventory.
-                    // Before #4851 (#4859 for AllObjWithCaption) every handout walked.
-                    Assert.True(walks == 1,
-                        $"{pass} run: {walks} {table} inventory walk(s) for {handouts} handout(s); expected 1:\n{output}");
+                    // [THEN] The rows were built once per key, not per handout.
+                    Assert.True(walks == keys,
+                        $"{pass} run: {walks} {table} inventory walk(s) for {handouts} handout(s); expected {keys}, one per key:\n{output}");
 
-                    // [THEN] One store was filled, by the first codeunit; the second codeunit was
-                    // handed that store back at its boundary instead of a new one (#4859).
-                    Assert.True(topUps == 1 && reuses == 1,
-                        $"{pass} run: {topUps} {table} top-up(s) and {reuses} reuse(s) for {handouts} handout(s); "
-                        + $"expected 1 and 1:\n{output}");
+                    // [THEN] One top-up per key, and only the first inserted rows: one store was
+                    // filled, by the first codeunit. The second codeunit was handed that store
+                    // back at its boundary instead of a new one (#4859).
+                    var fills = topUpLine.Matches(output).Count(m => int.Parse(m.Groups[1].Value) > 0);
+                    Assert.True(topUps == keys && fills == 1 && reuses == 1,
+                        $"{pass} run: {topUps} {table} top-up(s), {fills} fill(s) and {reuses} reuse(s) for {handouts} "
+                        + $"handout(s); expected {keys}, 1 and 1:\n{output}");
                 }
             }
         }
@@ -530,6 +555,12 @@ public class AllObjPopulateCostTests
                     $"{pass} run: expected all {tests} write-path tests to pass (exit {exit}), got:\n{output}");
                 Assert.True(ReuseLine.Matches(output).Count == 0,
                     $"{pass} run: a written AllObj store was reused:\n{output}");
+                // [THEN] Every codeunit got a fresh store, and every fresh store was filled from
+                // rows built once per key — the fixture's own and Test Runner's widened one —
+                // not once per store.
+                var walks = WalkLine.Matches(output).Count;
+                Assert.True(walks == 2,
+                    $"{pass} run: {walks} AllObj inventory walk(s) for {tests} fresh stores; expected 2, one per key:\n{output}");
             }
         }
         finally
