@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **testpage:** OptionCaption on a precompiled request page and page resolves SetValue/Value
 - **testpage:** a source-compiled pageextension's field controls are removed by application area
 - **server:** a later request's same-id table does not inherit an earlier request's field trigger or AutoIncrement
 - **page:** read ApplicationArea for a precompiled page's field controls
