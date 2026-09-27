@@ -241,6 +241,9 @@ public sealed class TableFieldOptionCaptionBuilderTests : IDisposable
     }
 }
 
+// ParserStaticsIsolationGuardTests scans this file as a whole, and the builder class above
+// reaches the parse statics.
+[Collection(RecordPatchesSerialCollection.Name)]
 public sealed class TableFieldOptionCaptionBoundOptionTests
 {
     // NCLOptionMetadataWithCaptions needs server settings to construct; a subclass answering a
