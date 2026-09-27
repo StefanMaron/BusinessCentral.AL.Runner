@@ -1573,6 +1573,11 @@ public static partial class NavReportSync
                 // PageType.ReportPreview, the DataItem filter controls a handler drives, and
                 // the request-page fields bound to report globals.
                 BindRealCreateRequestForm(ps2, args);
+                var removeSlot = Array.FindIndex(ps2, p => p.ParameterType.Name == "RemoveItemsOnPageBasedOnLicenseAndApplicationArea");
+                if (removeSlot < 0)
+                    throw new InvalidOperationException("MetaReport ctor has no RemoveItemsOnPageBasedOnLicenseAndApplicationArea slot — BC metadata shape changed (#4829)");
+                args[removeSlot] = Delegate.CreateDelegate(ps2[removeSlot].ParameterType,
+                    ((Func<Microsoft.Dynamics.Nav.Types.Metadata.MasterPage, Microsoft.Dynamics.Nav.Types.Metadata.MasterPage>)AlRunner.Patches.ApplicationAreaControlRemoval.RemoveFromRequestPage).Method);
                 var meta = _metaReportCtor.Invoke(args);
 
                 // Force the request-page master page NOW rather than on first use, so a

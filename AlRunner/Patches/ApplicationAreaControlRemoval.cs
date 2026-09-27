@@ -19,8 +19,13 @@
 // Actions (#4795): the same pass's action lists, through BC's own RemoveInList and
 // UpdateClonedActionsFromOriginates, with the application-area branches of RemoveAction and its
 // four RemoveXxxDefinition helpers (decompiled bc284). Corpus codeunit 67531
-// "PAA Area Action Tests". Request pages are not filtered: they are built outside GetMasterPage
-// (NavReportSync.GetRealMetaReport) and cached per report, not per session (#4829).
+// "PAA Area Action Tests".
+//
+// Request pages (#4829): MetaReport takes the same pass as a delegate and runs it on a fresh
+// clone at every RequestFormMetadata read, so the per-report MetaReport cache does not freeze
+// one test's areas. NavReportSync binds RemoveFromRequestPage there, as
+// MetadataProvider.GetReportMetadata binds `mp => RemoveItemsOnPageBasedOnLicenseAndApplicationArea(mp, null)`
+// (decompiled bc284; MetaReport shape identical on 27.0 and 28.5). Corpus codeunit 67533.
 using System.Reflection;
 using AlRunner.Infrastructure;
 using Microsoft.Dynamics.Nav.Runtime;
@@ -173,6 +178,13 @@ public static class ApplicationAreaControlRemoval
         if (removedActions.Count > 0) RemovedActionIds.AddOrUpdate(page, removedActions);
         return page;
     }
+
+    /// <summary>
+    /// MetaReport's RemoveItemsOnPageBasedOnLicenseAndApplicationArea delegate (#4829). A page
+    /// with no ContentArea is the runner's own request-page stub (NavReportSync), left as is.
+    /// </summary>
+    public static MasterPage RemoveFromRequestPage(MasterPage page) =>
+        page.ContentArea == null ? page : (MasterPage)RemoveByApplicationArea(null!, page, null);
 
     /// <summary>
     /// Whether this page's application-area pass removed the control. The runner's TestPage

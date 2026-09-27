@@ -1,9 +1,10 @@
-// ApplicationAreaControlRemovalTests — issue #4750.
+// ApplicationAreaControlRemovalTests — issues #4750, #4795, #4829, #4830.
 //
 // RUNNER-MECHANISM test: pins ApplicationAreaControlRemoval (the Cecil-redirected removal
-// pass in MetadataProvider.GetMasterPage) and LiveNavTestPage.GetField's use of it, end to end
-// through a real bundle run. The BC-behaviour claim itself is measured upstream, by corpus
-// codeunit 67530 (pageapplicationarea/TestPageApplicationAreaControlRemoval.al).
+// pass in MetadataProvider.GetMasterPage, and the MetaReport request-page delegate) and the
+// TestPage lookups that consult it (LiveNavTestPage.GetField/GetAction/GetPart,
+// RequestPageTestPage.GetField), end to end through a real bundle run. The BC-behaviour claims
+// are measured upstream, by corpus codeunits 67530-67533 (pageapplicationarea/).
 using System.Diagnostics;
 using System.Text;
 using Xunit;
@@ -103,6 +104,14 @@ public sealed class ApplicationAreaControlRemovalTests : IDisposable
                             ApplicationArea = Service;
                         }
                     }
+                    part(BasicPart; "AACR Lines")
+                    {
+                        ApplicationArea = Basic;
+                    }
+                    part(ServicePart; "AACR Lines")
+                    {
+                        ApplicationArea = Service;
+                    }
                 }
             }
             actions
@@ -139,9 +148,63 @@ public sealed class ApplicationAreaControlRemovalTests : IDisposable
             }
         }
 
+        page 90752 "AACR Lines"
+        {
+            PageType = ListPart;
+            SourceTable = "AACR Record";
+
+            layout
+            {
+                area(Content)
+                {
+                    repeater(Lines)
+                    {
+                        field(LineCode; Rec."Code")
+                        {
+                            ApplicationArea = Basic;
+                        }
+                    }
+                }
+            }
+        }
+
+        report 90753 "AACR Report"
+        {
+            ProcessingOnly = true;
+            UsageCategory = None;
+
+            requestpage
+            {
+                layout
+                {
+                    area(Content)
+                    {
+                        group(Options)
+                        {
+                            field(BasicOpt; BasicText)
+                            {
+                                ApplicationArea = Basic;
+                            }
+                            field(ServiceOpt; ServiceText)
+                            {
+                                ApplicationArea = Service;
+                            }
+                        }
+                    }
+                }
+            }
+
+            var
+                BasicText: Text[30];
+                ServiceText: Text[30];
+        }
+
         codeunit 90751 "AACR Test"
         {
             Subtype = Test;
+
+            var
+                ReqPageSeen: Text;
 
             local procedure MakeRecord(var R: Record "AACR Record")
             begin
@@ -272,6 +335,97 @@ public sealed class ApplicationAreaControlRemovalTests : IDisposable
                     Error('the #Basic action must run its OnAction, got %1', R."Basic Value");
             end;
 
+            // #4830: a removed part is BC's own "The part with ID = ... was not found on the page."
+            [Test]
+            procedure AreaNotEnabled_ServicePartIsNotFound()
+            var
+                R: Record "AACR Record";
+                P: TestPage "AACR Card";
+                Prev: Text;
+            begin
+                MakeRecord(R);
+                Prev := ApplicationArea();
+                ApplicationArea('#Basic,#Suite');
+                P.OpenView();
+                P.GoToRecord(R);
+                asserterror P.ServicePart.First();
+                ApplicationArea(Prev);
+                if StrPos(GetLastErrorText(), 'was not found on the page.') = 0 then
+                    Error('expected the #Service part to be not found, got: %1', GetLastErrorText());
+            end;
+
+            [Test]
+            procedure AreaNotEnabled_BasicPartIsStillFound()
+            var
+                R: Record "AACR Record";
+                P: TestPage "AACR Card";
+                Prev: Text;
+                Seen: Text;
+            begin
+                MakeRecord(R);
+                Prev := ApplicationArea();
+                ApplicationArea('#Basic,#Suite');
+                P.OpenView();
+                P.GoToRecord(R);
+                P.BasicPart.First();
+                Seen := P.BasicPart.LineCode.Value();
+                P.Close();
+                ApplicationArea(Prev);
+                if Seen <> 'A' then
+                    Error('the #Basic part must show its row, got %1', Seen);
+            end;
+
+            // #4829: the request page goes through the same pass, per RequestFormMetadata read.
+            [Test]
+            [HandlerFunctions('TouchServiceOpt')]
+            procedure AreaNotEnabled_RequestPageServiceControlIsNotFound()
+            var
+                Prev: Text;
+                Params: Text;
+            begin
+                ReqPageSeen := '';
+                Prev := ApplicationArea();
+                ApplicationArea('#Basic,#Suite');
+                asserterror Params := Report.RunRequestPage(Report::"AACR Report");
+                ApplicationArea(Prev);
+                if ReqPageSeen <> 'reached' then
+                    Error('the request-page handler never reached the #Service control');
+                if StrPos(GetLastErrorText(), 'is not found on the page.') = 0 then
+                    Error('expected the #Service request-page control to be not found, got: %1', GetLastErrorText());
+            end;
+
+            [Test]
+            [HandlerFunctions('WriteBasicOpt')]
+            procedure AreaNotEnabled_RequestPageBasicControlIsFound()
+            var
+                Prev: Text;
+                Params: Text;
+            begin
+                ReqPageSeen := '';
+                Prev := ApplicationArea();
+                ApplicationArea('#Basic,#Suite');
+                Params := Report.RunRequestPage(Report::"AACR Report");
+                ApplicationArea(Prev);
+                if ReqPageSeen <> 'B' then
+                    Error('the #Basic request-page control must read back B, got %1', ReqPageSeen);
+            end;
+
+            [RequestPageHandler]
+            procedure TouchServiceOpt(var RP: TestRequestPage "AACR Report")
+            begin
+                ReqPageSeen := 'reached';
+                RP.ServiceOpt.SetValue('S');
+                RP.OK().Invoke();
+            end;
+
+            [RequestPageHandler]
+            procedure WriteBasicOpt(var RP: TestRequestPage "AACR Report")
+            begin
+                RP.BasicOpt.SetValue('B');
+                ReqPageSeen := RP.BasicOpt.Value();
+                RP.OK().Invoke();
+            end;
+
             [Test]
             procedure AreaEnabled_ServiceControlIsFound()
             begin
@@ -290,15 +444,15 @@ public sealed class ApplicationAreaControlRemovalTests : IDisposable
     }
 
     [SkippableFact]
-    public void TestPage_ControlOrActionWhoseAreaIsNotEnabled_IsNotFound_OthersAre()
+    public void TestPage_ControlActionPartOrRequestPageControlWhoseAreaIsNotEnabled_IsNotFound_OthersAre()
     {
         WriteFixture();
         var (output, exit) = RunRunner(_root);
         TestArtifacts.SkipIf(output.Contains("no BC artifact") || output.Contains("[bc] no engines"),
             "no BC engine artifact provisioned in this environment");
 
-        Assert.True(exit == 0, $"expected all seven AL tests to pass; exit={exit}\n{output}");
-        Assert.Contains("   passed 7 ", output);
+        Assert.True(exit == 0, $"expected all eleven AL tests to pass; exit={exit}\n{output}");
+        Assert.Contains("   passed 11 ", output);
         Assert.DoesNotContain("FAIL", output);
     }
 }

@@ -59,6 +59,11 @@ internal partial class LiveNavTestPage
         // than re-deriving.
         if (_page?.ControlIsCompileTimeEliminated(controlId) == true) return null!;
 
+        // Removed from the MasterPage because its ApplicationArea is not enabled for the
+        // session (#4830): same null, same BC exception. Asked before TryGetPartDefinition,
+        // which reads that MasterPage and would report the removed part as a shape gap.
+        if (_page?.ControlRemovedByApplicationArea(controlId) == true) return null!;
+
         if (Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PAGE_METADATA") == "1")
             Console.Out.WriteLine($"[MockTestPage.GetPart] controlId={controlId} pageId={_pageId} _page={(_page == null ? "null" : "set")} _page.Form={( _page?.Form == null ? "null" : _page.Form.GetType().FullName)}");
 
