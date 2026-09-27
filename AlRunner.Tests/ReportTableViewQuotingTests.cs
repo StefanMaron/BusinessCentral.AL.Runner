@@ -105,6 +105,22 @@ public sealed class ReportTableViewQuotingTests
             """sorting("No.")  where("Search  Name" = const(A))""",
             RecordPatches.TableViewText("""sorting("No.")  where("Search  Name" = const(A))"""));
 
+    // In a view that does break lines, a space-only run elsewhere is still left as written:
+    // only the runs that carry a break are rewritten.
+    [Fact]
+    public void MultiLineView_SpaceOnlyRunsElsewhere_AreKept()
+        => Assert.Equal(
+            "sorting(Code)  where(Code = const(A), Kind = const(B))",
+            RecordPatches.TableViewText("sorting(Code)  where(Code = const(A),\r\n    Kind = const(B))"));
+
+    // A tab INSIDE a quoted value is part of the value, not layout, while the line break
+    // between the clauses is still collapsed.
+    [Fact]
+    public void TabInsideAQuotedValue_IsKept()
+        => Assert.Equal(
+            "sorting(Code) where(Code = const(\"A\tB\"), Name = filter('C\tD'))",
+            RecordPatches.TableViewText("sorting(Code)\r\n  where(Code = const(\"A\tB\"), Name = filter('C\tD'))"));
+
     [Fact]
     public void NullAndEmptyViews_AreLeftAlone()
     {
