@@ -116,6 +116,8 @@ public static class AlEnumMetadataRegistry
         _byId[id] = new Entry(id, name ?? string.Empty, options, indexes, implementations, captions,
             defaultImplementations, unknownImplementations, extensible);
         System.Threading.Interlocked.Increment(ref _version);
+        // After the write, so a rebuild reads the new entry (#3577).
+        BcRuntime.EvictAlEnumMetadata(id);
     }
 
     /// <summary>
@@ -141,6 +143,7 @@ public static class AlEnumMetadataRegistry
             ImmutableList.Create(entry),
             (_, list) => list.Add(entry));
         System.Threading.Interlocked.Increment(ref _version);
+        BcRuntime.EvictAlEnumMetadata(targetId);
     }
 
     /// <summary>
@@ -207,6 +210,7 @@ public static class AlEnumMetadataRegistry
         _byId.Clear();
         _extByTargetId.Clear();
         System.Threading.Interlocked.Increment(ref _version);
+        BcRuntime.ClearAlEnumMetadata();
     }
 
     /// <summary>
@@ -744,6 +748,12 @@ internal sealed class AlEnumOptionMetadata : NCLOptionMetadata
 public static partial class BcRuntime
 {
     private static readonly ConcurrentDictionary<int, NCLOptionMetadata> _alEnumCache = new();
+
+    /// <summary>Drop the metadata built for enum <paramref name="id"/>; every registry write for
+    /// that id calls this, so the next lookup rebuilds from the changed registration (#3577).</summary>
+    internal static void EvictAlEnumMetadata(int id) => _alEnumCache.TryRemove(id, out _);
+
+    internal static void ClearAlEnumMetadata() => _alEnumCache.Clear();
 
     /// <summary>
     /// Replacement for NCLEnumMetadata.Create(int).
