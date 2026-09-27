@@ -372,7 +372,11 @@ Two memos now carry it, both in `RecordPatches.AllObjVirtualTable.cs`:
 The **stamp** (`AllObjInventoryStamp`) has one term per input the inventory, the visibility
 filter and the owner index read: the bundle and `.app` registration epochs, the app-group
 generation, the module and enum registries, and the size of each parsed-object registry. A
-reload moves an epoch. Within one bundle the registries only grow, which a count sees.
+reload moves an epoch. Within one bundle the registries only grow, which a count sees. The live
+case is the enum registry: `EnsureSystemEnumsRegistered` adds BC's platform enums on the first
+enum-field metadata read, which can come after an AllObj lookup, and only the registry's mutation
+counter (`AlEnumMetadataRegistry.Version`) notices. A dependency `.app` deleted from disk mid-process
+is not a term: its rows stay until the next reload, as they did before #4851.
 `ResetForReload` also drops the rows outright. **Trap:** a new source read by
 `EnumerateKnownAlObjects`, `IsHiddenFromCurrentAppGroup` or `BuildObjectOwnerIndex` needs a term
 in the stamp. Without one, AllObj stops listing what that source adds until something else
@@ -386,3 +390,6 @@ What stays per store is the insert itself. A test-codeunit boundary drops every 
 
 - one walk and one top-up per store across many handouts, on a cold and a warm run;
 - a `--server` second request that renames objects answers with the new names.
+
+`AlRunner.Tests/AllObjInventoryStampTests.cs` pins that a registered, replaced or extended enum
+moves the stamp.
