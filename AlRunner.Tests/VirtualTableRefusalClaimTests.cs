@@ -493,7 +493,14 @@ public sealed class VirtualTableRefusalClaimTests
         // Each would otherwise skip the propagation and leave the dependent rows on the old
         // profile id with nothing said. 88 was READ OUT of this test's own failure message
         // ("Expected: 85, Actual: 88").
-        Assert.Equal(88, total);
+        //
+        // 88 -> 89 (#4879): one REAL refusal site in AllProfileWritePatches.cs, in NewKeyOf —
+        // All Profile's primary key does not contain both "App ID" and "Profile ID". The rename
+        // guard judges the key a row is renamed TO, placed by the table's own primary key; a key
+        // missing either field would otherwise leave the new App ID or Profile ID unread and let
+        // the guard judge a guess. 89 was READ OUT of this test's own failure message
+        // ("Expected: 88, Actual: 89") on CI run 36349873017.
+        Assert.Equal(89, total);
     }
 
     // A refusal SITE is a *call* to a `*ShapeGap(` factory, not only a `throw` of one (#4058).
