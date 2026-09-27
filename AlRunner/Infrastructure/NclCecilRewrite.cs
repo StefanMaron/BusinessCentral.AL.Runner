@@ -111,6 +111,8 @@ public static partial class NclCecilRewrite
         // NavGlobal.MetadataProvider -> NCLMetadata rather than through Create(int). Rewritten
         // to the same AlEnumMetadataRegistry (see RewriteNcl, just after the Create(int) block).
         set.Add("Microsoft.Dynamics.Nav.Runtime.NCLFieldEnumMetadata::GetEnumMetadataFromMetadataProvider/0");
+        // NCLOptionMetadata.get_OrdinalValues — #4798, routed to BcRuntime.NCLOptionMetadata_OrdinalValues.
+        set.Add("Microsoft.Dynamics.Nav.Runtime.NCLOptionMetadata::get_OrdinalValues/0");
         // get_ApplicationObjectConstructor + Populate + CompileAndLoadClrObject (Batch 7
         // — completes the insert/construction path so ALInsertAsync→get_OldRecord→
         // CreateObjectInstance→{getter,Populate,CompileAndLoadClrObject} is single-mechanism).
@@ -322,6 +324,33 @@ public static partial class NclCecilRewrite
             Console.Error.WriteLine(
                 "[Cecil] Replaced NCLFieldEnumMetadata.GetEnumMetadataFromMetadataProvider() "
                 + "\u2192 BcRuntime.NCLFieldEnumMetadata_GetEnumMetadataFromRegistry");
+        }
+
+        // NCLOptionMetadata.get_OrdinalValues — #4798. The base getter answers null and is
+        // internal, so AlEnumOptionMetadata cannot override it; route the BASE body to a helper
+        // that answers the AL enum's ordinals. Overriding subclasses (NCLEnumMetadata,
+        // NCLFieldEnumMetadata) keep their own bodies. Only the base method's body changes: no
+        // signature, slot or flag.
+        {
+            var optionMetadataType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NCLOptionMetadata")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NCLOptionMetadata type not found — Ncl shape changed; do not commit");
+            var getOrdinalValues = optionMetadataType.Methods.FirstOrDefault(m =>
+                m.Name == "get_OrdinalValues"
+                && m.HasBody
+                && m.HasThis
+                && m.Parameters.Count == 0
+                && m.ReturnType.FullName == "System.Int32[]")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NCLOptionMetadata.get_OrdinalValues() not found — Ncl shape changed; do not commit");
+            var ordinalValuesHelper = typeof(AlRunner.BcRuntime).GetMethod(
+                nameof(AlRunner.BcRuntime.NCLOptionMetadata_OrdinalValues),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] BcRuntime.NCLOptionMetadata_OrdinalValues not found");
+            ReplaceBodyWithHelper(asm.MainModule, getOrdinalValues, ordinalValuesHelper);
+            Console.Error.WriteLine(
+                "[Cecil] Replaced NCLOptionMetadata.get_OrdinalValues() → BcRuntime.NCLOptionMetadata_OrdinalValues");
         }
 
         // ALCompiler.ToInterface(ITreeObject, NavOption, int) relies on the

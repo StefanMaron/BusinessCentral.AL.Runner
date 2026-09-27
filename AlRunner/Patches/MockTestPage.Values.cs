@@ -177,12 +177,7 @@ internal static class TestPageOptionValue
     /// <c>AlEnumOptionMetadata</c> (EnumMetadataPatches.cs) overrides from the SAME
     /// emit-captured <c>(name, options[], indexes[], captions[])</c> tuple already used, and
     /// already accepted as faithful, for <c>Enum::"X".Ordinals()/.Names()</c> via
-    /// <c>NCLEnumMetadata_CreateByIdAlAware</c>. The result is built in
-    /// <c>GetOrdinals()</c> order, which is the SAME order <see cref="Ordinals"/>'s reflection
-    /// (over a different, private accessor) already returns for the same metadata instance —
-    /// both walk the one <c>(options[], indexes[])</c> pair the AL emit captured — so a
-    /// caption at index i here lines up with the member at index i in <see cref="Members"/>,
-    /// which is what <see cref="Resolve"/> and <see cref="Display"/> index into.
+    /// <c>NCLEnumMetadata_CreateByIdAlAware</c>.
     ///
     /// Returns null for a plain <c>Option</c> value (<c>IsEnum</c> is false there) or when
     /// no bound value is available — the caller falls back to member-name display/resolution,
@@ -220,9 +215,7 @@ internal static class TestPageOptionValue
     private static string[] Members(object metadata)
         => ReadNonPublic<string[]>(metadata, "Options") ?? Array.Empty<string>();
 
-    // An enum's positions come from GetOrdinals(), the list EnumCaptions is built in: our
-    // AlEnumOptionMetadata cannot override Ncl's internal OrdinalValues, so for it the reflected
-    // read answers null and a position would be taken for the ordinal (#4788).
+    // An enum's positions come from GetOrdinals(), the list EnumCaptions is built in (#4788).
     private static int[]? Ordinals(object metadata)
     {
         if (metadata is NCLOptionMetadata { IsEnum: true } enumMetadata)

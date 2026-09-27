@@ -17,7 +17,8 @@
 //   we ship a minimal `NCLOptionMetadata` subclass (`AlEnumOptionMetadata`)
 //   that overrides those two public virtuals — NOT the internal `OrdinalValues`/
 //   `Name`/`Id`, which an out-of-assembly subclass cannot override; `OrdinalValues`
-//   therefore answers the base `null` (#4788) —
+//   reaches it instead through a Cecil rewrite of the base getter
+//   (BcRuntime.NCLOptionMetadata_OrdinalValues, #4798) —
 //   constructed from the `(name, id, options[], indexes[])`
 //   tuple captured by `BcCompiler.CaptureOutputter` at AL emit time.
 //
@@ -669,6 +670,12 @@ internal sealed class AlEnumOptionMetadata : NCLOptionMetadata
     /// it was looking at.</summary>
     public (int Id, string Name) IdentityForDiagnostics => (_id, _name);
 
+    /// <summary>The ordinal of each value, in declared order — what BC's
+    /// <c>NCLEnumMetadata.OrdinalValues</c> answers from its <c>indexes</c> field. Ncl's own
+    /// member is internal, so it reaches this through
+    /// <see cref="BcRuntime.NCLOptionMetadata_OrdinalValues"/> (#4798).</summary>
+    public int[] OrdinalValuesPublic => _ordinalValues;
+
     public int GetImplementationCodeunitIdPublic(int ordinalValue, int interfaceIndex)
     {
         if (interfaceIndex < 0)
@@ -967,6 +974,24 @@ public static partial class BcRuntime
         // valueless one — the silent fake loud-failures.md forbids.
         throw new NavMetadataNotFoundException(Microsoft.Dynamics.Nav.Types.ObjectType.Enum, enumId);
     }
+
+    /// <summary>
+    /// Replacement body for the BASE <c>NCLOptionMetadata.OrdinalValues</c> getter (#4798), which
+    /// answers <c>null</c>. Subclasses that override it (BC's <c>NCLEnumMetadata</c>,
+    /// <c>NCLFieldEnumMetadata</c>) never reach this, so it runs only for a plain option set —
+    /// still <c>null</c>, unchanged — and for <see cref="AlEnumOptionMetadata"/>, which cannot
+    /// override an internal member of Ncl.
+    ///
+    /// <para>Observably equivalent: for an AL enum it answers the declared ordinals in declared
+    /// order, exactly what <c>NCLEnumMetadata.OrdinalValues</c> returns (<c>=&gt; indexes</c>) for
+    /// the same enum. Without it <c>NavFieldRef.ALGetOptionValueOrdinal</c> and
+    /// <c>NCLOptionMetadata.GetOrdinalFromIndex</c> fall back to the position, and
+    /// <c>HasNonAscendingOptionValues</c> dereferences null. Adjudicated by corpus codeunit 67486
+    /// "FieldRef Enum Ordinal By Index".</para>
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static int[]? NCLOptionMetadata_OrdinalValues(NCLOptionMetadata self)
+        => self is AlEnumOptionMetadata al ? al.OrdinalValuesPublic : null;
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static NavInterfaceHandle ALCompiler_ToInterfaceFromOption(ITreeObject parentOfResult, NavOption optionValue, int interfaceIndex)
