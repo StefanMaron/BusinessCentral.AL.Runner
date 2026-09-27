@@ -27,10 +27,13 @@ public sealed class EnumMetadataCacheEvictionTests : IDisposable
         var before = BcRuntime.NCLEnumMetadata_CreateByIdAlAware(EnumId);
         Assert.Equal(new[] { 0 }, before.GetOrdinals().ToArray());
 
+        var version = AlEnumMetadataRegistry.Version;
         AlEnumMetadataRegistry.RegisterExtension(EnumId, "Cache Gap Extension", new[] { "Added" }, new[] { 10 },
             captions: new[] { "Added caption" });
         var after = BcRuntime.NCLEnumMetadata_CreateByIdAlAware(EnumId);
 
+        // The write that evicts also moves the version a memo over the registry keys on (#4872).
+        Assert.True(AlEnumMetadataRegistry.Version > version);
         Assert.NotSame(before, after);
         Assert.Equal(new[] { 0, 10 }, after.GetOrdinals().ToArray());
         Assert.Equal("Base caption", after.GetCaptionFromIndex(0));
@@ -45,9 +48,11 @@ public sealed class EnumMetadataCacheEvictionTests : IDisposable
         var before = BcRuntime.NCLEnumMetadata_CreateByIdAlAware(EnumId);
         Assert.Equal("Base caption", before.GetCaptionFromIndex(0));
 
+        var version = AlEnumMetadataRegistry.Version;
         RegisterBase(EnumId, "Replaced caption");
         var after = BcRuntime.NCLEnumMetadata_CreateByIdAlAware(EnumId);
 
+        Assert.True(AlEnumMetadataRegistry.Version > version);
         Assert.NotSame(before, after);
         Assert.Equal("Replaced caption", after.GetCaptionFromIndex(0));
     }
