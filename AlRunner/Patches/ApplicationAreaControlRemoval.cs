@@ -191,7 +191,7 @@ public static class ApplicationAreaControlRemoval
                 bool IsEnabled(string? area) => _isApplicationAreaEnabled!(area!, null!);
                 removed.UnionWith(DependencyFieldControlsToRemove(page.ID, IsEnabled, extensionAreas.AreaChanges));
                 removed.UnionWith(SourceExtensionFieldControlsToRemove(extensionAreas, IsEnabled));
-                removed.UnionWith(Rejected(extensionAreas.AddedParts, extensionAreas.AreaChanges, IsEnabled));
+                removed.UnionWith(Rejected(extensionAreas.AddedParts, NoAreaChanges, IsEnabled));
                 removedActions.UnionWith(Rejected(extensionAreas.AddedActions, extensionAreas.ActionAreaChanges, IsEnabled));
                 // A modify() replaces the target's area outright, so its verdict needs no base
                 // area. That is what reaches a precompiled page's action, which the runner's
@@ -277,7 +277,7 @@ public static class ApplicationAreaControlRemoval
     /// </summary>
     internal static (IEnumerable<int> Parts, IEnumerable<int> Actions) SourceExtensionPartsAndActionsToRemove(
         RecordPatches.SourcePageExtensionAreaSet areas, Func<string?, bool> isAreaEnabled)
-        => (Rejected(areas.AddedParts, areas.AreaChanges, isAreaEnabled),
+        => (Rejected(areas.AddedParts, NoAreaChanges, isAreaEnabled),
             Rejected(areas.AddedActions, areas.ActionAreaChanges, isAreaEnabled));
 
     internal static IEnumerable<int> RejectedActionRefs(
@@ -288,6 +288,8 @@ public static class ApplicationAreaControlRemoval
                 || removedActions.Contains(actionRef.TargetId))
             .Select(actionRef => actionRef.Id)
             .ToList();
+
+    private static readonly IReadOnlyDictionary<int, string> NoAreaChanges = new Dictionary<int, string>();
 
     private static IEnumerable<int> RejectedChanges(IReadOnlyDictionary<int, string> areaChanges, Func<string?, bool> isAreaEnabled)
         => areaChanges.Where(change => !isAreaEnabled(change.Value)).Select(change => change.Key);
@@ -329,12 +331,12 @@ public static class ApplicationAreaControlRemoval
             case ControlDefinition control:
                 return !_isApplicationAreaEnabled!(
                     AreaAfterChanges(control.ID, control.ApplicationArea, _areaChanges)!, control.ResourceIdentifier);
+            // A pageextension cannot modify() a part's or system part's ApplicationArea (AL0246),
+            // so no source change applies here.
             case InfopartPageDefinition part when !_propertyIsFalse!(part.Visible):
-                return !_isApplicationAreaEnabled!(
-                    AreaAfterChanges(part.ID, part.ApplicationArea, _areaChanges)!, part.ResourceIdentifier);
+                return !_isApplicationAreaEnabled!(part.ApplicationArea, part.ResourceIdentifier);
             case InfopartSystemDefinition systemPart:
-                return !_isApplicationAreaEnabled!(
-                    AreaAfterChanges(systemPart.ID, systemPart.ApplicationArea, _areaChanges)!, systemPart.ResourceIdentifier);
+                return !_isApplicationAreaEnabled!(systemPart.ApplicationArea, systemPart.ResourceIdentifier);
             // MetadataProvider.RemoveAction dispatches to these four; each checks the area first.
             case ActionDefinition action:
                 return !_isApplicationAreaEnabled!(

@@ -62,7 +62,7 @@ public sealed class SourcePageExtensionActionPartAreaTests : IDisposable
             SourceTable = "SPAA Record";
             ApplicationArea = Basic;
 
-            layout { area(Content) { field(CodeCtl; Rec."Code") { } } }
+            layout { area(Content) { field(CodeCtl; Rec."Code") { } } area(FactBoxes) { } }
             actions
             {
                 area(Promoted) { }
@@ -82,6 +82,10 @@ public sealed class SourcePageExtensionActionPartAreaTests : IDisposable
                 {
                     part(ServicePart; "SPAA Part") { ApplicationArea = Service; }
                     part(HiddenPart; "SPAA Part") { ApplicationArea = Service; Visible = false; }
+                }
+                addlast(FactBoxes)
+                {
+                    systempart(ExtNotes; Notes) { ApplicationArea = Suite; }
                 }
             }
             actions
@@ -167,10 +171,11 @@ public sealed class SourcePageExtensionActionPartAreaTests : IDisposable
     }
 
     [SkippableFact]
-    public void AddedParts_AnswerTheirOwnArea_ALiterallyHiddenPartIsNotAreaTested()
+    public void AddedParts_AndSystemParts_AnswerTheirOwnArea_ALiterallyHiddenPartIsNotAreaTested()
     {
-        var parts = EmitAndRead().AddedParts;
-        Assert.Equal(new[] { (Id("ServicePart"), (string?)"#Service") }, parts.ToArray());
+        var parts = EmitAndRead().AddedParts.OrderBy(p => p.Id).ToArray();
+        Assert.Equal(new[] { (Id("ServicePart"), (string?)"#Service"), (Id("ExtNotes"), (string?)"#Suite") }
+            .OrderBy(p => p.Item1).ToArray(), parts);
     }
 
     [SkippableFact]
