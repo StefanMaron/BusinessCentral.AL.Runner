@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **record:** Rename propagation reads the executing app group's own NCLMetaTable of a shared table id
 - **event-subscription:** scope Event Subscription rows to the executing app group
 - **isolated-storage:** scope IsolatedStorage per app
 - **testpage:** OptionCaption on a precompiled request page and page resolves SetValue/Value
