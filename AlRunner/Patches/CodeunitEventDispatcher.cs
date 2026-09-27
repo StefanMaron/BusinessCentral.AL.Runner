@@ -219,9 +219,14 @@ public static partial class BcRuntime
         // InvokeOneSubscriber resolves the surviving MethodInfo against the
         // instance's actual runtime type, so which copy survives is irrelevant.
         bool isolated = IsIsolatedEventScope(scopeType, eventMethodName);
+        // An id several app groups declare: each group's subscribers belong to its own publisher (#4834).
+        var objectKind = publisherKind == PublisherKindTable ? "table" : publisherKind;
+        var publisherGroup = RecordPatches.IsDeclaredBySeveralAppGroups(objectKind, publisherId)
+                             && TryGetModuleAppId(scopeType.Assembly, out var g) ? g : Guid.Empty;
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var sub in subs)
         {
+            if (RecordPatches.SubscribesToAnotherAppGroupsObject(objectKind, publisherId, publisherGroup, sub.DeclaringType!.Assembly)) continue;
             if (!seen.Add(SubscriberAlIdentity(sub))) continue;
             try
             {

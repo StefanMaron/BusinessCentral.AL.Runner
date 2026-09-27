@@ -87,7 +87,8 @@ public static partial class RecordPatches
     // --watch mode (same bundle, one edited file) that is the NORMAL case, not a corner. The
     // remaining terms stay counts and are sound as counts, because the dictionaries they count
     // are only ever cleared by ResetForReload, which bumps the epoch in the same breath.
-    private static (int Epoch, int Parsed, int ParsedExtensions) _pageControlFieldRowsBuiltFrom = (-1, -1, -1);
+    // The Guid term is AppGroupScopeKey(): a group sharing an id with another builds its own rows (#4833).
+    private static (int Epoch, int Parsed, int ParsedExtensions, Guid AppGroup) _pageControlFieldRowsBuiltFrom = (-1, -1, -1, Guid.Empty);
     private static readonly object _pageControlFieldRowsLock = new();
 
     private static void PopulatePageControlFieldVirtualTable(object dataAccess, NCLMetaTable metaTable)
@@ -154,11 +155,11 @@ public static partial class RecordPatches
 
     private static List<PageControlFieldRow> EnumerateKnownPageControlFields()
     {
-        var generation = (BcAppRegistrationEpoch, _parsedPages.Count, _parsedPageExtensions.Count);
+        var generation = (BcAppRegistrationEpoch, _parsedPages.Count, _parsedPageExtensions.Count, AppGroupScopeKey());
         if (_pageControlFieldRows != null && _pageControlFieldRowsBuiltFrom == generation) return _pageControlFieldRows;
         lock (_pageControlFieldRowsLock)
         {
-            generation = (BcAppRegistrationEpoch, _parsedPages.Count, _parsedPageExtensions.Count);
+            generation = (BcAppRegistrationEpoch, _parsedPages.Count, _parsedPageExtensions.Count, AppGroupScopeKey());
             if (_pageControlFieldRows != null && _pageControlFieldRowsBuiltFrom == generation) return _pageControlFieldRows;
 
             var rows = new List<PageControlFieldRow>();

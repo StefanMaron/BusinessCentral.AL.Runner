@@ -367,7 +367,7 @@ public static partial class EventSubscriberPatches
         SeedEventScopeSentinelsFor(
             _byCodeunitKey.Keys.Select(k => (k.PublisherCodeunitId, k.EventMethodName)),
             _byCodeunitKey.Count,
-            FindCodeunitClrType,
+            id => FindPublisherClrTypes(_codeunitTypeCache, "Codeunit", "codeunit", id),
             "Codeunit");
     }
 
@@ -384,7 +384,7 @@ public static partial class EventSubscriberPatches
         SeedEventScopeSentinelsFor(
             _byTableEventKey.Keys.Select(k => (k.PublisherTableId, k.EventMethodName)),
             _byTableEventKey.Count,
-            FindTableClrType,
+            id => FindPublisherClrTypes(_tableTypeCache, "Record", "table", id),
             "Table");
     }
 
@@ -409,7 +409,9 @@ public static partial class EventSubscriberPatches
             SeedEventScopeSentinelsFor(
                 keysForKind,
                 keysForKind.Count,
-                id => FindObjectEventClrType(kind, id),
+                id => RecordPatches.IsDeclaredBySeveralAppGroups(kind, id)
+                    ? ResolveAllBusinessApplicationTypes(kind + id)
+                    : FindObjectEventClrType(kind, id) is { } t ? new[] { t } : Array.Empty<Type>(),
                 kind);
         }
     }
@@ -429,7 +431,7 @@ public static partial class EventSubscriberPatches
     private static void SeedEventScopeSentinelsFor(
         IEnumerable<(int PublisherId, string EventMethodName)> keys,
         int totalKeyCount,
-        Func<int, Type?> resolveClrType,
+        Func<int, IReadOnlyList<Type>> resolveClrTypes,
         string publisherKindLabel)
     {
         if (totalKeyCount == 0) return;
@@ -464,32 +466,37 @@ public static partial class EventSubscriberPatches
             bool dbg = Environment.GetEnvironmentVariable("ALRUNNER_SEED_DEBUG") == "1";
             foreach (var (publisherId, eventMethodName) in keys)
             {
-                var clrType = resolveClrType(publisherId);
-                if (clrType == null) { missing++; if (!diagLogged) { diagLogged = true; Console.Error.WriteLine($"[Subscribers] seed-miss: {publisherKindLabel}{publisherId} type not found"); } continue; }
-                // Metadata-backed nested-type lookup: same answer as
-                // GetNestedTypes().FirstOrDefault(name), without resolving every OTHER nested
-                // type on the publisher (see AssemblyTypeIndex.FindNestedType).
-                var scopeType = AssemblyTypeIndex.For(clrType.Assembly)
-                    .FindNestedType(clrType, eventMethodName + "_Scope");
-                if (scopeType == null)
+                var clrTypes = resolveClrTypes(publisherId);
+                if (clrTypes.Count == 0) { missing++; if (!diagLogged) { diagLogged = true; Console.Error.WriteLine($"[Subscribers] seed-miss: {publisherKindLabel}{publisherId} type not found"); } continue; }
+                bool anyScope = false;
+                foreach (var clrType in clrTypes)
                 {
-                    missing++;
-                    if (dbg) Console.Error.WriteLine($"[SeedDebug] {publisherKindLabel}{publisherId}: no nested type '{eventMethodName}_Scope' — have [{string.Join(",", clrType.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic).Select(t => t.Name))}]");
-                    continue;
+                    // Metadata-backed nested-type lookup: same answer as
+                    // GetNestedTypes().FirstOrDefault(name), without resolving every OTHER nested
+                    // type on the publisher (see AssemblyTypeIndex.FindNestedType).
+                    var scopeType = AssemblyTypeIndex.For(clrType.Assembly)
+                        .FindNestedType(clrType, eventMethodName + "_Scope");
+                    if (scopeType == null)
+                    {
+                        if (dbg) Console.Error.WriteLine($"[SeedDebug] {publisherKindLabel}{publisherId}: no nested type '{eventMethodName}_Scope' — have [{string.Join(",", clrType.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic).Select(t => t.Name))}]");
+                        continue;
+                    }
+                    anyScope = true;
+                    if (_seededScopeTypes.Contains(scopeType)) continue;
+                    // Match the Greek-gamma field by suffix — the IL gamma codepoint differs from
+                    // a C# source-literal "γ" so GetField("γeventScope") returns null. EndsWith works.
+                    var fld = scopeType.GetFields(BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static)
+                        .FirstOrDefault(f => f.Name.EndsWith("eventScope", StringComparison.Ordinal) && f.FieldType == _tNavEventScope);
+                    if (fld == null)
+                    {
+                        missing++;
+                        if (dbg) Console.Error.WriteLine($"[SeedDebug] {publisherKindLabel}{publisherId}.{eventMethodName}: no eventScope field — have [{string.Join(",", scopeType.GetFields(BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static).Select(f => f.Name + ":" + f.FieldType.Name))}]");
+                        continue;
+                    }
+                    try { fld.SetValue(null, _sentinelNavEventScope); _seededScopeTypes.Add(scopeType); seeded++; if (dbg) Console.Error.WriteLine($"[SeedDebug] {publisherKindLabel}{publisherId}.{eventMethodName}: seeded OK"); }
+                    catch (Exception ex) { Console.Error.WriteLine($"[Subscribers] failed seed on {scopeType.FullName}: {ex.Message}"); missing++; }
                 }
-                if (_seededScopeTypes.Contains(scopeType)) continue;
-                // Match the Greek-gamma field by suffix — the IL gamma codepoint differs from
-                // a C# source-literal "γ" so GetField("γeventScope") returns null. EndsWith works.
-                var fld = scopeType.GetFields(BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static)
-                    .FirstOrDefault(f => f.Name.EndsWith("eventScope", StringComparison.Ordinal) && f.FieldType == _tNavEventScope);
-                if (fld == null)
-                {
-                    missing++;
-                    if (dbg) Console.Error.WriteLine($"[SeedDebug] {publisherKindLabel}{publisherId}.{eventMethodName}: no eventScope field — have [{string.Join(",", scopeType.GetFields(BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static).Select(f => f.Name + ":" + f.FieldType.Name))}]");
-                    continue;
-                }
-                try { fld.SetValue(null, _sentinelNavEventScope); _seededScopeTypes.Add(scopeType); seeded++; if (dbg) Console.Error.WriteLine($"[SeedDebug] {publisherKindLabel}{publisherId}.{eventMethodName}: seeded OK"); }
-                catch (Exception ex) { Console.Error.WriteLine($"[Subscribers] failed seed on {scopeType.FullName}: {ex.Message}"); missing++; }
+                if (!anyScope) missing++;
             }
         }
         if (seeded > 0)
@@ -581,16 +588,14 @@ public static partial class EventSubscriberPatches
         }
     }
 
-    private static Type? FindCodeunitClrType(int codeunitId) =>
-        FindClrType(_codeunitTypeCache, "Codeunit", codeunitId);
-
-    // A table object's OWN code (triggers, local procedures, and any manually-declared
-    // [IntegrationEvent]/[BusinessEvent] on it) compiles to a class named "Record<N>", not
-    // "Table<N>" — "Table<N>" is a separate metadata-only class. Empirically confirmed via
-    // reflection over the emitted test assembly (issue #1770): searching for "Table<N>" here
-    // silently finds nothing, which is exactly the kind of miss loud-failures.md warns about.
-    private static Type? FindTableClrType(int tableId) =>
-        FindClrType(_tableTypeCache, "Record", tableId);
+    // Every class declaring object (kind, id)'s own code. A table's is named "Record<N>", not
+    // "Table<N>" — "Table<N>" is a separate metadata-only class (#1770). An id several app groups
+    // declare has one class per group's assembly, and each group's publisher scope needs its own
+    // sentinel (#4834); every other id keeps the one cached type.
+    private static IReadOnlyList<Type> FindPublisherClrTypes(Dictionary<int, Type?> cache, string namePrefix, string kind, int id)
+        => RecordPatches.IsDeclaredBySeveralAppGroups(kind, id)
+            ? ResolveAllBusinessApplicationTypes(namePrefix + id)
+            : FindClrType(cache, namePrefix, id) is { } t ? new[] { t } : Array.Empty<Type>();
 
     // Page/Report/Query/XmlPort own-code compiles to a class literally named "<Kind><N>" — no
     // Record<N>-vs-Table<N> split to worry about (issue #1794; see the empirical confirmation
@@ -628,7 +633,14 @@ public static partial class EventSubscriberPatches
     /// Shared by <see cref="FindClrType"/> (single-int-keyed callers) and
     /// <see cref="FindObjectEventClrType"/> (kind+id-keyed).</summary>
     private static Type? ResolveBusinessApplicationType(string name)
+        => ResolveBusinessApplicationTypes(name, firstOnly: true).FirstOrDefault();
+
+    private static IReadOnlyList<Type> ResolveAllBusinessApplicationTypes(string name)
+        => ResolveBusinessApplicationTypes(name, firstOnly: false);
+
+    private static List<Type> ResolveBusinessApplicationTypes(string name, bool firstOnly)
     {
+        var found = new List<Type>(1);
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
             var n = asm.GetName().Name ?? "";
@@ -638,10 +650,14 @@ public static partial class EventSubscriberPatches
                 || n.StartsWith("Microsoft.CodeAnalysis")) continue;
             // Skip a previous bundle assembly still loaded after a server reload.
             if (BcRuntime.IsStaleBundleAssembly(asm)) continue;
-            try { var t = asm.GetType("Microsoft.Dynamics.Nav.BusinessApplication." + name); if (t != null) return t; }
+            try
+            {
+                var t = asm.GetType("Microsoft.Dynamics.Nav.BusinessApplication." + name);
+                if (t != null) { found.Add(t); if (firstOnly) break; }
+            }
             catch { }
         }
-        return null;
+        return found;
     }
 
     private static void DoInject(Func<int, object?> getNclMetaTable)
@@ -769,6 +785,7 @@ public static partial class EventSubscriberPatches
 
         lock (_lock)
         {
+            var group = RecordPatches.AppGroupCacheScope("table", tableId);
             var ledger = InjectedLedgerFor(tableId);
             if (!GetSubscriberIndex().TriggerKeysByTable.TryGetValue(tableId, out var tableKeys)) return;
             int injected = 0, failed = 0;
@@ -796,6 +813,7 @@ public static partial class EventSubscriberPatches
                 foreach (var sub in tableSubs)
                 {
                     if (ledger.Contains(sub.Method)) continue;
+                    if (RecordPatches.SubscribesToAnotherAppGroupsObject("table", tableId, group, sub.Method.DeclaringType!.Assembly)) continue;
                     object? subscription;
                     try { subscription = BuildSubscription(sub); }
                     catch (Exception ex)
@@ -882,11 +900,13 @@ public static partial class EventSubscriberPatches
         lock (_lock)
         {
             if (!GetSubscriberIndex().ValidateSubsByTable.TryGetValue(tableId, out var tableSubs)) return;
+            var group = RecordPatches.AppGroupCacheScope("table", tableId);
             var ledger = InjectedLedgerFor(tableId);
             int injected = 0, failed = 0;
             foreach (var vs in tableSubs)
             {
                 if (ledger.Contains(vs.Handle.Method)) continue;
+                if (RecordPatches.SubscribesToAnotherAppGroupsObject("table", tableId, group, vs.Handle.Method.DeclaringType!.Assembly)) continue;
                 TryInjectOneValidateSub(vs, metaTable, ledger, ref injected, ref failed);
             }
             if (injected > 0 || failed > 0)

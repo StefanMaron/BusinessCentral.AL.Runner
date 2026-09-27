@@ -101,6 +101,8 @@ public static partial class RecordPatches
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, BcPageDocument?>
         _bcPageControlDocuments = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Guid AppGroup, int Id), BcPageDocument?>
+        _bcPageControlDocumentsByAppGroup = new();
 
     /// <summary>
     /// Drop the parsed documents on a <c>--watch</c>/<c>--server</c> reload. Page ids repeat
@@ -108,7 +110,11 @@ public static partial class RecordPatches
     /// answer rather than a miss — the same statement <see cref="ClearBcReportDocuments"/>
     /// makes for reports (#3607).
     /// </summary>
-    internal static void ClearBcPageControlDocuments() => _bcPageControlDocuments.Clear();
+    internal static void ClearBcPageControlDocuments()
+    {
+        _bcPageControlDocuments.Clear();
+        _bcPageControlDocumentsByAppGroup.Clear();
+    }
 
     /// <summary>
     /// True when BC's emitter handed the runner a metadata document for this page id. A page
@@ -152,7 +158,7 @@ public static partial class RecordPatches
     }
 
     private static BcPageDocument? TryGetBcPageControlDocument(int pageId)
-        => _bcPageControlDocuments.GetOrAdd(pageId, static id =>
+        => GetOrAddInAppGroupScope(_bcPageControlDocuments, _bcPageControlDocumentsByAppGroup, "page", pageId, static id =>
         {
             if (!AlObjectMetadataRegistry.TryGet(BcPageMetadataKind, id, out var xml) || string.IsNullOrEmpty(xml))
                 return null;
@@ -282,13 +288,19 @@ public static partial class RecordPatches
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, List<BcPageControl>>
         _bcPageExtensionControls = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Guid AppGroup, int Id), List<BcPageControl>>
+        _bcPageExtensionControlsByAppGroup = new();
 
     /// <summary>
     /// Drop the parsed pageextension deltas on a <c>--watch</c>/<c>--server</c> reload, for the
     /// same reason <see cref="ClearBcPageControlDocuments"/> does: extension ids repeat across
     /// reloads, so an entry from the previous bundle is a wrong answer rather than a miss.
     /// </summary>
-    internal static void ClearBcPageExtensionControls() => _bcPageExtensionControls.Clear();
+    internal static void ClearBcPageExtensionControls()
+    {
+        _bcPageExtensionControls.Clear();
+        _bcPageExtensionControlsByAppGroup.Clear();
+    }
 
     /// <summary>
     /// The field controls every pageextension over <paramref name="pageId"/> ADDS, read from
@@ -304,7 +316,7 @@ public static partial class RecordPatches
         var result = new List<BcPageControl>();
         foreach (var extId in GetPageExtensionIdsForPage(pageId))
         {
-            var controls = _bcPageExtensionControls.GetOrAdd(extId, static id =>
+            var controls = GetOrAddInAppGroupScope(_bcPageExtensionControls, _bcPageExtensionControlsByAppGroup, "pageextension", extId, static id =>
             {
                 var into = new List<BcPageControl>();
                 if (!AlObjectMetadataRegistry.TryGet(BcPageExtensionMetadataKind, id, out var xml)
@@ -540,7 +552,7 @@ public static partial class RecordPatches
     /// page.</para>
     /// </summary>
     private static bool GetMetaFieldEditable(int tableId, int fieldNo)
-        => _bcMetaFieldEditable.GetOrAdd((tableId, fieldNo), static key =>
+        => _bcMetaFieldEditable.GetOrAdd((AppGroupCacheScope("table", tableId), tableId, fieldNo), static key =>
         {
             var meta = GetOrBuildNCLMetaTable(key.TableId);
             // The runner's OWN build declining to produce a metatable is a fact about the
@@ -639,7 +651,8 @@ public static partial class RecordPatches
         return true;
     }
 
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(int TableId, int FieldNo), bool>
+    // AppGroup: AppGroupCacheScope of the table, so a group sharing the table id reads its own field (#4833).
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Guid AppGroup, int TableId, int FieldNo), bool>
         _bcMetaFieldEditable = new();
 
     /// <summary>
