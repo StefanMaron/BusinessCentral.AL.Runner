@@ -101,6 +101,62 @@ public class SkeletonSharedObjectContainerLeakTests
         }
     }
 
+    /// <summary>
+    /// #4781: with a SingleInstance instance cached — the normal state of a Base App run — the
+    /// sweep takes its per-child branch. It must still dispose every wrapper nothing reaches, and
+    /// keep only the one the cached instance reaches (here through a RecordRef it holds).
+    /// </summary>
+    [SkippableFact]
+    public void ResetPerTestState_WithASingleInstanceCached_SweepsUnreachableChildren_AndKeepsTheReachableOne()
+    {
+        TestArtifacts.SkipIf(!_engine.Ready,
+            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
+
+        var nclAssembly = typeof(ITreeObject).Assembly;
+        var root = new RootTreeObject();
+        var container = new TreeSharedObjectContainer(root);
+        var tShared = nclAssembly.GetType("Microsoft.Dynamics.Nav.Runtime.SharedRecordRef")!;
+        var tIContainer = nclAssembly.GetType("Microsoft.Dynamics.Nav.Runtime.ITreeSharedObjectContainer")!;
+        var sharedCtor = tShared.GetConstructor(
+            BindingFlags.NonPublic | BindingFlags.Instance, null, new[] { tIContainer }, null)!;
+
+        var containerField = typeof(BcRuntime).GetField(
+            "_skeletonSharedObjectContainer", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var cache = (System.Collections.IDictionary)typeof(BcRuntime).GetField(
+            "_singleInstanceCache", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
+        var originalContainer = containerField.GetValue(null);
+        var instance = new Codeunit69006(root);
+        try
+        {
+            containerField.SetValue(null, container);
+            cache[Codeunit69006.Id] = instance;
+
+            var unreachable = Enumerable.Range(0, PerCycle)
+                .Select(_ => (ITreeObject)sharedCtor.Invoke(new object?[] { container })).ToList();
+            var reachable = (ITreeObject)sharedCtor.Invoke(new object?[] { container });
+            // What a RecordRef global does: a reference child of the instance, targeting the wrapper.
+            var recordRef = new NavRecordRef(instance);
+            ((ITreeObject)recordRef).Tree.SetReferenceTarget(reachable);
+            Assert.Equal(PerCycle + 1, ((ITreeObject)container).Tree.Children.Count);
+
+            RecordPatches.ResetPerTestState();
+
+            var left = ((ITreeObject)container).Tree.Children;
+            Assert.True(left.Count == 1 && ReferenceEquals(left[0], reachable),
+                $"expected only the wrapper the cached SingleInstance instance reaches to survive the "
+                + $"sweep, but {left.Count} child(ren) remain. More than one means the per-child "
+                + "branch no longer disposes what nothing reaches (the leak is back for every run "
+                + "with a SingleInstance instance cached); zero means it disposed the reachable one.");
+            Assert.All(unreachable, u => Assert.True(u.Tree == null || u.Tree.IsDisposed,
+                "an unreachable wrapper was not disposed by the sweep."));
+        }
+        finally
+        {
+            cache.Remove(Codeunit69006.Id);
+            containerField.SetValue(null, originalContainer);
+        }
+    }
+
     [SkippableFact]
     public void WithoutReset_SkeletonContainerChildren_GrowLinearlyWithCyclesAsBaseline()
     {
@@ -127,4 +183,12 @@ public class SkeletonSharedObjectContainerLeakTests
         var count = ((ITreeObject)container).Tree.Children.Count;
         Assert.Equal(totalToCreate, count);
     }
+}
+
+/// <summary>A stand-in SingleInstance codeunit for the sweep test above. Named
+/// <c>Codeunit{id}</c> like Codeunit69001/69002, with an id outside every AL idRange here.</summary>
+internal sealed class Codeunit69006 : NavCodeunit
+{
+    internal const int Id = 69006;
+    public Codeunit69006(ITreeObject parent) : base(parent, Id) { }
 }
