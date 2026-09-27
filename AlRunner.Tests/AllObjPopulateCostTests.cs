@@ -230,20 +230,15 @@ public class AllObjPopulateCostTests
                     Assert.True(handouts >= 2 * Lookups,
                         $"{pass} run: expected at least {2 * Lookups} {table} handouts, got {handouts}:\n{output}");
 
-                    // [THEN] The rows were built once per visible-app set, not per handout. Test
-                    // Runner (loaded by default, #4840) looks AllObj up with its own code on the call
-                    // stack, which widens the set: that is a second key, and so a second walk.
-                    Assert.True(walks >= 1 && walks <= 2,
-                        $"{pass} run: {walks} {table} inventory walk(s) for {handouts} handout(s); expected 1 or 2:\n{output}");
+                    // [THEN] The rows were built once for the run: one visibility, one inventory.
+                    // Before #4851 (#4859 for AllObjWithCaption) every handout walked.
+                    Assert.True(walks == 1,
+                        $"{pass} run: {walks} {table} inventory walk(s) for {handouts} handout(s); expected 1:\n{output}");
 
-                    // [THEN] One store was filled, by the first codeunit; a top-up under the second
-                    // key adds no row when the wider set lists nothing more. The second codeunit
-                    // was handed that store back at its boundary instead of a new one (#4859).
-                    var fills = topUpLine.Matches(output).Count(m => int.Parse(m.Groups[1].Value) > 0);
-                    Assert.True(topUps <= 2,
-                        $"{pass} run: {topUps} {table} top-up(s) for {handouts} handout(s); expected at most one per key:\n{output}");
-                    Assert.True(fills == 1 && reuses == 1,
-                        $"{pass} run: {fills} {table} fill(s) and {reuses} reuse(s) for {handouts} handout(s); "
+                    // [THEN] One store was filled, by the first codeunit; the second codeunit was
+                    // handed that store back at its boundary instead of a new one (#4859).
+                    Assert.True(topUps == 1 && reuses == 1,
+                        $"{pass} run: {topUps} {table} top-up(s) and {reuses} reuse(s) for {handouts} handout(s); "
                         + $"expected 1 and 1:\n{output}");
                 }
             }
@@ -535,11 +530,6 @@ public class AllObjPopulateCostTests
                     $"{pass} run: expected all {tests} write-path tests to pass (exit {exit}), got:\n{output}");
                 Assert.True(ReuseLine.Matches(output).Count == 0,
                     $"{pass} run: a written AllObj store was reused:\n{output}");
-                // [THEN] Every codeunit got a fresh store, and every fresh store was filled from
-                // rows built once per visible-app set — not once per store.
-                var walks = WalkLine.Matches(output).Count;
-                Assert.True(walks >= 1 && walks <= 2,
-                    $"{pass} run: {walks} AllObj inventory walk(s) for {tests} fresh stores; expected 1 or 2:\n{output}");
             }
         }
         finally
