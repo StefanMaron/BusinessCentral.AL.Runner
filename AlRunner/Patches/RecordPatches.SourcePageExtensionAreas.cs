@@ -58,15 +58,8 @@ public static partial class RecordPatches
         var changedBy = new Dictionary<int, int>();
         var actionChanges = new Dictionary<int, string>();
         var actionChangedBy = new Dictionary<int, int>();
-        foreach (var extId in extensionIds)
+        foreach (var (extId, xml) in SourcePageExtensionDeltaDocuments(pageId, extensionIds, $"TestPage ApplicationArea on page {pageId}"))
         {
-            // Parsed but never captured is "could not measure", never "adds nothing".
-            if (!AlObjectMetadataRegistry.TryGet(BcPageExtensionMetadataKind, extId, out var xml) || string.IsNullOrEmpty(xml))
-                throw TestPageShapeGap.ControlProperty(
-                    $"TestPage ApplicationArea on page {pageId}",
-                    $"pageextension {extId} was compiled from source, but BC's emitted delta document for it "
-                    + "is not in the metadata registry, so the areas of the controls it adds or modifies "
-                    + "cannot be read (#4866)");
             var doc = new XmlDocument();
             doc.LoadXml(xml);
             foreach (XmlNode node in doc.DocumentElement!.ChildNodes)
@@ -83,6 +76,93 @@ public static partial class RecordPatches
             }
         }
         return new SourcePageExtensionAreaSet(added, changes, parts, actions, actionChanges, actionRefs);
+    }
+
+    // Parsed but never captured is "could not measure", never "adds nothing".
+    private static IEnumerable<(int ExtensionId, string Xml)> SourcePageExtensionDeltaDocuments(
+        int pageId, IEnumerable<int> extensionIds, string api)
+    {
+        foreach (var extId in extensionIds)
+        {
+            if (!AlObjectMetadataRegistry.TryGet(BcPageExtensionMetadataKind, extId, out var xml) || string.IsNullOrEmpty(xml))
+                throw TestPageShapeGap.ControlProperty(api,
+                    $"pageextension {extId} of page {pageId} was compiled from source, but BC's emitted delta "
+                    + "document for it is not in the metadata registry, so what it adds or modifies cannot be read");
+            yield return (extId, xml);
+        }
+    }
+
+    /// <summary>
+    /// The part a source-compiled pageextension of <paramref name="pageId"/> adds under
+    /// <paramref name="controlId"/>, or null when none does (#4876). The runner's MasterPage
+    /// carries no extension delta, so the part is read from the extension's own delta document
+    /// through BC's own parser, <c>NavAppObjectMetadataRuntimeDeltas.FromXml</c>, walking its
+    /// <c>ControlAddDelta</c>s as <c>CachingDatabaseDeltaRetrieverHelper.CollectAddedControls</c>
+    /// does.
+    /// </summary>
+    internal static Microsoft.Dynamics.Nav.Types.Metadata.InfopartPageDefinition? SourcePageExtensionPart(int pageId, int controlId)
+    {
+        var extensionIds = GetPageExtensionIdsForPage(pageId).Where(_parsedPageExtensions.ContainsKey).ToList();
+        foreach (var (_, xml) in SourcePageExtensionDeltaDocuments(pageId, extensionIds, $"TestPage part {controlId} (page {pageId})"))
+            foreach (var part in _partsByDeltaDocument.GetValue(xml, AddedParts))
+                if (part.ID == controlId) return part;
+        return null;
+    }
+
+    // Keyed on the registry's own string, so a --watch/--server reload, which registers new
+    // documents, cannot serve a previous generation's parts.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<string,
+        List<Microsoft.Dynamics.Nav.Types.Metadata.InfopartPageDefinition>> _partsByDeltaDocument = new();
+
+    private static List<Microsoft.Dynamics.Nav.Types.Metadata.InfopartPageDefinition> AddedParts(string deltaXml)
+    {
+        var parts = new List<Microsoft.Dynamics.Nav.Types.Metadata.InfopartPageDefinition>();
+        var deltas = Microsoft.Dynamics.Nav.Apps.MetadataDeltas.NavAppObjectMetadataRuntimeDeltas.FromXml(
+            System.Xml.Linq.XDocument.Parse(deltaXml));
+        foreach (var delta in deltas.AllDeltas)
+            if (delta != null && ControlAddDeltaType.IsInstanceOfType(delta))
+                CollectParts(AddedContent(delta), parts);
+        return parts;
+    }
+
+    private const string ExtensionPartSurface = "TestPage part a pageextension adds (#4876)";
+
+    // ControlAddDelta is internal to BC's delta assembly; its Context.Content is what
+    // CachingDatabaseDeltaRetrieverHelper.CollectAddedControls walks.
+    private static readonly Lazy<Type> _controlAddDeltaType = new(() =>
+        typeof(Microsoft.Dynamics.Nav.Apps.MetadataDeltas.NavAppObjectMetadataRuntimeDeltas).Assembly
+            .GetType("Microsoft.Dynamics.Nav.Apps.MetadataDeltas.ControlAddDelta")
+        ?? throw new BcShapeGapException(ExtensionPartSurface,
+            "Microsoft.Dynamics.Nav.Apps.MetadataDeltas.ControlAddDelta", "the type is not in BC's delta assembly"));
+
+    private static Type ControlAddDeltaType => _controlAddDeltaType.Value;
+
+    private static Microsoft.Dynamics.Nav.Types.Metadata.ControlBaseDefinition? AddedContent(object controlAddDelta)
+    {
+        var context = MostDerivedProperty(ControlAddDeltaType, "Context").GetValue(controlAddDelta)
+            ?? throw new BcShapeGapException(ExtensionPartSurface, "ControlAddDelta.Context", "BC's parser left it null");
+        return MostDerivedProperty(context.GetType(), "Content").GetValue(context)
+            as Microsoft.Dynamics.Nav.Types.Metadata.ControlBaseDefinition;
+    }
+
+    // Context and Content are declared on generic bases and re-declared (new) on the derived
+    // types, so a bare GetProperty is ambiguous; take the most derived, which is what an
+    // ordinary member access binds.
+    private static System.Reflection.PropertyInfo MostDerivedProperty(Type type, string name)
+    {
+        for (var t = type; t != null; t = t.BaseType)
+            if (t.GetProperty(name, BcShape.AnyInstance | System.Reflection.BindingFlags.DeclaredOnly) is { } p)
+                return p;
+        throw new BcShapeGapException(ExtensionPartSurface, $"{type.Name}.{name}", "the property is gone");
+    }
+
+    private static void CollectParts(Microsoft.Dynamics.Nav.Types.Metadata.ControlBaseDefinition? control,
+        List<Microsoft.Dynamics.Nav.Types.Metadata.InfopartPageDefinition> into)
+    {
+        if (control is Microsoft.Dynamics.Nav.Types.Metadata.InfopartPageDefinition part) into.Add(part);
+        if (control is Microsoft.Dynamics.Nav.Types.Metadata.ControlGroupBaseDefinition group)
+            foreach (var child in group.Controls)
+                CollectParts(child, into);
     }
 
     private static void RecordAreaChange(int pageId, string kind, int extId, XmlElement change,
