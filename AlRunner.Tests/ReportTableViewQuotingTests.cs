@@ -61,6 +61,50 @@ public sealed class ReportTableViewQuotingTests
             "sorting(Number) where(Number = filter(1 ..))",
             RecordPatches.TableViewText("sorting(Number) where(Number = filter(1 ..))"));
 
+    // #4668. A symbol file carries the view as the AL source wrote it, line breaks and
+    // indentation included, and TableViewParser pads its clauses with `[ ]*` only — so a
+    // view split over lines is refused whole ("Invalid expression of type: table view").
+    // Base Application report 302's FilterItem, verbatim from the 28.1 symbol file:
+    [Fact]
+    public void MultiLineView_LineBreakAndIndentation_CollapseToOneSpace()
+        => Assert.Equal(
+            """sorting("No.") where(Type = const(Inventory))""",
+            RecordPatches.TableViewText(
+                "sorting(\"No.\")\r\n                                where(Type = const(Inventory))"));
+
+    // Report 302's SalesOrderLine: breaks BETWEEN where-entries, and a filter(...) body that
+    // must still be rewritten for the filter grammar after the collapse.
+    [Fact]
+    public void MultiLineWhere_EntriesOnSeparateLines_AreJoinedAndTheFilterBodyStillConverts()
+        => Assert.Equal(
+            """sorting("Document Type", "Document No.") where("Document Type" = const(Order), "Drop Shipment" = const(false), "Outstanding Qty. (Base)" = filter(<> 0))""",
+            RecordPatches.TableViewText(
+                "sorting(\"Document Type\", \"Document No.\")\r\n                                    where(\"Document Type\" = const(Order),\r\n                                        \"Drop Shipment\" = const(false),\r\n                                        \"Outstanding Qty. (Base)\" = filter(<> 0))"));
+
+    // No quoted identifier at all: the early exit for "nothing to convert" must not also skip
+    // the line-break collapse. A bare LF and a tab are line breaks to AL too.
+    [Fact]
+    public void MultiLineView_WithNoQuotedIdentifier_IsStillCollapsed()
+        => Assert.Equal(
+            "sorting(Status) where(Status = const(Released))",
+            RecordPatches.TableViewText("sorting(Status)\n\twhere(Status = const(Released))"));
+
+    // A DataItemLink goes through the same function and the same parser (RecordDataItemLink).
+    [Fact]
+    public void MultiLineDataItemLink_IsCollapsed()
+        => Assert.Equal(
+            "\"Source Type\" = field(\"Source Type\"), \"Source ID\" = field(\"No.\")",
+            RecordPatches.TableViewText(
+                "\"Source Type\" = field(\"Source Type\"),\r\n                               \"Source ID\" = field(\"No.\")"));
+
+    // Only whitespace runs that contain a line break or a tab are touched; a single-line view
+    // keeps its own spacing byte for byte, inside quoted identifiers too.
+    [Fact]
+    public void SingleLineView_KeepsItsSpacingExactly()
+        => Assert.Equal(
+            """sorting("No.")  where("Search  Name" = const(A))""",
+            RecordPatches.TableViewText("""sorting("No.")  where("Search  Name" = const(A))"""));
+
     [Fact]
     public void NullAndEmptyViews_AreLeftAlone()
     {

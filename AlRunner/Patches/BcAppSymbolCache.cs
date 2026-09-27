@@ -40,7 +40,7 @@ internal static partial class BcAppSymbolCache
     //
     // Every bump adds its row to docs/bc-symbol-cache-versions.md#version-history (why that
     // integer was taken); BcAppSymbolCacheVersionHistoryTests holds the page to this constant.
-    private const int CacheVersion = 44;
+    private const int CacheVersion = 45;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820's path -> content-hash memo now lives in
     // RunnerFingerprint._fileContentHashes (#2955), because AppLoader's persisted r2r-chunks
