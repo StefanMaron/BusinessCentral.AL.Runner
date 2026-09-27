@@ -301,12 +301,11 @@ public class AppGroupObjectVisibilityTests
         Assert.False(RecordPatches.SubscribesToAnotherAppGroupsObject("codeunit", 62680, AppC, AppD, declarers, deps));
     }
 
-    private static string WriteApp(string dir, Guid appId, string name, int from, int to, (Guid Id, string Name)? dependsOn = null)
+    private static string WriteApp(string dir, Guid appId, string name, int from, int to, params (Guid Id, string Name)[] dependsOn)
     {
         Directory.CreateDirectory(dir);
-        var deps = dependsOn is { } d
-            ? $$"""[ { "id": "{{d.Id}}", "name": "{{d.Name}}", "publisher": "AL Runner", "version": "1.0.0.0" } ]"""
-            : "[]";
+        var deps = "[" + string.Join(", ", dependsOn.Select(d =>
+            $$"""{ "id": "{{d.Id}}", "name": "{{d.Name}}", "publisher": "AL Runner", "version": "1.0.0.0" }""")) + "]";
         File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
         { "id": "{{appId}}", "name": "{{name}}", "publisher": "AL Runner", "version": "1.0.0.0",
           "dependencies": {{deps}}, "platform": "1.0.0.0", "idRanges": [ { "from": {{from}}, "to": {{to}} } ], "runtime": "14.0" }
@@ -856,6 +855,71 @@ public class AppGroupObjectVisibilityTests
 
         AssertEdgeFixturesPass(RunCli($" --cache \"{cache}\" \"{root}\""));
         AssertEdgeFixturesPass(RunCli($" --cache \"{cache}\" \"{root}\""));
+    }
+
+    /// <summary>
+    /// #4844: a group depending on BOTH declarers of an id cannot say which object its code names.
+    /// Every test reaching that binding fails naming the id and both declarers; the run itself
+    /// completes, and a test that does not reach it still passes.
+    /// </summary>
+    [SkippableFact]
+    public void Cli_GroupDependingOnTwoDeclarersOfOneId_FailsLoudlyPerTest_AndTheRunCompletes()
+    {
+        TestArtifacts.SkipIfMissing();
+        var root = TestScratch.Dir("al-runner-app-group-visibility-two-declarers");
+        Directory.CreateDirectory(root);
+        var appF = new Guid("3b0e6f52-0000-4c38-9e25-0000000000f1");
+        var appG = new Guid("3b0e6f52-0000-4c38-9e25-0000000000f2");
+        foreach (var (letter, appId) in new[] { ("F", appF), ("G", appG) })
+        {
+            var dir = WriteApp(Path.Combine(root, "two" + letter), appId, "Two " + letter, 62740, 62749);
+            File.WriteAllText(Path.Combine(dir, "Two.al"), $$"""
+            table 62740 "Two {{letter}} Table"
+            {
+                fields { field(1; "Code"; Code[20]) { } }
+                keys { key(PK; "Code") { Clustered = true; } }
+            }
+            codeunit 62741 "Two {{letter}} Tests"
+            {
+                Subtype = Test;
+                [Test]
+                procedure OwnInsertStillRuns()
+                var
+                    Rec: Record "Two {{letter}} Table";
+                begin
+                    Rec.Code := 'A';
+                    Rec.Insert();
+                    if not Rec.Get('A') then Error('WRONG: own insert of 62740 lost in {{letter}}');
+                end;
+            }
+            """);
+        }
+        var both = WriteApp(Path.Combine(root, "bothH"), AppE, "Both H", 62750, 62759, (appF, "Two F"), (appG, "Two G"));
+        File.WriteAllText(Path.Combine(both, "Both.al"), """
+        codeunit 62750 "Both H Tests"
+        {
+            Subtype = Test;
+            [Test]
+            procedure ReadsTheAmbiguousTable()
+            var
+                TableMetadata: Record "Table Metadata";
+            begin
+                TableMetadata.Get(62740);
+            end;
+
+            [Test]
+            procedure TouchesNothingShared()
+            begin
+            end;
+        }
+        """);
+
+        var (output, exitCode) = RunCli($" --no-cache \"{root}\"");
+        Assert.DoesNotContain("Unhandled exception", output);
+        Assert.True(output.Contains("3P/1F/0E across 4 tests"), output);
+        Assert.Contains($"depends on {appF} and {appG}, which each declare table 62740", output);
+        Assert.DoesNotContain("WRONG:", output);
+        Assert.Equal(1, exitCode);
     }
 
     private static (string Output, int ExitCode) RunCli(string args)
