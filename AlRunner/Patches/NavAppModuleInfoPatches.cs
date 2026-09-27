@@ -86,7 +86,8 @@ public static class NavAppModuleInfoPatches
     // Observably equivalent: BC's body is GetModuleExecutionContext(<owning app of the executing
     // object>), and this keeps that, changing only how the owning app is found when BC's own
     // lookup (CurrentMethodScope.ApplicationObject.GetOwningAppId) answers AppId.None — which it
-    // does for every runner-loaded object, having no OwningApp metadata. GetOwningAppId is internal;
+    // does whenever the current scope carries no application object, or one whose AppId the
+    // ctor replacement left null (StampOwningAppId, #4676). GetOwningAppId is internal;
     // its first arm, the object's own AppId, is kept. The fallback is the same
     // stack walk GetCurrentModuleInfo answers from, so the two agree on "which module" (#4049,
     // corpus 60589 TestInstallExecCtx_ModuleContextIsInstallPerCompany).

@@ -71,6 +71,7 @@ public static partial class BcRuntime
     private static FieldInfo? _fAoObjectId;            // NavApplicationObjectBase.objectId (readonly struct)
     private static FieldInfo? _fAoOrigGroupId;         // NavApplicationObjectBase.originalAppGroupId
     private static FieldInfo? _fAoRuntimeGroupId;      // NavApplicationObjectBase.runtimeAppGroupId
+    private static FieldInfo? _fAoAppId;               // NavApplicationObjectBase.<AppId>k__BackingField
     private static FieldInfo? _fNavComplexValueTree;   // NavComplexValue.tree (distinct from TreeObject.tree)
     internal static FieldInfo? _fTreeHandlerSession;   // TreeHandler.session (private readonly, on base class)
     private static object? _skeletonCompany;            // cached skeleton NavCompany (CompanyNameToken=0)
@@ -1180,6 +1181,7 @@ public static partial class BcRuntime
             _fAoObjectId      = aoType.GetField("objectId",            BindingFlags.NonPublic | BindingFlags.Instance);
             _fAoOrigGroupId   = aoType.GetField("originalAppGroupId",  BindingFlags.NonPublic | BindingFlags.Instance);
             _fAoRuntimeGroupId= aoType.GetField("runtimeAppGroupId",   BindingFlags.NonPublic | BindingFlags.Instance);
+            _fAoAppId         = aoType.GetField("<AppId>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance);
 
             // NavApplicationObjectBase..ctor is Cecil-owned (see NclCecilRewrite.cs, "Batch 4
             // keystone") — the fields cached above are consumed by the same replacement helper

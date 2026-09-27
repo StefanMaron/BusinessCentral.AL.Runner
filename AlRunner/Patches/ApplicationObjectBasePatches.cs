@@ -84,6 +84,37 @@ public static partial class BcRuntime
         // 3. Skip NavCurrentThread.ResolveAppGroup — use BaseGroupId=0.
         if (_fAoOrigGroupId != null)    FieldPoke.SetInstance(_fAoOrigGroupId,    self, 0);
         if (_fAoRuntimeGroupId != null) FieldPoke.SetInstance(_fAoRuntimeGroupId, self, 0);
+        // 4. `AppId = objectId.IsDynamic ? null : navAppGroup.GetObjectOwner(objectId)?.AppId`.
+        StampOwningAppId(self, objectId);
+    }
+
+    /// <summary>
+    /// The real ctor's AppId assignment. Observably equivalent: BC's GetObjectOwner answers the
+    /// app whose package declares the object, and the runner's answer is the app the object's
+    /// emitted assembly was registered under — exact per app, and per app group (#2963).
+    /// Readers: CodeCoverageTestInfo (corpus 60925), GetOwningAppId (isolated storage, module
+    /// execution context), NavForm.CallTriggerAsync, and diagnostics-only trace tags (#4676).
+    /// Trap: key on the object's own type, never a fallback to the bundle — Ncl-declared types
+    /// (NavRecord for a RecordRef, system codeunits) are unregistered and must stay null, which
+    /// is what lets GetOwningAppId fall back to the object's metadata OwningApp.
+    /// </summary>
+    private static void StampOwningAppId(object self, object objectId)
+    {
+        if (OwningAppIdFor(self.GetType(), objectId) is not { } appId) return;
+        if (_fAoAppId == null)
+            throw new BcShapeGapException(
+                "NavApplicationObjectBase.AppId (the object's owning app)",
+                "NavApplicationObjectBase.<AppId>k__BackingField",
+                "field not found — BC's auto-property backing field for AppId moved");
+        FieldPoke.SetInstance(_fAoAppId, self, (Guid?)appId);
+    }
+
+    /// <summary>The AppId <see cref="StampOwningAppId"/> writes for an object of
+    /// <paramref name="objectType"/>; null for a dynamic object or an unregistered assembly.</summary>
+    internal static Guid? OwningAppIdFor(Type objectType, object objectId)
+    {
+        if (objectId is Microsoft.Dynamics.Nav.Types.ApplicationObjectId { IsDynamic: true }) return null;
+        return TryGetModuleAppId(objectType.Assembly, out var appId) ? appId : null;
     }
 
     private static FieldInfo? _fAoExecPermValidated; // NavApplicationObjectBase.executePermissionsValidated : bool?
