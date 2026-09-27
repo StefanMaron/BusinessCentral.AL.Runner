@@ -28,7 +28,8 @@ namespace AlRunner;
 internal static class TestPageOptionValue
 {
     /// <summary>Turn the string a test wrote into the NavOption the binding holds.</summary>
-    internal static NavValue Resolve(NavOption current, string value, string[]? captions, string context)
+    internal static NavValue Resolve(NavOption current, string value, string[]? captions, string context,
+        string? controlCaption = null)
     {
         var metadata = current.NavOptionMetadata
             ?? throw TestPageShapeGap.OptionValue(
@@ -72,6 +73,12 @@ internal static class TestPageOptionValue
                 CultureInfo.InvariantCulture, out var literal)
             && (ordinals == null || ordinals.Contains(literal)))
             return NavOption.Create(metadata, literal);
+
+        // An Option control whose caption list is known refuses with BC's own message, which
+        // BC's NavTestField.CheckError then wraps (corpus codeunit 67575, #4669). With no caption
+        // list the runner cannot tell "declares none" from "could not read it", so it stays loud.
+        if (!isEnumBacked && captions != null && controlCaption != null)
+            throw TestPageBooleanValue.MakeNotAcceptableError(value, controlCaption);
 
         throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
             context,
@@ -569,7 +576,7 @@ internal static class TestPageBooleanValue
     /// Message = '…'</c> — including the double space after the comma, which is BC's and not a
     /// typo. The composed result is the string corpus PR #163 measured on all eight legs.</para>
     /// </summary>
-    private static System.Exception MakeNotAcceptableError(string value, string caption)
+    internal static System.Exception MakeNotAcceptableError(string value, string caption)
     {
         // The BARE message only — see TestPageMinMaxValue.MakeError for why the
         // "Validation error for Field: ..." wrapper is BC's to add and no longer ours (#2900).

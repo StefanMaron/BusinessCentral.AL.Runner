@@ -63,6 +63,7 @@ public sealed class ReportRequestPageControlSymbolTests
                                 "Kind": 8,
                                 "Properties": [
                                   { "Name": "Enabled", "Value": "0" },
+                                  { "Name": "OptionCaption", "Value": "Version 4.00 or Later (.xml),Dynamics 365 Finance (.txt)" },
                                   { "Name": "SourceExpression", "Value": "ShipReq" }
                                 ]
                               }
@@ -129,6 +130,18 @@ public sealed class ReportRequestPageControlSymbolTests
         Assert.Equal("0", ship.EnabledExpr);
         Assert.Null(ship.VisibleExpr);
         Assert.Equal(1678175880, ship.ParentId);
+    }
+
+    [Fact]
+    public void AFieldCarriesItsOptionCaptionVerbatim()
+    {
+        // #4669: TestRequestPage SetValue/Value resolve an Option control by this caption list.
+        var controls = InScratch("al-runner-rp-control-symbol-option-caption",
+            dir => Report(dir, WithControls).RequestPageControls)!;
+
+        Assert.Equal("Version 4.00 or Later (.xml),Dynamics 365 Finance (.txt)",
+            Assert.Single(controls, c => c.Id == 1265798802).OptionCaption);
+        Assert.Null(Assert.Single(controls, c => c.Id == 966077527).OptionCaption);
     }
 
     [Fact]

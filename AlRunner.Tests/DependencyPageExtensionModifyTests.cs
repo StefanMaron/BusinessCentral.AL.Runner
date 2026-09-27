@@ -43,10 +43,12 @@ public class DependencyPageExtensionModifyTests
                 { "Kind": 1, "Id": 1, "Name": "content", "Controls": [
                   { "Kind": 8, "Id": 646700001, "Name": "CodeCtl",
                     "Properties": [ { "Name": "SourceExpression", "Value": "Rec.Code" },
-                                    { "Name": "Enabled", "Value": "BaseFlag" } ] },
+                                    { "Name": "Enabled", "Value": "BaseFlag" },
+                                    { "Name": "OptionCaption", "Value": "Base A,Base B" } ] },
                   { "Kind": 8, "Id": 646700002, "Name": "Untouched",
                     "Properties": [ { "Name": "SourceExpression", "Value": "Rec.Name" },
-                                    { "Name": "Enabled", "Value": "false" } ] }
+                                    { "Name": "Enabled", "Value": "false" },
+                                    { "Name": "OptionCaption", "Value": "Own A,Own B" } ] }
                 ] }
               ],
               "Actions": [
@@ -83,7 +85,8 @@ public class DependencyPageExtensionModifyTests
               "Id": 88247611, "Name": "MDX Page Ext", "TargetObject": "MDX Page",
               "ControlChanges": [
                 { "Anchor": "CodeCtl", "ChangeKind": 9,
-                  "Properties": [ { "Name": "Enabled", "Value": "Rec.Code <> ''" } ] }
+                  "Properties": [ { "Name": "Enabled", "Value": "Rec.Code <> ''" },
+                                  { "Name": "OptionCaption", "Value": "Ext A,Ext B" } ] }
               ],
               "ActionChanges": [
                 { "Anchor": "DoIt", "ChangeKind": 9,
@@ -152,6 +155,16 @@ public class DependencyPageExtensionModifyTests
             // A property the extension does not modify keeps the control's own answer (none).
             Assert.Null(RecordPatches.TryGetDependencyControlDeclaredProperty(PageId, ModifiedControlId, "Editable"));
             Assert.Equal("false", RecordPatches.TryGetDependencyControlDeclaredProperty(PageId, UntouchedControlId, "Enabled"));
+        });
+
+    [Fact]
+    public void ModifiedControl_AnswersTheExtensionsOptionCaption()
+        => WithDependencyApp(() =>
+        {
+            // #4669: CodeCtl states "Base A,Base B" itself; the extension's modify() value wins.
+            Assert.Equal("Ext A,Ext B", RecordPatches.TryGetDependencyControlOptionCaption(PageId, ModifiedControlId));
+            // No modify() for Untouched: its own caption is the answer.
+            Assert.Equal("Own A,Own B", RecordPatches.TryGetDependencyControlOptionCaption(PageId, UntouchedControlId));
         });
 
     [Fact]

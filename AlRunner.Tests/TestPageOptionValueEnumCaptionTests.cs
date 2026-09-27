@@ -212,6 +212,46 @@ public sealed class TestPageOptionValueEnumCaptionTests
         Assert.Equal(1, resolved.Value);
     }
 
+    // #4669: an Option control whose caption list is known refuses an undeclared value with BC's
+    // own message (corpus codeunit 67575), which BC's NavTestField.CheckError then wraps.
+    [Fact]
+    public void Resolve_PlainOptionWithKnownCaptions_RefusesAnUndeclaredValueWithBcsMessage()
+    {
+        var current = NavOption.Create(NCLOptionMetadata.Create("Xml,Txt,FO"), 0);
+
+        var ex = Assert.Throws<Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLDialogException>(() =>
+            TestPageOptionValue.Resolve(current, "Not A Format",
+                new[] { "Version 4.00 (.xml)", "Version 3.70 (.txt)", "Dynamics 365 Finance (.txt)" },
+                "test", controlCaption: "File Format"));
+
+        Assert.Equal("Your entry of 'Not A Format' is not an acceptable value for 'File Format'.", ex.Message);
+    }
+
+    // With no caption list the runner cannot tell "declares none" from "could not read it", so an
+    // unresolved value stays a loud refusal rather than a message BC may not produce.
+    [Fact]
+    public void Resolve_PlainOptionWithoutCaptions_StaysOutOfScope()
+    {
+        var current = NavOption.Create(NCLOptionMetadata.Create("Xml,Txt,FO"), 0);
+
+        var ex = Assert.Throws<RunnerOutOfScopeException>(() =>
+            TestPageOptionValue.Resolve(current, "Not A Format", captions: null, "test", controlCaption: "File Format"));
+        Assert.Contains("declares no OptionCaption", ex.Message);
+    }
+
+    // #4669 left the Enum branch alone: an Enum control with known captions still refuses an
+    // undeclared value as out-of-scope, even when a control caption is available.
+    [Fact]
+    public void Resolve_EnumControlWithKnownCaptions_StillRefusesOutOfScope()
+    {
+        var current = NavOption.Create(BuildEnumMetadata(), 0);
+
+        var ex = Assert.Throws<RunnerOutOfScopeException>(() =>
+            TestPageOptionValue.Resolve(current, "Not A Kind", TestPageOptionValue.EnumCaptions(current),
+                "test", controlCaption: "Kind"));
+        Assert.Contains("Enum-typed control", ex.Message);
+    }
+
     // ── DisplayOrdinal — issue #2367 ────────────────────────────────────────────────
     //
     // The runner-mechanism half of #2367. The BC-behaviour claim ("AssertEquals on an
