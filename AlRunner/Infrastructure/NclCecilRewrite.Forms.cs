@@ -177,58 +177,11 @@ public static partial class NclCecilRewrite
 
         RewriteGetMasterPageApplicationAreaRemoval(asm.MainModule, metadataProviderType);
 
-        // NavPageDataPersonalizationHelper.LoadPageDataPersonalization<T>(...) → default(T).
-        //
-        // Reached from MergePageAndTable -> SolveDefaultFilterColumnProperty. It opens the
-        // per-user page-personalization system table, which the runner has no metadata for,
-        // so `new NavRecord(...)` NREs.
-        //
-        // User personalization is out of scope by construction: the runner has no user
-        // profile, no personalization store and no UI to produce one. default(T) is exactly
-        // what BC returns for a user who has never personalized the page, which is every
-        // user here — so the merged page keeps its AL-declared layout, which is what an AL
-        // test is asserting about in the first place.
-        var personalizationHelperType = asm.MainModule.GetType(
-            "Microsoft.Dynamics.Nav.Runtime.NavPageDataPersonalizationHelper");
-        if (personalizationHelperType != null)
-        {
-            int personalizationRewroteCount = 0;
-            foreach (var method in personalizationHelperType.Methods
-                .Where(mm => mm.Name == "LoadPageDataPersonalization" && mm.HasBody).ToList())
-            {
-                var body = method.Body;
-                body.Instructions.Clear();
-                body.Variables.Clear();
-                body.ExceptionHandlers.Clear();
-                var il = body.GetILProcessor();
-                var retType = method.ReturnType;
-                if (retType.FullName == "System.Void")
-                    il.Append(il.Create(OpCodes.Ret));
-                else if (!retType.IsValueType && !retType.IsGenericParameter)
-                {
-                    il.Append(il.Create(OpCodes.Ldnull));
-                    il.Append(il.Create(OpCodes.Ret));
-                }
-                else
-                {
-                    // Generic parameter or value type — default(T) via initobj.
-                    var local = new VariableDefinition(retType);
-                    body.Variables.Add(local);
-                    body.InitLocals = true;
-                    il.Append(il.Create(OpCodes.Ldloca_S, local));
-                    il.Append(il.Create(OpCodes.Initobj, retType));
-                    il.Append(il.Create(OpCodes.Ldloc_S, local));
-                    il.Append(il.Create(OpCodes.Ret));
-                }
-                body.MaxStackSize = 1;
-                personalizationRewroteCount++;
-            }
-            if (personalizationRewroteCount == 0)
-                throw new InvalidOperationException(
-                    "NavPageDataPersonalizationHelper.LoadPageDataPersonalization not found — Ncl shape changed; do not commit");
-            Console.Error.WriteLine(
-                $"[Cecil] Rewrote {personalizationRewroteCount} LoadPageDataPersonalization overload(s) → default (no user personalization in the runner)");
-        }
+        // NavPageDataPersonalizationHelper.LoadPageDataPersonalization is deliberately NOT
+        // rewritten: it reads table 2000000080 "Page Data Personalization", which resolves in
+        // the runner, and a page's SaveValues restore (ReadValues) goes through it (#4818,
+        // corpus codeunit 67545). An empty table answers default(T), as BC does for a user who
+        // never personalized the page.
 
         // NavForm.RequiresExecutePermissionCheck(MasterPage) → return false
         // GetMasterPage() now returns null/default, so its callers pass null into this method,

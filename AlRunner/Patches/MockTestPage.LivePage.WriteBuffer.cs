@@ -1155,6 +1155,7 @@ internal partial class LiveNavTestPage
         // FormRunModal's own attempt run -- and that second attempt is where the second message
         // delivery, and the Action::None, come from.
         if (!_page.RaiseOnClosePage(result)) return;
+        _page.StoreSaveValuesOnClose(result);
 
         // The close succeeded, so BC's own form state has to agree -- otherwise IsOpen stays
         // true and FormRunModal runs the whole sequence a second time, which is exactly the

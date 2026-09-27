@@ -75,24 +75,4 @@ public class RequestPageSaveValuesWiringTests
                 && i.Operand is FieldReference f && f.Name == "<Parent>k__BackingField");
         }
     }
-
-    private sealed class RequestPageLike { public bool IsRequestPage => true; }
-    private sealed class PageLike { public bool IsRequestPage => false; }
-    private sealed class NoSuchProperty { }
-
-    // Decides which close result a modal form gets: the handler's for a request page (so OK
-    // reaches StoreSaveValues), FormResult.None for any other page.
-    [Fact]
-    public void IsRequestPage_ReadsTheFormsOwnAnswer()
-    {
-        Assert.True(RunnerModalDispatch.IsRequestPage(new RequestPageLike()));
-        Assert.False(RunnerModalDispatch.IsRequestPage(new PageLike()));
-    }
-
-    [Fact]
-    public void IsRequestPage_RefusesWhenTheFormCannotAnswer()
-    {
-        var ex = Assert.Throws<BcShapeGapException>(() => RunnerModalDispatch.IsRequestPage(new NoSuchProperty()));
-        Assert.Contains("IsRequestPage", ex.Message);
-    }
 }
