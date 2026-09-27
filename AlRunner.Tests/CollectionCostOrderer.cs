@@ -158,6 +158,9 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // spawns six. Recorded at 131, the observed maximum rounded down: an overstatement
             // only schedules it earlier, while a value near 30 would make it the #1887 tail.
             ["RunSummaryOutputTests"] = 131,
+            // Runs 36297442575 and 36296544176: observed maximum, rounded down (#2498 convention).
+            ["AppGroupObjectVisibilityTests"] = 75,
+            ["NoCacheLastWinsIntegrationTests"] = 66,
             // #4204: five collections absent from this table on run 35017043142's BC 28.4
             // leg. FloorOnlyBundleEnumFieldTests at 76.4s crossed the >= 75s band and failed
             // the leg; the other four sat in the >= 60s advisory band, and
