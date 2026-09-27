@@ -81,6 +81,9 @@ public sealed class ReportRequestPageSubtreeTests
     // States AboutTitle / AboutText / ContextSensitiveHelpPage on its RequestPage node, as Base
     // Application report 3 "G/L Register" states the first two (#4108, #4675).
     private const int WithAbout = 9814;
+    // States SaveValues / ShowFilter as their AL DEFAULTS ("0" / "1") — stated all the same, so
+    // BC's emitter writes them (#4667), and a writer emitting only non-defaults would drop both.
+    private const int WithDefaultFlags = 9815;
 
     // Not learn.microsoft.com, so a HelpLink can only have come from the manifest (#4675).
     private const string ManifestHelpUrl = "https://example.invalid/rp-help/";
@@ -167,6 +170,19 @@ public sealed class ReportRequestPageSubtreeTests
                               { "Name": "AboutTitle", "Value": "About With About" },
                               { "Name": "AboutText", "Value": "Lists the **entries**, one per row." },
                               { "Name": "ContextSensitiveHelpPage", "Value": "finance-report" }
+                            ]
+                          }
+                        },
+                        {
+                          "Id": {{WithDefaultFlags}},
+                          "Name": "With Default Flags",
+                          "DataItems": [],
+                          "RequestPage": {
+                            "Id": 0,
+                            "Name": "RequestOptionsPage",
+                            "Properties": [
+                              { "Name": "SaveValues", "Value": "0" },
+                              { "Name": "ShowFilter", "Value": "1" }
                             ]
                           }
                         },
@@ -616,6 +632,127 @@ public sealed class ReportRequestPageSubtreeTests
         finally
         {
             Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// #4667: SaveValues / ShowFilter are read off the request page node as stated — true/false
+    /// for "1"/"0" — and null when the node states neither, so "declared the default" and
+    /// "declared nothing" stay distinguishable (BC's emitter writes the first, not the second).
+    /// </summary>
+    [Fact]
+    public void TheSymbolCarriesTheRequestPageSaveValuesAndShowFilter()
+    {
+        var dir = TestScratch.Dir("al-runner-report-requestpage-savevalues-symbol");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var reports = BcAppSymbolCache.Get(WriteApp(dir)).Reports;
+            var withSourceTable = Assert.Single(reports, r => r.Id == WithSourceTable);
+            Assert.True(withSourceTable.RequestPageSaveValues);
+            Assert.False(withSourceTable.RequestPageShowFilter);
+
+            var withControls = Assert.Single(reports, r => r.Id == WithControls);
+            Assert.True(withControls.RequestPageSaveValues);
+            Assert.Null(withControls.RequestPageShowFilter);
+
+            var withDefaults = Assert.Single(reports, r => r.Id == WithDefaultFlags);
+            Assert.False(withDefaults.RequestPageSaveValues);
+            Assert.True(withDefaults.RequestPageShowFilter);
+
+            var changePassword = Assert.Single(reports, r => r.Id == ChangePassword);
+            Assert.Null(changePassword.RequestPageSaveValues);
+            Assert.Null(changePassword.RequestPageShowFilter);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// #4667: BC writes a stated request-page SaveValues / ShowFilter on <c>&lt;SourceObject&gt;</c>
+    /// as "1"/"0" beside SourceTable, including a value that equals the AL default, and writes
+    /// neither when none is stated (report 9810's <c>&lt;SourceObject /&gt;</c>).
+    /// </summary>
+    [Fact]
+    public void TheEmittedSourceObjectCarriesTheDeclaredSaveValuesAndShowFilter()
+    {
+        var dir = TestScratch.Dir("al-runner-report-requestpage-savevalues-xml");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var withSourceTable = SourceObjectOf(Emit(Report(dir, WithSourceTable)));
+            Assert.Equal("1", withSourceTable.GetAttribute("SaveValues"));
+            Assert.Equal("0", withSourceTable.GetAttribute("ShowFilter"));
+
+            var withControls = SourceObjectOf(Emit(Report(dir, WithControls)));
+            Assert.Equal("1", withControls.GetAttribute("SaveValues"));
+            Assert.False(withControls.HasAttribute("ShowFilter"));
+
+            var withDefaults = SourceObjectOf(Emit(Report(dir, WithDefaultFlags)));
+            Assert.Equal("0", withDefaults.GetAttribute("SaveValues"));
+            Assert.Equal("1", withDefaults.GetAttribute("ShowFilter"));
+
+            var changePassword = SourceObjectOf(Emit(Report(dir, ChangePassword)));
+            Assert.False(changePassword.HasAttribute("SaveValues"));
+            Assert.False(changePassword.HasAttribute("ShowFilter"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// The same through BC's OWN reader: <c>SourceObject.SaveValues</c> is what
+    /// <c>NavForm.InitializeFromMetadata</c> copies into the request page, and it gates the
+    /// restore of the previous run's values. Each stated pair reads back as stated, in both
+    /// directions, so the attributes land where BC reads them.
+    /// </summary>
+    [SkippableFact]
+    public void BcsOwnReaderSeesTheRequestPageSaveValuesAndShowFilter()
+    {
+        var types = Type.GetType(
+            "Microsoft.Dynamics.Nav.Types.Metadata.MetaReport, Microsoft.Dynamics.Nav.Types");
+        Skip.If(types is null, "Microsoft.Dynamics.Nav.Types is not loadable on this box.");
+
+        var ctor = types!.GetConstructors().FirstOrDefault(
+            c => c.GetParameters() is { Length: 5 } ps && ps[0].ParameterType == typeof(XmlElement));
+        Assert.True(ctor is not null, "MetaReport has no (XmlElement, …) constructor.");
+        var requestPage = types.GetProperty("RequestPageDefinition",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        Assert.True(requestPage is not null, "MetaReport has no RequestPageDefinition property.");
+
+        var dir = TestScratch.Dir("al-runner-report-requestpage-savevalues-reader");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            Assert.Equal((true, false), ReadFlags(Report(dir, WithSourceTable)));
+            Assert.Equal((false, true), ReadFlags(Report(dir, WithDefaultFlags)));
+            // Stating neither reads (false, false) — BC's reader, not the AL default, decides
+            // an absent ShowFilter, and BC's own document for report 9810 carries no attribute.
+            Assert.Equal((false, false), ReadFlags(Report(dir, ChangePassword)));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+
+        (bool SaveValues, bool ShowFilter) ReadFlags(BcAppSymbolCache.ReportSymbol report)
+        {
+            var parsed = ctor!.Invoke(new object?[] { Emit(report), null, 0, 0, null });
+            var sourceObject = Get(Get(requestPage!.GetValue(parsed)!, "Properties"), "SourceObject");
+            return ((bool)Get(sourceObject, "SaveValues"), (bool)Get(sourceObject, "ShowFilter"));
+        }
+
+        static object Get(object o, string name)
+        {
+            var p = o.GetType().GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            Assert.True(p is not null, $"{o.GetType().Name} has no {name} property.");
+            var v = p!.GetValue(o);
+            Assert.NotNull(v);
+            return v!;
         }
     }
 

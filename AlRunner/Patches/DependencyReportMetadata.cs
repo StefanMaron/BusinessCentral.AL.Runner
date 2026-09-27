@@ -455,7 +455,15 @@ public static partial class RecordPatches
         // <SourceObject … SourceTable="<id>"/> (measured: the runner's own emit-captured document
         // for a source-compiled report). Without it NavForm.SourceTable stays null and the
         // request page's OnOpenPage NREs on its first `Rec` access — report 742.
-        // SaveValues / ShowFilter sit on this element too and are not written yet: #4667.
+        // #4667: SaveValues / ShowFilter are written exactly when the symbol file states them,
+        // with its value, as BC's emitter does for a source-compiled request page
+        // (<SourceObject SaveValues="1" ShowFilter="0" SourceTable="50100"/>, BC 28.1.49838.53910)
+        // and as DependencyPageMetadataXml's Flag does for a page. NavForm.InitializeFromMetadata
+        // reads SaveValues; it gates ApplySourceTableViewAndSavedValuesAsync's restore.
+        if (report.RequestPageSaveValues is { } saveValues)
+            w.WriteAttributeString("SaveValues", saveValues ? "1" : "0");
+        if (report.RequestPageShowFilter is { } showFilter)
+            w.WriteAttributeString("ShowFilter", showFilter ? "1" : "0");
         if (report.RequestPageSourceTableId > 0)
             w.WriteAttributeString("SourceTable",
                 report.RequestPageSourceTableId.ToString(System.Globalization.CultureInfo.InvariantCulture));
