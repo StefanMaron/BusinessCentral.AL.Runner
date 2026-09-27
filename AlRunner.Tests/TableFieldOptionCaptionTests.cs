@@ -167,9 +167,19 @@ public sealed class TableFieldOptionCaptionBuilderTests : IDisposable
 
         // OptionCaptionML is the member NCLMetaField.CreateFromMetaField reads; OptionString
         // stays the member names, so the two are provably different sources.
-        Assert.Equal(TableFieldOptionCaptionFixture.Captions, built.OptionCaptionML?.GetText(1033));
+        Assert.Equal(TableFieldOptionCaptionFixture.Captions, Enu(built.OptionCaptionML));
         Assert.Equal(TableFieldOptionCaptionFixture.Captions, PlainOptionCaption(built));
         Assert.Equal(TableFieldOptionCaptionFixture.Members, built.OptionString);
+    }
+
+    // Read off LanguageIds/Texts: GetText goes through WindowsLanguageHelper, which needs the
+    // engine's Linux rewrite and so fails or passes by test order.
+    private static string? Enu(Microsoft.Dynamics.Nav.Types.Metadata.MultiLanguage? ml)
+    {
+        if (ml == null) return null;
+        for (int i = 0; i < ml.LanguageIds.Count && i < ml.Texts.Count; i++)
+            if (ml.LanguageIds[i] == 1033) return ml.Texts[i];
+        return null;
     }
 
     // MetaField's plain OptionCaption getter is not public; BC's emitter states it beside the ML.
@@ -186,7 +196,7 @@ public sealed class TableFieldOptionCaptionBuilderTests : IDisposable
         // no OptionCaption; an ML built from the member names would be an invented declaration.
         var built = Build(null);
 
-        Assert.True(string.IsNullOrEmpty(built.OptionCaptionML?.GetText(1033)));
+        Assert.True(string.IsNullOrEmpty(Enu(built.OptionCaptionML)));
         Assert.Equal(TableFieldOptionCaptionFixture.Members, built.OptionString);
     }
 
