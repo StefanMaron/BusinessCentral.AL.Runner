@@ -170,6 +170,10 @@ internal sealed class RequestPageTestPage : MockITestPage
         if (_controlFields.TryGetValue(id, out var cached)) return cached;
 
         var page = PageInstance();
+        // Removed from the request page's MasterPage because its ApplicationArea is not enabled
+        // for the session (#4829): null makes BC's NavTestPageBase.GetField raise its own
+        // "is not found on the page." error.
+        if (page?.ControlRemovedByApplicationArea(id) == true) return null!;
         var expression = page?.TryGetSourceExpression(id);
         if (expression == null)
             throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
