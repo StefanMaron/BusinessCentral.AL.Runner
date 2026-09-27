@@ -14,8 +14,13 @@
 //
 // Trap: when every area is enabled (the session's area string is empty) this returns the page
 // untouched, so the empty-group pruning RemoveInList also does is not applied there — that is
-// the runner's behaviour from before #4750, deliberately kept for the common case. Actions and
-// request pages are not filtered yet (#4795).
+// the runner's behaviour from before #4750, deliberately kept for the common case.
+//
+// Actions (#4795): the same pass's action lists, through BC's own RemoveInList and
+// UpdateClonedActionsFromOriginates, with the application-area branches of RemoveAction and its
+// four RemoveXxxDefinition helpers (decompiled bc284). Corpus codeunit 67531
+// "PAA Area Action Tests". Request pages are not filtered: they are built outside GetMasterPage
+// (NavReportSync.GetRealMetaReport) and cached per report, not per session.
 using System.Reflection;
 using AlRunner.Infrastructure;
 using Microsoft.Dynamics.Nav.Runtime;
@@ -28,6 +33,10 @@ public static class ApplicationAreaControlRemoval
     private static int _gateOpen;
     private static int _gateClosed;
     private static MethodInfo? _removeInList;
+    private static MethodInfo? _removeInListActions;
+    private static Delegate? _actionPredicate;
+    private static Delegate? _actionChildren;
+    private static MethodInfo? _updateClonedActions;
     private static Delegate? _getControl;
     private static Delegate? _getPart;
     private static Delegate? _predicate;
@@ -58,7 +67,8 @@ public static class ApplicationAreaControlRemoval
 
         // RemoveInList, GetControl and GetPart are generic method definitions, so their
         // signatures cannot be pinned before MakeGenericMethod; FindMethod refuses a second one.
-        _removeInList = Required(provider, "RemoveInList", null).MakeGenericMethod(typeof(ControlBaseDefinition));
+        var removeInListDefinition = Required(provider, "RemoveInList", null);
+        _removeInList = removeInListDefinition.MakeGenericMethod(typeof(ControlBaseDefinition));
         var p = _removeInList.GetParameters();
         if (p.Length != 8) throw Shape("MetadataProvider.RemoveInList with 8 parameters");
         _builderCtor = p[0].ParameterType.GetConstructor(
@@ -71,6 +81,14 @@ public static class ApplicationAreaControlRemoval
             Required(provider, "GetControl", null).MakeGenericMethod(typeof(ControlBaseDefinition)));
         _getPart = Delegate.CreateDelegate(p[5].ParameterType,
             Required(provider, "GetPart", null).MakeGenericMethod(typeof(ControlBaseDefinition)));
+
+        _removeInListActions = removeInListDefinition.MakeGenericMethod(typeof(ActionBaseDefinition));
+        var pa = _removeInListActions.GetParameters();
+        _actionPredicate = Delegate.CreateDelegate(pa[4].ParameterType,
+            ((Func<object, object, object?, bool, bool>)RemoveWhenAreaNotEnabled).Method);
+        _actionChildren = Delegate.CreateDelegate(pa[5].ParameterType,
+            ((Func<ActionBaseDefinition, IList<ActionBaseDefinition>>)ActionChildren).Method);
+        _updateClonedActions = Required(provider, "UpdateClonedActionsFromOriginates", new[] { typeof(MasterPage) });
 
         var visibleType = (typeof(InfopartPageDefinition).GetProperty(nameof(InfopartPageDefinition.Visible))
             ?? throw Shape("InfopartPageDefinition.Visible")).PropertyType;
@@ -111,7 +129,9 @@ public static class ApplicationAreaControlRemoval
 
         var builder = _builderCtor!.Invoke(new object[] { false });
         var removed = new HashSet<int>();
+        var removedActions = new HashSet<int>();
         _removing = removed;
+        _removingActions = removedActions;
         void Remove(IList<ControlBaseDefinition>? controls, Delegate selector)
         {
             if (controls == null) return;
@@ -120,10 +140,25 @@ public static class ApplicationAreaControlRemoval
                 builder, false, page.RemovedControls, controls, _predicate, selector, relatedMasterPages, true,
             });
         }
+        void RemoveActions(IList<ActionBaseDefinition>? actions)
+        {
+            if (actions == null) return;
+            _removeInListActions!.Invoke(null, new object?[]
+            {
+                builder, false, page.RemovedControls, actions, _actionPredicate, _actionChildren, relatedMasterPages, true,
+            });
+        }
 
+        // BC's order: cloned actions first, then the command bar, content, per-control actions,
+        // and the remaining control lists.
+        page = (MasterPage)_updateClonedActions!.Invoke(null, new object[] { page })!;
         try
         {
+            RemoveActions(page.CommandBar?.Actions);
             Remove(page.ContentArea.Controls, _getControl!);
+            foreach (var placeholder in page.ContentArea.Controls.OfType<ControlContainerPlaceHolder>())
+                for (var i = placeholder.Controls.Count - 1; i >= 0; i--)
+                    RemoveActions(placeholder.Controls[i].Actions);
             Remove(page.PromptArea?.Controls, _getControl!);
             Remove(page.PromptOptionsArea?.Controls, _getControl!);
             Remove(page.UserControlHostNavigationArea?.Controls, _getControl!);
@@ -132,8 +167,10 @@ public static class ApplicationAreaControlRemoval
         finally
         {
             _removing = null;
+            _removingActions = null;
         }
         if (removed.Count > 0) RemovedIds.AddOrUpdate(page, removed);
+        if (removedActions.Count > 0) RemovedActionIds.AddOrUpdate(page, removedActions);
         return page;
     }
 
@@ -146,14 +183,28 @@ public static class ApplicationAreaControlRemoval
     public static bool WasRemoved(MasterPage? page, int controlId) =>
         page != null && RemovedIds.TryGetValue(page, out var ids) && ids.Contains(controlId);
 
+    /// <summary>
+    /// Whether this page's application-area pass removed the action. LiveNavTestPage.GetAction
+    /// answers null for it, which BC's NavTestPageBase.GetAction turns into its own
+    /// NavTestActionNotFoundException.
+    /// </summary>
+    public static bool WasActionRemoved(MasterPage? page, int actionId) =>
+        page != null && RemovedActionIds.TryGetValue(page, out var ids) && ids.Contains(actionId);
+
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<MasterPage, HashSet<int>> RemovedIds = new();
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<MasterPage, HashSet<int>> RemovedActionIds = new();
 
     [ThreadStatic] private static HashSet<int>? _removing;
+    [ThreadStatic] private static HashSet<int>? _removingActions;
+
+    private static IList<ActionBaseDefinition> ActionChildren(ActionBaseDefinition node) => node.Actions;
 
     private static bool RemoveWhenAreaNotEnabled(object builder, object element, object? related, bool applyApplicationArea)
     {
         var remove = AreaNotEnabled(element, applyApplicationArea);
-        if (remove && element is ControlBaseDefinition control) _removing?.Add(control.ID);
+        // ActionBaseDefinition derives from ControlBaseDefinition, so it is tested first.
+        if (remove && element is ActionBaseDefinition action) _removingActions?.Add(action.ID);
+        else if (remove && element is ControlBaseDefinition control) _removing?.Add(control.ID);
         return remove;
     }
 
@@ -169,6 +220,18 @@ public static class ApplicationAreaControlRemoval
                 return !_isApplicationAreaEnabled!(part.ApplicationArea, part.ResourceIdentifier);
             case InfopartSystemDefinition systemPart:
                 return !_isApplicationAreaEnabled!(systemPart.ApplicationArea, systemPart.ResourceIdentifier);
+            // MetadataProvider.RemoveAction dispatches to these four; each checks the area first.
+            case ActionDefinition action:
+                return !_isApplicationAreaEnabled!(action.ApplicationArea, action.ResourceIdentifier);
+            case CustomActionDefinition customAction:
+                return !_isApplicationAreaEnabled!(customAction.ApplicationArea, customAction.ResourceIdentifier);
+            case FileUploadActionDefinition fileUploadAction:
+                return !_isApplicationAreaEnabled!(fileUploadAction.ApplicationArea, fileUploadAction.ResourceIdentifier);
+            // RemoveActionRefDefinition: its own area, then its target's. A missing target is
+            // BC's structural removal, not an area one, and is left out with the license half.
+            case ActionRefDefinition actionRef:
+                return !_isApplicationAreaEnabled!(actionRef.ApplicationArea, actionRef.ResourceIdentifier)
+                    || (actionRef.TargetActionDefinition is { } target && AreaNotEnabled(target, applyApplicationArea));
             default:
                 return false;
         }
