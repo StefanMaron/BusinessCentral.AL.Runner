@@ -974,17 +974,35 @@ public class AppGroupObjectVisibilityTests
             procedure TouchesNothingShared()
             begin
             end;
+
+            // #4901: an inventory read names no object, so it lists the shared id from one declaration.
+            [Test]
+            procedure ListsTheAmbiguousIdInAllObj()
+            var
+                AllObj: Record AllObjWithCaption;
+            begin
+                if not AllObj.Get(AllObj."Object Type"::Table, 62740) then Error('MISSING: AllObjWithCaption does not list table 62740 in H');
+                if (AllObj."Object Name" <> 'Two F Table') and (AllObj."Object Name" <> 'Two G Table') then
+                    Error('WRONG: AllObjWithCaption name of table 62740 in H is %1', AllObj."Object Name");
+            end;
         }
         """);
 
-        var (output, exitCode) = RunCli($" --no-cache \"{root}\"");
+        // Microsoft's Test Runner app, whose reset subscriber reads AllObj before every test, loads
+        // whenever a package cache holds it (#4816); passed explicitly, so every box runs it (#4901).
+        var testTool = TestRunnerMgtEventsTests.RequireProvisioned();
+        var (output, exitCode) = RunCli(
+            $" --no-cache --package-cache \"{testTool.TestApps}\" --package-cache \"{testTool.PlatformApps}\" \"{root}\"");
         Assert.DoesNotContain("Unhandled exception", output);
-        Assert.True(output.Contains("3P/2F/0E across 5 tests"), output);
+        Assert.True(output.Contains("4P/2F/0E across 6 tests"), output);
+        Assert.Contains("PASS  Codeunit62750.TouchesNothingShared", output);
+        Assert.Contains("PASS  Codeunit62750.ListsTheAmbiguousIdInAllObj", output);
         // #4845: the Event Subscription read fails on the ambiguity itself, not on anything else.
         var esFailure = output[output.IndexOf("FAIL  \"Both H Tests\".ListsTheAmbiguousTablesEventSubscriptions", StringComparison.Ordinal)..];
         Assert.Contains($"depends on {appF} and {appG}, which each declare Table 62740", esFailure.Split('\n')[1]);
         Assert.Contains($"depends on {appF} and {appG}, which each declare table 62740", output);
         Assert.DoesNotContain("WRONG:", output);
+        Assert.DoesNotContain("MISSING:", output);
         Assert.Equal(1, exitCode);
     }
 
