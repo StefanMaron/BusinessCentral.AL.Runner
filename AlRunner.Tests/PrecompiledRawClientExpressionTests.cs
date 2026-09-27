@@ -184,6 +184,15 @@ public sealed class PrecompiledRawClientExpressionTests
         public void Set(NavValue _) { }
     }
 
+    private static RunnerPageInstance BuildPage(Dictionary<string, object?> expressions)
+    {
+        var ctor = typeof(RunnerPageInstance).GetConstructor(
+            BindingFlags.Instance | BindingFlags.NonPublic, binder: null,
+            types: new[] { typeof(object), typeof(object), typeof(NavRecord), typeof(int), typeof(System.Collections.IDictionary) },
+            modifiers: null) ?? throw new InvalidOperationException("RunnerPageInstance private ctor not found.");
+        return (RunnerPageInstance)ctor.Invoke(new object?[] { new object(), new object(), null, 4787, expressions });
+    }
+
     private static bool ResolveMemberOnPage(string owner, string member, out object? ordinal)
     {
         var expressions = new Dictionary<string, object?>
@@ -191,11 +200,7 @@ public sealed class PrecompiledRawClientExpressionTests
             // A precompiled page registers its global under the mangled key; the raw text names it.
             ["p4787p4787ShipToOptions"] = new FakeExpression("p4787p4787ShipToOptions", NavOption.Create(SparseEnum(), 1)),
         };
-        var ctor = typeof(RunnerPageInstance).GetConstructor(
-            BindingFlags.Instance | BindingFlags.NonPublic, binder: null,
-            types: new[] { typeof(object), typeof(object), typeof(NavRecord), typeof(int), typeof(System.Collections.IDictionary) },
-            modifiers: null) ?? throw new InvalidOperationException("RunnerPageInstance private ctor not found.");
-        var page = (RunnerPageInstance)ctor.Invoke(new object?[] { new object(), new object(), null, 4787, expressions });
+        var page = BuildPage(expressions);
 
         var method = typeof(RunnerPageInstance).GetMethod("ResolveMemberOrdinal", BindingFlags.Instance | BindingFlags.NonPublic)
                      ?? throw new InvalidOperationException("ResolveMemberOrdinal not found.");
@@ -210,6 +215,42 @@ public sealed class PrecompiledRawClientExpressionTests
     {
         Assert.True(ResolveMemberOnPage("ShipToOptions", "Print", out var ordinal));
         Assert.Equal(3, ordinal);
+    }
+
+    // ---- which resolver EvaluateProperty hands the parser -----------------------------------------
+
+    /// <summary>EvaluateProperty on a page with no source record, returning the refusal it raised.</summary>
+    private static string EvaluatePropertyRefusal(string raw, bool atOpen)
+    {
+        var page = BuildPage(new Dictionary<string, object?>());
+        var method = typeof(RunnerPageInstance).GetMethod("EvaluateProperty", BindingFlags.Instance | BindingFlags.NonPublic)
+                     ?? throw new InvalidOperationException("EvaluateProperty not found.");
+        var kind = Enum.Parse(method.GetParameters()[3].ParameterType, "Control");
+        var thrown = Assert.Throws<TargetInvocationException>(
+            () => method.Invoke(page, new object?[] { raw, "Visible", 1, kind, atOpen }));
+        return thrown.InnerException!.Message;
+    }
+
+    // A control's own Visible (atOpen) must NOT read the source record for `Rec.X`: real BC reads
+    // the field's type default there (corpus 60755), which is #2596's open question. Handing the
+    // live field resolver to this path would silently answer from the current row instead.
+    [Fact]
+    public void OwnVisible_RawFieldReference_RefusesCitingTheOpenQuestion()
+    {
+        var message = EvaluatePropertyRefusal("Rec.Flag", atOpen: true);
+        Assert.Contains("'Rec.Flag' reads the source record", message);
+        Assert.Contains("#2596", message);
+    }
+
+    // The live path DOES consult the field resolver for the same text: with no record on the page
+    // it finds no field and refuses for THAT reason, not the #2596 one. Evaluating it to a value
+    // needs a live NavRecord; corpus 67403's three arms measure that end to end.
+    [Fact]
+    public void LiveProperty_RawFieldReference_ReachesTheFieldResolver()
+    {
+        var message = EvaluatePropertyRefusal("Rec.Flag", atOpen: false);
+        Assert.Contains("'Rec.Flag' is not a source-table field the runner can read", message);
+        Assert.DoesNotContain("#2596", message);
     }
 
     [Fact]
