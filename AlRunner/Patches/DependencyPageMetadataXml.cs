@@ -55,6 +55,9 @@
 //        compile itself stays out of scope (RunnerPageInstance.cs already documents this),
 //        unchanged by this fix — a modal page whose handler drives a field it does not
 //        recognise still refuses loudly, exactly as it did before.
+//      A field control's ApplicationArea is the one field-level property BC's removal pass
+//      needs; it is read from the symbol file rather than emitted here (#4796,
+//      docs/dependency-page-properties.md#field-control-application-area).
 //
 //   Subpage PARTS (issue #2467) are the one exception, and reason 2 above is exactly why:
 //   unlike a field control, a part's binding is NOT read from IL at all.
@@ -884,9 +887,9 @@ public static partial class RecordPatches
         // "true"/"true"/"true"/"1" for the four flags. Zero disagreements over every part of
         // Business Foundation + System Application on 27.5.46862.53931, 28.1.49838.53910,
         // 28.1.49838.54308 and 28.4.53241.54407, plus a compiled probe for the no-area and
-        // group/FactBox arms: docs/dependency-page-properties.md#part-controls. Nothing at
-        // runtime reads a part's ApplicationArea here (MetadataProviderElementRemoval disables
-        // BC's filter), and each default is the value BC's reader already answers for absence.
+        // group/FactBox arms: docs/dependency-page-properties.md#part-controls. The
+        // ApplicationArea is read by BC's removal pass (ApplicationAreaControlRemoval), and each
+        // default is the value BC's reader already answers for absence.
         var applicationArea = part.ApplicationArea ?? hostPage.ApplicationArea;
         if (!string.IsNullOrEmpty(applicationArea)) w.WriteAttributeString("ApplicationArea", applicationArea);
         w.WriteAttributeString("Editable", part.EditableExpr ?? "true");

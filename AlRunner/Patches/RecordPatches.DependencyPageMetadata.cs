@@ -271,10 +271,39 @@ public static partial class RecordPatches
                 props.TryGetValue("Visible", out var visible);
                 props.TryGetValue("Editable", out var editable);
                 props.TryGetValue("Enabled", out var enabled);
+                props.TryGetValue("ApplicationArea", out var applicationArea);
                 yield return new BcAppSymbolCache.PageControlSymbol(
-                    id, name, source, visible, editable, enabled, origin.Sequence);
+                    id, name, source, visible, editable, enabled, origin.Sequence, applicationArea);
             }
         }
+    }
+
+    /// <summary>
+    /// The <c>ApplicationArea</c> BC's page metadata carries for each field control of a page
+    /// whose runtime metadata is the symbol-derived <see cref="TryBuildDependencyPageMetadata"/>
+    /// document — which has no field controls, so BC's application-area pass cannot see them
+    /// (#4796). Empty for a page the runner compiled itself: its metadata carries the real
+    /// controls and BC's own pass reads those.
+    ///
+    /// <para>A base-page control answers its own area, else the page's: zero disagreements with
+    /// BC's emitted <c>ControlDefinition.ApplicationArea</c> over every field control of System
+    /// Application and Business Foundation on 27.5.46862.53931 and 28.1.49838.53910
+    /// (docs/dependency-page-properties.md#field-control-application-area). A pageextension's
+    /// control answers its own; a <c>modify()</c> replaces either (#4761's rule).</para>
+    /// </summary>
+    internal static IEnumerable<(int Id, string? ApplicationArea)> DependencyFieldControlAreas(int pageId)
+    {
+        if (AlPageMetadataRegistry.TryGet(pageId, out _)) yield break;
+        var page = TryGetDependencyPageSymbol(pageId);
+        if (page == null) yield break;
+        foreach (var control in page.Controls ?? new List<BcAppSymbolCache.PageControlSymbol>())
+            yield return (control.Id,
+                DependencyPageExtensionModifiedProperty(page.Name, control.Name, "ApplicationArea", isAction: false)
+                ?? control.ApplicationArea ?? page.ApplicationArea);
+        foreach (var control in DependencyPageExtensionFieldControls(page.Name))
+            yield return (control.Id,
+                DependencyPageExtensionModifiedProperty(page.Name, control.Name, "ApplicationArea", isAction: false)
+                ?? control.ApplicationArea);
     }
 
     /// <summary>

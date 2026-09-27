@@ -176,8 +176,36 @@ serializer that does that — quoting on `;`, `=` or `"`, doubling `"` — so ev
 `EmitPageXml` goes through it rather than concatenating. Page 4312's "Agent Available Tools"
 `AboutText` is the instance in the bundles.
 
-Nothing at runtime reads a part's `ApplicationArea` here: BC's license/area filter over the page is
-switched off by `MetadataProviderElementRemoval`, so this is document equivalence only.
+A part's `ApplicationArea` is read at runtime: `ApplicationAreaControlRemoval` runs the
+application-area half of BC's removal pass over this document whenever the session has areas set
+(#4750).
+
+<a id="field-control-application-area"></a>
+### Field controls' `ApplicationArea` (#4796)
+
+The reconstructed document carries no field controls, so BC's removal pass cannot see them.
+`RecordPatches.DependencyFieldControlAreas` reads each field control's area from the symbol file
+instead, and `ApplicationAreaControlRemoval` adds the ones the session does not enable to the
+page's removed set, through BC's own `MetadataProvider.IsApplicationAreaEnabled`. The rule:
+
+| control | area |
+|---|---|
+| on the base page | its own, else the **page's**, else none |
+| added by a pageextension | its own, else none |
+| named by a pageextension `modify()` that states `ApplicationArea` | the modify's value |
+
+The base-page row was cross-tabulated against BC's emitted `ControlDefinition.ApplicationArea` for
+every field control of System Application and Business Foundation on `27.5.46862.53931` and
+`28.1.49838.53910`: **zero** disagreements, on both the stated arm and the page-inherited arm. Those
+apps have no control where neither states an area; BC's `NavSession.IsApplicationAreaEnabled`
+answers false for an empty area once any areas are set, and corpus codeunit 67534 pins that arm on
+a service tier ("Integration Field Mapping List"'s "User Defined"). The extension and `modify()`
+rows have no emitter measurement: on `28.4.53241.53955` every field control Base Application's
+pageextensions add states its own area, and one `modify()` across the platform apps states
+`ApplicationArea`.
+
+A group's `ApplicationArea` does not reach the fields inside it: `MetadataProvider.RemoveControl`
+tests a `ControlDefinition` only, and a group is a `ControlGroupDefinition`.
 
 ## What is deliberately not implemented, and why
 
