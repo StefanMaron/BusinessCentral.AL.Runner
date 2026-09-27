@@ -143,12 +143,15 @@ public static partial class RecordPatches
         lock (applied)
             if (applied.Contains(key)) return;
 
+        var inserted = 0;
         foreach (var row in AllObjInventoryFor(key, ordinals, visibleApps))
         {
             if (!done.TryAdd((row.TypeOrdinal, row.Id), 0))
                 continue;
             InsertAllObjRow(provider, allObjMetaTable, row.TypeOrdinal, row.Id, row.Name, row.OwningAppId);
+            inserted++;
         }
+        PerfTrace.Log($"AllObj.TopUp {inserted} row(s)");
         // After the inserts, so a throw above leaves the key unapplied and the next handout retries.
         lock (applied) applied.Add(key);
     }

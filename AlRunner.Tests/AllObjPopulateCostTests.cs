@@ -3,7 +3,7 @@
 // nothing; Test Runner's per-test AllObj lookups made that most of a warm corpus run. These
 // tests pin two things together, because a memo that is cheap and wrong is worse than the cost:
 //
-//   * the COST: many handouts in one run cost a handful of inventory walks, counted through the
+//   * the COST: many handouts in one run cost one inventory walk and one fill per store, counted through the
 //     AL_RUNNER_PERF lines the runner logs for each (a count, not a duration, so it cannot flake
 //     on a loaded box and cannot be satisfied by a fast machine);
 //   * the ANSWERS: every lookup the fixture makes asserts a concrete value, positive and
@@ -30,6 +30,7 @@ public class AllObjPopulateCostTests
     private const int Lookups = 25;
 
     private static readonly Regex HandoutLine = new(@"^PERF AllObj\.Handout$", RegexOptions.Multiline);
+    private static readonly Regex TopUpLine = new(@"^PERF AllObj\.TopUp (\d+) row\(s\)$", RegexOptions.Multiline);
     private static readonly Regex WalkLine = new(@"^PERF AllObj\.InventoryWalk (\d+) row\(s\)$", RegexOptions.Multiline);
 
     private static (string output, int exit) RunRunner(string cacheDir, string app)
@@ -201,16 +202,22 @@ public class AllObjPopulateCostTests
 
                 var handouts = HandoutLine.Matches(output).Count;
                 var walks = WalkLine.Matches(output).Count;
+                var topUps = TopUpLine.Matches(output).Count;
 
                 // [THEN] The loop reached the populate path on every lookup. Without this the
                 // walk bound below could hold because nothing was handed out at all.
                 Assert.True(handouts >= 2 * Lookups,
                     $"{pass} run: expected at least {2 * Lookups} AllObj handouts, got {handouts}:\n{output}");
 
-                // [THEN] And the inventory was walked a handful of times, not once per handout.
-                // Before #4851 this equalled the handout count.
-                Assert.True(walks >= 1 && walks <= 3,
-                    $"{pass} run: {walks} inventory walk(s) for {handouts} handout(s); expected 1..3:\n{output}");
+                // [THEN] The rows were built once for the run: one visibility, one inventory.
+                // Before #4851 every handout walked, so this equalled the handout count.
+                Assert.True(walks == 1,
+                    $"{pass} run: {walks} inventory walk(s) for {handouts} handout(s); expected 1:\n{output}");
+
+                // [THEN] And each store was filled once, on its first handout: one per test
+                // codeunit, whose boundary drops the store. The other handouts added nothing.
+                Assert.True(topUps == 2,
+                    $"{pass} run: {topUps} top-up(s) for {handouts} handout(s); expected 2, one per codeunit:\n{output}");
             }
         }
         finally
