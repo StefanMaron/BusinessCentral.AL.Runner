@@ -124,7 +124,7 @@ public static partial class RecordPatches
     private sealed record CodeunitMetaRow(int Id, string Name, int TableNo, bool SingleInstance, string Subtype,
         string? ALNamespace = null, string? InherentEntitlements = null, string? InherentPermissions = null,
         List<BcAppSymbolCache.CodeunitMethodSymbol>? AttributedMethods = null,
-        bool MethodsProvenComplete = false);
+        bool MethodsProvenComplete = false, string? EventSubscriberInstance = null);
 
     private static List<CodeunitMetaRow>? _codeunitMetaRows;
     // The .app term is RecordPatches' registration EPOCH, never _bcAppPaths.Count (#2888):
@@ -573,7 +573,8 @@ public static partial class RecordPatches
                     // Codeunit 1 is single-instance in BC whatever it declares — see
                     // CodeUnitDataProvider, which ORs `item.Key == 1` into the flag.
                     d.SingleInstance || d.Id == 1,
-                    d.Subtype ?? "Normal");
+                    d.Subtype ?? "Normal",
+                    EventSubscriberInstance: d.EventSubscriberInstance);
             }
 
             // 2. Codeunits declared by precompiled dependency .app packages.
@@ -593,7 +594,8 @@ public static partial class RecordPatches
                     symbol.InherentEntitlements,
                     symbol.InherentPermissions,
                     methods,
-                    complete);
+                    complete,
+                    symbol.EventSubscriberInstance);
             }
 
             // Never silent (#3540): the row's TableNo reads 0, which is also the truthful answer

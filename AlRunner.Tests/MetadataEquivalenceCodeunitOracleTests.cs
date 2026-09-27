@@ -118,9 +118,10 @@ public sealed class MetadataEquivalenceCodeunitOracleTests
     /// A projection that started echoing BC's document would be caught by the mask assertions
     /// below, not by an absence check.</para>
     ///
-    /// <para>The members BC's emitter alone derives — TestIsolation, EventSubscriberInstance,
-    /// MetadataVersion, the whole &lt;Methods&gt; subtree — are still asserted absent, and that is
-    /// still the BC-against-BC guard for them.</para>
+    /// <para>The members BC's emitter alone derives — TestIsolation, MetadataVersion — are still
+    /// asserted absent, and that is still the BC-against-BC guard for them. EventSubscriberInstance
+    /// left that set at #4605: it is the declared value else StaticAutomatic, asserted below on
+    /// a codeunit declaring Manual so an echo of the default cannot pass.</para>
     /// </summary>
     [SkippableFact]
     public void The_runner_side_states_only_what_the_runner_derives()
@@ -165,10 +166,16 @@ public sealed class MetadataEquivalenceCodeunitOracleTests
         Assert.Equal("16", root.GetAttribute("InherentEntitlements"));
         Assert.Equal("16", root.GetAttribute("InherentPermissions"));
 
+        // #4605: codeunit 26 declares no EventSubscriberInstance, so BC's default is stated;
+        // codeunit 3903 "Retention Policy Setup Impl." declares Manual in its symbol file.
+        Assert.Equal("StaticAutomatic", root.GetAttribute("EventSubscriberInstance"));
+        var manual = new XmlDocument();
+        manual.LoadXml(RecordPatches.TryBuildCodeunitMetadataEquivalenceXml(3903)!);
+        Assert.Equal("Manual", manual.DocumentElement!.GetAttribute("EventSubscriberInstance"));
+
         // Still absent: what only BC's emitter knows. If any of these appears, the runner side
         // has started carrying BC's own answers and the comparison has stopped measuring.
-        foreach (var emitterOnly in new[]
-                 { "TestIsolation", "EventSubscriberInstance", "MetadataVersion" })
+        foreach (var emitterOnly in new[] { "TestIsolation", "MetadataVersion" })
             Assert.False(root.HasAttribute(emitterOnly),
                 $"the runner's projection states '{emitterOnly}', which only BC's emitter " +
                 "derives. Stating it would manufacture agreement with the ground truth and " +

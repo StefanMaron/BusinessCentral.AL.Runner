@@ -94,7 +94,9 @@ public static partial class RecordPatches
                     // arrives through the XML object metadata the runner never loads for AL it
                     // compiles itself, so source is the only place it exists here.
                     // Null means "declares none", which the consumer reads as AL's default.
-                    TestHttpRequestPolicy: DeclaredIdentifierText(PropValue(props, "TestHttpRequestPolicy")));
+                    TestHttpRequestPolicy: DeclaredIdentifierText(PropValue(props, "TestHttpRequestPolicy")),
+                    // Null means "declares none"; the consumer applies BC's default (#4605).
+                    EventSubscriberInstance: DeclaredIdentifierText(PropValue(props, "EventSubscriberInstance")));
                 continue;
             }
             // All five *extension kinds AL declares here derive from one syntax base carrying
@@ -150,4 +152,5 @@ public static partial class RecordPatches
 internal record ParsedAlObjectDecl(
     string Kind, int Id, string Name,
     string? TableNo = null, bool SingleInstance = false, string? Subtype = null,
-    string? TestHttpRequestPolicy = null, string? BaseObjectName = null);
+    string? TestHttpRequestPolicy = null, string? BaseObjectName = null,
+    string? EventSubscriberInstance = null);
