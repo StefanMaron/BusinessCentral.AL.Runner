@@ -135,6 +135,13 @@ public sealed class DependencyResolver
         => _precompiledSidecarRoot != null
            && DependencyLoader.FindPrecompiledSidecar(m, _precompiledSidecarRoot) != null;
 
+    /// <summary>Whether <paramref name="dep"/> resolves from the scanned directories, without resolving it.</summary>
+    internal bool CanResolve(DependencyRef dep)
+    {
+        EnsureIndexed();
+        return TryFind(dep, out _, out _);
+    }
+
     internal static bool IsMicrosoftPlatformApp(string name, string publisher)
     {
         if (!string.Equals(publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) return false;

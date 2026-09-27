@@ -203,6 +203,7 @@ internal static class DependencyMetadataProducer
 
             var sw = System.Diagnostics.Stopwatch.StartNew();
             BcEmitOutput emitOutput;
+            BcCompiler.RecordPackageDeclaration(m);
             try
             {
                 using (BcCompiler.ScopeCurrentAppIdentity(m.AppId, m.Publisher, m.Version))

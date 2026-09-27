@@ -140,6 +140,37 @@ internal static partial class ProgramSupport
         return byKey.Values.ToList();
     }
 
+    /// <summary>
+    /// Microsoft's "Test Runner" app — the test tool a service tier runs every test through,
+    /// installed whether or not the test app declares it. Its codeunits 130450/130451 raise the
+    /// "Test Runner - Mgt" events whose subscribers (130453 "ALTestRunner Reset Environment")
+    /// reset areas, LastError and WorkDate between tests (#4816).
+    /// </summary>
+    internal static readonly DependencyRef InstalledTestTool = new(
+        new Guid("23de40a6-dfe8-4f80-80db-d70f83ce8caf"), "Test Runner", "Microsoft", new Version(0, 0, 0, 0),
+        Optional: true);
+
+    /// <summary>
+    /// <paramref name="roots"/> plus <see cref="InstalledTestTool"/> when the package caches hold
+    /// it and neither a dependency nor one of the bundle's own <paramref name="manifests"/> is
+    /// already that app. Absent from the caches, the run is what it was before (no root, so no
+    /// "not found" line). Both closure readers — the resolve in Program.cs and the AL-output
+    /// cache key — go through this, so they cannot disagree on what was loaded.
+    /// </summary>
+    internal static List<DependencyRef> WithInstalledTestTool(
+        List<DependencyRef> roots, IReadOnlyList<string> manifests, AlRunner.DependencyResolver resolver)
+    {
+        if (manifests.Any(m => AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(m)?.AppId
+                == InstalledTestTool.AppId))
+            return roots;
+        if (roots.Any(r => r.AppId == InstalledTestTool.AppId
+                || (string.Equals(r.Name, InstalledTestTool.Name, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(r.Publisher, InstalledTestTool.Publisher, StringComparison.OrdinalIgnoreCase))))
+            return roots;
+        if (!resolver.CanResolve(InstalledTestTool)) return roots;
+        return roots.Append(InstalledTestTool).ToList();
+    }
+
     internal static void SetBundleInfoFromAppJson(string appJsonPath)
     {
         // Remember (or clear) the bundle dir for NavApp.GetResource: the emitted test
@@ -804,7 +835,7 @@ internal static partial class ProgramSupport
                 .ToList();
             var resolver = new AlRunner.DependencyResolver(
                 bundlePkgDirs.Concat(packageCacheDirs).Distinct().ToList());
-            var resolvedDeps = resolver.Resolve(roots);
+            var resolvedDeps = resolver.Resolve(WithInstalledTestTool(roots, manifests, resolver));
             var ordered = resolvedDeps
                 // Id:Version alone is NOT a content identity: a sibling source app keeps
                 // its app.json version while its schema evolves during development, so a
