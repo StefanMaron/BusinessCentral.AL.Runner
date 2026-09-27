@@ -117,7 +117,11 @@ public static class AllProfileWritePatches
             if (fieldNo == _appIdFieldNo)
                 appId = Guid.TryParse(newKey[i]?.ToString(), out var g) ? g : Guid.Empty;
             else if (fieldNo == _profileIdFieldNo)
-                profileId = newKey[i]?.ToString() ?? string.Empty;
+                // As the field stores it: Profile ID is a Code field, so 'ALT AllProfile Row'
+                // compares, and is named in BC's message, as 'ALT ALLPROFILE ROW'.
+                profileId = newKey[i] == null ? string.Empty
+                    : NavValue.CreateNavValueFromObject(key.GetKeyFieldByIndex(i), newKey[i].ToString())?.ToString()
+                      ?? string.Empty;
         }
         if (appId == null || profileId == null)
             throw RecordPatches.AllProfileShapeGap(

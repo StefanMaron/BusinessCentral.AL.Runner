@@ -106,8 +106,9 @@ public class RenameWriteGuardTests
                 NavApp.GetCurrentModuleInfo(ThisModule);
                 AllProfile.Get(AllProfile.Scope::Tenant, ThisModule.Id(), 'IT4879 PROFILE');
 
-                // Not a key change, so BC's IsRecordKeyChange guard never reaches its refusal.
-                AllProfile.Rename(AllProfile.Scope::Tenant, ThisModule.Id(), 'IT4879 PROFILE');
+                // Not a key change, so BC's IsRecordKeyChange guard never reaches its refusal. Mixed
+                // case on purpose: Profile ID is a Code field, so this IS the stored key.
+                AllProfile.Rename(AllProfile.Scope::Tenant, ThisModule.Id(), 'IT4879 Profile');
 
                 Clear(AllProfile);
                 if not AllProfile.Get(AllProfile.Scope::Tenant, ThisModule.Id(), 'IT4879 PROFILE') then
