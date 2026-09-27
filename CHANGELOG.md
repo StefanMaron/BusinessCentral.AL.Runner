@@ -562,6 +562,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **allobj:** bound AllObjPopulateCostTests per visible-app key, now that Test Runner loads by default
 - **virtual-tables:** stop refilling AllObj at every test-codeunit boundary
 - **allobj:** answer Test Runner's per-test AllObj lookups without rebuilding the table
 - **ci:** record AppGroupObjectVisibilityTests and NoCacheLastWinsIntegrationTests collection weights
