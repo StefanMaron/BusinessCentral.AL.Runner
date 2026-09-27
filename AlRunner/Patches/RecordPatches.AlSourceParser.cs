@@ -503,6 +503,8 @@ public static partial class RecordPatches
 
         bool isAutoIncrement = PropIs(props, "AutoIncrement", "true");
         var caption = CaptionFrom(PropValue(props, "Caption"));
+        // #4857 — read on this path too, so both routes build the same option metadata.
+        var optionCaption = optionMembers != null ? CaptionFrom(PropValue(props, "OptionCaption")) : null;
 
         // ObsoleteState / ObsoleteReason (#1780): the Field virtual table (2000000041) reports
         // these via BC's own FieldDataProvider.GetFieldRecordBuffer, which reads them off the
@@ -561,7 +563,8 @@ public static partial class RecordPatches
             minValue, maxValue,
             Editable: editable,
             DataClassificationName: string.IsNullOrWhiteSpace(fieldDataClassification)
-                ? null : fieldDataClassification);
+                ? null : fieldDataClassification,
+            OptionCaption: optionCaption);
     }
 
     /// <summary>
@@ -1665,7 +1668,7 @@ internal record ParsedRelationArm(string TableName, string? FieldName, List<Pars
 /// reading is in place when it is.</param>
 /// <param name="EnumTypeName">The enum's name, paired with <see cref="EnumTypeId"/>; null when
 /// the field is not enum-typed.</param>
-internal record ParsedField(int FieldId, string FieldName, string TypeName, int Length, bool IsFlowField = false, ParsedCalcFormula? CalcFormula = null, string? OptionMembers = null, string? InitValueText = null, bool IsAutoIncrement = false, string? Caption = null, List<ParsedRelationArm>? RelationArms = null, bool RelationValidate = true, bool IsFlowFilter = false, string ObsoleteState = "No", string? ObsoleteReason = null, string? MinValue = null, string? MaxValue = null, bool? Editable = null, string? DataClassificationName = null, int EnumTypeId = 0, string? EnumTypeName = null);
+internal record ParsedField(int FieldId, string FieldName, string TypeName, int Length, bool IsFlowField = false, ParsedCalcFormula? CalcFormula = null, string? OptionMembers = null, string? InitValueText = null, bool IsAutoIncrement = false, string? Caption = null, List<ParsedRelationArm>? RelationArms = null, bool RelationValidate = true, bool IsFlowFilter = false, string ObsoleteState = "No", string? ObsoleteReason = null, string? MinValue = null, string? MaxValue = null, bool? Editable = null, string? DataClassificationName = null, int EnumTypeId = 0, string? EnumTypeName = null, string? OptionCaption = null);
 /// <param name="Name">The key's declared AL name (<c>Key1</c>, <c>PrimaryKey</c>, <c>UniqueID</c>),
 /// which is what BC states as <c>MetaKey.KeyName</c> and propagates into the live
 /// <c>NCLMetaKey</c>. NOT <c>MetaKey.Name</c>, which BC derives separately as the positional

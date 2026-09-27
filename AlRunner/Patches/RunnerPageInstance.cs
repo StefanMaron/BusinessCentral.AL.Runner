@@ -1897,7 +1897,7 @@ internal sealed partial class RunnerPageInstance
                 foreach (var d in defs as System.Collections.IEnumerable ?? Array.Empty<object>())
                     Console.Out.WriteLine($"[option-captions]   have {d?.GetType().Name} ID={ReadProperty(d!, "ID")} Name={ReadProperty(d!, "Name")}");
             }
-            return DependencyOptionCaptions(controlId) ?? TestPageOptionValue.EnumCaptions(boundOption);
+            return DependencyOptionCaptions(controlId) ?? TestPageOptionValue.BoundOptionCaptions(boundOption);
         }
         if (trace)
             Console.Out.WriteLine(

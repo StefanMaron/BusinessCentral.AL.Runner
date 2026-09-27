@@ -831,6 +831,22 @@ public static partial class RecordPatches
                 args[i] = f.OptionMembers;
                 continue;
             }
+            // #4857 — OptionCaption. NCLMetaField.CreateFromMetaField builds the option's
+            // NCLOptionMetadataWithCaptions from OptionCaptionML alone, and answers OptionString
+            // when it is empty — so FieldRef.OptionCaption, Format, Evaluate and a Rec-bound
+            // TestPage control all read member names unless the ML is passed. ENU only: the
+            // runner loads no translations (owner decision on #3568). Corpus 67600.
+            if (p.Name == "optionCaption" && !string.IsNullOrEmpty(f.OptionCaption))
+            {
+                args[i] = f.OptionCaption;
+                continue;
+            }
+            if (p.Name == "optionCaptionML" && !string.IsNullOrEmpty(f.OptionCaption)
+                && BuildEnuMultiLanguage(p.ParameterType, f.OptionCaption!) is { } optionCaptionMl)
+            {
+                args[i] = optionCaptionMl;
+                continue;
+            }
             if (p.Name == "initValue" && !string.IsNullOrEmpty(f.InitValueText))
             {
                 // Pass the raw AL InitValue expression text. BC stores it on

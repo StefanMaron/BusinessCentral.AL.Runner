@@ -258,6 +258,7 @@ internal static partial class BcAppSymbolCache
                     && !string.IsNullOrWhiteSpace(calcFormulaText))
                     calcFormulaTexts[fieldId] = calcFormulaText;
                 props.TryGetValue("OptionMembers", out var optionMembers);
+                props.TryGetValue("OptionCaption", out var optionCaption); // #4857
                 props.TryGetValue("InitValue", out var initValue);
                 var isAutoIncrement = props.TryGetValue("AutoIncrement", out var autoIncrement)
                     && (autoIncrement == "1" || autoIncrement.Equals("true", StringComparison.OrdinalIgnoreCase));
@@ -288,7 +289,8 @@ internal static partial class BcAppSymbolCache
                     Editable: editable,
                     DataClassificationName: string.IsNullOrWhiteSpace(fieldDataClassification)
                         ? null : fieldDataClassification.Trim(),
-                    EnumTypeId: enumTypeId, EnumTypeName: enumTypeName));
+                    EnumTypeId: enumTypeId, EnumTypeName: enumTypeName,
+                    OptionCaption: optionCaption));
             }
         }
         // #3545 — an extension field with no DataClassification takes the TABLEEXTENSION's,
