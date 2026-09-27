@@ -198,8 +198,9 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // first CI run (36294813041): 180.2s on both the BC 27.5 and 28.5 legs, rounded down.
             ["TestRunnerMgtEventsTests"] = 180,
             // #4851/#4859/#4888: each test spawns the runner cold, then warm on one cache. Absent from
-            // this table on main run 36344474690: 66.5s, the observed maximum, rounded down.
-            ["AllObjPopulateCostTests"] = 66,
+            // this table on main run 36344474690: 66.5s (BC 28.5) and 68.2s (BC 27.5); the observed
+            // maximum, rounded down.
+            ["AllObjPopulateCostTests"] = 68,
             // #4834/#4833: the dupX/dupY fixture, spawned cold, cold-then-warm and in server mode.
             // Absent from this table on PR #4839's first CI run (36301236496): 75.3s on the
             // BC 28.5 leg, one leg only, rounded down.
