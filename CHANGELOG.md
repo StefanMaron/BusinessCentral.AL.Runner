@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **server:** a later request's same-id table does not inherit an earlier request's field trigger or AutoIncrement
 - **page:** read ApplicationArea for a precompiled page's field controls
 - **coverage:** runner-compiled objects name their owning app in NavApplicationObjectBase.AppId
 - **test-exec:** refuse Codeunit.Run of a test codeunit from inside a running test
