@@ -713,7 +713,11 @@ internal static partial class BcAppSymbolCache
         string? RequestPageAboutTitle = null, string? RequestPageAboutText = null,
         // The request page's SaveValues / ShowFilter as the symbol file states them (#4667);
         // null when it states none, which BC's emitter writes as no attribute at all.
-        bool? RequestPageSaveValues = null, bool? RequestPageShowFilter = null);
+        bool? RequestPageSaveValues = null, bool? RequestPageShowFilter = null,
+        // The request page's own Caption and InsertAllowed as stated (#4811); null when not.
+        // Its Permissions is deliberately not read: BC's emitter writes nothing for it into
+        // the document (docs/report-metadata-from-bc.md#request-page-caption-insertallowed-permissions).
+        string? RequestPageCaption = null, bool? RequestPageInsertAllowed = null);
 
     /// <summary>
     /// One node of a precompiled report's request-page control tree (#4661): a field, a group,
@@ -2525,7 +2529,9 @@ internal static partial class BcAppSymbolCache
             ReadRequestPageProperty(report, "AboutTitle"),
             ReadRequestPageProperty(report, "AboutText"),
             ReadRequestPageBool(report, "SaveValues"),
-            ReadRequestPageBool(report, "ShowFilter"));
+            ReadRequestPageBool(report, "ShowFilter"),
+            ReadRequestPageProperty(report, "Caption"),
+            ReadRequestPageBool(report, "InsertAllowed"));
     }
 
     // "1"/"0" (or true/false) -> the value; absent -> null. An unreadable spelling also reads

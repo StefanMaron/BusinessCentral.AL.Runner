@@ -417,6 +417,11 @@ public static partial class RecordPatches
         // The REPORT's name. The symbol file states the literal "RequestOptionsPage" for all
         // 660 nodes, which is not what BC's emitter writes.
         w.WriteAttributeString("Name", report.Name);
+        // #4811: BC writes a stated request-page Caption as CaptionML="ENU=…" here, and nothing
+        // when none is stated (probe app, 27.5 and 28.1). CreatePage prefers the REPORT's
+        // caption, so this reaches the form only for a report stating none.
+        if (!string.IsNullOrEmpty(report.RequestPageCaption))
+            w.WriteAttributeString("CaptionML", EnuMultiLanguage(report.RequestPageCaption));
 
         w.WriteStartElement("Properties", MetaObjectsNamespace);
         w.WriteAttributeString(
@@ -460,6 +465,9 @@ public static partial class RecordPatches
         // (<SourceObject SaveValues="1" ShowFilter="0" SourceTable="50100"/>, BC 28.1.49838.53910)
         // and as DependencyPageMetadataXml's Flag does for a page. NavForm.InitializeFromMetadata
         // reads SaveValues; it gates ApplySourceTableViewAndSavedValuesAsync's restore.
+        // #4811: InsertAllowed likewise, stated value only, first in BC's attribute order.
+        if (report.RequestPageInsertAllowed is { } insertAllowed)
+            w.WriteAttributeString("InsertAllowed", insertAllowed ? "1" : "0");
         if (report.RequestPageSaveValues is { } saveValues)
             w.WriteAttributeString("SaveValues", saveValues ? "1" : "0");
         if (report.RequestPageShowFilter is { } showFilter)
