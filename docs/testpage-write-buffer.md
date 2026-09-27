@@ -166,6 +166,11 @@ its row; a new card row its key field's trigger saved runs `OnInsert` once.
 - `RunnerPageInstance`'s `UpdateRequest` handler refreshes the before-image on `RecordSaved`
   only when the sender is its own form. Before, a part's save refreshed the host's
   before-image, so the host's pending edit compared equal to it and was never written.
+- `New()` leaves the row the cursor was on, so `InsertEmptyRow` saves it through `FlushRow`,
+  the same pending-insert-then-pending-Modify step as every other row leave. Before, it flushed
+  only a pending insert, so an edit to an existing row, or a value typed after the page saved a
+  new row, was dropped when `New()` started the next one (issue #4632; corpus 60412's
+  `*WhenNewLeavesIt` arms, StefanMaron/BusinessCentral.AL.Language.Tests#466).
 
 `AlRunner.Tests/TestPagePageSavedRowTests.cs` has one AL test per change.
 

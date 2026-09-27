@@ -66,10 +66,13 @@ internal partial class LiveNavTestPage
         // — the NEXT draft line owes its own new-record step (#3029).
         _newRowLineRecordStarted = false;
 
-        // Starting a second row persists the first. A refused insert raises nothing: the error
-        // is recorded on the key control and the cursor stays on the refused row, so no second
-        // row is started (corpus 60045 "IPF Tests", DelayedList_DuplicateKey_New; #4624).
-        if (FlushPendingNewRow(RefusedInsert.Record)) return;
+        // Starting a second row leaves the first, so it is saved as every other row-leave saves
+        // it: a pending insert, or a pending Modify of an existing row (corpus 60412 "PSR Page
+        // Saved Row Tests", ExistingPartRowEdit_IsSavedWhenNewLeavesIt; #4632). A refused insert
+        // raises nothing: the error is recorded on the key control and the cursor stays on the
+        // refused row, so no second row is started (corpus 60045 "IPF Tests",
+        // DelayedList_DuplicateKey_New; #4624).
+        if (FlushRow(RefusedInsert.Record)) return;
 
         // The rows around the insert decide the new row's AutoSplitKey number, and the row
         // the cursor sits on is about to be wiped by NewRecord's ALInit — so the position is
