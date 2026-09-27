@@ -263,9 +263,6 @@ public static partial class RecordPatches
     /// decision below is a no-op otherwise.</summary>
     internal static bool AnyIdSharedByAppGroups => _appGroupsSharingAnId.Count > 0;
 
-    /// <summary>The executing app group's app id, or null outside a registered module.</summary>
-    internal static Guid? ExecutingAppGroup => CurrentAppGroupAppId();
-
     /// <summary>
     /// True when the executing app group must not list a subscription of
     /// <paramref name="subscriberAssembly"/> to (<paramref name="kind"/>, <paramref name="id"/>):

@@ -153,12 +153,12 @@ public static partial class EventSubscriberPatches
         }
     }
 
-    // #4845: rows of BC's registry the executing app group must not list, and the (group, row
-    // set) they were computed for. See docs/virtual-tables-allobj.md#shared-id-declarers.
+    // #4845: rows of BC's registry the executing app group must not list. _rowsScoped holds until
+    // the next SeedSubscriptionMetadata, which every app group's run and every test codeunit
+    // reaches first. See docs/virtual-tables-allobj.md#shared-id-declarers.
     private static readonly List<object> _rowsHiddenFromExecutingAppGroup = new();
     private static readonly Dictionary<object, (string Kind, int Id)> _publisherByRow =
         new(ReferenceEqualityComparer.Instance);
-    private static Guid? _rowsScopedFor;
     private static bool _rowsScoped;
 
     /// <summary>
@@ -181,8 +181,7 @@ public static partial class EventSubscriberPatches
 
     private static void ScopeRowsToExecutingAppGroup(IList list)
     {
-        var group = RecordPatches.ExecutingAppGroup;
-        if (_rowsScoped && _rowsScopedFor == group) return;
+        if (_rowsScoped) return;
 
         RestoreRowsHiddenFromExecutingAppGroup(list);
         var hide = new HashSet<object>(ReferenceEqualityComparer.Instance);
@@ -199,7 +198,7 @@ public static partial class EventSubscriberPatches
             _rowsHiddenFromExecutingAppGroup.Add(list[i]!);
             list.RemoveAt(i);
         }
-        (_rowsScoped, _rowsScopedFor) = (true, group);
+        _rowsScoped = true;
     }
 
     private static void RestoreRowsHiddenFromExecutingAppGroup(IList list)
