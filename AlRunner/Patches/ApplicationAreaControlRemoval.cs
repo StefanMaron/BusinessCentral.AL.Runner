@@ -197,6 +197,9 @@ public static class ApplicationAreaControlRemoval
                 // area. That is what reaches a precompiled page's action, which the runner's
                 // MasterPage does not carry (#4862).
                 removedActions.UnionWith(RejectedChanges(extensionAreas.ActionAreaChanges, IsEnabled));
+                // RemoveActionRefDefinition: its own area, then its target's. An actionref stating
+                // no area is judged by its target alone, as a base page's is (corpus 67531).
+                removedActions.UnionWith(RejectedActionRefs(extensionAreas.AddedActionRefs, removedActions, IsEnabled));
             }
         }
         finally
@@ -276,6 +279,15 @@ public static class ApplicationAreaControlRemoval
         RecordPatches.SourcePageExtensionAreaSet areas, Func<string?, bool> isAreaEnabled)
         => (Rejected(areas.AddedParts, areas.AreaChanges, isAreaEnabled),
             Rejected(areas.AddedActions, areas.ActionAreaChanges, isAreaEnabled));
+
+    internal static IEnumerable<int> RejectedActionRefs(
+        IEnumerable<(int Id, string? ApplicationArea, int TargetId)> actionRefs,
+        IReadOnlySet<int> removedActions, Func<string?, bool> isAreaEnabled)
+        => actionRefs
+            .Where(actionRef => (actionRef.ApplicationArea != null && !isAreaEnabled(actionRef.ApplicationArea))
+                || removedActions.Contains(actionRef.TargetId))
+            .Select(actionRef => actionRef.Id)
+            .ToList();
 
     private static IEnumerable<int> RejectedChanges(IReadOnlyDictionary<int, string> areaChanges, Func<string?, bool> isAreaEnabled)
         => areaChanges.Where(change => !isAreaEnabled(change.Value)).Select(change => change.Key);

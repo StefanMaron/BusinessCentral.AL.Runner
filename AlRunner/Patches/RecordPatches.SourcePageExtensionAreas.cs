@@ -22,19 +22,22 @@ public static partial class RecordPatches
     /// <c>InfopartPageDefinition</c> whose <c>Visible</c> is not literally false.</param>
     /// <param name="AddedActions">Every <c>ActionDefinition</c>, <c>CustomActionDefinition</c>
     /// and <c>FileUploadActionDefinition</c> under an <c>ActionAdd</c>, including inside an
-    /// added group — the four kinds <c>MetadataProvider.RemoveAction</c> tests by area, less
-    /// <c>ActionRefDefinition</c> (#4876).</param>
+    /// added group.</param>
     /// <param name="ActionAreaChanges"><c>ActionChange TargetID → ApplicationArea</c>.</param>
+    /// <param name="AddedActionRefs">Every <c>ActionRefDefinition</c> under an <c>ActionAdd</c>,
+    /// with its own area (null when it states none) and its target action's id.</param>
     internal sealed record SourcePageExtensionAreaSet(
         IReadOnlyList<(int Id, string? ApplicationArea)> AddedFieldControls,
         IReadOnlyDictionary<int, string> AreaChanges,
         IReadOnlyList<(int Id, string? ApplicationArea)> AddedParts,
         IReadOnlyList<(int Id, string? ApplicationArea)> AddedActions,
-        IReadOnlyDictionary<int, string> ActionAreaChanges);
+        IReadOnlyDictionary<int, string> ActionAreaChanges,
+        IReadOnlyList<(int Id, string? ApplicationArea, int TargetId)> AddedActionRefs);
 
     private static readonly SourcePageExtensionAreaSet NoSourcePageExtensionAreas =
         new(Array.Empty<(int, string?)>(), new Dictionary<int, string>(),
-            Array.Empty<(int, string?)>(), Array.Empty<(int, string?)>(), new Dictionary<int, string>());
+            Array.Empty<(int, string?)>(), Array.Empty<(int, string?)>(), new Dictionary<int, string>(),
+            Array.Empty<(int, string?, int)>());
 
     /// <summary>
     /// The areas the source-compiled pageextensions of <paramref name="pageId"/> contribute.
@@ -50,6 +53,7 @@ public static partial class RecordPatches
         var added = new List<(int, string?)>();
         var parts = new List<(int, string?)>();
         var actions = new List<(int, string?)>();
+        var actionRefs = new List<(int, string?, int)>();
         var changes = new Dictionary<int, string>();
         var changedBy = new Dictionary<int, int>();
         var actionChanges = new Dictionary<int, string>();
@@ -71,14 +75,14 @@ public static partial class RecordPatches
                 if (e.Name == "ControlAdd")
                     CollectAddedControlAreas(e, added, parts);
                 else if (e.Name == "ActionAdd")
-                    CollectAddedActionAreas(e, actions);
+                    CollectAddedActionAreas(e, actions, actionRefs);
                 else if (e.Name == "ControlChange" && e.HasAttribute("ApplicationArea"))
                     RecordAreaChange(pageId, "control", extId, e, changes, changedBy);
                 else if (e.Name == "ActionChange" && e.HasAttribute("ApplicationArea"))
                     RecordAreaChange(pageId, "action", extId, e, actionChanges, actionChangedBy);
             }
         }
-        return new SourcePageExtensionAreaSet(added, changes, parts, actions, actionChanges);
+        return new SourcePageExtensionAreaSet(added, changes, parts, actions, actionChanges, actionRefs);
     }
 
     private static void RecordAreaChange(int pageId, string kind, int extId, XmlElement change,
@@ -119,7 +123,7 @@ public static partial class RecordPatches
         }
     }
 
-    private static void CollectAddedActionAreas(XmlElement parent, List<(int, string?)> into)
+    private static void CollectAddedActionAreas(XmlElement parent, List<(int, string?)> into, List<(int, string?, int)> refs)
     {
         foreach (XmlNode node in parent.ChildNodes)
         {
@@ -131,8 +135,11 @@ public static partial class RecordPatches
                 case "FileUploadActionDefinition":
                     into.Add((ReadBcAttrInt(e, "ID"), AreaAttribute(e)));
                     break;
+                case "ActionRefDefinition":
+                    refs.Add((ReadBcAttrInt(e, "ID"), AreaAttribute(e), ReadBcAttrInt(e, "TargetID")));
+                    break;
             }
-            CollectAddedActionAreas(e, into);
+            CollectAddedActionAreas(e, into, refs);
         }
     }
 }
