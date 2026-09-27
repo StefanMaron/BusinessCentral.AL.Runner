@@ -852,6 +852,10 @@ public sealed class TestExecutor
             var onRunDone = false;
             TestResult? onRunFailure = null;
 
+            // #3575: captured before OnRun, restored after every test method and when the
+            // codeunit ends — see RestoreTestCodeunitApplicationAreas.
+            var areasAtCodeunitStart = CaptureTestCodeunitApplicationAreas();
+
             var loopSw = System.Diagnostics.Stopwatch.StartNew();
             var orderedMethods = OrderTestMethodsBySourceDeclaration(t);
 
@@ -969,6 +973,7 @@ public sealed class TestExecutor
                     var raw = onRunFailure != null
                         ? onRunFailure with { Method = m.Name }
                         : RunOne(t.Name, m, testInstance, displayName, baselineRestored);
+                    RestoreTestCodeunitApplicationAreas(areasAtCodeunitStart);
                     methodsMs += stageSw.ElapsedMilliseconds;
                     var result = Expectations != null
                         ? ApplyExpectation(raw, displayName, entry)
@@ -1014,6 +1019,7 @@ public sealed class TestExecutor
                 // InternalRemoveChild). Under Test isolation this disposes only the
                 // FIRST test's instance — every later one was already disposed above,
                 // right after its own test ran.
+                RestoreTestCodeunitApplicationAreas(areasAtCodeunitStart);
                 stageSw.Restart();
                 (instance as IDisposable)?.Dispose();
                 disposeMs += stageSw.ElapsedMilliseconds;
@@ -1582,6 +1588,27 @@ public sealed class TestExecutor
             c.GetParameters()[0].ParameterType.Name == "ITreeObject");
         if (ctor == null) return null;
         return ctor.Invoke(new object[] { BcRuntime.RootTreeStub! });
+    }
+
+    /// <summary>
+    /// The session's application areas as a test codeunit starts, before its OnRun. Null when
+    /// there is no skeleton session, which RestoreTestCodeunitApplicationAreas treats as nothing to restore.
+    /// </summary>
+    internal static string? CaptureTestCodeunitApplicationAreas() =>
+        (BcRuntime.SkeletonSession as Microsoft.Dynamics.Nav.Runtime.NavSession)?.ApplicationAreas;
+
+    /// <summary>
+    /// BC's <c>NavTestCodeunit.DoRunAsync</c> assigns the areas read before OnRun back to the
+    /// session after every test method and again when the codeunit ends (body identical on bc270
+    /// and bc284), so areas a test sets never reach the next test. Settled on real BC by corpus
+    /// codeunits 67550/67551 (<c>TestSessionApplicationAreaTestBoundary.al</c>). Independent of
+    /// the runner's --isolation mode, because BC's own restore is.
+    /// </summary>
+    internal static void RestoreTestCodeunitApplicationAreas(string? areasAtCodeunitStart)
+    {
+        if (areasAtCodeunitStart != null
+            && BcRuntime.SkeletonSession is Microsoft.Dynamics.Nav.Runtime.NavSession session)
+            session.ApplicationAreas = areasAtCodeunitStart;
     }
 
     /// <summary>
