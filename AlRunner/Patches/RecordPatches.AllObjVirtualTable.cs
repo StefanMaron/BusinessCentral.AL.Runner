@@ -132,24 +132,105 @@ public static partial class RecordPatches
         var done = _aovPopulatedByProvider.GetValue(provider, static _ => new ConcurrentDictionary<(int, int), byte>());
         var visibleApps = PinInventoryScope(provider, "AllObj (virtual table 2000000038)");
 
-        // #3117: built on FIRST ACTUAL INSERT, not on entry. PopulateAllObjVirtualTable runs on
-        // every AllObj data-access handout, but `done` makes all but the first few handouts
-        // insert nothing — and BuildObjectOwnerIndex walks every registered module assembly's
-        // TypeDef name index once per _emittedObjectTypePrefixes entry, Base Application
-        // included, so an eager build paid that price to produce no rows. Every figure below
-        // was measured with six prefixes; #4000 made it nine and added a source-owner fold.
-        //
-        // Measured on the al-language corpus (2665 tests, BC 28.1, warm compile cache), which
-        // is what settles the "cost is not the reason for a skip any more" claim #3107's PR
-        // body made with no number behind it:
-        //
-        //   eager (as merged in #3107): 74 calls, 74 builds, 1905.2 ms total
-        //   this shape:                 74 calls,  3 builds,   48.7 ms total
-        //
-        // 71 of the 74 handouts rebuilt a 10,349-entry dictionary and inserted zero rows. For
-        // scale, the rest of this method — EnumerateKnownAlObjects plus the inserts, which is
-        // work that actually has to happen — measured 1119.5 ms over the same 74 calls, so the
-        // redundant build was NOT the same order as the necessary work: it was 1.7x larger.
+        // #4851: every handout used to re-walk the whole inventory to insert nothing, and Test
+        // Runner's per-test lookups made that most of a warm corpus run. A provider is topped up
+        // once per inventory key; the rows for a key are built once per process.
+        // See docs/virtual-tables-allobj.md#populate-cost.
+        var key = new AllObjInventoryKey(CurrentAllObjInventoryStamp(), CurrentAppGroupAppId(), VisibilityKey(visibleApps));
+        System.Threading.Interlocked.Increment(ref AllObjHandoutCount);
+        PerfTrace.Log("AllObj.Handout");
+        var applied = _aovAppliedByProvider.GetValue(provider, static _ => new HashSet<AllObjInventoryKey>());
+        lock (applied)
+            if (applied.Contains(key)) return;
+
+        var inserted = 0;
+        foreach (var row in AllObjInventoryFor(key, allObjMetaTable, ordinals, visibleApps))
+        {
+            if (!done.TryAdd((row.TypeOrdinal, row.Id), 0))
+                continue;
+            InsertAllObjRow(provider, allObjMetaTable, row.Values);
+            inserted++;
+        }
+        PerfTrace.Log($"AllObj.TopUp {inserted} row(s)");
+        // After the inserts, so a throw above leaves the key unapplied and the next handout retries.
+        lock (applied) applied.Add(key);
+    }
+
+    /// <summary>What the rows of one AllObj top-up depend on: the inventory's inputs, the executing
+    /// app group (<see cref="InAppGroupScope{T}(string, int, T)"/>) and the visible-app set.</summary>
+    private readonly record struct AllObjInventoryKey(AllObjInventoryStamp Stamp, Guid? AppGroup, string Visibility);
+
+    /// <summary>
+    /// One term per input <see cref="EnumerateKnownAlObjects"/>, <see cref="IsHiddenFromCurrentAppGroup"/>
+    /// and <see cref="BuildObjectOwnerIndex"/> read. A reload bumps an epoch; within one bundle the
+    /// registries only grow, which a count sees.
+    /// <para>Trap: a new source read by any of those three needs a term here, or AllObj stops
+    /// listing what it adds until something else moves (#4851).</para>
+    /// </summary>
+    private readonly record struct AllObjInventoryStamp(
+        int BundleEpoch, int BcAppEpoch, int AppGroupGeneration, int ModuleAssemblies, int EnumVersion,
+        int Tables, int Pages, int PageExtensions, int Reports, int ReportExtensions, int Queries, int XmlPorts,
+        int ObjectDecls, int ObjectDeclOwners, int SourceOwners, int AmbiguousSource, int SourceDeclarers,
+        int ParsedByAppGroup, int AppGroupsSharingAnId);
+
+    private static AllObjInventoryStamp CurrentAllObjInventoryStamp() => new(
+        AlRunner.BcRuntime.CurrentBundleEpoch,
+        BcAppRegistrationEpoch,
+        System.Threading.Volatile.Read(ref _appGroupRegistrationGeneration),
+        AlRunner.BcRuntime.RegisteredModuleAssemblyCount,
+        AlEnumMetadataRegistry.Version,
+        _parsedTables.Count, _parsedPages.Count, _parsedPageExtensions.Count, _parsedReports.Count,
+        _parsedReportExtensions.Count, _parsedQueries.Count, _parsedXmlPorts.Count,
+        _parsedObjectDecls.Count, _parsedObjectDeclOwners.Count,
+        _sourceObjectOwners.Count, _ambiguousSourceObjects.Count, _sourceObjectDeclarers.Count,
+        _parsedByAppGroup.Count, _appGroupsSharingAnId.Count);
+
+    private static string VisibilityKey(HashSet<Guid>? visibleApps)
+        => visibleApps == null ? "*" : string.Join(",", visibleApps.OrderBy(g => g));
+
+    // Values is the finished row, shared by every store it is inserted into — see InsertAllObjRow.
+    private readonly record struct AllObjInventoryRow(int TypeOrdinal, int Id, Array Values);
+
+    // Rows per (app group, visibility) for ONE stamp; a new stamp drops them all. The metatable is
+    // kept beside them because the rows are laid out by its field indexes. A class holding it as
+    // `object`, never a tuple: a static whose signature names a value type with a Nav field loads
+    // CodeAnalysis before --bc-version is parsed (ProgramMustNotNameNavCaValueTypesTests).
+    private sealed class AllObjInventoryEntry
+    {
+        public required object MetaTable;
+        public required AllObjInventoryRow[] Rows;
+    }
+    private static readonly object _aovInventoryLock = new();
+    private static AllObjInventoryStamp? _aovInventoryStamp;
+    private static readonly Dictionary<(Guid? AppGroup, string Visibility), AllObjInventoryEntry> _aovInventory = new();
+    private static readonly ConditionalWeakTable<object, HashSet<AllObjInventoryKey>> _aovAppliedByProvider = new();
+
+    /// <summary>Full inventory walks and AllObj data-access handouts since process start — what
+    /// AllObjPopulateCostTests reads through the PERF lines they are logged with.</summary>
+    internal static int AllObjInventoryWalkCount;
+    internal static int AllObjHandoutCount;
+
+    /// <summary>Dropped with the parsed registries on a reload; the stamp would miss anyway.</summary>
+    internal static void ResetAllObjInventoryMemo()
+    {
+        lock (_aovInventoryLock)
+        {
+            _aovInventory.Clear();
+            _aovInventoryStamp = null;
+        }
+    }
+
+    private static AllObjInventoryRow[] AllObjInventoryFor(
+        AllObjInventoryKey key, NCLMetaTable allObjMetaTable, Dictionary<string, int> ordinals, HashSet<Guid>? visibleApps)
+    {
+        lock (_aovInventoryLock)
+            if (_aovInventoryStamp == key.Stamp && _aovInventory.TryGetValue((key.AppGroup, key.Visibility), out var hit)
+                && ReferenceEquals(hit.MetaTable, allObjMetaTable))
+                return hit.Rows;
+
+        var rows = new List<AllObjInventoryRow>();
+        var seen = new HashSet<(int, int)>();
+        // #3117: the owner index is built on the first row, never for an empty walk.
         Dictionary<(string Kind, int Id), Guid>? ownerIndex = null;
 
         foreach (var (kind, id, name, _, _) in EnumerateKnownAlObjects())
@@ -162,24 +243,37 @@ public static partial class RecordPatches
                 // set (e.g. a kind introduced after the artifact). Real BC would not
                 // list it either — skipping is faithful, inventing an ordinal is not.
                 continue;
-            if (!done.TryAdd((typeOrdinal, id), 0))
+            // First registry to list (type, id) names it, as the per-provider set did.
+            if (!seen.Add((typeOrdinal, id)))
                 continue;
             // The app that owns this object: stated by the declaring .app's own
             // SymbolReference.json when it came from one, or by the emitted assembly that
             // declares it when the runner compiled it here. Anything the index cannot answer
             // for stays Guid.Empty and therefore matches no Published Application row.
             //
-            // NOT a fallback to the current bundle. That is the conservative direction and it
-            // is deliberate: an object neither an emitted type name nor a parsed source
-            // declaration attributes, or one reached before its assembly was registered, is an
-            // object whose owner the runner
-            // does not know — and answering "the bundle" there would let the bundle own it,
-            // which is a permission granted on a guess. An unowned object simply fails the
-            // ownership check, which is what a wrong guess should look like.
+            // NOT a fallback to the current bundle: an object whose owner the runner does not
+            // know fails the ownership check, which is what a wrong guess should look like.
             ownerIndex ??= BuildObjectOwnerIndex();
             var owningAppId = ownerIndex.TryGetValue((normalized, id), out var owner) ? owner : Guid.Empty;
-            InsertAllObjRow(provider, allObjMetaTable, typeOrdinal, id, name, owningAppId);
+            rows.Add(new AllObjInventoryRow(typeOrdinal, id,
+                BuildAllObjRowValues(allObjMetaTable, typeOrdinal, id, name, owningAppId)));
         }
+
+        var built = rows.ToArray();
+        System.Threading.Interlocked.Increment(ref AllObjInventoryWalkCount);
+        PerfTrace.Log($"AllObj.InventoryWalk {built.Length} row(s)");
+        // Published only once the walk completed (#3143 throws out of it), and only under the
+        // stamp it was keyed on: a registry that grew during the walk re-walks next time.
+        lock (_aovInventoryLock)
+        {
+            if (_aovInventoryStamp != key.Stamp)
+            {
+                _aovInventory.Clear();
+                _aovInventoryStamp = key.Stamp;
+            }
+            _aovInventory[(key.AppGroup, key.Visibility)] = new AllObjInventoryEntry { MetaTable = allObjMetaTable, Rows = built };
+        }
+        return built;
     }
 
     /// <summary>
@@ -377,12 +471,11 @@ public static partial class RecordPatches
     }
 
     /// <summary>
-    /// Build one AllObj row and Insert it into the in-memory provider. Layout mirrors
-    /// AllObjDataProvider.GetValuesWithinRangeForKeyField: BC's own
-    /// GetSystemPopulatedVirtualRecordValues fills timestamp/SystemId/audit, we write the
+    /// Build one AllObj row. Layout mirrors AllObjDataProvider.GetValuesWithinRangeForKeyField:
+    /// BC's own GetSystemPopulatedVirtualRecordValues fills timestamp/SystemId/audit, we write the
     /// three columns we can answer truthfully, and BC's own GetDefaultNavValue fills the rest.
     /// </summary>
-    private static void InsertAllObjRow(object provider, NCLMetaTable allObjMetaTable, int typeOrdinal, int objectId, string objectName, Guid owningAppId)
+    private static Array BuildAllObjRowValues(NCLMetaTable allObjMetaTable, int typeOrdinal, int objectId, string objectName, Guid owningAppId)
     {
         var values = _aovSystemValues!.Invoke(allObjMetaTable, AllObjVirtualTableId, typeOrdinal, objectId, 0);
 
@@ -417,7 +510,18 @@ public static partial class RecordPatches
             };
             values.SetValue(v, idx);
         }
+        return values;
+    }
 
+    /// <summary>
+    /// Insert one built row into the in-memory provider. The array is copied, its NavValues are
+    /// not: they are immutable, and BC shares them the same way — AddSystemFieldValues puts one
+    /// static VirtualTimeStamp and NavDateTime.Default/NavGuid.Default into every virtual row, and
+    /// CloneValues restores install-baseline rows by the same shallow copy (#4851).
+    /// </summary>
+    private static void InsertAllObjRow(object provider, NCLMetaTable allObjMetaTable, Array builtValues)
+    {
+        var values = (Array)builtValues.Clone();
         var readOnly = _aovCtorReadOnlyBuffer!.Invoke(new object?[] { allObjMetaTable, values });
         var mutable = _aovCtorMutableBuffer!.Invoke(new object?[] { readOnly });
         try
@@ -576,9 +680,8 @@ public static partial class RecordPatches
         // number behind it. Measured since (before #4000 widened the scan), on the al-language
         // corpus: one build of this index is ~25 ms with Base Application loaded (10,349
         // entries), and it is NOT free. What
-        // makes it affordable is that the caller now builds it at most once per handout that
-        // actually inserts a row — see PopulateAllObjVirtualTable — rather than on every
-        // handout. The half of the original claim that does hold is the mechanism:
+        // makes it affordable is that the caller builds it at most once per inventory walk, and
+        // walks once per inventory key (#4851) — see AllObjInventoryFor. The half of the original claim that does hold is the mechanism:
         // TypeNamesWithPrefix reads the TypeDef table and resolves no CLR Type at all, where
         // EnumerateWithPrefix materialised a RuntimeType per match.
         foreach (var (asm, appId) in AlRunner.BcRuntime.RegisteredModuleAssemblies())

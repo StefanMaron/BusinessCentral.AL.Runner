@@ -156,6 +156,10 @@ public static partial class BcRuntime
             .Select(kv => (kv.Key, kv.Value.AppId))
             .ToList();
 
+    /// <summary>How many assemblies carry module info — a cheap term for a memo key over the
+    /// registered set (RecordPatches' AllObj inventory stamp, #4851).</summary>
+    internal static int RegisteredModuleAssemblyCount => _moduleInfoByAssembly.Count;
+
     /// <summary>
     /// Every AL module the runner has loaded — one entry per distinct app id, across the
     /// registered dependency assemblies and the bundle under test. This is the manifest data

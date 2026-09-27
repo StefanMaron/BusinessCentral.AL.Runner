@@ -370,6 +370,7 @@ public static partial class RecordPatches
         // through to the assembly scan that repopulates it.
         _tableExtensionTypeCache.Clear();
         _parsedTables.Clear();
+        ResetAllObjInventoryMemo();
         _parsedExtensionFields.Clear();
         // #3216 — cleared alongside _parsedExtensionFields, never separately: the two halves
         // describe one merge, and a keys map surviving a reload would attach the previous
