@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **app-groups:** events and Page Control Field rows of an id two app groups share stay each group's own
 - **test-runner:** raise Test Runner - Mgt's per-method events inside BC's test-codeunit scope
 - **page:** close an ordinary modal page with its handler's result so SaveValues round-trips
 - **report:** accept a precompiled report's multi-line DataItemTableView
