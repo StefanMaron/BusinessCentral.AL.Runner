@@ -14,6 +14,9 @@ namespace AlRunner.Tests;
 /// pins is the wiring: the failure carries BC's own exception type,
 /// <c>NavNCLTestCodeUnitNestedInvocationException</c>, which only BC's guard raises, and
 /// <c>CodeunitPatches.NavCodeunit_RunCodeunit</c> is still the path a plain codeunit takes.
+/// It also pins that a modal page opened after the refused run still reaches its handler:
+/// BC's refused <c>DoRunAsync</c> releases the test page client, which
+/// <c>RunnerModalDispatch.EnsureTestClientSession</c> rebuilds as BC's own getter does.
 ///
 /// No asserterror and no Library Assert: each outer test lets the error reach the runner, so
 /// the runner's FAIL line (exception type + message) is the assertion surface.
@@ -97,9 +100,17 @@ public class NestedTestCodeunitRunTests
             end;
         }
 
+        page 64830 "NTC4827 Dialog"
+        {
+            PageType = StandardDialog;
+        }
+
         codeunit 64829 "NTC4827 Outer Tests"
         {
             Subtype = Test;
+
+            var
+                DialogHandled: Boolean;
 
             [Test]
             procedure StaticRun_Unguarded()
@@ -115,6 +126,24 @@ public class NestedTestCodeunitRunTests
             begin
                 Ok := Codeunit.Run(Codeunit::"NTC4827 Inner Tests");
                 Error('NTC4827 guarded nested run returned %1', Ok);
+            end;
+
+            // BC's NavTestCodeunit.DoRunAsync releases the test page client even when
+            // EnterTestCodeunit refuses the run; the next modal page must still reach its handler.
+            [Test]
+            [HandlerFunctions('DialogHandler')]
+            procedure ModalPage_AfterRefusedNestedRun_ReachesItsHandler()
+            begin
+                asserterror Codeunit.Run(Codeunit::"NTC4827 Inner Tests");
+                Page.RunModal(Page::"NTC4827 Dialog");
+                if not DialogHandled then
+                    Error('NTC4827 modal handler did not run after the refused nested run');
+            end;
+
+            [ModalPageHandler]
+            procedure DialogHandler(var Dialog: TestPage "NTC4827 Dialog")
+            begin
+                DialogHandled := true;
             end;
 
             [Test]
@@ -140,7 +169,8 @@ public class NestedTestCodeunitRunTests
 
         Assert.Null(FailureDetail(output, "PlainRun_Succeeds"));
         Assert.Null(FailureDetail(output, "InnerTest_Runs"));
-        Assert.Contains("Tests: 4", output);
+        Assert.Null(FailureDetail(output, "ModalPage_AfterRefusedNestedRun_ReachesItsHandler"));
+        Assert.Contains("Tests: 5", output);
         Assert.DoesNotContain("NTC4827 unguarded nested run was not refused", output);
         Assert.DoesNotContain("NTC4827 guarded nested run returned", output);
     }

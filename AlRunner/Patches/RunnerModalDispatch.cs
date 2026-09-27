@@ -51,6 +51,7 @@ public static class RunnerModalDispatch
                 "the runner was asked to run a modal page with no test-execution context or no "
                 + "request");
 
+        EnsureTestClientSession(testExecution);
         var handle = FormHandleOf(runRequest);
         var type = testExecution.GetType();
 
@@ -126,6 +127,28 @@ public static class RunnerModalDispatch
     /// raises its own NavTestPageInvokedWithoutHandlerException. None of that logic is
     /// duplicated here.
     /// </summary>
+    /// <summary>
+    /// The side effect of the <c>get_ServiceConnection</c> call the Cecil rewrite removes from
+    /// this call site: BC's <c>NavTestExecution.ServiceConnection</c> reads <c>ClientSession</c>,
+    /// which re-creates <c>testClientSession</c> when it is null. <c>ReleaseTestPageClient</c>
+    /// nulls it whenever a <c>NavTestCodeunit.DoRunAsync</c> ends, including a nested run
+    /// refused by <c>EnterTestCodeunit</c> (#4827), and the pushed dialog delegate then reads the
+    /// field directly. Observably equivalent: the runner's session is stateless, so a new one
+    /// answers exactly as the released one did.
+    /// </summary>
+    internal static void EnsureTestClientSession(object testExecution)
+    {
+        var field = testExecution.GetType().GetField("testClientSession",
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException(
+                "NavTestExecution.testClientSession not found — Ncl shape changed; do not commit");
+        if (field.GetValue(testExecution) != null) return;
+        var session = BcRuntime.SkeletonSession
+            ?? throw new InvalidOperationException(
+                "no skeleton session to rebuild NavTestExecution.testClientSession on");
+        AlRunner.Infrastructure.FieldPoke.SetInstance(field, testExecution, new RunnerTestClientSession(session));
+    }
+
     public static void FormRun(object testExecution, object runRequest)
     {
         if (testExecution == null || runRequest == null)
@@ -134,6 +157,7 @@ public static class RunnerModalDispatch
                 "testpage-page-dispatch-context",
                 "the runner was asked to run a page with no test-execution context or no request");
 
+        EnsureTestClientSession(testExecution);
         var handle = FormHandleOf(runRequest);
         var type = testExecution.GetType();
         var form = RegisteredForm(handle);
