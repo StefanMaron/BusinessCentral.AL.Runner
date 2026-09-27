@@ -349,3 +349,40 @@ entry of those four caches, process-wide and per app group. Every null rather th
 `BuildNCLMetaQuery` reads parsed source only. Proven by `bc-tests.yml`'s *Run
 precompiled-dep-cache-null as ordered bundles* step and
 `AlRunner.Tests/AppRegistrationEvictsCachedNullsTests.cs`.
+
+<a id="populate-cost"></a>
+
+## What a handout costs (#4851)
+
+AllObj is populated into a runner store on every data-access handout, and a handout happens
+each time AL opens a fresh `Record AllObj`. Microsoft's Test Runner does that several times per
+test, so the corpus hands AllObj out thousands of times per run. Until #4851 each handout walked
+the whole inventory — Base and System Application included — only to insert nothing, and that
+walk was most of a warm corpus run once Test Runner loaded.
+
+Two memos now carry it, both in `RecordPatches.AllObjVirtualTable.cs`:
+
+- **The rows**, per `AllObjInventoryKey` — the inventory stamp, the executing app group and the
+  visible-app set. The rows are built once per key, as finished value arrays. A store gets a
+  shallow copy of each array. The NavValues are immutable and shared, as BC's own
+  `VirtualDataProvider.AddSystemFieldValues` shares its system values across virtual rows.
+- **The top-up**, per store and key: a store that has already taken a key's rows is handed out
+  without touching the inventory again.
+
+The **stamp** (`AllObjInventoryStamp`) has one term per input the inventory, the visibility
+filter and the owner index read: the bundle and `.app` registration epochs, the app-group
+generation, the module and enum registries, and the size of each parsed-object registry. A
+reload moves an epoch. Within one bundle the registries only grow, which a count sees.
+`ResetForReload` also drops the rows outright. **Trap:** a new source read by
+`EnumerateKnownAlObjects`, `IsHiddenFromCurrentAppGroup` or `BuildObjectOwnerIndex` needs a term
+in the stamp. Without one, AllObj stops listing what that source adds until something else
+changes.
+
+What stays per store is the insert itself. A test-codeunit boundary drops every store
+(`ResetPerTestState`), so each codeunit's first handout copies the rows in again.
+
+`AlRunner.Tests/AllObjPopulateCostTests.cs` pins it, through the `AL_RUNNER_PERF=1` lines
+`AllObj.Handout`, `AllObj.InventoryWalk` and `AllObj.TopUp`:
+
+- one walk and one top-up per store across many handouts, on a cold and a warm run;
+- a `--server` second request that renames objects answers with the new names.
