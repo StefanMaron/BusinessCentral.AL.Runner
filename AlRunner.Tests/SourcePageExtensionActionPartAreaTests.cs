@@ -82,6 +82,10 @@ public sealed class SourcePageExtensionActionPartAreaTests : IDisposable
                 {
                     part(ServicePart; "SPAA Part") { ApplicationArea = Service; }
                     part(HiddenPart; "SPAA Part") { ApplicationArea = Service; Visible = false; }
+                    group(ExtPartGroup)
+                    {
+                        part(GroupedPart; "SPAA Part") { ApplicationArea = Basic; }
+                    }
                 }
                 addlast(FactBoxes)
                 {
@@ -174,7 +178,8 @@ public sealed class SourcePageExtensionActionPartAreaTests : IDisposable
     public void AddedParts_AndSystemParts_AnswerTheirOwnArea_ALiterallyHiddenPartIsNotAreaTested()
     {
         var parts = EmitAndRead().AddedParts.OrderBy(p => p.Id).ToArray();
-        Assert.Equal(new[] { (Id("ServicePart"), (string?)"#Service"), (Id("ExtNotes"), (string?)"#Suite") }
+        Assert.Equal(new[] { (Id("ServicePart"), (string?)"#Service"), (Id("ExtNotes"), (string?)"#Suite"),
+                (Id("GroupedPart"), (string?)"#Basic") }
             .OrderBy(p => p.Item1).ToArray(), parts);
     }
 
@@ -193,6 +198,46 @@ public sealed class SourcePageExtensionActionPartAreaTests : IDisposable
         var removedActions = new HashSet<int> { Id("ExtServiceAct") };
         var refs = ApplicationAreaControlRemoval.RejectedActionRefs(areas.AddedActionRefs, removedActions, BasicSuiteSession);
         Assert.Equal(new[] { Id("ExtServiceRef") }, refs.ToArray());
+    }
+
+    // #4876: the part itself, read through BC's own delta parser, not just its area.
+    [SkippableFact]
+    public void AddedPart_IsResolvedFromTheDelta_InsideAnAddedGroupToo_WithItsHostedPageAndOwnVisible()
+    {
+        EmitAndRead();
+        var part = RecordPatches.SourcePageExtensionPart(PageId, Id("ServicePart"));
+        Assert.NotNull(part);
+        Assert.Equal(Id("ServicePart"), part!.ID);
+        Assert.Equal(94873, part.PagePartID);
+        Assert.Equal("#Service", part.ApplicationArea);
+
+        var grouped = RecordPatches.SourcePageExtensionPart(PageId, Id("GroupedPart"));
+        Assert.NotNull(grouped);
+        Assert.Equal(94873, grouped!.PagePartID);
+
+        var hidden = RecordPatches.SourcePageExtensionPart(PageId, Id("HiddenPart"));
+        Assert.NotNull(hidden);
+        Assert.Equal("false", hidden!.Visible?.ToString(), ignoreCase: true);
+    }
+
+    [SkippableFact]
+    public void AControlIdNoExtensionAddsAsAPart_ResolvesToNull()
+    {
+        EmitAndRead();
+        Assert.Null(RecordPatches.SourcePageExtensionPart(PageId, Id("ExtServiceAct")));
+        Assert.Null(RecordPatches.SourcePageExtensionPart(PageId, 1));
+    }
+
+    [SkippableFact]
+    public void AddedPart_WhenTheExtensionsDeltaDocumentIsMissing_Refuses()
+    {
+        EmitAndRead();
+        var partId = Id("ServicePart");
+        AlObjectMetadataRegistry.Clear();
+
+        var ex = Assert.Throws<RunnerOutOfScopeException>(() => RecordPatches.SourcePageExtensionPart(PageId, partId));
+        Assert.Contains($"pageextension {ExtensionId}", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("delta", ex.Message, StringComparison.Ordinal);
     }
 
     [SkippableFact]

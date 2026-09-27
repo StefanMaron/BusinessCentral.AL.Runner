@@ -1954,7 +1954,8 @@ internal sealed partial class RunnerPageInstance
             if (definition is Microsoft.Dynamics.Nav.Types.Metadata.InfopartPageDefinition part
                 && part.ID == controlId)
                 return part;
-        return null;
+        // The MasterPage carries no pageextension delta, on any host page (#4876).
+        return RecordPatches.SourcePageExtensionPart(_pageId, controlId);
     }
 
     /// <summary>

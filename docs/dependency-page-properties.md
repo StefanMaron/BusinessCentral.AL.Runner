@@ -229,8 +229,13 @@ as in `MetadataProvider.RemoveControl`. A pageextension cannot `modify()` a part
 part's `ApplicationArea` (the compiler refuses it with AL0246), so no change applies to parts. A `modify()`'s verdict needs no base area, which is what
 reaches a precompiled page's action: the runner's MasterPage for such a page carries no actions of
 its own (#4862). Corpus codeunits 67538 (a page compiled in the same app) and 67539 ("Inventory
-Posting Groups", precompiled). A TestPage still cannot reach a part a pageextension adds (#4876),
-nor invoke an extension actionref whose target the same extension adds (#4878).
+Posting Groups", precompiled). A TestPage reaches a part a pageextension adds (#4876):
+`RunnerPageInstance.TryGetPartDefinition` falls back to `RecordPatches.SourcePageExtensionPart`,
+which parses the extension's delta document with BC's own
+`NavAppObjectMetadataRuntimeDeltas.FromXml` and walks its `ControlAddDelta`s as
+`CachingDatabaseDeltaRetrieverHelper.CollectAddedControls` does. Such a part is not yet opened
+with its host (#4887), and invoking an extension actionref whose target the same extension adds
+still refuses (#4878).
 
 ## What is deliberately not implemented, and why
 
