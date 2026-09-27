@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **testpage:** an extension's actionref invokes the action the same extension adds
 - **records:** run the All Profile rename guard where an AL Rename actually goes
 - **tests:** plain dotnet test of AlRunner.Tests no longer crashes discovery on a missing Nav.Types
 - **enum:** include extensions of existing IDs in dependency sidecars
