@@ -82,40 +82,12 @@ internal sealed class TestRunnerMgtEvents
     /// <summary>True when the bound OnBeforeTestMethodRun carries <c>var Skip</c> (Test Runner 28.1+).</summary>
     internal bool BeforeTestMethodRunHasSkip => _onBeforeTestMethodRun.GetParameters().Length == 6;
 
-    private NavDate? _workDateAtInitialize;
-
     /// <summary>
     /// <c>RunTests</c>' <c>ALTestRunnerResetEnvironment.Initialize()</c>: 130453 records the
-    /// WorkDate its OnAfterCodeunitRun subscriber puts back. Called as each test codeunit starts,
-    /// after the runner's codeunit-boundary reset.
+    /// WorkDate its OnAfterCodeunitRun subscriber puts back. Called once per run, before the
+    /// first test codeunit.
     /// </summary>
-    internal void InitializeResetEnvironment()
-    {
-        _workDateAtInitialize = Session()?.WorkDate;
-        InvokeInitialize();
-    }
-
-    /// <summary>
-    /// The runner's per-test reset (<c>--isolation test</c>) drops SingleInstance state, which BC
-    /// never does, so 130453 would forget the WorkDate Initialize recorded. Re-run Initialize
-    /// with the session's WorkDate set, for that call only, to the value first recorded — the
-    /// state 130453 would still hold on BC.
-    /// </summary>
-    internal void ReinitializeAfterReset()
-    {
-        var session = Session();
-        if (session == null || _workDateAtInitialize is not { } recorded)
-        {
-            InvokeInitialize();
-            return;
-        }
-        var current = session.WorkDate;
-        session.WorkDate = recorded;
-        try { InvokeInitialize(); }
-        finally { session.WorkDate = current; }
-    }
-
-    private static NavSession? Session() => BcRuntime.SkeletonSession as NavSession;
+    internal void InitializeResetEnvironment() => InvokeInitialize();
 
     private static void InvokeInitialize()
     {

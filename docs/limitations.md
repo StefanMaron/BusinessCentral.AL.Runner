@@ -222,7 +222,7 @@ Microsoft's own subscribers run as shipped:
 
 | event | when |
 |---|---|
-| `OnBeforeCodeunitRun` | before a test codeunit's `OnRun` or first executed test; 130453's `Initialize` is called first |
+| `OnBeforeCodeunitRun` | before a test codeunit's `OnRun` or first executed test; before the first codeunit of the run, 130453's `Initialize` is called |
 | `OnBeforeTestMethodRun` | before each test method, after the database reset and outside the test method; from Test Runner 28.1, where the event has `var Skip`, a subscriber setting `Skip` makes the runner report the test `SKIP` without running it (27.x and 28.0 publish it without `Skip`) |
 | `OnAfterTestMethodRun` | after each test method that ran, with `IsSuccess` |
 | `OnAfterCodeunitRun` | after the codeunit's last test |
@@ -241,9 +241,10 @@ as the test tool; the runner loads only what the suite's dependency closure name
 does not declare it keeps the areas its `OnRun` set, and `WorkDate` and `LastError` carry over
 between tests. Corpus codeunit 67552 is that case; loading the app by default is #4816.
 
-Under `--isolation test` the runner resets SingleInstance codeunits before every test, which BC
-does not do; it calls 130453's `Initialize` again after each reset with the `WorkDate` recorded
-when the codeunit started, so `OnAfterCodeunitRun` still puts back the codeunit-start value.
+130453's `Initialize` is called once per run, before the first test codeunit, as `RunTests` does.
+130453 is `SingleInstance`, and SingleInstance state survives every codeunit and test boundary
+under every `--isolation` mode (#4781), so the WorkDate it recorded is what `OnAfterCodeunitRun`
+puts back after every codeunit.
 Pinned by `AlRunner.Tests/TestRunnerMgtEventsTests.cs`.
 
 #### A correction worth recording (#2160)

@@ -765,6 +765,7 @@ public sealed class TestExecutor
         var perTestInstance = Isolation == TestIsolation.Test;
         // #4813: Microsoft's "Test Runner - Mgt" events, when the Test Runner app is loaded.
         _testRunnerEvents = TestRunnerMgtEvents.Resolve();
+        var resetEnvironmentInitialized = false;
         for (int ti = 0; ti < types.Length; ti++)
         {
             var t = types[ti];
@@ -964,13 +965,17 @@ public sealed class TestExecutor
                     stageSw.Restart();
                     if (_testRunnerEvents != null && !codeunitEventsRaised)
                     {
-                        // 130454.RunTests: Initialize once, then OnBeforeCodeunitRun before
-                        // Codeunit.Run of the test codeunit (#4813).
+                        // 130454.RunTests: Initialize once per run, then OnBeforeCodeunitRun before
+                        // Codeunit.Run of each test codeunit (#4813). 130453 is SingleInstance and
+                        // keeps what Initialize recorded across every boundary (#4781), so never
+                        // call Initialize again mid-run: it would record a WorkDate a test changed.
                         codeunitEventsRaised = true;
+                        var initialize = !resetEnvironmentInitialized;
+                        resetEnvironmentInitialized = true;
                         var cuEventFailure = RaiseCodeunitEvent(t.Name, displayName, "OnBeforeCodeunitRun",
                             () =>
                             {
-                                _testRunnerEvents.InitializeResetEnvironment();
+                                if (initialize) _testRunnerEvents.InitializeResetEnvironment();
                                 _testRunnerEvents.RaiseBeforeCodeunitRun(codeunitObjectId, displayName);
                             });
                         if (cuEventFailure != null)
@@ -987,7 +992,6 @@ public sealed class TestExecutor
                         if (Isolation == TestIsolation.Test)
                         {
                             AlRunner.Patches.RecordPatches.RestoreInstallBaseline();
-                            _testRunnerEvents?.ReinitializeAfterReset();
                             baselineRestored = true;
                         }
                         onRunDone = true;
@@ -1820,7 +1824,6 @@ public sealed class TestExecutor
         if (Isolation == TestIsolation.Test && !baselineAlreadyRestored)
         {
             AlRunner.Patches.RecordPatches.RestoreInstallBaseline();
-            _testRunnerEvents?.ReinitializeAfterReset();
         }
         // #4813: BC raises the test runner's OnBeforeTestRun before EnterTestMethod and commits
         // after it (NavTestExecution.BeforeTestRunAsync); a Skip answer means the method never runs.
