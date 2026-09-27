@@ -1,5 +1,5 @@
 // AllObjInventoryStampTests — issue #4851 review. The AllObj row memo and each store's
-// "already filled" set are keyed on RecordPatches.CurrentAllObjInventoryStamp(), so an input that
+// "already filled" set are keyed on RecordPatches.CurrentObjectInventoryStamp(), so an input that
 // grows WITHIN one bundle reaches AllObj only if the stamp moves when it grows.
 //
 // Defensive: an enum registered after a lookup was not observed on a platform-only fixture
@@ -24,7 +24,7 @@ public sealed class AllObjInventoryStampTests
     private const int ExtendedEnumId = 88485103;
 
     private static object Stamp() =>
-        typeof(RecordPatches).GetMethod("CurrentAllObjInventoryStamp", BindingFlags.NonPublic | BindingFlags.Static)!
+        typeof(RecordPatches).GetMethod("CurrentObjectInventoryStamp", BindingFlags.NonPublic | BindingFlags.Static)!
             .Invoke(null, null)!;
 
     private static void Register(int id, string name) =>

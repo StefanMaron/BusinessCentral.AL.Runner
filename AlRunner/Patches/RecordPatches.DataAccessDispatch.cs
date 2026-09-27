@@ -185,7 +185,10 @@ public static partial class RecordPatches
             {
                 if (!perTable.TryGetValue(tableId, out var allObjDa))
                 {
-                    var createdAllObj = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+                    // #4859: a store parked at the last boundary, when it holds exactly what a
+                    // fresh one would be filled with. RecordPatches.ObjectInventoryStore.cs.
+                    var createdAllObj = TakeParkedObjectInventoryStore(self, table, AllObjDoneSet, "AllObj")
+                        ?? _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
                     allObjDa = perTable.GetOrAdd(tableId, createdAllObj);
                 }
                 PopulateAllObjVirtualTable(allObjDa, table);
@@ -203,7 +206,8 @@ public static partial class RecordPatches
             {
                 if (!perTable.TryGetValue(tableId, out var allObjCaptionDa))
                 {
-                    var createdAllObjCaption = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+                    var createdAllObjCaption = TakeParkedObjectInventoryStore(self, table, AllObjWithCaptionDoneSet, "AllObjWithCaption")
+                        ?? _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
                     allObjCaptionDa = perTable.GetOrAdd(tableId, createdAllObjCaption);
                 }
                 PopulateAllObjWithCaptionVirtualTable(allObjCaptionDa, table);

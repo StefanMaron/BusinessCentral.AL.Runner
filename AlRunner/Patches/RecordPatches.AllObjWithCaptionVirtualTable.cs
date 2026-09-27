@@ -95,36 +95,25 @@ public static partial class RecordPatches
         // ordinals off the table being populated is what keeps that an observation rather
         // than an assumption.
         var ordinals = EnsureAllObjWithCaptionObjectTypeOrdinals(metaTable);
-        var done = _awcPopulatedByProvider.GetValue(provider, static _ => new ConcurrentDictionary<(int, int), byte>());
-        var visibleApps = PinInventoryScope(provider, "AllObjWithCaption (virtual table 2000000058)");
-        // Built lazily after the `done` guard, as PopulateAllObjVirtualTable does (#3117).
-        Dictionary<(string Kind, int Id), Guid>? ownerIndex = null;
+        var done = AllObjWithCaptionDoneSet(provider);
 
-        foreach (var (kind, id, name, caption, subtype) in EnumerateKnownAlObjects())
-        {
-            if (id <= 0 || IsHiddenFromCurrentAppGroup(kind, id, visibleApps)) continue;
-            var normalized = NormalizeObjectTypeName(kind);
-            if (!ordinals.TryGetValue(normalized, out var typeOrdinal))
-                // This AL object kind has no ordinal in THIS BC version's option set.
-                // Real BC would not list it either — skipping is faithful, inventing an
-                // ordinal is not.
-                continue;
-            if (!done.TryAdd((typeOrdinal, id), 0))
-                continue;
-            // #3106: the same owner AllObj stamps, so the two tables agree on 60/61.
-            ownerIndex ??= BuildObjectOwnerIndex();
-            var owningAppId = ownerIndex.TryGetValue((normalized, id), out var owner) ? owner : Guid.Empty;
-
-            InsertVirtualRow(provider, metaTable,
-                new object[] { AllObjWithCaptionVirtualTableId, typeOrdinal, id, 0 },
-                field => BuildAllObjWithCaptionValue(field, typeOrdinal, id, name,
-                    // AL's own default caption is the object name. Applied here, once.
-                    string.IsNullOrEmpty(caption) ? name : caption,
-                    ObjectSubtypeTextFor(kind, subtype),
-                    owningAppId,
-                    AllObjWithCaptionKindCarriesAppId(kind)));
-        }
+        // Keyed top-up and shared rows, as AllObj: RecordPatches.ObjectInventoryStore.cs (#4859).
+        PopulateObjectInventoryStore(AllObjWithCaptionVirtualTableId, "AllObjWithCaption",
+            "AllObjWithCaption (virtual table 2000000058)", provider, metaTable, ordinals, done,
+            (kind, id, name, caption, subtype, _, typeOrdinal, owningAppId)
+                => BuildVirtualRowValues(metaTable,
+                    new object[] { AllObjWithCaptionVirtualTableId, typeOrdinal, id, 0 },
+                    field => BuildAllObjWithCaptionValue(field, typeOrdinal, id, name,
+                        // AL's own default caption is the object name. Applied here, once.
+                        string.IsNullOrEmpty(caption) ? name : caption,
+                        ObjectSubtypeTextFor(kind, subtype),
+                        // #3106: the same owner AllObj stamps, so the two tables agree on 60/61.
+                        owningAppId,
+                        AllObjWithCaptionKindCarriesAppId(kind))));
     }
+
+    private static ConcurrentDictionary<(int, int), byte> AllObjWithCaptionDoneSet(object provider)
+        => _awcPopulatedByProvider.GetValue(provider, static _ => new ConcurrentDictionary<(int, int), byte>());
 
     /// <summary>
     /// One column of an AllObjWithCaption row, matched by the metatable's own FIELD NAME so
@@ -154,7 +143,7 @@ public static partial class RecordPatches
                 // other text column here, rather than to a written-down 30.
                 return _aovNavTextCreateTruncated!.Invoke(null, new object?[] { field.FieldDefinedLength, objectSubtype ?? string.Empty });
             // #3106. Observably equivalent to AllObjWithCaptionDataProvider: 60/61 come from the
-            // same per-object entry AllObj reads, so they carry the values InsertAllObjRow writes;
+            // same per-object entry AllObj reads, so they carry the values BuildAllObjRowValues writes;
             // App ID is the owning app's MANIFEST id (OwningApp.AppId), un-derived, and only for
             // the kinds GetCaptionAndSubtype resolves an owner for. An unknown owner stays
             // Guid.Empty, which is also BC's answer when OwningApp is null.
