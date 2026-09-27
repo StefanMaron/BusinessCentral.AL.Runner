@@ -144,11 +144,11 @@ public static partial class RecordPatches
             if (applied.Contains(key)) return;
 
         var inserted = 0;
-        foreach (var row in AllObjInventoryFor(key, ordinals, visibleApps))
+        foreach (var row in AllObjInventoryFor(key, allObjMetaTable, ordinals, visibleApps))
         {
             if (!done.TryAdd((row.TypeOrdinal, row.Id), 0))
                 continue;
-            InsertAllObjRow(provider, allObjMetaTable, row.TypeOrdinal, row.Id, row.Name, row.OwningAppId);
+            InsertAllObjRow(provider, allObjMetaTable, row.Values);
             inserted++;
         }
         PerfTrace.Log($"AllObj.TopUp {inserted} row(s)");
@@ -188,12 +188,14 @@ public static partial class RecordPatches
     private static string VisibilityKey(HashSet<Guid>? visibleApps)
         => visibleApps == null ? "*" : string.Join(",", visibleApps.OrderBy(g => g));
 
-    private readonly record struct AllObjInventoryRow(int TypeOrdinal, int Id, string Name, Guid OwningAppId);
+    // Values is the finished row, shared by every store it is inserted into — see InsertAllObjRow.
+    private readonly record struct AllObjInventoryRow(int TypeOrdinal, int Id, Array Values);
 
-    // Rows per (app group, visibility) for ONE stamp; a new stamp drops them all.
+    // Rows per (app group, visibility) for ONE stamp; a new stamp drops them all. The metatable is
+    // kept beside them because the rows are laid out by its field indexes.
     private static readonly object _aovInventoryLock = new();
     private static AllObjInventoryStamp? _aovInventoryStamp;
-    private static readonly Dictionary<(Guid? AppGroup, string Visibility), AllObjInventoryRow[]> _aovInventory = new();
+    private static readonly Dictionary<(Guid? AppGroup, string Visibility), (NCLMetaTable MetaTable, AllObjInventoryRow[] Rows)> _aovInventory = new();
     private static readonly ConditionalWeakTable<object, HashSet<AllObjInventoryKey>> _aovAppliedByProvider = new();
 
     /// <summary>Full inventory walks and AllObj data-access handouts since process start — what
@@ -212,11 +214,12 @@ public static partial class RecordPatches
     }
 
     private static AllObjInventoryRow[] AllObjInventoryFor(
-        AllObjInventoryKey key, Dictionary<string, int> ordinals, HashSet<Guid>? visibleApps)
+        AllObjInventoryKey key, NCLMetaTable allObjMetaTable, Dictionary<string, int> ordinals, HashSet<Guid>? visibleApps)
     {
         lock (_aovInventoryLock)
-            if (_aovInventoryStamp == key.Stamp && _aovInventory.TryGetValue((key.AppGroup, key.Visibility), out var hit))
-                return hit;
+            if (_aovInventoryStamp == key.Stamp && _aovInventory.TryGetValue((key.AppGroup, key.Visibility), out var hit)
+                && ReferenceEquals(hit.MetaTable, allObjMetaTable))
+                return hit.Rows;
 
         var rows = new List<AllObjInventoryRow>();
         var seen = new HashSet<(int, int)>();
@@ -245,7 +248,8 @@ public static partial class RecordPatches
             // know fails the ownership check, which is what a wrong guess should look like.
             ownerIndex ??= BuildObjectOwnerIndex();
             var owningAppId = ownerIndex.TryGetValue((normalized, id), out var owner) ? owner : Guid.Empty;
-            rows.Add(new AllObjInventoryRow(typeOrdinal, id, name, owningAppId));
+            rows.Add(new AllObjInventoryRow(typeOrdinal, id,
+                BuildAllObjRowValues(allObjMetaTable, typeOrdinal, id, name, owningAppId)));
         }
 
         var built = rows.ToArray();
@@ -260,7 +264,7 @@ public static partial class RecordPatches
                 _aovInventory.Clear();
                 _aovInventoryStamp = key.Stamp;
             }
-            _aovInventory[(key.AppGroup, key.Visibility)] = built;
+            _aovInventory[(key.AppGroup, key.Visibility)] = (allObjMetaTable, built);
         }
         return built;
     }
@@ -460,12 +464,11 @@ public static partial class RecordPatches
     }
 
     /// <summary>
-    /// Build one AllObj row and Insert it into the in-memory provider. Layout mirrors
-    /// AllObjDataProvider.GetValuesWithinRangeForKeyField: BC's own
-    /// GetSystemPopulatedVirtualRecordValues fills timestamp/SystemId/audit, we write the
+    /// Build one AllObj row. Layout mirrors AllObjDataProvider.GetValuesWithinRangeForKeyField:
+    /// BC's own GetSystemPopulatedVirtualRecordValues fills timestamp/SystemId/audit, we write the
     /// three columns we can answer truthfully, and BC's own GetDefaultNavValue fills the rest.
     /// </summary>
-    private static void InsertAllObjRow(object provider, NCLMetaTable allObjMetaTable, int typeOrdinal, int objectId, string objectName, Guid owningAppId)
+    private static Array BuildAllObjRowValues(NCLMetaTable allObjMetaTable, int typeOrdinal, int objectId, string objectName, Guid owningAppId)
     {
         var values = _aovSystemValues!.Invoke(allObjMetaTable, AllObjVirtualTableId, typeOrdinal, objectId, 0);
 
@@ -500,7 +503,18 @@ public static partial class RecordPatches
             };
             values.SetValue(v, idx);
         }
+        return values;
+    }
 
+    /// <summary>
+    /// Insert one built row into the in-memory provider. The array is copied, its NavValues are
+    /// not: they are immutable, and BC shares them the same way — AddSystemFieldValues puts one
+    /// static VirtualTimeStamp and NavDateTime.Default/NavGuid.Default into every virtual row, and
+    /// CloneValues restores install-baseline rows by the same shallow copy (#4851).
+    /// </summary>
+    private static void InsertAllObjRow(object provider, NCLMetaTable allObjMetaTable, Array builtValues)
+    {
+        var values = (Array)builtValues.Clone();
         var readOnly = _aovCtorReadOnlyBuffer!.Invoke(new object?[] { allObjMetaTable, values });
         var mutable = _aovCtorMutableBuffer!.Invoke(new object?[] { readOnly });
         try
