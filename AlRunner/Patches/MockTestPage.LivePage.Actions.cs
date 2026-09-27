@@ -430,6 +430,9 @@ internal partial class LiveNavTestPage
                 return new ExtensionOnlyTestAction(this, _owner, _record, _pageId, actionId);
             return base.GetAction(actionId);
         }
+        // Removed from the MasterPage because its ApplicationArea is not enabled for the session
+        // (#4795): null makes NavTestPageBase.GetAction raise BC's own "not found" error.
+        if (_page.ActionRemovedByApplicationArea(actionId)) return null!;
         if (!_liveActions.TryGetValue(actionId, out var action))
             _liveActions[actionId] = action = new LiveNavTestAction(this, _page, actionId);
         return action;
