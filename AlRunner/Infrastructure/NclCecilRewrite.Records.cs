@@ -1726,12 +1726,8 @@ public static partial class NclCecilRewrite
             // Every rename surface (ALRename, ALRenameAsync, Rename(bool, DataError), RecordRef)
             // ends in that one overload, so it is noted once per rename. The 2-arg
             // RenameAsync(bool, DataError) forwards to it and must NOT be listed too.
-            static bool IsRenameFunnel(MethodDefinition x)
-                => x.Name == "RenameAsync" && x.Parameters.Count == 4;
-            if (!navRecord.Methods.Any(IsRenameFunnel))
-                throw new InvalidOperationException(
-                    "[Cecil] NavRecord.RenameAsync(DataError, bool, bool, NavValue[]) not found — an AL " +
-                    "Rename would stop being rolled back and seen by the write note (#4877).");
+            var renameFunnel = RenameFunnel(navRecord);
+            bool IsRenameFunnel(MethodDefinition x) => x == renameFunnel;
             int bumped = 0;
             foreach (var m in navRecord.Methods.Where(
                          x => (insertEntries.Contains(x.Name) || writeEntries.Contains(x.Name) || IsRenameFunnel(x))
@@ -1780,7 +1776,6 @@ public static partial class NclCecilRewrite
             {
                 ("ALInsertAsync", ProfileGuardRef(nameof(AlRunner.Patches.AllProfileWritePatches.GuardAllProfileInsert))),
                 ("ALDeleteAsync", ProfileGuardRef(nameof(AlRunner.Patches.AllProfileWritePatches.GuardAllProfileDelete))),
-                ("ALRenameAsync", ProfileGuardRef(nameof(AlRunner.Patches.AllProfileWritePatches.GuardAllProfileRename))),
             };
 
             int profileGuarded = 0;
@@ -1796,8 +1791,21 @@ public static partial class NclCecilRewrite
                 }
             if (profileGuarded == 0)
                 throw new InvalidOperationException(
-                    "[Cecil] no NavRecord ALInsert/ALDelete/ALRename entry points found for the All Profile "
+                    "[Cecil] no NavRecord ALInsert/ALDelete entry points found for the All Profile "
                     + "write guard - an app-owned profile would silently be deletable.");
+
+            // Rename at its funnel, as the write note (#4877, #4879): an AL Rename never reaches
+            // ALRenameAsync. The guard also gets the NEW key (arg 4, `values`), because BC's
+            // TenantProfileTableDataHandler.ModifyAsync judges the key the row is renamed TO.
+            {
+                var il = RenameFunnel(navRecordForProfileGuard).Body.GetILProcessor();
+                var first = il.Body.Instructions[0];
+                il.InsertBefore(first, il.Create(OpCodes.Ldarg_0));
+                il.InsertBefore(first, il.Create(OpCodes.Ldarg, il.Body.Method.Parameters[3]));
+                il.InsertBefore(first, il.Create(OpCodes.Call,
+                    ProfileGuardRef(nameof(AlRunner.Patches.AllProfileWritePatches.GuardAllProfileRename))));
+                profileGuarded++;
+            }
             Console.Error.WriteLine(
                 $"[Cecil] Prepended All Profile write guards -> {profileGuarded} NavRecord AL write entry point(s)");
 
@@ -1870,7 +1878,6 @@ public static partial class NclCecilRewrite
                 ("ALInsertAsync", PbtGuardRef(nameof(AlRunner.Patches.PageBackgroundTaskWritePatches.GuardPageBackgroundTaskInsert))),
                 ("ALModifyAsync", PbtGuardRef(nameof(AlRunner.Patches.PageBackgroundTaskWritePatches.GuardPageBackgroundTaskModify))),
                 ("ALDeleteAsync", PbtGuardRef(nameof(AlRunner.Patches.PageBackgroundTaskWritePatches.GuardPageBackgroundTaskDelete))),
-                ("ALRenameAsync", PbtGuardRef(nameof(AlRunner.Patches.PageBackgroundTaskWritePatches.GuardPageBackgroundTaskRename))),
             };
 
             int pbtGuarded = 0;
@@ -1886,8 +1893,18 @@ public static partial class NclCecilRewrite
                 }
             if (pbtGuarded == 0)
                 throw new InvalidOperationException(
-                    "[Cecil] no NavRecord ALInsert/ALModify/ALDelete/ALRename entry points found for the "
+                    "[Cecil] no NavRecord ALInsert/ALModify/ALDelete entry points found for the "
                     + "page background task write guard - a worker codeunit's write would silently succeed.");
+
+            // Rename at its funnel, as the write note (#4877, #4879).
+            {
+                var il = RenameFunnel(navRecordForPbtGuard).Body.GetILProcessor();
+                var first = il.Body.Instructions[0];
+                il.InsertBefore(first, il.Create(OpCodes.Ldarg_0));
+                il.InsertBefore(first, il.Create(OpCodes.Call,
+                    PbtGuardRef(nameof(AlRunner.Patches.PageBackgroundTaskWritePatches.GuardPageBackgroundTaskRename))));
+                pbtGuarded++;
+            }
             Console.Error.WriteLine(
                 $"[Cecil] Prepended page background task write guards -> {pbtGuarded} NavRecord AL write entry point(s)");
         }
@@ -2015,6 +2032,20 @@ public static partial class NclCecilRewrite
             $"[Cecil] Routed {reads} read(s) of RecordImplementation.dataAccess in {methods} method(s) "
             + "through RecordPatches.RecordImplementation_LiveDataAccess");
     }
+
+    /// <summary>
+    /// NavRecord.RenameAsync(DataError, bool, bool, NavValue[]): the one overload every rename
+    /// surface ends in — ALRename, ALRenameAsync, Rename(bool, DataError). Anything that must see
+    /// an AL Rename is prepended here, never to ALRenameAsync, which the ALRename the AL compiler
+    /// binds does not call (#4877, #4879). Refuses rather than let a rename go unseen.
+    /// </summary>
+    private static MethodDefinition RenameFunnel(TypeDefinition navRecord)
+        => navRecord.Methods.SingleOrDefault(m => m.Name == "RenameAsync" && m.Parameters.Count == 4
+               && m.HasBody && m.Body.Instructions.Count > 0)
+           ?? throw new InvalidOperationException(
+               "[Cecil] NavRecord.RenameAsync(DataError, bool, bool, NavValue[]) not found — an AL Rename "
+               + "would stop being rolled back, seen by the write note, and refused by the write guards "
+               + "(#4877, #4879).");
 
     private static IEnumerable<TypeDefinition> AllTypes(IEnumerable<TypeDefinition> types)
     {

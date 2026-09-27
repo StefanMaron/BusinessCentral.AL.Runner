@@ -73,14 +73,50 @@ public static class AllProfileWritePatches
             throw NavCSideError(Message("DeleteAppProfileNotAllowed"), profileId);
     }
 
-    /// <summary>Prepended to NavRecord.ALRenameAsync. No-op for every table but All Profile.</summary>
+    /// <summary>
+    /// Prepended to NavRecord.RenameAsync(DataError, bool, bool, NavValue[]), the funnel every AL
+    /// rename reaches (#4879), with <paramref name="newKey"/> its key values. No-op for every
+    /// table but All Profile.
+    ///
+    /// <para>Observably equivalent to TenantProfileTableDataHandler.ModifyAsync on a key change: it
+    /// reads App ID and Profile ID off the record being written — the key it is renamed TO — and
+    /// refuses a non-tenant App ID with ModifySpecificFieldsOnAppProfileNotAllowed naming the new
+    /// Profile ID. Corpus: 60907 AllProfile_RenameAppOwnedProfile_IsRefused.</para>
+    /// <para>Not reproduced: the empty-Profile-ID refusal BC makes next for a tenant profile.</para>
+    /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void GuardAllProfileRename(object? record)
+    public static void GuardAllProfileRename(object? record, NavValue[]? newKey)
     {
         if (Subject(record) is not { } rec) return;
-        var (appId, profileId) = KeyOf(rec);
+        var (appId, profileId) = NewKeyOf(rec, newKey);
         if (appId != RecordPatches.AllProfileTenantAppId)
             throw NavCSideError(Message("ModifySpecificFieldsOnAppProfileNotAllowed"), profileId);
+    }
+
+    /// <summary>App ID and Profile ID out of a Rename's key values, placed by the record's own
+    /// primary key rather than by an assumed field order.</summary>
+    private static (Guid AppId, string ProfileId) NewKeyOf(NavRecord rec, NavValue[]? newKey)
+    {
+        KeyOf(rec);   // binds the two field numbers
+        var key = rec.MetaTable!.GetKeyByIndex(0);
+        if (newKey == null || newKey.Length != key.KeyFieldCount)
+            // BC's own RenameAsync refuses this shape next (NavNCLRenameArgumentException).
+            return KeyOf(rec);
+        Guid? appId = null;
+        string? profileId = null;
+        for (var i = 0; i < key.KeyFieldCount; i++)
+        {
+            var fieldNo = key.GetKeyFieldByIndex(i).FieldNo;
+            if (fieldNo == _appIdFieldNo)
+                appId = Guid.TryParse(newKey[i]?.ToString(), out var g) ? g : Guid.Empty;
+            else if (fieldNo == _profileIdFieldNo)
+                profileId = newKey[i]?.ToString() ?? string.Empty;
+        }
+        if (appId == null || profileId == null)
+            throw RecordPatches.AllProfileShapeGap(
+                "All Profile's primary key does not contain both \"App ID\" and \"Profile ID\", so a "
+                + "Rename's new key cannot be judged");
+        return (appId.Value, profileId);
     }
 
     internal const int TenantProfileTableId = 2000000177;

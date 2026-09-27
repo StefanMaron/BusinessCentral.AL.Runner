@@ -53,7 +53,8 @@ public static class PageBackgroundTaskWritePatches
     public static void GuardPageBackgroundTaskDelete(object? record)
         => ThrowIfDenied(record, "Delete", NavDeleteDeniedPermissionException.DeleteDeniedErrorCode);
 
-    /// <summary>Prepended to every NavRecord.ALRenameAsync overload.</summary>
+    /// <summary>Prepended to NavRecord.RenameAsync(DataError, bool, bool, NavValue[]), the funnel every
+    /// AL rename reaches (#4879).</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void GuardPageBackgroundTaskRename(object? record)
         => ThrowIfDenied(record, "Rename", NavModifyDeniedPermissionException.ModifyDeniedErrorCode);
