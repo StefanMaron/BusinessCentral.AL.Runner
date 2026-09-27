@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **report:** accept a precompiled report's multi-line DataItemTableView
 - **test-runner:** raise Test Runner - Mgt. per-method events so Microsoft's reset subscribers run
 - **page:** remove actions whose ApplicationArea the session has not enabled
 - **metadata:** per-app-group table, page, report and query metadata for a shared object id
