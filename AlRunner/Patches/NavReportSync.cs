@@ -341,7 +341,7 @@ public static partial class NavReportSync
         {
             // offersOk: true — RunRequestPage opens the page with ReportIntent.Parameters, where a
             // plain OK means "these are the parameters" and is available on every request page.
-            confirmed = RunRequestPageForHandler(report, reportId, parameters, offersOk: true);
+            confirmed = RunRequestPageForHandler(report, reportId, parameters, offersOk: true, parametersOnly: true);
         }
         catch
         {
@@ -563,7 +563,7 @@ public static partial class NavReportSync
     /// <param name="offersOk">Whether the request page has a plain OK built-in action —
     /// see RequestPageTestPage.GetBuiltInAction. True for the parameters-capture entry point
     /// (RunRequestPage); for Report.Run() only when the report is ProcessingOnly.</param>
-    private static bool RunRequestPageForHandler(object report, int reportId, string? parameters, bool offersOk)
+    private static bool RunRequestPageForHandler(object report, int reportId, string? parameters, bool offersOk, bool parametersOnly = false)
     {
         var pRequestPage = FindProperty(report.GetType(), "RequestOptionsPage");
         if (pRequestPage == null) return true;
@@ -608,6 +608,7 @@ public static partial class NavReportSync
         // then dispatch was never reached and the unregistered-handle lookup was the
         // visible failure — that is no longer the path taken.
         SubscribeOnSaveValues(report);
+        if (parametersOnly) MarkParametersOnly(requestPage);
 
         var runModal = requestPage.GetType().GetMethod("RunModal",
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
@@ -663,6 +664,28 @@ public static partial class NavReportSync
                 "without it the request page's field values never reach GetReportParameters");
         variables.SetValue(report, null);
         Invoke(subscribe, report, Array.Empty<object?>());
+    }
+
+    /// <summary>
+    /// <c>RequestOptionsPage.ReportRunOptions.RunMode = ParametersOnly</c>, what BC's
+    /// <c>InitReportRunOptions</c> answers for <c>ReportIntent.Parameters</c> (Ncl
+    /// <c>ReportExtensions.Map</c>) and <c>RunRequestPageCoreAsync</c> hands the page. It is
+    /// what makes <c>StoreSaveValues</c> return before persisting, so Report.RunRequestPage
+    /// hands back the page's values without saving them for the next run (#4808).
+    /// </summary>
+    private static void MarkParametersOnly(object requestPage)
+    {
+        const string Surface = "Report.RunRequestPage (SaveValues)";
+        const string Detail = "without it confirming a RunRequestPage would persist its values as "
+            + "a SaveValues request page's saved settings, which BC does not do";
+        const BindingFlags Inst = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        var options = FindProperty(requestPage.GetType(), "ReportRunOptions")?.GetValue(requestPage)
+            ?? throw new AlRunner.Infrastructure.BcShapeGapException(Surface, "NavForm.ReportRunOptions", Detail);
+        var runMode = options.GetType().GetProperty("RunMode", Inst);
+        if (runMode == null || !runMode.CanWrite || !runMode.PropertyType.IsEnum
+            || !Enum.TryParse(runMode.PropertyType, "ParametersOnly", out var parametersOnly))
+            throw new AlRunner.Infrastructure.BcShapeGapException(Surface, "ReportRunOptions.RunMode", Detail);
+        runMode.SetValue(options, parametersOnly);
     }
 
     /// <summary>Register a form with the skeleton company, ignoring an already-registered one.</summary>
