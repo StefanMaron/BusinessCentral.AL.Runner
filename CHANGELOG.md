@@ -45,6 +45,8 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **record:** FieldRef enum ordinal/caption by index on a gapped or out-of-order enum
+- **page:** remove a TestPage control whose ApplicationArea is not enabled for the session
 - **testpage:** a custom action on a navigation-mock TestPage refuses instead of silently doing nothing
 - **testpage:** raise OnAfterGetCurrRecord for the blank line after an action deletes a List page's only row
 - **metadata:** a Date field's InitValue literal is normalised before BC evaluates it
