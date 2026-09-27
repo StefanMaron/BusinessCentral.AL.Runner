@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **testpage:** a TestPage reaches a part a pageextension adds
 - **testpage:** a source-compiled pageextension's actions and parts are removed by application area
 - **test-runner:** load Microsoft's Test Runner app by default as the installed test tool
 - **record:** Rename propagation reads the executing app group's own NCLMetaTable of a shared table id
