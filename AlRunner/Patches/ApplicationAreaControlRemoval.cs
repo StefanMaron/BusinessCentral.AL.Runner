@@ -152,6 +152,7 @@ public static class ApplicationAreaControlRemoval
         // Not for a request page: its ID is a report's, which can equal a page's.
         var extensionAreas = isRequestPage ? null : RecordPatches.SourcePageExtensionAreas(page.ID);
         _areaChanges = extensionAreas?.AreaChanges;
+        _actionAreaChanges = extensionAreas?.ActionAreaChanges;
         void Remove(IList<ControlBaseDefinition>? controls, Delegate selector)
         {
             if (controls == null) return;
@@ -190,6 +191,12 @@ public static class ApplicationAreaControlRemoval
                 bool IsEnabled(string? area) => _isApplicationAreaEnabled!(area!, null!);
                 removed.UnionWith(DependencyFieldControlsToRemove(page.ID, IsEnabled, extensionAreas.AreaChanges));
                 removed.UnionWith(SourceExtensionFieldControlsToRemove(extensionAreas, IsEnabled));
+                removed.UnionWith(Rejected(extensionAreas.AddedParts, extensionAreas.AreaChanges, IsEnabled));
+                removedActions.UnionWith(Rejected(extensionAreas.AddedActions, extensionAreas.ActionAreaChanges, IsEnabled));
+                // A modify() replaces the target's area outright, so its verdict needs no base
+                // area. That is what reaches a precompiled page's action, which the runner's
+                // MasterPage does not carry (#4862).
+                removedActions.UnionWith(RejectedChanges(extensionAreas.ActionAreaChanges, IsEnabled));
             }
         }
         finally
@@ -197,6 +204,7 @@ public static class ApplicationAreaControlRemoval
             _removing = null;
             _removingActions = null;
             _areaChanges = null;
+            _actionAreaChanges = null;
         }
         if (removed.Count > 0) RemovedIds.AddOrUpdate(page, removed);
         if (removedActions.Count > 0) RemovedActionIds.AddOrUpdate(page, removedActions);
@@ -258,9 +266,25 @@ public static class ApplicationAreaControlRemoval
     /// </summary>
     internal static IEnumerable<int> SourceExtensionFieldControlsToRemove(
         RecordPatches.SourcePageExtensionAreaSet areas, Func<string?, bool> isAreaEnabled)
-        => areas.AddedFieldControls
-            .Where(control => !isAreaEnabled(AreaAfterChanges(control.Id, control.ApplicationArea, areas.AreaChanges)))
-            .Select(control => control.Id);
+        => Rejected(areas.AddedFieldControls, areas.AreaChanges, isAreaEnabled);
+
+    /// <summary>
+    /// The parts and actions source-compiled pageextensions add that <paramref name="isAreaEnabled"/>
+    /// rejects, by the same rule as their field controls (#4871).
+    /// </summary>
+    internal static (IEnumerable<int> Parts, IEnumerable<int> Actions) SourceExtensionPartsAndActionsToRemove(
+        RecordPatches.SourcePageExtensionAreaSet areas, Func<string?, bool> isAreaEnabled)
+        => (Rejected(areas.AddedParts, areas.AreaChanges, isAreaEnabled),
+            Rejected(areas.AddedActions, areas.ActionAreaChanges, isAreaEnabled));
+
+    private static IEnumerable<int> RejectedChanges(IReadOnlyDictionary<int, string> areaChanges, Func<string?, bool> isAreaEnabled)
+        => areaChanges.Where(change => !isAreaEnabled(change.Value)).Select(change => change.Key);
+
+    private static IEnumerable<int> Rejected(IEnumerable<(int Id, string? ApplicationArea)> elements,
+        IReadOnlyDictionary<int, string> areaChanges, Func<string?, bool> isAreaEnabled)
+        => elements
+            .Where(element => !isAreaEnabled(AreaAfterChanges(element.Id, element.ApplicationArea, areaChanges)))
+            .Select(element => element.Id);
 
     private static string? AreaAfterChanges(int controlId, string? area, IReadOnlyDictionary<int, string>? areaChanges)
         => areaChanges != null && areaChanges.TryGetValue(controlId, out var changed) ? changed : area;
@@ -271,6 +295,7 @@ public static class ApplicationAreaControlRemoval
     [ThreadStatic] private static HashSet<int>? _removing;
     [ThreadStatic] private static HashSet<int>? _removingActions;
     [ThreadStatic] private static IReadOnlyDictionary<int, string>? _areaChanges;
+    [ThreadStatic] private static IReadOnlyDictionary<int, string>? _actionAreaChanges;
 
     private static IList<ActionBaseDefinition> ActionChildren(ActionBaseDefinition node) => node.Actions;
 
@@ -293,16 +318,21 @@ public static class ApplicationAreaControlRemoval
                 return !_isApplicationAreaEnabled!(
                     AreaAfterChanges(control.ID, control.ApplicationArea, _areaChanges)!, control.ResourceIdentifier);
             case InfopartPageDefinition part when !_propertyIsFalse!(part.Visible):
-                return !_isApplicationAreaEnabled!(part.ApplicationArea, part.ResourceIdentifier);
+                return !_isApplicationAreaEnabled!(
+                    AreaAfterChanges(part.ID, part.ApplicationArea, _areaChanges)!, part.ResourceIdentifier);
             case InfopartSystemDefinition systemPart:
-                return !_isApplicationAreaEnabled!(systemPart.ApplicationArea, systemPart.ResourceIdentifier);
+                return !_isApplicationAreaEnabled!(
+                    AreaAfterChanges(systemPart.ID, systemPart.ApplicationArea, _areaChanges)!, systemPart.ResourceIdentifier);
             // MetadataProvider.RemoveAction dispatches to these four; each checks the area first.
             case ActionDefinition action:
-                return !_isApplicationAreaEnabled!(action.ApplicationArea, action.ResourceIdentifier);
+                return !_isApplicationAreaEnabled!(
+                    AreaAfterChanges(action.ID, action.ApplicationArea, _actionAreaChanges)!, action.ResourceIdentifier);
             case CustomActionDefinition customAction:
-                return !_isApplicationAreaEnabled!(customAction.ApplicationArea, customAction.ResourceIdentifier);
+                return !_isApplicationAreaEnabled!(
+                    AreaAfterChanges(customAction.ID, customAction.ApplicationArea, _actionAreaChanges)!, customAction.ResourceIdentifier);
             case FileUploadActionDefinition fileUploadAction:
-                return !_isApplicationAreaEnabled!(fileUploadAction.ApplicationArea, fileUploadAction.ResourceIdentifier);
+                return !_isApplicationAreaEnabled!(
+                    AreaAfterChanges(fileUploadAction.ID, fileUploadAction.ApplicationArea, _actionAreaChanges)!, fileUploadAction.ResourceIdentifier);
             // RemoveActionRefDefinition: its own area, then its target's. A missing target is
             // BC's structural removal, not an area one, and is left out with the license half.
             case ActionRefDefinition actionRef:
