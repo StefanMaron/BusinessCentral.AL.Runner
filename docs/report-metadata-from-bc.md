@@ -462,10 +462,15 @@ Both are dereferenced by BC without a null check, and `MetaPageDefinition` deser
 
 - `<SourceObject/>` — `ModifyReportRequestPage` reads
   `pageDefinition.Properties.SourceObject.SaveValues` as one of its first acts.
-  It is empty only while the request page declares no `SourceTable`. When it does (Base
+  It is empty only while the request page declares none of `SourceTable`, `SaveValues` and
+  `ShowFilter`. When it does declare `SourceTable` (Base
   Application 28.1.49838.53910: reports 742, 7314 and 8621), BC writes
   `<SourceObject … SourceTable="<id>"/>`, and so does `WriteRequestPageXml` since #4659 —
   without it the request page's `Rec` is never bound and its `OnOpenPage` NREs on the first
-  `Rec` access. `SaveValues` and `ShowFilter`, which BC writes on the same element, are #4667.
+  `Rec` access. `SaveValues` and `ShowFilter` are written as `"1"`/`"0"` exactly when the
+  symbol file states them, a stated AL default included, as BC's emitter writes them (#4667).
+  BC's reader takes an absent `ShowFilter` as false, not the AL default true. `SaveValues` is
+  what `NavForm.ApplySourceTableViewAndSavedValuesAsync` checks before restoring the previous
+  run's values; the runner does not yet store or restore those values at all (#4808).
 - `<Expressions/>` — `MetadataProvider.LoadExpressionRelationTables` iterates
   `masterPage.Expressions`.
