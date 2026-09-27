@@ -1,6 +1,7 @@
 // TestPagePageSavedRowTests — issue #4577. A row the page's own AL saved (CurrPage.SaveRecord from
 // OnValidate) is an existing row to the TestPage write buffer, and a part's save is not its
-// host's. One AL test per mechanism, so each of the three edits reds exactly one. The BC
+// host's. One AL test per mechanism, so each of the three edits reds exactly one. Issue #4632
+// adds New() as a row-leave: InsertEmptyRow's FlushRow reds both *WhenNewLeavesIt arms. The BC
 // behaviour is adjudicated upstream by corpus codeunit 60412 "PSR Page Saved Row Tests"; see
 // docs/testpage-write-buffer.md#a-row-the-page-saved-itself.
 using System.Diagnostics;
@@ -193,6 +194,67 @@ public sealed class TestPagePageSavedRowTests : IDisposable
                     Error('Descr=%1, expected Changed', Header.Descr);
             end;
 
+            // InsertEmptyRow (#4632): New() leaves an edited existing row, which saves the edit.
+            [Test]
+            procedure ExistingPartRowEdit_IsSavedWhenNewLeavesIt()
+            var
+                Header: Record "Psr Header";
+                Line: Record "Psr Line";
+                Card: TestPage "Psr Header Card";
+            begin
+                Initialize(Header);
+                Line."Header Code" := 'H1';
+                Line."Line No." := 10000;
+                Line."Saved Field" := 'X';
+                Line.Insert();
+                Card.OpenEdit();
+                Card.GoToRecord(Header);
+                Card.Lines.First();
+                Card.Lines."Later Field".SetValue('E');
+                Card.Lines.New();
+                Card.Lines."Later Field".SetValue('N');
+                Card.OK().Invoke();
+                if Line.Count() <> 2 then
+                    Error('lines: %1, expected 2', Line.Count());
+                Line.Get('H1', 10000);
+                if Line."Later Field" <> 'E' then
+                    Error('existing row later=%1, expected E', Line."Later Field");
+                Line.SetRange("Saved Field", '');
+                Line.FindFirst();
+                if Line."Later Field" <> 'N' then
+                    Error('new row later=%1, expected N', Line."Later Field");
+            end;
+
+            // InsertEmptyRow (#4632): a row the part saved itself is a Modify when New() leaves it.
+            [Test]
+            procedure PartRowSavedByItsOwnTrigger_KeepsTheLaterValueWhenNewLeavesIt()
+            var
+                Header: Record "Psr Header";
+                Line: Record "Psr Line";
+                Card: TestPage "Psr Header Card";
+            begin
+                Initialize(Header);
+                Card.OpenEdit();
+                Card.GoToRecord(Header);
+                Card.Lines.New();
+                Card.Lines."Saved Field".SetValue('A');
+                Card.Lines."Later Field".SetValue('B');
+                Card.Lines.New();
+                Card.Lines."Saved Field".SetValue('C');
+                Card.Lines."Later Field".SetValue('D');
+                Card.OK().Invoke();
+                if Line.Count() <> 2 then
+                    Error('lines: %1, expected 2', Line.Count());
+                Line.SetRange("Saved Field", 'A');
+                Line.FindFirst();
+                if Line."Later Field" <> 'B' then
+                    Error('first row later=%1, expected B', Line."Later Field");
+                Line.SetRange("Saved Field", 'C');
+                Line.FindFirst();
+                if Line."Later Field" <> 'D' then
+                    Error('second row later=%1, expected D', Line."Later Field");
+            end;
+
             // ActivateControl: a new row the page saved is not inserted again on focus.
             [Test]
             procedure NewHostRowSavedByItsOwnTrigger_IsInsertedOnce()
@@ -249,6 +311,8 @@ public sealed class TestPagePageSavedRowTests : IDisposable
                      "PartRowSavedByItsOwnTrigger_KeepsTheValueTypedAfterIt",
                      "HostEdit_SurvivesAPartSavingItsOwnRow",
                      "NewHostRowSavedByItsOwnTrigger_IsInsertedOnce",
+                     "ExistingPartRowEdit_IsSavedWhenNewLeavesIt",
+                     "PartRowSavedByItsOwnTrigger_KeepsTheLaterValueWhenNewLeavesIt",
                  })
             Assert.Contains("PASS  Codeunit66814." + name, output);
         Assert.DoesNotContain("FAIL", output);
