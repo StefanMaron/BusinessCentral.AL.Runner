@@ -312,7 +312,7 @@ public static partial class BcRuntime
 
     /// <summary>
     /// <c>NavApp.GetCallerCallstackModuleInfos</c>, by BC's rule
-    /// (<c>ALNavApp.ALGetCallerCallstackModuleInfos</c>, bc281): skip the asking method's own
+    /// (<c>ALNavApp.ALGetCallerCallstackModuleInfos</c>; corpus codeunit 67595): skip the asking method's own
     /// frame only, then each app once, nearest caller first. The asking app IS listed when
     /// another of its methods is further up the stack. Walks the managed stack for the reason
     /// <see cref="TryGetImmediateCallerModule"/> does — the runner's CurrentMethodScope is flat.
