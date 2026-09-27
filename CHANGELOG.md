@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **coverage:** runner-compiled objects name their owning app in NavApplicationObjectBase.AppId
 - **test-exec:** refuse Codeunit.Run of a test codeunit from inside a running test
 - **app-groups:** a group depending on one declarer of a shared id sees that declarer's object and subscribers
 - **page:** remove request-page controls and page parts whose ApplicationArea the session has not enabled
