@@ -95,14 +95,14 @@ public static class AlEnumMetadataRegistry
     // fired last silently clobber the other instead of merging).
     private static readonly ConcurrentDictionary<int, ImmutableList<Entry>> _extByTargetId = new();
 
-    /// <summary>Last-writer-wins for the base enum itself; bundle-wide enum-id
-    /// collisions are quarantined upstream. Enumextension values are tracked
-    /// separately — see <see cref="RegisterExtension"/>.</summary>
     // Bumped by every mutation below, so a memo over the registered set can tell a replaced entry
     // from an unchanged one — a count cannot (#4851).
     private static int _version;
     internal static int Version => System.Threading.Volatile.Read(ref _version);
 
+    /// <summary>Last-writer-wins for the base enum itself; bundle-wide enum-id
+    /// collisions are quarantined upstream. Enumextension values are tracked
+    /// separately — see <see cref="RegisterExtension"/>.</summary>
     public static void Register(int id, string name, string[] options, int[] indexes, int[][]? implementations = null, string?[]? captions = null,
         int[]? defaultImplementations = null, int[]? unknownImplementations = null, bool? extensible = null)
     {

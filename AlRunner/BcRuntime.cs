@@ -149,15 +149,15 @@ public static partial class BcRuntime
     /// is the app whose assembly declares it, and that is exact even when several app groups
     /// are compiled in one process (#2963).
     /// </summary>
-    /// <summary>How many assemblies carry module info — a cheap term for a memo key over the
-    /// registered set (RecordPatches' AllObj inventory stamp, #4851).</summary>
-    internal static int RegisteredModuleAssemblyCount => _moduleInfoByAssembly.Count;
-
     public static IReadOnlyList<(Assembly Assembly, Guid AppId)> RegisteredModuleAssemblies()
         => _moduleInfoByAssembly
             .Where(kv => kv.Value.AppId != Guid.Empty)
             .Select(kv => (kv.Key, kv.Value.AppId))
             .ToList();
+
+    /// <summary>How many assemblies carry module info — a cheap term for a memo key over the
+    /// registered set (RecordPatches' AllObj inventory stamp, #4851).</summary>
+    internal static int RegisteredModuleAssemblyCount => _moduleInfoByAssembly.Count;
 
     /// <summary>
     /// Every AL module the runner has loaded — one entry per distinct app id, across the
