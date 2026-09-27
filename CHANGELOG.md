@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **metadata:** a precompiled report's request page states its Caption and InsertAllowed; TestRequestPage.Caption reads the form
 - **metadata:** codeunit projection states EventSubscriberInstance (declared value, else StaticAutomatic)
 - **session:** restore ApplicationAreas at the isolation reset boundary
 - **runtime:** keep SingleInstance codeunit state across test-codeunit boundaries
