@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **tests:** plain dotnet test of AlRunner.Tests no longer crashes discovery on a missing Nav.Types
 - **enum:** include extensions of existing IDs in dependency sidecars
 - **enum:** a base or extension enum registration evicts that enum's cached NCL metadata
 - **navapp:** GetCallerCallstackModuleInfos answers the calling apps
