@@ -292,7 +292,7 @@ public sealed class TestRunnerMgtEventsTests
         // Only a codeunit the suite itself defines at 130453/130454 keeps Microsoft's app out; an
         // id range covering 130454 with nothing there does not (Microsoft's Email - SMTP test apps
         // declare 100000-150000).
-        var defines130454 = WriteApp("defines-130454", "codeunit 130454 \"My Test Mgt\" { }");
+        var defines130454 = WriteApp("defines-130454", "codeunit 130454 \"My Test Mgt\" { }", Path.Combine("src", "codeunits"));
         var defines130453 = WriteApp("defines-130453", "codeunit 130453 \"My Reset\" { }");
         var rangeOnly = WriteApp("range-only", "// codeunit 130454 is not declared here\ncodeunit 130455 \"Beside\" { }");
         Assert.Equal(new[] { other.AppId },
@@ -302,11 +302,12 @@ public sealed class TestRunnerMgtEventsTests
         Assert.Equal(new[] { other.AppId, tool.AppId },
             ProgramSupport.WithInstalledTestTool(new List<DependencyRef> { other }, new[] { rangeOnly }, holding).Select(r => r.AppId));
 
-        string WriteApp(string name, string al)
+        // Real apps keep objects in subfolders (src/...), so the scan must recurse.
+        string WriteApp(string name, string al, string subfolder = "")
         {
             var dir = Path.Combine(empty, name);
-            Directory.CreateDirectory(dir);
-            File.WriteAllText(Path.Combine(dir, "Objects.al"), al);
+            Directory.CreateDirectory(Path.Combine(dir, subfolder));
+            File.WriteAllText(Path.Combine(dir, subfolder, "Objects.al"), al);
             var appJson = Path.Combine(dir, "app.json");
             File.WriteAllText(appJson, $$"""{ "id": "{{Guid.NewGuid()}}", "idRanges": [ { "from": 100000, "to": 150000 } ] }""");
             return appJson;
