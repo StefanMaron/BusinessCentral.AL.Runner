@@ -40,7 +40,7 @@ internal static partial class BcAppSymbolCache
     //
     // Every bump adds its row to docs/bc-symbol-cache-versions.md#version-history (why that
     // integer was taken); BcAppSymbolCacheVersionHistoryTests holds the page to this constant.
-    private const int CacheVersion = 45;
+    private const int CacheVersion = 46;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820's path -> content-hash memo now lives in
     // RunnerFingerprint._fileContentHashes (#2955), because AppLoader's persisted r2r-chunks
@@ -2841,6 +2841,8 @@ internal static partial class BcAppSymbolCache
                 if (isFlowField && props.TryGetValue("CalcFormula", out var calcFormulaText))
                     calcFormula = RecordPatches.TryParseCalcFormula($"CalcFormula = {calcFormulaText};");
                 props.TryGetValue("OptionMembers", out var optionMembers);
+                props.TryGetValue("Caption", out var fieldCaption); // #4857: FieldCaption answered the name
+                props.TryGetValue("OptionCaption", out var optionCaption); // #4857
                 props.TryGetValue("InitValue", out var initValue);
                 var isAutoIncrement = props.TryGetValue("AutoIncrement", out var autoIncrement)
                     && (autoIncrement == "1" || autoIncrement.Equals("true", StringComparison.OrdinalIgnoreCase));
@@ -2877,7 +2879,9 @@ internal static partial class BcAppSymbolCache
                     Editable: editable,
                     DataClassificationName: string.IsNullOrWhiteSpace(fieldDataClassification)
                         ? null : fieldDataClassification.Trim(),
-                    EnumTypeId: enumTypeId, EnumTypeName: enumTypeName));
+                    EnumTypeId: enumTypeId, EnumTypeName: enumTypeName,
+                    OptionCaption: optionCaption,
+                    Caption: string.IsNullOrEmpty(fieldCaption) ? null : fieldCaption));
             }
         }
 

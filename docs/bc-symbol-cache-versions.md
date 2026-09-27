@@ -177,6 +177,18 @@ v1 and v2 predate this record.
   45 was confirmed free immediately before pushing: `origin/main` read 44, and a sweep of every
   remote `agent/*` branch carrying this file found none above 44.
 
+- **v46**: a table field's (and a tableextension field's) declared `Caption` is read into
+  `ParsedField.Caption` rather than dropped (#4857). The same trap as v35 through v45:
+  `ParsedField.Caption` already existed and held null, so `PayloadShape` cannot see the value
+  change, and a warm box replays `FieldCaption` answering the field NAME. Measured, not
+  inferred: with the reader fixed and the integer at 45, a `--cache` root warmed by the unfixed
+  binary still answered `Completed` for Base Application table 2582 field 12, whose caption is
+  `Ran Once`. The `OptionCaption` member added in the same change IS a shape change and re-keys
+  on its own.
+
+  46 was confirmed free immediately before pushing: `origin/main` read 45, and a sweep of every
+  remote `agent/*` branch carrying this file found none above 45.
+
 ## Changes that deliberately did not bump
 
 - No CacheVersion bump of its own for PageSymbol.TableView (#2820), deliberately — the numbered bumps above belong to other changes (v28 to #2518, v29 to #2973), and this one rides whatever the current integer is without moving it. That member is reachable from CachePayload, so PayloadShape (issue #2335, merged as #2856) already gives it a different cache key than any payload written without it — the stale-entry hazard every entry in the version history describes is closed by construction, and bumping as well would only be ceremony. CacheVersion means what RecordShapeFingerprint's own summary says it means: the PARSE changed while the SHAPE did not, which no structural hash can see — v28 and v29 are both exactly that case, and this change is the other one. Verified rather than assumed: a cold run of this build wrote fresh entries and a warm second run read them back, on the SHARED ~/.cache/al-runner/bc-symbols with no --cache isolation, and the precompiled-page corpus arm (Base App page 1710) passed in both.

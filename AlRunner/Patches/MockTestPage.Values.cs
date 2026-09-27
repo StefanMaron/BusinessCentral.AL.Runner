@@ -203,6 +203,21 @@ internal static class TestPageOptionValue
         return captions;
     }
 
+    /// <summary>
+    /// The captions a control with no ControlDefinition shows for its bound value: the enum's
+    /// own captions, or a plain Option FIELD's OptionCaption (#4857). BC gives a control that
+    /// declares no OptionCaption its source field's; a precompiled page has no merged control
+    /// metadata to carry it, so it is read off the bound value's option metadata. Null when the
+    /// field declares no captions beyond its member names. Corpus 67600.
+    /// </summary>
+    internal static string[]? BoundOptionCaptions(NavOption? option)
+    {
+        if (EnumCaptions(option) is { } enumCaptions) return enumCaptions;
+        if (option?.NavOptionMetadata is not { } metadata) return null;
+        var caption = metadata.OptionCaption;
+        return string.IsNullOrEmpty(caption) || caption == metadata.OptionString ? null : caption.Split(',');
+    }
+
     /// <summary>The number of members, for AL that walks an option set rather than naming one.</summary>
     internal static int Count(NavOption option)
         => option.NavOptionMetadata is { } metadata ? Members(metadata).Length : 0;
