@@ -352,45 +352,55 @@ precompiled-dep-cache-null as ordered bundles* step and
 
 <a id="populate-cost"></a>
 
-## What a handout costs (#4851)
+## What a handout costs (#4851, #4859)
 
-AllObj is populated into a runner store on every data-access handout, and a handout happens
-each time AL opens a fresh `Record AllObj`. Microsoft's Test Runner does that several times per
-test, so the corpus hands AllObj out thousands of times per run. Until #4851 each handout walked
-the whole inventory — Base and System Application included — only to insert nothing, and that
-walk was most of a warm corpus run once Test Runner loaded.
+AllObj and AllObjWithCaption are populated into a runner store on every data-access handout, and
+a handout happens each time AL opens a fresh record of either table. Microsoft's Test Runner
+opens `Record AllObj` several times per test, so the corpus hands AllObj out thousands of times
+per run. Until #4851 each handout walked the whole inventory — Base and System Application
+included — only to insert nothing; AllObjWithCaption did the same until #4859.
 
-Two memos now carry it, both in `RecordPatches.AllObjVirtualTable.cs`:
+Both tables share one mechanism, `RecordPatches.ObjectInventoryStore.cs`:
 
-- **The rows**, per `AllObjInventoryKey` — the inventory stamp, the executing app group and the
-  visible-app set. The rows are built once per key, as finished value arrays. A store gets a
-  shallow copy of each array. The NavValues are immutable and shared, as BC's own
+- **The rows**, per table and `ObjectInventoryKey` — the inventory stamp, the executing app group
+  and the visible-app set. The rows are built once per key, as finished value arrays. A store gets
+  a shallow copy of each array. The NavValues are immutable and shared, as BC's own
   `VirtualDataProvider.AddSystemFieldValues` shares its system values across virtual rows.
 - **The top-up**, per store and key: a store that has already taken a key's rows is handed out
   without touching the inventory again.
+- **The store itself, across a test-codeunit boundary** (#4859). `ResetPerTestState` drops every
+  store, so each codeunit used to copy the rows in again. A store AL has not written to is now
+  parked at the boundary, and the next codeunit's first handout takes it back when a fresh store
+  would receive exactly the same rows. `IsReusableObjectInventoryStore` is that rule: the same
+  metatable, filled only under the current stamp, already holding the current key's rows, and
+  nothing else. The last clause matters because a store can hold rows from more than one
+  visible-app set: a read made with another app's code on the call stack widens the set, and
+  that store then holds rows a narrower read must not see. The row count tells them apart.
+  Writes are seen through `NoteTransactionWriteForTable`, which every AL write entry point
+  reaches before it writes; a written store is never parked.
 
-The **stamp** (`AllObjInventoryStamp`) has one term per input the inventory, the visibility
-filter and the owner index read: the bundle and `.app` registration epochs, the app-group
-generation, the module and enum registries, and the size of each parsed-object registry. A
-reload moves an epoch. Within one bundle the registries only grow, which a count sees. The lazy
-`EnsureSystemEnumsRegistered` path moves the stamp only for platform enums the symbols did not
-supply; a registration after a lookup was not observed on a platform-only fixture (#4855 review),
-and the registry's mutation counter (`AlEnumMetadataRegistry.Version`) is the term that would
-notice it. A dependency `.app` deleted from disk mid-process
-is not a term: its rows stay until the next reload, as they did before #4851.
-`ResetForReload` also drops the rows outright. **Trap:** a new source read by
-`EnumerateKnownAlObjects`, `IsHiddenFromCurrentAppGroup` or `BuildObjectOwnerIndex` needs a term
-in the stamp. Without one, AllObj stops listing what that source adds until something else
-changes.
+The **stamp** (`ObjectInventoryStamp`) has one term per input the inventory, the visibility
+filter, the owner index and AllObjWithCaption's captions read: the bundle and `.app`
+registration epochs, the app-group generation, the module and enum registries, and the size of
+each parsed-object and caption registry. A reload moves an epoch. Within one bundle the
+registries only grow, which a count sees. The lazy `EnsureSystemEnumsRegistered` path moves the
+stamp only for platform enums the symbols did not supply; a registration after a lookup was not
+observed on a platform-only fixture (#4855 review), and the registry's mutation counter
+(`AlEnumMetadataRegistry.Version`) is the term that would notice it. A dependency `.app` deleted
+from disk mid-process is not a term: its rows stay until the next reload, as they did before
+#4851. `ResetForReload` also drops the rows and the parked stores outright. **Trap:** a new
+source read by `EnumerateKnownAlObjects`, `IsHiddenFromCurrentAppGroup`, `BuildObjectOwnerIndex`
+or `SourceCaptionFor` needs a term in the stamp. Without one, the two tables stop listing what
+that source adds until something else changes.
 
-What stays per store is the insert itself. A test-codeunit boundary drops every store
-(`ResetPerTestState`), so each codeunit's first handout copies the rows in again.
+The tests read the `AL_RUNNER_PERF=1` lines `<table>.Handout`, `.InventoryWalk`, `.TopUp` and
+`.Reuse`:
 
-`AlRunner.Tests/AllObjPopulateCostTests.cs` pins it, through the `AL_RUNNER_PERF=1` lines
-`AllObj.Handout`, `AllObj.InventoryWalk` and `AllObj.TopUp`:
-
-- one walk and one top-up per store across many handouts, on a cold and a warm run;
-- a `--server` second request that renames objects answers with the new names.
-
-`AlRunner.Tests/AllObjInventoryStampTests.cs` pins that a registered, replaced or extended enum
-moves the stamp.
+- `AlRunner.Tests/AllObjPopulateCostTests.cs`: one walk, one fill and one reuse per table across
+  two codeunits of many handouts, on a cold and a warm run; a store AL wrote to is not carried
+  into the next codeunit; a `--server` second request that renames objects answers with the new
+  names.
+- `AlRunner.Tests/ObjectInventoryStoreReuseRuleTests.cs`: each clause of the reuse rule,
+  including the widened store no platform-only fixture can produce.
+- `AlRunner.Tests/AllObjInventoryStampTests.cs`: a registered, replaced or extended enum moves the
+  stamp.
