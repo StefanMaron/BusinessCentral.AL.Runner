@@ -263,6 +263,16 @@ public static partial class BcRuntime
     {
         bool trap = errorLevel == Microsoft.Dynamics.Nav.Types.DataError.TrapError;
 
+        // A test codeunit runs through its OWN DoRunAsync, as in BC's RunCodeunit
+        // (handle.Target.RunAsync): NavTestCodeunit.DoRunAsync, unmodified, whose first call is
+        // NavTestExecution.EnterTestCodeunit — BC's own refusal of a nested test run (#4827).
+        // Observably equivalent: it is BC's body, reached the way BC reaches it, and the
+        // instance form (`Var.Run()`) already took this path. No trap and no write-transaction
+        // bracket here: both belong to NavCodeunit.DoRunAsync, which the override replaces.
+        var testTarget = TryResolveTestCodeunitTarget(objectId);
+        if (testTarget != null)
+            return testTarget.RunAsync(errorLevel, record).AsTask().GetAwaiter().GetResult();
+
         // Deliberately OUTSIDE the `catch when (trap)` below, exactly as BC places
         // BeginTransactionWorldAndTransaction outside the try whose catch suppresses the
         // codeunit's own errors: a refusal must reach the AL caller as an error, never be
@@ -297,6 +307,18 @@ public static partial class BcRuntime
             ALDatabasePatches.ExitRunTransaction();
             if (guarded) ALDatabasePatches.EndGuardedRunTransaction(ran);
         }
+    }
+
+    /// <summary>
+    /// The target of <paramref name="objectId"/> when it is a <c>Subtype = Test</c> codeunit,
+    /// else null. Resolved by type only, so a non-test codeunit is not instantiated twice.
+    /// </summary>
+    private static Microsoft.Dynamics.Nav.Runtime.NavTestCodeunit? TryResolveTestCodeunitTarget(int objectId)
+    {
+        var cuType = FindCodeunitTypePublic(objectId);
+        if (cuType == null || !typeof(Microsoft.Dynamics.Nav.Runtime.NavTestCodeunit).IsAssignableFrom(cuType))
+            return null;
+        return (Microsoft.Dynamics.Nav.Runtime.NavTestCodeunit)NavCodeunitHandle_CreateTarget(CreateCodeunitHandle(objectId));
     }
 
     private static Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle CreateCodeunitHandle(int objectId)
