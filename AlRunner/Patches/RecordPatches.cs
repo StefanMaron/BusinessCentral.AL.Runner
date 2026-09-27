@@ -852,7 +852,8 @@ public static partial class RecordPatches
     /// <c>KnownXmlPortIdSet</c>. So a null is only true for the set registered when it was cached,
     /// and an earlier bundle asking about an id a later bundle's dependency declares left that
     /// later bundle unable to use its own dependency. Queries are not here: <c>BuildNCLMetaQuery</c>
-    /// reads parsed source only, which a registration cannot change.</para>
+    /// reads parsed source only, which a registration cannot change.
+    /// See docs/virtual-tables-allobj.md#multi-bundle-metatable-cache-app-registration.</para>
     ///
     /// <para>Only null entries go, so a live NCL object precompiled callers may hold is never
     /// swapped under them (precompiled-dll-respect.md). Every null goes, not just the new .app's
