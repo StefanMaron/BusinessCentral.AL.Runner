@@ -1878,7 +1878,7 @@ internal sealed partial class RunnerPageInstance
         if (helper == null)
         {
             if (trace) Console.Out.WriteLine($"[option-captions] control {controlId}: no MetadataHelper ({_form.GetType().Name})");
-            return TestPageOptionValue.EnumCaptions(boundOption);
+            return TestPageOptionValue.BoundOptionCaptions(boundOption);
         }
         if (!helper.TryGetControlDefinitionById(controlId, out var definition) || definition == null)
         {
