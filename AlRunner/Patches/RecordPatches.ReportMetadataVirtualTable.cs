@@ -211,6 +211,10 @@ public static partial class RecordPatches
     /// </summary>
     private static void InsertVirtualRow(
         object provider, NCLMetaTable metaTable, object[] systemIdArgs, Func<NCLMetaField, object?> buildValue)
+        => InsertVirtualRowValues(provider, metaTable, BuildVirtualRowValues(metaTable, systemIdArgs, buildValue));
+
+    /// <summary>The value array <see cref="InsertVirtualRow"/> inserts, built without inserting it.</summary>
+    private static Array BuildVirtualRowValues(NCLMetaTable metaTable, object[] systemIdArgs, Func<NCLMetaField, object?> buildValue)
     {
         var values = _aovSystemValues!.Invoke(metaTable, systemIdArgs);
 
@@ -221,7 +225,11 @@ public static partial class RecordPatches
             if (values.GetValue(idx) != null) continue;   // BC already filled this slot
             values.SetValue(buildValue(field), idx);
         }
+        return values;
+    }
 
+    private static void InsertVirtualRowValues(object provider, NCLMetaTable metaTable, Array values)
+    {
         var readOnly = _aovCtorReadOnlyBuffer!.Invoke(new object?[] { metaTable, values });
         var mutable = _aovCtorMutableBuffer!.Invoke(new object?[] { readOnly });
         try

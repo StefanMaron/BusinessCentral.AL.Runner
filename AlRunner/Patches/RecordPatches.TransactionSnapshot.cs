@@ -221,6 +221,7 @@ public static partial class RecordPatches
     /// </summary>
     internal static void NoteTransactionWriteForTable(int tableId)
     {
+        NoteObjectInventoryWrite(tableId);
         foreach (var (source, perTable) in _dataAccessByTable)
         {
             if (!perTable.TryGetValue(tableId, out var dataAccess)) continue;

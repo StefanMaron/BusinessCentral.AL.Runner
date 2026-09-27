@@ -32,6 +32,11 @@ public class AllObjPopulateCostTests
     private static readonly Regex HandoutLine = new(@"^PERF AllObj\.Handout$", RegexOptions.Multiline);
     private static readonly Regex TopUpLine = new(@"^PERF AllObj\.TopUp (\d+) row\(s\)$", RegexOptions.Multiline);
     private static readonly Regex WalkLine = new(@"^PERF AllObj\.InventoryWalk (\d+) row\(s\)$", RegexOptions.Multiline);
+    private static readonly Regex ReuseLine = new(@"^PERF AllObj\.Reuse$", RegexOptions.Multiline);
+    private static readonly Regex CaptionHandoutLine = new(@"^PERF AllObjWithCaption\.Handout$", RegexOptions.Multiline);
+    private static readonly Regex CaptionTopUpLine = new(@"^PERF AllObjWithCaption\.TopUp (\d+) row\(s\)$", RegexOptions.Multiline);
+    private static readonly Regex CaptionWalkLine = new(@"^PERF AllObjWithCaption\.InventoryWalk (\d+) row\(s\)$", RegexOptions.Multiline);
+    private static readonly Regex CaptionReuseLine = new(@"^PERF AllObjWithCaption\.Reuse$", RegexOptions.Multiline);
 
     private static (string output, int exit) RunRunner(string cacheDir, string app)
     {
@@ -103,6 +108,7 @@ public class AllObjPopulateCostTests
         page {{BaseId + 1}} "IT4851 {{tag}} Card"
         {
             PageType = Card;
+            Caption = 'IT4851 {{tag}} Card Caption';
             SourceTable = "IT4851 {{tag}} Widget";
         }
 
@@ -111,7 +117,15 @@ public class AllObjPopulateCostTests
             procedure CheckOnce()
             var
                 AllObj: Record AllObj;
+                WithCaption: Record AllObjWithCaption;
             begin
+                if not WithCaption.Get(WithCaption."Object Type"::Page, {{BaseId + 1}}) then
+                    Error('AllObjWithCaption must list page {{BaseId + 1}}');
+                if WithCaption."Object Caption" <> 'IT4851 {{tag}} Card Caption' then
+                    Error('page {{BaseId + 1}} caption is <%1>, expected <IT4851 {{tag}} Card Caption>', WithCaption."Object Caption");
+                if WithCaption.Get(WithCaption."Object Type"::Table, {{BaseId + 9}}) then
+                    Error('AllObjWithCaption must NOT list table {{BaseId + 9}}');
+
                 if not AllObj.Get(AllObj."Object Type"::Table, {{BaseId}}) then
                     Error('AllObj must list table {{BaseId}}');
                 if AllObj."Object Name" <> 'IT4851 {{tag}} Widget' then
@@ -200,24 +214,159 @@ public class AllObjPopulateCostTests
                 Assert.True(exit == 0 && output.Contains("2P/0F/0E"),
                     $"{pass} run: expected both tests to pass (exit {exit}), got:\n{output}");
 
-                var handouts = HandoutLine.Matches(output).Count;
-                var walks = WalkLine.Matches(output).Count;
-                var topUps = TopUpLine.Matches(output).Count;
+                foreach (var (table, handoutLine, walkLine, topUpLine, reuseLine) in new[]
+                         {
+                             ("AllObj", HandoutLine, WalkLine, TopUpLine, ReuseLine),
+                             ("AllObjWithCaption", CaptionHandoutLine, CaptionWalkLine, CaptionTopUpLine, CaptionReuseLine),
+                         })
+                {
+                    var handouts = handoutLine.Matches(output).Count;
+                    var walks = walkLine.Matches(output).Count;
+                    var topUps = topUpLine.Matches(output).Count;
+                    var reuses = reuseLine.Matches(output).Count;
 
-                // [THEN] The loop reached the populate path on every lookup. Without this the
-                // walk bound below could hold because nothing was handed out at all.
-                Assert.True(handouts >= 2 * Lookups,
-                    $"{pass} run: expected at least {2 * Lookups} AllObj handouts, got {handouts}:\n{output}");
+                    // [THEN] The loop reached the populate path on every lookup. Without this the
+                    // bounds below could hold because nothing was handed out at all.
+                    Assert.True(handouts >= 2 * Lookups,
+                        $"{pass} run: expected at least {2 * Lookups} {table} handouts, got {handouts}:\n{output}");
 
-                // [THEN] The rows were built once for the run: one visibility, one inventory.
-                // Before #4851 every handout walked, so this equalled the handout count.
-                Assert.True(walks == 1,
-                    $"{pass} run: {walks} inventory walk(s) for {handouts} handout(s); expected 1:\n{output}");
+                    // [THEN] The rows were built once for the run: one visibility, one inventory.
+                    // Before #4851 (#4859 for AllObjWithCaption) every handout walked.
+                    Assert.True(walks == 1,
+                        $"{pass} run: {walks} {table} inventory walk(s) for {handouts} handout(s); expected 1:\n{output}");
 
-                // [THEN] And each store was filled once, on its first handout: one per test
-                // codeunit, whose boundary drops the store. The other handouts added nothing.
-                Assert.True(topUps == 2,
-                    $"{pass} run: {topUps} top-up(s) for {handouts} handout(s); expected 2, one per codeunit:\n{output}");
+                    // [THEN] One store was filled, by the first codeunit; the second codeunit was
+                    // handed that store back at its boundary instead of a new one (#4859).
+                    Assert.True(topUps == 1 && reuses == 1,
+                        $"{pass} run: {topUps} {table} top-up(s) and {reuses} reuse(s) for {handouts} handout(s); "
+                        + $"expected 1 and 1:\n{output}");
+                }
+            }
+        }
+        finally
+        {
+            try { Directory.Delete(root, true); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// Two symmetric test codeunits that each check the stores are clean, then write to both
+    /// tables: an Insert of a row no object backs, and a Modify of a real one. Codeunit order is
+    /// not id order, so whichever runs second is the one that would read a leaked write.
+    /// </summary>
+    private static void WriteWriteLeakFixture(string dir)
+    {
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
+        {
+          "id": "6a4851e0-0000-4c38-9e25-000000004859",
+          "name": "IT4859 AllObj Write Leak",
+          "publisher": "IssueTest4859",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": {{BaseId + 20}}, "to": {{BaseId + 29}} } ],
+          "runtime": "14.0"
+        }
+        """);
+        string Tests(int id, string letter) => $$"""
+        codeunit {{id}} "IT4859 Leak Tests {{letter}}"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure AWriteDoesNotReachTheNextCodeunit{{letter}}()
+            var
+                Probe: Codeunit "IT4859 Leak Probe";
+            begin
+                Probe.CheckClean();
+                Probe.Write();
+            end;
+        }
+        """;
+        File.WriteAllText(Path.Combine(dir, "Fixture.al"), $$"""
+        table {{BaseId + 20}} "IT4859 Leak Widget"
+        {
+            fields { field(1; "Code"; Code[20]) { } }
+            keys { key(PK; "Code") { Clustered = true; } }
+        }
+
+        codeunit {{BaseId + 21}} "IT4859 Leak Probe"
+        {
+            procedure CheckClean()
+            var
+                AllObj: Record AllObj;
+                WithCaption: Record AllObjWithCaption;
+            begin
+                if AllObj.Get(AllObj."Object Type"::Table, {{BaseId + 28}}) then
+                    Error('LEAK: AllObj lists table {{BaseId + 28}}, which only a previous codeunit inserted');
+                if not AllObj.Get(AllObj."Object Type"::Table, {{BaseId + 20}}) then
+                    Error('AllObj must list table {{BaseId + 20}}');
+                if AllObj."Object Name" <> 'IT4859 Leak Widget' then
+                    Error('LEAK: table {{BaseId + 20}} is named <%1>, as a previous codeunit modified it', AllObj."Object Name");
+                if WithCaption.Get(WithCaption."Object Type"::Table, {{BaseId + 28}}) then
+                    Error('LEAK: AllObjWithCaption lists table {{BaseId + 28}}, which only a previous codeunit inserted');
+                if not WithCaption.Get(WithCaption."Object Type"::Table, {{BaseId + 20}}) then
+                    Error('AllObjWithCaption must list table {{BaseId + 20}}');
+                if WithCaption."Object Caption" <> 'IT4859 Leak Widget' then
+                    Error('LEAK: table {{BaseId + 20}} caption is <%1>, as a previous codeunit modified it', WithCaption."Object Caption");
+            end;
+
+            procedure Write()
+            var
+                AllObj: Record AllObj;
+                WithCaption: Record AllObjWithCaption;
+            begin
+                AllObj.Init();
+                AllObj."Object Type" := AllObj."Object Type"::Table;
+                AllObj."Object ID" := {{BaseId + 28}};
+                AllObj."Object Name" := 'Written';
+                if AllObj.Insert() then;
+                if AllObj.Get(AllObj."Object Type"::Table, {{BaseId + 20}}) then begin
+                    AllObj."Object Name" := 'Modified';
+                    if AllObj.Modify() then;
+                end;
+                WithCaption.Init();
+                WithCaption."Object Type" := WithCaption."Object Type"::Table;
+                WithCaption."Object ID" := {{BaseId + 28}};
+                if WithCaption.Insert() then;
+                if WithCaption.Get(WithCaption."Object Type"::Table, {{BaseId + 20}}) then begin
+                    WithCaption."Object Caption" := 'Modified';
+                    if WithCaption.Modify() then;
+                end;
+            end;
+        }
+
+        {{Tests(BaseId + 22, "A")}}
+
+        {{Tests(BaseId + 23, "B")}}
+        """);
+    }
+
+    /// <summary>
+    /// A store AL wrote to is never carried into the next codeunit (#4859). Without the write
+    /// check, the second codeunit reads the first one's Insert and Modify.
+    /// </summary>
+    [SkippableFact]
+    public void AWrittenStore_IsNotCarriedIntoTheNextCodeunit_ColdAndWarm()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var root = TestScratch.Dir("al-runner-4859-writeleak");
+        try
+        {
+            var app = Path.Combine(root, "app");
+            WriteWriteLeakFixture(app);
+            var cache = Path.Combine(root, "cache");
+
+            foreach (var pass in new[] { "cold", "warm" })
+            {
+                var (output, exit) = RunRunner(cache, app);
+                Assert.True(exit == 0 && output.Contains("2P/0F/0E"),
+                    $"{pass} run: expected both tests to pass (exit {exit}), got:\n{output}");
+                // [THEN] The written stores were not reused — neither table reports a reuse.
+                Assert.True(ReuseLine.Matches(output).Count == 0 && CaptionReuseLine.Matches(output).Count == 0,
+                    $"{pass} run: a written store was reused:\n{output}");
             }
         }
         finally

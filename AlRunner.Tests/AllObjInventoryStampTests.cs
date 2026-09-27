@@ -24,7 +24,7 @@ public sealed class AllObjInventoryStampTests
     private const int ExtendedEnumId = 88485103;
 
     private static object Stamp() =>
-        typeof(RecordPatches).GetMethod("CurrentAllObjInventoryStamp", BindingFlags.NonPublic | BindingFlags.Static)!
+        typeof(RecordPatches).GetMethod("CurrentObjectInventoryStamp", BindingFlags.NonPublic | BindingFlags.Static)!
             .Invoke(null, null)!;
 
     private static void Register(int id, string name) =>
