@@ -1677,7 +1677,7 @@ public static partial class NclCecilRewrite
             //
             // DeleteAllAsync/ModifyAllAsync (no "AL" prefix) — NOT ALDeleteAllAsync/
             // ALModifyAllAsync — deliberately (AlRunner#1791). The single-row forms
-            // (ALInsert/ALModify/ALDelete/ALRename) all fire their prepend correctly via
+            // (ALInsert/ALModify/ALDelete) all fire their prepend correctly via
             // either overload because BC's own sync entry point (e.g. `ALInsert(bool)`)
             // itself calls the "AL"-prefixed async sibling (`ALInsertAsync(...)`), so
             // hooking the async name catches both call surfaces. The bulk forms break that
@@ -1702,12 +1702,24 @@ public static partial class NclCecilRewrite
             var insertEntries = new[] { "ALInsertAsync" };
             var writeEntries = new[]
             {
-                "ALModifyAsync", "ALDeleteAsync", "ALRenameAsync",
+                "ALModifyAsync", "ALDeleteAsync",
                 "DeleteAllAsync", "ModifyAllAsync",
             };
+            // Rename is noted at its funnel, not at ALRenameAsync (#4877): the sync ALRename the
+            // AL compiler binds calls Rename(DataError, bool, bool, NavValue[]), which goes to
+            // RenameAsync(DataError, bool, bool, NavValue[]) and never through ALRenameAsync.
+            // Every rename surface (ALRename, ALRenameAsync, Rename(bool, DataError), RecordRef)
+            // ends in that one overload, so it is noted once per rename. The 2-arg
+            // RenameAsync(bool, DataError) forwards to it and must NOT be listed too.
+            static bool IsRenameFunnel(MethodDefinition x)
+                => x.Name == "RenameAsync" && x.Parameters.Count == 4;
+            if (!navRecord.Methods.Any(IsRenameFunnel))
+                throw new InvalidOperationException(
+                    "[Cecil] NavRecord.RenameAsync(DataError, bool, bool, NavValue[]) not found — an AL " +
+                    "Rename would stop being rolled back and seen by the write note (#4877).");
             int bumped = 0;
             foreach (var m in navRecord.Methods.Where(
-                         x => (insertEntries.Contains(x.Name) || writeEntries.Contains(x.Name))
+                         x => (insertEntries.Contains(x.Name) || writeEntries.Contains(x.Name) || IsRenameFunnel(x))
                               && x.HasBody && x.Body.Instructions.Count > 0))
             {
                 var il = m.Body.GetILProcessor();

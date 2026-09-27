@@ -38,7 +38,7 @@ public class AllObjPopulateCostTests
     private static readonly Regex CaptionWalkLine = new(@"^PERF AllObjWithCaption\.InventoryWalk (\d+) row\(s\)$", RegexOptions.Multiline);
     private static readonly Regex CaptionReuseLine = new(@"^PERF AllObjWithCaption\.Reuse$", RegexOptions.Multiline);
 
-    private static (string output, int exit) RunRunner(string cacheDir, string app)
+    internal static (string output, int exit) RunRunner(string cacheDir, string app)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
@@ -291,6 +291,12 @@ public class AllObjPopulateCostTests
             keys { key(PK; "Code") { Clustered = true; } }
         }
 
+        table {{BaseId + 24}} "IT4859 Leak Renamed"
+        {
+            fields { field(1; "Code"; Code[20]) { } }
+            keys { key(PK; "Code") { Clustered = true; } }
+        }
+
         codeunit {{BaseId + 21}} "IT4859 Leak Probe"
         {
             procedure CheckClean()
@@ -310,6 +316,13 @@ public class AllObjPopulateCostTests
                     Error('AllObjWithCaption must list table {{BaseId + 20}}');
                 if WithCaption."Object Caption" <> 'IT4859 Leak Widget' then
                     Error('LEAK: table {{BaseId + 20}} caption is <%1>, as a previous codeunit modified it', WithCaption."Object Caption");
+                // #4877: a Rename must be seen as a write too.
+                if not AllObj.Get(AllObj."Object Type"::Table, {{BaseId + 24}}) then
+                    Error('LEAK: AllObj lost table {{BaseId + 24}}, which a previous codeunit renamed');
+                if AllObj.Get(AllObj."Object Type"::Table, {{BaseId + 27}}) then
+                    Error('LEAK: AllObj lists table {{BaseId + 27}}, a previous codeunit''s rename target');
+                if not WithCaption.Get(WithCaption."Object Type"::Table, {{BaseId + 24}}) then
+                    Error('LEAK: AllObjWithCaption lost table {{BaseId + 24}}, which a previous codeunit renamed');
             end;
 
             procedure Write()
@@ -334,6 +347,10 @@ public class AllObjPopulateCostTests
                     WithCaption."Object Caption" := 'Modified';
                     if WithCaption.Modify() then;
                 end;
+                if AllObj.Get(AllObj."Object Type"::Table, {{BaseId + 24}}) then
+                    if AllObj.Rename(AllObj."Object Type"::Table, {{BaseId + 27}}) then;
+                if WithCaption.Get(WithCaption."Object Type"::Table, {{BaseId + 24}}) then
+                    if WithCaption.Rename(WithCaption."Object Type"::Table, {{BaseId + 27}}) then;
             end;
         }
 
@@ -367,6 +384,141 @@ public class AllObjPopulateCostTests
                 // [THEN] The written stores were not reused — neither table reports a reuse.
                 Assert.True(ReuseLine.Matches(output).Count == 0 && CaptionReuseLine.Matches(output).Count == 0,
                     $"{pass} run: a written store was reused:\n{output}");
+            }
+        }
+        finally
+        {
+            try { Directory.Delete(root, true); } catch { }
+        }
+    }
+
+    // Every AL write path, one per row: (name, AL statements). Each path owns table
+    // MatrixBase + i; the Insert paths insert id MatrixBase + 20 + i, the Rename path renames to
+    // MatrixBase + 30 + i. A path whose write the store's write note misses leaks into the next
+    // codeunit, and the probe names the path.
+    private const int MatrixBase = 62760;
+    private static readonly (string Name, string Write)[] WritePaths =
+    {
+        ("RecordInsert", "AllObj.Init(); AllObj.\"Object Type\" := AllObj.\"Object Type\"::Table; AllObj.\"Object ID\" := {INS}; AllObj.\"Object Name\" := 'X'; AllObj.Insert();"),
+        ("RecordModify", "AllObj.Get(AllObj.\"Object Type\"::Table, {OWN}); AllObj.\"Object Name\" := 'X'; AllObj.Modify();"),
+        ("RecordDelete", "AllObj.Get(AllObj.\"Object Type\"::Table, {OWN}); AllObj.Delete();"),
+        ("RecordRename", "AllObj.Get(AllObj.\"Object Type\"::Table, {OWN}); AllObj.Rename(AllObj.\"Object Type\"::Table, {REN});"),
+        ("RecordRefInsert", "Ref.Open(Database::AllObj); Ref.Init(); Ref.Field(1).Value := AllObj.\"Object Type\"::Table; Ref.Field(3).Value := {INS}; Ref.Field(4).Value := 'X'; Ref.Insert();"),
+        ("RecordRefModify", "AllObj.Get(AllObj.\"Object Type\"::Table, {OWN}); Ref.GetTable(AllObj); Ref.Field(4).Value := 'X'; Ref.Modify();"),
+        ("RecordRefDelete", "AllObj.Get(AllObj.\"Object Type\"::Table, {OWN}); Ref.GetTable(AllObj); Ref.Delete();"),
+        ("ModifyAll", "AllObj.SetRange(\"Object Type\", AllObj.\"Object Type\"::Table); AllObj.SetRange(\"Object ID\", {OWN}); AllObj.ModifyAll(\"Object Name\", 'X');"),
+        ("DeleteAll", "AllObj.SetRange(\"Object Type\", AllObj.\"Object Type\"::Table); AllObj.SetRange(\"Object ID\", {OWN}); AllObj.DeleteAll();"),
+    };
+
+    private static void WriteWritePathFixture(string dir)
+    {
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
+        {
+          "id": "6a4859e0-0000-4c38-9e25-000000004877",
+          "name": "IT4859 AllObj Write Paths",
+          "publisher": "IssueTest4859",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": {{MatrixBase}}, "to": {{MatrixBase + 99}} } ],
+          "runtime": "14.0"
+        }
+        """);
+        var al = new StringBuilder();
+        var checks = new StringBuilder();
+        var writes = new StringBuilder();
+        for (var i = 0; i < WritePaths.Length; i++)
+        {
+            var (name, write) = WritePaths[i];
+            int own = MatrixBase + i, ins = MatrixBase + 20 + i, ren = MatrixBase + 30 + i;
+            al.Append($$"""
+            table {{own}} "IT4859 Path {{i}}"
+            {
+                fields { field(1; "Code"; Code[20]) { } }
+                keys { key(PK; "Code") { Clustered = true; } }
+            }
+
+            """);
+            checks.Append($$"""
+                    AllObj.Reset();
+                    if not AllObj.Get(AllObj."Object Type"::Table, {{own}}) then
+                        Error('LEAK via {{name}}: table {{own}} is gone');
+                    if AllObj."Object Name" <> 'IT4859 Path {{i}}' then
+                        Error('LEAK via {{name}}: table {{own}} is named <%1>', AllObj."Object Name");
+                    if AllObj.Get(AllObj."Object Type"::Table, {{ins}}) then
+                        Error('LEAK via {{name}}: table {{ins}} was inserted by a previous codeunit');
+                    if AllObj.Get(AllObj."Object Type"::Table, {{ren}}) then
+                        Error('LEAK via {{name}}: table {{ren}} is a previous codeunit''s rename target');
+
+            """);
+            writes.Append($$"""
+                procedure Write{{name}}()
+                var
+                    AllObj: Record AllObj;
+                    Ref: RecordRef;
+                begin
+                    {{write.Replace("{OWN}", own.ToString()).Replace("{INS}", ins.ToString()).Replace("{REN}", ren.ToString())}}
+                end;
+
+            """);
+            foreach (var letter in new[] { "A", "B" })
+                al.Append($$"""
+                codeunit {{MatrixBase + 40 + 2 * i + (letter == "A" ? 0 : 1)}} "IT4859 {{name}} {{letter}}"
+                {
+                    Subtype = Test;
+
+                    [Test]
+                    procedure {{name}}{{letter}}()
+                    var
+                        Probe: Codeunit "IT4859 Path Probe";
+                    begin
+                        Probe.CheckClean();
+                        Probe.Write{{name}}();
+                    end;
+                }
+
+                """);
+        }
+        al.Append($$"""
+        codeunit {{MatrixBase + 90}} "IT4859 Path Probe"
+        {
+            procedure CheckClean()
+            var
+                AllObj: Record AllObj;
+            begin
+        {{checks}}    end;
+
+        {{writes}}}
+        """);
+        File.WriteAllText(Path.Combine(dir, "Fixture.al"), al.ToString());
+    }
+
+    /// <summary>
+    /// Every AL write path to AllObj, each written by two codeunits that first check the table is
+    /// clean, so whichever of a pair runs first is followed by some codeunit that reads its write.
+    /// A path the write note misses leaks, and the probe names it (#4859, #4877).
+    /// </summary>
+    [SkippableFact]
+    public void EveryWritePath_KeepsItsStoreOutOfTheNextCodeunit_ColdAndWarm()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var root = TestScratch.Dir("al-runner-4859-writepaths");
+        try
+        {
+            var app = Path.Combine(root, "app");
+            WriteWritePathFixture(app);
+            var cache = Path.Combine(root, "cache");
+            var tests = 2 * WritePaths.Length;
+
+            foreach (var pass in new[] { "cold", "warm" })
+            {
+                var (output, exit) = RunRunner(cache, app);
+                Assert.True(exit == 0 && output.Contains($"{tests}P/0F/0E"),
+                    $"{pass} run: expected all {tests} write-path tests to pass (exit {exit}), got:\n{output}");
+                Assert.True(ReuseLine.Matches(output).Count == 0,
+                    $"{pass} run: a written AllObj store was reused:\n{output}");
             }
         }
         finally
