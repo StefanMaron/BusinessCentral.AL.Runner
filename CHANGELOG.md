@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **page:** remove request-page controls and page parts whose ApplicationArea the session has not enabled
 - **metadata:** a table registered by a later bundle's precompiled dependency is no longer answered from a cached absence
 - **app-groups:** events and Page Control Field rows of an id two app groups share stay each group's own
 - **test-runner:** raise Test Runner - Mgt's per-method events inside BC's test-codeunit scope
