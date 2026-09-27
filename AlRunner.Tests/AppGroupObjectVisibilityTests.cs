@@ -513,10 +513,33 @@ public class AppGroupObjectVisibilityTests
         Directory.CreateDirectory(root);
         WriteOwnershipEdgeFixtures(root);
 
+        AssertEdgeFixturesPass(RunCli($" --no-cache \"{root}\""));
+    }
+
+    /// <summary>
+    /// #4767: a cache HIT replays each group's emit-captured page and report documents from that
+    /// group's own sidecar. The sidecar is written after the previous group's tests ran, so it must
+    /// read the compiling group's document, not the one the still-current test assembly sees.
+    /// </summary>
+    [SkippableFact]
+    public void Cli_SharedIds_ColdThenWarmOnOneCacheRoot_EachGroupStillReadsItsOwn()
+    {
+        TestArtifacts.SkipIfMissing();
+        var root = TestScratch.Dir("al-runner-app-group-visibility-edges-warm");
+        Directory.CreateDirectory(root);
+        WriteOwnershipEdgeFixtures(root);
+        var cache = TestScratch.Dir("al-runner-app-group-visibility-edges-warm-cache");
+
+        AssertEdgeFixturesPass(RunCli($" --cache \"{cache}\" \"{root}\""));
+        AssertEdgeFixturesPass(RunCli($" --cache \"{cache}\" \"{root}\""));
+    }
+
+    private static (string Output, int ExitCode) RunCli(string args)
+    {
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet",
-            Arguments = TestBuildConfig.RunArgs(ProjectPath) + TestBuildConfig.BcVersionArg + $" --no-cache \"{root}\"",
+            Arguments = TestBuildConfig.RunArgs(ProjectPath) + TestBuildConfig.BcVersionArg + args,
             RedirectStandardOutput = true, RedirectStandardError = true,
             UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
         };
@@ -528,14 +551,17 @@ public class AppGroupObjectVisibilityTests
         p.BeginErrorReadLine();
         if (!p.WaitForExit(240_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
         p.WaitForExit();
-        string output;
-        lock (sb) output = sb.ToString();
+        lock (sb) return (sb.ToString(), p.ExitCode);
+    }
 
+    private static void AssertEdgeFixturesPass((string Output, int ExitCode) run)
+    {
+        var (output, exitCode) = run;
         // The whole runner output as the message, so a red names the failing test and its WRONG: line.
         Assert.True(output.Contains("23P/0F/0E across 23 tests"), output);
         Assert.DoesNotContain("MISSING:", output);
         Assert.DoesNotContain("WRONG:", output);
-        Assert.Equal(0, p.ExitCode);
+        Assert.Equal(0, exitCode);
     }
 
     [SkippableFact]
