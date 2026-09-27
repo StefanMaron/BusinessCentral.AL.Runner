@@ -1018,4 +1018,111 @@ public class AppGroupObjectVisibilityTests
             Assert.True(failed.Count == 0, $"{label}: " + string.Join(" | ", failed));
         }
     }
+
+    /// <summary>
+    /// #4828: groups X and Y depend on D and both declare table 62790. Only X's field 2 relates to
+    /// D's table 62780, so renaming a 62780 row carries into X's 62790 rows and never into Y's.
+    /// </summary>
+    private static (string D, string X, string Y) WriteSharedIdRenameFixture(string root)
+    {
+        var appD = new Guid("3b0e6f52-0000-4c38-9e25-0000000000d1");
+        var d = WriteApp(Path.Combine(root, "renD"), appD, "Ren D", 62780, 62784);
+        File.WriteAllText(Path.Combine(d, "Parent.al"), """
+        table 62780 "Ren Parent" { fields { field(1; "Code"; Code[20]) { } } keys { key(PK; "Code") { Clustered = true; } } }
+        """);
+        string Group(string letter, Guid appId, bool related)
+        {
+            var dir = WriteApp(Path.Combine(root, "ren" + letter), appId, "Ren " + letter, 62790, 62799, (appD, "Ren D"));
+            var relation = related ? "TableRelation = \"Ren Parent\";" : "";
+            var expected = related ? "P2" : "P1";
+            File.WriteAllText(Path.Combine(dir, "Child.al"), $$"""
+            table 62790 "Ren Child {{letter}}"
+            {
+                fields
+                {
+                    field(1; "Code"; Code[20]) { }
+                    field(2; "Parent Code"; Code[20]) { {{relation}} }
+                }
+                keys { key(PK; "Code") { Clustered = true; } }
+            }
+            codeunit 62791 "Ren {{letter}} Tests"
+            {
+                Subtype = Test;
+                [Test]
+                procedure RenamingTheParentFollowsOnlyThisGroupsRelation()
+                var
+                    Parent: Record "Ren Parent";
+                    Child: Record "Ren Child {{letter}}";
+                begin
+                    Parent.Code := 'P1';
+                    Parent.Insert();
+                    Child.Code := 'C1';
+                    Child."Parent Code" := 'P1';
+                    Child.Insert();
+                    Parent.Rename('P2');
+                    Child.Get('C1');
+                    if Child."Parent Code" <> '{{expected}}' then
+                        Error('WRONG: after renaming 62780 P1 to P2, 62790 field 2 in {{letter}} is %1', Child."Parent Code");
+                end;
+            }
+            """);
+            return dir;
+        }
+        return (d, Group("X", AppC, related: true), Group("Y", AppD, related: false));
+    }
+
+    [SkippableFact]
+    public async Task Server_SharedTableId_RenamePropagationFollowsTheExecutingGroupsOwnRelations()
+    {
+        TestArtifacts.SkipIfMissing();
+        var root = TestScratch.Dir("al-runner-app-group-shared-id-rename");
+        Directory.CreateDirectory(root);
+        var (d, x, y) = WriteSharedIdRenameFixture(root);
+
+        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        await AssertRenameSequencePasses(server, d, x, y);
+    }
+
+    /// <summary>#4828 on a compile cache: the same requests cold, then in a second server on the
+    /// same cache root, where every module is a cache HIT.</summary>
+    [SkippableFact]
+    public async Task Server_SharedTableId_RenamePropagation_ColdThenWarmOnOneCacheRoot()
+    {
+        TestArtifacts.SkipIfMissing();
+        var root = TestScratch.Dir("al-runner-app-group-shared-id-rename-warm");
+        Directory.CreateDirectory(root);
+        var (d, x, y) = WriteSharedIdRenameFixture(root);
+        var cache = TestScratch.Dir("al-runner-app-group-shared-id-rename-cache");
+        for (var pass = 0; pass < 2; pass++)
+        {
+            await using var server = await CliServer.StartAsync(new[] { "--cache", cache });
+            await AssertRenameSequencePasses(server, d, x, y);
+        }
+    }
+
+    private static async Task AssertRenameSequencePasses(CliServer server, string d, string x, string y)
+    {
+        // Both orders: whichever group renames first must not fix the answer for the other.
+        foreach (var (label, request) in new[] { ("[D,X,Y]", new[] { d, x, y }), ("[D,Y,X]", new[] { d, y, x }) })
+        {
+            var lines = await server.SendRequestStreamingAsync(RunTests(request));
+            var (events, _) = ProtocolV2Streaming.Split(lines);
+            Assert.True(events.Count == 2, $"{label}: {events.Count} events | " + string.Join(" | ", lines));
+            var failed = events.Where(e => e.GetProperty("status").GetString() != "pass").Select(e => e.ToString()).ToList();
+            Assert.True(failed.Count == 0, $"{label}: " + string.Join(" | ", failed));
+        }
+    }
+
+    [SkippableFact]
+    public void Cli_SharedTableId_RenamePropagationFollowsTheExecutingGroupsOwnRelations()
+    {
+        TestArtifacts.SkipIfMissing();
+        var root = TestScratch.Dir("al-runner-app-group-shared-id-rename-cli");
+        Directory.CreateDirectory(root);
+        WriteSharedIdRenameFixture(root);
+        var (output, exitCode) = RunCli($" --no-cache \"{root}\"");
+        Assert.True(output.Contains("2P/0F/0E across 2 tests"), output);
+        Assert.DoesNotContain("WRONG:", output);
+        Assert.Equal(0, exitCode);
+    }
 }

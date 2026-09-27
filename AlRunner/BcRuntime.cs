@@ -599,6 +599,7 @@ public static partial class BcRuntime
             return;
         }
         _currentTestAssembly = asm;
+        AlRunner.Patches.RecordPatches.ForgetReferencingRelationsOnAppGroupSwitch();
         // Superseding registration for asm's OWN simple name — see
         // _latestGenerationByAssemblyName's doc comment (#1901). Unconditional: this must
         // happen for every app SetTestAssembly loads, not only whichever one ends up being

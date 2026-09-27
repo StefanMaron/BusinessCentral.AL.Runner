@@ -452,9 +452,8 @@ public static partial class RecordPatches
         object appGroup, NCLMetaTable context)
     {
         var result = new List<NCLMetaFieldRelation>();
-        foreach (var value in _metaTableCache.Values)
+        foreach (var child in ReferencingRelationCandidates())
         {
-            if (value is not NCLMetaTable child) continue;
             if (!IsInBcNonVirtualSnapshot(child.TableId)) continue;
             foreach (var field in child.Fields)
             {
@@ -466,6 +465,46 @@ public static partial class RecordPatches
             }
         }
         return result.ToArray();
+    }
+
+    private static FieldInfo? _fReferencingRelationsLookup;
+
+    /// <summary>
+    /// Drop BC's memo of each process-wide table's referencing relations when the executing app
+    /// group changes. BC keeps one per NavAppGroup, and the runner has one NavAppGroup for every
+    /// source app group, so the first group to rename a row of a table fixed the answer for every
+    /// later group sharing an id (#4828). Null is BC's own "not computed yet" state
+    /// (NCLMetaTable.GetReferencingRelations rebuilds it). A run where no two groups share an id
+    /// computes the same relations in every group, so it skips this.
+    /// </summary>
+    internal static void ForgetReferencingRelationsOnAppGroupSwitch()
+    {
+        if (_appGroupsSharingAnId.Count == 0) return;
+        _fReferencingRelationsLookup ??= BcShape.RequiredField(typeof(NCLMetaTable), "referencingRelationsLookup",
+            "rename propagation", "a table id several app groups declare would keep the first group's referencing relations");
+        foreach (var value in _metaTableCache.Values)
+            if (value is NCLMetaTable table)
+                _fReferencingRelationsLookup.SetValue(table, null);
+    }
+
+    /// <summary>
+    /// The tables the executing code sees: for an id several app groups declare, that group's own
+    /// NCLMetaTable, never the process-wide one another group built (#4828). An id only another
+    /// group has built, and that the executing group does not resolve for itself, is left out.
+    /// </summary>
+    private static IEnumerable<NCLMetaTable> ReferencingRelationCandidates()
+    {
+        var seen = new HashSet<int>();
+        foreach (var (id, value) in _metaTableCache)
+        {
+            seen.Add(id);
+            var own = AppGroupCacheScope("table", id) != Guid.Empty ? GetOrBuildNCLMetaTable(id) : value as NCLMetaTable;
+            if (own != null) yield return own;
+        }
+        foreach (var key in _metaTableCacheByAppGroup.Keys)
+            if (seen.Add(key.Id) && AppGroupCacheScope("table", key.Id) != Guid.Empty
+                && GetOrBuildNCLMetaTable(key.Id) is { } own)
+                yield return own;
     }
 
     /// <summary>
