@@ -156,7 +156,7 @@ public static partial class RecordPatches
 
     private static NCLMetaTable? BuildNCLMetaTable(int tableId)
     {
-        if (!TryGetInAppGroupScope("table", _parsedTables, tableId, out var parsed))
+        if (!_parsedTables.TryGetValue(tableId, out var parsed))
         {
             // Fallback: try to parse the table source from a registered BC dependency
             // .app. Tests under tests/spike-a-baseapp invoke Record types defined in
@@ -168,6 +168,8 @@ public static partial class RecordPatches
                 return null;
         }
         if (_tMetaTable == null || _mCreateFromMetaTable == null) return null;
+        // An id several app groups declare builds from the executing group's own declaration (#4767).
+        parsed = InAppGroupScope("table", tableId, parsed);
 
         try
         {
