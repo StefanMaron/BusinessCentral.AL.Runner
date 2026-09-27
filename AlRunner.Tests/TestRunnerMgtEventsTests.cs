@@ -6,8 +6,8 @@
 //
 // The plain-BC half (a test run through Microsoft's Test Runner starts with every area enabled)
 // is corpus codeunit 67552 in corpus PR #467. What this pins is the runner's raising of the
-// events, under every --isolation mode, and that a suite WITHOUT the Test Runner app is left
-// alone. OnBeforeTestMethodRun has five parameters in Test Runner 27.x/28.0 and gains `var Skip`
+// events, under every --isolation mode, and that a suite which does not declare the Test Runner
+// app still runs through it when the caches hold it, as on a service tier (#4816). OnBeforeTestMethodRun has five parameters in Test Runner 27.x/28.0 and gains `var Skip`
 // in 28.1, and each CI leg loads its own artifact's Test Runner, so the real-app probes are
 // version-neutral; both publisher shapes, Skip, and the refusals are pinned on source-compiled
 // stand-ins for 130454/130453 that carry Microsoft's object names. No Base Application dependency (.claude/rules/no-base-app-in-csharp-tests.md): the AL
@@ -65,7 +65,8 @@ public sealed class TestRunnerMgtEventsTests
         return dirs!;
     }
 
-    private static string WriteBundle(string name, AppManifest? testRunner, string al, string target = "Cloud")
+    private static string WriteBundle(string name, AppManifest? testRunner, string al, string target = "Cloud",
+        bool ownsTestRunnerRange = true)
     {
         var root = TestScratch.Dir(name);
         if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
@@ -80,7 +81,7 @@ public sealed class TestRunnerMgtEventsTests
           "version": "1.0.0.0",
           "dependencies": [ {{dependency}} ],
           "platform": "27.0.0.0",
-          "idRanges": [ { "from": 64810, "to": 64819 }, { "from": 130450, "to": 130459 } ],
+          "idRanges": [ { "from": 64810, "to": 64819 }{{(ownsTestRunnerRange ? ", { \"from\": 130450, \"to\": 130459 }" : "")}} ],
           "runtime": "14.0",
           "target": "{{target}}"
         }
@@ -219,12 +220,14 @@ public sealed class TestRunnerMgtEventsTests
             Lacks(output, marker);
     }
 
+    // #4816: a suite that does not declare Test Runner still runs through it, as on a service
+    // tier, whenever the package caches hold the app.
     [SkippableFact]
-    public void TestRunnerNotLoaded_NothingIsRaised_AndTheRunIsUnaffected()
+    public void TestRunnerNotDeclared_IsLoadedAsTheInstalledTestTool()
     {
         var dirs = RequireProvisioned();
-        var bundle = WriteBundle("al-runner-test-runner-events-4813-absent", null, """
-            codeunit 64811 "TRE Absent Tests"
+        var bundle = WriteBundle("al-runner-test-runner-events-4816-undeclared", null, ownsTestRunnerRange: false, al: """
+            codeunit 64811 "TRE Undeclared Tests"
             {
                 Subtype = Test;
 
@@ -234,20 +237,68 @@ public sealed class TestRunnerMgtEventsTests
                 end;
 
                 [Test]
-                procedure A_AreaFromOnRunIsStillThere()
+                procedure A_FirstTestSeesNoArea()
                 begin
-                    if ApplicationArea() <> '#Basic,#TREProbe' then
-                        Error('TRE6 FAIL: without the Test Runner app the first test saw [%1]', ApplicationArea());
+                    if ApplicationArea() <> '' then
+                        Error('TRE6 FAIL: undeclared Test Runner, first test saw [%1]', ApplicationArea());
+                end;
+
+                [Test]
+                procedure B_LeavesLastError()
+                begin
+                    asserterror Error('TRE-LEFT-BEHIND');
+                end;
+
+                [Test]
+                procedure C_StartsWithLastErrorCleared()
+                begin
+                    if GetLastErrorText() <> '' then
+                        Error('TRE7 FAIL: undeclared Test Runner, next test saw last error [%1]', GetLastErrorText());
                 end;
             }
             """);
 
         var (output, exit) = RunRunner(bundle, dirs);
 
-        HasLine(output, "PASS", "A_AreaFromOnRunIsStillThere");
+        HasLine(output, "PASS", "A_FirstTestSeesNoArea");
+        HasLine(output, "PASS", "C_StartsWithLastErrorCleared");
         Lacks(output, "TRE6 FAIL");
-        Lacks(output, "Test Runner - Mgt");
+        Lacks(output, "TRE7 FAIL");
         Assert.Equal(0, exit);
+    }
+
+    [SkippableFact]
+    public void WithInstalledTestTool_AddsTheRootOnlyWhenTheCachesHoldIt_AndNobodyNamedItYet()
+    {
+        var dirs = RequireProvisioned();
+        var empty = TestScratch.Dir("al-runner-test-runner-4816-empty-cache");
+        if (Directory.Exists(empty)) Directory.Delete(empty, recursive: true);
+        Directory.CreateDirectory(empty);
+        var holding = new DependencyResolver(new[] { dirs.TestApps });
+        var tool = ProgramSupport.InstalledTestTool;
+        var other = new DependencyRef(Guid.NewGuid(), "Other", "Someone", new Version(1, 0, 0, 0));
+
+        var added = ProgramSupport.WithInstalledTestTool(new List<DependencyRef> { other }, Array.Empty<string>(), holding);
+        Assert.Equal(new[] { other.AppId, tool.AppId }, added.Select(r => r.AppId));
+        Assert.True(added[1].Optional);
+
+        var absent = ProgramSupport.WithInstalledTestTool(
+            new List<DependencyRef> { other }, Array.Empty<string>(), new DependencyResolver(new[] { empty }));
+        Assert.Equal(new[] { other.AppId }, absent.Select(r => r.AppId));
+
+        var declared = new DependencyRef(dirs.TestRunner.AppId, dirs.TestRunner.Name, dirs.TestRunner.Publisher, dirs.TestRunner.Version);
+        var kept = ProgramSupport.WithInstalledTestTool(new List<DependencyRef> { declared }, Array.Empty<string>(), holding);
+        Assert.Single(kept);
+
+        // A bundle app whose idRanges cover 130454 keeps its own objects there; one that does not, does not.
+        var covering = Path.Combine(empty, "covering.json");
+        File.WriteAllText(covering, """{ "id": "b4816000-0000-4000-8000-000000004816", "idRanges": [ { "from": 130450, "to": 130459 } ] }""");
+        var beside = Path.Combine(empty, "beside.json");
+        File.WriteAllText(beside, """{ "id": "b4816000-0000-4000-8000-000000004817", "idRanges": [ { "from": 130455, "to": 130459 } ] }""");
+        Assert.Equal(new[] { other.AppId },
+            ProgramSupport.WithInstalledTestTool(new List<DependencyRef> { other }, new[] { covering }, holding).Select(r => r.AppId));
+        Assert.Equal(new[] { other.AppId, tool.AppId },
+            ProgramSupport.WithInstalledTestTool(new List<DependencyRef> { other }, new[] { beside }, holding).Select(r => r.AppId));
     }
 
     // Stand-ins for Microsoft's 130454/130453 and table 130450, compiled from source inside the

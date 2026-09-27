@@ -152,10 +152,11 @@ internal static partial class ProgramSupport
 
     /// <summary>
     /// <paramref name="roots"/> plus <see cref="InstalledTestTool"/> when the package caches hold
-    /// it and neither a dependency nor one of the bundle's own <paramref name="manifests"/> is
-    /// already that app. Absent from the caches, the run is what it was before (no root, so no
-    /// "not found" line). Both closure readers — the resolve in Program.cs and the AL-output
-    /// cache key — go through this, so they cannot disagree on what was loaded.
+    /// it, neither a dependency nor one of the bundle's own <paramref name="manifests"/> is
+    /// already that app, and no bundle app declares an id range covering codeunit 130454.
+    /// Absent from the caches, the run is what it was before (no root, so no "not found" line).
+    /// Both closure readers — the resolve in Program.cs and the AL-output cache key — go through
+    /// this, so they cannot disagree on what was loaded.
     /// </summary>
     internal static List<DependencyRef> WithInstalledTestTool(
         List<DependencyRef> roots, IReadOnlyList<string> manifests, AlRunner.DependencyResolver resolver)
@@ -163,12 +164,42 @@ internal static partial class ProgramSupport
         if (manifests.Any(m => AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(m)?.AppId
                 == InstalledTestTool.AppId))
             return roots;
+        // An app may only number objects inside its idRanges (AL0297), so one whose range covers
+        // 130454 may carry its own "Test Runner - Mgt"; a tier could not install Microsoft's
+        // beside it, so the suite keeps its own and nothing is added.
+        if (manifests.Any(m => DeclaresIdRangeCovering(m, TestRunnerMgtEvents.TestRunnerMgtId)))
+            return roots;
         if (roots.Any(r => r.AppId == InstalledTestTool.AppId
                 || (string.Equals(r.Name, InstalledTestTool.Name, StringComparison.OrdinalIgnoreCase)
                     && string.Equals(r.Publisher, InstalledTestTool.Publisher, StringComparison.OrdinalIgnoreCase))))
             return roots;
         if (!resolver.CanResolve(InstalledTestTool)) return roots;
         return roots.Append(InstalledTestTool).ToList();
+    }
+
+    private static bool DeclaresIdRangeCovering(string appJsonPath, int id)
+    {
+        System.Text.Json.JsonDocument doc;
+        try { doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(appJsonPath)); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        { return false; }
+        using (doc)
+        {
+            var ranges = new List<System.Text.Json.JsonElement>();
+            foreach (var p in doc.RootElement.EnumerateObject())
+            {
+                if (string.Equals(p.Name, "idRanges", StringComparison.OrdinalIgnoreCase)
+                    && p.Value.ValueKind == System.Text.Json.JsonValueKind.Array)
+                    ranges.AddRange(p.Value.EnumerateArray());
+                else if (string.Equals(p.Name, "idRange", StringComparison.OrdinalIgnoreCase)
+                    && p.Value.ValueKind == System.Text.Json.JsonValueKind.Object)
+                    ranges.Add(p.Value);
+            }
+            return ranges.Any(r => r.ValueKind == System.Text.Json.JsonValueKind.Object
+                && r.TryGetProperty("from", out var f) && f.TryGetInt32(out var from)
+                && r.TryGetProperty("to", out var t) && t.TryGetInt32(out var to)
+                && from <= id && id <= to);
+        }
     }
 
     internal static void SetBundleInfoFromAppJson(string appJsonPath)
