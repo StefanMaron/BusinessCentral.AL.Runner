@@ -77,4 +77,17 @@ public sealed class TenantStorageAppScopeTests
         // A different scope is a different row, whatever the key.
         Assert.False(Contains(app, DataScope.Module, string.Empty, key));
     }
+
+    [Fact]
+    public void Scope_IsPartOfTheKey_EvenWhenCompanyAndUserAreEqual()
+    {
+        var app = Guid.NewGuid();
+        var key = NewKey();
+
+        Set(app, DataScope.Module, string.Empty, key, "module value");
+
+        // Same app, company and user; only the scope differs, so this is another row.
+        Assert.False(Contains(app, DataScope.User, string.Empty, key));
+        Assert.Equal((true, "module value"), Get(app, DataScope.Module, string.Empty, key));
+    }
 }
