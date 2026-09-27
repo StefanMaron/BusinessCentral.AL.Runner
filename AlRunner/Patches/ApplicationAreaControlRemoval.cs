@@ -26,6 +26,11 @@
 // one test's areas. NavReportSync binds RemoveFromRequestPage there, as
 // MetadataProvider.GetReportMetadata binds `mp => RemoveItemsOnPageBasedOnLicenseAndApplicationArea(mp, null)`
 // (decompiled bc284; MetaReport shape identical on 27.0 and 28.5). Corpus codeunit 67533.
+//
+// Precompiled pages (#4796): their metadata document carries no field controls, so each field
+// control's area comes from the symbol file (RecordPatches.DependencyFieldControlAreas) and is
+// tested with the same IsApplicationAreaEnabled. Corpus codeunit 67534;
+// docs/dependency-page-properties.md#field-control-application-area.
 using System.Reflection;
 using AlRunner.Infrastructure;
 using Microsoft.Dynamics.Nav.Runtime;
