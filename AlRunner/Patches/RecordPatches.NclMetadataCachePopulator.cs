@@ -489,14 +489,21 @@ public static partial class RecordPatches
 
     /// <summary>
     /// The tables the executing code sees: for an id several app groups declare, that group's own
-    /// NCLMetaTable, never the process-wide one another group built (#4828). Every parsed table
-    /// has a process-wide entry (PopulateNclMetadataCache), so walking its keys covers them all.
+    /// NCLMetaTable, never the process-wide one another group built (#4828).
+    /// <para>A shared id is walked from <c>_parsedTables</c>, not from <c>_metaTableCache</c>: on a
+    /// later --server request PopulateNclMetadataCache skips every id BC's own metadata cache still
+    /// holds, so the process-wide entry of a shared id exists only if something touched the id
+    /// before a second declarer was parsed. Once every bundle loads before any runs (#4850),
+    /// nothing does.</para>
     /// </summary>
     private static IEnumerable<NCLMetaTable> ReferencingRelationCandidates()
     {
         foreach (var (id, value) in _metaTableCache)
-            if ((AppGroupCacheScope("table", id) != Guid.Empty ? GetOrBuildNCLMetaTable(id) : value) is NCLMetaTable table)
+            if (AppGroupCacheScope("table", id) == Guid.Empty && value is NCLMetaTable table)
                 yield return table;
+        foreach (var id in _parsedTables.Keys)
+            if (AppGroupCacheScope("table", id) != Guid.Empty && GetOrBuildNCLMetaTable(id) is NCLMetaTable own)
+                yield return own;
     }
 
     /// <summary>
