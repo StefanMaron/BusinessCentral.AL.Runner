@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **testpage:** controls an extension adds answer their own Caption and OptionCaption
 - **testpage:** a request-page handler reads and writes a field a reportextension adds
 - **testpage:** Caption() on a page-variable control answers the declared Caption
 - **testpage:** AssertEquals on a page-variable control names what BC names
