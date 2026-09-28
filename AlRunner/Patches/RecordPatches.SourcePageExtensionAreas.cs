@@ -140,6 +140,54 @@ public static partial class RecordPatches
             ? EnuMultiLanguageText.ReadEnu(ml, firstIfNoEnu: false)
             : null;
 
+    /// <summary>
+    /// The <c>Caption</c> or <c>OptionCaption</c> (<paramref name="property"/>) an extension's
+    /// <c>modify()</c> gives control <paramref name="controlId"/> of page <paramref name="pageId"/>,
+    /// or null when none does (#4928). A source-compiled pageextension's, read from its delta
+    /// document, wins over a dependency app's, read from the symbol file: BC applies the dependent
+    /// app's <c>modify()</c> last (corpus 67670, <c>DependencyPage_ModifiedByBothApps_ThisAppsCaptionWins</c>).
+    /// </summary>
+    internal static string? PageExtensionModifiedControlText(int pageId, int controlId, string? controlName, string property)
+    {
+        var extensionIds = GetPageExtensionIdsForPage(pageId).Where(_parsedPageExtensions.ContainsKey).ToList();
+        var api = $"TestPage {property} on page {pageId} control {controlId}";
+        var source = extensionIds.Count == 0 ? null
+            : ModifiedControlText(SourcePageExtensionDeltaDocuments(pageId, extensionIds, api), controlId, property, api, "pageextensions");
+        if (source != null || controlName == null) return source;
+        var pageName = TryGetAnyPageName(pageId);
+        return string.IsNullOrEmpty(pageName) ? null
+            : DependencyPageExtensionModifiedProperty(pageName, controlName, property, isAction: false);
+    }
+
+    // The ENU text of the <property>ML a ControlChange targeting controlId states, across the
+    // given extension delta documents. Two extensions stating different texts refuse until a
+    // service tier measures which one BC applies.
+    internal static string? ModifiedControlText(IEnumerable<(int ExtensionId, string Xml)> documents,
+        int controlId, string property, string api, string kinds)
+    {
+        var attribute = property + "ML";
+        string? value = null;
+        int? from = null;
+        foreach (var (extId, xml) in documents)
+        {
+            var doc = new XmlDocument();
+            doc.LoadXml(xml);
+            foreach (XmlNode node in doc.DocumentElement!.ChildNodes)
+            {
+                if (node is not XmlElement e || e.Name != "ControlChange" || !e.HasAttribute(attribute)
+                    || ReadBcAttrInt(e, "TargetID") != controlId) continue;
+                var stated = EnuMultiLanguageText.ReadEnu(e.GetAttribute(attribute), firstIfNoEnu: false);
+                if (from != null && !string.Equals(value, stated, StringComparison.Ordinal))
+                    throw TestPageShapeGap.ControlProperty(api,
+                        $"{kinds} {from} and {extId} both modify it, to '{value}' and '{stated}', "
+                        + "and which one BC applies has not been measured (#4928)");
+                value = stated;
+                from = extId;
+            }
+        }
+        return value;
+    }
+
     private static XmlElement? SourcePageExtensionAddedControl(int pageId, int controlId, string what)
     {
         var extensionIds = GetPageExtensionIdsForPage(pageId).Where(_parsedPageExtensions.ContainsKey).ToList();

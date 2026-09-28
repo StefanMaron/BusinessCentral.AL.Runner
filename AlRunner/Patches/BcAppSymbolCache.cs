@@ -118,12 +118,14 @@ internal static partial class BcAppSymbolCache
     /// A precompiled reportextension, as far as its request page goes (#4896): the controls it
     /// adds, in the same row shape a report's own request page uses, and the
     /// <c>ApplicationArea</c> each <c>modify(name)</c> states, keyed by the modified control's
-    /// NAME (it lives in the target report's id space).
+    /// NAME (it lives in the target report's id space). <c>RequestPageCaptionModifications</c> is
+    /// the same for <c>Caption</c> and <c>OptionCaption</c>: control name, then property name (#4928).
     /// </summary>
     internal sealed record ReportExtensionSymbol(
         int Id, string Name, string TargetName,
         List<RequestPageControlSymbol> RequestPageAddedControls,
-        Dictionary<string, string> RequestPageAreaModifications);
+        Dictionary<string, string> RequestPageAreaModifications,
+        Dictionary<string, Dictionary<string, string>>? RequestPageCaptionModifications = null);
 
     /// <summary>
     /// One profile as SymbolReference.json states it. <c>ProfileId</c> is the profile object's
@@ -2639,18 +2641,30 @@ internal static partial class BcAppSymbolCache
         if (string.IsNullOrEmpty(name) || target == null) return null;
         var added = new List<RequestPageControlSymbol>();
         var modifications = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var captionModifications = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
         if (rx.TryGetProperty("RequestPage", out var rp) && rp.ValueKind == JsonValueKind.Object
             && rp.TryGetProperty("ControlChanges", out var changes) && changes.ValueKind == JsonValueKind.Array)
             foreach (var change in changes.EnumerateArray())
             {
                 if (change.TryGetProperty("Controls", out var controls) && controls.ValueKind == JsonValueKind.Array)
+                {
                     foreach (var control in controls.EnumerateArray())
                         CollectRequestPageControls(control, parentId: 0, added);
-                else if (change.TryGetProperty("Anchor", out var anchor) && anchor.GetString() is { Length: > 0 } anchorName
-                         && SymbolProperties(change).TryGetValue("ApplicationArea", out var area) && !string.IsNullOrWhiteSpace(area))
+                    continue;
+                }
+                if (!change.TryGetProperty("Anchor", out var anchor) || anchor.GetString() is not { Length: > 0 } anchorName) continue;
+                var properties = SymbolProperties(change);
+                if (properties.TryGetValue("ApplicationArea", out var area) && !string.IsNullOrWhiteSpace(area))
                     modifications[anchorName] = area;
+                foreach (var property in new[] { "Caption", "OptionCaption" })
+                    if (properties.TryGetValue(property, out var text) && text != null)
+                    {
+                        if (!captionModifications.TryGetValue(anchorName, out var bag))
+                            captionModifications[anchorName] = bag = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                        bag[property] = text;
+                    }
             }
-        return new ReportExtensionSymbol(id, name, target, added, modifications);
+        return new ReportExtensionSymbol(id, name, target, added, modifications, captionModifications);
     }
 
     private static string? ReadRequestPageProperty(JsonElement report, string name)

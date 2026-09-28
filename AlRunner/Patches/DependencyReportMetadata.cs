@@ -194,6 +194,51 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// The <c>Caption</c> or <c>OptionCaption</c> (<paramref name="property"/>) a reportextension's
+    /// <c>modify()</c> gives request-page control <paramref name="controlId"/> of report
+    /// <paramref name="reportId"/>, or null when none does (#4928). A source-compiled one's, read
+    /// from its delta document, wins over a dependency app's, read from the symbol file, as on the
+    /// page side (<see cref="PageExtensionModifiedControlText"/>).
+    /// </summary>
+    internal static string? ReportExtensionModifiedControlText(int reportId, int controlId, string? controlName, string property)
+    {
+        var reportName = _parsedReports.TryGetValue(reportId, out var parsed) ? parsed.Name
+            : FindDependencyReportSymbol(reportId)?.Report.Name;
+        if (reportName == null) return null;
+        var api = $"TestRequestPage {property} on report {reportId} control {controlId}";
+        var source = ModifiedControlText(SourceReportExtensionDeltaDocuments(reportId, reportName, api),
+            controlId, property, api, "reportextensions");
+        if (source != null || controlName == null) return source;
+
+        string? value = null;
+        int? from = null;
+        foreach (var ext in DependencyReportExtensionsOf(reportName))
+        {
+            if (ext.RequestPageCaptionModifications?.GetValueOrDefault(controlName)?.GetValueOrDefault(property) is not { } stated) continue;
+            if (from != null && !string.Equals(value, stated, StringComparison.Ordinal))
+                throw TestPageShapeGap.ControlProperty(api,
+                    $"reportextensions {from} and {ext.Id} both modify it, to '{value}' and '{stated}', "
+                    + "and which one BC applies has not been measured (#4928)");
+            value = stated;
+            from = ext.Id;
+        }
+        return value;
+    }
+
+    private static IEnumerable<(int ExtensionId, string Xml)> SourceReportExtensionDeltaDocuments(int reportId, string reportName, string api)
+    {
+        foreach (var ext in InAppGroupScope("reportextension", _parsedReportExtensions))
+        {
+            if (ext.BaseObjectName == null || !NamesEqual(ext.BaseObjectName, reportName)) continue;
+            if (!AlObjectMetadataRegistry.TryGet("ReportExtension", ext.Id, out var xml) || string.IsNullOrEmpty(xml))
+                throw TestPageShapeGap.ControlProperty(api,
+                    $"reportextension {ext.Id} of report {reportId} was compiled from source, but BC's emitted delta "
+                    + "document for it is not in the metadata registry, so what it adds to or modifies on the request page cannot be read");
+            yield return (ext.Id, xml);
+        }
+    }
+
+    /// <summary>
     /// Ids of every reportextension of <paramref name="reportId"/>, precompiled ones first (they
     /// sit in dependency apps), then those compiled from source; a source one wins over a
     /// precompiled one of the same number (the project's own .app at the bundle root). Empty
@@ -226,13 +271,8 @@ public static partial class RecordPatches
         var changes = new Dictionary<int, string>();
         var changedBy = new Dictionary<int, int>();
         if (reportName == null) return (added, changes);
-        foreach (var ext in InAppGroupScope("reportextension", _parsedReportExtensions))
+        foreach (var (extId, xml) in SourceReportExtensionDeltaDocuments(reportId, reportName, $"TestRequestPage ApplicationArea on report {reportId}"))
         {
-            if (ext.BaseObjectName == null || !NamesEqual(ext.BaseObjectName, reportName)) continue;
-            if (!AlObjectMetadataRegistry.TryGet("ReportExtension", ext.Id, out var xml) || string.IsNullOrEmpty(xml))
-                throw TestPageShapeGap.ControlProperty($"TestRequestPage ApplicationArea on report {reportId}",
-                    $"reportextension {ext.Id} was compiled from source, but BC's emitted delta document for it "
-                    + "is not in the metadata registry, so what it adds to the request page cannot be read");
             var doc = new System.Xml.XmlDocument();
             doc.LoadXml(xml);
             var parts = new List<(int, string?)>();
@@ -241,7 +281,7 @@ public static partial class RecordPatches
                 if (node is not System.Xml.XmlElement e) continue;
                 if (e.Name == "ControlAdd") CollectAddedControlAreas(e, added, parts);
                 else if (e.Name == "ControlChange" && e.HasAttribute("ApplicationArea"))
-                    RecordAreaChange(reportId, "request-page control", ext.Id, e, changes, changedBy);
+                    RecordAreaChange(reportId, "request-page control", extId, e, changes, changedBy);
             }
         }
         return (added, changes);
