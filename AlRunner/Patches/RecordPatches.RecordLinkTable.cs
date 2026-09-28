@@ -83,11 +83,19 @@ public static partial class RecordPatches
         });
 
     /// <summary>BC's own SystemId column for a table, read off the metatable rather than found
-    /// by column name. A missing <c>NCLMetaTable.SystemIdField</c> (internal, present on Ncl
-    /// 27.0.38460 and 28.4.53241) refuses: silently skipping it wrote every link row with an
-    /// empty SystemId, the divergence <see cref="BuildRecordLinkRow"/> documents (#4944).</summary>
+    /// by column name. A missing <c>NCLMetaTable.SystemIdField</c> refuses (#4944), and so does a
+    /// value that is not an <see cref="NCLMetaField"/>; a null value is carried, and refused by
+    /// <see cref="SetFreshSystemId"/> only when a row is written (#4951).</summary>
     private static NCLMetaField? ResolveSystemIdField(NCLMetaTable table)
-        => RecordLinkSystemIdProperty().GetValue(table) as NCLMetaField;
+        => CoerceSystemIdField(RecordLinkSystemIdProperty().GetValue(table));
+
+    private static NCLMetaField? CoerceSystemIdField(object? value)
+        => value == null
+            ? null
+            : value as NCLMetaField
+              ?? throw new AlRunner.Infrastructure.BcShapeGapException(
+                  RecordLinkSurface, "NCLMetaTable.SystemIdField",
+                  $"holds a {value.GetType().Name}, not an NCLMetaField");
 
     private static PropertyInfo RecordLinkSystemIdProperty()
         => AlRunner.Infrastructure.BcShape.Property(
@@ -219,19 +227,13 @@ public static partial class RecordPatches
         return (int)row[idx].ToDecimal();
     }
 
-    private static string ReadText(NavValue[] row, NCLMetaField field)
-    {
-        var idx = field.FieldIndex;
-        if (idx < 0 || idx >= row.Length || row[idx] == null) return string.Empty;
-        return row[idx].ToString() ?? string.Empty;
-    }
-
-    /// <summary>Build one Record Link row. Layout mirrors what BC's own AddLink writes:
-    /// the caller's URL and description, a fresh AutoIncrement Link ID, the parent's
-    /// RecordId, and this session's company. Type stays at the column's own default, which
-    /// is ordinal 0 = Link — the type AddLink creates.</summary>
+    /// <summary>Build the row BC's <c>RecordLink.AddLinkAsync</c> writes: the caller's URL and
+    /// description, a fresh AutoIncrement Link ID, the parent's RecordId, User ID, Created, and
+    /// Company only for a per-company parent. Type stays at the column's default, ordinal 0 =
+    /// Link. Corpus codeunit 67681 "Test Record Link Columns" pins the columns (#4951).</summary>
     private static NavValue[] BuildRecordLinkRow(
-        RecordLinkColumns columns, int linkId, NavValue parentRecordId, string url, string description)
+        RecordLinkColumns columns, int linkId, NavValue parentRecordId, string url, string description,
+        bool parentDataPerCompany)
     {
         var values = (NavValue[])columns.Empty.Clone();
 
@@ -247,21 +249,38 @@ public static partial class RecordPatches
         Set(columns.RecordId, parentRecordId);
         Set(columns.Url1, url);
         Set(columns.Description, description);
-        Set(columns.Company, ReadSkeletonCompanyIdentity().Name);
-        // Created / User ID carry provenance only: no AL surface on Record reads them back,
-        // and BC fills them from the session. Written when the columns resolve so a test
-        // reading the table sees a plausible row, skipped rather than guessed when they do not.
+        if (parentDataPerCompany) Set(columns.Company, ReadSkeletonCompanyIdentity().Name);
         Set(columns.Created, DateTime.UtcNow);
-        Set(columns.UserId, SkeletonUserId());
-        // The third instance of "two writers, one invariant". Measured on BC 28.1 before this
-        // line existed: a row from AddLink carried SystemId {00000000-...} while a row an AL
-        // Insert wrote into the same table carried a real Guid. InsertRows runs inside
-        // SuppressSystemIdUniqueness, so nothing downstream would have assigned one. Each row
-        // this store creates is a NEW row -- including a CopyLinks copy, which BC also creates
-        // rather than relocates -- so each gets its own id.
-        Set(columns.SystemId, Guid.NewGuid());
+        Set(columns.UserId, RecordLinkUserId());
+        SetFreshSystemId(values, columns);
 
         return values;
+    }
+
+    /// <summary>Each row this store creates is a NEW row, a CopyLinks copy included, so it gets
+    /// its own SystemId: InsertRows runs inside SuppressSystemIdUniqueness, so nothing
+    /// downstream assigns one, and an empty id diverges from a row an AL Insert wrote. So a
+    /// metatable with no SystemId slot refuses rather than writing the row without one.</summary>
+    private static void SetFreshSystemId(NavValue[] values, RecordLinkColumns columns)
+    {
+        var f = columns.SystemId;
+        if (f == null || f.FieldIndex < 0 || f.FieldIndex >= values.Length)
+            throw new AlRunner.Infrastructure.BcShapeGapException(
+                RecordLinkSurface, "NCLMetaTable.SystemIdField",
+                f == null
+                    ? "is null, so a Record Link row would be written with no SystemId"
+                    : $"has field index {f.FieldIndex}, outside the {values.Length}-slot row");
+        values[f.FieldIndex] = NavValue.CreateNavValueFromObject(f, Guid.NewGuid());
+    }
+
+    /// <summary>The Company value BC writes on a link row: the company for a per-company parent,
+    /// empty otherwise (<c>RecordLink.CopyLinksAsync</c> writes the empty text explicitly).</summary>
+    private static void SetRecordLinkCompany(NavValue[] values, RecordLinkColumns columns, bool parentDataPerCompany)
+    {
+        var f = columns.Company;
+        if (f == null || f.FieldIndex < 0 || f.FieldIndex >= values.Length) return;
+        values[f.FieldIndex] = NavValue.CreateNavValueFromObject(
+            f, parentDataPerCompany ? ReadSkeletonCompanyIdentity().Name : string.Empty);
     }
 
     /// <summary>The next "Link ID". Taken from the SAME AutoIncrement counter
@@ -298,7 +317,7 @@ public static partial class RecordPatches
         var nextId = NextRecordLinkId(columns);
         NoteRecordLinkWrite();
         InsertRows(provider, columns.Meta,
-            new[] { BuildRecordLinkRow(columns, nextId, parentValue, url, description) });
+            new[] { BuildRecordLinkRow(columns, nextId, parentValue, url, description, rec.MetaTable.DataPerCompany) });
         return nextId;
     }
 
@@ -368,12 +387,21 @@ public static partial class RecordPatches
         var toCopy = rows.Where(r => RowBelongsTo(r, columns, srcKey)).ToList();
         if (toCopy.Count == 0) return;
 
-        // Copying creates NEW rows, so each copy gets a fresh Link ID — unlike MoveLinks
-        // below, which relocates the existing rows and keeps theirs.
+        // BC's CopyLinksAsync copies the whole source row (Type, User ID, Created, Notify, Note,
+        // ...) and then sets only Link ID, Record ID and Company — so a copy keeps its author.
+        // A fresh Link ID, unlike MoveLinks below, which relocates the rows and keeps theirs.
+        var dstDataPerCompany = dst.MetaTable.DataPerCompany;
         var built = toCopy
-            .Select(r => BuildRecordLinkRow(
-                columns, NextRecordLinkId(columns), dstValue,
-                ReadText(r, columns.Url1), ReadText(r, columns.Description)))
+            .Select(r =>
+            {
+                var copy = (NavValue[])r.Clone();
+                copy[columns.LinkId.FieldIndex] =
+                    NavValue.CreateNavValueFromObject(columns.LinkId, NextRecordLinkId(columns));
+                copy[columns.RecordId.FieldIndex] = dstValue;
+                SetRecordLinkCompany(copy, columns, dstDataPerCompany);
+                SetFreshSystemId(copy, columns);
+                return copy;
+            })
             .ToArray();
         NoteRecordLinkWrite();
         InsertRows(provider, columns.Meta, built);
@@ -429,18 +457,12 @@ public static partial class RecordPatches
         return NavRecordId.CreateFromBytes(bytes, 0, bytes.Length).TableNo;
     }
 
-    /// <summary>The session's user, for the Record Link row's provenance column. Read off the
-    /// skeleton session rather than invented, and skipped when it exposes none.</summary>
-    private static string? SkeletonUserId()
+    /// <summary>The User ID BC's AddLink writes: <c>Session.User.Name</c> after any
+    /// <c>DOMAIN\</c> prefix. Read through <see cref="ALDatabase.ALUserID"/>, the member AL's
+    /// <c>UserId()</c> compiles to, so the link and <c>UserId()</c> cannot disagree (#4951).</summary>
+    private static string RecordLinkUserId()
     {
-        var session = AlRunner.BcRuntime.SkeletonSession;
-        if (session == null) return null;
-        foreach (var name in new[] { "UserId", "UserName" })
-        {
-            var p = session.GetType().GetProperty(name,
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            if (p?.GetValue(session) is string s && s.Length > 0) return s;
-        }
-        return null;
+        var name = ALDatabase.ALUserID;
+        return name.Substring(name.IndexOf('\\') + 1);
     }
 }
