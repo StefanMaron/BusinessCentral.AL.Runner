@@ -171,14 +171,18 @@ public sealed class BuildNclMetaTableFailureAttributionTests
             .Min();
 
         Assert.NotEqual(int.MaxValue, firstTryOffset);
-
-        // The IL before the first try must contain the two early-return paths, i.e. at least
-        // one `ret` — a method whose try starts at offset 0 has folded them in.
-        var il = body.GetILAsByteArray()!;
         Assert.True(firstTryOffset > 0,
             "BuildNCLMetaTable's try must start after the absent-table early returns; a try at "
             + "offset 0 means a missing table now reaches the catch filter.");
-        Assert.Contains((byte)0x2A /* ret */, il.Take(firstTryOffset).ToArray());
+
+        // Decoded, not a raw 0x2A byte scan: in Debug each early return is a `br` to one shared
+        // `ret` after the handler, and a 0x2A before the try is only ever an operand byte (#4822).
+        // Two source-level `return null`s precede the try, so two exits must.
+        var exits = IlEarlyExits.ExitSitesBefore(body, firstTryOffset);
+        Assert.True(exits.Count == 2,
+            $"expected 2 absent-table exits before the try at IL_{firstTryOffset:x4}, found "
+            + $"{exits.Count} [{string.Join(", ", exits.Select(o => $"IL_{o:x4}"))}] — an early "
+            + "return has moved inside the try, so a missing table now reaches the catch filter.");
     }
 
     // ══ 4. THE FAILURE IS VISIBLE AT DEFAULT VERBOSITY ═══════════════════════════════════
