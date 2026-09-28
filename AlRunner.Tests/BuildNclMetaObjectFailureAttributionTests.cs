@@ -159,40 +159,34 @@ public sealed class BuildNclMetaObjectFailureAttributionTests
 
     // ══ 3. THE ABSENT CASES NEVER REACH THE CATCH ════════════════════════════════════════
     //
-    // The claim that makes section 1 safe, measured per builder from IL rather than assumed from
-    // the source. A refactor that moves an existence check inside the try must fail here.
-    //
-    // WHAT THIS ASSERTS, AND WHAT IT DELIBERATELY DOES NOT
-    //
-    //   Asserted: the protected region begins at a nonzero offset and does not reach the method's
-    //   entry point, and the unprotected prologue is big enough to hold the existence checks. So
-    //   the checks run OUTSIDE the handler's reach, and an absent object returns without the
-    //   filter ever seeing it.
-    //
-    //   NOT asserted: which IL offset any particular early return branches to. Two attempts at
-    //   that both measured codegen rather than structure, and the second was unsound:
-    //
-    //   1. #3590's version asserts a `ret` byte appears before the first try offset. Roslyn gives
-    //      four of these five builders one shared epilogue and branches every early return to it,
-    //      so no `ret` is emitted before the try at all. Measured: the scan holds only for
-    //      BuildNCLMetaTable and BuildNCLMetaXmlPort.
-    //   2. This test's first version scanned the pre-try bytes for branch opcodes and required one
-    //      to target past the handler. Without a real opcode-length table a forward byte scan
-    //      cannot tell an opcode from an operand, and mis-framing yields garbage targets — on one
-    //      box BuildNCLMetaForm produced targets of 755630105 and 755630118, which satisfied
-    //      "past the handler" and made the check PASS on nonsense, while the same assertion failed
-    //      honestly on another box. It was wrong in both directions, so it is gone.
-    //
-    //   A sound version needs the full opcode table (or Cecil), and a behavioural arm driving a
-    //   real absent object through needs the BC engine, which would make this skip on boxes that
-    //   lack it — a non-vacuity guard that silently does not run is the defect it exists to catch.
-    //   The offsets below are source-determined, always run, and are what actually carries the
-    //   safety property.
+    // The claim that makes section 1 safe, measured per builder from decoded IL. A refactor that
+    // moves an existence check inside the try must fail here. IlEarlyExits decodes instructions:
+    // a raw-byte scan cannot tell an opcode from an operand, and Debug codegen emits each early
+    // return as a `br` to one shared `ret` after the handler rather than as a `ret` (#4822).
+
+    // Source-level `return`s ahead of each builder's try. Debug and Release both emit one exit
+    // site per return statement.
+    public static TheoryData<string, int> AbsentReturnCounts => new()
+    {
+        { "BuildNCLMetaForm", 2 },
+        { "BuildNCLMetaReport", 2 },
+        { "BuildNCLMetaQuery", 2 },
+        { "BuildNCLMetaXmlPort", 2 },
+        { "BuildRealNCLMetaQueryCore", 1 },
+    };
+
+    [Fact]
+    public void AbsentReturnCounts_CoverEveryBuilder()
+    {
+        Assert.Equal(
+            Builders.Select(row => (string)row[0]).OrderBy(x => x),
+            AbsentReturnCounts.Select(row => (string)row[0]).OrderBy(x => x));
+    }
 
     [Theory]
-    [MemberData(nameof(Builders))]
+    [MemberData(nameof(AbsentReturnCounts))]
     public void TheAbsentReturns_SitOutsideTheTry_SoNoMissingObjectCanReachTheFilter(
-        string builder, string _, string __)
+        string builder, int absentReturns)
     {
         var body = Method(builder).GetMethodBody()!;
         var clauses = body.ExceptionHandlingClauses;
@@ -222,13 +216,12 @@ public sealed class BuildNclMetaObjectFailureAttributionTests
             + "means a genuinely missing object now reaches the catch filter and can be rethrown "
             + "— the false-red half of guards-need-a-third-state.md's constraint.");
 
-        // Non-vacuity, part 2: the unprotected prologue is substantial, not a stray byte or two.
-        // Every existence check in these builders is at least a dictionary/set lookup plus a
-        // branch, so a prologue this small would mean the checks are no longer there. 16 bytes is
-        // well under the smallest real value (55) and well over a degenerate one.
-        Assert.True(tryOffset >= 16,
-            $"{builder}: only {tryOffset} IL bytes precede the try. The existence checks are not "
-            + "where this test thinks they are, so the assertion above is not measuring them.");
+        // Every absent-object return exits before the try without entering any handler region.
+        var exits = IlEarlyExits.ExitSitesBefore(body, tryOffset);
+        Assert.True(exits.Count == absentReturns,
+            $"{builder}: expected {absentReturns} absent-object exit(s) before the try at "
+            + $"IL_{tryOffset:x4}, found {exits.Count} [{string.Join(", ", exits.Select(o => $"IL_{o:x4}"))}]"
+            + " — an early return has moved inside the try, so a missing object now reaches the filter.");
 
         // And the handler does not reach back over the prologue.
         Assert.True(clause.HandlerOffset > tryOffset,
