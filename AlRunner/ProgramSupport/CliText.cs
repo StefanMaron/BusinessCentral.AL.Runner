@@ -306,6 +306,21 @@ internal static partial class ProgramSupport
         w.WriteLine("      only; it says nothing about whether the code is present to execute.");
         w.WriteLine();
 
+        // #4932: AL that branches on these answers takes a different path here than on a sandbox,
+        // and nothing told the caller why.
+        w.WriteLine("RUNTIME ENVIRONMENT — what your AL sees by default");
+        w.WriteLine("  Environment type: Production, not a sandbox, not SaaS. So Environment");
+        w.WriteLine("      Information answers IsProduction() = true, IsSandbox() = false and");
+        w.WriteLine("      IsSaaS() = false, as an on-premises service tier does. A test switches it");
+        w.WriteLine("      the same way it would there: Library - Permissions");
+        w.WriteLine("      .SetTestTenantEnvironmentType(true), or Environment Info Test Library");
+        w.WriteLine("      .SetTestabilitySandbox / .SetTestabilitySoftwareAsAService. The al-language");
+        w.WriteLine("      corpus tier runs as a sandbox, so its answers differ from the runner's.");
+        w.WriteLine("  Service topology: always on-premises, even after a test switches to SaaS.");
+        w.WriteLine("  License: there is none, so named-user license checks never refuse a write.");
+        w.WriteLine("  Details: docs/limitations.md#environment-type");
+        w.WriteLine();
+
         w.WriteLine("OUTPUT NOTES");
         w.WriteLine("  Console output written from inside a test is captured by the runner, not");
         w.WriteLine("  echoed live — a probe that writes to stdout will appear to produce nothing.");
@@ -391,6 +406,8 @@ internal static partial class ProgramSupport
         w.WriteLine();
 
         w.WriteLine("FURTHER READING");
+        w.WriteLine("  docs/ paths in this guide resolve online under");
+        w.WriteLine("  https://github.com/StefanMaron/BusinessCentral.AL.Runner/blob/main/");
         w.WriteLine("  --help                       full flag reference");
         w.WriteLine("  docs/limitations.md          the real architectural limits");
         w.WriteLine("  docs/scope.md                in-scope vs out-of-scope-by-design surfaces");
