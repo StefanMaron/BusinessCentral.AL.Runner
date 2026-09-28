@@ -479,6 +479,7 @@ All notable changes to this project are documented here. Format based on
 - **integer-vt:** judge a half-open range against the base window, not the envelope-widened span
 
 ### Documentation
+- **guide:** say what environment AL sees by default
 - **rules:** move derivations out of the remaining large rules
 - **claude-md:** move reference material and derivations out of CLAUDE.md
 - **agents:** delete figures that go stale on their own from skills and agent definitions
