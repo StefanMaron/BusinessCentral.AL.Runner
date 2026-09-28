@@ -236,10 +236,14 @@ subscriber that fails turns that test (or a `<OnBeforeCodeunitRun>`/`<OnAfterCod
 into an error naming the event. A loaded `Test Runner - Mgt` whose publishers cannot be bound, or
 without 130453 beside it, is refused the same way rather than run without the resets.
 
-**Without the Test Runner app nothing is raised.** On a service tier the app is always installed
-as the test tool; the runner loads only what the suite's dependency closure names, so a suite that
-does not declare it keeps the areas its `OnRun` set, and `WorkDate` and `LastError` carry over
-between tests. Corpus codeunit 67552 is that case; loading the app by default is #4816.
+**The runner loads the Test Runner app by default** when a package cache holds it, as a service
+tier always installs it as the test tool (#4816; corpus codeunit 67552). It does not when the suite
+defines codeunit 130453 or 130454 itself, or when `AL_RUNNER_DEFAULT_TEST_TOOL=off` is set; `on`
+or unset is the default, and any other value exits 2. **Without the app nothing is raised**: a
+suite that does not declare it keeps the areas its `OnRun` set, and `WorkDate` and `LastError`
+carry over between tests. So whether a run gets the resets depends on what the machine has
+provisioned into `<artifacts>/<version>/test-apps`; `AlRunner.Tests` sets `off` for every runner
+it spawns for that reason (#4905).
 
 130453's `Initialize` is called once per run, before the first test codeunit, as `RunTests` does.
 130453 is `SingleInstance`, and SingleInstance state survives every codeunit and test boundary
