@@ -32,6 +32,9 @@ public sealed class SourceExtensionModifyCaptionTests : IDisposable
     public void Dispose()
     {
         AlObjectMetadataRegistry.Clear();
+        typeof(RecordPatches).GetMethod("ResetAppGroupObjectVisibilityForReload",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
+            .Invoke(null, null);
         RemoveFromDict("_parsedPages", PageId);
         RemoveFromDict("_parsedPages", OtherPageId);
         RemoveFromDict("_parsedPageExtensions", PageExtensionId);
@@ -208,6 +211,67 @@ public sealed class SourceExtensionModifyCaptionTests : IDisposable
             RecordPatches.PageExtensionModifiedControlText(PageId, PageControl("ClashCtl"), "ClashCtl", "Caption"));
         Assert.Contains("'Clash A' and 'Clash B'", ex.Message, StringComparison.Ordinal);
         Assert.Equal("Agreed", RecordPatches.PageExtensionModifiedControlText(PageId, PageControl("AgreeCtl"), "AgreeCtl", "Caption"));
+    }
+
+    private static readonly Guid BaseApp = new("49370000-0000-4000-8000-00000000000c");
+    private static readonly Guid AppA = new("49370000-0000-4000-8000-00000000000a");
+    private static readonly Guid AppB = new("49370000-0000-4000-8000-00000000000b");
+
+    // Registers pageextension 94930 ('Clash A') as AppA's and 94933 ('Clash B') as AppB's, both
+    // apps depending on BaseApp (the host page's owner) plus whatever extra each is given.
+    private void RegisterClashingExtensionApps(Guid[] aAlsoDependsOn, Guid[] bAlsoDependsOn)
+    {
+        var record = typeof(RecordPatches).GetMethod("RecordSourceObjectOwners",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+        foreach (var (app, extraDeps, text) in new[]
+        {
+            (BaseApp, Array.Empty<Guid>(), "page 94928 \"SEMC Card\" { }"),
+            (AppA, aAlsoDependsOn, "pageextension 94930 \"SEMC Card Ext\" extends \"SEMC Card\" { }"),
+            (AppB, bAlsoDependsOn, "pageextension 94933 \"SEMC Card Ext 2\" extends \"SEMC Card\" { }"),
+        })
+        {
+            var dir = Path.Combine(_root, "apps", app.ToString("N"));
+            Directory.CreateDirectory(dir);
+            var deps = (app == BaseApp ? extraDeps : extraDeps.Prepend(BaseApp))
+                .Select(d => $$"""{ "id": "{{d}}", "name": "App {{d:N}}", "publisher": "SEMC", "version": "1.0.0.0" }""");
+            File.WriteAllText(Path.Combine(dir, "app.json"),
+                $$"""{ "id": "{{app}}", "name": "App {{app:N}}", "publisher": "SEMC", "version": "1.0.0.0", "dependencies": [ {{string.Join(", ", deps)}} ] }""");
+            RecordPatches.RegisterAppGroupSourceDirs(dir, new[] { dir });
+            var file = Path.Combine(dir, "Obj.al");
+            File.WriteAllText(file, text);
+            record.Invoke(null, new object[] { text, file });
+        }
+    }
+
+    // Both apps known, both depending only on the host page's app: BC's order between them is
+    // not determined by a dependency, so the lookup refuses rather than picking one (#4937).
+    // The unknown-owner test above never reaches this branch.
+    [SkippableFact]
+    public void TwoSiblingAppsNeitherDependingOnTheOther_ModifyingDifferently_Refuse()
+    {
+        Emit();
+        RegisterClashingExtensionApps(aAlsoDependsOn: Array.Empty<Guid>(), bAlsoDependsOn: Array.Empty<Guid>());
+        var ex = Assert.Throws<RunnerOutOfScopeException>(() =>
+            RecordPatches.PageExtensionModifiedControlText(PageId, PageControl("ClashCtl"), "ClashCtl", "Caption"));
+        Assert.Contains($"pageextensions {PageExtensionId} and {SecondPageExtensionId} both modify it", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("'Clash A' and 'Clash B'", ex.Message, StringComparison.Ordinal);
+        Assert.Equal("Agreed", RecordPatches.PageExtensionModifiedControlText(PageId, PageControl("AgreeCtl"), "AgreeCtl", "Caption"));
+    }
+
+    // The control for the refusal above: the same two apps, one depending on the other, answer
+    // the dependent's value in both directions, so neither the refusal nor an id order passes it.
+    [SkippableFact]
+    public void TwoAppsWhereOneDependsOnTheOther_ModifyingDifferently_AnswerTheDependentsValue()
+    {
+        Emit();
+        RegisterClashingExtensionApps(aAlsoDependsOn: Array.Empty<Guid>(), bAlsoDependsOn: new[] { AppA });
+        Assert.Equal("Clash B", RecordPatches.PageExtensionModifiedControlText(PageId, PageControl("ClashCtl"), "ClashCtl", "Caption"));
+
+        typeof(RecordPatches).GetMethod("ResetAppGroupObjectVisibilityForReload",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
+            .Invoke(null, null);
+        RegisterClashingExtensionApps(aAlsoDependsOn: new[] { AppB }, bAlsoDependsOn: Array.Empty<Guid>());
+        Assert.Equal("Clash A", RecordPatches.PageExtensionModifiedControlText(PageId, PageControl("ClashCtl"), "ClashCtl", "Caption"));
     }
 
     [SkippableFact]
