@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **record-link:** a failed primaryTree bind refuses instead of reading as zero Record Link rows
 - **cli:** several bundle paths load every bundle before any of them runs tests
 - **diagnostics:** mem-census sharedChildren measures the shared-object container instead of printing -1
 - **testpage:** an extension's modify() of a control's Caption reaches TestPage Caption()
