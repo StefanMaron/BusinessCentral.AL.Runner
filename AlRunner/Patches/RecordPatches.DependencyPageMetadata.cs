@@ -273,9 +273,10 @@ public static partial class RecordPatches
                 props.TryGetValue("Enabled", out var enabled);
                 props.TryGetValue("ApplicationArea", out var applicationArea);
                 props.TryGetValue("OptionCaption", out var optionCaption);
+                props.TryGetValue("Caption", out var caption);
                 yield return new BcAppSymbolCache.PageControlSymbol(
                     id, name, source, visible, editable, enabled, origin.Sequence,
-                    ApplicationArea: applicationArea, OptionCaption: optionCaption);
+                    ApplicationArea: applicationArea, OptionCaption: optionCaption, Caption: caption);
             }
         }
     }

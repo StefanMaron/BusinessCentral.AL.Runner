@@ -681,7 +681,9 @@ internal static partial class BcAppSymbolCache
         // host page's is the consumer's job (#4796, RecordPatches.DependencyFieldControlAreas).
         string? ApplicationArea = null,
         // The control's own OptionCaption, verbatim; null when it states none (#4669).
-        string? OptionCaption = null);
+        string? OptionCaption = null,
+        // The control's own Caption, verbatim; null when it states none (#4858).
+        string? Caption = null);
 
     /// <summary>
     /// A precompiled dependency's report, as far as SymbolReference.json states it. Feeds
@@ -764,7 +766,9 @@ internal static partial class BcAppSymbolCache
         // from groups (#4863).
         string? ApplicationArea = null, int? Kind = null,
         // The node's AL name, so a reportextension's modify(name) can be matched to it (#4896).
-        string? Name = null);
+        string? Name = null,
+        // The node's own Caption, verbatim; null when it states none (#4858).
+        string? Caption = null);
 
     /// <summary>
     /// One <c>layout(Name) { Type; MimeType; LayoutFile; Caption; Summary; ObsoleteState;
@@ -2118,8 +2122,9 @@ internal static partial class BcAppSymbolCache
                 // source-compiled and a precompiled-dependency page and AL cannot see which
                 // it has.
                 props.TryGetValue("OptionCaption", out var optionCaption);
+                props.TryGetValue("Caption", out var caption);
                 into.Add(new PageControlSymbol(id, name!, srcExpr, visible, editable, enabled, sequence++,
-                    ApplicationArea: applicationArea, OptionCaption: optionCaption));
+                    ApplicationArea: applicationArea, OptionCaption: optionCaption, Caption: caption));
             }
         }
 
@@ -2681,12 +2686,16 @@ internal static partial class BcAppSymbolCache
             props.TryGetValue("Enabled", out var enabled);
             props.TryGetValue("OptionCaption", out var optionCaption);
             props.TryGetValue("ApplicationArea", out var applicationArea);
+            props.TryGetValue("Caption", out var caption);
             int? kind = control.TryGetProperty("Kind", out var kindProp) && kindProp.TryGetInt32(out var k) ? k : null;
             var nodeName = control.TryGetProperty("Name", out var nameProp) && nameProp.ValueKind == JsonValueKind.String
                 ? nameProp.GetString() : null;
-            into.Add(new RequestPageControlSymbol(id, parentId, visible, editable, enabled, optionCaption,
-                string.IsNullOrWhiteSpace(applicationArea) ? null : applicationArea, kind,
-                string.IsNullOrEmpty(nodeName) ? null : nodeName));
+            into.Add(new RequestPageControlSymbol(id, parentId, visible, editable, enabled,
+                OptionCaption: optionCaption,
+                ApplicationArea: string.IsNullOrWhiteSpace(applicationArea) ? null : applicationArea,
+                Kind: kind,
+                Name: string.IsNullOrEmpty(nodeName) ? null : nodeName,
+                Caption: caption));
         }
 
         if (control.TryGetProperty("Controls", out var children) && children.ValueKind == JsonValueKind.Array)
