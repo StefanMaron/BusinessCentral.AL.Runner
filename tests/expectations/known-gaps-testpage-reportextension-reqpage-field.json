@@ -1,0 +1,18 @@
+[
+  {
+    "codeunitId": 67546,
+    "CodeunitName": "PAA RExt ReqPage Tests",
+    "Method": "ExtOwnArea_Enabled_IsFound",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4909",
+    "Note": "A request-page field a reportextension adds cannot be read or written by a [RequestPageHandler]: RequestPageTestPage.GetField resolves through the request page's source expressions, which map to report globals, and the field binds to a global of the reportextension. The runner refuses with request-page-control. The not-found direction works (#4896). Real BC finds the field: corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#490 asserts it on a service tier. Tracked as #4909, which stays open after #4896; its fix removes this entry."
+  },
+  {
+    "codeunitId": 67547,
+    "CodeunitName": "PAA Precompiled RExt Tests",
+    "Method": "PrecompiledExtOwnArea_Enabled_IsFound",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4909",
+    "Note": "A request-page field a reportextension adds cannot be read or written by a [RequestPageHandler]: RequestPageTestPage.GetField resolves through the request page's source expressions, which map to report globals, and the field binds to a global of the reportextension. The runner refuses with request-page-control. The not-found direction works (#4896). Real BC finds the field: corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#490 asserts it on a service tier. Tracked as #4909, which stays open after #4896; its fix removes this entry."
+  }
+]

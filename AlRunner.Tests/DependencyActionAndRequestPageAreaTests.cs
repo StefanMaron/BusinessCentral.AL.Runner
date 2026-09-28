@@ -113,7 +113,41 @@ public class DependencyActionAndRequestPageAreaTests
                 { "Id": 1, "Name": "Content", "Controls": [
                   { "Kind": 8, "Id": 648630011, "Name": "Opt",
                     "Properties": [ { "Name": "ApplicationArea", "Value": "#Assembly" } ] } ] } ] }
+            },
+            {
+              "Id": 88486303, "Name": "DAA Ext Report",
+              "Properties": [ { "Name": "ApplicationArea", "Value": "#Basic,#Suite" } ],
+              "RequestPage": { "Id": 0, "Name": "RequestOptionsPage", "Controls": [
+                { "Id": 1, "Name": "Content", "Controls": [
+                  { "Kind": 8, "Id": 648630021, "Name": "BaseInherits" },
+                  { "Kind": 8, "Id": 648630022, "Name": "BaseModified",
+                    "Properties": [ { "Name": "ApplicationArea", "Value": "#Basic" } ] } ] } ] }
+            },
+            {
+              "Id": 88486304, "Name": "DAA Conflict Report",
+              "RequestPage": { "Id": 0, "Name": "RequestOptionsPage", "Controls": [
+                { "Id": 1, "Name": "Content", "Controls": [
+                  { "Kind": 8, "Id": 648630031, "Name": "Twice" } ] } ] }
             }
+          ],
+          "ReportExtensions": [
+            {
+              "Id": 88486311, "Name": "DAA Ext Report Ext", "Target": "DAA Ext Report",
+              "RequestPage": { "Id": 0, "Name": "RequestPageExtension", "ControlChanges": [
+                { "Anchor": "Content", "ChangeKind": 4, "Controls": [
+                  { "Kind": 1, "Id": 648630029, "Name": "ExtGroup", "Controls": [
+                    { "Kind": 8, "Id": 648630023, "Name": "ExtOwn",
+                      "Properties": [ { "Name": "ApplicationArea", "Value": "#Manufacturing" } ] },
+                    { "Kind": 8, "Id": 648630024, "Name": "ExtNone" } ] } ] },
+                { "Anchor": "BaseModified", "ChangeKind": 9,
+                  "Properties": [ { "Name": "ApplicationArea", "Value": "#Jobs" } ] } ] }
+            },
+            { "Id": 88486312, "Name": "DAA Conflict A", "Target": "DAA Conflict Report",
+              "RequestPage": { "ControlChanges": [ { "Anchor": "Twice", "ChangeKind": 9,
+                "Properties": [ { "Name": "ApplicationArea", "Value": "#Jobs" } ] } ] } },
+            { "Id": 88486313, "Name": "DAA Conflict B", "Target": "DAA Conflict Report",
+              "RequestPage": { "ControlChanges": [ { "Anchor": "Twice", "ChangeKind": 9,
+                "Properties": [ { "Name": "ApplicationArea", "Value": "#Service" } ] } ] } }
           ]
         }
         """;
@@ -232,6 +266,30 @@ public class DependencyActionAndRequestPageAreaTests
             Assert.Equal("#Basic,#Suite", fields[RpInheritsId]);
             Assert.Equal(new[] { RpOwnId },
                 ApplicationAreaControlRemoval.DependencyRequestPageFieldsToRemove(ReportId, BasicSuiteSession).ToArray());
+        });
+
+    // #4896: a precompiled reportextension's request-page fields and modify().
+    [Fact]
+    public void APrecompiledReportExtension_AddsFieldsWithTheirOwnAreaOrNone_AndItsModifyReplaces()
+        => WithDependencyApp(() =>
+        {
+            var fields = RecordPatches.DependencyRequestPageFieldAreas(88486303).ToDictionary(f => f.Id, f => f.ApplicationArea);
+            Assert.Equal(new[] { 648630021, 648630022, 648630023, 648630024 }, fields.Keys.OrderBy(i => i));
+            Assert.Equal("#Basic,#Suite", fields[648630021]);   // the report's
+            Assert.Equal("#Jobs", fields[648630022]);           // the modify's, replacing #Basic
+            Assert.Equal("#Manufacturing", fields[648630023]);  // the extension field's own
+            Assert.Null(fields[648630024]);                     // none: not the report's
+            Assert.Equal(new[] { 648630022, 648630023, 648630024 },
+                ApplicationAreaControlRemoval.DependencyRequestPageFieldsToRemove(88486303, BasicSuiteSession).OrderBy(i => i));
+        });
+
+    [Fact]
+    public void TwoPrecompiledReportExtensionsModifyingOneFieldToDifferentAreas_Refuse()
+        => WithDependencyApp(() =>
+        {
+            var ex = Assert.Throws<RunnerOutOfScopeException>(() => RecordPatches.DependencyRequestPageFieldAreas(88486304).ToList());
+            Assert.Contains("'#Jobs'", ex.Message, StringComparison.Ordinal);
+            Assert.Contains("'#Service'", ex.Message, StringComparison.Ordinal);
         });
 
     [Fact]
