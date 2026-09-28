@@ -354,7 +354,7 @@ public class AppGroupObjectVisibilityTests
     /// a suite compiling a sub-folder that carries its own app.json, and two unrelated groups
     /// declaring the same table id. Both groups must still list the objects they compile.
     /// </summary>
-    private static string[] WriteOwnershipEdgeFixtures(string root, bool serverRequest = false)
+    private static string[] WriteOwnershipEdgeFixtures(string root, bool zInRequest = true)
     {
         var outer = WriteApp(Path.Combine(root, "outer"), AppA, "Nest Outer", 62660, 62679);
         WriteApp(Path.Combine(outer, "inner"), AppB, "Nest Inner", 62665, 62669);
@@ -388,12 +388,11 @@ public class AppGroupObjectVisibilityTests
                  { ("X", AppC, 62681, 62684, 62690, "true", 2, "true"), ("Y", AppD, 62682, 62685, 62691, "false", 0, "false") })
         {
             // #4844: group Z depends on X, so X's subscribers see Z's row ZZ in X's table and every
-            // X event also reaches Z's subscriber; Y sees neither. A server request loads Z's module
-            // only after X's tests ran, so there X's events cannot reach Z yet (#4850).
+            // X event also reaches Z's subscriber; Y sees neither. A run that does not include Z
+            // (zInRequest: false) has no Z subscriber at all.
             var alsoOwn = letter == "X" ? " and (Rec.Code <> 'ZZ')" : "";
             string Reached(string got, string own, string z)
-                => letter != "X" ? $"{got} <> '{own}'"
-                    : serverRequest ? $"{got}.Replace('{z}', '') <> '{own}'"
+                => letter != "X" || !zInRequest ? $"{got} <> '{own}'"
                     : $"(StrLen({got}) <> {own.Length + z.Length}) or (StrPos({got}, '{own[..2]}') = 0) or (StrPos({got}, '{z}') = 0)" + (own.Length > 2 ? $" or (StrPos({got}, '{own[2..]}') = 0)" : "");
             var dir = WriteApp(Path.Combine(root, "dup" + letter), appId, "Dup " + letter, 62680, 62699);
             File.WriteAllText(Path.Combine(dir, "Dup.al"), $$"""
@@ -773,7 +772,7 @@ public class AppGroupObjectVisibilityTests
                             if StrPos(Got, Format(ES."Subscriber Codeunit ID", 0, 9) + ',') = 0 then
                                 Got += Format(ES."Subscriber Codeunit ID", 0, 9) + ',';
                         until ES.Next() = 0;
-                    if {{(letter != "X" ? "Got <> '62691,'" : serverRequest ? "Got.Replace('62700,', '') <> '62690,'" : "Got <> '62690,62700,'")}} then
+                    if {{(letter != "X" ? "Got <> '62691,'" : zInRequest ? "Got <> '62690,62700,'" : "Got <> '62690,'")}} then
                         Error('WRONG: Event Subscription subscribers of %1 %2 in {{letter}} are %3', Kind, PublisherId, Got);
                 end;
             }
@@ -1133,7 +1132,7 @@ public class AppGroupObjectVisibilityTests
         TestArtifacts.SkipIfMissing();
         var root = TestScratch.Dir("al-runner-app-group-visibility-edges-server");
         Directory.CreateDirectory(root);
-        var dirs = WriteOwnershipEdgeFixtures(root, serverRequest: true);
+        var dirs = WriteOwnershipEdgeFixtures(root);
 
         await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
         var lines = await server.SendRequestStreamingAsync(RunTests(dirs));
@@ -1176,7 +1175,8 @@ public class AppGroupObjectVisibilityTests
     {
         var root = TestScratch.Dir(prefix);
         Directory.CreateDirectory(root);
-        return WriteOwnershipEdgeFixtures(root, serverRequest: true);
+        // Every request of the sequence names X and Y only, so Z is never installed there.
+        return WriteOwnershipEdgeFixtures(root, zInRequest: false);
     }
 
     private static async Task AssertRequestSequencePasses(CliServer server, string x, string y)
