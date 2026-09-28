@@ -110,15 +110,16 @@ public sealed class PhaseLogIntegrationTests : IDisposable
         """);
     }
 
-    /// <summary>Runs the real runner over the given bundle directories.</summary>
-    private (string Output, int Exit) RunBundles(string? phaseLogPath, params string[] bundles)
+    /// <summary>Runs the real runner over the given bundle directories.
+    /// <paramref name="sequential"/>: each bundle runs before the next loads (#4931).</summary>
+    private (string Output, int Exit) RunBundles(string? phaseLogPath, bool sequential, params string[] bundles)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
         var platformApps = Path.Combine(TestArtifacts.HomeDir() ?? "", ".al-runner", "platform-apps");
         if (Directory.Exists(platformApps)) args.Append($" --package-cache \"{platformApps}\"");
         foreach (var b in bundles) args.Append($" \"{b}\"");
-        return Spawn(phaseLogPath, args.ToString());
+        return Spawn(phaseLogPath, args.ToString(), sequential);
     }
 
     /// <summary>
@@ -129,7 +130,7 @@ public sealed class PhaseLogIntegrationTests : IDisposable
     private (string Output, int Exit) RunRaw(string? phaseLogPath, string rawArgs) =>
         Spawn(phaseLogPath, TestBuildConfig.RunArgs(ProjectPath) + " " + rawArgs);
 
-    private static (string Output, int Exit) Spawn(string? phaseLogPath, string argLine)
+    private static (string Output, int Exit) Spawn(string? phaseLogPath, string argLine, bool sequential = false)
     {
         var psi = new ProcessStartInfo
         {
@@ -154,6 +155,8 @@ public sealed class PhaseLogIntegrationTests : IDisposable
         // regardless so the marker-derived expected-parent count never depends on which
         // tags happen to be exempted today.
         psi.Environment["AL_RUNNER_VERBOSE"] = "1";
+        if (sequential) psi.Environment["AL_RUNNER_SEQUENTIAL_BUNDLES"] = "1";
+        else psi.Environment.Remove("AL_RUNNER_SEQUENTIAL_BUNDLES");
 
         var sb = new StringBuilder();
         using var p = Process.Start(psi)!;
@@ -174,7 +177,8 @@ public sealed class PhaseLogIntegrationTests : IDisposable
             .ToList();
 
     /// <summary>
-    /// The whole instrument, end to end, on a real two-bundle run.
+    /// The whole instrument, end to end, on a real two-bundle run, one bundle after the other
+    /// (the default loads both before running either: see the test after this one).
     ///
     /// Every assertion below fails against a phase log that is merely well-formed:
     /// the ordering fields must reconstruct the bundle sequence (that is how a
@@ -189,7 +193,7 @@ public sealed class PhaseLogIntegrationTests : IDisposable
         TestArtifacts.SkipIfMissing();
 
         var before = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        var (output, exit) = RunBundles(_logPath, _noDeps, _withDeps);
+        var (output, exit) = RunBundles(_logPath, sequential: true, _noDeps, _withDeps);
         var after = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         Assert.Equal(0, exit);
         Assert.True(File.Exists(_logPath), $"no phase log written. Runner output:\n{output}");
@@ -376,6 +380,38 @@ public sealed class PhaseLogIntegrationTests : IDisposable
         Assert.All(parents, parent =>
             Assert.True(parent.GetProperty("start_ms").GetInt64() <= proc.GetProperty("start_ms").GetInt64(),
                 "a re-exec parent must start before the child it spawned"));
+    }
+
+    /// <summary>
+    /// #4931: by default both bundles load before either runs, and each bundle still writes ONE
+    /// row carrying its load turn (emit, compile) and its run turn, on the same app row. Its
+    /// interval is not contiguous, so bundle rows may overlap here; the sequential run above pins
+    /// the non-overlapping timeline.
+    /// </summary>
+    [SkippableFact]
+    public void DeferredRun_KeepsOneRowPerBundle_CarryingItsLoadAndRunTurns()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var (output, exit) = RunBundles(_logPath, sequential: false, _noDeps, _withDeps);
+        Assert.Equal(0, exit);
+        Assert.True(File.Exists(_logPath), $"no phase log written. Runner output:\n{output}");
+
+        var bundleRows = ReadRecords(_logPath, "bundle");
+        var appRows = ReadRecords(_logPath, "app");
+        var proc = Assert.Single(ReadRecords(_logPath, "process"));
+        Assert.Equal(new[] { 1, 2 }, bundleRows.Select(r => r.GetProperty("bundle_index").GetInt32()));
+        Assert.Equal(new[] { "PL NoDeps", "PL WithDeps" }, appRows.Select(r => r.GetProperty("app").GetString()));
+        foreach (var r in bundleRows.Concat(appRows))
+        {
+            Assert.True(r.GetProperty("emit_ms").GetInt64() > 0, $"load turn missing: {r}");
+            Assert.True(r.GetProperty("run_ms").GetInt64() > 0, $"run turn missing: {r}");
+            Assert.True(r.GetProperty("wall_ms").GetInt64()
+                >= r.GetProperty("emit_ms").GetInt64() + r.GetProperty("compile_ms").GetInt64() + r.GetProperty("run_ms").GetInt64(),
+                $"wall_ms does not cover its own phases: {r}");
+        }
+        Assert.Equal(bundleRows.Sum(r => r.GetProperty("emit_ms").GetInt64()), proc.GetProperty("emit_ms").GetInt64());
+        Assert.Equal(bundleRows.Sum(r => r.GetProperty("run_ms").GetInt64()), proc.GetProperty("run_ms").GetInt64());
     }
 
     /// <summary>

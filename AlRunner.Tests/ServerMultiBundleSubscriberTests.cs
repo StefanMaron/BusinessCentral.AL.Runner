@@ -148,4 +148,27 @@ public class ServerMultiBundleSubscriberTests
             await AssertSequence(server, p, s);
         }
     }
+
+    /// <summary>#4931: a deferred bundle writes ONE phase-log row, carrying its load and its run.</summary>
+    [SkippableFact]
+    public async Task Server_MultiBundleRequest_WritesOnePhaseLogRowPerBundle()
+    {
+        TestArtifacts.SkipIfMissing();
+        var root = TestScratch.Dir("al-runner-server-multi-bundle-phaselog");
+        Directory.CreateDirectory(root);
+        var (p, s) = WriteFixture(root);
+        var log = Path.Combine(root, "phases.jsonl");
+        await using (var server = await CliServer.StartAsync(new[] { "--no-cache" },
+                         extraEnv: new Dictionary<string, string> { ["AL_RUNNER_PHASE_LOG"] = log }))
+            await ProbeAsync(server, "[P,S]", p, s);
+
+        var rows = File.ReadAllLines(log).Where(l => l.Length > 0).Select(l => JsonDocument.Parse(l).RootElement)
+            .Where(e => e.GetProperty("kind").GetString() == "bundle").ToList();
+        Assert.Equal(new[] { 1, 2 }, rows.Select(r => r.GetProperty("bundle_index").GetInt32()));
+        Assert.All(rows, r =>
+        {
+            Assert.True(r.GetProperty("emit_ms").GetInt64() > 0, $"load turn missing: {r}");
+            Assert.True(r.GetProperty("run_ms").GetInt64() > 0, $"run turn missing: {r}");
+        });
+    }
 }

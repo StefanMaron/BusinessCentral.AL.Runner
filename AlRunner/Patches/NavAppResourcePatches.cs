@@ -198,6 +198,8 @@ public static class NavAppResourcePatches
     /// (Program.cs bundle loop). Null when the bundle has no app.json.</summary>
     public static void SetCurrentBundleDir(string? dir) => _currentBundleDir = dir;
 
+    internal static string? CurrentBundleDir => _currentBundleDir;
+
     /// <summary>Register the bundle's own emitted test assembly against the current
     /// bundle source dir (called from BcRuntime.SetTestAssembly).</summary>
     public static void RegisterTestAssembly(Assembly asm)

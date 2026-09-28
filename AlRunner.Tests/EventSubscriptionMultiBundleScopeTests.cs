@@ -24,7 +24,14 @@
 //   `ForeignSubscriptionIsAbsentB` filters on bundle A's subscriber codeunit id, a number
 //   bundle B never declares. Against the unfixed runner it reads one row and the runner exits
 //   non-zero. Measured both ways, and with two independent mutations of the fix.
+//
+// SINCE #4931 ONLY A SEQUENTIAL RUN KEEPS BUNDLES APART
+//   By default a multi-path run loads every bundle before any runs tests and treats them as
+//   installed together, as a run over one root holding both folders does — so each bundle then
+//   lists the other's subscription. The scoping above is pinned under AL_RUNNER_SEQUENTIAL_BUNDLES=1,
+//   and the default is pinned to the single-root result.
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 using System.IO;
 using System.Text;
 using Xunit;
@@ -54,11 +61,15 @@ public sealed class EventSubscriptionMultiBundleScopeTests
     /// destroy the property under test.</para>
     /// </summary>
     private static (int ExitCode, string StdOut, string StdErr) Run(string cacheDir, params string[] bundles)
+        => Run(cacheDir, sequential: true, bundles);
+
+    private static (int ExitCode, string StdOut, string StdErr) Run(string cacheDir, bool sequential, params string[] bundles)
     {
         var sb = new StringBuilder(TestBuildConfig.RunArgs(Path.Combine(RepoRoot, "AlRunner")));
         foreach (var b in bundles)
             sb.Append(' ').Append($"\"{Path.Combine(FixtureDir, b)}\"");
         sb.Append(' ').Append($"--cache \"{cacheDir}\"");
+        sb.Append(" --show-pass"); // a one-root run lists PASS lines only when asked
 
         var psi = new ProcessStartInfo
         {
@@ -70,6 +81,7 @@ public sealed class EventSubscriptionMultiBundleScopeTests
             CreateNoWindow = true,
             WorkingDirectory = RepoRoot,
         };
+        if (sequential) psi.Environment["AL_RUNNER_SEQUENTIAL_BUNDLES"] = "1";
 
         var outSb = new StringBuilder();
         var errSb = new StringBuilder();
@@ -90,7 +102,7 @@ public sealed class EventSubscriptionMultiBundleScopeTests
     }
 
     /// <summary>
-    /// The whole two-bundle fixture, in one runner invocation — the proof of the #4222 fix.
+    /// The whole two-bundle fixture, in one sequential runner invocation — the proof of the #4222 fix.
     ///
     /// <para>Named arms rather than a bare exit-code check: the runner exits 0 on a bundle
     /// whose tests all pass, and the specific claims below are what say WHICH tests passed.</para>
@@ -133,6 +145,47 @@ public sealed class EventSubscriptionMultiBundleScopeTests
         {
             try { Directory.Delete(cacheDir, recursive: true); } catch { }
         }
+    }
+
+    /// <summary>
+    /// #4931: by default the two paths run as the single root holding both folders runs — every
+    /// arm has the same outcome in both invocations. There, each bundle's foreign arm reads the
+    /// other's row (both are installed), and AllObj still hides the other app, which neither depends on.
+    /// </summary>
+    [Fact]
+    public void ByDefault_TwoPaths_MatchTheSingleRootHoldingBoth()
+    {
+        var cacheDir = TestScratch.Dir("al-runner-esv-multibundle-parity");
+        try
+        {
+            var paths = Run(cacheDir, sequential: false, "AppA", "AppB").StdOut;
+            var oneRoot = Run(cacheDir, sequential: false, ".").StdOut;
+
+            var outcomes = Outcomes(paths);
+            Assert.Equal(6, outcomes.Count);
+            Assert.Equal(Outcomes(oneRoot), outcomes);
+            Assert.Equal("FAIL", outcomes["Codeunit70804.ForeignSubscriptionIsAbsentB"]);
+            Assert.Equal("FAIL", outcomes["Codeunit70784.ForeignSubscriptionIsAbsentA"]);
+            Assert.Equal("PASS", outcomes["Codeunit70804.OwnSubscriptionIsPresentB"]);
+            Assert.Equal("PASS", outcomes["Codeunit70804.AllObjDoesNotListTheForeignCodeunitB"]);
+            Assert.Contains("Expected 0 but got 1", paths);
+        }
+        finally
+        {
+            try { Directory.Delete(cacheDir, recursive: true); } catch { }
+        }
+    }
+
+    /// <summary>`Codeunit<id>.<method>` -> PASS/FAIL, from the per-test lines of a run.</summary>
+    private static SortedDictionary<string, string> Outcomes(string stdout)
+    {
+        var outcomes = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        // PASS  Codeunit70784.Own... (1ms)   |   FAIL  "EMB Tests A".Foreign... (Codeunit70784, 1 ms)
+        foreach (Match m in Regex.Matches(stdout, @"^PASS +(Codeunit\d+)\.(\w+) ", RegexOptions.Multiline))
+            outcomes[$"{m.Groups[1].Value}.{m.Groups[2].Value}"] = "PASS";
+        foreach (Match m in Regex.Matches(stdout, @"^FAIL +""[^""]+""\.(\w+) \((Codeunit\d+),", RegexOptions.Multiline))
+            outcomes[$"{m.Groups[2].Value}.{m.Groups[1].Value}"] = "FAIL";
+        return outcomes;
     }
 
     /// <summary>

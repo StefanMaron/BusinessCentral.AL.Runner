@@ -354,7 +354,7 @@ public class AppGroupObjectVisibilityTests
     /// a suite compiling a sub-folder that carries its own app.json, and two unrelated groups
     /// declaring the same table id. Both groups must still list the objects they compile.
     /// </summary>
-    private static string[] WriteOwnershipEdgeFixtures(string root, bool zInRequest = true)
+    internal static string[] WriteOwnershipEdgeFixtures(string root, bool zInRequest = true)
     {
         var outer = WriteApp(Path.Combine(root, "outer"), AppA, "Nest Outer", 62660, 62679);
         WriteApp(Path.Combine(outer, "inner"), AppB, "Nest Inner", 62665, 62669);
@@ -1095,7 +1095,7 @@ public class AppGroupObjectVisibilityTests
         return n;
     }
 
-    private static (string Output, int ExitCode) RunCli(string args, string? loadTestToolFrom = null)
+    internal static (string Output, int ExitCode) RunCli(string args, string? loadTestToolFrom = null)
     {
         var psi = new ProcessStartInfo
         {
