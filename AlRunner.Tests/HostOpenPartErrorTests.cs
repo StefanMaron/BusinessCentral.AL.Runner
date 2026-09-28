@@ -1,9 +1,9 @@
 // #4903: while a host TestPage opens, the runner builds every part eagerly (#2677). An AL
 // Error() in a part's OnOpenPage fails the host's OpenView, as on BC (corpus codeunit 67010), and
 // an out-of-scope surface a part's OnOpenPage touches is reported as out-of-scope rather than
-// swallowed, and so is an unhandled Confirm there (corpus codeunit 67010 again). Only a
-// [RunOnClient] DotNet callback refusal (#2772) is absorbed, which needs Base App to reach and
-// is pinned by tests/runner-extras/testpage-trigger-inject-timing.
+// swallowed. Only a [RunOnClient] DotNet callback refusal (#2772) is absorbed, which needs
+// Base App to reach and is pinned by tests/runner-extras/testpage-trigger-inject-timing. An
+// unhandled Confirm in a part's OnOpenPage is left to #4915: BC 27.x and 28.x disagree on it.
 using System.Diagnostics;
 using System.Text;
 using Xunit;
@@ -66,11 +66,9 @@ public sealed class HostOpenPartErrorTests
             + Part(62813, "Hope Refusing Part", "Client.Get('http://hope.invalid/', Response);").Replace(
                 "Log: Codeunit \"Hope Log\";", "Log: Codeunit \"Hope Log\";\n        Client: HttpClient;\n        Response: HttpResponseMessage;")
             + Part(62814, "Hope Clean Part", "")
-            + Part(62819, "Hope Confirm Part", "if Confirm('HOPE asks') then;")
             + Host(62815, "Hope Error Host", "Hope Error Part")
             + Host(62816, "Hope Refusing Host", "Hope Refusing Part")
             + Host(62817, "Hope Clean Host", "Hope Clean Part")
-            + Host(62820, "Hope Confirm Host", "Hope Confirm Part")
             + """
             codeunit 62818 "Hope Tests"
             {
@@ -101,15 +99,6 @@ public sealed class HostOpenPartErrorTests
                 end;
 
                 [Test]
-                procedure ConfirmingPart_UnhandledConfirm_FailsTheHostsOpenView()
-                var
-                    Host: TestPage "Hope Confirm Host";
-                begin
-                    asserterror Host.OpenView();
-                    if StrPos(GetLastErrorText(), 'Unhandled UI: Confirm') = 0 then Error('WRONG: OpenView ended with: %1', GetLastErrorText());
-                end;
-
-                [Test]
                 procedure CleanPart_HostOpens_AndThePartOpened()
                 var
                     Host: TestPage "Hope Clean Host";
@@ -125,7 +114,7 @@ public sealed class HostOpenPartErrorTests
 
         var (output, exitCode) = RunCli($" --no-cache \"{root}\"");
         // RefusingPart_IsReportedOutOfScope fails by design: the refusal is the assertion.
-        Assert.True(output.Contains("Tests: 4   passed 3   failed 1"), output);
+        Assert.True(output.Contains("Tests: 3   passed 2   failed 1"), output);
         Assert.Contains("FAIL  \"Hope Tests\".RefusingPart_IsReportedOutOfScope", output);
         Assert.Contains("Unexpected out-of-scope: HttpClient.Get (reason: external-http)", output);
         Assert.DoesNotContain("WRONG:", output);
