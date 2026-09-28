@@ -1142,6 +1142,8 @@ public static partial class BcRuntime
         // report's TableViewIsSet array stays null, so AL's Report.SetTableView(Rec) NREs
         // inside BC's own DataItemIterator.SetTableView (issue #1718).
         // BC's CreateTarget passes no skip, so saved request-page values are restored too (#4808).
+        // Extensions bind first, in BC's own order (#4909).
+        AlRunner.NavReportSync.BindReportExtensions(instance, id);
         AlRunner.NavReportSync.RestoreSavedRequestPageValues(instance, self, id);
         AlRunner.NavReportSync.CompleteReportConstruction(instance, self, id);
         return instance;

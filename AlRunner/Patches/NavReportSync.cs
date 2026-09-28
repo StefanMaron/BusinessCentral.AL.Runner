@@ -1987,11 +1987,89 @@ public static partial class NavReportSync
             throw new InvalidOperationException(
                 $"Report{id} has no (ITreeObject[, NCLMetaReport]) constructor");
 
+        // BC's own order (NCLMetaReport.CreateObjectInstance): bind the extensions, then
+        // InitializeReportValues, then FinalizeDataItemLoading.
+        BindReportExtensions(instance, id);
+
         if (!skipRestoreSavedReportSettings)
             RestoreSavedRequestPageValues(instance, parent, id);
 
         CompleteReportConstruction(instance, parent, id);
         return instance;
+    }
+
+    private static readonly ConditionalWeakTable<object, object> _reportExtensionsBound = new();
+
+    /// <summary>
+    /// Construct each reportextension of <paramref name="reportId"/> on the report and hand it
+    /// to BC's own <c>NavReport.RegisterReportExtension</c>, which is what
+    /// <c>NCLReportExtension.CreateExtensionInstanceAndBindToParent</c> does inside
+    /// <c>NCLMetaReport.CreateObjectInstance</c> (decompiled bc285). That registers the
+    /// extension's data items and its request-page extension on the request page, whose
+    /// <c>OnExtensionRegistered</c> registers the source expressions a [RequestPageHandler]
+    /// reads and writes (#4909; corpus 67546, 67547). Idempotent per report instance.
+    ///
+    /// <para>An extension the metadata names but whose compiled type is not loaded refuses:
+    /// constructing the report without it would make its request-page fields unreachable and
+    /// its triggers silent.</para>
+    /// </summary>
+    internal static void BindReportExtensions(object navReport, int reportId)
+    {
+        if (!_reportExtensionsBound.TryAdd(navReport, navReport)) return;
+        var extensionTypes = ResolveReportExtensionTypes(reportId);
+        if (extensionTypes.Count == 0) return;
+
+        var register = AlRunner.Infrastructure.BcShape.RequiredMethod(navReport.GetType(), "RegisterReportExtension",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            "Report extensions", "NavReport.RegisterReportExtension",
+            "without it a reportextension's data items and request-page fields are never bound to the report");
+        foreach (var (extensionId, type) in extensionTypes)
+        {
+            var ctor = type.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                .FirstOrDefault(c => c.GetParameters().Length == 1)
+                ?? throw new AlRunner.Infrastructure.BcShapeGapException(
+                    "Report extensions", $"ReportExtension{extensionId}(ITreeObject)",
+                    "the compiled reportextension declares no one-argument constructor");
+            object extension;
+            try { extension = ctor.Invoke(new object?[] { navReport }); }
+            catch (TargetInvocationException tie) when (tie.InnerException != null)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+                throw; // unreachable
+            }
+            Invoke(register, navReport, new[] { extension });
+        }
+    }
+
+    /// <summary>
+    /// The compiled type of every reportextension the metadata declares for
+    /// <paramref name="reportId"/>, in binding order. One whose type is not loaded refuses.
+    /// </summary>
+    internal static IReadOnlyList<(int Id, Type Type)> ResolveReportExtensionTypes(int reportId)
+        => AlRunner.Patches.RecordPatches.ReportExtensionIdsFor(reportId)
+            .Select(extensionId => (extensionId, FindReportExtensionType(extensionId)
+                ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                    $"reportextension {extensionId} of report {reportId}",
+                    "not-yet-implemented — the metadata declares this reportextension, but its compiled "
+                    + "ReportExtension" + extensionId + " type is not loaded, so it cannot be bound to the report")))
+            .ToList();
+
+    private static Type? FindReportExtensionType(int extensionId)
+    {
+        var name = "ReportExtension" + extensionId;
+        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            // A previous server/watch generation of this module (#1901, #4099).
+            if (AlRunner.BcRuntime.IsStaleBundleAssembly(asm)) continue;
+            try
+            {
+                var t = AlRunner.Infrastructure.AssemblyTypeIndex.For(asm)
+                    .FindFirst(name, typeof(Microsoft.Dynamics.Nav.Runtime.Extensions.NavReportExtension).IsAssignableFrom);
+                if (t != null) return t;
+            }
+            catch (ReflectionTypeLoadException) { }
+        }
+        return null;
     }
 
     /// <summary>
