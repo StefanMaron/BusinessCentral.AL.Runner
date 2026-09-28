@@ -38,6 +38,28 @@ public sealed class GuideRuntimeEnvironmentTextTests
         Assert.Contains("SetTestabilitySandbox", guide, StringComparison.Ordinal);
     }
 
+    /// <summary>IsProduction() is !NavTenantSettingsHelper.IsSandbox() and reads no testability
+    /// flag (NavUserAccount.dll 28.5.54151.55132), so only the tenant setter moves it. Naming the
+    /// testability setters without that caveat promised a switch they do not make (PR #4933 review).</summary>
+    [Fact]
+    public void Guide_SaysWhichSetterMovesIsProduction()
+    {
+        var guide = Guide();
+
+        Assert.Contains("IsSandbox() and IsSaaS() become true, IsProduction()", guide, StringComparison.Ordinal);
+        Assert.Contains("with either, IsProduction() stays true", guide, StringComparison.Ordinal);
+        Assert.Contains("(OnPrem scope)", guide, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Guide_StatesTopologyAndLicenseDefaults()
+    {
+        var guide = Guide();
+
+        Assert.Contains("Service topology: always on-premises", guide, StringComparison.Ordinal);
+        Assert.Contains("named-user limit on User writes is never enforced (#4700)", guide, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Guide_PointsAtTheEnvironmentTypeLimitationAnchor()
     {

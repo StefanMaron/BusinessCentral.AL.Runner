@@ -311,13 +311,15 @@ internal static partial class ProgramSupport
         w.WriteLine("RUNTIME ENVIRONMENT — what your AL sees by default");
         w.WriteLine("  Environment type: Production, not a sandbox, not SaaS. So Environment");
         w.WriteLine("      Information answers IsProduction() = true, IsSandbox() = false and");
-        w.WriteLine("      IsSaaS() = false, as an on-premises service tier does. A test switches it");
-        w.WriteLine("      the same way it would there: Library - Permissions");
-        w.WriteLine("      .SetTestTenantEnvironmentType(true), or Environment Info Test Library");
-        w.WriteLine("      .SetTestabilitySandbox / .SetTestabilitySoftwareAsAService. The al-language");
-        w.WriteLine("      corpus tier runs as a sandbox, so its answers differ from the runner's.");
+        w.WriteLine("      IsSaaS() = false, as an on-premises service tier does.");
+        w.WriteLine("      Library - Permissions.SetTestTenantEnvironmentType(true) makes the tenant a");
+        w.WriteLine("      sandbox for the test: IsSandbox() and IsSaaS() become true, IsProduction()");
+        w.WriteLine("      false. Environment Info Test Library (OnPrem scope) .SetTestabilitySandbox");
+        w.WriteLine("      changes only IsSandbox(), and .SetTestabilitySoftwareAsAService only");
+        w.WriteLine("      IsSaaS(); with either, IsProduction() stays true.");
+        w.WriteLine("      The al-language corpus tier runs as a sandbox, so its answers differ.");
         w.WriteLine("  Service topology: always on-premises, even after a test switches to SaaS.");
-        w.WriteLine("  License: there is none, so named-user license checks never refuse a write.");
+        w.WriteLine("  License: none; the named-user limit on User writes is never enforced (#4700).");
         w.WriteLine("  Details: docs/limitations.md#environment-type");
         w.WriteLine();
 
