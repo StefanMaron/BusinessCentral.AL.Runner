@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **testpage:** an extension's modify() of a control's Caption reaches TestPage Caption()
 - **server:** a later bundle's subscribers see an earlier bundle's events in one multi-bundle request
 - **provisioning:** auto-provision downloads the BC backup that test-data needs
 - **testpage:** controls an extension adds answer their own Caption and OptionCaption
