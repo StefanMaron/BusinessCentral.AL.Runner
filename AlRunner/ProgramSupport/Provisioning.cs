@@ -147,9 +147,7 @@ internal static partial class ProgramSupport
                 ? "[reexec] Re-execing into a shadow runtime dir with the matching BC-minor engine variant"
                 : "[reexec] Ncl.dll not shipped in this install — re-execing into a shadow runtime dir that has it");
         AlRunner.Infrastructure.PhaseLog.MarkReexecParent();
-        using var shadowChild = System.Diagnostics.Process.Start(psi)!;
-        shadowChild.WaitForExit();
-        return shadowChild.ExitCode;
+        return AlRunner.Infrastructure.ReexecParent.RunToExit(psi);
     }
 
     // Rewrite a forwarded argv so that `--artifact-path <dir>` becomes `--bc-version <ver>`

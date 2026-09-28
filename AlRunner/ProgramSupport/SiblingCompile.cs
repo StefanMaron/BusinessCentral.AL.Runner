@@ -140,9 +140,7 @@ internal static partial class ProgramSupport
                     psi.ArgumentList.Add(a);
                 psi.Environment["AL_RUNNER_REEXECED"] = "1";
                 Console.Error.WriteLine("[reexec] --precompile: fresh Ncl rewrite done — re-execing for a clean load");
-                using var child = System.Diagnostics.Process.Start(psi)!;
-                child.WaitForExit();
-                return child.ExitCode;
+                return AlRunner.Infrastructure.ReexecParent.RunToExit(psi);
             }
         }
 
