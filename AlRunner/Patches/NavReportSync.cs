@@ -2015,35 +2015,37 @@ public static partial class NavReportSync
 
     /// <summary>
     /// Whether a compiled reportextension declares anything beyond its request page that BC
-    /// binds through the other steps of RegisterReportExtension: any override on the extension
-    /// class itself (a report trigger, or EvaluateSourceExpression for an added column), or a
-    /// non-empty RegisterDataItems (an added data item). Those are not bound (#4918). The
+    /// binds through the other steps of RegisterReportExtension: a report-trigger override, an
+    /// EvaluateSourceExpression override (an added column), or a non-empty RegisterDataItems
+    /// (an added data item or a data-item trigger). Those are not bound (#4918). The
     /// request-page extension is a nested class, so its triggers are not counted here.
     /// </summary>
     internal static bool DeclaresReportBehaviour(Type extensionType)
     {
-        var any = false;
         foreach (var m in extensionType.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
         {
-            if (m.GetBaseDefinition().DeclaringType == extensionType) continue; // not an override
-            if (m.Name == "RegisterDataItems")
+            if (m.GetBaseDefinition().DeclaringType != typeof(Microsoft.Dynamics.Nav.Runtime.Extensions.NavReportExtension)) continue;
+            // Allow-list, not deny-list: the compiler also overrides members that declare nothing
+            // (get_IsCompiledForOnPremise, get___IsAsync on Base App's 99000783; OnInvoke for a
+            // procedure; OnClear for globals), and those must not refuse a run.
+            switch (m.Name)
             {
-                // An empty override is `ret` (or `nop; ret`).
-                if ((m.GetMethodBody()?.GetILAsByteArray()?.Length ?? 0) > 2) any = true;
-            }
-            else if (m.Name is not ("OnClear" or "get_ObjectName"))
-            {
-                // A report trigger, or a dataset member such as EvaluateSourceExpression (a
-                // column the extension adds). A reportextension cannot declare OnInitReport (AL0162).
-                any = true;
+                case "OnPreReport" or "OnPreReportAsync" or "OnPostReport" or "OnPostReportAsync"
+                    or "OnPreRendering" or "OnPreRenderingAsync" or "OnInitReport" or "OnInitReportAsync"
+                    or "EvaluateSourceExpression" or "EvaluateSourceExpressionAsync":
+                    return true;
+                case "RegisterDataItems":
+                    // Always emitted; an extension without dataitems/modify(dataitem) emits `ret`.
+                    if ((m.GetMethodBody()?.GetILAsByteArray()?.Length ?? 0) > 2) return true;
+                    break;
             }
         }
-        return any;
+        return false;
     }
 
     /// <summary>
-    /// Refuses running a report whose bound reportextensions declare report triggers or data
-    /// items: BC would run them and the runner does not bind them yet (#4918). Opening the
+    /// Refuses running a report whose bound reportextensions declare report triggers, added
+    /// columns or data items: BC would run them and the runner does not bind them yet (#4918). Opening the
     /// request page alone is unaffected, which is why this sits at the run, not at binding.
     /// </summary>
     internal static void ThrowIfExtensionReportBehaviourIsUnbound(object navReport)
@@ -2051,7 +2053,7 @@ public static partial class NavReportSync
         if (!_extensionsWithUnboundReportBehaviour.TryGetValue(navReport, out var unbound) || unbound.ExtensionIds.Count == 0) return;
         throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
             $"Report {unbound.ReportId} run with reportextension(s) {string.Join(", ", unbound.ExtensionIds)}",
-            "not-yet-implemented — these reportextensions declare report triggers or data items, which "
+            "not-yet-implemented — these reportextensions declare report triggers, added columns or data items, which "
             + "the runner does not bind to the report yet, so running it would skip them (#4918)");
     }
 
