@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **app-groups:** an AllObj read in a group depending on two declarers of an id no longer throws
 - **session:** answer Session's Database Name and Application Name from the Active Session row, as BC does
 - **testpage:** parts a source pageextension adds, measured on a service tier
 - **testpage:** application-area removal reaches a precompiled page's actions and a precompiled report's request page
