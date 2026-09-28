@@ -1151,7 +1151,7 @@ public static class AppLoader
     /// manifest path. The returned archive owns the FileStream (disposed transitively
     /// through <see cref="NavxZipView"/> when the caller disposes the archive).
     /// </summary>
-    private static ZipArchive OpenAppZip(string appPath)
+    internal static ZipArchive OpenAppZip(string appPath)
     {
         var fs = new FileStream(appPath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 65536, useAsync: false);
         try
