@@ -900,6 +900,9 @@ public static partial class NavReportSync
                     Console.Error.WriteLine("[NavReportSync] SyncRun: request page cancelled — report body not executed");
                 return true;
             }
+            // Past the request page and before any report trigger: the report is really
+            // running now, and its extensions' triggers and data items are not bound (#4918).
+            ThrowIfExtensionReportBehaviourIsUnbound(navReport);
             // BC's RunReportInternalCoreAsync calls this immediately before it builds the
             // result-set processor, and it is the counterpart of the ApplySetTableView above:
             // Apply copies TableViewRecord -> Record so triggers and the request-page handler
@@ -1999,6 +2002,58 @@ public static partial class NavReportSync
     }
 
     private static readonly ConditionalWeakTable<object, object> _reportExtensionsBound = new();
+    // Request-page form -> the request-page extension instances bound to it, so the runner's
+    // trigger dispatch can reach an extension control's OnValidate / OnLookup / … (#4909).
+    private static readonly ConditionalWeakTable<object, List<(int Id, object Instance)>> _requestPageExtensions = new();
+    // Report -> the bound extensions that declare report triggers or data items (#4918).
+    private sealed class UnboundReportBehaviour { public int ReportId; public readonly List<int> ExtensionIds = new(); }
+    private static readonly ConditionalWeakTable<object, UnboundReportBehaviour> _extensionsWithUnboundReportBehaviour = new();
+
+    /// <summary>The request-page extension instances bound to <paramref name="requestPageForm"/>.</summary>
+    internal static IReadOnlyList<(int Id, object Instance)> RequestPageExtensionsOf(object requestPageForm)
+        => _requestPageExtensions.TryGetValue(requestPageForm, out var list) ? list : Array.Empty<(int, object)>();
+
+    /// <summary>
+    /// Whether a compiled reportextension declares anything beyond its request page that BC
+    /// binds through the other steps of RegisterReportExtension: any override on the extension
+    /// class itself (a report trigger, or EvaluateSourceExpression for an added column), or a
+    /// non-empty RegisterDataItems (an added data item). Those are not bound (#4918). The
+    /// request-page extension is a nested class, so its triggers are not counted here.
+    /// </summary>
+    internal static bool DeclaresReportBehaviour(Type extensionType)
+    {
+        var any = false;
+        foreach (var m in extensionType.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+        {
+            if (m.GetBaseDefinition().DeclaringType == extensionType) continue; // not an override
+            if (m.Name == "RegisterDataItems")
+            {
+                // An empty override is `ret` (or `nop; ret`).
+                if ((m.GetMethodBody()?.GetILAsByteArray()?.Length ?? 0) > 2) any = true;
+            }
+            else if (m.Name is not ("OnClear" or "get_ObjectName"))
+            {
+                // A report trigger, or a dataset member such as EvaluateSourceExpression (a
+                // column the extension adds). A reportextension cannot declare OnInitReport (AL0162).
+                any = true;
+            }
+        }
+        return any;
+    }
+
+    /// <summary>
+    /// Refuses running a report whose bound reportextensions declare report triggers or data
+    /// items: BC would run them and the runner does not bind them yet (#4918). Opening the
+    /// request page alone is unaffected, which is why this sits at the run, not at binding.
+    /// </summary>
+    internal static void ThrowIfExtensionReportBehaviourIsUnbound(object navReport)
+    {
+        if (!_extensionsWithUnboundReportBehaviour.TryGetValue(navReport, out var unbound) || unbound.ExtensionIds.Count == 0) return;
+        throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            $"Report {unbound.ReportId} run with reportextension(s) {string.Join(", ", unbound.ExtensionIds)}",
+            "not-yet-implemented — these reportextensions declare report triggers or data items, which "
+            + "the runner does not bind to the report yet, so running it would skip them (#4918)");
+    }
 
     /// <summary>
     /// Construct each reportextension of <paramref name="reportId"/> on the report and register
@@ -2038,6 +2093,12 @@ public static partial class NavReportSync
             "without it a reportextension's request-page fields never register their source expressions");
         foreach (var (extensionId, type) in extensionTypes)
         {
+            if (DeclaresReportBehaviour(type))
+            {
+                var unbound = _extensionsWithUnboundReportBehaviour.GetOrCreateValue(navReport);
+                unbound.ReportId = reportId;
+                unbound.ExtensionIds.Add(extensionId);
+            }
             var ctor = type.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
                 .FirstOrDefault(c => c.GetParameters().Length == 1)
                 ?? throw new AlRunner.Infrastructure.BcShapeGapException(
@@ -2056,6 +2117,7 @@ public static partial class NavReportSync
                 .GetValue(extension);
             if (requestPageExtension == null) continue; // the extension declares no requestpage block
             Invoke(register, requestPage, new[] { requestPageExtension });
+            _requestPageExtensions.GetOrCreateValue(requestPage).Add((extensionId, requestPageExtension));
         }
     }
 

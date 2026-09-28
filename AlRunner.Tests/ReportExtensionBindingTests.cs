@@ -1,5 +1,7 @@
-// Issue #4909: every reportextension of a report is bound to it at construction, through BC's own
-// NavReport.RegisterReportExtension. These pin which extensions the runner finds for a report and
+// Issue #4909: each reportextension of a report has its request-page extension registered on the
+// report's request page at construction — the last step of BC's NavReport.RegisterReportExtension,
+// not the whole method (its report triggers and data items are #4918). These pin which extensions
+// the runner finds for a report and
 // that one the metadata declares but whose compiled type is not loaded refuses rather than being
 // left unbound. The end-to-end claim (a [RequestPageHandler] reads and writes the extension's
 // field) is the corpus's: codeunits 67546 and 67547.
