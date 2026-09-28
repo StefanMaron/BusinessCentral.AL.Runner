@@ -104,7 +104,9 @@ public sealed class SilentReflectionLookupRatchetTests
     // the number comes from running it.
     // 120 -> 119: BlobStoreIsolationPatches.MarkDatabaseBacked's DataProvider lookup now refuses
     // with a BcShapeGapException (#4487).
-    private const int Baseline = 119;
+    // 119 -> 116: RecordPatches.RecordLinkTable.cs's primaryTree, table and SystemIdField
+    // lookups now bind through RequiredField / BcShape.Property (#4944).
+    private const int Baseline = 116;
 
     // ── The assertions ──────────────────────────────────────────────────────────────────
 
@@ -315,10 +317,6 @@ public sealed class SilentReflectionLookupRatchetTests
         ("AlRunner/Patches/RecordPatches.QueryProjection.cs", "t", "GetField", "member", 1),
         ("AlRunner/Patches/RecordPatches.QueryProjection.cs", "t", "GetProperty", "member", 1),
         ("AlRunner/Patches/RecordPatches.QueryProjection.cs", "t", "GetProperty", "n", 1),
-        // RecordPatches.RecordLinkTable.cs — 3
-        ("AlRunner/Patches/RecordPatches.RecordLinkTable.cs", "provider.GetType()", "GetField", "\"primaryTree\"", 1),
-        ("AlRunner/Patches/RecordPatches.RecordLinkTable.cs", "provider.GetType()", "GetField", "\"table\"", 1),
-        ("AlRunner/Patches/RecordPatches.RecordLinkTable.cs", "table.GetType()", "GetProperty", "\"SystemIdField\"", 1),
         // RecordPatches.SessionVirtualTable.cs — 2
         ("AlRunner/Patches/RecordPatches.SessionVirtualTable.cs", "auth?.GetType()", "GetProperty", "\"AuthenticationMethod\"", 1),
         ("AlRunner/Patches/RecordPatches.SessionVirtualTable.cs", "session.GetType()", "GetProperty", "\"Authenticator\"", 1),

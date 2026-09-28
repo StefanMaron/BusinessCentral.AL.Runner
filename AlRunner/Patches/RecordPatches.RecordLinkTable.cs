@@ -83,13 +83,16 @@ public static partial class RecordPatches
         });
 
     /// <summary>BC's own SystemId column for a table, read off the metatable rather than found
-    /// by column name. Returns null when the shape has no such property, in which case rows
-    /// simply carry the column's own empty value — the state this store shipped in before the
-    /// divergence below was measured.</summary>
+    /// by column name. A missing <c>NCLMetaTable.SystemIdField</c> (internal, present on Ncl
+    /// 27.0.38460 and 28.4.53241) refuses: silently skipping it wrote every link row with an
+    /// empty SystemId, the divergence <see cref="BuildRecordLinkRow"/> documents (#4944).</summary>
     private static NCLMetaField? ResolveSystemIdField(NCLMetaTable table)
-        => table.GetType()
-            .GetProperty("SystemIdField", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance)
-            ?.GetValue(table) as NCLMetaField;
+        => RecordLinkSystemIdProperty().GetValue(table) as NCLMetaField;
+
+    private static PropertyInfo RecordLinkSystemIdProperty()
+        => AlRunner.Infrastructure.BcShape.Property(
+            typeof(NCLMetaTable), "SystemIdField", AlRunner.Infrastructure.BcShape.AnyInstance,
+            RecordLinkSurface);
 
     /// <summary>
     /// The Record Link table's own TempTableDataProvider — the same one an AL
@@ -122,9 +125,7 @@ public static partial class RecordPatches
         var provider = GetDataProvider(dataAccess);
         if (provider == null || provider.GetType().Name != "TempTableDataProvider") return null;
 
-        var meta = provider.GetType()
-            .GetField("table", BindingFlags.NonPublic | BindingFlags.Instance)
-            ?.GetValue(provider) as NCLMetaTable;
+        var meta = ReadRecordLinkProviderTable(provider);
         if (meta == null) return null;
 
         return (provider, ResolveRecordLinkColumns(meta));
@@ -139,15 +140,31 @@ public static partial class RecordPatches
         return store == null ? 0 : ReadRecordLinkRows(store.Value.Provider).Count;
     }
 
-    /// <summary>Every Record Link row currently stored, as the provider holds them.</summary>
+    /// <summary>The provider's metatable. A null value is an answer (no store to read); a field
+    /// that cannot be bound, or holds something other than a metatable, refuses (#4944).</summary>
+    private static NCLMetaTable? ReadRecordLinkProviderTable(object provider)
+    {
+        var value = RequiredField(provider.GetType(), "table", RecordLinkSurface).GetValue(provider);
+        if (value == null) return null;
+        return value as NCLMetaTable
+               ?? throw new AlRunner.Infrastructure.BcShapeGapException(
+                   RecordLinkSurface, $"{provider.GetType().Name}.table",
+                   $"holds a {value.GetType().Name}, not an NCLMetaTable");
+    }
+
+    /// <summary>Every Record Link row currently stored, as the provider holds them.
+    /// A null <c>primaryTree</c> is BC's own "no row was ever inserted" and answers empty; a
+    /// field that cannot be bound refuses rather than reading as zero links (#4944).</summary>
     private static List<NavValue[]> ReadRecordLinkRows(object provider)
     {
         var rows = new List<NavValue[]>();
-        if (provider.GetType().GetField("primaryTree", BindingFlags.NonPublic | BindingFlags.Instance)
-                ?.GetValue(provider) is IEnumerable tree)
-            foreach (var row in tree)
-                if (row is TempTableRecordBuffer buffer)
-                    rows.Add(buffer.ToArray());
+        var tree = RequiredField(provider.GetType(), "primaryTree", RecordLinkSurface).GetValue(provider);
+        if (tree == null) return rows;
+        foreach (var row in AlRunner.Infrastructure.BcShape.RequiredEnumerable(
+                     tree, $"{provider.GetType().Name}.primaryTree", RecordLinkSurface,
+                     "the runner reads the Record Link rows from it"))
+            if (row is TempTableRecordBuffer buffer)
+                rows.Add(buffer.ToArray());
         return rows;
     }
 
