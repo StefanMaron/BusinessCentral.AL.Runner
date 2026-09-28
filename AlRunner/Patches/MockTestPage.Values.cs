@@ -567,11 +567,9 @@ internal static class TestPageBooleanValue
     /// the same way <see cref="TestPageMinMaxValue.MakeError"/> already builds that shape for a
     /// MinValue/MaxValue refusal.</para>
     ///
-    /// <para>One fidelity gap, stated rather than hidden: BC puts the control's declared NAME in
-    /// the <c>Field:</c> slot and its CAPTION in the quoted target ("RecTrue" and "Rec True"
-    /// above). This runner's <c>ITestField.Name</c> answers the caption, so both slots read the
-    /// caption here. A test asserting the message as a substring — as the corpus one does — is
-    /// unaffected; one asserting it verbatim would see the difference.</para>
+    /// <para>BC puts the control's declared NAME in the <c>Field:</c> slot and its CAPTION in the
+    /// quoted target ("RecTrue" and "Rec True" above). <c>ITestField.Name</c> answers the control
+    /// name (#3458), and <paramref name="caption"/> is the caption.</para>
     /// </summary>
     internal static NavValue Resolve(string value, string caption)
     {

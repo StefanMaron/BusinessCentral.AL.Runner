@@ -247,8 +247,12 @@ internal sealed class LiveNavTestField : ITestField
     private string[]? OptionCaptions()
         => _page != null && _controlId != 0 ? _page.TryGetOptionCaptions(_controlId, CurrentOption()) : null;
 
-    // Name keeps the static chain; only Caption() reads CaptionClass (#4638).
-    public string Name => StaticCaption;
+    // BC's AssertEquals and validation-error wrappers name the CONTROL (field(<Name>; ...)),
+    // not its caption (#3458; corpus 60662 and 67630). The caption chain is only the fallback
+    // for a field with no control behind it.
+    public string Name
+        => (_page != null && _controlId != 0 ? _page.TryGetControlName(_controlId) : null)
+           ?? StaticCaption;
 
     public string Caption
         => (_page != null && _controlId != 0 ? _page.TryGetControlCaptionClass(_controlId) : null)

@@ -115,6 +115,37 @@ public static partial class RecordPatches
                 yield return part;
     }
 
+    /// <summary>
+    /// The AL name of a control a source-compiled pageextension of <paramref name="pageId"/>
+    /// adds under <paramref name="controlId"/>, or null when none does (#3458). Read from the
+    /// extension's delta document, because the runner's MasterPage carries no extension delta.
+    /// </summary>
+    internal static string? SourcePageExtensionControlName(int pageId, int controlId)
+    {
+        var extensionIds = GetPageExtensionIdsForPage(pageId).Where(_parsedPageExtensions.ContainsKey).ToList();
+        foreach (var (_, xml) in SourcePageExtensionDeltaDocuments(pageId, extensionIds, $"TestPage control {controlId} name (page {pageId})"))
+        {
+            var doc = new XmlDocument();
+            doc.LoadXml(xml);
+            foreach (XmlNode node in doc.DocumentElement!.ChildNodes)
+                if (node is XmlElement e && e.Name == "ControlAdd" && FindAddedControlName(e, controlId) is { } name)
+                    return name;
+        }
+        return null;
+    }
+
+    private static string? FindAddedControlName(XmlElement parent, int controlId)
+    {
+        foreach (XmlNode node in parent.ChildNodes)
+        {
+            if (node is not XmlElement e || e.Name != "Controls") continue;
+            if (ReadBcAttrInt(e, "ID") == controlId)
+                return string.IsNullOrEmpty(e.GetAttribute("Name")) ? null : e.GetAttribute("Name");
+            if (FindAddedControlName(e, controlId) is { } nested) return nested;
+        }
+        return null;
+    }
+
     // Keyed on the registry's own string, so a --watch/--server reload, which registers new
     // documents, cannot serve a previous generation's parts.
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<string,
