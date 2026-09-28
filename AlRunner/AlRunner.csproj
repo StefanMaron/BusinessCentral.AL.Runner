@@ -73,11 +73,10 @@
               Server, DOTNET_GCHeapCount=4     3.10-3.15 GB   655, 668 G
               Server + DATAS                   2.50-2.52 GB   700, 702 G
 
-         Neither knob is set here. Capping heap count keeps the throughput and gives back most
-         of the memory, but the right cap depends on the machine, and .NET already caps the heap
-         under a container memory limit — which is the case where running out actually matters.
-         DATAS gives back the memory and loses the whole throughput win, landing at Workstation's
-         instruction count, so it is not a middle ground on this workload.
+         Capping heap count keeps the throughput and gives back most of the memory, but the right
+         cap depends on the machine. DATAS (below) is what ships: on that compile measurement it
+         landed at Workstation's instruction count, but on the whole corpus run it costs about 1%
+         of wall time (#4946).
 
          TEST EXECUTION IS A DIFFERENT WORKLOAD, and everything above was measured on COMPILE.
          Measured 2026-09-04 on Microsoft's Tests-SMB bucket (1,027 tests), two runs each, same
@@ -96,15 +95,20 @@
              each sizing for the whole machine. ParallelFanOut now budgets cores/jobs per
              worker: measured over ten buckets back-to-back on an idle box, 13,372 MB -> 9,196 MB
              at an identical 153 s wall. See ParallelFanOut.GcHeapCountForWorker.
-           * Whether the SINGLE-process default should cap heaps for an execution-heavy run is
-             open, and needs the compile and execute phases measured separately before anyone
-             changes this property.
+           * The single-process default is Server GC plus DATAS (GarbageCollectionAdaptationMode
+             below): it roughly halves peak memory for about 1% more wall time and the same
+             pass/fail set on the al-language corpus, cold and warm (#4946, raised by the peak
+             memory investigation in #4935). Adding GCConserveMemory=9 cost ~10% wall cold and
+             33-40% more CPU in the same measurement, so it is NOT set.
+             Opt out with DOTNET_GCDynamicAdaptationMode=0. Under the jobs flag, workers get an
+             explicit DOTNET_GCHeapCount=1, which keeps them at one heap with DATAS configured.
 
          Concurrent (background) GC stays at its default (on): untested here, and this allocation
          profile is throughput-bound, not pause-bound.
          Regression cover: AlRunner.Tests/ServerGcConfigTests, and
          AlRunner.Tests/PhaseLogIntegrationTests.TheRunnerProcess_RunsUnderServerGc. -->
     <ServerGarbageCollection>true</ServerGarbageCollection>
+    <GarbageCollectionAdaptationMode>1</GarbageCollectionAdaptationMode>
 
     <!-- dotnet tool packaging -->
     <PackAsTool>true</PackAsTool>
