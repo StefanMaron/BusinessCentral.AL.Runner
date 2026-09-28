@@ -12,6 +12,9 @@
 // See also: TableExtensionSymbol.cs (the data record, also in a separate file for the same reason).
 
 using System.Collections.Concurrent;
+using System.IO.Compression;
+using System.Text;
+using System.Text.Json;
 
 namespace AlRunner.Patches;
 
@@ -105,11 +108,8 @@ internal static partial class BcAppSymbolCache
         var result = new Dictionary<int, TableExtensionSymbol>();
         try
         {
-            foreach (var json in ReadSymbolReferences(appPath))
-            {
-                using var doc = System.Text.Json.JsonDocument.Parse(json);
-                VisitTableExtensions(doc.RootElement, result);
-            }
+            using var zip = AlRunner.AppLoader.OpenAppZip(appPath);
+            CollectTableExtensions(zip, result);
         }
         catch (Exception ex)
         {
@@ -122,21 +122,252 @@ internal static partial class BcAppSymbolCache
         return result.Values.ToList();
     }
 
-    private static void VisitTableExtensions(System.Text.Json.JsonElement container, Dictionary<int, TableExtensionSymbol> tableExts)
+    // The same SymbolReference.json entries, in the same order, as ReadSymbolReferences: the
+    // package's own, then the nested root-level .app's (the R2R wrapper), recursively.
+    private static void CollectTableExtensions(ZipArchive zip, Dictionary<int, TableExtensionSymbol> result)
     {
-        if (container.TryGetProperty("TableExtensions", out var extArray) && extArray.ValueKind == System.Text.Json.JsonValueKind.Array)
+        var symbol = zip.Entries.FirstOrDefault(e =>
+            e.FullName.Equals("SymbolReference.json", StringComparison.OrdinalIgnoreCase));
+        if (symbol != null)
         {
-            foreach (var ext in extArray.EnumerateArray())
+            using var s = symbol.Open();
+            foreach (var parsed in ScanTableExtensions(s))
+                if (parsed != null && !result.ContainsKey(parsed.ExtensionId))
+                    result[parsed.ExtensionId] = parsed;
+        }
+
+        var nested = zip.Entries.FirstOrDefault(e =>
+            e.FullName.EndsWith(".app", StringComparison.OrdinalIgnoreCase) && !e.FullName.Contains('/'));
+        if (nested != null)
+        {
+            byte[] bytes;
+            using (var ns = nested.Open())
+            using (var ms = new MemoryStream(nested.Length is > 0 and <= int.MaxValue ? (int)nested.Length : 0))
             {
-                var parsed = TryParseTableExtensionSymbol(ext);
-                if (parsed != null && !tableExts.ContainsKey(parsed.ExtensionId))
-                    tableExts[parsed.ExtensionId] = parsed;
+                ns.CopyTo(ms);
+                bytes = ms.Length == ms.Capacity ? ms.GetBuffer() : ms.ToArray();
+            }
+            using var inner = OpenZipFromNavx(bytes);
+            CollectTableExtensions(inner, result);
+        }
+    }
+
+    /// <summary>
+    /// Every <c>TableExtensions</c> element of one SymbolReference.json, parsed, in the order the
+    /// whole-document traversal visited them: a container's own <c>TableExtensions</c> first,
+    /// then its <c>Namespaces</c> in order, recursively — whatever order the two properties
+    /// appear in the text. Only one element at a time is ever a <see cref="JsonDocument"/>;
+    /// everything else is read token by token.
+    /// <para>Observably equivalent to the <c>JsonDocument.Parse</c> + <c>TryGetProperty</c>
+    /// walk it replaced (#4945): same entries, same order, same refusals — including which of
+    /// two same-named properties counts. Pinned against that code path by
+    /// <c>TableExtensionStreamingParseTests</c>. Trap: <see cref="JsonDocument.ParseValue"/>
+    /// does not rent from <c>ArrayPool&lt;byte&gt;.Shared</c>; a whole-document
+    /// <c>JsonDocument.Parse</c> does, and the pool then held about 0.5 GB of Base
+    /// Application's buffers for the whole run.</para>
+    /// </summary>
+    private static List<TableExtensionSymbol?> ScanTableExtensions(Stream stream)
+    {
+        // Decoded as ReadSymbolReferences' StreamReader decodes it: a UTF-8 byte order mark is
+        // dropped, a UTF-16/UTF-32 one selects that encoding, anything else is UTF-8.
+        var head = new byte[4];
+        var headLength = 0;
+        while (headLength < head.Length)
+        {
+            var n = stream.Read(head, headLength, head.Length - headLength);
+            if (n == 0) break;
+            headLength += n;
+        }
+        Encoding? wide = null;
+        var bomLength = 0;
+        if (headLength >= 3 && head[0] == 0xEF && head[1] == 0xBB && head[2] == 0xBF)
+            bomLength = 3;
+        else if (headLength >= 4 && head[0] == 0xFF && head[1] == 0xFE && head[2] == 0 && head[3] == 0)
+            (wide, bomLength) = (new UTF32Encoding(bigEndian: false, byteOrderMark: true), 4);
+        else if (headLength >= 2 && head[0] == 0xFF && head[1] == 0xFE)
+            (wide, bomLength) = (new UnicodeEncoding(bigEndian: false, byteOrderMark: true), 2);
+        else if (headLength >= 2 && head[0] == 0xFE && head[1] == 0xFF)
+            (wide, bomLength) = (new UnicodeEncoding(bigEndian: true, byteOrderMark: true), 2);
+        else if (headLength >= 4 && head[0] == 0 && head[1] == 0 && head[2] == 0xFE && head[3] == 0xFF)
+            (wide, bomLength) = (new UTF32Encoding(bigEndian: true, byteOrderMark: true), 4);
+
+        if (wide == null)
+            return ScanTableExtensionsUtf8(stream, head.AsSpan(bomLength, headLength - bomLength));
+
+        // No platform package has been seen shipping one, so this path buffers instead of streaming.
+        using var rest = new MemoryStream();
+        rest.Write(head, bomLength, headLength - bomLength);
+        stream.CopyTo(rest);
+        rest.Position = 0;
+        using var utf8 = Encoding.CreateTranscodingStream(rest, wide, Encoding.UTF8);
+        return ScanTableExtensionsUtf8(utf8, default);
+    }
+
+    private sealed class ScannedExtensions
+    {
+        public readonly List<TableExtensionSymbol?> Items = new();
+        // Held, not thrown: it fails the parse only if its container keeps this list, and a later
+        // same-named property can still replace it.
+        public System.Runtime.ExceptionServices.ExceptionDispatchInfo? Error;
+
+        public void AddFrom(ScannedExtensions other)
+        {
+            Items.AddRange(other.Items);
+            Error ??= other.Error;
+        }
+    }
+
+    private enum ScanFrameKind { Container, ExtensionArray, NamespaceArray, Skip }
+
+    private sealed class ScanFrame
+    {
+        public ScanFrameKind Kind;
+        public int Depth;                          // Skip: the depth of the token that ends it
+        public ScannedExtensions? Target;          // the two arrays: where their elements go
+        public ScannedExtensions Own = new();      // Container: its TableExtensions
+        public ScannedExtensions Children = new(); // Container: its Namespaces, flattened
+        public int Pending;                        // Container: 1 TableExtensions, 2 Namespaces
+    }
+
+    private static List<TableExtensionSymbol?> ScanTableExtensionsUtf8(Stream utf8, ReadOnlySpan<byte> prefix)
+    {
+        var buffer = new byte[Math.Max(256 * 1024, prefix.Length)];
+        prefix.CopyTo(buffer);
+        var length = prefix.Length;
+        var isFinal = false;
+        Fill();
+
+        var reader = new Utf8JsonReader(buffer.AsSpan(0, length), isFinal, default);
+        var frames = new List<ScanFrame>();
+        ScannedExtensions? root = null;
+
+        while (true)
+        {
+            var stateBefore = reader.CurrentState;
+            var consumedBefore = reader.BytesConsumed;
+            if (!reader.Read())
+            {
+                if (isFinal) break;
+                Refill(ref reader, reader.BytesConsumed, reader.CurrentState);
+                continue;
+            }
+            var token = reader.TokenType;
+
+            if (frames.Count == 0)
+            {
+                // The reader itself refuses a second root value.
+                if (token != JsonTokenType.StartObject)
+                    throw new InvalidOperationException($"SymbolReference.json's root is {token}, not an object");
+                frames.Add(new ScanFrame { Kind = ScanFrameKind.Container });
+                continue;
+            }
+
+            var top = frames[^1];
+            switch (top.Kind)
+            {
+                case ScanFrameKind.Container:
+                    if (token == JsonTokenType.PropertyName)
+                    {
+                        top.Pending = reader.ValueTextEquals("TableExtensions"u8) ? 1
+                            : reader.ValueTextEquals("Namespaces"u8) ? 2 : 0;
+                        break;
+                    }
+                    if (token == JsonTokenType.EndObject)
+                    {
+                        frames.RemoveAt(frames.Count - 1);
+                        var merged = new ScannedExtensions();
+                        merged.AddFrom(top.Own);
+                        merged.AddFrom(top.Children);
+                        if (frames.Count == 0) root = merged;
+                        else frames[^1].Target!.AddFrom(merged);
+                        break;
+                    }
+                    // A property value. A later property of the same name replaces it, as
+                    // JsonElement.TryGetProperty answers with the last of them.
+                    if (top.Pending == 1) top.Own = new ScannedExtensions();
+                    if (top.Pending == 2) top.Children = new ScannedExtensions();
+                    if (token == JsonTokenType.StartArray && top.Pending == 1)
+                        frames.Add(new ScanFrame { Kind = ScanFrameKind.ExtensionArray, Target = top.Own });
+                    else if (token == JsonTokenType.StartArray && top.Pending == 2)
+                        frames.Add(new ScanFrame { Kind = ScanFrameKind.NamespaceArray, Target = top.Children });
+                    else if (token is JsonTokenType.StartArray or JsonTokenType.StartObject)
+                        frames.Add(new ScanFrame { Kind = ScanFrameKind.Skip, Depth = reader.CurrentDepth });
+                    top.Pending = 0;
+                    break;
+
+                case ScanFrameKind.ExtensionArray:
+                    if (token == JsonTokenType.EndArray)
+                    {
+                        frames.RemoveAt(frames.Count - 1);
+                        break;
+                    }
+                    if (!isFinal)
+                    {
+                        var probe = reader;
+                        if (!probe.TrySkip())
+                        {
+                            // The element runs past the buffer: re-read it from its start.
+                            Refill(ref reader, consumedBefore, stateBefore);
+                            break;
+                        }
+                    }
+                    using (var element = JsonDocument.ParseValue(ref reader))
+                    {
+                        if (top.Target!.Error != null) break;
+                        try { top.Target.Items.Add(TryParseTableExtensionSymbol(element.RootElement)); }
+                        catch (Exception ex) { top.Target.Error = System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex); }
+                    }
+                    break;
+
+                case ScanFrameKind.NamespaceArray:
+                    if (token == JsonTokenType.EndArray)
+                    {
+                        frames.RemoveAt(frames.Count - 1);
+                        break;
+                    }
+                    if (token == JsonTokenType.StartObject)
+                    {
+                        frames.Add(new ScanFrame { Kind = ScanFrameKind.Container });
+                        break;
+                    }
+                    top.Target!.Error ??= System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(
+                        new InvalidOperationException($"a Namespaces element is {token}, not an object"));
+                    if (token == JsonTokenType.StartArray)
+                        frames.Add(new ScanFrame { Kind = ScanFrameKind.Skip, Depth = reader.CurrentDepth });
+                    break;
+
+                case ScanFrameKind.Skip:
+                    if (token is JsonTokenType.EndObject or JsonTokenType.EndArray && reader.CurrentDepth == top.Depth)
+                        frames.RemoveAt(frames.Count - 1);
+                    break;
             }
         }
-        if (container.TryGetProperty("Namespaces", out var namespaces) && namespaces.ValueKind == System.Text.Json.JsonValueKind.Array)
+
+        if (root == null)
+            throw new JsonException("SymbolReference.json holds no JSON value");
+        root.Error?.Throw();
+        return root.Items;
+
+        void Fill()
         {
-            foreach (var ns in namespaces.EnumerateArray())
-                VisitTableExtensions(ns, tableExts);
+            while (length < buffer.Length)
+            {
+                var n = utf8.Read(buffer, length, buffer.Length - length);
+                if (n == 0) { isFinal = true; return; }
+                length += n;
+            }
+        }
+
+        void Refill(ref Utf8JsonReader r, long keepFrom, JsonReaderState state)
+        {
+            var keep = (int)keepFrom;
+            if (keep == 0 && length == buffer.Length)
+                Array.Resize(ref buffer, buffer.Length * 2);
+            else
+                Buffer.BlockCopy(buffer, keep, buffer, 0, length - keep);
+            length -= keep;
+            Fill();
+            r = new Utf8JsonReader(buffer.AsSpan(0, length), isFinal, state);
         }
     }
 
