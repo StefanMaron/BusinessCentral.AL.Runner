@@ -313,10 +313,11 @@ internal static partial class ProgramSupport
         w.WriteLine("      Information answers IsProduction() = true, IsSandbox() = false and");
         w.WriteLine("      IsSaaS() = false, as an on-premises service tier does.");
         w.WriteLine("      Library - Permissions.SetTestTenantEnvironmentType(true) makes the tenant a");
-        w.WriteLine("      sandbox for the test: IsSandbox() and IsSaaS() become true, IsProduction()");
-        w.WriteLine("      false. Environment Info Test Library (OnPrem scope) .SetTestabilitySandbox");
-        w.WriteLine("      changes only IsSandbox(), and .SetTestabilitySoftwareAsAService only");
-        w.WriteLine("      IsSaaS(); with either, IsProduction() stays true.");
+        w.WriteLine("      sandbox for the test: IsSandbox() true, IsProduction() false. IsSaaS() does");
+        w.WriteLine("      NOT reliably follow: Environment Information Impl. caches it at its first");
+        w.WriteLine("      read in the run. To force it, use Environment Info Test Library (OnPrem");
+        w.WriteLine("      scope) .SetTestabilitySoftwareAsAService(true). Its .SetTestabilitySandbox");
+        w.WriteLine("      changes only IsSandbox(); with either, IsProduction() stays true.");
         w.WriteLine("      The al-language corpus tier runs as a sandbox, so its answers differ.");
         w.WriteLine("  Service topology: always on-premises, even after a test switches to SaaS.");
         w.WriteLine("  License: none; the named-user limit on User writes is never enforced (#4700).");

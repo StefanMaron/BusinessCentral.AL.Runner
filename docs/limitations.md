@@ -939,6 +939,13 @@ way it does on a service tier — `Library - Permissions.SetTestTenantEnvironmen
 (`NavTenantSettingsHelper.SetTestTenantEnvironmentType`, honoured only while a test runs) or
 `Environment Info Test Library.SetTestabilitySandbox` / `SetTestabilitySoftwareAsAService`.
 
+**Trap: `IsSaaS()` does not reliably follow the tenant setter.** `Environment Information Impl.`
+(codeunit 3702) caches `IsSaaS()` at its first read, and a probe on PR #4933 saw the cached `false`
+survive into the next test of the same run; to force SaaS, call
+`SetTestabilitySoftwareAsAService(true)`. `IsProduction()` is `not IsSandbox()` at the tenant
+level only (`NavTenantSettingsHelper`), so the tenant setter moves it and the testability setters
+(both `[Scope('OnPrem')]`) do not.
+
 Until #3514 the runner called `SetTestTenantEnvironmentType(true)` itself on the first test of
 every run, on the belief that BC's test harness does. No service-tier assembly calls it
 (`NavUserAccount.dll` defines it; nothing else in the 27.0 or 28.4 artifacts references it), so

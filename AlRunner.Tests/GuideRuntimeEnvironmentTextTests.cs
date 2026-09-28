@@ -46,9 +46,25 @@ public sealed class GuideRuntimeEnvironmentTextTests
     {
         var guide = Guide();
 
-        Assert.Contains("IsSandbox() and IsSaaS() become true, IsProduction()", guide, StringComparison.Ordinal);
+        Assert.Contains("IsSandbox() true, IsProduction() false", guide, StringComparison.Ordinal);
         Assert.Contains("with either, IsProduction() stays true", guide, StringComparison.Ordinal);
-        Assert.Contains("(OnPrem scope)", guide, StringComparison.Ordinal);
+        Assert.Contains("(OnPrem", guide, StringComparison.Ordinal);
+    }
+
+    /// <summary>CU3702 caches IsSaaS() at its first read, so the tenant setter does not move it
+    /// once anything has read it — a probe on PR #4933's head saw IsSaaS=No after the setter in the
+    /// second test of a run. The guide must not promise the switch, and must name the setter that
+    /// forces it.</summary>
+    [Fact]
+    public void Guide_WarnsThatIsSaaSIsCachedAndNamesTheForcingSetter()
+    {
+        var guide = Guide();
+
+        Assert.Contains("IsSaaS() does", guide, StringComparison.Ordinal);
+        Assert.Contains("NOT reliably follow", guide, StringComparison.Ordinal);
+        Assert.Contains("caches it at its first", guide, StringComparison.Ordinal);
+        Assert.Contains(".SetTestabilitySoftwareAsAService(true)", guide, StringComparison.Ordinal);
+        Assert.DoesNotContain("IsSaaS() become true", guide, StringComparison.Ordinal);
     }
 
     [Fact]
