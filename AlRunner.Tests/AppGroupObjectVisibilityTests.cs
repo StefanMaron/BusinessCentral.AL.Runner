@@ -1066,11 +1066,12 @@ public class AppGroupObjectVisibilityTests
         }
         """);
 
-        // Microsoft's Test Runner app, whose reset subscriber reads AllObj before every test, loads
-        // whenever a package cache holds it (#4816); passed explicitly, so every box runs it (#4901).
+        // Microsoft's Test Runner app, whose reset subscriber reads AllObj before every test, loaded
+        // from a cache the run names, so every box runs it (#4901, #4905).
         var testTool = TestRunnerMgtEventsTests.RequireProvisioned();
         var (output, exitCode) = RunCli(
-            $" --no-cache --package-cache \"{testTool.TestApps}\" --package-cache \"{testTool.PlatformApps}\" \"{root}\"");
+            $" --no-cache --package-cache \"{testTool.TestApps}\" --package-cache \"{testTool.PlatformApps}\" \"{root}\"",
+            loadTestToolFrom: testTool.TestApps);
         Assert.DoesNotContain("Unhandled exception", output);
         Assert.True(output.Contains("6P/2F/0E across 8 tests"), output);
         // #4853: the declarers' own tests run as if H's subscriber were absent.
@@ -1095,7 +1096,7 @@ public class AppGroupObjectVisibilityTests
         return n;
     }
 
-    private static (string Output, int ExitCode) RunCli(string args)
+    private static (string Output, int ExitCode) RunCli(string args, string? loadTestToolFrom = null)
     {
         var psi = new ProcessStartInfo
         {
@@ -1104,6 +1105,7 @@ public class AppGroupObjectVisibilityTests
             RedirectStandardOutput = true, RedirectStandardError = true,
             UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
         };
+        if (loadTestToolFrom != null) DefaultTestToolPin.LoadFrom(psi, loadTestToolFrom);
         var sb = new StringBuilder();
         using var p = Process.Start(psi)!;
         p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };

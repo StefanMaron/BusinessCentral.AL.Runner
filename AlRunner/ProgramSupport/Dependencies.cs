@@ -156,8 +156,8 @@ internal static partial class ProgramSupport
     /// already that app, and no bundle app defines a codeunit Test Runner also defines that the
     /// runner binds to (130453, 130454): a tier refuses to install two apps with one object id.
     /// Absent from the caches, the run is what it was before (no root, so no "not found" line).
-    /// Both closure readers — the resolve in Program.cs and the AL-output cache key — go through
-    /// this, so they cannot disagree on what was loaded.
+    /// Both closure readers — the resolve in Program.cs and the AL-output cache key — reach this
+    /// through <see cref="WithDefaultTestTool"/>, so they cannot disagree on what was loaded.
     /// </summary>
     internal static List<DependencyRef> WithInstalledTestTool(
         List<DependencyRef> roots, IReadOnlyList<string> manifests, AlRunner.DependencyResolver resolver)
@@ -181,6 +181,40 @@ internal static partial class ProgramSupport
     }
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _testToolSkipReported = new();
+
+    /// <summary>
+    /// <c>off</c> keeps <see cref="InstalledTestTool"/> out of every run; unset, empty or <c>on</c>
+    /// is the default load. AlRunner.Tests sets <c>off</c> for every runner it spawns, so whether
+    /// the box has provisioned test apps does not change a test's outcome (#4905).
+    /// </summary>
+    internal const string DefaultTestToolEnvVar = "AL_RUNNER_DEFAULT_TEST_TOOL";
+
+    /// <summary>
+    /// Whether <see cref="DefaultTestToolEnvVar"/> allows the default load. Any value other than
+    /// on/off throws: a misspelled <c>off</c> read as <c>on</c> would bring back the box-dependent load.
+    /// </summary>
+    internal static bool DefaultTestToolEnabled()
+    {
+        var raw = Environment.GetEnvironmentVariable(DefaultTestToolEnvVar);
+        if (string.IsNullOrWhiteSpace(raw)) return true;
+        return raw.Trim().ToLowerInvariant() switch
+        {
+            "on" => true,
+            "off" => false,
+            _ => throw new InvalidOperationException(
+                $"{DefaultTestToolEnvVar}='{raw}' is not 'on' or 'off'. Unset it, or set 'off' to keep "
+                + "Microsoft's Test Runner app from loading unless the suite declares it."),
+        };
+    }
+
+    /// <summary>
+    /// <see cref="WithInstalledTestTool"/> unless <see cref="DefaultTestToolEnvVar"/> is <c>off</c>.
+    /// The two closure readers (the resolve in Program.cs and the AL-output cache key) call this,
+    /// never <see cref="WithInstalledTestTool"/> directly, so the switch reaches both.
+    /// </summary>
+    internal static List<DependencyRef> WithDefaultTestTool(
+        List<DependencyRef> roots, IReadOnlyList<string> manifests, AlRunner.DependencyResolver resolver)
+        => DefaultTestToolEnabled() ? WithInstalledTestTool(roots, manifests, resolver) : roots;
 
     private static readonly System.Text.RegularExpressions.Regex TestRunnerCodeunitDeclaration = new(
         $@"^\s*codeunit\s+({TestRunnerMgtEvents.ResetEnvironmentId}|{TestRunnerMgtEvents.TestRunnerMgtId})\b",
@@ -867,7 +901,7 @@ internal static partial class ProgramSupport
                 .ToList();
             var resolver = new AlRunner.DependencyResolver(
                 bundlePkgDirs.Concat(packageCacheDirs).Distinct().ToList());
-            var resolvedDeps = resolver.Resolve(WithInstalledTestTool(roots, manifests, resolver));
+            var resolvedDeps = resolver.Resolve(WithDefaultTestTool(roots, manifests, resolver));
             var ordered = resolvedDeps
                 // Id:Version alone is NOT a content identity: a sibling source app keeps
                 // its app.json version while its schema evolves during development, so a
