@@ -315,6 +315,10 @@ table answers `null` for the rest of the process.
 **It is positional, not identity-based.** Reverse the two paths on the command line and the
 failure moves to whichever bundle now runs second. Each bundle alone passes.
 
+Since #4931 a multi-path run registers every bundle before any runs tests, so this order arises
+only when bundles run one after another: `AL_RUNNER_SEQUENTIAL_BUNDLES=1`, `--per-suite`, or
+successive `--server` requests. The CI step below sets the variable.
+
 ### What it looked like
 
 Silent. `Field.Get(<B's own table>, 1)` returned `false` — no exception, no

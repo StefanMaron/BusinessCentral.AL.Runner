@@ -98,6 +98,12 @@ al-runner --out results.json ./my-bundle
 al-runner --verbose ./my-bundle
 ```
 
+With several bundle directories, the runner loads every bundle before any of them runs tests,
+as it does for the app folders under one root: the bundles count as apps installed together, so
+an event raised in one bundle's test reaches another bundle's subscriber (#4931). Set
+`AL_RUNNER_SEQUENTIAL_BUNDLES=1` to run each bundle start to finish before loading the next;
+`--per-suite` always does.
+
 Besides the AL-output cache above, the runner keeps the result of the dependency apps'
 `Install` triggers plus `Company-Initialize` (codeunit 2) at
 `~/.cache/al-runner/install-baseline/<key>.bin`, keyed by the dependency assembly set, the
