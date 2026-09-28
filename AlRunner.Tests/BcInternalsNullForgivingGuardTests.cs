@@ -326,7 +326,10 @@ public sealed class BcInternalsNullForgivingGuardTests
         // and NavReportExtension.RequestOptionsPageExtension, both BcShape.Property. A null
         // from either would leave a reportextension's request-page fields unregistered and
         // every [RequestPageHandler] read of them refused, with the lookup unnamed.
-        Assert.Equal(118, converted);
+        //
+        // 118 -> 119 for NCLMetaTable.SystemIdField in RecordPatches.RecordLinkTable.cs (#4944),
+        // now BcShape.Property: a miss used to write every link row with an empty SystemId.
+        Assert.Equal(119, converted);
     }
 
     /// <summary>
