@@ -1397,7 +1397,14 @@ if (provisionSubcommand || autoProvision)
     var prc = RunProvisioning(bcVersionArg, artifactPathArg, bundles, provisionManifestApps: provisionSubcommand,
         deferredLines: provisionSubcommand ? null : deferredStartupLines, out var provisionedVersion);
     if (provisionSubcommand)
+    {
+        // #4923: `provision --test-data` also fetches the backup; the continuing run does it
+        // after SelectVersion instead (ProvisionTestDataBackup below).
+        if (prc == 0 && provisionedVersion != null
+            && ProvisionTestDataBackup(provisionedVersion, autoProvision: true, verbose: true) != 0)
+            return 2;
         return prc; // the subcommand always exits after provisioning, never runs tests
+    }
     if (prc == 0 && provisionedVersion != null)
         bcVersionArg = provisionedVersion; // run against the version we just ensured
     // On failure with --auto-provision we fall through; SelectVersion below emits the
@@ -1900,6 +1907,12 @@ foreach (var d in extraProvisionSearchDirs)
     if (!packageCacheDirs.Contains(d))
         packageCacheDirs.Add(d);
 }
+
+// #4923: --test-data's backup, for the SELECTED version and --country. Here rather than in
+// RunProvisioning because only this point knows the selected version, and it runs once per
+// invocation (a re-exec returns before reaching it; #2232's deferred child finds the file).
+if (ProvisionTestDataBackup(selectedVersionForProvisioning, autoProvision, AlRunner.Log.Verbose) != 0)
+    return 2;
 
 // Platform-app R2R check: scan the package cache for known Microsoft platform runtime apps
 // (System Application, Base Application, Business Foundation). If any are present as

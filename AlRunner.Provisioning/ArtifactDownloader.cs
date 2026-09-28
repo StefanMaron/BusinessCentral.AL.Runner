@@ -608,6 +608,10 @@ public static class ArtifactDownloader
     internal static string BuildArtifactUrl(string version, string channel)
         => $"{CdnBase}/{version}/{channel}";
 
+    /// <summary>The artifact <see cref="TestData"/> reads the country backup out of.</summary>
+    public static string TestDataArtifactUrl(string version, string country)
+        => BuildArtifactUrl(version, NormalizeCountry(country));
+
     /// <summary>
     /// Whether a ZIP central-directory entry name is one PlatformApps should download for
     /// the given country (issue #2236). Pure over the entry name alone — no I/O — so the

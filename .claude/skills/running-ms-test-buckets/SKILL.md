@@ -261,7 +261,8 @@ Each zip carries its own `app.json` and needs no edits; the `$(app_*)` version p
 fine.
 
 `--test-data` additionally needs the demo backup (`BusinessCentral-W1.bak`, from the
-sandbox artifact) at the selected build's artifact path, and the backup reader binary the runner
+sandbox artifact) at the selected build's artifact path — auto-provision downloads it there when
+missing (#4923) — and the backup reader binary the runner
 looks for at `~/.cache/al-runner/bcbak/bcbak`.
 
 **Check the reader's version before measuring anything on BC 28.2 or newer.** `ms-bucket.yml`
