@@ -160,8 +160,8 @@ internal static class TestDataOptions
     /// Every location <see cref="ResolveBackupPath"/> probes for the shipped backup, in
     /// order. The BcContainerHelper sandbox cache is first because that is the layout the
     /// artifact is published in (<c>sandbox/&lt;version&gt;/&lt;country&gt;/</c>); the
-    /// runner's own artifacts root is probed second so a future
-    /// <c>provision --test-data</c> writing there needs no change here.
+    /// runner's own artifacts root is probed second: it is where
+    /// <see cref="TestDataBackupProvisioning"/> downloads the backup (#4923).
     /// </summary>
     internal static IReadOnlyList<string> CandidateBackupPaths(
         string? home, string? runnerArtifactsRoot, string version, string country)
@@ -198,14 +198,18 @@ internal static class TestDataOptions
             if (File.Exists(candidate))
                 return candidate;
 
-        // Everything actionable on the FIRST line: the bundle reporter keeps only line 1 of
-        // an EXEC-FAIL message, so a "Probed:" list on line 3 never reaches the user.
-        throw new TestDataUnavailableException(
-            $"--test-data: no BC backup for BC {version} ({country}) at any of "
+        throw new TestDataUnavailableException(MissingBackupMessage(version, country, candidates));
+    }
+
+    /// <summary>Everything actionable on the FIRST line: the bundle reporter keeps only line 1
+    /// of an EXEC-FAIL message, so a "Probed:" list on line 3 never reaches the user.</summary>
+    internal static string MissingBackupMessage(string version, string country, IReadOnlyList<string> candidates)
+        => $"--test-data: no BC backup for BC {version} ({country}) at any of "
             + string.Join(" or ", candidates.Select(c => $"'{c}'"))
             + $" — it ships inside the BC sandbox artifact as sandbox/{version}/{country}/{BackupFileName(country)}; "
-            + "pass an explicit one with --test-data=/path/to/BusinessCentral-W1.bak.");
-    }
+            + $"auto-provision downloads it (off under --no-auto-provision), or run `al-runner provision --test-data --bc-version {version}"
+            + (country == "w1" ? "" : $" --country {country}")
+            + "`, or pass an explicit one with --test-data=/path/to/BusinessCentral-W1.bak.";
 
     /// <summary>
     /// The identity folded into the install-baseline cache key. Empty string when --test-data

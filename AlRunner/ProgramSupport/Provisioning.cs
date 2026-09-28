@@ -6,6 +6,25 @@ namespace AlRunner;
 // no captured state.
 internal static partial class ProgramSupport
 {
+    // #4923: 0 when --test-data needs nothing or its backup is in place; 2 (execution error, no
+    // tests ran) after printing why the download failed. Needs the SELECTED version and country.
+    internal static int ProvisionTestDataBackup(string version, bool autoProvision, bool verbose)
+    {
+        string? home = null;
+        try { home = AlRunner.Infrastructure.AlRunnerPaths.UserHome; } catch { /* probed as absent */ }
+        try
+        {
+            AlRunner.Infrastructure.TestDataBackupProvisioning.EnsureBackup(autoProvision, version,
+                AlRunner.Infrastructure.BcArtifacts.SelectedCountry, home,
+                AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, Console.Error.WriteLine, verbose);
+            return 0;
+        }
+        catch (AlRunner.Infrastructure.TestDataUnavailableException ex)
+        {
+            Console.Error.WriteLine(ex.Message);
+            return 2;
+        }
+    }
 
     // Expands user-provided --package-cache dirs: returns each dir that exists, plus
     // any bcartifacts platform/Applications and platform/ModernDev dirs auto-discovered

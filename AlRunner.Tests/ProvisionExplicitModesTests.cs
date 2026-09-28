@@ -430,6 +430,39 @@ public sealed class ProvisionExplicitModesTests
     /// --force silently discarded — no message, no error, nothing forced. No network/BC
     /// artifacts needed: this must be rejected before either is ever touched.
     /// </summary>
+    /// <summary>
+    /// #4923: the explicit modes return before the backup step, so `provision --test-apps
+    /// --test-data` used to drop --test-data and exit 0. Rejected before any network access.
+    /// </summary>
+    [Theory]
+    [InlineData("--platform-apps")]
+    [InlineData("--test-apps")]
+    [InlineData("--service-tier")]
+    [InlineData("--resolve-version 28.4")]
+    public void TestData_WithAnExplicitMode_IsRejected(string mode)
+    {
+        var argLine = TestBuildConfig.RunArgs(Path.Combine(RepoRoot, "AlRunner"))
+            + $" provision {mode} --test-data --bc-version 0.0.0.1";
+        var psi = new ProcessStartInfo
+        {
+            FileName = "dotnet",
+            Arguments = argLine,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WorkingDirectory = RepoRoot,
+        };
+        psi.Environment["HOME"] = NewIsolatedHome();
+        using var proc = Process.Start(psi)!;
+        var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+        var stderr = proc.StandardError.ReadToEnd();
+        Assert.True(proc.WaitForExit(60_000));
+        _ = stdoutTask.Result;
+        Assert.Equal(2, proc.ExitCode);
+        Assert.Contains("--test-data is not supported with", stderr, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Force_AloneWithNoModeFlag_IsRejected()
     {

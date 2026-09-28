@@ -724,6 +724,15 @@ if (provisionSubcommand && provisionForce
     Console.Error.WriteLine("--force is only valid with `provision --platform-apps` / `--test-apps` / `--service-tier`.");
     return 2;
 }
+// #4923: the explicit modes below return before the backup step, so --test-data would be
+// dropped with exit 0.
+if (provisionSubcommand && AlRunner.Infrastructure.TestDataOptions.Enabled
+    && (provisionPlatformApps || provisionTestApps || provisionServiceTier || provisionResolveVersionPrefix != null))
+{
+    Console.Error.WriteLine("--test-data is not supported with `provision --platform-apps` / `--test-apps` / " +
+        "`--service-tier` / `--resolve-version`; run `al-runner provision --test-data [--bc-version V]` on its own.");
+    return 2;
+}
 // `al-runner provision --help`: subcommands must accept --help like everything else —
 // previously this fell through to the generic arg-parser and answered "Unknown option
 // '--help'. Run with --help for the supported flags.", which tells the caller to run the
@@ -1397,7 +1406,14 @@ if (provisionSubcommand || autoProvision)
     var prc = RunProvisioning(bcVersionArg, artifactPathArg, bundles, provisionManifestApps: provisionSubcommand,
         deferredLines: provisionSubcommand ? null : deferredStartupLines, out var provisionedVersion);
     if (provisionSubcommand)
+    {
+        // #4923: `provision --test-data` also fetches the backup; the continuing run does it
+        // after SelectVersion instead (ProvisionTestDataBackup below).
+        if (prc == 0 && provisionedVersion != null
+            && ProvisionTestDataBackup(provisionedVersion, autoProvision: true, verbose: true) != 0)
+            return 2;
         return prc; // the subcommand always exits after provisioning, never runs tests
+    }
     if (prc == 0 && provisionedVersion != null)
         bcVersionArg = provisionedVersion; // run against the version we just ensured
     // On failure with --auto-provision we fall through; SelectVersion below emits the
@@ -1739,6 +1755,13 @@ static void WriteRemainingInnerExceptions(AggregateException flat)
     foreach (var inner in flat.InnerExceptions.Skip(1))
         Console.Error.WriteLine($"  → {inner.GetType().Name}: {inner.Message}");
 }
+
+// #4923: --test-data's backup, for the SELECTED version and --country. Not in RunProvisioning,
+// which runs before SelectVersion. Here, after both re-exec points and BEFORE the --jobs fan-out,
+// so the parent downloads once and every worker (and #2232's deferred child) finds the file.
+if (ProvisionTestDataBackup(AlRunner.Infrastructure.BcArtifacts.SelectedVersion.ToString(),
+        autoProvision, AlRunner.Log.Verbose) != 0)
+    return 2;
 
 // --jobs: fan out across worker processes (#2280). Deliberately placed HERE, after the
 // deferred-startup flush, because that line marks the terminal generation — both re-exec

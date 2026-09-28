@@ -190,6 +190,7 @@ internal static partial class ProgramSupport
         w.WriteLine("  inside the artifact. A table is read the first time the run touches it, so the");
         w.WriteLine("  cost tracks what the suite actually uses:");
         w.WriteLine("    al-runner --test-data <bundle-dir>              # the shipped backup for the selected version/country");
+        w.WriteLine("                                                    # (auto-provision downloads it when missing)");
         w.WriteLine("    al-runner --test-data=/path/to/X.bak <dirs>     # an explicit backup");
         w.WriteLine("    al-runner --test-data --test-data-company NAME  # which company inside it (required");
         w.WriteLine("                                                    # when the backup holds more than one;");
@@ -559,9 +560,12 @@ internal static partial class ProgramSupport
         w.WriteLine("                          BY DEFAULT; absent the flag no backup is opened and");
         w.WriteLine("                          nothing about the run changes. Resolves");
         w.WriteLine("                          sandbox/<version>/<country>/BusinessCentral-<CC>.bak for");
-        w.WriteLine("                          the selected BC version and --country; when that is");
-        w.WriteLine("                          missing the run FAILS naming every path it probed,");
-        w.WriteLine("                          rather than continuing against an empty database.");
+        w.WriteLine("                          the selected BC version and --country; when it is not");
+        w.WriteLine("                          on disk, auto-provision (and `provision --test-data`)");
+        w.WriteLine("                          downloads it (about 1 GB, once) into the runner's");
+        w.WriteLine("                          artifacts dir. Under --no-auto-provision, or when the");
+        w.WriteLine("                          download fails, the run FAILS naming the paths or the");
+        w.WriteLine("                          URL, rather than continuing against an empty database.");
         w.WriteLine("                          Needs the `bcbak` backup reader on PATH or at");
         w.WriteLine("                          $AL_RUNNER_BCBAK. A table is read once per process, at");
         w.WriteLine("                          first touch, and then lives in the install baseline the");
@@ -945,7 +949,7 @@ internal static partial class ProgramSupport
         w.WriteLine("checkout of this repository.");
         w.WriteLine();
         w.WriteLine("USAGE");
-        w.WriteLine("  al-runner provision [<bundle-dir>]");
+        w.WriteLine("  al-runner provision [<bundle-dir>] [--test-data] [--country CC]");
         w.WriteLine("  al-runner provision --platform-apps [--bc-version V] [--force]");
         w.WriteLine("  al-runner provision --test-apps [--bc-version V] [--force]");
         w.WriteLine("  al-runner provision --service-tier [--bc-version V] [--force]");
@@ -958,6 +962,10 @@ internal static partial class ProgramSupport
         w.WriteLine("                          + test toolkit, whichever are missing) and exit. This is");
         w.WriteLine("                          the default `provision` behavior and what a provisioning-");
         w.WriteLine("                          gap error's \"(a) One command (recommended)\" fix means.");
+        w.WriteLine("  --test-data             With no mode flag: also download the BC backup --test-data");
+        w.WriteLine("                          hydrates from (BusinessCentral-<CC>.bak for --country,");
+        w.WriteLine("                          about 1 GB) into <artifacts>/<version>/<country>, unless");
+        w.WriteLine("                          a copy is already on disk.");
         w.WriteLine("  --bc-version V          Target BC version (a prefix like \"28.4\" or a full");
         w.WriteLine("                          4-part version). Default: this binary's own built");
         w.WriteLine("                          engine version, or the target bundle's app.json.");
