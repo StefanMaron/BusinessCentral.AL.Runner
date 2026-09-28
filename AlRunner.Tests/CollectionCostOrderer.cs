@@ -196,6 +196,10 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // Microsoft's Test Runner app or stand-ins for it. Absent from this table on its
             // first CI run (36294813041): 180.2s on both the BC 27.5 and 28.5 legs, rounded down.
             ["TestRunnerMgtEventsTests"] = 180,
+            // #4931: absent on PR #4936's run 36461066505 (BC 27.5 leg), rounded down.
+            ["CliMultiPathBundleRunTests"] = 106,
+            ["ServerMultiBundleSubscriberTests"] = 61,
+            ["EventSubscriptionMultiBundleScopeTests"] = 60,
             // #4851/#4859/#4888: each test spawns the runner cold, then warm on one cache. Absent from
             // this table on main run 36344474690: 66.5s (BC 28.5) and 68.2s (BC 27.5); the observed
             // maximum, rounded down.
