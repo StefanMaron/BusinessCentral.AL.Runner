@@ -583,6 +583,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **metadata:** decode IL instead of scanning raw ret bytes in BuildNclMetaTableFailureAttributionTests
 - **page-extensions:** pin the refusal when neither extension's app depends on the other
 - **deps:** stream the dependency .app in BcAppSymbolCache.TryReadSourceFile
 - **guards:** DefaultTestToolPinGuardTests catches ProgramSupport.DefaultTestToolEnvVar spawn sites
