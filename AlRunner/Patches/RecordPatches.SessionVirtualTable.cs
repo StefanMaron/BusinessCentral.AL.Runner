@@ -73,24 +73,21 @@
 //                      field stays 0, and NavClientCredentialType runs None = -1, Windows = 0
 //                      — so 0 renders as Windows and the ordinal < 0 guard never fires. There
 //                      is no authentication here to observe. Recorded in docs/limitations.md
-//                      alongside Database Name and Application Name rather than presented as
-//                      an answered column, because a reader cannot tell the difference from
-//                      the row.
+//                      as a constant rather than presented as an answered column, because a
+//                      reader cannot tell the difference from the row.
 //     Host Name      ← the machine hosting the session, which is what BC's DnsHelper.HostName
 //                      reports on a tier. Host-derived, exactly like the Time Zone provider's
 //                      ids, so the VALUE is a property of the machine and no test may assert
 //                      a specific one.
 //
-//   Left at BC's own per-field default (NCLMetaField.EmptyValue), NOT invented:
-//     Database Name     — BC reads Active Session field 10. The runner has no database, so
-//                         there is no name to read back.
-//     Application Name  — BC reads Active Session field 7 (the client type) and stringifies
-//                         it. Which client type a runner session is, and what a tier's
-//                         .ToString() of that option renders as, are both unmeasured here.
-//   Tracked as #3230 rather than guessed. This follows the Published Application seed's
-//   precedent (RecordPatches.PublishedApplicationSystemTable.cs): columns with no truthful
-//   source keep BC's own default, and the unknown is recorded as an issue instead of being
-//   written into a row where nothing can tell it apart from a measurement.
+//   Read off the session's own Active Session row, as BC does (#3230):
+//     Database Name     ← Active Session field "Database Name", as stored. Blank on the runner,
+//                         which has no database; the seed leaves that column at BC's default.
+//     Application Name  ← Active Session "Client Type" through the option's own ToString(),
+//                         BC's expression. The runner's row says Unknown (#4005), so this says
+//                         Unknown too. Corpus 60340 pins the agreement, never a literal.
+//   Before the Active Session seed runs (inside a dependency's install trigger) there is no row,
+//   and both keep BC's own default, as they did before #3230.
 //
 // WHICH CLAIMS ARE ADJUDICATED WHERE
 //   What real BC answers for this table is plain BC behaviour, so it is asserted upstream in

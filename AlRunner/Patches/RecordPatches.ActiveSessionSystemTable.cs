@@ -13,7 +13,7 @@
 //
 // Left at BC's own field default, not invented: "Server Instance Name", "Client Computer Name"
 // and "Database Name" — the runner has no server instance, client machine or database to read
-// them from. "Database Name" is #3230.
+// them from. Session (2000000009) projects "Database Name" and "Client Type" from this row (#3230).
 //
 // TRAP: seeded OUTSIDE the dependency-company snapshot window on purpose. The login instant and
 // the session unique id belong to this process, and a snapshot restored from the disk cache in
