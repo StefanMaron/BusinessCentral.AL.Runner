@@ -284,7 +284,7 @@ internal static class TestPageOptionValue
 /// Enforces a field's declared <c>MinValue</c>/<c>MaxValue</c> AL properties on a TestPage
 /// control write (issue #2495). Measured against real BC (28.1 / 28.4, see #2490's arm A2):
 /// a Decimal field with <c>MinValue = 0;</c> raises
-/// <c>Validation error for Field: &lt;caption&gt;,  Message = 'The value must be greater than
+/// <c>Validation error for Field: &lt;control name&gt;,  Message = 'The value must be greater than
 /// or equal to 0. Value: -1.00. (Select Refresh to discard errors)'</c> from a TestPage
 /// SetValue, while the SAME write via <c>Rec.Validate</c> or a plain field assignment raises
 /// nothing at all — this is a client/page-layer check, not a table-trigger one, so it must

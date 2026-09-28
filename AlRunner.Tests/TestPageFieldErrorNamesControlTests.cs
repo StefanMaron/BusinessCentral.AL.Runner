@@ -1,8 +1,8 @@
 // #3458: BC's own NavTestField.ALAssertEquals and CheckError put ITestField.Name into
 // "AssertEquals for Field: {0} ..." and "Validation error for Field: {0}, ...". BC answers the
 // control's AL name there, not its caption; the BC half is corpus codeunit 67630 (and 60662).
-// This pins the runner's ITestField.Name for a page control, a pageextension control, and the
-// record-only fallback it keeps.
+// This pins the runner's ITestField.Name for a page control and for two controls one
+// pageextension adds, so the delta lookup has to match on the control id.
 using System.Diagnostics;
 using System.Text;
 using Xunit;
@@ -24,6 +24,7 @@ public sealed class TestPageFieldErrorNamesControlTests
                 field(2; "Cust Name"; Text[30]) { Caption = 'Field Caption'; }
                 field(3; "Cust Count"; Integer) { Caption = 'Count Field Caption'; }
                 field(4; "Ext Name"; Text[30]) { Caption = 'Ext Field Caption'; }
+                field(5; "Ext Other"; Text[30]) { Caption = 'Ext Other Field Caption'; }
             }
             keys { key(PK; "No.") { Clustered = true; } }
         }
@@ -49,6 +50,7 @@ public sealed class TestPageFieldErrorNamesControlTests
             {
                 addlast(Content)
                 {
+                    field(ExtOtherCtl; Rec."Ext Other") { Caption = 'Ext Other Control Caption'; }
                     field(ExtNameCtl; Rec."Ext Name") { Caption = 'Ext Control Caption'; }
                 }
             }
@@ -67,6 +69,7 @@ public sealed class TestPageFieldErrorNamesControlTests
                 Row."Cust Name" := 'Alpha';
                 Row."Cust Count" := 7;
                 Row."Ext Name" := 'Beta';
+                Row."Ext Other" := 'Gamma';
                 Row.Insert();
                 Card.OpenEdit();
                 Card.GoToRecord(Row);
@@ -109,6 +112,16 @@ public sealed class TestPageFieldErrorNamesControlTests
                 asserterror Card.ExtNameCtl.AssertEquals('Wrong');
                 Expect('AssertEquals for Field: ExtNameCtl Expected = ''Wrong'', Actual = ''Beta''');
             end;
+
+            [Test]
+            procedure SecondExtensionControl_AssertEquals()
+            var
+                Card: TestPage "Fen Card";
+            begin
+                OpenSeeded(Card);
+                asserterror Card.ExtOtherCtl.AssertEquals('Wrong');
+                Expect('AssertEquals for Field: ExtOtherCtl Expected = ''Wrong'', Actual = ''Gamma''');
+            end;
         }
         """;
 
@@ -127,7 +140,7 @@ public sealed class TestPageFieldErrorNamesControlTests
 
         var (output, exitCode) = RunCli($" --no-cache \"{root}\"");
         Assert.False(output.Contains("WRONG:"), output);
-        Assert.True(output.Contains("Tests: 3   passed 3   failed 0"), output);
+        Assert.True(output.Contains("Tests: 4   passed 4   failed 0"), output);
         Assert.Equal(0, exitCode);
     }
 
