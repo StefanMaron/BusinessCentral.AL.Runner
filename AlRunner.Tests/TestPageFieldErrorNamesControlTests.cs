@@ -40,8 +40,17 @@ public sealed class TestPageFieldErrorNamesControlTests
                     field(NoCtl; Rec."No.") { }
                     field(CustNameCtl; Rec."Cust Name") { Caption = 'Control Caption'; }
                     field(CustCountCtl; Rec."Cust Count") { Caption = 'Count Control Caption'; }
+                    field(VarCtl; MyVar) { Caption = 'Var Caption'; }
                 }
             }
+
+            trigger OnOpenPage()
+            begin
+                MyVar := 'Delta';
+            end;
+
+            var
+                MyVar: Text[30];
         }
 
         pageextension 63451 "Fen Card Ext" extends "Fen Card"
@@ -122,6 +131,20 @@ public sealed class TestPageFieldErrorNamesControlTests
                 asserterror Card.ExtOtherCtl.AssertEquals('Wrong');
                 Expect('AssertEquals for Field: ExtOtherCtl Expected = ''Wrong'', Actual = ''Gamma''');
             end;
+
+            [Test]
+            procedure PageVariableControl_AssertEquals()
+            var
+                Card: TestPage "Fen Card";
+            begin
+                // #4911: a control bound to a page variable is named by its control, not the variable.
+                OpenSeeded(Card);
+                asserterror Card.VarCtl.AssertEquals('Wrong');
+                Expect('AssertEquals for Field: VarCtl Expected = ''Wrong'', Actual = ''Delta''');
+                if StrPos(GetLastErrorText(), 'MyVar') > 0 then
+                    Error('WRONG: the variable is named in [%1]', GetLastErrorText());
+                Card.VarCtl.AssertEquals('Delta');
+            end;
         }
         """;
 
@@ -140,7 +163,7 @@ public sealed class TestPageFieldErrorNamesControlTests
 
         var (output, exitCode) = RunCli($" --no-cache \"{root}\"");
         Assert.False(output.Contains("WRONG:"), output);
-        Assert.True(output.Contains("Tests: 4   passed 4   failed 0"), output);
+        Assert.True(output.Contains("Tests: 5   passed 5   failed 0"), output);
         Assert.Equal(0, exitCode);
     }
 
