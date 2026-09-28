@@ -910,6 +910,11 @@ internal static partial class ProgramSupport
         w.WriteLine("                               timeline across concurrent runners).");
         w.WriteLine("                               Safe for concurrent runners. Summarise with");
         w.WriteLine("                               scripts/phase-log-report.py. Inert when unset.");
+        w.WriteLine("  DOTNET_GCDynamicAdaptationMode=0");
+        w.WriteLine("                               Turn off DATAS, the .NET GC mode the runner ships");
+        w.WriteLine("                               with. DATAS keeps peak memory about half of plain");
+        w.WriteLine("                               Server GC for about 1% more wall time; with it off,");
+        w.WriteLine("                               Server GC sizes its heaps to every core (#4946).");
         w.WriteLine();
         w.WriteLine("EXAMPLES");
         w.WriteLine("  # Run the al-language corpus");

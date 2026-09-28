@@ -68,4 +68,27 @@ public sealed class ServerGcConfigTests
             + "<ServerGarbageCollection>true</ServerGarbageCollection> in AlRunner.csproj");
         Assert.Equal(JsonValueKind.True, serverGc.ValueKind);
     }
+
+    /// <summary>
+    /// DATAS (#4946) is the single-process default: on the al-language corpus it roughly halves
+    /// peak memory at about 1% wall time and an identical pass/fail set (measurement in #4946 and
+    /// the csproj note). It runs on top of Server GC, so the test above still has to hold.
+    /// Asserted from the runtimeconfig for the same reason: a DOTNET_GCDynamicAdaptationMode
+    /// exported in the environment would satisfy any test of the running process.
+    /// </summary>
+    [Fact]
+    public void ShippedRuntimeConfig_EnablesDatas()
+    {
+        Assert.True(File.Exists(RuntimeConfigPath),
+            $"no runtimeconfig at '{RuntimeConfigPath}' — build AlRunner before running this suite");
+
+        using var doc = JsonDocument.Parse(File.ReadAllText(RuntimeConfigPath));
+        var props = doc.RootElement.GetProperty("runtimeOptions").GetProperty("configProperties");
+
+        Assert.True(props.TryGetProperty("System.GC.DynamicAdaptationMode", out var mode),
+            "System.GC.DynamicAdaptationMode is absent from the shipped runtimeconfig — restore "
+            + "<GarbageCollectionAdaptationMode>1</GarbageCollectionAdaptationMode> in AlRunner.csproj");
+        Assert.Equal(JsonValueKind.Number, mode.ValueKind);
+        Assert.Equal(1, mode.GetInt32());
+    }
 }
