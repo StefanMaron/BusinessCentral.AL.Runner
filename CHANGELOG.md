@@ -586,6 +586,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **resolver:** ResolveTableIdByNameScopeTests no longer depends on _parsedTables enumeration order
 - **gc:** DATAS as the single-process GC default
 - **startup:** release the re-exec parent heap before waiting for the child
 - **symbols:** stream TableExtensions out of SymbolReference.json
