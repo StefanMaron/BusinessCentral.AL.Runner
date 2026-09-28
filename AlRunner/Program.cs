@@ -5530,19 +5530,21 @@ return strictExitCode ? computedExitCode : 0;
         // its own beforeRun parameter below) — `beforeRun` itself is now 6-arg (carries the
         // ownChangedScopes lookup), so `var effectiveBeforeRun = beforeRun` would infer the
         // wrong delegate type here.
-        Action<string, string, string, IReadOnlyList<AffectedObjectId>?, string?>? effectiveBeforeRun = null;
-        if (beforeRun != null)
+        //
+        // #4850: `earlierFallback` is what sawFallbackReason held when this bundle was LOADED. A
+        // multi-bundle request runs every bundle after all of them loaded, so reading the shared
+        // variable at run time would blame this bundle for a LATER bundle's fallback.
+        Action<string, string, string, IReadOnlyList<AffectedObjectId>?, string?>? EffectiveBeforeRun(string? earlierFallback)
         {
+            if (beforeRun == null) return null;
             var union = requestWideChangedObjects;
-            effectiveBeforeRun = (bundlePath, moduleName, selectionEnvironmentKey, changedObjects, changeModelFallbackReason) =>
+            return (bundlePath, moduleName, selectionEnvironmentKey, changedObjects, changeModelFallbackReason) =>
             {
                 var merged = union == null || changedObjects == null ? changedObjects : changedObjects.Concat(union).ToList();
                 var effectiveFallbackReason = changeModelFallbackReason
-                    ?? (sawFallbackReason != null
-                        ? $"an earlier bundle in this request fell back this cycle ({sawFallbackReason})"
+                    ?? (earlierFallback != null
+                        ? $"an earlier bundle in this request fell back this cycle ({earlierFallback})"
                         : null);
-                if (changeModelFallbackReason != null)
-                    sawFallbackReason ??= $"{moduleName}: {changeModelFallbackReason}";
                 // #2539: the SAME request-wide scope list for every bundle — narrowing an
                 // object changed in bundle A is legitimate for a test in bundle B exactly
                 // when A's change is legitimate for B's overlap check at all (i.e. it is
@@ -5571,6 +5573,13 @@ return strictExitCode ? computedExitCode : 0;
         // this costs nothing and changes no behaviour there.
         var forcedFullBundles = ChangedLaterDependencyBundles(sourcePaths, peekedChangedCountByBundle);
 
+        // #4850: with more than one bundle, load every bundle before any runs tests, as a CLI run
+        // over one root loads every app group first. Otherwise an earlier bundle's tests raise
+        // events before a later bundle's subscribers exist. One bundle keeps the single pass.
+        var deferRuns = sourcePaths.Length > 1;
+        var loadedBundles = new List<(ServerRunResult? Result,
+            (string ModuleName, string? ChangeModelFallbackReason, Func<(ServerRunResult Result, TimeSpan RunElapsed)> Run)? Deferred,
+            string RelBundle, int Index)>();
         var bundleIndex = 0;
         foreach (var bundleDir in sourcePaths)
         {
@@ -5585,10 +5594,29 @@ return strictExitCode ? computedExitCode : 0;
             var result = RunBundleForServer(bundleDir, requestPackagePaths, runStep,
                 useIncrementalChangeModel && sawFallbackReason == null
                     && !forcedFullBundles.Contains(Path.GetFullPath(bundleDir)),
-                effectiveBeforeRun,
+                EffectiveBeforeRun(sawFallbackReason),
+                deferRuns, out var deferred,
                 out var emitElapsed, out var compileElapsed, out var runElapsed);
             AlRunner.Infrastructure.PhaseLog.EndBundle(emitElapsed, compileElapsed, runElapsed);
-            results.Add(result);
+            if (beforeRun != null && deferred is { ChangeModelFallbackReason: { } fellBack } loadedBundle)
+                sawFallbackReason ??= $"{loadedBundle.ModuleName}: {fellBack}";
+            loadedBundles.Add((result, deferred, relBundle, bundleIndex));
+        }
+
+        foreach (var (loadResult, deferred, relBundle, index) in loadedBundles)
+        {
+            if (deferred is not { } run)
+            {
+                results.Add(loadResult!);
+                continue;
+            }
+            if (cancellationToken.IsCancellationRequested) break;
+            // A second row for this bundle: the first one closed with its emit and compile times.
+            AlRunner.Infrastructure.PhaseLog.BeginBundle(relBundle, index);
+            AlRunner.Infrastructure.PhaseLog.BeginApp(run.ModuleName, 1, 1);
+            var (runResult, runElapsed) = run.Run();
+            AlRunner.Infrastructure.PhaseLog.EndBundle(TimeSpan.Zero, TimeSpan.Zero, runElapsed);
+            results.Add(runResult);
         }
 
         // #2614: execution ran in dependency order; hand the results back in the order the caller
@@ -5735,12 +5763,19 @@ return strictExitCode ? computedExitCode : 0;
     // same-identity bundle is picked up (server reload contract). Mirrors the
     // bundled-mode path of the normal run loop for a single bundle. The run step
     // (executor.Run for runTests, OnRun dispatch for execute) is supplied by the caller.
-    ServerRunResult RunBundleForServer(string bundleDir, string[]? requestPackagePaths,
+    //
+    // deferRun (#4850): stop once the module is loaded and registered, return null, and hand
+    // the run step back as `deferred`, so the caller can load every bundle of a request before
+    // any of them runs tests. `deferred` stays null on every early-failure return.
+    ServerRunResult? RunBundleForServer(string bundleDir, string[]? requestPackagePaths,
         Func<Assembly, IReadOnlyList<TestResult>> runStep,
         bool useIncrementalChangeModel,
         Action<string, string, string, IReadOnlyList<AffectedObjectId>?, string?>? beforeRun,
+        bool deferRun,
+        out (string ModuleName, string? ChangeModelFallbackReason, Func<(ServerRunResult Result, TimeSpan RunElapsed)> Run)? deferred,
         out TimeSpan emitElapsed, out TimeSpan compileElapsed, out TimeSpan runElapsed)
     {
+        deferred = null;
         // #1888: defaulted here so every early-return path below (dep-resolve
         // failure, empty bundle, …) satisfies definite assignment without needing
         // its own assignment — those paths never opened an app row, so zero is the
@@ -5800,6 +5835,9 @@ return strictExitCode ? computedExitCode : 0;
         // in this request/session already loaded the same AppId, and to register
         // THIS bundle's freshly-compiled module under its AppId once loaded.
         AlRunner.Infrastructure.BundleIdentity? bundleId = null;
+        // What the dep block below hands the run: replayed before a deferred run (#4850),
+        // because a later bundle's load has overwritten it by then.
+        IReadOnlyList<Assembly>? bundleDepAssemblies = null;
         if (File.Exists(appJsonPath))
         {
             try
@@ -5832,6 +5870,7 @@ return strictExitCode ? computedExitCode : 0;
                 // install-trigger registrations, then register this bundle's deps.
                 AlRunner.InstallTriggerRunner.ResetForNewBundle();
                 AlRunner.InstallTriggerRunner.SetDependencyAssemblies(loaded);
+                bundleDepAssemblies = loaded;
                 SetBundleCompileReferences();
                 foreach (var (_, appPath) in ordered)
                     AlRunner.Patches.RecordPatches.AddBcAppPath(appPath);
@@ -6221,31 +6260,62 @@ return strictExitCode ? computedExitCode : 0;
                 }
             }
 
-            IReadOnlyList<TestResult> tests;
-            var rt = System.Diagnostics.Stopwatch.StartNew();
-            try
+            // The per-bundle state the dep block set for this bundle's run, which a later bundle's
+            // load has replaced by the time a deferred run starts (#4850).
+            void ReplayBundleRunState()
             {
-                beforeRun?.Invoke(bundleAbs, moduleName, selectionEnvironmentKey, changedObjects, changeModelFallbackReason);
-                BcRuntime.SetTestAssembly(asm);
-                BcRuntime.RegisterTestAssemblyInfo(asm);
-                BcRuntime.OosHooksActive = true;
-                tests = runStep(asm);
-            }
-            catch (Exception ex)
-            {
-                return ServerRunResult.Failure(2, moduleName, $"EXEC-FAIL: {ex.Message.Split('\n')[0]}", fileHashes);
-            }
-            finally
-            {
-                BcRuntime.OosHooksActive = false;
-                rt.Stop();
-                runElapsed = rt.Elapsed;
-                AlRunner.Infrastructure.PhaseLog.AddAppRun(rt.Elapsed);
+                if (bundleDepAssemblies == null) return;
+                AlRunner.InstallTriggerRunner.ResetForNewBundle();
+                AlRunner.InstallTriggerRunner.SetDependencyAssemblies(bundleDepAssemblies);
+                SetBundleInfoFromAppJson(appJsonPath);
+                if (bundleId != null)
+                    BcCompiler.SetCurrentAppIdentity(bundleId.AppId, bundleId.Publisher, bundleId.Version);
+                else
+                    BcCompiler.SetCurrentAppIdentity(null, null, null);
             }
 
-            int exit = 0;
-            if (tests.Any(t => t.Outcome == TestOutcome.Fail || t.Outcome == TestOutcome.Error)) exit = 1;
-            return new ServerRunResult(tests, exit, cached, null, fileHashes);
+            (ServerRunResult Result, TimeSpan RunElapsed) RunLoaded(bool replayBundleState)
+            {
+                IReadOnlyList<TestResult> tests;
+                var rt = System.Diagnostics.Stopwatch.StartNew();
+                try
+                {
+                    if (replayBundleState) ReplayBundleRunState();
+                    beforeRun?.Invoke(bundleAbs, moduleName, selectionEnvironmentKey, changedObjects, changeModelFallbackReason);
+                    BcRuntime.SetTestAssembly(asm);
+                    BcRuntime.RegisterTestAssemblyInfo(asm);
+                    BcRuntime.OosHooksActive = true;
+                    tests = runStep(asm);
+                }
+                catch (Exception ex)
+                {
+                    return (ServerRunResult.Failure(2, moduleName, $"EXEC-FAIL: {ex.Message.Split('\n')[0]}", fileHashes), rt.Elapsed);
+                }
+                finally
+                {
+                    BcRuntime.OosHooksActive = false;
+                    rt.Stop();
+                    AlRunner.Infrastructure.PhaseLog.AddAppRun(rt.Elapsed);
+                }
+
+                int exit = 0;
+                if (tests.Any(t => t.Outcome == TestOutcome.Fail || t.Outcome == TestOutcome.Error)) exit = 1;
+                return (new ServerRunResult(tests, exit, cached, null, fileHashes), rt.Elapsed);
+            }
+
+            if (deferRun)
+            {
+                // Register the module as the CLI's load loop does, so it is a current generation
+                // and its subscribers are bound before an earlier bundle's tests raise events.
+                BcRuntime.SetTestAssembly(asm, wireFieldTriggers: false);
+                BcRuntime.RegisterTestAssemblyInfo(asm);
+                deferred = (moduleName, changeModelFallbackReason, () => RunLoaded(replayBundleState: true));
+                return null;
+            }
+
+            var (result, elapsed) = RunLoaded(replayBundleState: false);
+            runElapsed = elapsed;
+            return result;
         }
         finally
         {
