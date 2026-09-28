@@ -187,7 +187,23 @@ public static partial class RecordPatches
         if (!_sourceObjectDeclarers.TryGetValue((NormalizeObjectTypeName(kind), id), out var d) || d.Count < 2) return null;
         return d.Contains(executing)
             ? executing
-            : AppGroupScopeFor(kind, id, _sourceObjectDeclarers, executing, CurrentPackageVisibility().Dependencies);
+            : AppGroupScopeFor(kind, id, _sourceObjectDeclarers, executing, CurrentPackageVisibility().Dependencies,
+                refuseTwoDeclarers: _listingObjectInventory == 0);
+    }
+
+    [ThreadStatic] private static int _listingObjectInventory;
+
+    /// <summary>
+    /// Runs <paramref name="walk"/> with a group depending on two declarers of an id answering
+    /// null for it, as a group seeing no declarer does, instead of refusing. An object-inventory
+    /// walk lists every id and names none of them, so it must not fail on one it cannot resolve;
+    /// code that names the object still refuses (#4901).
+    /// </summary>
+    internal static T ListingObjectInventory<T>(Func<T> walk)
+    {
+        _listingObjectInventory++;
+        try { return walk(); }
+        finally { _listingObjectInventory--; }
     }
 
     /// <summary>
@@ -222,7 +238,7 @@ public static partial class RecordPatches
     /// </summary>
     internal static Guid? AppGroupScopeFor(string kind, int id,
         IReadOnlyDictionary<(string Kind, int Id), HashSet<Guid>> declarers, Guid? group,
-        IReadOnlyDictionary<Guid, Guid[]> dependencies)
+        IReadOnlyDictionary<Guid, Guid[]> dependencies, bool refuseTwoDeclarers = true)
     {
         if (group is not { } g
             || !declarers.TryGetValue((NormalizeObjectTypeName(kind), id), out var d) || d.Count < 2) return null;
@@ -230,6 +246,7 @@ public static partial class RecordPatches
         var seen = VisibleAppClosure(g, dependencies);
         seen.IntersectWith(d);
         if (seen.Count <= 1) return seen.Count == 1 ? seen.First() : null;
+        if (!refuseTwoDeclarers) return null;
         throw new RunnerOutOfScopeException(
             $"{kind} {id}",
             $"app group {g} depends on {string.Join(" and ", seen.OrderBy(x => x))}, which each declare "

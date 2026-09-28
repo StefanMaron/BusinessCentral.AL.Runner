@@ -235,6 +235,14 @@ into one tenant, so nothing says which object such a group's code names. The loa
 field-trigger walk skips that id, and the test that touches it fails with the id and both
 declarers (`AppGroupObjectVisibilityTests.Cli_GroupDependingOnTwoDeclarersOfOneId_*`).
 
+**An `AllObj` or `AllObjWithCaption` read does not touch it (#4901).** Those tables list every
+object and name none, so their walk resolves such an id as a group seeing no declarer does: one
+row, from the process-wide declaration. Its name and App Package ID are one declarer's, as for
+that group, and say nothing about which object the group's code names.
+Microsoft's Test Runner app, loaded by default when the package caches hold it (#4816), reads
+`AllObj` before every test method; if that read refused, no test of the group would run. The
+other metadata tables (`Table Metadata` and the rest) are still per-object reads and refuse.
+
 <a id="precompiled-package-visibility"></a>
 
 ### Precompiled dependency packages (#4448)

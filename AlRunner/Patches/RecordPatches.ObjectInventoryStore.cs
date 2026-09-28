@@ -134,7 +134,13 @@ public static partial class RecordPatches
     {
         if (TryGetMemoizedRows(tableId, key, metaTable) is { } hit)
             return hit;
+        return ListingObjectInventory(() => WalkObjectInventory(tableId, perfName, key, metaTable, ordinals, visibleApps, build));
+    }
 
+    private static ObjectInventoryRow[] WalkObjectInventory(
+        int tableId, string perfName, ObjectInventoryKey key, NCLMetaTable metaTable,
+        Dictionary<string, int> ordinals, HashSet<Guid>? visibleApps, ObjectInventoryRowBuilder build)
+    {
         var rows = new List<ObjectInventoryRow>();
         var seen = new HashSet<(int, int)>();
         // #3117: the owner index is built on the first row, never for an empty walk.

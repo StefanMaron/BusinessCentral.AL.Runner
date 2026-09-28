@@ -159,7 +159,6 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // only schedules it earlier, while a value near 30 would make it the #1887 tail.
             ["RunSummaryOutputTests"] = 131,
             // Runs 36297442575 and 36296544176: observed maximum, rounded down (#2498 convention).
-            ["AppGroupObjectVisibilityTests"] = 75,
             ["NoCacheLastWinsIntegrationTests"] = 66,
             // #4204: five collections absent from this table on run 35017043142's BC 28.4
             // leg. FloorOnlyBundleEnumFieldTests at 76.4s crossed the >= 75s band and failed
@@ -202,9 +201,9 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // maximum, rounded down.
             ["AllObjPopulateCostTests"] = 68,
             // #4834/#4833: the dupX/dupY fixture, spawned cold, cold-then-warm and in server mode.
-            // Absent from this table on PR #4839's first CI run (36301236496): 75.3s on the
-            // BC 28.5 leg, one leg only, rounded down.
-            ["AppGroupObjectVisibilityTests"] = 75,
+            // Main run 36344474690: 237.8s (BC 27.5) and 235.0s (BC 28.5), the heaviest collection
+            // of the run, dispatched at t=517s/533s on the old 75; observed maximum, rounded down.
+            ["AppGroupObjectVisibilityTests"] = 237,
             // #2272: 3 tests, each spawning a real runner subprocess (the app-group one runs
             // two bundles in a single invocation), all with AL_RUNNER_NO_DEP_COMPANY_CACHE=1
             // so every spawn pays the dependency Install triggers + Company-Initialize

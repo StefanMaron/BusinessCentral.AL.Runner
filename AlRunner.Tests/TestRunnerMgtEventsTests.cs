@@ -28,11 +28,11 @@ public sealed class TestRunnerMgtEventsTests
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
     private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
 
-    private sealed record Provisioned(string TestApps, string PlatformApps, AppManifest TestRunner);
+    internal sealed record Provisioned(string TestApps, string PlatformApps, AppManifest TestRunner);
 
     // One location holding both Microsoft_Test Runner.app and System.app, never mixed across
     // versions — the same rule as LibraryAssertPlatformlessConsumerTests.FindProvisionedDirs.
-    private static Provisioned? FindProvisionedDirs()
+    internal static Provisioned? FindProvisionedDirs()
     {
         var home = TestArtifacts.HomeDir();
         var candidates = new List<(string TestApps, string PlatformApps)>();
@@ -53,7 +53,7 @@ public sealed class TestRunnerMgtEventsTests
         return null;
     }
 
-    private static Provisioned RequireProvisioned()
+    internal static Provisioned RequireProvisioned()
     {
         TestArtifacts.SkipIfMissing();
         var dirs = FindProvisionedDirs();
