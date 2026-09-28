@@ -220,6 +220,18 @@ public sealed class SourcePageExtensionActionPartAreaTests : IDisposable
         Assert.Equal("false", hidden!.Visible?.ToString(), ignoreCase: true);
     }
 
+    // #4887: the host's eager part build lists every part its source pageextensions add,
+    // including one inside an added group and one declared Visible = false; a systempart is
+    // not a page part and is not listed.
+    [SkippableFact]
+    public void EveryAddedPagePart_IsListed_AndNothingElse()
+    {
+        EmitAndRead();
+        var listed = RecordPatches.SourcePageExtensionParts(PageId).Select(p => p.ID).OrderBy(i => i).ToArray();
+        Assert.Equal(new[] { Id("ServicePart"), Id("HiddenPart"), Id("GroupedPart") }.OrderBy(i => i).ToArray(), listed);
+        Assert.DoesNotContain(Id("ExtNotes"), listed);
+    }
+
     [SkippableFact]
     public void AControlIdNoExtensionAddsAsAPart_ResolvesToNull()
     {

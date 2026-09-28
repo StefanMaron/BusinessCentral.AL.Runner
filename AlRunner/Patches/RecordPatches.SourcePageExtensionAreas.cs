@@ -101,12 +101,18 @@ public static partial class RecordPatches
     /// does.
     /// </summary>
     internal static Microsoft.Dynamics.Nav.Types.Metadata.InfopartPageDefinition? SourcePageExtensionPart(int pageId, int controlId)
+        => SourcePageExtensionParts(pageId, $"TestPage part {controlId} (page {pageId})")
+            .FirstOrDefault(part => part.ID == controlId);
+
+    /// <summary>Every part the source-compiled pageextensions of <paramref name="pageId"/> add
+    /// (#4887: the host's eager part build lists them with its own).</summary>
+    internal static IEnumerable<Microsoft.Dynamics.Nav.Types.Metadata.InfopartPageDefinition> SourcePageExtensionParts(
+        int pageId, string? api = null)
     {
         var extensionIds = GetPageExtensionIdsForPage(pageId).Where(_parsedPageExtensions.ContainsKey).ToList();
-        foreach (var (_, xml) in SourcePageExtensionDeltaDocuments(pageId, extensionIds, $"TestPage part {controlId} (page {pageId})"))
+        foreach (var (_, xml) in SourcePageExtensionDeltaDocuments(pageId, extensionIds, api ?? $"TestPage parts (page {pageId})"))
             foreach (var part in _partsByDeltaDocument.GetValue(xml, AddedParts))
-                if (part.ID == controlId) return part;
-        return null;
+                yield return part;
     }
 
     // Keyed on the registry's own string, so a --watch/--server reload, which registers new

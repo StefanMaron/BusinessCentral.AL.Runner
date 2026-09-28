@@ -1975,6 +1975,10 @@ internal sealed partial class RunnerPageInstance
         foreach (var definition in form.MetadataHelper.InfoPartDefinitions)
             if (definition is Microsoft.Dynamics.Nav.Types.Metadata.InfopartPageDefinition part)
                 ids.Add(part.ID);
+        // The MasterPage carries no pageextension delta (#4876), so the parts a source
+        // pageextension adds are listed from the delta too (#4887).
+        foreach (var part in RecordPatches.SourcePageExtensionParts(_pageId))
+            ids.Add(part.ID);
         return ids;
     }
 
