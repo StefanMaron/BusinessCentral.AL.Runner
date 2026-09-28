@@ -48,6 +48,22 @@ public class ResolveTableIdByNameScopeTests
     /// </summary>
     [Fact]
     public void BareResolver_AnswersTheBundleTable_WhereTheScopeAwareOneAnswersTheDependencyTable()
+        => BundleVersusDependencyScenario();
+
+    /// <summary>
+    /// The same scenario with _parsedTables' free slots arranged so that every table added
+    /// after the bundle table enumerates BEFORE it. Other classes in this collection remove
+    /// ids from the process-wide dictionary, and a later add reuses those slots, so this is
+    /// the state the scenario meets when it runs after them (#4748).
+    /// </summary>
+    [Fact]
+    public void BareResolver_AnswersTheBundleTable_WhateverSlotsParsedTablesHasFree()
+    {
+        FreeSlotsSoLaterAddsEnumerateFirst(4);
+        BundleVersusDependencyScenario();
+    }
+
+    private static void BundleVersusDependencyScenario()
     {
         var bundleApp = Guid.NewGuid();
         WithState(
@@ -59,20 +75,20 @@ public class ResolveTableIdByNameScopeTests
             },
             act: () =>
             {
+                // Bare FIRST: the scope-aware resolver faults the dependency table into
+                // _parsedTables, and with two same-named tables there the bare answer is
+                // whichever enumerates first, not the tier order this asserts (#4748).
+                // The six unfixed sites: _parsedTables is consulted before the symbol index,
+                // so the bundle table wins although a dependency object wrote the name.
+                var bare = InvokeBare(SharedName);
+                Assert.Equal(BundleTargetId, bare);
+
                 // What #4106's fix does for a name written by a dependency object.
                 var scoped = RecordPatches.ResolveTableNameInDeclaringScope(
                     SharedName, SymbolTable(DepDeclaringId));
                 Assert.Equal(DepTargetId, scoped?.TableId);
 
-                // What the six unfixed sites still do. _parsedTables is consulted first, so the
-                // bundle table wins even though the name was written by a dependency object that
-                // cannot see the bundle.
-                var bare = InvokeBare(SharedName);
-                Assert.Equal(BundleTargetId, bare);
-
-                // Stated as the difference rather than as two separate facts: this inequality is
-                // the whole precondition #4139 rests on, and it is what a fix at any of the six
-                // sites would remove.
+                // The inequality #4139 rests on, and what a fix at any of the six sites removes.
                 Assert.True(scoped!.TableId != bare,
                     "the two resolvers must disagree here, or #4139's premise does not hold");
             });
@@ -123,6 +139,25 @@ public class ResolveTableIdByNameScopeTests
 
     private static ParsedTable SymbolTable(int id) =>
         ((Dictionary<int, (string AppPath, ParsedTable Table)>)IndexField().GetValue(null)!)[id].Table;
+
+    /// <summary>
+    /// Adds <paramref name="count"/> placeholder tables and removes them lowest enumeration slot
+    /// first. A Dictionary reuses the last-freed slot first, so the next adds land in descending
+    /// slot order: each table added later enumerates before every one added earlier.
+    /// </summary>
+    private static void FreeSlotsSoLaterAddsEnumerateFirst(int count)
+    {
+        var parsedTables = ParsedTables();
+        var placeholders = Enumerable.Range(61970, count).ToArray();
+        foreach (var id in placeholders)
+        {
+            Assert.False(parsedTables.Contains(id), $"table id {id} is already in _parsedTables; pick another range");
+            parsedTables[id] = Table(id, $"RTIBN Placeholder {id}");
+        }
+        var inSlotOrder = parsedTables.Keys.Cast<int>().Where(placeholders.Contains).ToList();
+        Assert.Equal(count, inSlotOrder.Count);
+        foreach (var id in inSlotOrder) parsedTables.Remove(id);
+    }
 
     private static void WithState(ParsedTable[] parsed, (string App, ParsedTable Table)[] index, Action act)
     {
