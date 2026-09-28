@@ -151,7 +151,9 @@ public static class ApplicationAreaControlRemoval
         _removingActions = removedActions;
         // Not for a request page: its ID is a report's, which can equal a page's.
         var extensionAreas = isRequestPage ? null : RecordPatches.SourcePageExtensionAreas(page.ID);
-        _areaChanges = extensionAreas?.AreaChanges;
+        // A request page's id is its report's: its extensions are reportextensions (#4896).
+        var requestPageExtension = isRequestPage ? RecordPatches.SourceReportExtensionRequestPageAreas(page.ID) : default;
+        _areaChanges = isRequestPage ? requestPageExtension.AreaChanges : extensionAreas?.AreaChanges;
         _actionAreaChanges = extensionAreas?.ActionAreaChanges;
         void Remove(IList<ControlBaseDefinition>? controls, Delegate selector)
         {
@@ -188,7 +190,11 @@ public static class ApplicationAreaControlRemoval
             // so their areas come from its symbol file, through the same BC predicate (#4796).
             // A precompiled report's request page carries no field controls either (#4863).
             if (isRequestPage)
-                removed.UnionWith(DependencyRequestPageFieldsToRemove(page.ID, area => _isApplicationAreaEnabled!(area!, null!)));
+            {
+                bool IsEnabled(string? area) => _isApplicationAreaEnabled!(area!, null!);
+                removed.UnionWith(DependencyRequestPageFieldsToRemove(page.ID, IsEnabled, requestPageExtension.AreaChanges));
+                removed.UnionWith(Rejected(requestPageExtension.AddedFields, requestPageExtension.AreaChanges, IsEnabled));
+            }
             if (extensionAreas != null)
             {
                 bool IsEnabled(string? area) => _isApplicationAreaEnabled!(area!, null!);
@@ -298,9 +304,10 @@ public static class ApplicationAreaControlRemoval
     /// The request-page field controls of a precompiled report that <paramref name="isAreaEnabled"/>
     /// rejects (#4863). Keyed by REPORT id, which is what a request page's MasterPage.ID is.
     /// </summary>
-    internal static IEnumerable<int> DependencyRequestPageFieldsToRemove(int reportId, Func<string?, bool> isAreaEnabled)
+    internal static IEnumerable<int> DependencyRequestPageFieldsToRemove(
+        int reportId, Func<string?, bool> isAreaEnabled, IReadOnlyDictionary<int, string>? areaChanges = null)
         => RecordPatches.DependencyRequestPageFieldAreas(reportId)
-            .Where(control => !isAreaEnabled(control.ApplicationArea))
+            .Where(control => !isAreaEnabled(AreaAfterSourceChange(reportId, control, areaChanges)))
             .Select(control => control.Id);
 
     /// <summary>
