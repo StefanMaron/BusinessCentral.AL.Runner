@@ -45,6 +45,8 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **testpage:** TryGetControlFormat no longer hides a failed format read
+- **testpage:** a part's AL error while its host page opens is no longer swallowed
 - **app-groups:** a subscriber depending on two declarers of an id no longer fails the declarers' own tests
 - **testpage:** AssertEquals refusal names the page control, as BC does
 - **testpage:** application-area removal reaches the request-page controls a reportextension adds
