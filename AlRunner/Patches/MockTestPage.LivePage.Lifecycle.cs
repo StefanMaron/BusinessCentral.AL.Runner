@@ -212,16 +212,12 @@ internal partial class LiveNavTestPage
     /// for the first time from <see cref="Loaded"/>'s own refresh once the host DOES have a
     /// row, not from here.
     ///
-    /// Only the runner's own refusal to BUILD a part is absorbed: a part it cannot build (a
-    /// precompiled Base App page it has no metadata for, an unsupported shape) must not keep the
-    /// HOST from opening, and a test that touches that part still gets the refusal through
-    /// <see cref="GetPart"/>, which caches nothing for it. Anything else — an AL Error() in the
-    /// part's OnOpenPage above all — fails the host's open, as it does on BC (corpus codeunit
-    /// 67010, #4903).
-    /// <para>One BC exception is absorbed too: "Callback functions are not allowed", which a
-    /// part's OnOpenPage raises here when it asks for a client capability (Camera.IsAvailable on
-    /// the Salesperson/Purchaser card's picture FactBox). BC answers false there and opens the
-    /// host; the runner's missing client is #2772. Remove it from the filter when #2772 lands.</para>
+    /// Everything a part raises while it is built here fails the host's open, as it does on BC:
+    /// an AL Error() in the part's OnOpenPage (corpus codeunit 67010, #4903), an unhandled
+    /// Confirm there, an out-of-scope surface it touches. The one exception absorbed is BC's
+    /// "Callback functions are not allowed" raised by a <c>[RunOnClient]</c> DotNet access,
+    /// where BC answers without a client — Camera.IsAvailable on the picture FactBox of most
+    /// Base App cards. That is #2772; drop this filter when it lands.
     /// </summary>
     internal void EagerlyBuildParts()
     {
@@ -229,7 +225,10 @@ internal partial class LiveNavTestPage
         foreach (var controlId in _page.AllPartControlIds())
         {
             try { GetPart(controlId); }
-            catch (Exception ex) when (IsRunnerBuildRefusal(ex))
+            // Typed on purpose: OutOfScopeMessage.FromException would also match an out-of-scope
+            // refusal raised inside the part's AL, and swallow it.
+            catch (Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLCallbackNotAllowedException ex)
+                when (IsRunOnClientDotNetAccess(ex))
             {
                 if (Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PAGE_METADATA") == "1")
                     Console.Out.WriteLine($"[MockTestPage.EagerlyBuildParts] control {controlId} on page {_pageId}: {ex.GetType().Name}: {ex.Message}");
@@ -237,12 +236,18 @@ internal partial class LiveNavTestPage
         }
     }
 
-    private static bool IsRunnerBuildRefusal(Exception ex)
+    /// <summary>Whether BC raised <paramref name="ex"/> for a <c>[RunOnClient]</c> DotNet member —
+    /// a NavDotNet frame asked for the client — rather than for a Confirm, a RunModal, a Dialog
+    /// or any other client call, which the same exception type also reports.</summary>
+    internal static bool IsRunOnClientDotNetAccess(Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLCallbackNotAllowedException ex)
     {
-        for (Exception? e = ex; e != null; e = e.InnerException)
-            if (e is AlRunner.Infrastructure.RunnerOutOfScopeException or AlRunner.Infrastructure.BcShapeGapException
-                or Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLCallbackNotAllowedException)
-                return true;
+        foreach (var frame in new System.Diagnostics.StackTrace(ex, false).GetFrames())
+        {
+            var type = frame.GetMethod()?.DeclaringType;
+            if (type == typeof(Microsoft.Dynamics.Nav.Runtime.NavDotNet)) return true;
+            // Past BC's runtime into the AL that made the call: no DotNet frame asked.
+            if (type?.Namespace == "Microsoft.Dynamics.Nav.BusinessApplication") return false;
+        }
         return false;
     }
 

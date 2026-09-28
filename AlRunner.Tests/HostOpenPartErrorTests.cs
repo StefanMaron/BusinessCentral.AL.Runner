@@ -1,7 +1,9 @@
 // #4903: while a host TestPage opens, the runner builds every part eagerly (#2677). An AL
 // Error() in a part's OnOpenPage fails the host's OpenView, as on BC (corpus codeunit 67010), and
 // an out-of-scope surface a part's OnOpenPage touches is reported as out-of-scope rather than
-// swallowed. Only the runner's own refusal to BUILD a part is absorbed.
+// swallowed, and so is an unhandled Confirm there (corpus codeunit 67010 again). Only a
+// [RunOnClient] DotNet callback refusal (#2772) is absorbed, which needs Base App to reach and
+// is pinned by tests/runner-extras/testpage-trigger-inject-timing.
 using System.Diagnostics;
 using System.Text;
 using Xunit;
@@ -64,9 +66,11 @@ public sealed class HostOpenPartErrorTests
             + Part(62813, "Hope Refusing Part", "Client.Get('http://hope.invalid/', Response);").Replace(
                 "Log: Codeunit \"Hope Log\";", "Log: Codeunit \"Hope Log\";\n        Client: HttpClient;\n        Response: HttpResponseMessage;")
             + Part(62814, "Hope Clean Part", "")
+            + Part(62819, "Hope Confirm Part", "if Confirm('HOPE asks') then;")
             + Host(62815, "Hope Error Host", "Hope Error Part")
             + Host(62816, "Hope Refusing Host", "Hope Refusing Part")
             + Host(62817, "Hope Clean Host", "Hope Clean Part")
+            + Host(62820, "Hope Confirm Host", "Hope Confirm Part")
             + """
             codeunit 62818 "Hope Tests"
             {
@@ -97,6 +101,15 @@ public sealed class HostOpenPartErrorTests
                 end;
 
                 [Test]
+                procedure ConfirmingPart_UnhandledConfirm_FailsTheHostsOpenView()
+                var
+                    Host: TestPage "Hope Confirm Host";
+                begin
+                    asserterror Host.OpenView();
+                    if StrPos(GetLastErrorText(), 'Unhandled UI: Confirm') = 0 then Error('WRONG: OpenView ended with: %1', GetLastErrorText());
+                end;
+
+                [Test]
                 procedure CleanPart_HostOpens_AndThePartOpened()
                 var
                     Host: TestPage "Hope Clean Host";
@@ -112,12 +125,32 @@ public sealed class HostOpenPartErrorTests
 
         var (output, exitCode) = RunCli($" --no-cache \"{root}\"");
         // RefusingPart_IsReportedOutOfScope fails by design: the refusal is the assertion.
-        Assert.True(output.Contains("Tests: 3   passed 2   failed 1"), output);
+        Assert.True(output.Contains("Tests: 4   passed 3   failed 1"), output);
         Assert.Contains("FAIL  \"Hope Tests\".RefusingPart_IsReportedOutOfScope", output);
         Assert.Contains("Unexpected out-of-scope: HttpClient.Get (reason: external-http)", output);
         Assert.DoesNotContain("WRONG:", output);
         Assert.Equal(1, exitCode);
     }
+
+    /// <summary>
+    /// The one absorbed exception type is also what BC raises for every other client call with
+    /// no client (Confirm, RunModal, Hyperlink, …). Only a [RunOnClient] DotNet access is #2772's
+    /// case; a refusal no NavDotNet frame raised is not absorbed. The positive half needs Base
+    /// App's camera FactBox: tests/runner-extras/testpage-trigger-inject-timing.
+    /// </summary>
+    [Fact]
+    public void ACallbackRefusalNoDotNetMemberRaised_IsNotAbsorbed()
+    {
+        Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLCallbackNotAllowedException? caught = null;
+        try { RaiseCallbackRefusal(); }
+        catch (Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLCallbackNotAllowedException ex) { caught = ex; }
+
+        Assert.NotNull(caught);
+        Assert.False(LiveNavTestPage.IsRunOnClientDotNetAccess(caught!));
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static void RaiseCallbackRefusal() => throw new Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLCallbackNotAllowedException();
 
     private static (string Output, int ExitCode) RunCli(string args)
     {
