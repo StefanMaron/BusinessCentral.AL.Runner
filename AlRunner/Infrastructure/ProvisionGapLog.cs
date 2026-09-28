@@ -136,10 +136,6 @@ internal static class ProvisionGapLog
         lock (_lock) _gaps.Add(message);
     }
 
-    /// <summary>
-    /// What has been reported since the last <see cref="Reset"/>. A copy, so a caller that has
-    /// already read it keeps what it read when the next bundle resets.
-    /// </summary>
     /// <summary>One bundle's gaps and unservable apps, restored before its deferred run so the run
     /// names that bundle's missing apps and its tail reads that bundle's gaps (#4931).</summary>
     internal sealed record Snapshot(List<string> Gaps, List<(string App, Func<IEnumerable<int>> CodeunitIds)> UnservableApps);
@@ -159,6 +155,10 @@ internal static class ProvisionGapLog
         }
     }
 
+    /// <summary>
+    /// What has been reported since the last <see cref="Reset"/>. A copy, so a caller that has
+    /// already read it keeps what it read when the next bundle resets.
+    /// </summary>
     internal static IReadOnlyList<string> Collected
     {
         get { lock (_lock) return _gaps.ToList(); }
