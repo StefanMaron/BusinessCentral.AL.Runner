@@ -79,6 +79,13 @@ can put an unrelated bundle listed after it ahead of it. **Do not depend on
 per-bundle results are unaffected: results are returned in the order the caller
 listed the paths.
 
+A request with more than one bundle compiles and loads **every** bundle before any
+of them runs tests (#4850), the way a CLI run over one root loads every app group
+first. So an event raised by an earlier bundle's test reaches a later bundle's
+subscriber, as it does on a tenant where every app is installed. Only the bundles
+the request names count as installed: a module an earlier request loaded does not
+answer an event in a request that omits it. A single-bundle request is unchanged.
+
 ```jsonc
 {"type":"test","name":"Codeunit60110.MyTest","status":"pass","durationMs":12}
 {"type":"test","name":"Codeunit60110.OtherTest","status":"fail","durationMs":3,
