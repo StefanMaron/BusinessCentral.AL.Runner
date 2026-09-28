@@ -2001,17 +2001,22 @@ public static partial class NavReportSync
     private static readonly ConditionalWeakTable<object, object> _reportExtensionsBound = new();
 
     /// <summary>
-    /// Construct each reportextension of <paramref name="reportId"/> on the report and hand it
-    /// to BC's own <c>NavReport.RegisterReportExtension</c>, which is what
-    /// <c>NCLReportExtension.CreateExtensionInstanceAndBindToParent</c> does inside
-    /// <c>NCLMetaReport.CreateObjectInstance</c> (decompiled bc285). That registers the
-    /// extension's data items and its request-page extension on the request page, whose
-    /// <c>OnExtensionRegistered</c> registers the source expressions a [RequestPageHandler]
-    /// reads and writes (#4909; corpus 67546, 67547). Idempotent per report instance.
+    /// Construct each reportextension of <paramref name="reportId"/> on the report and register
+    /// its request-page extension on the request page — the last step of BC's own
+    /// <c>NavReport.RegisterReportExtension</c>, which <c>NCLMetaReport.CreateObjectInstance</c>
+    /// reaches through <c>NCLReportExtension.CreateExtensionInstanceAndBindToParent</c>
+    /// (decompiled bc285). <c>RegisterPageExtension</c> raises the request-page extension's
+    /// <c>OnExtensionRegistered</c>, which registers the source expressions a
+    /// [RequestPageHandler] reads and writes (#4909; corpus 67546, 67547). Idempotent per report.
     ///
-    /// <para>An extension the metadata names but whose compiled type is not loaded refuses:
-    /// constructing the report without it would make its request-page fields unreachable and
-    /// its triggers silent.</para>
+    /// <para>Trap: the other two steps of <c>RegisterReportExtension</c> are deliberately not
+    /// run. <c>RegisterDataItems</c> needs the extension's data items in the report's
+    /// MetaReport, which the runner does not merge (#4837; running it fails report 302 with
+    /// "No dataItem with name AssemblyLine"), and binding the extension into
+    /// <c>reportExtensions</c> would run its report triggers over data items that are not
+    /// there (#4918). Both stay exactly as they were before this change.</para>
+    ///
+    /// <para>An extension the metadata names but whose compiled type is not loaded refuses.</para>
     /// </summary>
     internal static void BindReportExtensions(object navReport, int reportId)
     {
@@ -2019,16 +2024,24 @@ public static partial class NavReportSync
         var extensionTypes = ResolveReportExtensionTypes(reportId);
         if (extensionTypes.Count == 0) return;
 
-        var register = AlRunner.Infrastructure.BcShape.RequiredMethod(navReport.GetType(), "RegisterReportExtension",
+        const string surface = "Report extensions";
+        // Read through NavReport itself: a generated Report{id} re-declares RequestOptionsPage
+        // with its own RequestPage type, so asking the derived type is ambiguous.
+        var requestPage = AlRunner.Infrastructure.BcShape.Property(typeof(Microsoft.Dynamics.Nav.Runtime.NavReport), "RequestOptionsPage",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly, surface)
+            .GetValue(navReport)
+            ?? throw new AlRunner.Infrastructure.BcShapeGapException(surface, "NavReport.RequestOptionsPage",
+                "the report has no request page to register its extensions on");
+        var register = AlRunner.Infrastructure.BcShape.RequiredMethod(requestPage.GetType(), "RegisterPageExtension",
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
-            "Report extensions", "NavReport.RegisterReportExtension",
-            "without it a reportextension's data items and request-page fields are never bound to the report");
+            surface, "NavForm.RegisterPageExtension",
+            "without it a reportextension's request-page fields never register their source expressions");
         foreach (var (extensionId, type) in extensionTypes)
         {
             var ctor = type.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
                 .FirstOrDefault(c => c.GetParameters().Length == 1)
                 ?? throw new AlRunner.Infrastructure.BcShapeGapException(
-                    "Report extensions", $"ReportExtension{extensionId}(ITreeObject)",
+                    surface, $"ReportExtension{extensionId}(ITreeObject)",
                     "the compiled reportextension declares no one-argument constructor");
             object extension;
             try { extension = ctor.Invoke(new object?[] { navReport }); }
@@ -2037,7 +2050,12 @@ public static partial class NavReportSync
                 System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
                 throw; // unreachable
             }
-            Invoke(register, navReport, new[] { extension });
+            var requestPageExtension = AlRunner.Infrastructure.BcShape.Property(
+                    typeof(Microsoft.Dynamics.Nav.Runtime.Extensions.NavReportExtension), "RequestOptionsPageExtension",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly, surface)
+                .GetValue(extension);
+            if (requestPageExtension == null) continue; // the extension declares no requestpage block
+            Invoke(register, requestPage, new[] { requestPageExtension });
         }
     }
 
