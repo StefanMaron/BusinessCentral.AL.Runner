@@ -240,9 +240,19 @@ internal partial class LiveNavTestPage
     /// a NavDotNet frame asked for the client — rather than for a Confirm, a RunModal, a Dialog
     /// or any other client call, which the same exception type also reports.</summary>
     internal static bool IsRunOnClientDotNetAccess(Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLCallbackNotAllowedException ex)
-        => IsRunOnClientDotNetAccess(new System.Diagnostics.StackTrace(ex, false).GetFrames()
-            .Select(f => f.GetMethod()?.DeclaringType)
-            .Select(t => (t?.Namespace, t?.Name)));
+        => IsRunOnClientDotNetAccess(new System.Diagnostics.StackTrace(ex, false).GetFrames().Select(FrameIdentity));
+
+    /// <summary>A frame's declaring (namespace, type). A frame with no managed method or no
+    /// declaring type — a native or dynamic frame — names neither NavDotNet nor AL, so the walk
+    /// passes over it; this is the stack's own shape, not a BC member a rename could lose.</summary>
+    private static (string? Namespace, string? Type) FrameIdentity(System.Diagnostics.StackFrame frame)
+    {
+        var method = frame.GetMethod();
+        if (method == null) return (null, null);
+        var type = method.DeclaringType;
+        if (type == null) return (null, null);
+        return (type.Namespace, type.Name);
+    }
 
     /// <summary>The decision over the throwing stack, innermost frame first: a NavDotNet frame
     /// before the first AL frame. The AL stop is load-bearing — without it a DotNet call made
