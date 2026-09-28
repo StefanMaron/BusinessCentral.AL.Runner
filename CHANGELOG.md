@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **session:** answer Session's Database Name and Application Name from the Active Session row, as BC does
 - **testpage:** parts a source pageextension adds, measured on a service tier
 - **testpage:** application-area removal reaches a precompiled page's actions and a precompiled report's request page
 - **metadata:** a precompiled table field answers its OptionCaption and Caption
