@@ -237,6 +237,38 @@ which parses the extension's delta document with BC's own
 with its host (#4887), and invoking an extension actionref whose target the same extension adds
 still refuses (#4878).
 
+<a id="action-application-area"></a>
+### Actions' `ApplicationArea` on a precompiled page (#4862)
+
+The reconstructed document for a precompiled page carries none of the page's own actions (the
+runner's MasterPage holds only BC's system actions), so their areas come from the symbol file
+(`RecordPatches.DependencyActionAreas`) and the rejected ids join the page's removed-action set.
+The rule was read off BC's emitted `PageDefinition` documents for every page of System
+Application and Business Foundation `28.1.49838.53910`, against the symbol file's own property,
+by Kind:
+
+| action Kind | area BC's emitter writes |
+|---|---|
+| 2 action | its own, else the **page's** (72 of 72 page-inherited rows; 300 of 300 own) |
+| 4 actionref | none of its own — never the page's (100 of 100); at runtime `ActionRefDefinition.SolveApplicationArea` gives it its target's, so it is removed exactly when its target is |
+| 6 system action | emitted with none (4 of 4), but `ActionDefinition.SolveSystemActionType` sets `#All` at runtime (Types 28.4.53241.53955), which every session enables — never removed (corpus 67543, page 332) |
+| 1 group | not area-tested (`RemoveAction` does not test a group) |
+
+Another Kind stating none on a page that states an area had no row in that population, so it
+refuses rather than guess. A precompiled pageextension's action answers its own area or
+none; a precompiled `modify()` replaces the base action's, a source one replaces either, and the
+two disagreeing refuse. Corpus codeunit 67543 ("Package No. Information List").
+
+<a id="request-page-application-area"></a>
+### Request-page controls of a precompiled report (#4863)
+
+A request-page field states its own `ApplicationArea`, else BC's emitter writes the **report's**
+(a request page cannot state one itself: AL0124). Measured by compiling a probe report with BC's
+compiler: a field stating none under a report stating `Basic` was emitted `#Basic`, and under a
+report stating none, with no attribute. `RecordPatches.DependencyRequestPageFieldAreas` applies
+that to the symbol file's Kind-8 controls; groups and the content node are not area-tested.
+Corpus codeunit 67544 (report 5803 "Reset Cost Is Adjusted").
+
 ## What is deliberately not implemented, and why
 
 - **`ActionContainers` / `ViewContainers`.** BC writes `ActionContainers` on all 235 pages
