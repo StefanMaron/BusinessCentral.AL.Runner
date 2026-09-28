@@ -567,8 +567,10 @@ internal sealed class PageVariableTestField : ITestField
             _ => ALCompiler.ToNavValue(value),
         };
 
-    // Name keeps the bound variable's name; only Caption() reads CaptionClass (#4638).
-    public string Name => VariableName;
+    // BC names the CONTROL here too, not the variable it shows (#4911; corpus 67650, green on
+    // every required leg). The variable name is only the fallback for a control no page
+    // declaration names. Caption() alone reads CaptionClass (#4638).
+    public string Name => (_controlId != 0 ? _page.TryGetControlName(_controlId) : null) ?? VariableName;
     public string Caption => _page.TryGetControlCaptionClass(_controlId) ?? VariableName;
     private string VariableName => _expression.GetType()
         .GetProperty("Name", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
