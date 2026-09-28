@@ -108,6 +108,27 @@ reportextension 66503 "RXUB ReqPage Ext" extends "RXUB ReqPage Target"
     var ExtValue: Text[30];
 }
 
+report 66506 "RXUB DataItem Target"
+{
+    ProcessingOnly = true;
+    UseRequestPage = false;
+    dataset { dataitem(RxubItem; "RXUB Rec") { } }
+}
+
+reportextension 66504 "RXUB DataItem Ext" extends "RXUB DataItem Target"
+{
+    dataset
+    {
+        modify(RxubItem)
+        {
+            trigger OnAfterAfterGetRecord()
+            begin
+                Error('the extension data-item trigger ran');
+            end;
+        }
+    }
+}
+
 codeunit 66502 "RXUB Assert"
 {
     procedure ExpectedError(Fragment: Text)
@@ -145,6 +166,15 @@ codeunit 66503 "RXUB Tests"
         Parameters := Report.RunRequestPage(Report::"RXUB Report");
         if Seen <> '' then
             Error('the handler must read the extension field (empty), got <%1>', Seen);
+    end;
+
+    [Test]
+    procedure ReportRun_WithAnExtensionDataItemTrigger_IsRefusedByName()
+    begin
+        asserterror Report.Run(Report::"RXUB DataItem Target", false);
+        Assert.ExpectedError('out-of-scope:');
+        Assert.ExpectedError('reportextension(s) 66504');
+        Assert.ExpectedError('#4918');
     end;
 
     [Test]
