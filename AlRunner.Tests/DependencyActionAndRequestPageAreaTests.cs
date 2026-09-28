@@ -284,6 +284,25 @@ public class DependencyActionAndRequestPageAreaTests
         });
 
     [Fact]
+    public void APrecompiledReportExtensionSharingItsIdWithASourceOne_Refuses_RatherThanBeingSkipped()
+        => WithDependencyApp(() =>
+        {
+            var field = typeof(RecordPatches).GetField("_parsedReportExtensions",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+            var parsed = (System.Collections.IDictionary)field.GetValue(null)!;
+            parsed[88486311] = new ParsedReport(88486311, "Some Source Ext", IsExtension: true);
+            try
+            {
+                var ex = Assert.Throws<RunnerOutOfScopeException>(() => RecordPatches.DependencyRequestPageFieldAreas(88486303).ToList());
+                Assert.Contains("reportextension 88486311", ex.Message, StringComparison.Ordinal);
+            }
+            finally
+            {
+                parsed.Remove(88486311);
+            }
+        });
+
+    [Fact]
     public void TwoPrecompiledReportExtensionsModifyingOneFieldToDifferentAreas_Refuse()
         => WithDependencyApp(() =>
         {

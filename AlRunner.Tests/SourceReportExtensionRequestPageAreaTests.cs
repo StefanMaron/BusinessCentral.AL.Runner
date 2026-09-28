@@ -122,6 +122,26 @@ public sealed class SourceReportExtensionRequestPageAreaTests : IDisposable
         Assert.Equal("#Suite", changes[Id("BaseServiceCtl")]);
     }
 
+    private static bool Enables(string? area, params string[] enabled)
+        => !string.IsNullOrWhiteSpace(area) && area.Split(',').Any(a => enabled.Contains(a) || a == "#All");
+
+    // The enabled direction, which the corpus cannot carry for an added field while #4909 keeps
+    // a handler from reading it: under an area that enables the field it must NOT be removed.
+    [SkippableFact]
+    public void WithServiceEnabled_TheServiceField_IsKept_AndTheAreaLessField_IsRemoved()
+    {
+        Emit();
+        var areas = RecordPatches.SourceReportExtensionRequestPageAreas(ReportId);
+        var removed = ApplicationAreaControlRemoval.RequestPageFieldsToRemove(
+            ReportId, areas, area => Enables(area, "#Basic", "#Service")).ToHashSet();
+        Assert.DoesNotContain(Id("ExtServiceCtl"), removed);
+        Assert.Contains(Id("ExtNoneCtl"), removed);
+
+        var basicSuite = ApplicationAreaControlRemoval.RequestPageFieldsToRemove(
+            ReportId, areas, area => Enables(area, "#Basic", "#Suite")).ToHashSet();
+        Assert.Contains(Id("ExtServiceCtl"), basicSuite);
+    }
+
     [SkippableFact]
     public void AReportExtensionWhoseDeltaDocumentIsMissing_Refuses()
     {

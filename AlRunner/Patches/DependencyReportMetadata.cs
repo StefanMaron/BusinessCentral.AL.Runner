@@ -148,8 +148,16 @@ public static partial class RecordPatches
     {
         foreach (var (_, symbols) in EnumerateRegisteredBcAppSymbols("reportextensions (request-page application area)"))
             foreach (var ext in symbols.ReportExtensions ?? (IReadOnlyList<BcAppSymbolCache.ReportExtensionSymbol>)Array.Empty<BcAppSymbolCache.ReportExtensionSymbol>())
-                if (!_parsedReportExtensions.ContainsKey(ext.Id) && NamesEqual(ext.TargetName, reportName))
+                if (NamesEqual(ext.TargetName, reportName))
+                {
+                    // A source reportextension of the same number cannot be told apart from this
+                    // one by id alone; refuse rather than drop either (loud-failures.md).
+                    if (_parsedReportExtensions.ContainsKey(ext.Id))
+                        throw TestPageShapeGap.ControlProperty($"TestRequestPage ApplicationArea on report '{reportName}'",
+                            $"reportextension {ext.Id} is both compiled from source here and shipped precompiled in a "
+                            + "loaded dependency, so which request-page changes apply cannot be decided by id (#4896)");
                     yield return ext;
+                }
     }
 
     // Two precompiled reportextensions setting one field to different areas refuse: which BC

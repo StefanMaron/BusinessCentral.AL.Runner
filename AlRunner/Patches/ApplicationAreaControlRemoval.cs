@@ -191,9 +191,8 @@ public static class ApplicationAreaControlRemoval
             // A precompiled report's request page carries no field controls either (#4863).
             if (isRequestPage)
             {
-                bool IsEnabled(string? area) => _isApplicationAreaEnabled!(area!, null!);
-                removed.UnionWith(DependencyRequestPageFieldsToRemove(page.ID, IsEnabled, requestPageExtension.AreaChanges));
-                removed.UnionWith(Rejected(requestPageExtension.AddedFields, requestPageExtension.AreaChanges, IsEnabled));
+                removed.UnionWith(RequestPageFieldsToRemove(page.ID, requestPageExtension,
+                    area => _isApplicationAreaEnabled!(area!, null!)));
             }
             if (extensionAreas != null)
             {
@@ -299,6 +298,19 @@ public static class ApplicationAreaControlRemoval
         }
         return rejected;
     }
+
+    /// <summary>
+    /// The request-page fields of <paramref name="reportId"/> that <paramref name="isAreaEnabled"/>
+    /// rejects beyond BC's own pass over its MasterPage: a precompiled report's fields and those
+    /// its precompiled reportextensions add (from the symbol file), and those a source-compiled
+    /// reportextension adds (from its delta document), each after a source <c>modify()</c> (#4896).
+    /// </summary>
+    internal static IEnumerable<int> RequestPageFieldsToRemove(int reportId,
+        (IReadOnlyList<(int Id, string? ApplicationArea)> AddedFields, IReadOnlyDictionary<int, string> AreaChanges) sourceExtensions,
+        Func<string?, bool> isAreaEnabled)
+        => DependencyRequestPageFieldsToRemove(reportId, isAreaEnabled, sourceExtensions.AreaChanges)
+            .Concat(Rejected(sourceExtensions.AddedFields, sourceExtensions.AreaChanges, isAreaEnabled))
+            .ToList();
 
     /// <summary>
     /// The request-page field controls of a precompiled report that <paramref name="isAreaEnabled"/>
