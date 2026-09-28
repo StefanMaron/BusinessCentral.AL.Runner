@@ -142,7 +142,7 @@ public sealed class TestDataBackupProvisioningTests : IDisposable
         {
             _calls.Add((version, outputDir, country));
             log("Resolving artifact size...");
-            log("Error: no BC artifact published for 28.5.54151.55132 (w1): https://example.invalid/x");
+            log("Error: no BC artifact published for 28.5.54151.55132 (w1): https://example.invalid/x.");
             log("       Check the version, or resolve the latest for a prefix:");
             return 1;
         };
@@ -153,6 +153,7 @@ public sealed class TestDataBackupProvisioningTests : IDisposable
         var firstLine = ex.Message.Split('\n')[0];
         Assert.Contains($"{AlRunner.Provisioning.ArtifactDownloader.CdnBase}/{Version}/w1", firstLine, StringComparison.Ordinal);
         Assert.Contains("Error: no BC artifact published", firstLine, StringComparison.Ordinal);
+        Assert.DoesNotContain("..", firstLine, StringComparison.Ordinal);
         Assert.Single(_calls);
         Assert.False(File.Exists(Path.Combine(_artifacts, Version, "w1", "BusinessCentral-W1.bak")));
     }

@@ -70,7 +70,7 @@ internal static class TestDataBackupProvisioning
         if (rc != 0 || !File.Exists(written))
             throw new TestDataUnavailableException(
                 $"--test-data: downloading {fileName} for BC {version} ({country}) from {url} failed: "
-                + (firstError ?? (rc != 0 ? $"downloader exit code {rc}" : $"it reported success but wrote no {written}"))
+                + (firstError ?? (rc != 0 ? $"downloader exit code {rc}" : $"it reported success but wrote no {written}")).TrimEnd('.')
                 + ". No tests ran; retry, or pass --test-data=/path/to/" + fileName + ".");
 
         report($"[provision] --test-data: wrote {written}.");
