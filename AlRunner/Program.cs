@@ -4169,8 +4169,7 @@ foreach (var bundle in bundles)
         if (deferBundleRuns)
         {
             // #4931: run after every bundle has loaded; the load's own row closes here.
-            var loadedState = AlRunner.Infrastructure.BundleRunState.Capture();
-            var loadedGaps = AlRunner.Infrastructure.ProvisionGapLog.Capture();
+            var loadedState = AlRunner.Infrastructure.BundleRunState.Capture(includeProvisionGaps: true);
             var loadedIndex = i2;
             AlRunner.Infrastructure.PhaseLog.EndBundle(bundleEmit, bundleComp, TimeSpan.Zero);
             deferredBundleRuns.Add(() =>
@@ -4178,9 +4177,6 @@ foreach (var bundle in bundles)
                 // A second row for this bundle, carrying its run time only.
                 AlRunner.Infrastructure.PhaseLog.BeginBundle(rel, loadedIndex);
                 loadedState.Restore();
-                AlRunner.Infrastructure.ProvisionGapLog.Restore(loadedGaps);
-                // Negative query answers memoised while a later bundle was not loaded yet.
-                AlRunner.Patches.RecordPatches.ResetNegativeQueryMemosForNewBundle();
                 RunLoadedApps();
                 FinishBundle(TimeSpan.Zero, TimeSpan.Zero);
             });

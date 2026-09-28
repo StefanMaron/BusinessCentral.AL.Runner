@@ -17,17 +17,22 @@ internal sealed class BundleRunState
     private readonly BcCompiler.BundleReferenceState _references;
     private readonly (Guid AppId, string Name, string Publisher, string Version) _bundleInfo;
     private readonly string? _resourceDir;
+    private readonly ProvisionGapLog.Snapshot? _provisionGaps;
 
-    private BundleRunState()
+    private BundleRunState(bool includeProvisionGaps)
     {
         _installDependencies = InstallTriggerRunner.DependencyAssemblies;
         // The resolved dependency closure is what --test-data hands the backup reader (TestDataProvisioner.ResolveSymbols).
         _references = BcCompiler.CaptureBundleReferenceState();
         _bundleInfo = BcRuntime.GetCurrentModuleAppInfo();
         _resourceDir = Patches.NavAppResourcePatches.CurrentBundleDir;
+        _provisionGaps = includeProvisionGaps ? ProvisionGapLog.Capture() : null;
     }
 
-    internal static BundleRunState Capture() => new();
+    /// <param name="includeProvisionGaps">The CLI resets ProvisionGapLog per bundle and reads it after
+    /// each bundle's run; --server never resets it per bundle, so restoring it there would drop the
+    /// gaps a later bundle's load reported.</param>
+    internal static BundleRunState Capture(bool includeProvisionGaps = false) => new(includeProvisionGaps);
 
     internal void Restore()
     {
@@ -36,5 +41,6 @@ internal sealed class BundleRunState
         BcCompiler.RestoreBundleReferenceState(_references);
         BcRuntime.SetCurrentBundleInfo(_bundleInfo.AppId, _bundleInfo.Name, _bundleInfo.Publisher, _bundleInfo.Version);
         Patches.NavAppResourcePatches.SetCurrentBundleDir(_resourceDir);
+        if (_provisionGaps != null) ProvisionGapLog.Restore(_provisionGaps);
     }
 }

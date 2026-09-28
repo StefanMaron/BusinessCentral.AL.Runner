@@ -83,23 +83,23 @@ public sealed class BundleRunStateTests
     }
 
     /// <summary>The CLI's per-bundle provisioning record: a deferred run names its own bundle's
-    /// unservable apps, and its tail reports its own bundle's gaps.</summary>
+    /// unservable apps, and its tail reports its own bundle's gaps. --server leaves it alone.</summary>
     [Fact]
     public void ProvisionGapLog_RestoreGivesTheBundleItsOwnGapsAndUnservableApps()
     {
-        var original = ProvisionGapLog.Capture();
+        var original = BundleRunState.Capture(includeProvisionGaps: true);
         try
         {
             ProvisionGapLog.Reset();
             ProvisionGapLog.RegisterUnservableApp("App A", () => new[] { 70001 });
             ProvisionGapLog.Report("gap A");
-            var loadedA = ProvisionGapLog.Capture();
+            var loadedA = BundleRunState.Capture(includeProvisionGaps: true);
             ProvisionGapLog.Reset();
             ProvisionGapLog.RegisterUnservableApp("App B", () => new[] { 70002 });
             ProvisionGapLog.Report("gap B");
             Assert.Equal("App B", ProvisionGapLog.UnservableAppDeclaringCodeunit(70002)); // builds the owner index
 
-            ProvisionGapLog.Restore(loadedA);
+            loadedA.Restore();
 
             Assert.Equal(new[] { "gap A" }, ProvisionGapLog.Collected);
             Assert.Equal("App A", ProvisionGapLog.UnservableAppDeclaringCodeunit(70001));
@@ -107,7 +107,28 @@ public sealed class BundleRunStateTests
         }
         finally
         {
-            ProvisionGapLog.Restore(original);
+            original.Restore();
+        }
+    }
+
+    [Fact]
+    public void WithoutProvisionGaps_RestoreLeavesTheLogAlone()
+    {
+        var original = BundleRunState.Capture(includeProvisionGaps: true);
+        try
+        {
+            ProvisionGapLog.Reset();
+            ProvisionGapLog.Report("gap A");
+            var loadedA = BundleRunState.Capture();
+            ProvisionGapLog.Report("gap B");
+
+            loadedA.Restore();
+
+            Assert.Equal(new[] { "gap A", "gap B" }, ProvisionGapLog.Collected);
+        }
+        finally
+        {
+            original.Restore();
         }
     }
 }
