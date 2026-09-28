@@ -284,7 +284,7 @@ internal static class TestPageOptionValue
 /// Enforces a field's declared <c>MinValue</c>/<c>MaxValue</c> AL properties on a TestPage
 /// control write (issue #2495). Measured against real BC (28.1 / 28.4, see #2490's arm A2):
 /// a Decimal field with <c>MinValue = 0;</c> raises
-/// <c>Validation error for Field: &lt;caption&gt;,  Message = 'The value must be greater than
+/// <c>Validation error for Field: &lt;control name&gt;,  Message = 'The value must be greater than
 /// or equal to 0. Value: -1.00. (Select Refresh to discard errors)'</c> from a TestPage
 /// SetValue, while the SAME write via <c>Rec.Validate</c> or a plain field assignment raises
 /// nothing at all — this is a client/page-layer check, not a table-trigger one, so it must
@@ -567,11 +567,9 @@ internal static class TestPageBooleanValue
     /// the same way <see cref="TestPageMinMaxValue.MakeError"/> already builds that shape for a
     /// MinValue/MaxValue refusal.</para>
     ///
-    /// <para>One fidelity gap, stated rather than hidden: BC puts the control's declared NAME in
-    /// the <c>Field:</c> slot and its CAPTION in the quoted target ("RecTrue" and "Rec True"
-    /// above). This runner's <c>ITestField.Name</c> answers the caption, so both slots read the
-    /// caption here. A test asserting the message as a substring — as the corpus one does — is
-    /// unaffected; one asserting it verbatim would see the difference.</para>
+    /// <para>BC puts the control's declared NAME in the <c>Field:</c> slot and its CAPTION in the
+    /// quoted target ("RecTrue" and "Rec True" above). <c>ITestField.Name</c> answers the control
+    /// name (#3458), and <paramref name="caption"/> is the caption.</para>
     /// </summary>
     internal static NavValue Resolve(string value, string caption)
     {

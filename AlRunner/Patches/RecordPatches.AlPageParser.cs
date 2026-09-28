@@ -726,6 +726,19 @@ public static partial class RecordPatches
         return null;
     }
 
+    /// <summary>The AL name of a PRECOMPILED dependency page's control, from its symbol file, or
+    /// null when no control has that id (#3458).</summary>
+    internal static string? TryGetDependencyControlName(int pageId, int controlId)
+    {
+        var symbol = TryGetDependencyPageSymbol(pageId);
+        if (symbol == null) return null;
+        foreach (var control in (symbol.Controls ?? new List<BcAppSymbolCache.PageControlSymbol>())
+                     .Concat(DependencyPageExtensionFieldControls(symbol.Name)))
+            if (control.Id == controlId)
+                return string.IsNullOrEmpty(control.Name) ? null : control.Name;
+        return null;
+    }
+
     /// <summary>
     /// The <c>OptionCaption</c> a control of a PRECOMPILED dependency page states, with a
     /// precompiled pageextension's <c>modify(&lt;control&gt;)</c> value winning, or null when

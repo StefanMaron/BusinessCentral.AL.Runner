@@ -324,6 +324,17 @@ internal sealed partial class RunnerPageInstance
         return string.IsNullOrEmpty(caption) ? null : caption;
     }
 
+    /// <summary>The control's AL name, <c>field(&lt;Name&gt;; …)</c>, from the page's own control
+    /// tree, a precompiled page's symbol file, or a source pageextension's delta; null when none
+    /// declares it (#3458).</summary>
+    internal string? TryGetControlName(int controlId)
+    {
+        var name = ControlDefinition(controlId)?.Name;
+        return !string.IsNullOrEmpty(name) ? name
+            : RecordPatches.TryGetDependencyControlName(_pageId, controlId)
+              ?? RecordPatches.SourcePageExtensionControlName(_pageId, controlId);
+    }
+
     /// <summary>
     /// Build and initialise the AL page object for <paramref name="pageId"/>, bound to
     /// <paramref name="record"/>. Returns null when the page has no compiled type or no
