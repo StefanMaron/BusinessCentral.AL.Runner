@@ -306,6 +306,24 @@ internal static partial class ProgramSupport
         w.WriteLine("      only; it says nothing about whether the code is present to execute.");
         w.WriteLine();
 
+        // #4932: AL that branches on these answers takes a different path here than on a sandbox,
+        // and nothing told the caller why.
+        w.WriteLine("RUNTIME ENVIRONMENT — what your AL sees by default");
+        w.WriteLine("  Environment type: Production, not a sandbox, not SaaS. So Environment");
+        w.WriteLine("      Information answers IsProduction() = true, IsSandbox() = false and");
+        w.WriteLine("      IsSaaS() = false, as an on-premises service tier does.");
+        w.WriteLine("      Library - Permissions.SetTestTenantEnvironmentType(true) makes the tenant a");
+        w.WriteLine("      sandbox for the test: IsSandbox() true, IsProduction() false. IsSaaS() does");
+        w.WriteLine("      NOT reliably follow: Environment Information Impl. caches it at its first");
+        w.WriteLine("      read in the run. To force it, use Environment Info Test Library (OnPrem");
+        w.WriteLine("      scope) .SetTestabilitySoftwareAsAService(true). Its .SetTestabilitySandbox");
+        w.WriteLine("      changes only IsSandbox(); with either, IsProduction() stays true.");
+        w.WriteLine("      The al-language corpus tier runs as a sandbox, so its answers differ.");
+        w.WriteLine("  Service topology: always on-premises, even after a test switches to SaaS.");
+        w.WriteLine("  License: none; the named-user limit on User writes is never enforced (#4700).");
+        w.WriteLine("  Details: docs/limitations.md#environment-type");
+        w.WriteLine();
+
         w.WriteLine("OUTPUT NOTES");
         w.WriteLine("  Console output written from inside a test is captured by the runner, not");
         w.WriteLine("  echoed live — a probe that writes to stdout will appear to produce nothing.");
@@ -391,6 +409,8 @@ internal static partial class ProgramSupport
         w.WriteLine();
 
         w.WriteLine("FURTHER READING");
+        w.WriteLine("  docs/ paths in this guide resolve online under");
+        w.WriteLine("  https://github.com/StefanMaron/BusinessCentral.AL.Runner/blob/main/");
         w.WriteLine("  --help                       full flag reference");
         w.WriteLine("  docs/limitations.md          the real architectural limits");
         w.WriteLine("  docs/scope.md                in-scope vs out-of-scope-by-design surfaces");
