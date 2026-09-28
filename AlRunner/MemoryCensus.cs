@@ -16,6 +16,15 @@ internal static class MemoryCensus
 
     private static int _counter;
 
+    /// <summary>The census's spelling of "could not measure": never a number, so a column that
+    /// did not measure cannot be read as data (#4812).</summary>
+    internal static string Unavailable(string reason) => $"unavailable({reason})";
+
+    internal static string RssMB(long rssKb) =>
+        rssKb < 0
+            ? Unavailable("/proc/self/status has no readable VmRSS line")
+            : Invariant($"{rssKb / 1024.0:F1}");
+
     private static long ReadVmRssKb()
     {
         try
@@ -55,7 +64,7 @@ internal static class MemoryCensus
             $"[mem-census] #{n} {codeunit}.{method} " +
             // #2968: a measurement line, and a measurement that reads differently per operator
             // locale is not one. Invariant so two runs stay comparable across machines.
-            Invariant($"gcTotalMB={gcTotal / 1024.0 / 1024.0:F1} rssMB={rssKb / 1024.0:F1} ") +
+            Invariant($"gcTotalMB={gcTotal / 1024.0 / 1024.0:F1} ") + $"rssMB={RssMB(rssKb)} " +
             $"asm={asmCount} daSources={daSources} daTables={daTables} " +
             $"media={mediaEntries} links={linkEntries} storage={storageEntries} " +
             $"sharedChildren={sharedChildren}");

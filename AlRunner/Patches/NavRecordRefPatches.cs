@@ -69,36 +69,30 @@ public static partial class BcRuntime
         }
     }
 
-    // TEMPORARY (memory-census diagnostic) — count the container's live child chain
-    // WITHOUT disposing it, by walking TreeHandler's private child-linked-list fields
-    // via reflection. Best-effort: returns -1 if the field shape can't be found.
-    // See MemoryCensus.cs.
-    private static FieldInfo? _fTreeHandlerFirstChild;
-    private static FieldInfo? _fTreeHandlerNextSibling;
-    internal static int CensusSharedObjectContainerChildCount()
-    {
-        if (_skeletonSharedObjectContainer is not ITreeObject treeObject || treeObject.Tree == null)
-            return 0;
-        var tree = treeObject.Tree;
-        var treeType = tree.GetType();
-        if (_fTreeHandlerFirstChild == null)
-            _fTreeHandlerFirstChild = treeType.GetField("firstChildHandler",
-                BindingFlags.NonPublic | BindingFlags.Instance);
-        if (_fTreeHandlerFirstChild == null) return -1;
-        if (_fTreeHandlerNextSibling == null)
-            _fTreeHandlerNextSibling = _fTreeHandlerFirstChild.FieldType.GetField("nextSiblingHandler",
-                BindingFlags.NonPublic | BindingFlags.Instance);
-        if (_fTreeHandlerNextSibling == null) return -1;
+    // Memory-census diagnostic (MemoryCensus.cs): the container's live child count, read through
+    // BC's public TreeHandler.Children — the chain DisposeSkeletonSharedObjectContainerChildren
+    // sweeps — without disposing anything. A number only when it was measured; a tree that
+    // cannot be read answers MemoryCensus.Unavailable(<reason>), never a number (#4812).
+    internal static string CensusSharedObjectContainerChildCount() =>
+        CensusTreeChildCount(_skeletonSharedObjectContainer);
 
-        int n = 0;
-        var cur = _fTreeHandlerFirstChild.GetValue(tree);
-        var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
-        while (cur != null && seen.Add(cur))
+    internal static string CensusTreeChildCount(object? container)
+    {
+        // No RecordRef has materialised a container yet, so nothing can be parented to one.
+        if (container == null) return "0";
+        if (container is not ITreeObject treeObject)
+            return MemoryCensus.Unavailable($"{container.GetType().Name} is not an ITreeObject");
+        var tree = treeObject.Tree;
+        if (tree == null) return MemoryCensus.Unavailable("the container has no TreeHandler");
+        if (tree.IsDisposed) return MemoryCensus.Unavailable("the container's TreeHandler is disposed");
+        try
         {
-            n++;
-            cur = _fTreeHandlerNextSibling.GetValue(cur);
+            return tree.Children.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
-        return n;
+        catch (Exception e)
+        {
+            return MemoryCensus.Unavailable($"TreeHandler.Children threw {e.GetType().Name}");
+        }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
