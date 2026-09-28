@@ -579,6 +579,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **guards:** DefaultTestToolPinGuardTests catches ProgramSupport.DefaultTestToolEnvVar spawn sites
 - **harness:** spawned-runner C# tests no longer depend on whether the box has test-apps
 - **allobj:** bound AllObjPopulateCostTests per visible-app key, now that Test Runner loads by default
 - **virtual-tables:** stop refilling AllObj at every test-codeunit boundary
