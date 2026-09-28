@@ -164,11 +164,18 @@ public sealed class TestRunnerMgtEventsTests
         """;
 
     private static (string Output, int Exit) RunRunner(string bundle, Provisioned dirs, params string[] extra)
+        => RunRunner(bundle, dirs, TestTool.LoadFromTheNamedCache, extra);
+
+    private enum TestTool { LoadFromTheNamedCache, PinnedOff, Unpinned }
+
+    // Unpinned passes no --package-cache at all: the run sees only the caches a user's run would.
+    private static (string Output, int Exit) RunRunner(string bundle, Provisioned? dirs, TestTool testTool, params string[] extra)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
         args.Append(" --no-cache --no-auto-provision --show-pass");
-        args.Append($" --package-cache \"{dirs.TestApps}\" --package-cache \"{dirs.PlatformApps}\"");
+        if (testTool != TestTool.Unpinned)
+            args.Append($" --package-cache \"{dirs!.TestApps}\" --package-cache \"{dirs.PlatformApps}\"");
         foreach (var e in extra) args.Append(" \"").Append(e).Append('"');
         args.Append(" \"").Append(bundle).Append('"');
         var psi = new ProcessStartInfo
@@ -177,6 +184,8 @@ public sealed class TestRunnerMgtEventsTests
             RedirectStandardOutput = true, RedirectStandardError = true,
             UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
         };
+        if (testTool == TestTool.LoadFromTheNamedCache) DefaultTestToolPin.LoadFrom(psi, dirs!.TestApps);
+        if (testTool == TestTool.Unpinned) DefaultTestToolPin.Unpin(psi);
         var sb = new StringBuilder();
         var p = Process.Start(psi)!;
         p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
@@ -264,6 +273,71 @@ public sealed class TestRunnerMgtEventsTests
         Lacks(output, "TRE6 FAIL");
         Lacks(output, "TRE7 FAIL");
         Assert.Equal(0, exit);
+    }
+
+    private const string UndeclaredProbes = """
+        codeunit 64811 "TRE Undeclared Tests"
+        {
+            Subtype = Test;
+
+            trigger OnRun()
+            begin
+                ApplicationArea('#Basic,#TREProbe');
+            end;
+
+            [Test]
+            procedure A_FirstTestSeesNoArea()
+            begin
+                if ApplicationArea() <> '' then
+                    Error('TRE6 FAIL: undeclared Test Runner, first test saw [%1]', ApplicationArea());
+            end;
+        }
+        """;
+
+    // #4905: with the default load off, a cache holding the app is not enough; the suite's own
+    // OnRun area survives into its first test, as it does when no cache holds the app.
+    [SkippableFact]
+    public void TestRunnerNotDeclared_WithTheDefaultLoadOff_IsNotLoaded()
+    {
+        var dirs = RequireProvisioned();
+        var bundle = WriteBundle("al-runner-test-runner-events-4905-off", null, UndeclaredProbes);
+
+        var (output, exit) = RunRunner(bundle, dirs, TestTool.PinnedOff);
+
+        Assert.Contains("TRE6 FAIL: undeclared Test Runner, first test saw [#Basic,#TREProbe]", output, StringComparison.Ordinal);
+        Assert.Contains("FAIL  \"TRE Undeclared Tests\".A_FirstTestSeesNoArea", output, StringComparison.Ordinal);
+        Assert.Equal(1, exit);
+    }
+
+    // #4905: the configuration a user gets. No --package-cache and no pin, so the app comes from
+    // the runner-owned <artifacts>/<ver>/test-apps that `al-runner provision` fills. CI puts the
+    // toolkit there before this suite runs (.github/actions/provision-bc), so a CI leg runs this.
+    [SkippableFact]
+    public void TestRunnerNotDeclared_UnpinnedWithNoPackageCache_IsLoadedFromTheRunnerOwnedTestApps()
+    {
+        TestArtifacts.SkipIfMissing();
+        RequireRunnerOwnedTestRunner();
+        var bundle = WriteBundle("al-runner-test-runner-events-4905-unpinned", null, UndeclaredProbes);
+
+        var (output, exit) = RunRunner(bundle, null, TestTool.Unpinned);
+
+        HasLine(output, "PASS", "A_FirstTestSeesNoArea");
+        Lacks(output, "TRE6 FAIL");
+        Assert.Equal(0, exit);
+    }
+
+    private static void RequireRunnerOwnedTestRunner()
+    {
+        var built = AlRunner.Infrastructure.BcArtifacts.EngineBuiltVersion();
+        var dirs = built == null ? new List<string>() : AlRunner.Infrastructure.ProvisioningCheck.CollectRunnerOwnedProvisionDirs(
+            AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, $"{built.Major}.{built.Minor}").ToList();
+        if (dirs.Any(d => File.Exists(Path.Combine(d, "Microsoft_Test Runner.app")))
+            && dirs.Any(d => File.Exists(Path.Combine(d, "System.app"))))
+            return;
+        var reason = $"no runner-owned test-apps + platform-apps holding Microsoft_Test Runner.app and System.app for BC {built} under "
+            + $"'{AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir}' (al-runner provision --test-apps --platform-apps).";
+        if (TestArtifacts.RunningOnCi) Assert.Fail(TestArtifacts.CiMissingArtifactsMessage(reason));
+        TestArtifacts.SkipIf(true, reason);
     }
 
     [SkippableFact]

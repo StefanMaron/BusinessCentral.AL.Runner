@@ -72,6 +72,7 @@ public class AllObjPopulateCostTests
             UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
             Environment = { ["AL_RUNNER_PERF"] = "1" },
         };
+        DefaultTestToolPin.LoadFrom(psi, TestAppsDir());
         var sb = new StringBuilder();
         var p = Process.Start(psi)!;
         p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };

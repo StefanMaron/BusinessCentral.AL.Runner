@@ -87,3 +87,15 @@ runs:
         # cache key. --package-cache is repeatable; pass both.
         dotnet run --project tools/DownloadArtifacts -- \
           test-apps ${{ inputs.bc-version }} "$HOME/.al-runner/test-apps"
+
+        # #4905: the same toolkit at the runner-owned default location, as for platform-apps
+        # above. A runner that finds Microsoft's Test Runner app there loads it as the test tool
+        # by default (#4816), which is what a user who has run `al-runner provision` gets.
+        # AlRunner.Tests pins that load off for every runner it spawns, and
+        # TestRunnerMgtEventsTests.TestRunnerNotDeclared_UnpinnedWithNoPackageCache_* runs this
+        # default configuration; it fails on a CI leg when this directory is missing.
+        DEFAULT_TEST_APPS="$HOME/.local/share/al-runner/artifacts/${{ inputs.bc-version }}/test-apps"
+        mkdir -p "$DEFAULT_TEST_APPS"
+        cp -al "$HOME/.al-runner/test-apps/." "$DEFAULT_TEST_APPS/" \
+          || cp -a "$HOME/.al-runner/test-apps/." "$DEFAULT_TEST_APPS/"
+        ls "$DEFAULT_TEST_APPS" | wc -l

@@ -1813,6 +1813,14 @@ if (jobs > 1 && bundles.Count > 1 && !watchMode && !serverMode && !dapMode)
     return AlRunner.Infrastructure.ParallelFanOut.Run(bundles, args, jobs);
 }
 
+// #4905: refuse a misspelled AL_RUNNER_DEFAULT_TEST_TOOL here, before any work, rather than
+// from inside a dependency resolve that reports it as that bundle's failure.
+try { DefaultTestToolEnabled(); }
+catch (InvalidOperationException ex)
+{
+    Console.Error.WriteLine(ex.Message);
+    return 2;
+}
 
 var packageCacheDirs = packageCacheArgs.Count > 0
     ? ExpandPackageCacheDirs(packageCacheArgs).ToList()
@@ -2839,7 +2847,7 @@ foreach (var bundle in bundles)
                     resolverDirs, AlRunner.Infrastructure.CacheRoots.SourceBuiltPackageDirs(), depRootDir);
                 IReadOnlyList<(AlRunner.AppManifest Manifest, string AppPath)> ordered;
                 using (AlRunner.Infrastructure.PhaseLog.Stage("dep-resolve"))
-                    ordered = resolver.Resolve(WithInstalledTestTool(roots, bundleManifests, resolver));
+                    ordered = resolver.Resolve(WithDefaultTestTool(roots, bundleManifests, resolver));
                 bundleResolvedDeps = ordered;
                 bundleDependenciesResolved = true;
                 // Issue #2239: per-bundle dep counts are diagnostic detail — gated behind
