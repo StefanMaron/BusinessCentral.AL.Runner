@@ -152,7 +152,7 @@ public static partial class RecordPatches
         var extensionIds = GetPageExtensionIdsForPage(pageId).Where(_parsedPageExtensions.ContainsKey).ToList();
         var api = $"TestPage {property} on page {pageId} control {controlId}";
         var source = extensionIds.Count == 0 ? null
-            : ModifiedControlText(SourcePageExtensionDeltaDocuments(pageId, extensionIds, api), controlId, property, api, "pageextensions");
+            : ModifiedControlText(SourcePageExtensionDeltaDocuments(pageId, extensionIds, api), controlId, property, api, "pageextension");
         if (source != null || controlName == null) return source;
         var pageName = TryGetAnyPageName(pageId);
         return string.IsNullOrEmpty(pageName) ? null
@@ -160,10 +160,9 @@ public static partial class RecordPatches
     }
 
     // The ENU text of the <property>ML a ControlChange targeting controlId states, across the
-    // given extension delta documents. Two extensions stating different texts refuse until a
-    // service tier measures which one BC applies.
+    // given extension delta documents; where two state different texts, the one BC applies last.
     internal static string? ModifiedControlText(IEnumerable<(int ExtensionId, string Xml)> documents,
-        int controlId, string property, string api, string kinds)
+        int controlId, string property, string api, string objectKind)
     {
         var attribute = property + "ML";
         string? value = null;
@@ -177,16 +176,42 @@ public static partial class RecordPatches
                 if (node is not XmlElement e || e.Name != "ControlChange" || !e.HasAttribute(attribute)
                     || ReadBcAttrInt(e, "TargetID") != controlId) continue;
                 var stated = EnuMultiLanguageText.ReadEnu(e.GetAttribute(attribute), firstIfNoEnu: false);
-                if (from != null && !string.Equals(value, stated, StringComparison.Ordinal))
-                    throw TestPageShapeGap.ControlProperty(api,
-                        $"{kinds} {from} and {extId} both modify it, to '{value}' and '{stated}', "
-                        + "and which one BC applies has not been measured (#4928)");
+                if (from is { } earlier && !string.Equals(value, stated, StringComparison.Ordinal))
+                {
+                    var later = LaterAppliedExtension(objectKind, earlier, extId)
+                        ?? throw TestPageShapeGap.ControlProperty(api,
+                            $"{objectKind}s {earlier} and {extId} both modify it, to '{value}' and '{stated}', and neither's "
+                            + "app is known to depend on the other's, so which one BC applies cannot be told (#4928)");
+                    if (later == earlier) continue;
+                }
                 value = stated;
                 from = extId;
             }
         }
         return value;
     }
+
+    // Of two source extensions modifying one property, the one BC applies last: the dependent
+    // app's over its dependency's, and within one app the higher object id's, whatever the
+    // declaration or name order (corpus 67670: FxBothCtl, FxBoth2Ctl, TwiceCtl, Twice2Ctl).
+    // Null when an extension's app is unknown or neither app depends on the other.
+    private static int? LaterAppliedExtension(string objectKind, int a, int b)
+    {
+        if (SingleSourceOwner(objectKind, a) is not { } appA || SingleSourceOwner(objectKind, b) is not { } appB)
+            return null;
+        if (appA == appB) return Math.Max(a, b);
+        var dependencies = CurrentPackageVisibility().Dependencies;
+        var aDependsOnB = VisibleAppClosure(appA, dependencies).Contains(appB);
+        var bDependsOnA = VisibleAppClosure(appB, dependencies).Contains(appA);
+        if (aDependsOnB == bDependsOnA) return null;
+        return aDependsOnB ? a : b;
+    }
+
+    private static Guid? SingleSourceOwner(string objectKind, int id)
+        => _sourceObjectDeclarers.TryGetValue((NormalizeObjectTypeName(objectKind), id), out var declarers)
+           && declarers.Count == 1
+            ? declarers.First()
+            : null;
 
     private static XmlElement? SourcePageExtensionAddedControl(int pageId, int controlId, string what)
     {

@@ -207,7 +207,7 @@ public static partial class RecordPatches
         if (reportName == null) return null;
         var api = $"TestRequestPage {property} on report {reportId} control {controlId}";
         var source = ModifiedControlText(SourceReportExtensionDeltaDocuments(reportId, reportName, api),
-            controlId, property, api, "reportextensions");
+            controlId, property, api, "reportextension");
         if (source != null || controlName == null) return source;
 
         string? value = null;

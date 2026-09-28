@@ -16,6 +16,7 @@ public sealed class SourceExtensionModifyCaptionTests : IDisposable
     private const int PageExtensionId = 94930;
     private const int ReportId = 94931;
     private const int ReportExtensionId = 94932;
+    private const int SecondPageExtensionId = 94933;
 
     private readonly string _root;
     private readonly BcEngineFixture _engine;
@@ -34,6 +35,7 @@ public sealed class SourceExtensionModifyCaptionTests : IDisposable
         RemoveFromDict("_parsedPages", PageId);
         RemoveFromDict("_parsedPages", OtherPageId);
         RemoveFromDict("_parsedPageExtensions", PageExtensionId);
+        RemoveFromDict("_parsedPageExtensions", SecondPageExtensionId);
         RemoveFromDict("_parsedReports", ReportId);
         RemoveFromDict("_parsedReportExtensions", ReportExtensionId);
         try { Directory.Delete(_root, recursive: true); } catch { /* best-effort cleanup */ }
@@ -65,6 +67,8 @@ public sealed class SourceExtensionModifyCaptionTests : IDisposable
                     field(VarCtl; HostVar) { Caption = 'Host Var'; }
                     field(OptCtl; HostOpt) { Caption = 'Host Option'; OptionCaption = 'Alpha Cap,Beta Cap'; }
                     field(PlainCtl; HostVar) { Caption = 'Host Plain'; }
+                    field(ClashCtl; HostVar) { Caption = 'Host Clash'; }
+                    field(AgreeCtl; HostVar) { Caption = 'Host Agree'; }
                 }
             }
             var
@@ -86,6 +90,17 @@ public sealed class SourceExtensionModifyCaptionTests : IDisposable
                 modify(RenCtl) { Caption = 'Modified Ren'; }
                 modify(VarCtl) { Caption = 'Modified; Var'; }
                 modify(OptCtl) { Caption = 'Modified Option'; OptionCaption = 'Alpha Mod,Beta Mod'; }
+                modify(ClashCtl) { Caption = 'Clash A'; }
+                modify(AgreeCtl) { Caption = 'Agreed'; }
+            }
+        }
+
+        pageextension 94933 "SEMC Card Ext 2" extends "SEMC Card"
+        {
+            layout
+            {
+                modify(ClashCtl) { Caption = 'Clash B'; }
+                modify(AgreeCtl) { Caption = 'Agreed'; }
             }
         }
 
@@ -181,6 +196,18 @@ public sealed class SourceExtensionModifyCaptionTests : IDisposable
         // A modify() stating only OptionCaption leaves the Caption to the control.
         Assert.Null(RecordPatches.ReportExtensionModifiedControlText(ReportId, RequestControl("ReqOptCtl"), "ReqOptCtl", "Caption"));
         Assert.Null(RecordPatches.ReportExtensionModifiedControlText(ReportId, RequestControl("ReqPlainCtl"), "ReqPlainCtl", "Caption"));
+    }
+
+    // Which of two differing modify() values BC applies depends on the extensions' apps
+    // (corpus 67670); this fixture registers no app group, so neither app is known.
+    [SkippableFact]
+    public void TwoExtensionsWhoseAppsAreUnknown_ModifyingDifferently_Refuse_AndAgreeingAnswer()
+    {
+        Emit();
+        var ex = Assert.Throws<RunnerOutOfScopeException>(() =>
+            RecordPatches.PageExtensionModifiedControlText(PageId, PageControl("ClashCtl"), "ClashCtl", "Caption"));
+        Assert.Contains("'Clash A' and 'Clash B'", ex.Message, StringComparison.Ordinal);
+        Assert.Equal("Agreed", RecordPatches.PageExtensionModifiedControlText(PageId, PageControl("AgreeCtl"), "AgreeCtl", "Caption"));
     }
 
     [SkippableFact]
