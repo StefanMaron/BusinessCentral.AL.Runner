@@ -717,7 +717,7 @@ public static partial class NclCecilRewrite
         // helper (ReplaceBodyWithHelper handles arg-boxing + return-cast), and add
         // every key to CecilOwned so the existing Hook(...) install auto-no-ops.
         //
-        // The *Async no-op targets (VerifySecurityFilters*, MoveLinksAsync,
+        // The *Async no-op targets (VerifySecurityFilters*,
         // UpdateReferencesOnRenameAsync) all return the NON-generic ValueTask and map
         // to HelperShims.ReturnValueTask{2..5} (which return `default` ValueTask) —
         // an exact value-type return match, so no completed-task shim is needed.
@@ -1358,11 +1358,6 @@ public static partial class NclCecilRewrite
                 ByParams(Rt + "NavRecord", "UpdateReferencesOnRenameAsync",
                     "NavRecord", "NCLMetaTable", "NCLMetaField", "NavValue"),
                 H(recordPatches, "NavRecord_UpdateReferencesOnRenameRows"));
-
-            // ── RecordLink.MoveLinksAsync(NavRecord,NavRecord) static → ReturnValueTask2 ──
-            ReplaceBodyWithHelper(nclMod,
-                ByParams(Rt + "RecordLink", "MoveLinksAsync", "NavRecord", "NavRecord"),
-                H(helperShims, "ReturnValueTask2"));
 
             // ── NavManagementTasks.CopyCompany(String,String) instance void → NoOp3 ──
             ReplaceBodyWithHelper(nclMod,

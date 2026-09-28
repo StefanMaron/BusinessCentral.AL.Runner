@@ -33,7 +33,7 @@ public static partial class RecordPatches
         internal NCLMetaField RecordId = null!;
         internal NCLMetaField Url1 = null!;
         internal NCLMetaField Description = null!;
-        internal NCLMetaField? Company;
+        internal NCLMetaField Company = null!;
         internal NCLMetaField? UserId;
         internal NCLMetaField? Created;
         internal NCLMetaField? SystemId;
@@ -57,7 +57,7 @@ public static partial class RecordPatches
 
             // Loud, never silent: a renamed column here would otherwise produce link rows
             // that insert cleanly and can never be found again — the exact silent-fake shape
-            // loud-failures.md forbids. The four below are the ones every read filters or
+            // loud-failures.md forbids. The five below are the ones every read filters or
             // asserts on; the three optional ones only carry provenance.
             NCLMetaField Required(string name)
                 => byName.TryGetValue(name, out var f)
@@ -75,7 +75,7 @@ public static partial class RecordPatches
                 RecordId = Required("Record ID"),
                 Url1 = Required("URL1"),
                 Description = Required("Description"),
-                Company = byName.TryGetValue("Company", out var c) ? c : null,
+                Company = Required("Company"),
                 UserId = byName.TryGetValue("User ID", out var u) ? u : null,
                 Created = byName.TryGetValue("Created", out var cr) ? cr : null,
                 SystemId = ResolveSystemIdField(table),
@@ -206,11 +206,27 @@ public static partial class RecordPatches
         return v.GetBytes();
     }
 
-    private static bool RowBelongsTo(NavValue[] row, RecordLinkColumns columns, byte[] parentKey)
+    /// <summary>A record's links, as BC's <c>RecordLink.SetupRecordLinkRanges</c> selects them:
+    /// "Record ID" equal to the record's, and Company equal to <paramref name="company"/> when that
+    /// is non-null. Corpus codeunit 67681 pins both halves (#4956).</summary>
+    private static bool RowBelongsTo(NavValue[] row, RecordLinkColumns columns, byte[] parentKey, string? company)
     {
         var bytes = SlotBytes(row, columns.RecordId);
-        return bytes != null && bytes.AsSpan().SequenceEqual(parentKey);
+        return bytes != null && bytes.AsSpan().SequenceEqual(parentKey)
+               && (company == null || ReadRecordLinkCompany(row, columns) == company);
     }
+
+    private static string ReadRecordLinkCompany(NavValue[] row, RecordLinkColumns columns)
+    {
+        var idx = columns.Company.FieldIndex;
+        if (idx < 0 || idx >= row.Length || row[idx] == null || row[idx].IsNull) return string.Empty;
+        return row[idx].ToString() ?? string.Empty;
+    }
+
+    /// <summary>The Company filter <c>SetupRecordLinkRanges</c> adds: the record's company for a
+    /// per-company table, none (null) otherwise.</summary>
+    private static string? ParentCompanyFilter(object? record)
+        => record is NavRecord rec && rec.MetaTable.DataPerCompany ? rec.CompanyName : null;
 
     /// <summary>BC's own encoding of a RecordId, which is what the stored column holds — so
     /// "is this row this record's" is a byte comparison, never a re-parse.</summary>
@@ -233,7 +249,7 @@ public static partial class RecordPatches
     /// Link. Corpus codeunit 67681 "Test Record Link Columns" pins the columns (#4951).</summary>
     private static NavValue[] BuildRecordLinkRow(
         RecordLinkColumns columns, int linkId, NavValue parentRecordId, string url, string description,
-        bool parentDataPerCompany)
+        string? parentCompany)
     {
         var values = (NavValue[])columns.Empty.Clone();
 
@@ -249,7 +265,7 @@ public static partial class RecordPatches
         Set(columns.RecordId, parentRecordId);
         Set(columns.Url1, url);
         Set(columns.Description, description);
-        if (parentDataPerCompany) Set(columns.Company, ReadSkeletonCompanyIdentity().Name);
+        Set(columns.Company, parentCompany);
         Set(columns.Created, DateTime.UtcNow);
         Set(columns.UserId, RecordLinkUserId());
         SetFreshSystemId(values, columns);
@@ -275,12 +291,11 @@ public static partial class RecordPatches
 
     /// <summary>The Company value BC writes on a link row: the company for a per-company parent,
     /// empty otherwise (<c>RecordLink.CopyLinksAsync</c> writes the empty text explicitly).</summary>
-    private static void SetRecordLinkCompany(NavValue[] values, RecordLinkColumns columns, bool parentDataPerCompany)
+    private static void SetRecordLinkCompany(NavValue[] values, RecordLinkColumns columns, string? parentCompany)
     {
         var f = columns.Company;
-        if (f == null || f.FieldIndex < 0 || f.FieldIndex >= values.Length) return;
-        values[f.FieldIndex] = NavValue.CreateNavValueFromObject(
-            f, parentDataPerCompany ? ReadSkeletonCompanyIdentity().Name : string.Empty);
+        if (f.FieldIndex < 0 || f.FieldIndex >= values.Length) return;
+        values[f.FieldIndex] = NavValue.CreateNavValueFromObject(f, parentCompany ?? string.Empty);
     }
 
     /// <summary>The next "Link ID". Taken from the SAME AutoIncrement counter
@@ -317,7 +332,7 @@ public static partial class RecordPatches
         var nextId = NextRecordLinkId(columns);
         NoteRecordLinkWrite();
         InsertRows(provider, columns.Meta,
-            new[] { BuildRecordLinkRow(columns, nextId, parentValue, url, description, rec.MetaTable.DataPerCompany) });
+            new[] { BuildRecordLinkRow(columns, nextId, parentValue, url, description, ParentCompanyFilter(rec)) });
         return nextId;
     }
 
@@ -329,8 +344,9 @@ public static partial class RecordPatches
         var key = ParentKeyBytes(record, columns);
         if (key == null) return false;
 
+        var company = ParentCompanyFilter(record);
         foreach (var row in ReadRecordLinkRows(provider))
-            if (RowBelongsTo(row, columns, key))
+            if (RowBelongsTo(row, columns, key, company))
                 return true;
         return false;
     }
@@ -344,7 +360,8 @@ public static partial class RecordPatches
         if (key == null) return;
 
         var rows = ReadRecordLinkRows(provider);
-        var kept = rows.Where(r => !RowBelongsTo(r, columns, key)).ToList();
+        var company = ParentCompanyFilter(record);
+        var kept = rows.Where(r => !RowBelongsTo(r, columns, key, company)).ToList();
         if (kept.Count == rows.Count) return;
         ReplaceRecordLinkRows(provider, columns, kept);
     }
@@ -358,8 +375,11 @@ public static partial class RecordPatches
         if (key == null) return;
 
         var rows = ReadRecordLinkRows(provider);
-        // BC's DeleteLink on a Link ID that is not this record's is a no-op, not an error.
-        var kept = rows.Where(r => !(RowBelongsTo(r, columns, key) && ReadLinkId(r, columns) == linkId)).ToList();
+        // BC's DeleteLink on a Link ID that is not this record's is a no-op, not an error. Its
+        // Company check has no per-company condition, so on a table that is not per company the
+        // empty Company AddLink wrote never matches and the row stays (corpus 67681, #4956).
+        var company = ((NavRecord)record!).CompanyName;
+        var kept = rows.Where(r => !(RowBelongsTo(r, columns, key, company) && ReadLinkId(r, columns) == linkId)).ToList();
         if (kept.Count == rows.Count) return;
         ReplaceRecordLinkRows(provider, columns, kept);
     }
@@ -384,13 +404,14 @@ public static partial class RecordPatches
         if (dstValue.GetBytes().AsSpan().SequenceEqual(srcKey)) return;
 
         var rows = ReadRecordLinkRows(provider);
-        var toCopy = rows.Where(r => RowBelongsTo(r, columns, srcKey)).ToList();
+        var srcCompany = ParentCompanyFilter(from);
+        var toCopy = rows.Where(r => RowBelongsTo(r, columns, srcKey, srcCompany)).ToList();
         if (toCopy.Count == 0) return;
 
         // BC's CopyLinksAsync copies the whole source row (Type, User ID, Created, Notify, Note,
         // ...) and then sets only Link ID, Record ID and Company — so a copy keeps its author.
         // A fresh Link ID, unlike MoveLinks below, which relocates the rows and keeps theirs.
-        var dstDataPerCompany = dst.MetaTable.DataPerCompany;
+        var dstCompany = ParentCompanyFilter(dst);
         var built = toCopy
             .Select(r =>
             {
@@ -398,7 +419,7 @@ public static partial class RecordPatches
                 copy[columns.LinkId.FieldIndex] =
                     NavValue.CreateNavValueFromObject(columns.LinkId, NextRecordLinkId(columns));
                 copy[columns.RecordId.FieldIndex] = dstValue;
-                SetRecordLinkCompany(copy, columns, dstDataPerCompany);
+                SetRecordLinkCompany(copy, columns, dstCompany);
                 SetFreshSystemId(copy, columns);
                 return copy;
             })
@@ -418,10 +439,11 @@ public static partial class RecordPatches
         var dstValue = NavValue.CreateNavValueFromObject(columns.RecordId, dst.ALRecordId);
 
         var rows = ReadRecordLinkRows(provider);
+        var srcCompany = ParentCompanyFilter(from);
         var moved = false;
         foreach (var row in rows)
         {
-            if (!RowBelongsTo(row, columns, srcKey)) continue;
+            if (!RowBelongsTo(row, columns, srcKey, srcCompany)) continue;
             var idx = columns.RecordId.FieldIndex;
             if (idx < 0 || idx >= row.Length) continue;
             // Moving keeps the row and its Link ID; only the owner changes.
@@ -433,8 +455,9 @@ public static partial class RecordPatches
 
     /// <summary>Does any record of <paramref name="tableId"/> have a link? Answered by
     /// reading the table id back out of each row's own RecordId, so it cannot report
-    /// another table's links.</summary>
-    internal static bool RecordLinkStore_TableHasLinks(int tableId)
+    /// another table's links. <paramref name="company"/> is BC's Company filter, null for a
+    /// table that is not per company (<c>RecordLink.TableHasLinks</c>).</summary>
+    internal static bool RecordLinkStore_TableHasLinks(int tableId, string? company)
     {
         var store = GetRecordLinkStore(create: false);
         if (store == null) return false;
@@ -444,7 +467,8 @@ public static partial class RecordPatches
         {
             var idx = columns.RecordId.FieldIndex;
             if (idx < 0 || idx >= row.Length || row[idx] == null || row[idx].IsNull) continue;
-            if (RecordIdTableNo(row[idx]) == tableId) return true;
+            if (RecordIdTableNo(row[idx]) == tableId
+                && (company == null || ReadRecordLinkCompany(row, columns) == company)) return true;
         }
         return false;
     }
