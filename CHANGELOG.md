@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **testpage:** AssertEquals refusal names the page control, as BC does
 - **testpage:** application-area removal reaches the request-page controls a reportextension adds
 - **app-groups:** an AllObj read in a group depending on two declarers of an id no longer throws
 - **session:** answer Session's Database Name and Application Name from the Active Session row, as BC does
