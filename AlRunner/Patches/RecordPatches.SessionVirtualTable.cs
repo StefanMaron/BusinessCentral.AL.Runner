@@ -150,7 +150,8 @@ public static partial class RecordPatches
     /// back from the skeleton NavSession; nothing here is computed a second time.
     /// </summary>
     private sealed record SessionRow(
-        int ConnectionId, string UserId, DateTime LoginAt, int LoginTypeOrdinal, string HostName);
+        int ConnectionId, string UserId, DateTime LoginAt, int LoginTypeOrdinal, string HostName,
+        string? DatabaseName, string? ApplicationName);
 
     /// <summary>
     /// Populate the in-memory store behind Session (2000000009) with the one row BC's own
@@ -214,8 +215,43 @@ public static partial class RecordPatches
                 + "\"Login Date\" / \"Login Time\" have no source — see "
                 + "BcRuntime.SkeletonSessionLoginTime");
 
+        var (databaseName, applicationName) = ReadActiveSessionProjection(session, connectionId);
         return new SessionRow(
-            connectionId, userName!, loginAt, ReadLoginTypeOrdinal(session), ReadHostName());
+            connectionId, userName!, loginAt, ReadLoginTypeOrdinal(session), ReadHostName(),
+            databaseName, applicationName);
+    }
+
+    /// <summary>
+    /// "Database Name" and "Application Name" as BC's SessionDataProvider reads them (#3230): off
+    /// the session's own Active Session (2000000110) row, keyed (ServiceInstanceId(), session Id) —
+    /// field "Database Name" as stored, and field "Client Type" stringified with the option's own
+    /// ToString(). Both columns therefore agree with Active Session by construction, as on a tier.
+    /// </summary>
+    /// <remarks>
+    /// Null for either when there is no row to read: the Active Session seed runs after the
+    /// dependency Install triggers (TestExecutor, and see RecordPatches.ActiveSessionSystemTable.cs
+    /// for why it cannot run earlier), so a Session read from inside one of those triggers finds
+    /// no row yet, and the column keeps BC's own default as it did before #3230. The seeded row
+    /// itself carries a blank "Database Name" (the runner has no database) and "Client Type"
+    /// Unknown (#4005); this reads them back rather than improving on them.
+    /// </remarks>
+    private static (string? DatabaseName, string? ApplicationName) ReadActiveSessionProjection(
+        object session, int connectionId)
+    {
+        if (session is not Microsoft.Dynamics.Nav.Runtime.NavSession navSession) return (null, null);
+        if (EnsureTableInMetadataCache(ActiveSessionSystemTableId) is not { } meta) return (null, null);
+
+        using var rec = new Microsoft.Dynamics.Nav.Runtime.NavRecord(
+            navSession, ActiveSessionSystemTableId, Microsoft.Dynamics.Nav.Runtime.SecurityFiltering.Ignored);
+#pragma warning disable CS0618
+        if (!rec.ALGet(Microsoft.Dynamics.Nav.Types.DataError.TrapError,
+                Microsoft.Dynamics.Nav.Runtime.NavInteger.Create(Microsoft.Dynamics.Nav.Runtime.ALDatabase.ALServiceInstanceID()),
+                Microsoft.Dynamics.Nav.Runtime.NavInteger.Create(connectionId)))
+            return (null, null);
+#pragma warning restore CS0618
+        var m = rec.MetaTable ?? meta;
+        return (rec.GetFieldValue(FieldByNameOn(m, "Database Name").FieldNo)?.ToString() ?? string.Empty,
+                rec.GetFieldValue(FieldByNameOn(m, "Client Type").FieldNo)?.ToString() ?? string.Empty);
     }
 
     /// <summary>
@@ -273,8 +309,8 @@ public static partial class RecordPatches
     /// <summary>
     /// One column of the Session row, matched by the metatable's own FIELD NAME so the mapping
     /// tracks whatever the System package in the resolved artifact declares rather than a
-    /// hardcoded field-number table. "Database Name" and "Application Name" deliberately fall
-    /// through to BC's own default — see this file's header and #3230.
+    /// hardcoded field-number table. "Database Name" and "Application Name" are read off the
+    /// session's Active Session row (#3230) — see <see cref="ReadActiveSessionProjection"/>.
     /// </summary>
     private static object? BuildSessionValue(NCLMetaField field, SessionRow row)
     {
@@ -310,6 +346,12 @@ public static partial class RecordPatches
             case "hostname":
                 return _aovNavTextCreateTruncated!.Invoke(
                     null, new object?[] { field.FieldDefinedLength, row.HostName });
+            case "databasename":
+                return row.DatabaseName == null ? Default()
+                    : _aovNavTextCreateTruncated!.Invoke(null, new object?[] { field.FieldDefinedLength, row.DatabaseName });
+            case "applicationname":
+                return row.ApplicationName == null ? Default()
+                    : _aovNavTextCreateTruncated!.Invoke(null, new object?[] { field.FieldDefinedLength, row.ApplicationName });
             default:
                 return Default();
         }
