@@ -4170,15 +4170,13 @@ foreach (var bundle in bundles)
         {
             // #4931: run after every bundle has loaded; the load's own row closes here.
             var loadedState = AlRunner.Infrastructure.BundleRunState.Capture(includeProvisionGaps: true);
-            var loadedIndex = i2;
-            AlRunner.Infrastructure.PhaseLog.EndBundle(bundleEmit, bundleComp, TimeSpan.Zero);
+            var phaseRow = AlRunner.Infrastructure.PhaseLog.SuspendBundle();
             deferredBundleRuns.Add(() =>
             {
-                // A second row for this bundle, carrying its run time only.
-                AlRunner.Infrastructure.PhaseLog.BeginBundle(rel, loadedIndex);
+                AlRunner.Infrastructure.PhaseLog.ResumeBundle(phaseRow);
                 loadedState.Restore();
                 RunLoadedApps();
-                FinishBundle(TimeSpan.Zero, TimeSpan.Zero);
+                FinishBundle();
             });
             continue;
         }
@@ -4389,10 +4387,9 @@ foreach (var bundle in bundles)
         }
     }
 
-    FinishBundle(bundleEmit, bundleComp);
+    FinishBundle();
 
-    // The row's emit/compile arguments are zero on a deferred run, whose load row reported them.
-    void FinishBundle(TimeSpan rowEmit, TimeSpan rowCompile)
+    void FinishBundle()
     {
     // The interactive dashboard owns the whole screen and is painted after the
     // cycle, so suppress these per-bundle status lines there (they'd be wiped by
@@ -4451,7 +4448,7 @@ foreach (var bundle in bundles)
     // yields a row for every bundle it did finish. The row's wall clock covers this
     // whole loop turn, so wall − (emit+compile+run) is the per-bundle overhead
     // (dep resolution, symbol/module registration) #1825 is hunting.
-    AlRunner.Infrastructure.PhaseLog.EndBundle(rowEmit, rowCompile, bundleRun);
+    AlRunner.Infrastructure.PhaseLog.EndBundle(bundleEmit, bundleComp, bundleRun);
     }
 }
 foreach (var deferredRun in deferredBundleRuns)
@@ -5618,7 +5615,7 @@ return strictExitCode ? computedExitCode : 0;
         var deferRuns = sourcePaths.Length > 1;
         var loadedBundles = new List<(ServerRunResult? Result,
             (string ModuleName, string? ChangeModelFallbackReason, Func<(ServerRunResult Result, TimeSpan RunElapsed)> Run)? Deferred,
-            string RelBundle, int Index)>();
+            AlRunner.Infrastructure.PhaseLog.SuspendedBundle? PhaseRow, TimeSpan Emit, TimeSpan Compile)>();
         var bundleIndex = 0;
         foreach (var bundleDir in sourcePaths)
         {
@@ -5636,13 +5633,16 @@ return strictExitCode ? computedExitCode : 0;
                 EffectiveBeforeRun(sawFallbackReason),
                 deferRuns, out var deferred,
                 out var emitElapsed, out var compileElapsed, out var runElapsed);
-            AlRunner.Infrastructure.PhaseLog.EndBundle(emitElapsed, compileElapsed, runElapsed);
+            // A deferred bundle keeps one row: set aside here, resumed for its run below.
+            var phaseRow = deferred != null ? AlRunner.Infrastructure.PhaseLog.SuspendBundle() : null;
+            if (phaseRow == null)
+                AlRunner.Infrastructure.PhaseLog.EndBundle(emitElapsed, compileElapsed, runElapsed);
             if (beforeRun != null && deferred is { ChangeModelFallbackReason: { } fellBack } loadedBundle)
                 sawFallbackReason ??= $"{loadedBundle.ModuleName}: {fellBack}";
-            loadedBundles.Add((result, deferred, relBundle, bundleIndex));
+            loadedBundles.Add((result, deferred, phaseRow, emitElapsed, compileElapsed));
         }
 
-        foreach (var (loadResult, deferred, relBundle, index) in loadedBundles)
+        foreach (var (loadResult, deferred, phaseRow, emit, compile) in loadedBundles)
         {
             if (deferred is not { } run)
             {
@@ -5650,11 +5650,10 @@ return strictExitCode ? computedExitCode : 0;
                 continue;
             }
             if (cancellationToken.IsCancellationRequested) break;
-            // A second row for this bundle: the first one closed with its emit and compile times.
-            AlRunner.Infrastructure.PhaseLog.BeginBundle(relBundle, index);
+            AlRunner.Infrastructure.PhaseLog.ResumeBundle(phaseRow!);
             AlRunner.Infrastructure.PhaseLog.BeginApp(run.ModuleName, 1, 1);
             var (runResult, runElapsed) = run.Run();
-            AlRunner.Infrastructure.PhaseLog.EndBundle(TimeSpan.Zero, TimeSpan.Zero, runElapsed);
+            AlRunner.Infrastructure.PhaseLog.EndBundle(emit, compile, runElapsed);
             results.Add(runResult);
         }
 

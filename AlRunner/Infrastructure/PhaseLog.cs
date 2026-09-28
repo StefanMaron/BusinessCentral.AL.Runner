@@ -501,6 +501,53 @@ public static class PhaseLog
         }
     }
 
+    /// <summary>A bundle row set aside while later bundles load (#4850, #4931).</summary>
+    public sealed class SuspendedBundle
+    {
+        internal PhaseLogRecord? Bundle;
+        internal System.Diagnostics.Stopwatch? Clock;
+        internal readonly List<PhaseLogRecord> Apps = new();
+    }
+
+    /// <summary>
+    /// Sets the open bundle row and its app rows aside, clock stopped, so a bundle whose run is
+    /// deferred still writes ONE row: <see cref="ResumeBundle"/> reopens it for the run turn, the run
+    /// lands on the same app rows by name, and wall_ms is the sum of this bundle's own two turns.
+    /// </summary>
+    public static SuspendedBundle SuspendBundle()
+    {
+        var suspended = new SuspendedBundle();
+        if (!Enabled) return suspended;
+        EndApp();
+        lock (Gate)
+        {
+            suspended.Bundle = _bundle;
+            suspended.Clock = _bundleClock;
+            suspended.Clock?.Stop();
+            suspended.Apps.AddRange(Apps);
+            _bundle = null;
+            _bundleClock = null;
+            Apps.Clear();
+            AppsByName.Clear();
+        }
+        return suspended;
+    }
+
+    /// <summary>Reopens a row <see cref="SuspendBundle"/> set aside; <see cref="EndBundle"/> writes it.</summary>
+    public static void ResumeBundle(SuspendedBundle suspended)
+    {
+        if (!Enabled || suspended.Bundle == null) return;
+        EndBundle(TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero); // flush anything open, as BeginBundle does
+        lock (Gate)
+        {
+            _bundle = suspended.Bundle;
+            _bundleClock = suspended.Clock;
+            _bundleClock?.Start();
+            Apps.AddRange(suspended.Apps);
+            foreach (var app in suspended.Apps) AppsByName[app.App!] = app;
+        }
+    }
+
     /// <summary>
     /// Closes the open bundle row with its measured phase times and appends it.
     /// Written per bundle rather than buffered to process exit so a run that dies
