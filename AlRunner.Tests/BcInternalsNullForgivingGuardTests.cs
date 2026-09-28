@@ -321,7 +321,12 @@ public sealed class BcInternalsNullForgivingGuardTests
         // constructor lookups are included because the same reasoning applies: BC moving an
         // overload is a shape gap, and `GetConstructor(...)` answering null would NRE at the
         // Invoke rather than say which signature was missing.
-        Assert.Equal(116, converted);
+        //
+        // 116 -> 118 for NavReportSync.BindReportExtensions (#4909): NavReport.RequestOptionsPage
+        // and NavReportExtension.RequestOptionsPageExtension, both BcShape.Property. A null
+        // from either would leave a reportextension's request-page fields unregistered and
+        // every [RequestPageHandler] read of them refused, with the lookup unnamed.
+        Assert.Equal(118, converted);
     }
 
     /// <summary>

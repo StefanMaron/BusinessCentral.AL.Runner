@@ -61,6 +61,7 @@
         "report-dep-maxiteration": { "tests": 2 },
         "report-precompiled-dep-metadata": { "tests": 2 },
         "report-stubmeta-unbounded-loop": { "tests": 4 },
+        "reportextension-unbound-report-behaviour": { "tests": 6 },
         "rnce-first": { "tests": 2 },
         "rnce-second": { "tests": 7 },
         "server-multibundle-dep": { "tests": 0 },

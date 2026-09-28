@@ -179,6 +179,24 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// Ids of every reportextension of <paramref name="reportId"/>, precompiled ones first (they
+    /// sit in dependency apps), then those compiled from source; a source one wins over a
+    /// precompiled one of the same number (the project's own .app at the bundle root). Empty
+    /// when the report's name is unknown to both the source parse and the symbol files (#4909).
+    /// </summary>
+    internal static IReadOnlyList<int> ReportExtensionIdsFor(int reportId)
+    {
+        var reportName = _parsedReports.TryGetValue(reportId, out var parsed) ? parsed.Name
+            : FindDependencyReportSymbol(reportId)?.Report.Name;
+        if (reportName == null) return Array.Empty<int>();
+        var ids = DependencyReportExtensionsOf(reportName).Select(e => e.Id).OrderBy(id => id).ToList();
+        ids.AddRange(InAppGroupScope("reportextension", _parsedReportExtensions)
+            .Where(e => e.BaseObjectName != null && NamesEqual(e.BaseObjectName, reportName))
+            .Select(e => e.Id).OrderBy(id => id));
+        return ids;
+    }
+
+    /// <summary>
     /// What the source-compiled reportextensions of <paramref name="reportId"/> add to or change on
     /// its request page (#4896), read from each extension's emitted delta document: every
     /// ControlDefinition under a ControlAdd with its own area or none, and each ControlChange

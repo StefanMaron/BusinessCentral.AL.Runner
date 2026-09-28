@@ -3162,6 +3162,15 @@ internal sealed partial class RunnerPageInstance
             if (extMatch != null) return extMatch;
         }
 
+        // A request page's extensions are reportextensions' request-page extensions, bound by
+        // NavReportSync.BindReportExtensions; an added control's id hashes from the
+        // reportextension's own id, as a pageextension's does (#4909).
+        foreach (var (extensionId, extInstance) in AlRunner.NavReportSync.RequestPageExtensionsOf(_form))
+        {
+            var extMatch = FindTriggerOnTarget(extInstance, extensionId, memberId, suffix, surface, arity);
+            if (extMatch != null) return extMatch;
+        }
+
         // #3573: last, the id space the two arms above cannot reach — a control an extension
         // MODIFIES rather than declares. See FindModifiedControlTriggers for why that needs the
         // BASE page's id space against the EXTENSION's methods. Last, not first, so an

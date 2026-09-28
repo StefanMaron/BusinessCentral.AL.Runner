@@ -1,0 +1,19 @@
+{
+  "id": "4c1d9e27-8a53-4f60-b909-4918a1c2d3e4",
+  "name": "Runner Extras - ReportExtension Unbound Report Behaviour",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issues #4909 / #4918: the runner binds a reportextension's request page to the report but not yet its report triggers or data items. Running such a report must refuse by name rather than skip them. Runner-specific by construction: it asserts the runner's own refusal.",
+  "description": "What BC does with the same objects (the request-page field is reachable, its OnValidate runs) is upstream in the al-language corpus, codeunit 67546. What stays here is only what the runner answers where it cannot yet do what BC does.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 66500,
+      "to": 66509
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}
