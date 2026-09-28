@@ -386,6 +386,13 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             ["ServerCrossAppStaleGenerationTests"] = 130,
             ["DapStdioServerTests"] = 101,
             ["CacheRootsIsolationTests"] = 83,
+            // Absent from this table until run 36445536307's BC 28.5 leg, where
+            // check-collection-weights.py failed the leg on CrossMajorNoteTests (76.3s) and
+            // reported the other three; one leg each, rounded down.
+            ["CrossMajorNoteTests"] = 76,
+            ["PrecompileNclShadowHopTests"] = 70,
+            ["ServerPackagedDependencyReplacementTests"] = 62,
+            ["ServerAffectedSelectionMultiSourcePathsTests"] = 60,
             ["ServerDuplicateSourcePathTests"] = 73,
             // #2653-adjacent: tripped check-collection-weights.py on PR 2659, absent from
             // this table while costing over 60s. Measured across all six legs of that run:

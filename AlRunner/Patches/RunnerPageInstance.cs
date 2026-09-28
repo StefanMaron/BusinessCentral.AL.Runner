@@ -323,11 +323,23 @@ internal sealed partial class RunnerPageInstance
         // A precompiled page's or request page's control has no ControlDefinition; its Caption
         // is read from the symbol file, as its OptionCaption is (#4858, #4669). Neither has a
         // control a source pageextension adds, whose Caption is in its delta document (#4913).
-        var caption = ControlDefinition(controlId) is { } definition
-            ? definition.Caption
-            : DependencyControlCaption(controlId)
-              ?? (IsRequestPage ? null : RecordPatches.SourcePageExtensionControlCaption(_pageId, controlId));
+        // Nor does either carry an extension's modify(), which replaces both (#4928).
+        var caption = ExtensionModifiedControlText(controlId, "Caption")
+            ?? (ControlDefinition(controlId) is { } definition
+                ? definition.Caption
+                : DependencyControlCaption(controlId)
+                  ?? (IsRequestPage ? null : RecordPatches.SourcePageExtensionControlCaption(_pageId, controlId)));
         return string.IsNullOrEmpty(caption) ? null : caption;
+    }
+
+    /// <summary>The Caption or OptionCaption an extension's <c>modify()</c> gives the control, or
+    /// null (#4928).</summary>
+    private string? ExtensionModifiedControlText(int controlId, string property)
+    {
+        if (!IsRequestPage)
+            return RecordPatches.PageExtensionModifiedControlText(_pageId, controlId, TryGetControlName(controlId), property);
+        var name = ControlDefinition(controlId)?.Name is { Length: > 0 } own ? own : DependencyRequestPageControl(controlId)?.Name;
+        return RecordPatches.ReportExtensionModifiedControlText(_pageId, controlId, name, property);
     }
 
     /// <summary>The control's AL name, <c>field(&lt;Name&gt;; …)</c>, from the page's own control
@@ -1921,6 +1933,8 @@ internal sealed partial class RunnerPageInstance
             if (trace) Console.Out.WriteLine($"[option-captions] control {controlId}: no MetadataHelper ({_form.GetType().Name})");
             return TestPageOptionValue.BoundOptionCaptions(boundOption);
         }
+        if (ExtensionModifiedControlText(controlId, "OptionCaption") is { Length: > 0 } modified)
+            return modified.Split(',');
         if (!helper.TryGetControlDefinitionById(controlId, out var definition) || definition == null)
         {
             if (trace)
