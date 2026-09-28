@@ -111,6 +111,9 @@ public sealed class SessionVirtualTableTests
             Assert.Contains("PASS  Codeunit70561.Session_GetOnAConnectionIdThatIsNotThisSession_ReturnsFalse", stdout);
             // Negative: nothing may claim to be a session other than this one.
             Assert.Contains("PASS  Codeunit70561.Session_FilterOnMySessionFalse_SelectsNothing", stdout);
+            // #3230: both columns read back off the session's Active Session row.
+            Assert.Contains("PASS  Codeunit70561.Session_MySessionRow_ApplicationNameIsActiveSessionsClientType", stdout);
+            Assert.Contains("PASS  Codeunit70561.Session_MySessionRow_DatabaseNameIsActiveSessionsDatabaseName", stdout);
             Assert.DoesNotContain("FAIL", stdout);
         }
         finally

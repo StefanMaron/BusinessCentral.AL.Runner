@@ -134,4 +134,35 @@ codeunit 70561 "SVT Fixture Tests"
         Sess.SetRange("My Session", false);
         Assert.IsTrue(Sess.IsEmpty(), 'no row may claim to be a session other than this one.');
     end;
+
+    // #3230: BC's SessionDataProvider reads both columns off the session's own Active Session
+    // row. The runner's row carries Client Type Unknown (#4005), so the read-back is 'Unknown'
+    // rather than the blank the column held before; the equality is the claim, the literal only
+    // proves the column is no longer left at its default.
+    [Test]
+    procedure Session_MySessionRow_ApplicationNameIsActiveSessionsClientType()
+    var
+        Sess: Record Session;
+        ActiveSession: Record "Active Session";
+    begin
+        Sess.SetRange("My Session", true);
+        Assert.IsTrue(Sess.FindFirst(), 'the reading session must be a row.');
+        Assert.IsTrue(ActiveSession.Get(ServiceInstanceId(), SessionId()), 'the reading session must have an Active Session row.');
+        Assert.AreEqual(Format(ActiveSession."Client Type"), Sess."Application Name",
+            'Session."Application Name" must be the reading session''s Active Session "Client Type", as text.');
+        Assert.AreEqual('Unknown', Sess."Application Name", 'the runner session''s client type reads back as Unknown (#4005).');
+    end;
+
+    [Test]
+    procedure Session_MySessionRow_DatabaseNameIsActiveSessionsDatabaseName()
+    var
+        Sess: Record Session;
+        ActiveSession: Record "Active Session";
+    begin
+        Sess.SetRange("My Session", true);
+        Assert.IsTrue(Sess.FindFirst(), 'the reading session must be a row.');
+        Assert.IsTrue(ActiveSession.Get(ServiceInstanceId(), SessionId()), 'the reading session must have an Active Session row.');
+        Assert.AreEqual(ActiveSession."Database Name", Sess."Database Name",
+            'Session."Database Name" must be the reading session''s Active Session "Database Name".');
+    end;
 }

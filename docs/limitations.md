@@ -2178,18 +2178,22 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   install code does not see the row — it is written after the cached dependency snapshot, so a
   snapshot never replays another process's login instant
   ([#3233](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3233)).
-- **`Session` (2000000009) answers one row — the reading session — and two of its columns are
-  blank.** That single row is not a runner simplification: BC's own `SessionDataProvider`
+- **`Session` (2000000009) answers one row — the reading session — and two of its columns
+  repeat the runner's Active Session row.** That single row is not a runner simplification: BC's own `SessionDataProvider`
   returns `new ReadOnlyRecordBuffer[1]` unconditionally, with `My Session` a constant `true`,
   so on a modern service tier this table answers "who am I" rather than "who is logged on".
   The runner matches that, reading every identity column back from the skeleton session so the
   table cannot disagree with `SessionId()` / `UserId()`
   ([#2940](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2940)).
 
-  `Database Name` and `Application Name` keep BC's own per-field default. BC takes both from
-  `Active Session` (2000000110) — there is no database to name, and the client type BC
-  stringifies into `Application Name` is unmeasured here. Blank rather than invented, tracked in
-  [#3230](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3230). `Host Name`
+  `Database Name` and `Application Name` are read off the session's `Active Session`
+  (2000000110) row, as BC's `SessionDataProvider` does: `Database Name` as stored, and
+  `Application Name` as the row's `Client Type` rendered as text. They therefore agree with that
+  row. They also inherit its gaps: `Database Name` is blank, because there is no database to
+  name, and `Application Name` reads `Unknown`
+  ([#3230](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3230),
+  [#4005](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4005)). Inside a
+  dependency's install code there is no Active Session row yet, and both stay blank. `Host Name`
   reports the machine the runner is on, the same host-derived answer BC's `DnsHelper.HostName`
   gives on a tier.
 
