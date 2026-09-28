@@ -2020,34 +2020,38 @@ internal sealed partial class RunnerPageInstance
     /// codeunit 60605 "ALT AutoFormat Tests" on all eight cloud legs — deliberately not
     /// restated here, because that table was copied into four places and the
     /// custom-expression arm was mislabelled in every one of them (#3406).</para>
-    /// <para>Never throws: a page that published no format table, a control with no format
-    /// expression, and an expression whose evaluation fails all answer null, and the caller
-    /// falls back to its own historical spelling. A refusal here would turn every
-    /// <c>Field.Value</c> read on an unusual page into a hard failure, which is a far worse
-    /// answer than the two-decimal default this replaces for the controls it can read.</para>
+    /// <para>Null only when the control publishes no format expression, or the expression
+    /// answers an empty string; the caller then uses its own default. A failure to evaluate the
+    /// expression propagates, as <see cref="TryGetControlCaptionClass"/>'s does: swallowed, it
+    /// read exactly like "no format" and a systematic read failure stayed green (#3479). An AL
+    /// error raised by AutoFormatExpression reaches the test on a service tier too (corpus
+    /// codeunit 67644).</para>
     /// </summary>
     internal string? TryGetControlFormat(int controlId)
     {
-        try
-        {
-            var expression = _sourceExpressions[FormatExpressionKey(controlId)];
-            if (expression == null) return null;
-            var value = GetValue(expression);
-            var text = value?.ClientObject?.ToString();
-            return string.IsNullOrEmpty(text) ? null : text;
-        }
-        catch
-        {
-            // See the remarks: unreadable format => the caller's default, never a failure.
-            return null;
-        }
+        var expression = _sourceExpressions[FormatExpressionKey(controlId)];
+        if (expression == null) return null;
+        var text = GetValue(expression)?.ClientObject?.ToString();
+        return string.IsNullOrEmpty(text) ? null : text;
     }
 
     internal static NavValue? GetValue(object expression)
-        => (NavValue?)BcShape.Method(
+    {
+        var get = BcShape.Method(
             expression.GetType(), "Get", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
-            Type.EmptyTypes, "TestPage field expression access")
-            .Invoke(expression, null);
+            Type.EmptyTypes, "TestPage field expression access");
+        try
+        {
+            return (NavValue?)get.Invoke(expression, null);
+        }
+        // The getter runs page AL (a format or CaptionClass expression); its error is what the
+        // test must see, not the reflection wrapper (#3479).
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+            throw; // unreachable
+        }
+    }
 
     internal static void SetValue(object expression, NavValue value)
         => BcShape.Method(
