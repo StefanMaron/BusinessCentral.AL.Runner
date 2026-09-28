@@ -227,8 +227,8 @@ The `Event Subscription` virtual table (2000000140) lists the same pairs (#4845)
 reads one process-wide registry, so before each handout of that table the runner removes the
 rows whose subscriber resolves the publisher id to a different declarer than the executing
 group does. X lists its own subscriptions and those of a group depending on X; Y lists only its
-own. A row whose subscriber, or the executing group, depends on two declarers makes the read
-throw, as the table's last row does.
+own. When the executing group depends on two declarers, the read throws, as the table's last
+row does.
 
 The last row is loud on purpose. BC does not install two apps that declare the same object id
 into one tenant, so nothing says which object such a group's code names. The load-time
@@ -242,6 +242,12 @@ that group, and say nothing about which object the group's code names.
 Microsoft's Test Runner app, loaded by default when the package caches hold it (#4816), reads
 `AllObj` before every test method; if that read refused, no test of the group would run. The
 other metadata tables (`Table Metadata` and the rest) are still per-object reads and refuse.
+
+**A subscriber in such a group is not refused. It is excluded from every declarer's events and
+`Event Subscription` rows (#4853).** It needs both declarers installed, and a tenant holding one
+declarer cannot hold the other. So in no tenant holding the publisher does the subscriber exist,
+and the declarers' own tests run as if it were absent. Only the executing group's own ambiguity
+is undecidable, and that is the case that throws.
 
 <a id="precompiled-package-visibility"></a>
 

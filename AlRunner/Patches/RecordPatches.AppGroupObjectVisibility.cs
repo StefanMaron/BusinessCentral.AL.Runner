@@ -188,10 +188,13 @@ public static partial class RecordPatches
         return d.Contains(executing)
             ? executing
             : AppGroupScopeFor(kind, id, _sourceObjectDeclarers, executing, CurrentPackageVisibility().Dependencies,
-                refuseTwoDeclarers: _listingObjectInventory == 0);
+                refuseTwoDeclarers: RefusesTwoDeclarers);
     }
 
     [ThreadStatic] private static int _listingObjectInventory;
+
+    /// <summary>False only while <see cref="ListingObjectInventory{T}"/> runs on this thread.</summary>
+    internal static bool RefusesTwoDeclarers => _listingObjectInventory == 0;
 
     /// <summary>
     /// Runs <paramref name="walk"/> with a group depending on two declarers of an id answering
@@ -252,7 +255,7 @@ public static partial class RecordPatches
             $"app group {g} depends on {string.Join(" and ", seen.OrderBy(x => x))}, which each declare "
             + $"{kind} {id}; BC cannot install both into one tenant, so which object this group's code "
             + "names is undefined — see AlRunner#4844",
-            "docs/virtual-tables-allobj.md#shared-id-declarers");
+            SharedIdDeclarersAnchor);
     }
 
     /// <summary>True when several source app groups declare (<paramref name="kind"/>,
@@ -292,13 +295,31 @@ public static partial class RecordPatches
            && AppGroupScopeFor(kind, id) is { } bound
            && SubscribesToAnotherAppGroupsObject(kind, id, bound, subscriberAssembly);
 
+    /// <summary>
+    /// A subscriber group whose closure holds two declarers is excluded rather than refused: it
+    /// needs a declarer other than the publisher's installed beside it, which BC cannot do, so in
+    /// no tenant holding the publisher does it subscribe (#4853). Only the executing group's own
+    /// ambiguity is undecidable, and <see cref="AppGroupScopeFor(string, int)"/> refuses that.
+    /// </summary>
     internal static bool SubscribesToAnotherAppGroupsObject(string kind, int id, Guid publisherGroup, Guid subscriberGroup,
         IReadOnlyDictionary<(string Kind, int Id), HashSet<Guid>> declarers, IReadOnlyDictionary<Guid, Guid[]> dependencies)
-        => subscriberGroup != publisherGroup
-           && declarers.TryGetValue((NormalizeObjectTypeName(kind), id), out var d)
-           && d.Contains(publisherGroup)
-           && AppGroupScopeFor(kind, id, declarers, subscriberGroup, dependencies) is { } bound
-           && bound != publisherGroup;
+    {
+        if (subscriberGroup == publisherGroup
+            || !declarers.TryGetValue((NormalizeObjectTypeName(kind), id), out var d)
+            || !d.Contains(publisherGroup)) return false;
+        if (d.Contains(subscriberGroup)) return true;
+        var seen = VisibleAppClosure(subscriberGroup, dependencies);
+        seen.IntersectWith(d);
+        return seen.Count > 1 || (seen.Count == 1 && !seen.Contains(publisherGroup));
+    }
+
+    /// <summary>The doc anchor every #4844 two-declarer refusal carries, and nothing else does.</summary>
+    internal const string SharedIdDeclarersAnchor = "docs/virtual-tables-allobj.md#shared-id-declarers";
+
+    /// <summary>True for the refusal <see cref="AppGroupScopeFor(string, int, IReadOnlyDictionary{ValueTuple{string, int}, HashSet{Guid}}, Guid?, IReadOnlyDictionary{Guid, Guid[]})"/>
+    /// raises for a group depending on two declarers of an id (#4844), and for no other.</summary>
+    internal static bool IsTwoDeclarersRefusal(AlRunner.Infrastructure.RunnerOutOfScopeException ex)
+        => ex.DocAnchor == SharedIdDeclarersAnchor;
 
     /// <summary>
     /// <paramref name="ordered"/> with the modules of the executing app group's dependency closure

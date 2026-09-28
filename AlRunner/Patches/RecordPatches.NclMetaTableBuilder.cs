@@ -2132,7 +2132,7 @@ public static partial class RecordPatches
                 if (kvp.Value is NCLMetaTable mt && WireFieldTriggerHandlers(mt, kvp.Key))
                     _fieldTriggersWiredTables.TryAdd(kvp.Key, 1);
             }
-            catch (AlRunner.Infrastructure.RunnerOutOfScopeException) { }
+            catch (AlRunner.Infrastructure.RunnerOutOfScopeException ex) when (IsTwoDeclarersRefusal(ex)) { }
         }
     }
 
