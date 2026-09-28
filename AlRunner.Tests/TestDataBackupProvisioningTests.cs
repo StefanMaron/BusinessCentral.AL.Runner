@@ -12,7 +12,7 @@ public sealed class TestDataBackupProvisioningTests : IDisposable
 {
     private const string Version = "28.5.54151.55132";
     private readonly Func<string, string, string, Action<string>, int> _realDownload;
-    private readonly DirectoryInfo _root;
+    private readonly string _root;
     private readonly string _home;
     private readonly string _artifacts;
     private readonly List<(string Version, string OutputDir, string Country)> _calls = new();
@@ -22,9 +22,9 @@ public sealed class TestDataBackupProvisioningTests : IDisposable
     {
         TestDataOptions.ResetForTests();
         _realDownload = TestDataBackupProvisioning.Download;
-        _root = Directory.CreateTempSubdirectory("al-runner-4923-");
-        _home = Path.Combine(_root.FullName, "home");
-        _artifacts = Path.Combine(_root.FullName, "artifacts");
+        _root = TestScratch.Dir("al-runner-4923");
+        _home = Path.Combine(_root, "home");
+        _artifacts = Path.Combine(_root, "artifacts");
         Directory.CreateDirectory(_home);
         Directory.CreateDirectory(_artifacts);
     }
@@ -33,7 +33,7 @@ public sealed class TestDataBackupProvisioningTests : IDisposable
     {
         TestDataBackupProvisioning.Download = _realDownload;
         TestDataOptions.ResetForTests();
-        _root.Delete(recursive: true);
+        if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
     }
 
     /// <summary>A fake that records the call and writes the file the real downloader would.</summary>
@@ -96,7 +96,9 @@ public sealed class TestDataBackupProvisioningTests : IDisposable
     {
         FakeSucceeds();
         TestDataOptions.TryParseArg("--test-data");
-        var existing = Path.Combine(_home, ".bcartifacts.cache", "sandbox", Version, "w1", "BusinessCentral-W1.bak");
+        // The first probed path, the BcContainerHelper sandbox cache under the home directory.
+        var existing = TestDataOptions.CandidateBackupPaths(_home, _artifacts, Version, "w1")[0];
+        Assert.StartsWith(_home, existing, StringComparison.Ordinal);
         Directory.CreateDirectory(Path.GetDirectoryName(existing)!);
         File.WriteAllBytes(existing, new byte[4]);
 
