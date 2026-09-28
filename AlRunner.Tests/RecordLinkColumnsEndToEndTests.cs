@@ -5,6 +5,7 @@
 // 67681 "Test Record Link Columns"; this pins where the runner reads each value from:
 //   - "User ID" from ALDatabase.ALUserID — the skeleton user AL's UserId() answers, TESTUSER;
 //   - Company from the skeleton company, only for a per-company parent table;
+//   - SystemId from BC's own NCLMetaTable.SystemIdField, a fresh Guid per row;
 //   - a CopyLinks copy cloned from the source row, so it keeps the source's author.
 using System.Diagnostics;
 using System.Text;
@@ -111,6 +112,8 @@ public sealed class RecordLinkColumnsEndToEndTests : IDisposable
                     Error('USERID-COLUMN expected TESTUSER, got [%1]', Link."User ID");
                 if Link."User ID" <> UserId() then
                     Error('USERID-COLUMN [%1] must equal UserId() [%2]', Link."User ID", UserId());
+                if IsNullGuid(Link.SystemId) then
+                    Error('SYSTEMID-COLUMN an AddLink row has no SystemId');
             end;
 
             [Test]
@@ -162,6 +165,8 @@ public sealed class RecordLinkColumnsEndToEndTests : IDisposable
                     Error('COPY-NOTIFY the copy lost Notify');
                 if Link.Company <> '' then
                     Error('COPY-COMPANY expected empty on a table not per company, got [%1]', Link.Company);
+                if IsNullGuid(Link.SystemId) then
+                    Error('SYSTEMID-COLUMN a CopyLinks copy has no SystemId');
             end;
         }
         """);
