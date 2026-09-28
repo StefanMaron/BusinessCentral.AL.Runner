@@ -3910,7 +3910,11 @@ internal static partial class BcAppSymbolCache
         var wanted = referenceSourceFileName.Replace('\\', '/').TrimStart('/');
         try
         {
-            return TryReadSourceFromBytes(File.ReadAllBytes(appPath), wanted);
+            // Streamed: reads the central directory and the one entry, never the whole .app — a
+            // whole-file read per call was large-object-heap garbage on Base Application (#4938).
+            // Same text returned; pinned by BcAppSourceFileStreamingTests.
+            using var zip = AlRunner.AppLoader.OpenAppZip(appPath);
+            return TryReadSourceFromZip(zip, wanted);
         }
         catch (Exception ex)
         {
@@ -3923,6 +3927,11 @@ internal static partial class BcAppSymbolCache
     private static string? TryReadSourceFromBytes(byte[] bytes, string wanted)
     {
         using var zip = OpenZipFromNavx(bytes);
+        return TryReadSourceFromZip(zip, wanted);
+    }
+
+    private static string? TryReadSourceFromZip(ZipArchive zip, string wanted)
+    {
         var entry = zip.Entries.FirstOrDefault(e =>
             e.FullName.Replace('\\', '/').EndsWith(wanted, StringComparison.OrdinalIgnoreCase));
         // The zip entry may spell a path segment DOUBLE-encoded where SymbolReference.json
