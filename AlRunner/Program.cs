@@ -1722,9 +1722,7 @@ catch (Exception ex)
         // child's entire run. Re-label the row so aggregates that sum `kind=="process"`
         // do not double-count it.
         AlRunner.Infrastructure.PhaseLog.MarkReexecParent();
-        using var child = System.Diagnostics.Process.Start(psi)!;
-        child.WaitForExit();
-        return child.ExitCode;
+        return AlRunner.Infrastructure.ReexecParent.RunToExit(psi);
     }
 }
 

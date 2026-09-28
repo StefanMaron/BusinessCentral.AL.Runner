@@ -122,6 +122,12 @@ public sealed class PhaseLogRecord
     /// </summary>
     public bool StartupHousekeeping { get; set; }
 
+    /// <summary>
+    /// RSS the moment a re-exec parent starts waiting for its child, after
+    /// <see cref="ReexecParent.ReleaseHeap"/> (#4947). Re-exec parent rows only.
+    /// </summary>
+    public long WaitRssBytes { get; set; }
+
     // ── Bundle-row and app-row only. Named slices of the row's turn that are NOT
     // already reported elsewhere on it — for a bundle row, the block #1828 exists to
     // attribute (work outside every app group); for an app row, the block #1861
@@ -172,6 +178,7 @@ public sealed class PhaseLogRecord
             Num(sb, "package_dir_walks", PackageDirWalks);
             Num(sb, "package_dir_repeat_walks", PackageDirRepeatWalks);
             Bool(sb, "startup_housekeeping", StartupHousekeeping);
+            if (Kind == "process-reexec-parent") Num(sb, "wait_rss_bytes", WaitRssBytes);
         }
         // Bundle and app rows only, and only when something was measured: a process
         // row's once-per-process costs already have their own named fields, and an
@@ -256,6 +263,12 @@ public static class PhaseLog
     {
         if (!Enabled) return;
         Process_.Kind = "process-reexec-parent";
+    }
+
+    public static void SetWaitRss(long bytes)
+    {
+        if (!Enabled) return;
+        Process_.WaitRssBytes = bytes;
     }
 
     public static void SetStartupHousekeeping(bool ran)
