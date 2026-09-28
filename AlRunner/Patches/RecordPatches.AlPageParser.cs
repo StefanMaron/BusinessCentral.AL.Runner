@@ -729,15 +729,7 @@ public static partial class RecordPatches
     /// <summary>The AL name of a PRECOMPILED dependency page's control, from its symbol file, or
     /// null when no control has that id (#3458).</summary>
     internal static string? TryGetDependencyControlName(int pageId, int controlId)
-    {
-        var symbol = TryGetDependencyPageSymbol(pageId);
-        if (symbol == null) return null;
-        foreach (var control in (symbol.Controls ?? new List<BcAppSymbolCache.PageControlSymbol>())
-                     .Concat(DependencyPageExtensionFieldControls(symbol.Name)))
-            if (control.Id == controlId)
-                return string.IsNullOrEmpty(control.Name) ? null : control.Name;
-        return null;
-    }
+        => TryGetDependencyControlSymbol(pageId, controlId).Control?.Name is { Length: > 0 } name ? name : null;
 
     /// <summary>
     /// The <c>OptionCaption</c> a control of a PRECOMPILED dependency page states, with a
@@ -755,6 +747,30 @@ public static partial class RecordPatches
                 return DependencyPageExtensionModifiedProperty(symbol.Name, control.Name, "OptionCaption", isAction: false)
                        ?? control.OptionCaption;
         return null;
+    }
+
+    /// <summary>
+    /// The <c>Caption</c> a control of a PRECOMPILED dependency page states, with a precompiled
+    /// pageextension's <c>modify(&lt;control&gt;)</c> value winning, or null when it states none
+    /// (#4858). The <see cref="TryGetDependencyControlOptionCaption"/> twin.
+    /// </summary>
+    internal static string? TryGetDependencyControlCaption(int pageId, int controlId)
+        => TryGetDependencyControlSymbol(pageId, controlId) is var (pageName, control) && control != null
+            ? DependencyPageExtensionModifiedProperty(pageName, control.Name, "Caption", isAction: false) ?? control.Caption
+            : null;
+
+    /// <summary>A PRECOMPILED dependency page's field control by id, its own or one a precompiled
+    /// pageextension adds, with the page's name; a null control when neither has that id.</summary>
+    internal static (string PageName, BcAppSymbolCache.PageControlSymbol? Control) TryGetDependencyControlSymbol(
+        int pageId, int controlId)
+    {
+        var symbol = TryGetDependencyPageSymbol(pageId);
+        if (symbol == null) return (string.Empty, null);
+        foreach (var control in (symbol.Controls ?? new List<BcAppSymbolCache.PageControlSymbol>())
+                     .Concat(DependencyPageExtensionFieldControls(symbol.Name)))
+            if (control.Id == controlId)
+                return (symbol.Name, control);
+        return (symbol.Name, null);
     }
 
     /// <summary>

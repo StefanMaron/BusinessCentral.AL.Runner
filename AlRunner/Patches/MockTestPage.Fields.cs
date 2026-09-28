@@ -571,7 +571,12 @@ internal sealed class PageVariableTestField : ITestField
     // every required leg). The variable name is only the fallback for a control no page
     // declaration names. Caption() alone reads CaptionClass (#4638).
     public string Name => (_controlId != 0 ? _page.TryGetControlName(_controlId) : null) ?? VariableName;
-    public string Caption => _page.TryGetControlCaptionClass(_controlId) ?? VariableName;
+    // CaptionClass, then the control's declared Caption, then the control name the compiler
+    // gives a control stating none (#4858, corpus 67640) — never the bound variable's name.
+    public string Caption => _page.TryGetControlCaptionClass(_controlId)
+                             ?? _page.TryGetControlCaption(_controlId)
+                             ?? _page.TryGetDependencyControlDefaultCaption(_controlId)
+                             ?? VariableName;
     private string VariableName => _expression.GetType()
         .GetProperty("Name", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
         ?.GetValue(_expression) as string ?? string.Empty;

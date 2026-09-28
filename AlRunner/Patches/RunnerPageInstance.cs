@@ -320,7 +320,11 @@ internal sealed partial class RunnerPageInstance
     /// </summary>
     internal string? TryGetControlCaption(int controlId)
     {
-        var caption = ControlDefinition(controlId)?.Caption;
+        // A precompiled page's or request page's control has no ControlDefinition; its Caption
+        // is read from the symbol file, as its OptionCaption is (#4858, #4669).
+        var caption = ControlDefinition(controlId) is { } definition
+            ? definition.Caption
+            : DependencyControlCaption(controlId);
         return string.IsNullOrEmpty(caption) ? null : caption;
     }
 
@@ -333,6 +337,33 @@ internal sealed partial class RunnerPageInstance
         return !string.IsNullOrEmpty(name) ? name
             : RecordPatches.TryGetDependencyControlName(_pageId, controlId)
               ?? RecordPatches.SourcePageExtensionControlName(_pageId, controlId);
+    }
+
+    private string? DependencyControlCaption(int controlId)
+        => IsRequestPage
+            ? DependencyRequestPageControl(controlId)?.Caption
+            : RecordPatches.TryGetDependencyControlCaption(_pageId, controlId);
+
+    /// <summary>
+    /// The caption BC's compiler gives a precompiled control bound to a page VARIABLE that states
+    /// none: its control name, which the compiler writes into the control's metadata Caption
+    /// (the source-compiled ControlDefinition carries it; corpus 67640). Null for a control that
+    /// has a ControlDefinition, whose Caption already answers (#4858).
+    /// </summary>
+    internal string? TryGetDependencyControlDefaultCaption(int controlId)
+    {
+        if (ControlDefinition(controlId) != null) return null;
+        if (!IsRequestPage) return RecordPatches.TryGetDependencyControlName(_pageId, controlId);
+        var name = DependencyRequestPageControl(controlId)?.Name;
+        return string.IsNullOrEmpty(name) ? null : name;
+    }
+
+    private BcAppSymbolCache.RequestPageControlSymbol? DependencyRequestPageControl(int controlId)
+    {
+        foreach (var node in RecordPatches.TryGetDependencyRequestPageControls(_pageId)
+                 ?? (IReadOnlyList<BcAppSymbolCache.RequestPageControlSymbol>)Array.Empty<BcAppSymbolCache.RequestPageControlSymbol>())
+            if (node.Id == controlId) return node;
+        return null;
     }
 
     /// <summary>
