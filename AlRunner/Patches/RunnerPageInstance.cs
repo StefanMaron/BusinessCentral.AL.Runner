@@ -321,10 +321,12 @@ internal sealed partial class RunnerPageInstance
     internal string? TryGetControlCaption(int controlId)
     {
         // A precompiled page's or request page's control has no ControlDefinition; its Caption
-        // is read from the symbol file, as its OptionCaption is (#4858, #4669).
+        // is read from the symbol file, as its OptionCaption is (#4858, #4669). Neither has a
+        // control a source pageextension adds, whose Caption is in its delta document (#4913).
         var caption = ControlDefinition(controlId) is { } definition
             ? definition.Caption
-            : DependencyControlCaption(controlId);
+            : DependencyControlCaption(controlId)
+              ?? (IsRequestPage ? null : RecordPatches.SourcePageExtensionControlCaption(_pageId, controlId));
         return string.IsNullOrEmpty(caption) ? null : caption;
     }
 
@@ -345,26 +347,23 @@ internal sealed partial class RunnerPageInstance
             : RecordPatches.TryGetDependencyControlCaption(_pageId, controlId);
 
     /// <summary>
-    /// The caption BC's compiler gives a precompiled control bound to a page VARIABLE that states
-    /// none: its control name, which the compiler writes into the control's metadata Caption
-    /// (the source-compiled ControlDefinition carries it; corpus 67640). Null for a control that
-    /// has a ControlDefinition, whose Caption already answers (#4858).
+    /// The caption BC gives a control bound to a page VARIABLE that states none and has no
+    /// ControlDefinition here — a precompiled page's, or one a source pageextension adds: its
+    /// control name, as the source-compiled ControlDefinition answers (corpus 67640; #4858, #4913).
+    /// Null for a control that has a ControlDefinition, whose Caption already answers.
     /// </summary>
     internal string? TryGetDependencyControlDefaultCaption(int controlId)
     {
         if (ControlDefinition(controlId) != null) return null;
-        if (!IsRequestPage) return RecordPatches.TryGetDependencyControlName(_pageId, controlId);
+        if (!IsRequestPage)
+            return RecordPatches.TryGetDependencyControlName(_pageId, controlId)
+                   ?? RecordPatches.SourcePageExtensionControlName(_pageId, controlId);
         var name = DependencyRequestPageControl(controlId)?.Name;
         return string.IsNullOrEmpty(name) ? null : name;
     }
 
     private BcAppSymbolCache.RequestPageControlSymbol? DependencyRequestPageControl(int controlId)
-    {
-        foreach (var node in RecordPatches.TryGetDependencyRequestPageControls(_pageId)
-                 ?? (IReadOnlyList<BcAppSymbolCache.RequestPageControlSymbol>)Array.Empty<BcAppSymbolCache.RequestPageControlSymbol>())
-            if (node.Id == controlId) return node;
-        return null;
-    }
+        => RecordPatches.TryGetDependencyRequestPageControl(_pageId, controlId);
 
     /// <summary>
     /// Build and initialise the AL page object for <paramref name="pageId"/>, bound to
@@ -1962,21 +1961,16 @@ internal sealed partial class RunnerPageInstance
     /// <summary>
     /// A precompiled object's control has no ControlDefinition (its synthesized metadata carries
     /// no control tree), so its OptionCaption is read from the symbol file (#4669): the report's
-    /// request-page tree for a request page, whose id is the report's, and the page's own
-    /// controls otherwise.
+    /// request-page tree, with what its reportextensions add (#4921), for a request page, whose id
+    /// is the report's, and the page's own controls otherwise. Nor does a control a source
+    /// pageextension adds, whose OptionCaption is in the extension's delta document (#4913).
     /// </summary>
     private string[]? DependencyOptionCaptions(int controlId)
     {
-        string? stated;
-        if (IsRequestPage)
-        {
-            stated = null;
-            foreach (var node in RecordPatches.TryGetDependencyRequestPageControls(_pageId)
-                     ?? (IReadOnlyList<BcAppSymbolCache.RequestPageControlSymbol>)Array.Empty<BcAppSymbolCache.RequestPageControlSymbol>())
-                if (node.Id == controlId) { stated = node.OptionCaption; break; }
-        }
-        else
-            stated = RecordPatches.TryGetDependencyControlOptionCaption(_pageId, controlId);
+        var stated = IsRequestPage
+            ? DependencyRequestPageControl(controlId)?.OptionCaption
+            : RecordPatches.TryGetDependencyControlOptionCaption(_pageId, controlId)
+              ?? RecordPatches.SourcePageExtensionControlOptionCaption(_pageId, controlId);
         return string.IsNullOrEmpty(stated) ? null : stated.Split(',');
     }
 

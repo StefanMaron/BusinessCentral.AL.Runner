@@ -121,27 +121,46 @@ public static partial class RecordPatches
     /// extension's delta document, because the runner's MasterPage carries no extension delta.
     /// </summary>
     internal static string? SourcePageExtensionControlName(int pageId, int controlId)
+        => SourcePageExtensionAddedControl(pageId, controlId, "name")?.GetAttribute("Name") is { Length: > 0 } name ? name : null;
+
+    /// <summary>
+    /// The Caption a control a source-compiled pageextension of <paramref name="pageId"/> adds
+    /// declares — the ENU text of the <c>CaptionML</c> BC's emitter writes on it — or null when
+    /// it declares none or no extension adds that control (#4913).
+    /// </summary>
+    internal static string? SourcePageExtensionControlCaption(int pageId, int controlId)
+        => SourcePageExtensionAddedControl(pageId, controlId, "Caption")?.GetAttribute("CaptionML") is { Length: > 0 } ml
+            ? EnuMultiLanguageText.ReadEnu(ml, firstIfNoEnu: false)
+            : null;
+
+    /// <summary>The <c>OptionCaption</c> such a control declares (the ENU text of its
+    /// <c>OptionCaptionML</c>), or null (#4913).</summary>
+    internal static string? SourcePageExtensionControlOptionCaption(int pageId, int controlId)
+        => SourcePageExtensionAddedControl(pageId, controlId, "OptionCaption")?.GetAttribute("OptionCaptionML") is { Length: > 0 } ml
+            ? EnuMultiLanguageText.ReadEnu(ml, firstIfNoEnu: false)
+            : null;
+
+    private static XmlElement? SourcePageExtensionAddedControl(int pageId, int controlId, string what)
     {
         var extensionIds = GetPageExtensionIdsForPage(pageId).Where(_parsedPageExtensions.ContainsKey).ToList();
-        foreach (var (_, xml) in SourcePageExtensionDeltaDocuments(pageId, extensionIds, $"TestPage control {controlId} name (page {pageId})"))
+        foreach (var (_, xml) in SourcePageExtensionDeltaDocuments(pageId, extensionIds, $"TestPage control {controlId} {what} (page {pageId})"))
         {
             var doc = new XmlDocument();
             doc.LoadXml(xml);
             foreach (XmlNode node in doc.DocumentElement!.ChildNodes)
-                if (node is XmlElement e && e.Name == "ControlAdd" && FindAddedControlName(e, controlId) is { } name)
-                    return name;
+                if (node is XmlElement e && e.Name == "ControlAdd" && FindAddedControl(e, controlId) is { } control)
+                    return control;
         }
         return null;
     }
 
-    private static string? FindAddedControlName(XmlElement parent, int controlId)
+    private static XmlElement? FindAddedControl(XmlElement parent, int controlId)
     {
         foreach (XmlNode node in parent.ChildNodes)
         {
             if (node is not XmlElement e || e.Name != "Controls") continue;
-            if (ReadBcAttrInt(e, "ID") == controlId)
-                return string.IsNullOrEmpty(e.GetAttribute("Name")) ? null : e.GetAttribute("Name");
-            if (FindAddedControlName(e, controlId) is { } nested) return nested;
+            if (ReadBcAttrInt(e, "ID") == controlId) return e;
+            if (FindAddedControl(e, controlId) is { } nested) return nested;
         }
         return null;
     }
