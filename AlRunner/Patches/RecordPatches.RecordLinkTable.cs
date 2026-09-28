@@ -227,13 +227,6 @@ public static partial class RecordPatches
         return (int)row[idx].ToDecimal();
     }
 
-    private static string ReadText(NavValue[] row, NCLMetaField field)
-    {
-        var idx = field.FieldIndex;
-        if (idx < 0 || idx >= row.Length || row[idx] == null) return string.Empty;
-        return row[idx].ToString() ?? string.Empty;
-    }
-
     /// <summary>Build the row BC's <c>RecordLink.AddLinkAsync</c> writes: the caller's URL and
     /// description, a fresh AutoIncrement Link ID, the parent's RecordId, User ID, Created, and
     /// Company only for a per-company parent. Type stays at the column's default, ordinal 0 =
@@ -467,7 +460,7 @@ public static partial class RecordPatches
     /// <summary>The User ID BC's AddLink writes: <c>Session.User.Name</c> after any
     /// <c>DOMAIN\</c> prefix. Read through <see cref="ALDatabase.ALUserID"/>, the member AL's
     /// <c>UserId()</c> compiles to, so the link and <c>UserId()</c> cannot disagree (#4951).</summary>
-    internal static string RecordLinkUserId()
+    private static string RecordLinkUserId()
     {
         var name = ALDatabase.ALUserID;
         return name.Substring(name.IndexOf('\\') + 1);
