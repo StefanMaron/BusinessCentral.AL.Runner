@@ -284,8 +284,8 @@ public class AppGroupObjectVisibilityTests
             [("table", 62680)] = new() { AppC, AppD },
         };
 
-        // AppA depends on the declarer AppC; AppB depends on nothing.
-        var deps = new Dictionary<Guid, Guid[]> { [AppA] = new[] { AppC } };
+        // AppA depends on the declarer AppC; AppB depends on nothing; AppE on both declarers.
+        var deps = new Dictionary<Guid, Guid[]> { [AppA] = new[] { AppC }, [AppE] = new[] { AppC, AppD } };
 
         // #4834: a declarer of the shared id subscribes to its own object, never the other one's.
         Assert.True(RecordPatches.SubscribesToAnotherAppGroupsObject("Table", 62680, AppC, AppD, declarers, deps));
@@ -296,9 +296,45 @@ public class AppGroupObjectVisibilityTests
         Assert.True(RecordPatches.SubscribesToAnotherAppGroupsObject("table", 62680, AppD, AppA, declarers, deps));
         // A group that sees no declarer cannot name the object; nothing to decide, so it is not excluded.
         Assert.False(RecordPatches.SubscribesToAnotherAppGroupsObject("table", 62680, AppD, AppB, declarers, deps));
+        // #4853: a subscriber depending on both declarers can be installed beside neither, so both exclude it.
+        Assert.True(RecordPatches.SubscribesToAnotherAppGroupsObject("table", 62680, AppC, AppE, declarers, deps));
+        Assert.True(RecordPatches.SubscribesToAnotherAppGroupsObject("table", 62680, AppD, AppE, declarers, deps));
         // An id only one group declares, or the same id of another kind: nothing to separate.
         Assert.False(RecordPatches.SubscribesToAnotherAppGroupsObject("table", 62681, AppC, AppD, declarers, deps));
         Assert.False(RecordPatches.SubscribesToAnotherAppGroupsObject("codeunit", 62680, AppC, AppD, declarers, deps));
+    }
+
+    [Fact]
+    public void ListingObjectInventory_AWalkThatThrows_LeavesTheRefusalInForceOnThisThread()
+    {
+        var declarers = new Dictionary<(string Kind, int Id), HashSet<Guid>> { [("table", 62680)] = new() { AppC, AppD } };
+        var deps = new Dictionary<Guid, Guid[]> { [AppE] = new[] { AppC, AppD } };
+        Guid? Scope() => RecordPatches.AppGroupScopeFor("table", 62680, declarers, AppE, deps,
+            refuseTwoDeclarers: RecordPatches.RefusesTwoDeclarers);
+
+        // #4901: inside the walk the id resolves as for a group seeing no declarer.
+        Assert.Null(RecordPatches.ListingObjectInventory(Scope));
+        // #4853: a walk ending in an exception must not leave the listing mode on for this thread,
+        // or every later lookup on it would answer null silently instead of refusing.
+        Assert.Throws<InvalidOperationException>(() =>
+            RecordPatches.ListingObjectInventory<int>(() => throw new InvalidOperationException("walk failed")));
+        Assert.True(RecordPatches.RefusesTwoDeclarers);
+        Assert.Throws<RunnerOutOfScopeException>(() => Scope());
+    }
+
+    [Fact]
+    public void IsTwoDeclarersRefusal_MatchesTheTwoDeclarersRefusalOnly()
+    {
+        var declarers = new Dictionary<(string Kind, int Id), HashSet<Guid>> { [("table", 62680)] = new() { AppC, AppD } };
+        var deps = new Dictionary<Guid, Guid[]> { [AppE] = new[] { AppC, AppD } };
+        var twoDeclarers = Assert.Throws<RunnerOutOfScopeException>(
+            () => RecordPatches.AppGroupScopeFor("table", 62680, declarers, AppE, deps));
+
+        // #4853: the load-time field-trigger walk swallows this refusal and nothing else.
+        Assert.True(RecordPatches.IsTwoDeclarersRefusal(twoDeclarers));
+        Assert.False(RecordPatches.IsTwoDeclarersRefusal(new RunnerOutOfScopeException("table 62680", "not-yet-implemented")));
+        Assert.False(RecordPatches.IsTwoDeclarersRefusal(
+            new RunnerOutOfScopeException("NavEmail.Send", "email-smtp", "docs/scope.md#email")));
     }
 
     private static string WriteApp(string dir, Guid appId, string name, int from, int to, params (Guid Id, string Name)[] dependsOn)
@@ -439,6 +475,13 @@ public class AppGroupObjectVisibilityTests
                 end;
                 [IntegrationEvent(false, false)]
                 local procedure OnReportShared(var Tag: Text) begin end;
+            }
+            // #4853: no test of this group runs 62692, so Z is the first to resolve its type.
+            report 62692 "Dup {{letter}} Unrun Report"
+            {
+                ProcessingOnly = true;
+                UseRequestPage = false;
+                trigger OnPreReport() begin Error('RAN UNRUN REPORT {{letter}}'); end;
             }
             codeunit 62689 "Dup {{letter}} Pub"
             {
@@ -854,6 +897,15 @@ public class AppGroupObjectVisibilityTests
                 if QueryMetadata.Name <> 'Dup X Query' then Error('WRONG: Query Metadata name for 62688 in Z is %1', QueryMetadata.Name);
             end;
 
+            // #4853: a report run by id finds the declarer Z depends on, not the other group's same-id
+            // report. 62692, not 62686: X's own run of 62686 caches its type under X, which Z reuses.
+            [Test]
+            procedure DependentGroupRunningTheSharedReportIdRunsTheDeclarers()
+            begin
+                asserterror Report.Run(62692, false, false);
+                if GetLastErrorText() <> 'RAN UNRUN REPORT X' then Error('WRONG: Report.Run(62692) in Z ended with: %1', GetLastErrorText());
+            end;
+
             // #4845: Z binds 62680 to X's table, so it lists the subscriptions to X's table, Y's none.
             [Test]
             procedure DependentGroupListsTheDeclarersEventSubscriptions()
@@ -907,8 +959,8 @@ public class AppGroupObjectVisibilityTests
 
     /// <summary>
     /// #4844: a group depending on BOTH declarers of an id cannot say which object its code names.
-    /// Every test reaching that binding fails naming the id and both declarers; the run itself
-    /// completes, and a test that does not reach it still passes.
+    /// Every test reaching that binding fails naming the id and both declarers, and the run itself
+    /// completes. The declarers' own tests pass, with that group's subscriber excluded (#4853).
     /// </summary>
     [SkippableFact]
     public void Cli_GroupDependingOnTwoDeclarersOfOneId_FailsLoudlyPerTest_AndTheRunCompletes()
@@ -945,11 +997,37 @@ public class AppGroupObjectVisibilityTests
                     Rec.Insert();
                     if not Rec.Get('A') then Error('WRONG: own insert of 62740 lost in {{letter}}');
                 end;
+
+                // #4853: H's subscription is to neither declarer's table.
+                [Test]
+                procedure OwnEventSubscriptionsOmitTheAmbiguousGroup()
+                var
+                    ES: Record "Event Subscription";
+                    Got: Text;
+                begin
+                    ES.SetRange("Publisher Object Type", ES."Publisher Object Type"::Table);
+                    ES.SetRange("Publisher Object ID", 62740);
+                    if ES.FindSet() then
+                        repeat
+                            if StrPos(Got, Format(ES."Subscriber Codeunit ID", 0, 9) + ',') = 0 then
+                                Got += Format(ES."Subscriber Codeunit ID", 0, 9) + ',';
+                        until ES.Next() = 0;
+                    if Got <> '62742,' then Error('WRONG: Event Subscription subscribers of table 62740 in {{letter}} are %1', Got);
+                end;
             }
             """);
         }
         var both = WriteApp(Path.Combine(root, "bothH"), AppE, "Both H", 62750, 62759, (appF, "Two F"), (appG, "Two G"));
         File.WriteAllText(Path.Combine(both, "Both.al"), """
+        // #4853: H cannot be installed beside F or G, so this never fires in their runs.
+        codeunit 62751 "Both H Subs"
+        {
+            [EventSubscriber(ObjectType::Table, Database::"Two F Table", 'OnAfterInsertEvent', '', false, false)]
+            local procedure OnAfterInsert(var Rec: Record "Two F Table")
+            begin
+                Error('LEAK: the OnAfterInsert subscriber of H fired for row %1', Rec.Code);
+            end;
+        }
         codeunit 62750 "Both H Tests"
         {
             Subtype = Test;
@@ -994,7 +1072,10 @@ public class AppGroupObjectVisibilityTests
         var (output, exitCode) = RunCli(
             $" --no-cache --package-cache \"{testTool.TestApps}\" --package-cache \"{testTool.PlatformApps}\" \"{root}\"");
         Assert.DoesNotContain("Unhandled exception", output);
-        Assert.True(output.Contains("4P/2F/0E across 6 tests"), output);
+        Assert.True(output.Contains("6P/2F/0E across 8 tests"), output);
+        // #4853: the declarers' own tests run as if H's subscriber were absent.
+        Assert.Equal(2, CountOf(output, "PASS  Codeunit62741.OwnInsertStillRuns"));
+        Assert.Equal(2, CountOf(output, "PASS  Codeunit62741.OwnEventSubscriptionsOmitTheAmbiguousGroup"));
         Assert.Contains("PASS  Codeunit62750.TouchesNothingShared", output);
         Assert.Contains("PASS  Codeunit62750.ListsTheAmbiguousIdInAllObj", output);
         // #4845: the Event Subscription read fails on the ambiguity itself, not on anything else.
@@ -1003,7 +1084,15 @@ public class AppGroupObjectVisibilityTests
         Assert.Contains($"depends on {appF} and {appG}, which each declare table 62740", output);
         Assert.DoesNotContain("WRONG:", output);
         Assert.DoesNotContain("MISSING:", output);
+        Assert.DoesNotContain("LEAK:", output);
         Assert.Equal(1, exitCode);
+    }
+
+    private static int CountOf(string text, string needle)
+    {
+        var n = 0;
+        for (var i = text.IndexOf(needle, StringComparison.Ordinal); i >= 0; i = text.IndexOf(needle, i + needle.Length, StringComparison.Ordinal)) n++;
+        return n;
     }
 
     private static (string Output, int ExitCode) RunCli(string args)
@@ -1030,7 +1119,7 @@ public class AppGroupObjectVisibilityTests
     {
         var (output, exitCode) = run;
         // The whole runner output as the message, so a red names the failing test and its WRONG: line.
-        Assert.True(output.Contains("39P/0F/0E across 39 tests"), output);
+        Assert.True(output.Contains("40P/0F/0E across 40 tests"), output);
         Assert.DoesNotContain("MISSING:", output);
         Assert.DoesNotContain("WRONG:", output);
         Assert.Equal(0, exitCode);
@@ -1047,7 +1136,7 @@ public class AppGroupObjectVisibilityTests
         await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
         var lines = await server.SendRequestStreamingAsync(RunTests(dirs));
         var (events, _) = ProtocolV2Streaming.Split(lines);
-        Assert.Equal(39, events.Count);
+        Assert.Equal(40, events.Count);
         foreach (var e in events)
             Assert.True(e.GetProperty("status").GetString() == "pass", string.Join(" | ", lines));
     }
