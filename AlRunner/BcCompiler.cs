@@ -422,6 +422,31 @@ public sealed partial class BcCompiler
         lock (_refSync) { _currentAppId = appId; _currentPublisher = publisher; _currentVersion = version; }
     }
 
+    /// <summary>What <see cref="SetResolvedDeps"/>, <see cref="SetExtraSymbolDirs"/> and
+    /// <see cref="SetCurrentAppIdentity"/> last set: a bundle's reference state, captured when its
+    /// load finishes and restored before its deferred test run (#4931).</summary>
+    internal sealed record BundleReferenceState(
+        IReadOnlyList<(AppManifest Manifest, string AppPath)>? ResolvedDeps, IReadOnlyList<string>? PackageCacheDirs,
+        IReadOnlyList<string>? ExtraSymbolDirs, Guid? AppId, string? Publisher, Version? Version);
+
+    internal static BundleReferenceState CaptureBundleReferenceState()
+    {
+        lock (_refSync)
+            return new(_resolvedDeps, _packageCacheDirs, _extraSymbolDirs, _currentAppId, _currentPublisher, _currentVersion);
+    }
+
+    internal static void RestoreBundleReferenceState(BundleReferenceState state)
+    {
+        lock (_refSync)
+        {
+            _resolvedDeps = state.ResolvedDeps;
+            _packageCacheDirs = state.PackageCacheDirs;
+            _refSpecs = null; // as SetResolvedDeps: recomputed per GetSharedReferences call
+            _extraSymbolDirs = state.ExtraSymbolDirs;
+            (_currentAppId, _currentPublisher, _currentVersion) = (state.AppId, state.Publisher, state.Version);
+        }
+    }
+
     /// <summary>
     /// Temporarily overrides the "current app being compiled" identity for the
     /// duration of a single sub-compile (e.g. DependencyLoader compiling a dep from

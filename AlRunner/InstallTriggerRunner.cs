@@ -65,6 +65,12 @@ public static class InstallTriggerRunner
         }
     }
 
+    /// <summary>The registered dependency assemblies, in order (#4931: replayed before a deferred run).</summary>
+    internal static IReadOnlyList<Assembly> DependencyAssemblies
+    {
+        get { lock (_depAssemblies) return _depAssemblies.ToList(); }
+    }
+
     /// <summary>Register the bundle's own (test) assembly — its Install codeunits
     /// fire after all dependency apps', matching install order.</summary>
     public static void SetTestAssembly(Assembly assembly)

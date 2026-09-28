@@ -1049,6 +1049,10 @@ jobs:
         # -second's table happen before -second is registered. Reversed, all six pass on main too,
         # which is the positional property the issue measured.
         if: ${{ always() && hashFiles('tests/runner-extras/metatable-cache-null-second/**/*.al') != '' }}
+        # A multi-path run loads every bundle before any runs tests (#4931), which would register
+        # -second before -first asks about it. This keeps one pass per bundle, the order the defect needs.
+        env:
+          AL_RUNNER_SEQUENTIAL_BUNDLES: "1"
         run: |
           rc=0
           dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
@@ -1101,6 +1105,10 @@ jobs:
         # of -second's page happen before -second is registered. Reversed, all nine pass on main
         # too, which is the positional property #4452 measured.
         if: ${{ always() && hashFiles('tests/runner-extras/rnce-second/**/*.al') != '' }}
+        # A multi-path run loads every bundle before any runs tests (#4931), which would register
+        # -second before -first asks about it. This keeps one pass per bundle, the order the defect needs.
+        env:
+          AL_RUNNER_SEQUENTIAL_BUNDLES: "1"
         run: |
           rc=0
           dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
@@ -1149,6 +1157,10 @@ jobs:
         # .app before any test runs. Order comes from the ARGUMENT LIST; reversed, all four pass
         # on main too.
         if: ${{ always() && hashFiles('tests/runner-extras/precompiled-dep-cache-null-first/**/*.al') != '' }}
+        # A multi-path run loads every bundle before any runs tests (#4931), which would register
+        # -second before -first asks about it. This keeps one pass per bundle, the order the defect needs.
+        env:
+          AL_RUNNER_SEQUENTIAL_BUNDLES: "1"
         run: |
           rc=0
           dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \

@@ -2779,6 +2779,16 @@ if (watchUi && !AlRunner.Log.Verbose)
     Console.SetError(TextWriter.Null);
     stdoutSilenced = true;
 }
+// #4931: with more than one bundle, load every bundle before any runs tests, as a run over one
+// root loads every app group first, so an earlier bundle's events reach a later bundle's
+// subscribers. Each queued run restores what its own load left (BundleRunState). One epoch for the
+// whole set: every bundle named is installed together. --per-suite keeps one pass per bundle, and
+// so does AL_RUNNER_SEQUENTIAL_BUNDLES=1: the ordered-bundle CI steps need an earlier bundle to run
+// before a later one registers, which is the order their cache-poisoning defects need (#4450).
+var deferBundleRuns = bundledMode && bundles.Count > 1
+    && Environment.GetEnvironmentVariable("AL_RUNNER_SEQUENTIAL_BUNDLES") != "1";
+var deferredBundleRuns = new List<Action>();
+if (deferBundleRuns) BcRuntime.BeginBundleEpoch();
 int i2 = 0;
 foreach (var bundle in bundles)
 {
@@ -2799,12 +2809,12 @@ foreach (var bundle in bundles)
     AlRunner.Patches.RecordPatches.ResetNegativeQueryMemosForNewBundle();
 
     // #4222: mark the start of this bundle's iteration, so an inventory read can tell this
-    // bundle's assemblies from a previous one's. Unconditional, and the ONLY per-bundle
-    // isolation in this loop — a one-shot multi-bundle run must not inherit a sibling bundle's
-    // registrations. It stamps and clears nothing, which is what lets it run per bundle at all:
-    // ResetForNewBundleReload (#2684) runs once per CYCLE at the top of the loop body instead,
-    // because clearing per bundle drops registrations a later DEPENDENT bundle still needs.
-    BcRuntime.BeginBundleEpoch();
+    // bundle's assemblies from a previous one's. It stamps and clears nothing, which is what lets
+    // it run per bundle at all: ResetForNewBundleReload (#2684) runs once per CYCLE at the top of
+    // the loop body instead, because clearing per bundle drops registrations a later DEPENDENT
+    // bundle still needs. Deferred runs (#4931) share the one epoch begun above the loop.
+    if (!deferBundleRuns)
+        BcRuntime.BeginBundleEpoch();
 
     // Everything about this bundle that says "your package cache cannot serve this run":
     // dependencies no loader tier can implement (DependencyResolver.UnservableDependencies,
@@ -4156,6 +4166,30 @@ foreach (var bundle in bundles)
         // whole pass onto it.
         AlRunner.Infrastructure.PhaseLog.EndApp();
 
+        if (deferBundleRuns)
+        {
+            // #4931: run after every bundle has loaded; the load's own row closes here.
+            var loadedState = AlRunner.Infrastructure.BundleRunState.Capture();
+            var loadedGaps = AlRunner.Infrastructure.ProvisionGapLog.Capture();
+            var loadedIndex = i2;
+            AlRunner.Infrastructure.PhaseLog.EndBundle(bundleEmit, bundleComp, TimeSpan.Zero);
+            deferredBundleRuns.Add(() =>
+            {
+                // A second row for this bundle, carrying its run time only.
+                AlRunner.Infrastructure.PhaseLog.BeginBundle(rel, loadedIndex);
+                loadedState.Restore();
+                AlRunner.Infrastructure.ProvisionGapLog.Restore(loadedGaps);
+                // Negative query answers memoised while a later bundle was not loaded yet.
+                AlRunner.Patches.RecordPatches.ResetNegativeQueryMemosForNewBundle();
+                RunLoadedApps();
+                FinishBundle(TimeSpan.Zero, TimeSpan.Zero);
+            });
+            continue;
+        }
+        RunLoadedApps();
+
+        void RunLoadedApps()
+        {
         // Every app's assembly is now in the AppDomain, so this single walk resolves
         // every table's Record CLR type in one pass — including tables belonging to
         // apps that loaded LATER than the app that first registered their NCLMetaTable
@@ -4230,6 +4264,7 @@ foreach (var bundle in bundles)
             sP += tests.Count(t => t.Outcome == TestOutcome.Pass);
             sF += tests.Count(t => t.Outcome == TestOutcome.Fail);
             sE += tests.Count(t => t.Outcome == TestOutcome.Error);
+        }
         }
     }
     else
@@ -4358,6 +4393,11 @@ foreach (var bundle in bundles)
         }
     }
 
+    FinishBundle(bundleEmit, bundleComp);
+
+    // The row's emit/compile arguments are zero on a deferred run, whose load row reported them.
+    void FinishBundle(TimeSpan rowEmit, TimeSpan rowCompile)
+    {
     // The interactive dashboard owns the whole screen and is painted after the
     // cycle, so suppress these per-bundle status lines there (they'd be wiped by
     // the next Clear anyway and corrupt the cleared frame). Piped watch + normal
@@ -4415,8 +4455,11 @@ foreach (var bundle in bundles)
     // yields a row for every bundle it did finish. The row's wall clock covers this
     // whole loop turn, so wall − (emit+compile+run) is the per-bundle overhead
     // (dep resolution, symbol/module registration) #1825 is hunting.
-    AlRunner.Infrastructure.PhaseLog.EndBundle(bundleEmit, bundleComp, bundleRun);
+    AlRunner.Infrastructure.PhaseLog.EndBundle(rowEmit, rowCompile, bundleRun);
+    }
 }
+foreach (var deferredRun in deferredBundleRuns)
+    deferredRun();
 
 // Restore the streams silenced for the clean-loading frame (#5) before any dashboard
 // repaint / summary that writes to Console.Out / Console.Error.
@@ -5835,9 +5878,6 @@ return strictExitCode ? computedExitCode : 0;
         // in this request/session already loaded the same AppId, and to register
         // THIS bundle's freshly-compiled module under its AppId once loaded.
         AlRunner.Infrastructure.BundleIdentity? bundleId = null;
-        // What the dep block below hands the run: replayed before a deferred run (#4850),
-        // because a later bundle's load has overwritten it by then.
-        IReadOnlyList<Assembly>? bundleDepAssemblies = null;
         if (File.Exists(appJsonPath))
         {
             try
@@ -5870,7 +5910,6 @@ return strictExitCode ? computedExitCode : 0;
                 // install-trigger registrations, then register this bundle's deps.
                 AlRunner.InstallTriggerRunner.ResetForNewBundle();
                 AlRunner.InstallTriggerRunner.SetDependencyAssemblies(loaded);
-                bundleDepAssemblies = loaded;
                 SetBundleCompileReferences();
                 foreach (var (_, appPath) in ordered)
                     AlRunner.Patches.RecordPatches.AddBcAppPath(appPath);
@@ -6260,27 +6299,13 @@ return strictExitCode ? computedExitCode : 0;
                 }
             }
 
-            // The per-bundle state the dep block set for this bundle's run, which a later bundle's
-            // load has replaced by the time a deferred run starts (#4850).
-            void ReplayBundleRunState()
-            {
-                if (bundleDepAssemblies == null) return;
-                AlRunner.InstallTriggerRunner.ResetForNewBundle();
-                AlRunner.InstallTriggerRunner.SetDependencyAssemblies(bundleDepAssemblies);
-                SetBundleInfoFromAppJson(appJsonPath);
-                if (bundleId != null)
-                    BcCompiler.SetCurrentAppIdentity(bundleId.AppId, bundleId.Publisher, bundleId.Version);
-                else
-                    BcCompiler.SetCurrentAppIdentity(null, null, null);
-            }
-
-            (ServerRunResult Result, TimeSpan RunElapsed) RunLoaded(bool replayBundleState)
+            (ServerRunResult Result, TimeSpan RunElapsed) RunLoaded(AlRunner.Infrastructure.BundleRunState? loadedState)
             {
                 IReadOnlyList<TestResult> tests;
                 var rt = System.Diagnostics.Stopwatch.StartNew();
                 try
                 {
-                    if (replayBundleState) ReplayBundleRunState();
+                    loadedState?.Restore();
                     beforeRun?.Invoke(bundleAbs, moduleName, selectionEnvironmentKey, changedObjects, changeModelFallbackReason);
                     BcRuntime.SetTestAssembly(asm);
                     BcRuntime.RegisterTestAssemblyInfo(asm);
@@ -6309,11 +6334,13 @@ return strictExitCode ? computedExitCode : 0;
                 // and its subscribers are bound before an earlier bundle's tests raise events.
                 BcRuntime.SetTestAssembly(asm, wireFieldTriggers: false);
                 BcRuntime.RegisterTestAssemblyInfo(asm);
-                deferred = (moduleName, changeModelFallbackReason, () => RunLoaded(replayBundleState: true));
+                // What this bundle's load left for its run, which a later bundle's load overwrites (#4850).
+                var loadedState = AlRunner.Infrastructure.BundleRunState.Capture();
+                deferred = (moduleName, changeModelFallbackReason, () => RunLoaded(loadedState));
                 return null;
             }
 
-            var (result, elapsed) = RunLoaded(replayBundleState: false);
+            var (result, elapsed) = RunLoaded(loadedState: null);
             runElapsed = elapsed;
             return result;
         }
