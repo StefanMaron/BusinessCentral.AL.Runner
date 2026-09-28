@@ -52,8 +52,33 @@ public sealed class DefaultTestToolPinGuardTests
     {
         new(Regex.Escape(DefaultTestToolPin.EnvVar), RegexOptions.CultureInvariant),
         new(@"DefaultTestToolPin\s*\.\s*EnvVar", RegexOptions.CultureInvariant),
+        // The runner-side constant, qualified or through `using static AlRunner.ProgramSupport`.
+        new(@"\bDefaultTestToolEnvVar\b", RegexOptions.CultureInvariant),
         new(@"\.Environment(Variables)?\s*\.\s*Clear\s*\(", RegexOptions.CultureInvariant),
     };
+
+    internal static bool GoesAroundThePin(string line) => GoesAround.Any(r => r.IsMatch(line));
+
+    // Every spelling of the variable's name a text scan can see (#4927). A name assembled at run
+    // time ("AL_RUNNER_DEFAULT_" + "TEST_TOOL") is out of reach of any text scan.
+    [Theory]
+    [InlineData("psi.Environment[\"AL_RUNNER_DEFAULT_TEST_TOOL\"] = \"on\";")]
+    [InlineData("psi.Environment.Remove(DefaultTestToolPin.EnvVar);")]
+    [InlineData("psi.Environment[ProgramSupport.DefaultTestToolEnvVar] = \"on\";")]
+    [InlineData("psi.Environment[AlRunner.ProgramSupport.DefaultTestToolEnvVar] = \"on\";")]
+    [InlineData("psi.Environment.Remove(DefaultTestToolEnvVar);")]
+    [InlineData("psi.EnvironmentVariables.Clear();")]
+    public void Scan_CatchesEverySpellingOfThePin(string line)
+        => Assert.True(GoesAroundThePin(line), $"the scan misses: {line}");
+
+    // Controls: sanctioned helpers, and a sibling member sharing the name's prefix.
+    [Theory]
+    [InlineData("DefaultTestToolPin.LoadFrom(psi, testApps);")]
+    [InlineData("DefaultTestToolPin.Unpin(psi);")]
+    [InlineData("var enabled = ProgramSupport.DefaultTestToolEnabled();")]
+    [InlineData("psi.Environment[\"AL_RUNNER_OTHER\"] = \"on\";")]
+    public void Scan_LeavesSanctionedAndUnrelatedLinesAlone(string line)
+        => Assert.False(GoesAroundThePin(line), $"the scan flags a line that does not go around the pin: {line}");
 
     [Fact]
     public void NoSpawnSite_SetsClearsOrRemovesThePin_OutsideDefaultTestToolPin()
@@ -73,7 +98,7 @@ public sealed class DefaultTestToolPinGuardTests
         {
             var lines = File.ReadAllLines(f);
             for (var i = 0; i < lines.Length; i++)
-                if (GoesAround.Any(r => r.IsMatch(lines[i])))
+                if (GoesAroundThePin(lines[i]))
                     hits.AppendLine($"{Path.GetRelativePath(RepoRoot, f)}:{i + 1}: {lines[i].Trim()}");
         }
         Assert.True(hits.Length == 0,
