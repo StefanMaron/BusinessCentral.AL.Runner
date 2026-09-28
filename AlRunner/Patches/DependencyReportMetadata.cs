@@ -110,6 +110,21 @@ public static partial class RecordPatches
     internal static IReadOnlyList<BcAppSymbolCache.RequestPageControlSymbol>? TryGetDependencyRequestPageControls(int reportId)
         => FindDependencyReportSymbol(reportId)?.Report.RequestPageControls;
 
+    /// <summary>
+    /// Request-page control <paramref name="controlId"/> of a precompiled report: the report's own,
+    /// or one a precompiled reportextension of it adds (#4921), or null when neither declares it.
+    /// </summary>
+    internal static BcAppSymbolCache.RequestPageControlSymbol? TryGetDependencyRequestPageControl(int reportId, int controlId)
+    {
+        if (FindDependencyReportSymbol(reportId)?.Report is not { } report) return null;
+        foreach (var control in report.RequestPageControls ?? new List<BcAppSymbolCache.RequestPageControlSymbol>())
+            if (control.Id == controlId) return control;
+        foreach (var ext in DependencyReportExtensionsOf(report.Name))
+            foreach (var control in ext.RequestPageAddedControls)
+                if (control.Id == controlId) return control;
+        return null;
+    }
+
     private const int RequestPageFieldKind = 8;
 
     /// <summary>
