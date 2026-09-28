@@ -149,6 +149,23 @@ public sealed class HostOpenPartErrorTests
         Assert.False(LiveNavTestPage.IsRunOnClientDotNetAccess(caught!));
     }
 
+    private static readonly (string?, string?) GetClientCallback = ("Microsoft.Dynamics.Nav.Runtime", "NavSession");
+    private static readonly (string?, string?) DotNetFrame = ("Microsoft.Dynamics.Nav.Runtime", "NavDotNet");
+    private static readonly (string?, string?) AlFrame = ("Microsoft.Dynamics.Nav.BusinessApplication", "Codeunit1908");
+
+    [Fact]
+    public void Frames_DotNetBeforeTheFirstAlFrame_IsAbsorbed()
+        => Assert.True(LiveNavTestPage.IsRunOnClientDotNetAccess(new[] { GetClientCallback, DotNetFrame, AlFrame }));
+
+    [Fact]
+    public void Frames_AlBeforeTheDotNetFrame_IsNotAbsorbed()
+        // The shape of a Confirm raised by AL code that an outer [RunOnClient] DotNet call reached.
+        => Assert.False(LiveNavTestPage.IsRunOnClientDotNetAccess(new[] { GetClientCallback, AlFrame, DotNetFrame }));
+
+    [Fact]
+    public void Frames_NoDotNetFrame_IsNotAbsorbed()
+        => Assert.False(LiveNavTestPage.IsRunOnClientDotNetAccess(new[] { GetClientCallback, AlFrame }));
+
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static void RaiseCallbackRefusal() => throw new Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLCallbackNotAllowedException();
 

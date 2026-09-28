@@ -240,13 +240,20 @@ internal partial class LiveNavTestPage
     /// a NavDotNet frame asked for the client — rather than for a Confirm, a RunModal, a Dialog
     /// or any other client call, which the same exception type also reports.</summary>
     internal static bool IsRunOnClientDotNetAccess(Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLCallbackNotAllowedException ex)
+        => IsRunOnClientDotNetAccess(new System.Diagnostics.StackTrace(ex, false).GetFrames()
+            .Select(f => f.GetMethod()?.DeclaringType)
+            .Select(t => (t?.Namespace, t?.Name)));
+
+    /// <summary>The decision over the throwing stack, innermost frame first: a NavDotNet frame
+    /// before the first AL frame. The AL stop is load-bearing — without it a DotNet call made
+    /// deeper in the stack (by an outer AL caller) would absorb a Confirm raised above it.</summary>
+    internal static bool IsRunOnClientDotNetAccess(IEnumerable<(string? Namespace, string? Type)> frames)
     {
-        foreach (var frame in new System.Diagnostics.StackTrace(ex, false).GetFrames())
+        foreach (var (ns, type) in frames)
         {
-            var type = frame.GetMethod()?.DeclaringType;
-            if (type == typeof(Microsoft.Dynamics.Nav.Runtime.NavDotNet)) return true;
+            if (ns == "Microsoft.Dynamics.Nav.Runtime" && type == "NavDotNet") return true;
             // Past BC's runtime into the AL that made the call: no DotNet frame asked.
-            if (type?.Namespace == "Microsoft.Dynamics.Nav.BusinessApplication") return false;
+            if (ns == "Microsoft.Dynamics.Nav.BusinessApplication") return false;
         }
         return false;
     }
