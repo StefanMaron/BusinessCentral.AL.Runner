@@ -117,17 +117,101 @@ public static partial class RecordPatches
     /// BC's emitter writes for each: its own, else the report's (#4863; measured on BC's own
     /// emitter, docs/dependency-page-properties.md#request-page-application-area). Empty for a
     /// report the runner compiled itself, whose request page carries its real controls.
+    ///
+    /// <para>A precompiled reportextension's added field answers its own area or none, and its
+    /// <c>modify(name)</c> replaces a field's area (#4896; the rule BC's compiler follows for a
+    /// reportextension, measured on a probe compiled with it). <c>ModifiedArea</c> is that
+    /// modify alone, so a source reportextension's can be checked against it.</para>
     /// </summary>
-    internal static IEnumerable<(int Id, string? ApplicationArea)> DependencyRequestPageFieldAreas(int reportId)
+    internal static IEnumerable<(int Id, string? ApplicationArea, string? ModifiedArea)> DependencyRequestPageFieldAreas(int reportId)
     {
         if (AlReportMetadataRegistry.TryGet(reportId, out _)) yield break;
         if (FindDependencyReportSymbol(reportId)?.Report is not { } report) yield break;
+        var extensions = DependencyReportExtensionsOf(report.Name).ToList();
         foreach (var control in report.RequestPageControls ?? new List<BcAppSymbolCache.RequestPageControlSymbol>())
         {
             // A field states Kind 8; a group states 1; the content-area node states no Kind.
-            if (control.Kind == RequestPageFieldKind)
-                yield return (control.Id, control.ApplicationArea ?? report.ApplicationArea);
+            if (control.Kind != RequestPageFieldKind) continue;
+            var modified = PrecompiledRequestPageModify(reportId, extensions, control.Name);
+            yield return (control.Id, modified ?? control.ApplicationArea ?? report.ApplicationArea, modified);
         }
+        foreach (var ext in extensions)
+            foreach (var control in ext.RequestPageAddedControls)
+            {
+                if (control.Kind != RequestPageFieldKind) continue;
+                var modified = PrecompiledRequestPageModify(reportId, extensions, control.Name);
+                yield return (control.Id, modified ?? control.ApplicationArea, modified);
+            }
+    }
+
+    private static IEnumerable<BcAppSymbolCache.ReportExtensionSymbol> DependencyReportExtensionsOf(string reportName)
+    {
+        foreach (var (_, symbols) in EnumerateRegisteredBcAppSymbols("reportextensions (request-page application area)"))
+            foreach (var ext in symbols.ReportExtensions ?? (IReadOnlyList<BcAppSymbolCache.ReportExtensionSymbol>)Array.Empty<BcAppSymbolCache.ReportExtensionSymbol>())
+                // A same-numbered source-parsed reportextension wins, as on the page side
+                // (DependencyPageExtensionFieldControls): the project's own compiled .app at the
+                // bundle root is registered as a dependency and declares the very extension being
+                // compiled from source, and its delta document is read instead.
+                if (!_parsedReportExtensions.ContainsKey(ext.Id) && NamesEqual(ext.TargetName, reportName))
+                    yield return ext;
+    }
+
+    // Two precompiled reportextensions setting one field to different areas refuse: which BC
+    // applies has not been measured (#4761's rule on the page side).
+    private static string? PrecompiledRequestPageModify(
+        int reportId, IReadOnlyList<BcAppSymbolCache.ReportExtensionSymbol> extensions, string? controlName)
+    {
+        if (controlName == null) return null;
+        string? value = null;
+        int? from = null;
+        foreach (var ext in extensions)
+        {
+            if (!ext.RequestPageAreaModifications.TryGetValue(controlName, out var stated)) continue;
+            if (from != null && !string.Equals(value, stated, StringComparison.Ordinal))
+                throw TestPageShapeGap.ControlProperty(
+                    $"TestRequestPage ApplicationArea on report {reportId} control '{controlName}'",
+                    $"reportextensions {from} and {ext.Id} both modify it, to '{value}' and '{stated}', "
+                    + "and which one BC applies has not been measured (#4896)");
+            value = stated;
+            from = ext.Id;
+        }
+        return value;
+    }
+
+    /// <summary>
+    /// What the source-compiled reportextensions of <paramref name="reportId"/> add to or change on
+    /// its request page (#4896), read from each extension's emitted delta document: every
+    /// ControlDefinition under a ControlAdd with its own area or none, and each ControlChange
+    /// that states ApplicationArea. A source reportextension whose document is missing refuses.
+    /// </summary>
+    internal static (IReadOnlyList<(int Id, string? ApplicationArea)> AddedFields, IReadOnlyDictionary<int, string> AreaChanges)
+        SourceReportExtensionRequestPageAreas(int reportId)
+    {
+        var reportName = _parsedReports.TryGetValue(reportId, out var parsed) ? parsed.Name
+            : FindDependencyReportSymbol(reportId)?.Report.Name;
+        var added = new List<(int, string?)>();
+        var changes = new Dictionary<int, string>();
+        var changedBy = new Dictionary<int, int>();
+        if (reportName == null) return (added, changes);
+        foreach (var ext in InAppGroupScope("reportextension", _parsedReportExtensions))
+        {
+            if (ext.BaseObjectName == null || !NamesEqual(ext.BaseObjectName, reportName)) continue;
+            if (!AlObjectMetadataRegistry.TryGet("ReportExtension", ext.Id, out var xml) || string.IsNullOrEmpty(xml))
+                throw TestPageShapeGap.ControlProperty($"TestRequestPage ApplicationArea on report {reportId}",
+                    $"reportextension {ext.Id} was compiled from source, but BC's emitted delta document for it "
+                    + "is not in the metadata registry, so what it adds to the request page cannot be read");
+            var doc = new System.Xml.XmlDocument();
+            doc.LoadXml(xml);
+            var parts = new List<(int, string?)>();
+            foreach (System.Xml.XmlNode node in doc.DocumentElement!.ChildNodes)
+            {
+                if (node is not System.Xml.XmlElement e) continue;
+                if (e.Name == "ControlAdd") CollectAddedControlAreas(e, added, parts);
+                else if (e.Name == "ControlChange" && e.HasAttribute("ApplicationArea"))
+                    RecordAreaChange(reportId, "request-page control", ext.Id, e, changes, changedBy);
+            }
+        }
+        return (added, changes);
     }
 
     // ── ProcessingOnly for a report the runner never source-compiled ─────────

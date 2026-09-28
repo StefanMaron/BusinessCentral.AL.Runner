@@ -109,7 +109,21 @@ internal static partial class BcAppSymbolCache
         // UseRequestPage) reachable instead of parsed-and-dropped at the ObjectSymbol ctor.
         // Trailing + optional for the same reason as PageExtensions; the SHAPE change re-keys
         // the cache through PayloadShape, so no stale payload is ever read back.
-        List<XmlPortSymbol>? XmlPorts = null);
+        List<XmlPortSymbol>? XmlPorts = null,
+        // #4896 — reportextensions and the request-page controls they add or modify. Trailing +
+        // optional for the same reason as PageExtensions; the SHAPE change re-keys the cache.
+        List<ReportExtensionSymbol>? ReportExtensions = null);
+
+    /// <summary>
+    /// A precompiled reportextension, as far as its request page goes (#4896): the controls it
+    /// adds, in the same row shape a report's own request page uses, and the
+    /// <c>ApplicationArea</c> each <c>modify(name)</c> states, keyed by the modified control's
+    /// NAME (it lives in the target report's id space).
+    /// </summary>
+    internal sealed record ReportExtensionSymbol(
+        int Id, string Name, string TargetName,
+        List<RequestPageControlSymbol> RequestPageAddedControls,
+        Dictionary<string, string> RequestPageAreaModifications);
 
     /// <summary>
     /// One profile as SymbolReference.json states it. <c>ProfileId</c> is the profile object's
@@ -748,7 +762,9 @@ internal static partial class BcAppSymbolCache
         // The node's own ApplicationArea verbatim, null when it states none, and its Kind
         // (8 = field control), so the field controls BC's RemoveControl tests can be told
         // from groups (#4863).
-        string? ApplicationArea = null, int? Kind = null);
+        string? ApplicationArea = null, int? Kind = null,
+        // The node's AL name, so a reportextension's modify(name) can be matched to it (#4896).
+        string? Name = null);
 
     /// <summary>
     /// One <c>layout(Name) { Type; MimeType; LayoutFile; Caption; Summary; ObsoleteState;
@@ -1084,7 +1100,8 @@ internal static partial class BcAppSymbolCache
         List<PermissionSetSymbol>? PermissionSets = null,
         List<PageExtensionSymbol>? PageExtensions = null,
         List<EnumExtensionSymbol>? EnumExtensions = null,
-        List<XmlPortSymbol>? XmlPorts = null);
+        List<XmlPortSymbol>? XmlPorts = null,
+        List<ReportExtensionSymbol>? ReportExtensions = null);
 
     /// <summary>
     /// Parse a loose <c>SymbolReference.json</c> file (the raw module JSON, NOT a .app
@@ -1098,6 +1115,7 @@ internal static partial class BcAppSymbolCache
         var tables = new Dictionary<int, ParsedTable>();
         var enums = new Dictionary<int, EnumSymbol>();
         var enumExtensions = new Dictionary<int, EnumExtensionSymbol>();
+        var reportExtensions = new Dictionary<int, ReportExtensionSymbol>();
         var queries = new Dictionary<int, QuerySymbol>();
         var objects = new Dictionary<(string, int), ObjectSymbol>();
         var reports = new Dictionary<int, ReportSymbol>();
@@ -1107,13 +1125,14 @@ internal static partial class BcAppSymbolCache
         var permissionSets = new Dictionary<int, PermissionSetSymbol>();
         var xmlPorts = new Dictionary<int, XmlPortSymbol>();
         using var doc = JsonDocument.Parse(File.ReadAllText(jsonPath));
-        VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects, reports, pages, profiles, pageExtensions, enumExtensions, xmlPorts);
+        VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects, reports, pages, profiles, pageExtensions, enumExtensions, xmlPorts, reportExtensions);
         CollectPermissionSets(doc.RootElement, permissionSets);
         var (appId, appName) = ReadAppIdentity(doc.RootElement);
         return new AppSymbols(tables.Values.ToList(), enums.Values.ToList(), queries.Values.ToList(),
             objects.Values.ToList(), reports.Values.ToList(), pages.Values.ToList(),
             profiles.Values.ToList(), appId, appName, permissionSets.Values.ToList(),
-            pageExtensions.Values.ToList(), enumExtensions.Values.ToList(), xmlPorts.Values.ToList());
+            pageExtensions.Values.ToList(), enumExtensions.Values.ToList(), xmlPorts.Values.ToList(),
+            reportExtensions.Values.ToList());
     }
 
     /// <summary>
@@ -1248,7 +1267,8 @@ internal static partial class BcAppSymbolCache
                 payload.PermissionSets ?? new List<PermissionSetSymbol>(),
                 payload.PageExtensions ?? new List<PageExtensionSymbol>(),
                 payload.EnumExtensions ?? new List<EnumExtensionSymbol>(),
-                payload.XmlPorts ?? new List<XmlPortSymbol>());
+                payload.XmlPorts ?? new List<XmlPortSymbol>(),
+                payload.ReportExtensions ?? new List<ReportExtensionSymbol>());
         }
         catch (Exception ex)
         {
@@ -1265,7 +1285,7 @@ internal static partial class BcAppSymbolCache
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
-            var payload = new CachePayload(contentHash, symbols.Tables, symbols.Enums, symbols.Queries, symbols.Objects, symbols.Reports, symbols.Pages, symbols.Profiles, symbols.AppId, symbols.AppName, symbols.PermissionSets, symbols.PageExtensions, symbols.EnumExtensions, symbols.XmlPorts);
+            var payload = new CachePayload(contentHash, symbols.Tables, symbols.Enums, symbols.Queries, symbols.Objects, symbols.Reports, symbols.Pages, symbols.Profiles, symbols.AppId, symbols.AppName, symbols.PermissionSets, symbols.PageExtensions, symbols.EnumExtensions, symbols.XmlPorts, symbols.ReportExtensions);
             // #1809 follow-up: cachePath is content-keyed (hash of the .app file),
             // so two subprocesses parsing the same app concurrently used to race a
             // plain File.WriteAllText into the same path. TryRead already treats any
@@ -1292,6 +1312,7 @@ internal static partial class BcAppSymbolCache
         var tables = new Dictionary<int, ParsedTable>();
         var enums = new Dictionary<int, EnumSymbol>();
         var enumExtensions = new Dictionary<int, EnumExtensionSymbol>();
+        var reportExtensions = new Dictionary<int, ReportExtensionSymbol>();
         var queries = new Dictionary<int, QuerySymbol>();
         var objects = new Dictionary<(string, int), ObjectSymbol>();
         var reports = new Dictionary<int, ReportSymbol>();
@@ -1304,7 +1325,7 @@ internal static partial class BcAppSymbolCache
         foreach (var json in ReadSymbolReferences(appPath))
         {
             using var doc = JsonDocument.Parse(json);
-            VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects, reports, pages, profiles, pageExtensions, enumExtensions, xmlPorts);
+            VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects, reports, pages, profiles, pageExtensions, enumExtensions, xmlPorts, reportExtensions);
             CollectPermissionSets(doc.RootElement, permissionSets);
             // The .app's own identity, stated once at the root of its SymbolReference.json.
             // First one wins: ReadSymbolReferences can yield more than one module for a
@@ -1315,7 +1336,8 @@ internal static partial class BcAppSymbolCache
         return new AppSymbols(tables.Values.ToList(), enums.Values.ToList(), queries.Values.ToList(),
             objects.Values.ToList(), reports.Values.ToList(), pages.Values.ToList(),
             profiles.Values.ToList(), appId, appName, permissionSets.Values.ToList(),
-            pageExtensions.Values.ToList(), enumExtensions.Values.ToList(), xmlPorts.Values.ToList());
+            pageExtensions.Values.ToList(), enumExtensions.Values.ToList(), xmlPorts.Values.ToList(),
+            reportExtensions.Values.ToList());
     }
 
     /// <summary>
@@ -1432,7 +1454,7 @@ internal static partial class BcAppSymbolCache
     /// reached through, or null at the root. It is the ONLY source for a codeunit's ALNamespace:
     /// the symbol file states no such property, and Microsoft's own packages put every object in
     /// the tree — System Application 28.1's top-level <c>Codeunits</c> array has length 0 (#3788).</param>
-    private static void VisitSymbolContainer(JsonElement container, Dictionary<int, ParsedTable> tables, Dictionary<int, EnumSymbol> enums, Dictionary<int, QuerySymbol> queries, Dictionary<(string, int), ObjectSymbol> objects, Dictionary<int, ReportSymbol> reports, Dictionary<int, PageSymbol> pages, Dictionary<string, ProfileSymbol> profiles, Dictionary<int, PageExtensionSymbol> pageExtensions, Dictionary<int, EnumExtensionSymbol> enumExtensions, Dictionary<int, XmlPortSymbol> xmlPorts, string? alNamespace = null)
+    private static void VisitSymbolContainer(JsonElement container, Dictionary<int, ParsedTable> tables, Dictionary<int, EnumSymbol> enums, Dictionary<int, QuerySymbol> queries, Dictionary<(string, int), ObjectSymbol> objects, Dictionary<int, ReportSymbol> reports, Dictionary<int, PageSymbol> pages, Dictionary<string, ProfileSymbol> profiles, Dictionary<int, PageExtensionSymbol> pageExtensions, Dictionary<int, EnumExtensionSymbol> enumExtensions, Dictionary<int, XmlPortSymbol> xmlPorts, Dictionary<int, ReportExtensionSymbol> reportExtensions, string? alNamespace = null)
     {
         // Flat (kind, id, name) sweep for AllObj. Independent of the typed parsing below
         // so a kind we do not model in depth still shows up as an existing object.
@@ -1547,6 +1569,11 @@ internal static partial class BcAppSymbolCache
             }
         }
 
+        if (container.TryGetProperty("ReportExtensions", out var reportExtArray) && reportExtArray.ValueKind == JsonValueKind.Array)
+            foreach (var rx in reportExtArray.EnumerateArray())
+                if (TryParseReportExtensionSymbol(rx) is { } parsedRx && !reportExtensions.ContainsKey(parsedRx.Id))
+                    reportExtensions[parsedRx.Id] = parsedRx;
+
         if (container.TryGetProperty("Pages", out var pageArray) && pageArray.ValueKind == JsonValueKind.Array)
         {
             foreach (var p in pageArray.EnumerateArray())
@@ -1605,7 +1632,7 @@ internal static partial class BcAppSymbolCache
                 var childNamespace = string.IsNullOrWhiteSpace(segment)
                     ? alNamespace
                     : string.IsNullOrEmpty(alNamespace) ? segment!.Trim() : alNamespace + "." + segment!.Trim();
-                VisitSymbolContainer(ns, tables, enums, queries, objects, reports, pages, profiles, pageExtensions, enumExtensions, xmlPorts, childNamespace);
+                VisitSymbolContainer(ns, tables, enums, queries, objects, reports, pages, profiles, pageExtensions, enumExtensions, xmlPorts, reportExtensions, childNamespace);
             }
         }
     }
@@ -2599,6 +2626,28 @@ internal static partial class BcAppSymbolCache
         return v is null ? null : SymbolBoolOrNull(new() { [name] = v }, name, ref unreadable);
     }
 
+    private static ReportExtensionSymbol? TryParseReportExtensionSymbol(JsonElement rx)
+    {
+        if (!rx.TryGetProperty("Id", out var idProp) || !idProp.TryGetInt32(out var id) || id <= 0) return null;
+        var name = rx.TryGetProperty("Name", out var n) ? n.GetString() : null;
+        var target = ExtensionTargetName("ReportExtension", rx);
+        if (string.IsNullOrEmpty(name) || target == null) return null;
+        var added = new List<RequestPageControlSymbol>();
+        var modifications = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (rx.TryGetProperty("RequestPage", out var rp) && rp.ValueKind == JsonValueKind.Object
+            && rp.TryGetProperty("ControlChanges", out var changes) && changes.ValueKind == JsonValueKind.Array)
+            foreach (var change in changes.EnumerateArray())
+            {
+                if (change.TryGetProperty("Controls", out var controls) && controls.ValueKind == JsonValueKind.Array)
+                    foreach (var control in controls.EnumerateArray())
+                        CollectRequestPageControls(control, parentId: 0, added);
+                else if (change.TryGetProperty("Anchor", out var anchor) && anchor.GetString() is { Length: > 0 } anchorName
+                         && SymbolProperties(change).TryGetValue("ApplicationArea", out var area) && !string.IsNullOrWhiteSpace(area))
+                    modifications[anchorName] = area;
+            }
+        return new ReportExtensionSymbol(id, name, target, added, modifications);
+    }
+
     private static string? ReadRequestPageProperty(JsonElement report, string name)
     {
         if (!report.TryGetProperty("RequestPage", out var requestPage)
@@ -2633,8 +2682,11 @@ internal static partial class BcAppSymbolCache
             props.TryGetValue("OptionCaption", out var optionCaption);
             props.TryGetValue("ApplicationArea", out var applicationArea);
             int? kind = control.TryGetProperty("Kind", out var kindProp) && kindProp.TryGetInt32(out var k) ? k : null;
+            var nodeName = control.TryGetProperty("Name", out var nameProp) && nameProp.ValueKind == JsonValueKind.String
+                ? nameProp.GetString() : null;
             into.Add(new RequestPageControlSymbol(id, parentId, visible, editable, enabled, optionCaption,
-                string.IsNullOrWhiteSpace(applicationArea) ? null : applicationArea, kind));
+                string.IsNullOrWhiteSpace(applicationArea) ? null : applicationArea, kind,
+                string.IsNullOrEmpty(nodeName) ? null : nodeName));
         }
 
         if (control.TryGetProperty("Controls", out var children) && children.ValueKind == JsonValueKind.Array)

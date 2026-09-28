@@ -113,7 +113,41 @@ public class DependencyActionAndRequestPageAreaTests
                 { "Id": 1, "Name": "Content", "Controls": [
                   { "Kind": 8, "Id": 648630011, "Name": "Opt",
                     "Properties": [ { "Name": "ApplicationArea", "Value": "#Assembly" } ] } ] } ] }
+            },
+            {
+              "Id": 88486303, "Name": "DAA Ext Report",
+              "Properties": [ { "Name": "ApplicationArea", "Value": "#Basic,#Suite" } ],
+              "RequestPage": { "Id": 0, "Name": "RequestOptionsPage", "Controls": [
+                { "Id": 1, "Name": "Content", "Controls": [
+                  { "Kind": 8, "Id": 648630021, "Name": "BaseInherits" },
+                  { "Kind": 8, "Id": 648630022, "Name": "BaseModified",
+                    "Properties": [ { "Name": "ApplicationArea", "Value": "#Basic" } ] } ] } ] }
+            },
+            {
+              "Id": 88486304, "Name": "DAA Conflict Report",
+              "RequestPage": { "Id": 0, "Name": "RequestOptionsPage", "Controls": [
+                { "Id": 1, "Name": "Content", "Controls": [
+                  { "Kind": 8, "Id": 648630031, "Name": "Twice" } ] } ] }
             }
+          ],
+          "ReportExtensions": [
+            {
+              "Id": 88486311, "Name": "DAA Ext Report Ext", "Target": "DAA Ext Report",
+              "RequestPage": { "Id": 0, "Name": "RequestPageExtension", "ControlChanges": [
+                { "Anchor": "Content", "ChangeKind": 4, "Controls": [
+                  { "Kind": 1, "Id": 648630029, "Name": "ExtGroup", "Controls": [
+                    { "Kind": 8, "Id": 648630023, "Name": "ExtOwn",
+                      "Properties": [ { "Name": "ApplicationArea", "Value": "#Manufacturing" } ] },
+                    { "Kind": 8, "Id": 648630024, "Name": "ExtNone" } ] } ] },
+                { "Anchor": "BaseModified", "ChangeKind": 9,
+                  "Properties": [ { "Name": "ApplicationArea", "Value": "#Jobs" } ] } ] }
+            },
+            { "Id": 88486312, "Name": "DAA Conflict A", "Target": "DAA Conflict Report",
+              "RequestPage": { "ControlChanges": [ { "Anchor": "Twice", "ChangeKind": 9,
+                "Properties": [ { "Name": "ApplicationArea", "Value": "#Jobs" } ] } ] } },
+            { "Id": 88486313, "Name": "DAA Conflict B", "Target": "DAA Conflict Report",
+              "RequestPage": { "ControlChanges": [ { "Anchor": "Twice", "ChangeKind": 9,
+                "Properties": [ { "Name": "ApplicationArea", "Value": "#Service" } ] } ] } }
           ]
         }
         """;
@@ -232,6 +266,81 @@ public class DependencyActionAndRequestPageAreaTests
             Assert.Equal("#Basic,#Suite", fields[RpInheritsId]);
             Assert.Equal(new[] { RpOwnId },
                 ApplicationAreaControlRemoval.DependencyRequestPageFieldsToRemove(ReportId, BasicSuiteSession).ToArray());
+        });
+
+    // #4896: a precompiled reportextension's request-page fields and modify().
+    [Fact]
+    public void APrecompiledReportExtension_AddsFieldsWithTheirOwnAreaOrNone_AndItsModifyReplaces()
+        => WithDependencyApp(() =>
+        {
+            var fields = RecordPatches.DependencyRequestPageFieldAreas(88486303).ToDictionary(f => f.Id, f => f.ApplicationArea);
+            Assert.Equal(new[] { 648630021, 648630022, 648630023, 648630024 }, fields.Keys.OrderBy(i => i));
+            Assert.Equal("#Basic,#Suite", fields[648630021]);   // the report's
+            Assert.Equal("#Jobs", fields[648630022]);           // the modify's, replacing #Basic
+            Assert.Equal("#Manufacturing", fields[648630023]);  // the extension field's own
+            Assert.Null(fields[648630024]);                     // none: not the report's
+            Assert.Equal(new[] { 648630022, 648630023, 648630024 },
+                ApplicationAreaControlRemoval.DependencyRequestPageFieldsToRemove(88486303, BasicSuiteSession).OrderBy(i => i));
+        });
+
+    [Fact]
+    // The project's own compiled .app at the bundle root: RegisterBundleSymbolApps registers it
+    // through the same AddBcAppPath this fixture uses, and it declares the reportextension the
+    // runner is also compiling from source. The source-parsed one wins (its delta is read by
+    // SourceReportExtensionRequestPageAreas), so the symbol copy contributes nothing and nothing
+    // refuses — an ordinary project layout must open the request page.
+    public void AReportExtensionAlsoCompiledFromSource_IsReadFromSourceOnly_AndDoesNotRefuse()
+        => WithDependencyApp(() =>
+        {
+            var field = typeof(RecordPatches).GetField("_parsedReportExtensions",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+            var parsed = (System.Collections.IDictionary)field.GetValue(null)!;
+            parsed[88486311] = new ParsedReport(88486311, "DAA Ext Report Ext", IsExtension: true);
+            try
+            {
+                var fields = RecordPatches.DependencyRequestPageFieldAreas(88486303).ToDictionary(f => f.Id, f => f.ApplicationArea);
+                Assert.Equal(new[] { 648630021, 648630022 }, fields.Keys.OrderBy(i => i));
+                Assert.Equal("#Basic", fields[648630022]);   // its own: the symbol copy's modify is not applied
+            }
+            finally
+            {
+                parsed.Remove(88486311);
+            }
+        });
+
+    // #4896: a SOURCE reportextension's modify() over a precompiled report's field, through the
+    // production helper. The report's own field 648630021 inherits #Basic,#Suite; the source
+    // change moves it to #Jobs, so a #Basic,#Suite session removes it.
+    [Fact]
+    public void ASourceReportExtensionsModify_ReplacesAPrecompiledRequestPageFieldsArea_AndConflictingRefuses()
+        => WithDependencyApp(() =>
+        {
+            var none = (Array.Empty<(int, string?)>() as IReadOnlyList<(int Id, string? ApplicationArea)>, new Dictionary<int, string>() as IReadOnlyDictionary<int, string>);
+            Assert.DoesNotContain(648630021, ApplicationAreaControlRemoval.RequestPageFieldsToRemove(88486303, none, BasicSuiteSession));
+
+            var moved = (Array.Empty<(int, string?)>() as IReadOnlyList<(int Id, string? ApplicationArea)>,
+                new Dictionary<int, string> { [648630021] = "#Jobs" } as IReadOnlyDictionary<int, string>);
+            Assert.Contains(648630021, ApplicationAreaControlRemoval.RequestPageFieldsToRemove(88486303, moved, BasicSuiteSession));
+
+            // 648630022 is already modify()'d to #Jobs by the precompiled extension; a source
+            // modify to a different area refuses, one to the same area does not.
+            var conflicting = (Array.Empty<(int, string?)>() as IReadOnlyList<(int Id, string? ApplicationArea)>,
+                new Dictionary<int, string> { [648630022] = "#Basic" } as IReadOnlyDictionary<int, string>);
+            var ex = Assert.Throws<RunnerOutOfScopeException>(() =>
+                ApplicationAreaControlRemoval.RequestPageFieldsToRemove(88486303, conflicting, BasicSuiteSession).ToList());
+            Assert.Contains("'#Jobs'", ex.Message, StringComparison.Ordinal);
+            var agreeing = (Array.Empty<(int, string?)>() as IReadOnlyList<(int Id, string? ApplicationArea)>,
+                new Dictionary<int, string> { [648630022] = "#Jobs" } as IReadOnlyDictionary<int, string>);
+            Assert.Contains(648630022, ApplicationAreaControlRemoval.RequestPageFieldsToRemove(88486303, agreeing, BasicSuiteSession));
+        });
+
+    [Fact]
+    public void TwoPrecompiledReportExtensionsModifyingOneFieldToDifferentAreas_Refuse()
+        => WithDependencyApp(() =>
+        {
+            var ex = Assert.Throws<RunnerOutOfScopeException>(() => RecordPatches.DependencyRequestPageFieldAreas(88486304).ToList());
+            Assert.Contains("'#Jobs'", ex.Message, StringComparison.Ordinal);
+            Assert.Contains("'#Service'", ex.Message, StringComparison.Ordinal);
         });
 
     [Fact]

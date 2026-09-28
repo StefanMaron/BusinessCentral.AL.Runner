@@ -269,6 +269,23 @@ report stating none, with no attribute. `RecordPatches.DependencyRequestPageFiel
 that to the symbol file's Kind-8 controls; groups and the content node are not area-tested.
 Corpus codeunit 67544 (report 5803 "Reset Cost Is Adjusted").
 
+<a id="reportextension-request-page-application-area"></a>
+### Request-page controls a reportextension adds (#4896)
+
+A reportextension's request page is not merged into the report's MasterPage, on a source-compiled
+or a precompiled report, so it is read separately: from its emitted delta document when it is
+compiled in the bundle (`RecordPatches.SourceReportExtensionRequestPageAreas`), and from the
+symbol file's `ReportExtensions[].RequestPage.ControlChanges` when it ships precompiled. The rule
+is what BC's compiler writes into a reportextension's delta, measured on a probe compiled with it:
+an added field states its own `ApplicationArea` or none (not the report's), and a `modify()` that
+states `ApplicationArea` is a `ControlChange` replacing the base control's. Two extensions
+disagreeing refuse. Corpus codeunits 67546 (source) and 67547 (report 5803's precompiled
+"Mfg. Reset Cost Is Adjusted"). A handler still cannot read or write such a field (#4909).
+
+A precompiled report's request-page **actions** (#4895) are not read: no report in the platform
+apps declares one, and the symbol file's `RequestPage` node states no `Actions` for any of them,
+so there is nothing to measure the representation against.
+
 ## What is deliberately not implemented, and why
 
 - **`ActionContainers` / `ViewContainers`.** BC writes `ActionContainers` on all 235 pages
