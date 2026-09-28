@@ -148,16 +148,12 @@ public static partial class RecordPatches
     {
         foreach (var (_, symbols) in EnumerateRegisteredBcAppSymbols("reportextensions (request-page application area)"))
             foreach (var ext in symbols.ReportExtensions ?? (IReadOnlyList<BcAppSymbolCache.ReportExtensionSymbol>)Array.Empty<BcAppSymbolCache.ReportExtensionSymbol>())
-                if (NamesEqual(ext.TargetName, reportName))
-                {
-                    // A source reportextension of the same number cannot be told apart from this
-                    // one by id alone; refuse rather than drop either (loud-failures.md).
-                    if (_parsedReportExtensions.ContainsKey(ext.Id))
-                        throw TestPageShapeGap.ControlProperty($"TestRequestPage ApplicationArea on report '{reportName}'",
-                            $"reportextension {ext.Id} is both compiled from source here and shipped precompiled in a "
-                            + "loaded dependency, so which request-page changes apply cannot be decided by id (#4896)");
+                // A same-numbered source-parsed reportextension wins, as on the page side
+                // (DependencyPageExtensionFieldControls): the project's own compiled .app at the
+                // bundle root is registered as a dependency and declares the very extension being
+                // compiled from source, and its delta document is read instead.
+                if (!_parsedReportExtensions.ContainsKey(ext.Id) && NamesEqual(ext.TargetName, reportName))
                     yield return ext;
-                }
     }
 
     // Two precompiled reportextensions setting one field to different areas refuse: which BC

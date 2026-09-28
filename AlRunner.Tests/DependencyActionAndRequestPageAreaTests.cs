@@ -284,22 +284,54 @@ public class DependencyActionAndRequestPageAreaTests
         });
 
     [Fact]
-    public void APrecompiledReportExtensionSharingItsIdWithASourceOne_Refuses_RatherThanBeingSkipped()
+    // The project's own compiled .app at the bundle root: RegisterBundleSymbolApps registers it
+    // through the same AddBcAppPath this fixture uses, and it declares the reportextension the
+    // runner is also compiling from source. The source-parsed one wins (its delta is read by
+    // SourceReportExtensionRequestPageAreas), so the symbol copy contributes nothing and nothing
+    // refuses — an ordinary project layout must open the request page.
+    public void AReportExtensionAlsoCompiledFromSource_IsReadFromSourceOnly_AndDoesNotRefuse()
         => WithDependencyApp(() =>
         {
             var field = typeof(RecordPatches).GetField("_parsedReportExtensions",
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
             var parsed = (System.Collections.IDictionary)field.GetValue(null)!;
-            parsed[88486311] = new ParsedReport(88486311, "Some Source Ext", IsExtension: true);
+            parsed[88486311] = new ParsedReport(88486311, "DAA Ext Report Ext", IsExtension: true);
             try
             {
-                var ex = Assert.Throws<RunnerOutOfScopeException>(() => RecordPatches.DependencyRequestPageFieldAreas(88486303).ToList());
-                Assert.Contains("reportextension 88486311", ex.Message, StringComparison.Ordinal);
+                var fields = RecordPatches.DependencyRequestPageFieldAreas(88486303).ToDictionary(f => f.Id, f => f.ApplicationArea);
+                Assert.Equal(new[] { 648630021, 648630022 }, fields.Keys.OrderBy(i => i));
+                Assert.Equal("#Basic", fields[648630022]);   // its own: the symbol copy's modify is not applied
             }
             finally
             {
                 parsed.Remove(88486311);
             }
+        });
+
+    // #4896: a SOURCE reportextension's modify() over a precompiled report's field, through the
+    // production helper. The report's own field 648630021 inherits #Basic,#Suite; the source
+    // change moves it to #Jobs, so a #Basic,#Suite session removes it.
+    [Fact]
+    public void ASourceReportExtensionsModify_ReplacesAPrecompiledRequestPageFieldsArea_AndConflictingRefuses()
+        => WithDependencyApp(() =>
+        {
+            var none = (Array.Empty<(int, string?)>() as IReadOnlyList<(int Id, string? ApplicationArea)>, new Dictionary<int, string>() as IReadOnlyDictionary<int, string>);
+            Assert.DoesNotContain(648630021, ApplicationAreaControlRemoval.RequestPageFieldsToRemove(88486303, none, BasicSuiteSession));
+
+            var moved = (Array.Empty<(int, string?)>() as IReadOnlyList<(int Id, string? ApplicationArea)>,
+                new Dictionary<int, string> { [648630021] = "#Jobs" } as IReadOnlyDictionary<int, string>);
+            Assert.Contains(648630021, ApplicationAreaControlRemoval.RequestPageFieldsToRemove(88486303, moved, BasicSuiteSession));
+
+            // 648630022 is already modify()'d to #Jobs by the precompiled extension; a source
+            // modify to a different area refuses, one to the same area does not.
+            var conflicting = (Array.Empty<(int, string?)>() as IReadOnlyList<(int Id, string? ApplicationArea)>,
+                new Dictionary<int, string> { [648630022] = "#Basic" } as IReadOnlyDictionary<int, string>);
+            var ex = Assert.Throws<RunnerOutOfScopeException>(() =>
+                ApplicationAreaControlRemoval.RequestPageFieldsToRemove(88486303, conflicting, BasicSuiteSession).ToList());
+            Assert.Contains("'#Jobs'", ex.Message, StringComparison.Ordinal);
+            var agreeing = (Array.Empty<(int, string?)>() as IReadOnlyList<(int Id, string? ApplicationArea)>,
+                new Dictionary<int, string> { [648630022] = "#Jobs" } as IReadOnlyDictionary<int, string>);
+            Assert.Contains(648630022, ApplicationAreaControlRemoval.RequestPageFieldsToRemove(88486303, agreeing, BasicSuiteSession));
         });
 
     [Fact]
