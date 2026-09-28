@@ -83,11 +83,19 @@ public static partial class RecordPatches
         });
 
     /// <summary>BC's own SystemId column for a table, read off the metatable rather than found
-    /// by column name. A missing <c>NCLMetaTable.SystemIdField</c> (internal, present on Ncl
-    /// 27.0.38460 and 28.4.53241) refuses: silently skipping it wrote every link row with an
-    /// empty SystemId, the divergence <see cref="BuildRecordLinkRow"/> documents (#4944).</summary>
+    /// by column name. A missing <c>NCLMetaTable.SystemIdField</c> refuses (#4944), and so does a
+    /// value that is not an <see cref="NCLMetaField"/>; a null value is carried, and refused by
+    /// <see cref="SetFreshSystemId"/> only when a row is written (#4951).</summary>
     private static NCLMetaField? ResolveSystemIdField(NCLMetaTable table)
-        => RecordLinkSystemIdProperty().GetValue(table) as NCLMetaField;
+        => CoerceSystemIdField(RecordLinkSystemIdProperty().GetValue(table));
+
+    private static NCLMetaField? CoerceSystemIdField(object? value)
+        => value == null
+            ? null
+            : value as NCLMetaField
+              ?? throw new AlRunner.Infrastructure.BcShapeGapException(
+                  RecordLinkSurface, "NCLMetaTable.SystemIdField",
+                  $"holds a {value.GetType().Name}, not an NCLMetaField");
 
     private static PropertyInfo RecordLinkSystemIdProperty()
         => AlRunner.Infrastructure.BcShape.Property(
@@ -258,11 +266,17 @@ public static partial class RecordPatches
 
     /// <summary>Each row this store creates is a NEW row, a CopyLinks copy included, so it gets
     /// its own SystemId: InsertRows runs inside SuppressSystemIdUniqueness, so nothing
-    /// downstream assigns one, and an empty id diverges from a row an AL Insert wrote.</summary>
+    /// downstream assigns one, and an empty id diverges from a row an AL Insert wrote. So a
+    /// metatable with no SystemId slot refuses rather than writing the row without one.</summary>
     private static void SetFreshSystemId(NavValue[] values, RecordLinkColumns columns)
     {
         var f = columns.SystemId;
-        if (f == null || f.FieldIndex < 0 || f.FieldIndex >= values.Length) return;
+        if (f == null || f.FieldIndex < 0 || f.FieldIndex >= values.Length)
+            throw new AlRunner.Infrastructure.BcShapeGapException(
+                RecordLinkSurface, "NCLMetaTable.SystemIdField",
+                f == null
+                    ? "is null, so a Record Link row would be written with no SystemId"
+                    : $"has field index {f.FieldIndex}, outside the {values.Length}-slot row");
         values[f.FieldIndex] = NavValue.CreateNavValueFromObject(f, Guid.NewGuid());
     }
 
