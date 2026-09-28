@@ -212,12 +212,12 @@ internal partial class LiveNavTestPage
     /// for the first time from <see cref="Loaded"/>'s own refresh once the host DOES have a
     /// row, not from here.
     ///
-    /// Each control is isolated in its own try/catch: a part the runner cannot build (a
-    /// precompiled Base App page the runner has no metadata for, an unsupported shape) must
-    /// not prevent the HOST from opening, or every card carrying one unbuildable FactBox
-    /// would refuse OpenView entirely. An AL test that genuinely touches such a part still
-    /// gets the normal named refusal through <see cref="GetPart"/> — this only skips the
-    /// EAGER attempt, it does not swallow the refusal a real touch would raise.
+    /// Everything a part raises while it is built here fails the host's open, as it does on BC:
+    /// an AL Error() in the part's OnOpenPage (corpus codeunit 67010, #4903), an unhandled
+    /// Confirm there, an out-of-scope surface it touches. The one exception absorbed is BC's
+    /// "Callback functions are not allowed" raised by a <c>[RunOnClient]</c> DotNet access,
+    /// where BC answers without a client — Camera.IsAvailable on the picture FactBox of most
+    /// Base App cards. That is #2772; drop this filter when it lands.
     /// </summary>
     internal void EagerlyBuildParts()
     {
@@ -225,12 +225,47 @@ internal partial class LiveNavTestPage
         foreach (var controlId in _page.AllPartControlIds())
         {
             try { GetPart(controlId); }
-            catch (Exception ex)
+            // Typed on purpose: OutOfScopeMessage.FromException would also match an out-of-scope
+            // refusal raised inside the part's AL, and swallow it.
+            catch (Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLCallbackNotAllowedException ex)
+                when (IsRunOnClientDotNetAccess(ex))
             {
                 if (Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PAGE_METADATA") == "1")
                     Console.Out.WriteLine($"[MockTestPage.EagerlyBuildParts] control {controlId} on page {_pageId}: {ex.GetType().Name}: {ex.Message}");
             }
         }
+    }
+
+    /// <summary>Whether BC raised <paramref name="ex"/> for a <c>[RunOnClient]</c> DotNet member —
+    /// a NavDotNet frame asked for the client — rather than for a Confirm, a RunModal, a Dialog
+    /// or any other client call, which the same exception type also reports.</summary>
+    internal static bool IsRunOnClientDotNetAccess(Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLCallbackNotAllowedException ex)
+        => IsRunOnClientDotNetAccess(new System.Diagnostics.StackTrace(ex, false).GetFrames().Select(FrameIdentity));
+
+    /// <summary>A frame's declaring (namespace, type). A frame with no managed method or no
+    /// declaring type — a native or dynamic frame — names neither NavDotNet nor AL, so the walk
+    /// passes over it; this is the stack's own shape, not a BC member a rename could lose.</summary>
+    private static (string? Namespace, string? Type) FrameIdentity(System.Diagnostics.StackFrame frame)
+    {
+        var method = frame.GetMethod();
+        if (method == null) return (null, null);
+        var type = method.DeclaringType;
+        if (type == null) return (null, null);
+        return (type.Namespace, type.Name);
+    }
+
+    /// <summary>The decision over the throwing stack, innermost frame first: a NavDotNet frame
+    /// before the first AL frame. The AL stop is load-bearing — without it a DotNet call made
+    /// deeper in the stack (by an outer AL caller) would absorb a Confirm raised above it.</summary>
+    internal static bool IsRunOnClientDotNetAccess(IEnumerable<(string? Namespace, string? Type)> frames)
+    {
+        foreach (var (ns, type) in frames)
+        {
+            if (ns == "Microsoft.Dynamics.Nav.Runtime" && type == "NavDotNet") return true;
+            // Past BC's runtime into the AL that made the call: no DotNet frame asked.
+            if (ns == "Microsoft.Dynamics.Nav.BusinessApplication") return false;
+        }
+        return false;
     }
 
     public override bool IsOpened() => _opened;
