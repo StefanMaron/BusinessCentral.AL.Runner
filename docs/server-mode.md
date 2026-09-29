@@ -573,9 +573,11 @@ A failing test's per-test coverage is the part of the test that ran before it
 failed, and that part decides its outcome: a change that can make it pass must
 touch code it already executed, because code after the failure point runs only
 once something before it changes. So a test that failed in the recording run
-keeps that coverage and is selected by it (#4978). The exceptions are the ones
-passing tests already have (a newly added object such as an event subscriber,
-table-shape changes).
+keeps that coverage and is selected by it (#4978). It shares the gaps passing
+tests have: an object added since the recording run, such as a new event
+subscriber, is in no test's coverage, so a test that raises its event is not
+selected for it (#4988). A test failing for want of that subscriber is therefore
+skipped too; `includeFailing: true` runs it.
 
 It stays **unknown**, and always runs, when the record is not complete:
 
