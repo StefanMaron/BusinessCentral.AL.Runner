@@ -6,6 +6,8 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+## [2.12.0] - 2026-09-29
+
 ### Added
 - **cli:** Action needed entries at most 3 lines; a failing test points at the entry
 - **compile:** emit runner AL in BC's inline-scope mode
