@@ -135,6 +135,12 @@ public static class AlCallStackCapture
         lock (_lock) { _assemblyInfo[asm] = (name, publisher, version); }
     }
 
+    /// <summary>The app a registered assembly belongs to; null for one nothing registered.</summary>
+    internal static (string Name, string Publisher, string Version)? AppOf(Assembly asm)
+    {
+        lock (_lock) { return _assemblyInfo.TryGetValue(asm, out var info) ? info : null; }
+    }
+
     /// <summary>
     /// One-time setup: stash the skeleton session and wire the FirstChanceException
     /// handler. Must be called after BC runtime patches are applied and the session

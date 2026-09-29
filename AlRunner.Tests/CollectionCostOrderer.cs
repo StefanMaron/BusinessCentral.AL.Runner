@@ -229,6 +229,9 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // perf/boot-overhead: 37.8s measured on the same run; below the 60s freshness
             // threshold, listed so it is dispatched by measured cost, not by the fallback.
             ["EventSubscriberScanEquivalenceTests"] = 37,
+            // #4273: four runner spawns (cold + warm coverage, --precompile, a Tier-1 run);
+            // 38.9s measured locally on the class alone.
+            ["CoveragePackagedDependencyTests"] = 38,
             // #1851/#1857 cut this from 292s to 196s (--print-cache-key skips the four cold
             // AL compiles the class used to pay for). #1887 caught the table still saying
             // 292 — harmless for ordering (it already ranked at the top either way), but it

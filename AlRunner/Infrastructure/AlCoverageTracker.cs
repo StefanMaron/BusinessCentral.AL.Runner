@@ -293,6 +293,39 @@ public static class AlCoverageTracker
         return result;
     }
 
+    /// <summary>
+    /// #4273: AL that executed this run and that no root maps — hit-tracked scopes carrying
+    /// [SourceSpans] and an AL object id, whose object <paramref name="sourceMap"/> lacks —
+    /// counted as distinct objects per dependency app. Precompiled package code is what lands
+    /// here. Read over the hit-tracked keys only: in Collect's whole-process scan the same test
+    /// also matches code nobody ran (docs/coverage-attribution.md#the-two-causes-of-a-null-resolution-are-separable-4350).
+    /// Microsoft's apps, and assemblies no dependency load registered (the service-tier DLLs),
+    /// are left out: Microsoft code is outside the report by design, not by accident.
+    /// </summary>
+    public static IReadOnlyList<(string App, int Objects)> UnattributedExecutedObjects(AlSourceLocationMap sourceMap)
+    {
+        EnsureReflInit();
+        var byApp = new SortedDictionary<string, HashSet<(string Label, int Id)>>(StringComparer.Ordinal);
+        foreach (var key in GetHitTrackedTypes())
+        {
+            if (Attribute.GetCustomAttribute(key, _tSourceSpansAttr!) is not object srcAttr) continue;
+            if (_piEncodedSpans!.GetValue(srcAttr) is not long[] spans || spans.Length == 0) continue;
+            var obj = AlCallStackCapture.ParseObjectTypeAndId(key);
+            if (obj.Item2 == 0 || sourceMap.ContainsKey(obj)) continue;
+            var app = AlCallStackCapture.AppOf(AlScopeKey.ObjectTypeOf(key).Assembly);
+            if (!NamedInUnattributedNote(app)) continue;
+            var name = $"{app!.Value.Publisher}_{app.Value.Name}_{app.Value.Version}";
+            if (!byApp.TryGetValue(name, out var objects)) byApp[name] = objects = new();
+            objects.Add(obj);
+        }
+        return byApp.Select(kv => (kv.Key, kv.Value.Count)).ToList();
+    }
+
+    /// <summary>Whether executed AL of <paramref name="app"/> belongs in the unattributed note:
+    /// a registered dependency app not published by Microsoft.</summary>
+    internal static bool NamedInUnattributedNote((string Name, string Publisher, string Version)? app) =>
+        app is { } a && !PackagedDependencySources.IsMicrosoft(a.Publisher);
+
     // The one resolution chain, shared by CollectStatementTable and
     // CollectPerTestStatementTable (#2135) — keep it that way; it was two copies, and a fix to
     // any of its five steps reached only whichever copy got edited. [NavName] on the scope CLASS
