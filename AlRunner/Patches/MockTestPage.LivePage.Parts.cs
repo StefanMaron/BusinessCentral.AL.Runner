@@ -230,6 +230,9 @@ internal partial class LiveNavTestPage
         // earlier TestPage touch) already wrote through that same instance.
         if (!adopted) part.RaiseOnOpenPage();
 
+        // After OnOpenPage, before the part's first row-load: see ApplySubPageViewSorting.
+        ApplySubPageViewSorting(definition, partRecord);
+
         // Position the part on its SubPageLink-matched row and run OnAfterGetRecord/
         // OnAfterGetCurrRecord — issue #2677, measured against real BC (corpus PR
         // StefanMaron/BusinessCentral.AL.Language.Tests#141): a linked part loads on EVERY
@@ -336,13 +339,47 @@ internal partial class LiveNavTestPage
     }
 
     /// <summary>
+    /// Order the part's rows by its <c>SubPageView</c>'s <c>sorting()</c> / <c>order()</c> (#4188).
+    ///
+    /// <para>Observably equivalent to BC's client, which builds a part through
+    /// <c>PageInfopartBuilder.CreatePagePart</c> (Client.Builder.dll, 28.4.53241.54346) and hands
+    /// it <c>Sorting.Ascending</c> and the <c>KeyFields</c>. Corpus codeunit 67930 "SPS Tests"
+    /// (StefanMaron/BusinessCentral.AL.Language.Tests#503) measures the rows: a named key orders
+    /// the part in the view's direction, and <c>order()</c> with no key leaves primary-key
+    /// ascending order — every cloud leg and the Windows nightly agree.</para>
+    ///
+    /// <para>Traps: the direction is applied only WITH a key, never alone; and the page path's
+    /// <c>NavForm.ApplySourceTableView</c> gates on the <c>*SetByView</c> flags, which the part
+    /// path does not read.</para>
+    /// </summary>
+    internal static void ApplySubPageViewSorting(
+        Microsoft.Dynamics.Nav.Types.Metadata.InfopartPageDefinition definition, NavRecord? record)
+    {
+        // A record-less part (#2195) has no rows to order.
+        if (record == null) return;
+        var (keyFieldIds, ascending) = SubPageViewSortOrder(definition);
+        if (keyFieldIds != null) record.ALSetCurrentKey(keyFieldIds);
+        if (ascending is { } value) record.ALAscending = value;
+    }
+
+    /// <summary>What <see cref="ApplySubPageViewSorting"/> sets: the key's field ids and the
+    /// direction, both null when the view names no key.</summary>
+    internal static (int[]? KeyFieldIds, bool? Ascending) SubPageViewSortOrder(
+        Microsoft.Dynamics.Nav.Types.Metadata.InfopartPageDefinition definition)
+    {
+        var sorting = definition.SubFormView?.Sorting;
+        if (sorting == null || string.IsNullOrEmpty(sorting.KeyFields)) return (null, null);
+        return (Microsoft.Dynamics.Nav.Types.Metadata.MetaTable.GetKeyFieldIds(sorting.KeyFields), sorting.Ascending);
+    }
+
+    /// <summary>
     /// Append the part's <c>SubPageView</c> filters to <paramref name="links"/>, so the part
     /// shows only the rows its view selects (#4188).
     ///
     /// <para>A view is NOT a link, and the type says so: <c>SubFormLink</c> is a
     /// <c>List&lt;FilterDefinition&gt;</c> while <c>SubFormView</c> is a <c>ViewDefinition</c>,
     /// carrying <c>TableFilters</c> (a <c>List&lt;FilterDefinition&gt;</c>) AND a
-    /// <c>Sorting</c>. Only the filters are handled here — see the Sorting note below.</para>
+    /// <c>Sorting</c>. Only the filters are handled here.</para>
     ///
     /// <para><b>The view's filters land in the same group the LINK uses (4), not the group 2
     /// BC's own <c>NavForm.ApplySourceTableView</c> uses.</b> That is measured, not inferred:
@@ -355,11 +392,8 @@ internal partial class LiveNavTestPage
     /// <para>Nothing is hardcoded here regardless: each entry carries BC's own
     /// <c>FilterDefinition.FilterGroup</c>, exactly as the SubPageLink entries above do.</para>
     ///
-    /// <para><b>Sorting is deliberately not applied</b>, and that is a stated gap rather than an
-    /// oversight. <c>ApplySourceTableView</c> shows what it takes — <c>ALSetCurrentKey</c> /
-    /// <c>ALCurrentKeyIndex</c> from <c>KeyFields</c>, and <c>ALAscending</c> — and no corpus arm
-    /// pins any of it for a PART, so applying it here would be reasoning by analogy from the page
-    /// path, which is the exact mistake the filter group above records. #4188 tracks it.</para>
+    /// <para>The view's <c>Sorting</c> is applied separately, by
+    /// <see cref="ApplySubPageViewSorting"/>: it is a key and a direction, not a filter.</para>
     /// </summary>
     private static void AppendSubPageViewFilters(
         Microsoft.Dynamics.Nav.Types.Metadata.InfopartPageDefinition definition,
