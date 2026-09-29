@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Measurement spike for #4979 part 2: static object-level reachability over AL sources.
+       Not part of the runner build or its tests. References BC's AL parser out of a
+       service-tier artifact directory (override with -p:BcServiceTier=<dir>). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RollForward>LatestMajor</RollForward>
+    <IsPackable>false</IsPackable>
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <BcServiceTier Condition="'$(BcServiceTier)' == ''">$(HOME)/.local/share/al-runner/artifacts/28.1.49838.54424</BcServiceTier>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="Microsoft.Dynamics.Nav.CodeAnalysis">
+      <HintPath>$(BcServiceTier)/Microsoft.Dynamics.Nav.CodeAnalysis.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+</Project>
