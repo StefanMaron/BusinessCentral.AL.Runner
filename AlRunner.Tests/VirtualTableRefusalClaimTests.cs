@@ -557,9 +557,10 @@ public sealed class VirtualTableRefusalClaimTests
         // ObjectMetadataShapeGap: #2894's own factory, scoped out of #2945's count by design.
         ["RecordPatches.NoSourceColumns.cs"] = 1,
         ["RecordPatches.ObjectMetadataSystemTable.cs"] = 10,
-        // PermissionSetSystemTableShapeGap / PermissionSystemTableShapeGap (the latter joined at #3695).
+        // PermissionSetSystemTableShapeGap / PermissionFamilyShapeGap (the latter joined at #3695, widened at #2910).
         ["RecordPatches.PermissionSetSystemTable.cs"] = 1,
-        ["RecordPatches.PermissionSystemTable.cs"] = 2,
+        // The family redrive (#3705) adds the third: a DataAccess with no session cannot be recomputed.
+        ["RecordPatches.PermissionSystemTable.cs"] = 3,
         // CheckInventoryScope's app-group-visibility gap (#2279): an in-memory store populated
         // under one app group and read under another cannot drop the first group's rows, so it
         // refuses rather than let the second group see them.

@@ -1152,6 +1152,24 @@ public static partial class NclCecilRewrite
                 H(recordPatches, "DataAccess_PermissionSetSystemTableGuardForGet"),
                 argSlots: 2); // `this` — the DataAccess — and the primary-key request
 
+            // ── Permission / Metadata Permission / Expanded Permission (2000000005/251/254) ──
+            // Computed per request on a real tier; the find path is the family branch in
+            // DataAccess_IsManagedFindRequest. See RecordPatches.PermissionSystemTable.cs (#3705).
+            PrependStaticCall(nclMod,
+                ByParams(Rt + "DataAccess", "CountAsync", "CountCacheRequest"),
+                H(recordPatches, "DataAccess_PermissionFamilyGuardForCount"),
+                argSlots: 2); // `this` — the DataAccess — and the count request
+
+            PrependStaticCall(nclMod,
+                ByParams(Rt + "DataAccess", "ExistsAsync", "ExistsCacheRequest"),
+                H(recordPatches, "DataAccess_PermissionFamilyGuardForExists"),
+                argSlots: 2); // `this` — the DataAccess — and the exists request
+
+            PrependStaticCall(nclMod,
+                ByParams(Rt + "DataAccess", "InternalTryGetByPrimaryKeyAsync", "PrimaryKeyCacheRequest"),
+                H(recordPatches, "DataAccess_PermissionFamilyGuardForGet"),
+                argSlots: 2); // `this` — the DataAccess — and the primary-key request
+
             // ── DataAccess.ExistsAsync — virtual Field table (2000000041), the FOURTH path ────
             // Record.IsEmpty() does not take the count path. RecordImplementation.IsEmptyAsync
             // calls its own ExistsAsync, which builds an ExistsCacheRequest and reaches

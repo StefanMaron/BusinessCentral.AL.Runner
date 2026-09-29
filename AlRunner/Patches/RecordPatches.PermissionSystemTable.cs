@@ -1,5 +1,12 @@
-// RecordPatches.PermissionSystemTable — managed provider for the "Permission" system
-// virtual table (2000000005), the rows that say what a permission set GRANTS.
+// RecordPatches.PermissionSystemTable — managed provider for the three
+// PermissionDataProviderBase tables, the rows that say what a permission set GRANTS:
+//   2000000005 "Permission"           -> BC's PermissionDataProvider (composed, assignable sets)
+//   2000000251 "Metadata Permission"  -> BC's MetadataPermissionDataProvider (declared, every set)
+//   2000000254 "Expanded Permission"  -> BC's ExpandedPermissionDataProvider (composed, every set,
+//                                        plus Tenant Permission Set rows)
+// All three are driven through the same three BC members below; each provider's own overrides
+// decide which sets it lists, whether it expands includes, and how a row is laid out (#2910).
+// Corpus codeunits 60604 (Permission) and 67945 (Metadata/Expanded Permission) adjudicate them.
 //
 // WHY THIS EXISTS
 //   #2893 made BC's permission METADATA layer resolve — the app group's permission-set
@@ -46,19 +53,11 @@
 //   PermissionDataProvider.ComputePermissions is `permissionComposer.Compose(
 //   permissionSetGraphWalker.Walk(key), session)`, which reads no Database at all.
 //
-// REBUILT ON EVERY DISPATCH, AND WHAT THAT DOES NOT COVER
-//   The store is cleared and rebuilt on every dispatch (ClearProviderInPlace), so a permission
-//   set that becomes known between two Record variables cannot be missing and a stale row
-//   cannot survive. What it does NOT cover is the second read on ONE already-open Record
-//   variable: real BC's RecordImplementation.InitializeImpl resolves a NavRecord's DataAccess
-//   wrapper at most once, so a later Get()/FindSet() on that same variable never re-dispatches
-//   and reads whatever this file last stored. The Aggregate Permission Set sibling closes that
-//   with a per-request redrive prepended to DataAccess.InternalTryGetByPrimaryKeyAsync (#2504),
-//   which is the right shape here too — and it is NOT done here, deliberately, because it costs
-//   nothing today: this table's rows derive from the permission-set inventory, which is fixed
-//   for the lifetime of one runner invocation, so a redrive on an already-open variable can only
-//   ever recompute the same rows. It starts costing something the moment a permission set can be
-//   declared mid-run. #3705 tracks it.
+// REBUILT ON EVERY DISPATCH AND ON EVERY REQUEST
+//   The store is cleared and rebuilt when a Record variable resolves its DataAccess and again
+//   on each find/count/exists/get request (the guards at the end of this file, #3705), because
+//   real BC computes these tables per request and "Expanded Permission" lists tenant sets AL
+//   can insert mid-run.
 //
 // PRECOMPILED-DLL RESPECT
 //   PermissionDataProvider, PermissionDataProviderBase, PermissionProvider, NCLMetadata,
@@ -76,51 +75,74 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
-    /// <summary>
-    /// A store-wiring refusal on the Permission table. See RecordPatches.VirtualTableShapeGap.cs
-    /// for the three-bucket classification; this is category (2), the same bucket the two
-    /// sibling permission tables' own store-wiring refusals sit in.
-    /// </summary>
-    internal static RunnerOutOfScopeException PermissionSystemTableShapeGap(string detail)
-        => VirtualTableShapeGap("Permission (system table 2000000005)", "permission-system-table", detail);
-
-    /// <summary>
-    /// A BC-internals read behind the Permission table (2000000005) that could not be
-    /// performed — the same classification the sibling permission tables use, so a moved Ncl
-    /// member is reported by name instead of arriving as an anonymous exception the
-    /// <c>asserterror</c> seam absorbs.
-    /// </summary>
-    internal static BcShapeGapException PermissionSystemTableBcShapeGap(string member, string detail)
-        => new("Permission (system table 2000000005)", member, detail);
-
     internal const int PermissionSystemTableId = 2000000005;
+    internal const int MetadataPermissionSystemTableId = 2000000251;
+    internal const int ExpandedPermissionSystemTableId = 2000000254;
+
+    /// <summary>One PermissionDataProviderBase table and the BC provider that serves it.</summary>
+    internal sealed record PermissionFamilyTable(
+        int TableId, string Api, string Surface, string ProviderTypeName, bool TakesPermissionProvider);
+
+    internal static readonly PermissionFamilyTable[] PermissionFamilyTables =
+    {
+        new(PermissionSystemTableId, "Permission (system table 2000000005)",
+            "permission-system-table", "PermissionDataProvider", TakesPermissionProvider: true),
+        new(MetadataPermissionSystemTableId, "Metadata Permission (system table 2000000251)",
+            "metadata-permission-system-table", "MetadataPermissionDataProvider", TakesPermissionProvider: false),
+        new(ExpandedPermissionSystemTableId, "Expanded Permission (system table 2000000254)",
+            "expanded-permission-system-table", "ExpandedPermissionDataProvider", TakesPermissionProvider: true),
+    };
+
+    private sealed class PermissionFamilyBinding
+    {
+        public required ConstructorInfo Ctor;
+        public required MethodInfo GetPermissionSets;   // protected IEnumerable<PermissionSetKey> GetPermissionSets(FilterExpression)
+        public required MethodInfo ComputePermissions;  // protected IEnumerable<NavPermissionDefinition> ComputePermissions(PermissionSetKey)
+        public required MethodInfo GetRecord;           // protected ReadOnlyRecordBuffer GetRecord(PermissionSetKey, NavPermissionDefinition)
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, PermissionFamilyBinding> _permFamilyBindings = new();
 
     private static bool _permTableReflectionReady;
-    private static Type? _permTableProviderType;        // Microsoft.Dynamics.Nav.Runtime.PermissionDataProvider
-    private static ConstructorInfo? _permTableProviderCtor;   // .ctor(NavSession, NCLMetadata, PermissionProvider)
+    private static Type? _permTableNavSessionType;
+    private static Type? _permTableNclMetadataType;
+    private static Type? _permTablePermissionProviderType;
+    private static Type? _permTablePermissionSetKeyType;
+    private static Type? _permTablePermissionDefinitionType;
+    private static Type? _permTableFilterExpressionType;
     private static ConstructorInfo? _permTablePermProviderCtor; // PermissionProvider(NCLMetadata)
-    private static MethodInfo? _permTableGetPermissionSets;    // protected IEnumerable<PermissionSetKey> GetPermissionSets(FilterExpression)
-    private static MethodInfo? _permTableComputePermissions;   // protected IEnumerable<NavPermissionDefinition> ComputePermissions(PermissionSetKey)
-    private static MethodInfo? _permTableGetRecord;            // protected ReadOnlyRecordBuffer GetRecord(PermissionSetKey, NavPermissionDefinition)
     private static PropertyInfo? _permTableSessionNclMetadata; // NavSession.NCLMetadata
+    private static object? _permTableAllAppsFilter;            // FilterExpression.BooleanConstant(true)
 
-    private static bool IsPermissionSystemTable(NCLMetaTable? table)
-        => table != null && table.TableId == PermissionSystemTableId;
+    internal static PermissionFamilyTable? PermissionFamilyTableFor(NCLMetaTable? table)
+    {
+        if (table == null) return null;
+        foreach (var t in PermissionFamilyTables)
+            if (t.TableId == table.TableId) return t;
+        return null;
+    }
+
+    private static RunnerOutOfScopeException PermissionFamilyShapeGap(PermissionFamilyTable t, string detail)
+        => VirtualTableShapeGap(t.Api, t.Surface, detail);
+
+    private static BcShapeGapException PermissionFamilyBcShapeGap(PermissionFamilyTable t, string member, string detail)
+        => new(t.Api, member, detail);
 
     /// <summary>
-    /// Populate the in-memory store behind the Permission (2000000005) data access by driving
-    /// BC's own <c>PermissionDataProvider</c> over every permission set the runner knows.
+    /// Populate the in-memory store behind one PermissionDataProviderBase table by driving
+    /// that table's own BC provider over every permission set it lists.
     /// </summary>
-    private static void PopulatePermissionSystemTable(object dataAccess, NCLMetaTable metaTable, object session)
+    internal static void PopulatePermissionFamilyTable(PermissionFamilyTable t, object dataAccess, NCLMetaTable metaTable, object session)
     {
         // The AllObj block resolved the shared Ncl helpers (buffer ctors,
         // TempTableDataProvider.Insert). Reuse them rather than resolving a second copy.
         EnsureAllObjReflection(metaTable);
-        EnsurePermissionSystemTableReflection(metaTable);
+        EnsurePermissionSystemTableReflection(t);
+        var binding = EnsurePermissionFamilyBinding(t);
         EnsureDataAccessProviderReflection(dataAccess);
 
         var store = _pDataAccessDataProvider!.GetValue(dataAccess)
-            ?? throw PermissionSystemTableShapeGap("data access has no in-memory provider");
+            ?? throw PermissionFamilyShapeGap(t, "data access has no in-memory provider");
 
         ClearProviderInPlace(store);
 
@@ -131,21 +153,22 @@ public static partial class RecordPatches
         EnsurePermissionMetadataPopulated();
 
         var nclMetadata = _permTableSessionNclMetadata!.GetValue(session)
-            ?? throw PermissionSystemTableShapeGap(
+            ?? throw PermissionFamilyShapeGap(t,
                 "NavSession.NCLMetadata is null on the skeleton session, so BC's own "
-                + "PermissionDataProvider cannot resolve the permission sets it reads");
+                + t.ProviderTypeName + " cannot resolve the permission sets it reads");
 
         object bcProvider;
         List<object> permissionSetKeys;
         try
         {
-            var permissionProvider = _permTablePermProviderCtor!.Invoke(new object?[] { nclMetadata });
-            bcProvider = _permTableProviderCtor!.Invoke(new object?[] { session, nclMetadata, permissionProvider });
-            // A null FilterExpression means "no App ID filter": BC's own GetMetadataPermissionSets
-            // only evaluates the filter when appIdField is non-null, and this table declares no
-            // App ID field, so the null is the same "every app" answer BC computes for an
-            // unfiltered request rather than a stand-in for one.
-            permissionSetKeys = DrainToList(_permTableGetPermissionSets!.Invoke(bcProvider, new object?[] { null })!);
+            var args = t.TakesPermissionProvider
+                ? new object?[] { session, nclMetadata, _permTablePermProviderCtor!.Invoke(new object?[] { nclMetadata }) }
+                : new object?[] { session, nclMetadata };
+            bcProvider = binding.Ctor.Invoke(args);
+            // The App ID filter is BC's own constant-true expression: the unfiltered request.
+            // GetMetadataPermissionSets EVALUATES it on a table with an App ID field (251, 254),
+            // so a null here NREs inside BC's lambda; 2000000005 has no App ID field and ignores it.
+            permissionSetKeys = DrainToList(binding.GetPermissionSets.Invoke(bcProvider, new[] { _permTableAllAppsFilter })!);
         }
         catch (TargetInvocationException tie) when (tie.InnerException != null)
         {
@@ -154,28 +177,28 @@ public static partial class RecordPatches
         }
 
         foreach (var key in permissionSetKeys)
-            InsertPermissionRowsForSet(bcProvider, store, metaTable, key);
+            InsertPermissionRowsForSet(binding, bcProvider, store, key);
     }
 
     /// <summary>
-    /// Every Permission row one permission set contributes: BC composes the set's effective
-    /// permissions, and BC lays each one out as a record buffer.
+    /// Every row one permission set contributes: BC computes the set's permissions (composed or
+    /// declared, per the provider), and BC lays each one out as a record buffer.
     ///
-    /// <para>The compose and the per-definition layout are separated deliberately, for the
+    /// <para>The compute and the per-definition layout are separated deliberately, for the
     /// reason the Aggregate Permission Set sibling's banner sets out at length: a C# iterator
     /// that throws out of <c>MoveNext()</c> is terminally finished, so one bad item inside a
     /// single combined enumeration silently truncates every item after it. Draining the
     /// composition first and calling <c>GetRecord</c> per item afterwards makes a per-row
     /// failure an ordinary exception around one ordinary call.</para>
     /// </summary>
-    private static void InsertPermissionRowsForSet(object bcProvider, object store, NCLMetaTable metaTable, object permissionSetKey)
+    private static void InsertPermissionRowsForSet(PermissionFamilyBinding binding, object bcProvider, object store, object permissionSetKey)
     {
         List<object> definitions;
         try
         {
             // ComputePermissions, not GetPermissions — see the file banner: the latter's memo
             // reads session.Database, which the skeleton session does not have.
-            definitions = DrainToList(_permTableComputePermissions!.Invoke(bcProvider, new object?[] { permissionSetKey })!);
+            definitions = DrainToList(binding.ComputePermissions.Invoke(bcProvider, new object?[] { permissionSetKey })!);
         }
         catch (TargetInvocationException tie) when (tie.InnerException != null)
         {
@@ -188,12 +211,12 @@ public static partial class RecordPatches
             object readOnlyBuffer;
             try
             {
-                readOnlyBuffer = _permTableGetRecord!.Invoke(bcProvider, new[] { permissionSetKey, definition })!;
+                readOnlyBuffer = binding.GetRecord.Invoke(bcProvider, new[] { permissionSetKey, definition })!;
             }
             catch (TargetInvocationException tie) when (IsRoleIdTooLongForPermissionTable(tie.InnerException))
             {
-                // "Role ID" on this table is Code[20], and GetRecord calls ModifyLength on the
-                // wider value, whose NavCode constructor throws rather than truncate. A role id
+                // GetRecord calls ModifyLength on the role id to the table's own "Role ID"
+                // length, whose NavCode constructor throws rather than truncate. A role id
                 // BC's own schema cannot represent in THIS table is a row that exists on no
                 // tier, so it is excluded rather than truncated — truncating would fabricate a
                 // Role ID BC never emits. Same rule, same reason, as the Aggregate Permission
@@ -217,106 +240,154 @@ public static partial class RecordPatches
             catch (TargetInvocationException tie) when (
                 tie.InnerException?.GetType().Name == "NavRecordAlreadyExistsException")
             {
-                // The same (Role ID, Object Type, Object ID) already present. BC's own composer
-                // unions grants across included sets, so two include edges reaching the same
-                // object legitimately produce one row here — dropping the duplicate is what a
-                // table whose primary key is that triple does on any tier.
+                // The same primary key already present. BC's own composer unions grants across
+                // included sets, so two include edges reaching the same object legitimately
+                // produce one row here — dropping the duplicate is what a table whose primary
+                // key is that tuple does on any tier.
             }
         }
+    }
+
+    // ── Per-request redrive (#3705) ─────────────────────────────────────────────────────
+    // Real BC computes these tables per request; the runner's store is filled when a Record
+    // variable first resolves its DataAccess, and RecordImplementation.InitializeImpl does
+    // that at most once. "Expanded Permission" lists Tenant Permission Set rows, which AL can
+    // insert mid-run, so without these guards an open variable answers from a stale store
+    // (corpus 67945, ExpandedPermission_OpenVariable_SeesATenantSetInsertedAfterItsFirstRead).
+    // Same four paths as the Aggregate Permission Set redrive (#2504): find, count, exists, get.
+
+    internal static bool IsPermissionFamilyTableId(int tableId)
+        => tableId == PermissionSystemTableId
+           || tableId == MetadataPermissionSystemTableId
+           || tableId == ExpandedPermissionSystemTableId;
+
+    /// <summary>Rebuild the store for THIS request, from the request's own table.</summary>
+    internal static void RedrivePermissionFamilyForRequest(object dataAccess, object request)
+    {
+        // A temporary record holds exactly the rows AL inserted; a redrive would overwrite them
+        // (the Aggregate sibling's #2524).
+        if (IsTemporaryRecordDataAccess(dataAccess)) return;
+        if (FindRequestMetaApplicationObject(request) is not NCLMetaTable metaTable) return;
+        if (PermissionFamilyTableFor(metaTable) is not { } t) return;
+
+        EnsureAggregatePermissionSetLiveGuardReflection(dataAccess);
+        var session = _apsDataAccessSession!.GetValue(dataAccess)
+            ?? throw PermissionFamilyShapeGap(t,
+                "the DataAccess carries no session, so the table cannot be recomputed for this "
+                + "request and would answer from rows computed for an earlier one");
+        PopulatePermissionFamilyTable(t, dataAccess, metaTable, session);
+    }
+
+    /// <summary>Prepended to DataAccess.CountAsync(CountCacheRequest).</summary>
+    public static void DataAccess_PermissionFamilyGuardForCount(object self, object request)
+    {
+        if (!IsPermissionFamilyTableId(FindRequestTableId(request))) return;
+        RedrivePermissionFamilyForRequest(self, request);
+    }
+
+    /// <summary>Prepended to DataAccess.ExistsAsync(ExistsCacheRequest) — the IsEmpty() path.</summary>
+    public static void DataAccess_PermissionFamilyGuardForExists(object self, object request)
+    {
+        if (!IsPermissionFamilyTableId(FindRequestTableId(request))) return;
+        RedrivePermissionFamilyForRequest(self, request);
+    }
+
+    /// <summary>Prepended to DataAccess.InternalTryGetByPrimaryKeyAsync(PrimaryKeyCacheRequest).</summary>
+    public static void DataAccess_PermissionFamilyGuardForGet(object self, object request)
+    {
+        if (!IsPermissionFamilyTableId(FindRequestTableId(request))) return;
+        RedrivePermissionFamilyForRequest(self, request);
     }
 
     private static bool IsRoleIdTooLongForPermissionTable(Exception? ex)
         => ex?.GetType().Name == "NavNCLStringLengthExceededException";
 
-    private static void EnsurePermissionSystemTableReflection(NCLMetaTable metaTable)
+    private static PermissionFamilyBinding EnsurePermissionFamilyBinding(PermissionFamilyTable t)
+    {
+        if (_permFamilyBindings.TryGetValue(t.TableId, out var cached)) return cached;
+
+        const string rt = "Microsoft.Dynamics.Nav.Runtime.";
+        var providerType = ResolveType(rt + t.ProviderTypeName, rt + t.ProviderTypeName)
+            ?? throw PermissionFamilyBcShapeGap(t, t.ProviderTypeName,
+                "type not found in Ncl — the table cannot be populated");
+
+        var ctorTypes = t.TakesPermissionProvider
+            ? new[] { _permTableNavSessionType!, _permTableNclMetadataType!, _permTablePermissionProviderType! }
+            : new[] { _permTableNavSessionType!, _permTableNclMetadataType! };
+        var ctor = providerType.GetConstructor(
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+            binder: null, types: ctorTypes, modifiers: null)
+            ?? throw PermissionFamilyBcShapeGap(t,
+                t.ProviderTypeName + (t.TakesPermissionProvider
+                    ? "(NavSession, NCLMetadata, PermissionProvider)"
+                    : "(NavSession, NCLMetadata)"),
+                "constructor not found — the table cannot be populated");
+
+        // GetPermissionSets, ComputePermissions and GetRecord are declared abstract on
+        // PermissionDataProviderBase and overridden per provider, so they are resolved on the
+        // DERIVED type: the override is what decides which table's question is answered.
+        MethodInfo Bind(string name, Type[] types, string display)
+            => providerType.GetMethod(name,
+                BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance, binder: null,
+                types: types, modifiers: null)
+               ?? throw PermissionFamilyBcShapeGap(t, t.ProviderTypeName + "." + display,
+                   "method not found — the table cannot be populated");
+
+        var binding = new PermissionFamilyBinding
+        {
+            Ctor = ctor,
+            GetPermissionSets = Bind("GetPermissionSets",
+                new[] { _permTableFilterExpressionType! }, "GetPermissionSets(FilterExpression)"),
+            ComputePermissions = Bind("ComputePermissions",
+                new[] { _permTablePermissionSetKeyType! }, "ComputePermissions(PermissionSetKey)"),
+            GetRecord = Bind("GetRecord",
+                new[] { _permTablePermissionSetKeyType!, _permTablePermissionDefinitionType! },
+                "GetRecord(PermissionSetKey, NavPermissionDefinition)"),
+        };
+        return _permFamilyBindings.GetOrAdd(t.TableId, binding);
+    }
+
+    private static void EnsurePermissionSystemTableReflection(PermissionFamilyTable t)
     {
         if (_permTableReflectionReady) return;
 
         const string rt = "Microsoft.Dynamics.Nav.Runtime.";
 
-        _permTableProviderType = ResolveType(rt + "PermissionDataProvider", rt + "PermissionDataProvider")
-            ?? throw PermissionSystemTableBcShapeGap(
-                "PermissionDataProvider",
-                "type not found in Ncl — the Permission table cannot be populated");
+        Type Resolve(string name)
+            => ResolveType(rt + name, rt + name)
+               ?? throw PermissionFamilyBcShapeGap(t, name,
+                   "type not found in Ncl — the table cannot be populated");
 
-        var tNavSession = ResolveType(rt + "NavSession", rt + "NavSession")
-            ?? throw PermissionSystemTableBcShapeGap(
-                "NavSession",
-                "type not found in Ncl — the Permission table cannot be populated");
-        var tNclMetadata = ResolveType(rt + "NCLMetadata", rt + "NCLMetadata")
-            ?? throw PermissionSystemTableBcShapeGap(
-                "NCLMetadata",
-                "type not found in Ncl — the Permission table cannot be populated");
-        var tPermissionProvider = ResolveType(
-            rt + "Permissions.PermissionProvider", rt + "Permissions.PermissionProvider")
-            ?? throw PermissionSystemTableBcShapeGap(
-                "Permissions.PermissionProvider",
-                "type not found in Ncl — the Permission table cannot be populated");
-        var tPermissionSetKey = ResolveType(
-            rt + "Permissions.PermissionSetKey", rt + "Permissions.PermissionSetKey")
-            ?? throw PermissionSystemTableBcShapeGap(
-                "Permissions.PermissionSetKey",
-                "type not found in Ncl — the Permission table cannot be populated");
+        _permTableNavSessionType = Resolve("NavSession");
+        _permTableNclMetadataType = Resolve("NCLMetadata");
+        _permTablePermissionProviderType = Resolve("Permissions.PermissionProvider");
+        _permTablePermissionSetKeyType = Resolve("Permissions.PermissionSetKey");
         // Permissions.NavPermissionDefinition, NOT Types.NavPermissionDefinition: the "Nav"
-        // prefix reads like a Types-namespace value type and it is not one. Measured on Ncl
-        // 28.1 — the only NavPermissionDefinition in the load chain is under
-        // Microsoft.Dynamics.Nav.Runtime.Permissions, and the Types spelling resolved to
-        // nothing, which is what this file's own refusal reported by name on its first run.
-        var tPermissionDefinition = ResolveType(
-            rt + "Permissions.NavPermissionDefinition", rt + "Permissions.NavPermissionDefinition")
-            ?? throw PermissionSystemTableBcShapeGap(
-                "Permissions.NavPermissionDefinition",
-                "type not found in Ncl — the Permission table cannot be populated");
-        var tFilterExpression = ResolveType(rt + "FilterExpression", rt + "FilterExpression")
-            ?? throw PermissionSystemTableBcShapeGap(
-                "FilterExpression",
-                "type not found in Ncl — the Permission table cannot be populated");
+        // prefix reads like a Types-namespace value type and it is not one (measured on Ncl 28.1).
+        _permTablePermissionDefinitionType = Resolve("Permissions.NavPermissionDefinition");
+        _permTableFilterExpressionType = Resolve("FilterExpression");
 
-        _permTablePermProviderCtor = tPermissionProvider.GetConstructor(
+        _permTablePermProviderCtor = _permTablePermissionProviderType.GetConstructor(
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
-            binder: null, types: new[] { tNclMetadata }, modifiers: null)
-            ?? throw PermissionSystemTableBcShapeGap(
+            binder: null, types: new[] { _permTableNclMetadataType }, modifiers: null)
+            ?? throw PermissionFamilyBcShapeGap(t,
                 "PermissionProvider(NCLMetadata)",
-                "constructor not found — the Permission table cannot be populated");
+                "constructor not found — the table cannot be populated");
 
-        _permTableProviderCtor = _permTableProviderType.GetConstructor(
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
-            binder: null, types: new[] { tNavSession, tNclMetadata, tPermissionProvider }, modifiers: null)
-            ?? throw PermissionSystemTableBcShapeGap(
-                "PermissionDataProvider(NavSession, NCLMetadata, PermissionProvider)",
-                "constructor not found — the Permission table cannot be populated");
-
-        // GetPermissionSets and ComputePermissions are declared abstract on
-        // PermissionDataProviderBase and overridden here, so they are resolved on the DERIVED
-        // type: the override is what a virtual dispatch would reach, and resolving the base
-        // declaration would invoke through the same slot but state a member the reader would
-        // have to follow one level to understand.
-        _permTableGetPermissionSets = _permTableProviderType.GetMethod("GetPermissionSets",
-            BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance, binder: null,
-            types: new[] { tFilterExpression }, modifiers: null)
-            ?? throw PermissionSystemTableBcShapeGap(
-                "PermissionDataProvider.GetPermissionSets(FilterExpression)",
-                "method not found — the Permission table cannot be populated");
-
-        _permTableComputePermissions = _permTableProviderType.GetMethod("ComputePermissions",
-            BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance, binder: null,
-            types: new[] { tPermissionSetKey }, modifiers: null)
-            ?? throw PermissionSystemTableBcShapeGap(
-                "PermissionDataProvider.ComputePermissions(PermissionSetKey)",
-                "method not found — the Permission table cannot be populated");
-
-        _permTableGetRecord = _permTableProviderType.GetMethod("GetRecord",
-            BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance, binder: null,
-            types: new[] { tPermissionSetKey, tPermissionDefinition }, modifiers: null)
-            ?? throw PermissionSystemTableBcShapeGap(
-                "PermissionDataProvider.GetRecord(PermissionSetKey, NavPermissionDefinition)",
-                "method not found — the Permission table cannot be populated");
-
-        _permTableSessionNclMetadata = FindBcProperty(tNavSession, "NCLMetadata", out var nNclMetadata)
-            ?? throw PermissionSystemTableBcShapeGap(
+        _permTableSessionNclMetadata = FindBcProperty(_permTableNavSessionType, "NCLMetadata", out var nNclMetadata)
+            ?? throw PermissionFamilyBcShapeGap(t,
                 "NavSession.NCLMetadata",
                 BcPropertyGapDetail("NCLMetadata", nNclMetadata)
-                + " — the Permission table cannot be populated");
+                + " — the table cannot be populated");
+
+        var booleanConstant = _permTableFilterExpressionType.GetMethod("BooleanConstant",
+            BindingFlags.Public | BindingFlags.Static, binder: null, types: new[] { typeof(bool) }, modifiers: null)
+            ?? throw PermissionFamilyBcShapeGap(t,
+                "FilterExpression.BooleanConstant(bool)",
+                "method not found — the table's App ID filter cannot be built");
+        _permTableAllAppsFilter = booleanConstant.Invoke(null, new object[] { true })
+            ?? throw PermissionFamilyBcShapeGap(t,
+                "FilterExpression.BooleanConstant(true)", "answered null");
 
         _permTableReflectionReady = true;
     }

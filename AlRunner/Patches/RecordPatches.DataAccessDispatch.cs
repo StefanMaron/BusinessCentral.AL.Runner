@@ -419,8 +419,10 @@ public static partial class RecordPatches
             // answer "does not exist" and every filtered walk come back empty, while the
             // set's HEADER listed correctly one table over — so a set's grants were
             // unreadable with nothing reporting a gap (#3695).
+            // "Metadata Permission" (2000000251) and "Expanded Permission" (2000000254) are the
+            // same family — each served by its own BC PermissionDataProviderBase subclass (#2910).
             // See RecordPatches.PermissionSystemTable.cs.
-            if (IsPermissionSystemTable(table))
+            if (PermissionFamilyTableFor(table) is { } permFamily)
             {
                 if (!perTable.TryGetValue(tableId, out var permDa))
                 {
@@ -428,10 +430,10 @@ public static partial class RecordPatches
                     permDa = perTable.GetOrAdd(tableId, createdPerm);
                 }
                 var permSession = _fDasSession?.GetValue(self)
-                    ?? throw PermissionSystemTableShapeGap(
+                    ?? throw PermissionFamilyShapeGap(permFamily,
                         "DataAccessSource has no skeleton session, so BC's own "
-                        + "PermissionDataProvider cannot be constructed");
-                PopulatePermissionSystemTable(permDa, table, permSession);
+                        + permFamily.ProviderTypeName + " cannot be constructed");
+                PopulatePermissionFamilyTable(permFamily, permDa, table, permSession);
                 return permDa;
             }
 
