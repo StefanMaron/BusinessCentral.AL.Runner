@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **events:** a manual binding a SingleInstance codeunit keeps alive survives the test-codeunit boundary
 - **record-link:** the link readers filter Company like BC, and a Rename moves the links
 - **record-link:** AddLink writes the session's user into Record Link "User ID"
 - **record-link:** a failed primaryTree bind refuses instead of reading as zero Record Link rows
