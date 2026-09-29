@@ -191,6 +191,13 @@ public sealed class ServerRequest
     /// </summary>
     [JsonPropertyName("affectedOnly")] public bool? AffectedOnly { get; set; }
     /// <summary>
+    /// #4978, with <see cref="AffectedOnly"/>: true reruns every test that did not pass in the
+    /// recording run, whatever changed. False (the default) selects such a test by the coverage
+    /// it recorded up to its failure, like any other test, and counts it in
+    /// <c>selection.skippedFailing</c> when it is skipped. See docs/server-mode.md#affectedonly-and-previously-failing-tests.
+    /// </summary>
+    [JsonPropertyName("includeFailing")] public bool? IncludeFailing { get; set; }
+    /// <summary>
     /// "codeunit" (default) | "test"/"method" | "disabled" — see <see cref="TestIsolationParser"/>.
     /// Null = the server's existing default (TestIsolation.Codeunit), matching the
     /// CLI's own default. Threaded into PipelineOptions.TestIsolation-equivalent
@@ -224,7 +231,9 @@ public sealed record ServerSelection(
     int Skipped,
     IReadOnlyList<string> ChangedObjects,
     bool ForcedFull,
-    string? Reason);
+    string? Reason,
+    // #4978: previously failing tests this selection skipped; null where no selection by coverage applies.
+    int? SkippedFailing = null);
 
 public static class ServerProtocol
 {
@@ -356,6 +365,7 @@ public static class ServerProtocol
                 changedObjects = selection.ChangedObjects,
                 forcedFull = selection.ForcedFull,
                 reason = selection.Reason,
+                skippedFailing = selection.SkippedFailing,
             },
             compilationErrors = compilationErrors is { Count: > 0 }
                 ? compilationErrors.Select(g => new { file = g.File, errors = g.Errors })
@@ -417,6 +427,7 @@ public static class ServerProtocol
                 changedObjects = selection.ChangedObjects,
                 forcedFull = selection.ForcedFull,
                 reason = selection.Reason,
+                skippedFailing = selection.SkippedFailing,
             },
             compilationErrors = compilationErrors is { Count: > 0 }
                 ? compilationErrors.Select(g => new { file = g.File, errors = g.Errors })
