@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **record-link:** the link readers filter Company like BC, and a Rename moves the links
 - **record-link:** AddLink writes the session's user into Record Link "User ID"
 - **record-link:** a failed primaryTree bind refuses instead of reading as zero Record Link rows
 - **cli:** several bundle paths load every bundle before any of them runs tests
