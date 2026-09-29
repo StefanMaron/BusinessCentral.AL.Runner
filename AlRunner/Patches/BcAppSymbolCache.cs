@@ -582,7 +582,11 @@ internal static partial class BcAppSymbolCache
         // #4282. The part's own ApplicationArea / AboutTitle / AboutText, verbatim; null when the
         // part states none. Inheriting the host page's ApplicationArea is the emitter's job
         // (RecordPatches.EmitPartControlXml), so nothing is defaulted here.
-        string? ApplicationArea = null, string? AboutTitle = null, string? AboutText = null);
+        string? ApplicationArea = null, string? AboutTitle = null, string? AboutText = null,
+        // The part control's SubPageView (#4968): the same sorting/order/where grammar as a page's
+        // SourceTableView, so ParseSourceTableView reads both. Null when the part declares none.
+        // Field names resolve against the PART's table later, in EmitPartControlXml.
+        PageTableViewSymbol? SubPageView = null);
 
     /// <summary>
     /// One entry of a part's <c>SubPageLink</c> property, still as AL source text.
@@ -1723,7 +1727,7 @@ internal static partial class BcAppSymbolCache
             foreach (var c in controlsArr.EnumerateArray())
             {
                 CollectPageControlSymbols(c, controls, ref seq);
-                CollectPagePartSymbols(c, parts);
+                CollectPagePartSymbols(c, parts, pageId);
                 CollectMemberNames(c, "Controls", memberNames, actionRefTargets);
             }
         // Actions only (issue #2460): a CONTROL's Enabled/Visible already travels on
@@ -1788,7 +1792,7 @@ internal static partial class BcAppSymbolCache
             string.IsNullOrWhiteSpace(cardPageName) ? null : cardPageName,
             autoSplitKey, multipleNewLines, delayedInsert, parts,
             memberNames, actionRefTargets,
-            ParseSourceTableView(pageId, sourceTableView), runObjects,
+            ParseSourceTableView($"page {pageId} SourceTableView", sourceTableView), runObjects,
             linksAllowed, showFilter, saveValues, populateAllFields,
             string.IsNullOrWhiteSpace(dataCaptionFields) ? null : dataCaptionFields,
             extensible, refreshOnActivate,
@@ -2144,7 +2148,7 @@ internal static partial class BcAppSymbolCache
     /// flat view built by walking the WHOLE Content tree) treats identically to however deep
     /// the real compiled page actually nested them.
     /// </summary>
-    private static void CollectPagePartSymbols(JsonElement control, List<PagePartSymbol> into)
+    private static void CollectPagePartSymbols(JsonElement control, List<PagePartSymbol> into, int hostPageId)
     {
         if (control.TryGetProperty("RelatedPagePartId", out var rel) && rel.ValueKind == JsonValueKind.Object
             && rel.TryGetProperty("Id", out var relId) && relId.TryGetInt32(out var partPageId) && partPageId > 0)
@@ -2160,6 +2164,7 @@ internal static partial class BcAppSymbolCache
                 props.TryGetValue("Visible", out var visible);
                 props.TryGetValue("ShowFilter", out var showFilter);
                 props.TryGetValue("SubPageLink", out var subPageLink);
+                props.TryGetValue("SubPageView", out var subPageView);
                 props.TryGetValue("ApplicationArea", out var applicationArea);
                 props.TryGetValue("AboutTitle", out var aboutTitle);
                 props.TryGetValue("AboutText", out var aboutText);
@@ -2173,13 +2178,14 @@ internal static partial class BcAppSymbolCache
                     links, unreadableLinks,
                     string.IsNullOrEmpty(applicationArea) ? null : applicationArea,
                     string.IsNullOrEmpty(aboutTitle) ? null : aboutTitle,
-                    string.IsNullOrEmpty(aboutText) ? null : aboutText));
+                    string.IsNullOrEmpty(aboutText) ? null : aboutText,
+                    ParseSourceTableView($"page {hostPageId} part \"{name}\" SubPageView", subPageView)));
             }
         }
 
         if (control.TryGetProperty("Controls", out var children) && children.ValueKind == JsonValueKind.Array)
             foreach (var child in children.EnumerateArray())
-                CollectPagePartSymbols(child, into);
+                CollectPagePartSymbols(child, into, hostPageId);
     }
 
     /// <summary>
@@ -2347,7 +2353,7 @@ internal static partial class BcAppSymbolCache
     /// into a filter the page refuses to open on, matching what
     /// <c>EmitSourceTableViewXml</c> already does for a field name it cannot resolve.</para>
     /// </summary>
-    private static PageTableViewSymbol? ParseSourceTableView(int pageId, string? text)
+    private static PageTableViewSymbol? ParseSourceTableView(string subject, string? text)
     {
         if (string.IsNullOrWhiteSpace(text)) return null;
 
@@ -2398,7 +2404,7 @@ internal static partial class BcAppSymbolCache
                     if (string.Equals(dir, "descending", StringComparison.OrdinalIgnoreCase)) ascending = false;
                     else if (string.Equals(dir, "ascending", StringComparison.OrdinalIgnoreCase)) ascending = true;
                     else Console.Error.WriteLine(
-                        $"[BcAppSymbolCache] page {pageId} SourceTableView order() not understood, ignored: '{dir}'");
+                        $"[BcAppSymbolCache] {subject} order() not understood, ignored: '{dir}'");
                     break;
                 default:
                     foreach (var (entry, conditional) in SplitPropertyEntries(inner))
@@ -2422,7 +2428,7 @@ internal static partial class BcAppSymbolCache
         if (!sawClause)
         {
             Console.Error.WriteLine(
-                $"[BcAppSymbolCache] page {pageId} SourceTableView not understood, ignored: '{text!.Trim()}'");
+                $"[BcAppSymbolCache] {subject} not understood, ignored: '{text!.Trim()}'");
             return null;
         }
         if (sorting.Count == 0 && ascending == null && filters.Count == 0 && unreadable == null) return null;

@@ -924,6 +924,17 @@ public static partial class RecordPatches
                 w.WriteEndElement();
             }
 
+        // #4968. The part's SubPageView, in the <SubFormView> shape a source-compiled part
+        // carries (filters in group 4, the part's own table's field ids), which is what
+        // MockTestPage reads for a part of either origin. Observably equivalent: the same
+        // parse and resolution as the page's own SourceTableView, including its FieldID="0"
+        // refusal for a name that does not resolve, so a view can only narrow the part or
+        // refuse it, never be silently dropped.
+        if (part.SubPageView is { } subPageView)
+            EmitTableViewXml(w, "SubFormView", "4",
+                RecordPatches.ResolveSourceTableIdForAnyPage(part.PagePartId),
+                $"page {hostPage.Id} \"{hostPage.Name}\" part \"{part.Name}\" SubPageView", subPageView);
+
         w.WriteEndElement(); // Controls
     }
 
@@ -1054,8 +1065,20 @@ public static partial class RecordPatches
     /// </summary>
     private static void EmitSourceTableViewXml(
         XmlWriter w, BcAppSymbolCache.PageSymbol page, BcAppSymbolCache.PageTableViewSymbol view)
+        => EmitTableViewXml(w, "SourceTableView", "2", page.SourceTableId,
+            $"page {page.Id} \"{page.Name}\" SourceTableView", view);
+
+    /// <summary>
+    /// A table view in BC's <c>ViewDefinition</c> shape: a page's <c>SourceTableView</c>
+    /// (filter group 2) or a part control's <c>SubFormView</c> (filter group 4, #4968; the group
+    /// corpus codeunit 60938 measured). Field names resolve against <paramref name="tableId"/>,
+    /// the page's own table or, for a SubFormView, the PART page's table.
+    /// </summary>
+    private static void EmitTableViewXml(
+        XmlWriter w, string elementName, string filterGroup, int tableId, string subject,
+        BcAppSymbolCache.PageTableViewSymbol view)
     {
-        w.WriteStartElement("SourceTableView");
+        w.WriteStartElement(elementName);
 
         // <Sorting> IS UNCONDITIONAL, and the "only when the page declares sorting" version of
         // this guard silently discarded the WHOLE view for half the pages that have one
@@ -1090,7 +1113,7 @@ public static partial class RecordPatches
             var unresolved = false;
             foreach (var sortField in view.SortingFields)
             {
-                var id = RecordPatches.TryResolveDependencyFieldId(page.SourceTableId, sortField.FieldName);
+                var id = RecordPatches.TryResolveDependencyFieldId(tableId, sortField.FieldName);
 
                 // #3271: an entry inside an AL `#if` block may not be in the compiled app at
                 // all, and this app's own field inventory is the only evidence available —
@@ -1103,7 +1126,7 @@ public static partial class RecordPatches
                 if (sortField.Conditional && id is null)
                 {
                     Console.Error.WriteLine(
-                        $"[RecordPatches] page {page.Id} \"{page.Name}\": conditional SourceTableView "
+                        $"[RecordPatches] {subject}: conditional "
                         + $"sorting field \"{sortField.FieldName}\" omitted — the field it names is not "
                         + "in this app, so the AL directive guarding it compiled the entry out");
                     continue;
@@ -1127,9 +1150,9 @@ public static partial class RecordPatches
                 // filter, a key CANNOT be made to fail loudly through the metadata (BC reads
                 // KeyFields only when KeyFieldsSetByView says to).
                 Console.Error.WriteLine(
-                    $"[RecordPatches] page {page.Id} \"{page.Name}\": SourceTableView sorting("
+                    $"[RecordPatches] {subject}: sorting("
                     + string.Join(", ", view.SortingFields.Select(f => f.FieldName))
-                    + $") not applied — a field name did not resolve against table {page.SourceTableId}");
+                    + $") not applied — a field name did not resolve against table {tableId}");
             }
             else
             {
@@ -1158,7 +1181,7 @@ public static partial class RecordPatches
 
         foreach (var filter in view.Filters)
         {
-            var fieldId = RecordPatches.TryResolveDependencyFieldId(page.SourceTableId, filter.FieldName);
+            var fieldId = RecordPatches.TryResolveDependencyFieldId(tableId, filter.FieldName);
 
             // #2978: an entry inside an AL `#if` block may not be in the compiled app at all,
             // and this app's own field inventory is the only evidence available — same rule,
@@ -1168,7 +1191,7 @@ public static partial class RecordPatches
             if (filter.Conditional && fieldId is null)
             {
                 Console.Error.WriteLine(
-                    $"[RecordPatches] page {page.Id} \"{page.Name}\": conditional SourceTableView "
+                    $"[RecordPatches] {subject}: conditional "
                     + $"filter \"{filter.FieldName}\" omitted — the field it names is not in this "
                     + "app, so the AL directive guarding it compiled the entry out");
                 continue;
@@ -1176,12 +1199,12 @@ public static partial class RecordPatches
 
             if (fieldId is null)
                 Console.Error.WriteLine(
-                    $"[RecordPatches] page {page.Id} \"{page.Name}\": SourceTableView field "
-                    + $"\"{filter.FieldName}\" did not resolve against table {page.SourceTableId} — "
+                    $"[RecordPatches] {subject}: field "
+                    + $"\"{filter.FieldName}\" did not resolve against table {tableId} — "
                     + "the page will refuse to open rather than show unfiltered rows");
 
             w.WriteStartElement("TableFilters");
-            w.WriteAttributeString("FilterGroup", "2");
+            w.WriteAttributeString("FilterGroup", filterGroup);
             w.WriteAttributeString("FieldID",
                 (fieldId ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture));
             if (string.Equals(filter.Kind, "const", StringComparison.OrdinalIgnoreCase))
@@ -1209,18 +1232,18 @@ public static partial class RecordPatches
             foreach (var entry in unreadable)
             {
                 Console.Error.WriteLine(
-                    $"[RecordPatches] page {page.Id} \"{page.Name}\": SourceTableView entry not "
+                    $"[RecordPatches] {subject}: entry not "
                     + $"readable: '{entry}' — the page will refuse to open rather than show rows "
                     + "its view excludes");
                 w.WriteStartElement("TableFilters");
-                w.WriteAttributeString("FilterGroup", "2");
+                w.WriteAttributeString("FilterGroup", filterGroup);
                 w.WriteAttributeString("FieldID", "0");
                 w.WriteAttributeString("FilterType", "CONST");
                 w.WriteAttributeString("FilterValue", XmlSafe(entry));
                 w.WriteEndElement();
             }
 
-        w.WriteEndElement(); // SourceTableView
+        w.WriteEndElement(); // SourceTableView / SubFormView
     }
 
     /// <summary>
