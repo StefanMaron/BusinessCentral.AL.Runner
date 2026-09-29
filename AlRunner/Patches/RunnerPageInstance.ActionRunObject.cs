@@ -262,16 +262,13 @@ internal sealed partial class RunnerPageInstance
     }
 
     /// <summary>
-    /// Apply an action's <c>RunPageView</c> to the target's cursor before the page opens: the
-    /// key and direction, then each filter in its own filter group. BC's client does the same
-    /// from <c>ActionBuilder.GetApplicationFilters</c> (Client.Builder, 28.1), which puts the
-    /// view's <c>TableFilters</c> into the action's filter context beside the RunPageLink and
-    /// its <c>Sorting</c> into <c>RunFormViewKeyFields</c> / <c>RunFormSortingAscending</c>.
-    /// Corpus codeunits 67006 and 67007 (StefanMaron/BusinessCentral.AL.Language.Tests#508)
-    /// measure the rows, order and filter group on a service tier.
-    /// Trap: the direction is applied only with a key, as a part's SubPageView does
-    /// (<c>MockTestPage.ApplySubPageViewSorting</c>); an action view with order() and no
-    /// sorting() is unmeasured.
+    /// Apply an action's <c>RunPageView</c> to the target's cursor before the page opens: key,
+    /// direction, then each filter in its own group — what BC's client builds from the view in
+    /// <c>ActionBuilder.GetApplicationFilters</c> (Client.Builder 28.1). Rows, order and group
+    /// (3) are measured by corpus codeunits 67006 / 67007
+    /// (StefanMaron/BusinessCentral.AL.Language.Tests#508).
+    /// Trap: the direction is applied only with a key, as <c>ApplySubPageViewSorting</c> does
+    /// for a part; order() without sorting() on an action is unmeasured.
     /// </summary>
     private static void ApplyActionRunView(NavRecord record, ActionRunView view)
     {
