@@ -500,7 +500,15 @@ public sealed class VirtualTableRefusalClaimTests
         // missing either field would otherwise leave the new App ID or Profile ID unread and let
         // the guard judge a guess. 89 was READ OUT of this test's own failure message
         // ("Expected: 88, Actual: 89") on CI run 36349873017.
-        Assert.Equal(89, total);
+        //
+        // 89 -> 88 (#2910): the Permission-table arm in RecordPatches.DataAccessDispatch.cs
+        // refused when the DataAccessSource had no session to construct BC's provider with. The
+        // runner no longer constructs it: the three PermissionDataProviderBase tables are handed
+        // to BC's own DataAccessSource.GetVirtualDataAccess, which builds the provider from its
+        // own session, and the one runner-side precondition left (a PermissionSetupMonitor on the
+        // skeleton database) refuses with a BcShapeGapException, which this count excludes.
+        // 88 was READ OUT of this test's own failure message ("Expected: 89, Actual: 88").
+        Assert.Equal(88, total);
     }
 
     // A refusal SITE is a *call* to a `*ShapeGap(` factory, not only a `throw` of one (#4058).
@@ -557,9 +565,9 @@ public sealed class VirtualTableRefusalClaimTests
         // ObjectMetadataShapeGap: #2894's own factory, scoped out of #2945's count by design.
         ["RecordPatches.NoSourceColumns.cs"] = 1,
         ["RecordPatches.ObjectMetadataSystemTable.cs"] = 10,
-        // PermissionSetSystemTableShapeGap / PermissionSystemTableShapeGap (the latter joined at #3695).
+        // PermissionSetSystemTableShapeGap. RecordPatches.PermissionSystemTable.cs left this list at
+        // #2910: it no longer builds a store, so it has no store-wiring refusal to count.
         ["RecordPatches.PermissionSetSystemTable.cs"] = 1,
-        ["RecordPatches.PermissionSystemTable.cs"] = 2,
         // CheckInventoryScope's app-group-visibility gap (#2279): an in-memory store populated
         // under one app group and read under another cannot drop the first group's rows, so it
         // refuses rather than let the second group see them.

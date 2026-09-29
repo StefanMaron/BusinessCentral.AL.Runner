@@ -1061,6 +1061,15 @@ public static partial class RecordPatches
                     ctorCompanyTokens.Invoke(new[] { _skeletonDatabase }));
         }
 
+        // PermissionSetupMonitor — BC's NavDatabase ctor builds one; GetUninitializedObject
+        // skipped it. PermissionDataProviderBase.GetPermissions reads its SetupVersion. See
+        // RecordPatches.PermissionSystemTable.cs.
+        _plantedPermissionSetupMonitor = PlantPermissionSetupMonitor(_skeletonDatabase);
+        if (_plantedPermissionSetupMonitor == null)
+            Console.Error.WriteLine(
+                "[RecordPatches] NavDatabase.PermissionSetupMonitor could not be built — the "
+                + "Permission / Metadata Permission / Expanded Permission tables will refuse");
+
         // tenant — BC's own NavDatabase ctor takes the owning NavTenant and stores it in this
         // private field; GetUninitializedObject skips it, so NavDatabase.Tenant was null on the
         // skeleton even though NavSession.Tenant was not. Both NavSession.get_Database and

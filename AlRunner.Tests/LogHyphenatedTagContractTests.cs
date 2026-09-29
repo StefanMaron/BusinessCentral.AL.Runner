@@ -91,7 +91,6 @@ public sealed class LogHyphenatedTagContractTests
         new("AlRunner/Patches/RecordPatches.cs", "parse-counts", Kind.OptIn, Gate: "AL_RUNNER_TRACE_PARSE_COUNTS"),
         new("AlRunner/Patches/RecordPatches.PermissionMetadataPopulator.cs", "perm-metadata", Kind.OptIn, Gate: "AL_RUNNER_DIAG_PERMMETA"),
         new("AlRunner/Patches/RecordPatches.PermissionSetFromBcDocument.cs", "perm-metadata", Kind.OptIn, Gate: "AL_RUNNER_DIAG_PERMMETA"),
-        new("AlRunner/Patches/RecordPatches.PermissionSystemTable.cs", "permission-table", Kind.OptIn, Gate: "AL_RUNNER_TRACE_PERMISSION_TABLE"),
         new("AlRunner/Patches/RecordPatches.MetaQueryFromBcDocument.cs", "query-metadata", Kind.OptIn, Gate: "AL_RUNNER_TRACE_QUERY_METADATA_SOURCE"),
         new("AlRunner/Patches/RecordPatches.ReportMetadataVirtualTable.cs", "report-metadata", Kind.OptIn, Gate: "AL_RUNNER_TRACE_REPORT_METADATA"),
         new("AlRunner/BcCompiler.cs", "shared-refs", Kind.OptIn, Gate: @"\btiming\b"),
