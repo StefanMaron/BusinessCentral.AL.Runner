@@ -204,9 +204,9 @@ public static class AlCoverageSourceMap
     /// <summary>
     /// The execution roots a coverage run was given, plus every OTHER AL source directory the
     /// run actually parsed — the sibling SOURCE dependencies <c>BuildSiblingSourceDeps</c>
-    /// matched and compiled. Execution roots come first and their order is preserved, so
-    /// nothing about the existing attribution changes; the extra roots only add files that had
-    /// no root at all.
+    /// matched and compiled. Execution roots precede those and keep their order, so nothing
+    /// about the existing attribution changes; the extra roots only add files that had no root
+    /// at all.
     ///
     /// <para>#3965: a statement executed in a sibling source dependency was tracked and then
     /// dropped from the report, because <see cref="Build"/> was fed the execution bundles
@@ -216,9 +216,13 @@ public static class AlCoverageSourceMap
     ///
     /// <para>#4273: a packaged .app dependency this run compiled from its embedded AL adds the
     /// directory that AL was materialized into (<see cref="PackagedDependencySources"/>). A
-    /// precompiled package adds nothing: docs/coverage-attribution.md#what-a-packaged-dependency-contributes-since-4273.</para>
+    /// precompiled package adds nothing: docs/coverage-attribution.md#what-a-packaged-dependency-contributes-since-4273.
+    /// Those roots go FIRST: <see cref="Build"/> keeps the last root's mapping of an object, so
+    /// an object that also has a source root keeps the source root's file, as before #4273.
+    /// <paramref name="packagedRoots"/> is a test seam; null means the registered packages.</para>
     /// </summary>
-    public static IReadOnlyList<string> RootsWithParsedSourceDependencies(IEnumerable<string> executionRoots)
+    public static IReadOnlyList<string> RootsWithParsedSourceDependencies(
+        IEnumerable<string> executionRoots, IEnumerable<string>? packagedRoots = null)
     {
         var roots = new List<string>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -255,10 +259,10 @@ public static class AlCoverageSourceMap
             if (seen.Add(key)) roots.Add(root);
         }
 
+        foreach (var dir in packagedRoots ?? PackagedDependencySources.Roots()) Add(dir);
         foreach (var root in executionRoots) Add(root);
         // After the execution roots, so a directory that is both keeps the caller's spelling.
         foreach (var dir in AlRunner.Patches.RecordPatches.RegisteredSourceDirs()) Add(dir);
-        foreach (var dir in PackagedDependencySources.Roots()) Add(dir);
         return roots;
     }
 

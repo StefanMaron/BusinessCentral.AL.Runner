@@ -261,6 +261,15 @@ public sealed class PackagedDependencySourcesTests : IDisposable
         Assert.Empty(Directory.GetDirectories(_scratch, "key1.src.tmp-*"));
     }
 
+    [Fact]
+    public void TheUnattributedNote_NamesARegisteredNonMicrosoftApp_Only()
+    {
+        Assert.True(AlCoverageTracker.NamedInUnattributedNote(("Subject", "AL Runner", "1.0.0.0")));
+        Assert.False(AlCoverageTracker.NamedInUnattributedNote(("Test Runner", "Microsoft", "28.1.0.0")));
+        // An assembly no dependency load registered: the service-tier DLLs, all Microsoft's.
+        Assert.False(AlCoverageTracker.NamedInUnattributedNote(null));
+    }
+
     [Theory]
     [InlineData("Microsoft", false)]
     [InlineData("microsoft", false)]
@@ -274,5 +283,50 @@ public sealed class PackagedDependencySourcesTests : IDisposable
             Assert.Equal(expectRoot, PackagedDependencySources.RegisteredCount == 1);
         }
         finally { PackagedDependencySources.ResetForTests(); }
+    }
+}
+
+/// <summary>
+/// #4273: a packaged root must only ADD objects. Build keeps the last root's mapping of an
+/// object, so the packaged roots go first and an object that also has a source root keeps it.
+/// </summary>
+[Collection(BcEngineCollection.Name)]
+public sealed class PackagedDependencySourcePrecedenceTests : IDisposable
+{
+    private readonly BcEngineFixture _engine;
+    private readonly string _root = TestScratch.Dir("al-runner-packaged-precedence");
+
+    public PackagedDependencySourcePrecedenceTests(BcEngineFixture engine) => _engine = engine;
+
+    public void Dispose()
+    {
+        try { Directory.Delete(_root, recursive: true); } catch { }
+    }
+
+    private static void Write(string path, string text)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, text);
+    }
+
+    [SkippableFact]
+    public void AnObjectWithASourceRoot_KeepsItsSourceFile_WhileAPackagedOnlyObjectIsAdded()
+    {
+        TestArtifacts.SkipIf(!_engine.Ready,
+            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
+        var source = Path.Combine(_root, "source");
+        var packaged = Path.Combine(_root, "key.src");
+        Write(Path.Combine(source, "Shared.Codeunit.al"), "codeunit 79860 \"Prec Shared\"\n{\n}\n");
+        Write(Path.Combine(packaged, "app.json"), "{}");
+        Write(Path.Combine(packaged, "src", "Shared.Codeunit.al"), "codeunit 79860 \"Prec Shared\"\n{\n}\n");
+        Write(Path.Combine(packaged, "src", "OnlyPackaged.Codeunit.al"), "codeunit 79861 \"Prec Only Packaged\"\n{\n}\n");
+
+        var map = AlCoverageSourceMap.Build(
+            AlCoverageSourceMap.RootsWithParsedSourceDependencies(new[] { source }, new[] { packaged }),
+            relativeTo: null);
+
+        string Abs(string p) => Path.GetFullPath(p).Replace('\\', '/');
+        Assert.Equal(Abs(Path.Combine(source, "Shared.Codeunit.al")), map[("CodeUnit", 79860)]);
+        Assert.Equal(Abs(Path.Combine(packaged, "src", "OnlyPackaged.Codeunit.al")), map[("CodeUnit", 79861)]);
     }
 }

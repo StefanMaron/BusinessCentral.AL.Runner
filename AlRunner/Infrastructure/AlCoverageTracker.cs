@@ -312,14 +312,19 @@ public static class AlCoverageTracker
             if (_piEncodedSpans!.GetValue(srcAttr) is not long[] spans || spans.Length == 0) continue;
             var obj = AlCallStackCapture.ParseObjectTypeAndId(key);
             if (obj.Item2 == 0 || sourceMap.ContainsKey(obj)) continue;
-            if (AlCallStackCapture.AppOf(AlScopeKey.ObjectTypeOf(key).Assembly) is not { } app
-                || PackagedDependencySources.IsMicrosoft(app.Publisher)) continue;
-            var name = $"{app.Publisher}_{app.Name}_{app.Version}";
+            var app = AlCallStackCapture.AppOf(AlScopeKey.ObjectTypeOf(key).Assembly);
+            if (!NamedInUnattributedNote(app)) continue;
+            var name = $"{app!.Value.Publisher}_{app.Value.Name}_{app.Value.Version}";
             if (!byApp.TryGetValue(name, out var objects)) byApp[name] = objects = new();
             objects.Add(obj);
         }
         return byApp.Select(kv => (kv.Key, kv.Value.Count)).ToList();
     }
+
+    /// <summary>Whether executed AL of <paramref name="app"/> belongs in the unattributed note:
+    /// a registered dependency app not published by Microsoft.</summary>
+    internal static bool NamedInUnattributedNote((string Name, string Publisher, string Version)? app) =>
+        app is { } a && !PackagedDependencySources.IsMicrosoft(a.Publisher);
 
     // The one resolution chain, shared by CollectStatementTable and
     // CollectPerTestStatementTable (#2135) — keep it that way; it was two copies, and a fix to

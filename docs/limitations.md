@@ -1853,31 +1853,14 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
 
 <a id="packaged-dependency-coverage"></a>
 
-- **`--coverage` attributes only AL the runner compiled from source.** A statement executed in a
-  dependency consumed as a precompiled `.app` runs, and its hit is counted, but it does not
-  appear in the Cobertura report — measured end to end on BC `28.1.49838.53910` with System
-  Application as the dependency: 98 scope types recorded hits, 1 class in the report
-  ([#4273](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4273)).
-
-  **Not an exclusion, and deliberately recorded here rather than as one.** The cause is that BC
-  emits two scope shapes: AL the runner compiles gets a per-method scope class carrying
-  `[SourceSpans]`, while a shipped `.app` uses Ncl's generic `ALMethodScope<T>`, which carries
-  none — so the tracker's type-level read finds nothing. Everything a fix needs is present on the
-  scope *instance* (`GetDeclaringMethodInfo()` resolved the AL method, its method-level
-  `[SourceSpans]` and its object id on every one of eight packaged scopes measured), which is why
-  this is a gap rather than a limit.
-
-  That accounts for the 8,357 ordinary methods. The packaged assembly's other 155 scopes — the
-  ones that *do* carry the attribute at type level — drop out for a **second, independent**
-  reason: they are event publishers with empty bodies, so each holds a single span, which is BC's
-  never-instrumented trailing sentinel, and contributes no line either way. A fix for the first
-  reason alone leaves that correct and unchanged.
-
-  Two things a reader is likely to assume and should not. The `.app` **does** ship its AL source
-  (1,319 `.al` files in System Application), so "no source on disk" is not the reason; and
-  supplying that source does not help — adding it as a coverage root grew the source map from 1
-  entry to 1,054 and changed the report by zero classes. The full measurement, and what a fix
-  still owes, are in [`coverage-attribution.md`](coverage-attribution.md).
+- **`--coverage` does not attribute a dependency's *precompiled* code.** A dependency consumed as
+  a packaged `.app` that ships its AL and no DLL is compiled here from that AL and appears in the
+  Cobertura report like source ([#4273](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4273)).
+  One whose code arrives precompiled — a `.deps-bin` sidecar, or an R2R DLL inside the `.app` —
+  runs and is counted but is not placed on lines, because nothing ties that DLL to the package's
+  source text. The run says so: after the report, a `Coverage note:` names each such dependency
+  and how many of its objects executed. Microsoft's apps are outside the report either way and
+  are not named. Detail: [`coverage-attribution.md`](coverage-attribution.md#what-a-packaged-dependency-contributes-since-4273).
 
 <a id="code-coverage-virtual-tables"></a>
 

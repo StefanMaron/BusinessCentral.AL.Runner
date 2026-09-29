@@ -1,4 +1,4 @@
-# How `--coverage` attributes a statement, and why a packaged `.app` dependency drops out
+# How `--coverage` attributes a statement, and which packaged dependencies it can place
 
 `AlCoverageTracker` records a hit per `(scope type, AL statement index)` from a Cecil-rewrite
 hook on `NavMethodScope.StmtHit(int)`, then resolves each scope type back to an AL object and a
@@ -15,7 +15,43 @@ method an `ALMethodScope` runs — found by its `[MethodId]` on the object type 
 `(type, id)` — and the scope class otherwise (event publishers keep one). So question 1 below is
 asked of that member, and a packaged `.app`'s statements now pass questions 1-3; they still stop at
 question 4, because no root maps a packaged object. The measurements below were taken under the
-old `scope.GetType()` keying and are kept as the record of why the key moved.
+old `scope.GetType()` keying and are kept as the record of why the key moved. What #4273 then
+changed at question 4 is [the next section](#what-a-packaged-dependency-contributes-since-4273).
+
+## What a packaged dependency contributes since #4273
+
+A packaged dependency reaches a run in one of two ways, and the report treats them differently.
+
+| the package's code is | attributed? | why |
+|---|---|---|
+| **compiled by this run from the package's embedded AL** (`DependencyLoader` Tier 3: the `.app` ships `src/*.al` and no DLL — what `alc` produces with `includeSourceInSymbolFile`) | **yes** | the `[SourceSpans]` came from compiling exactly the text the map parses |
+| **precompiled** — a `.deps-bin` sidecar (Tier 1), an R2R DLL inside the `.app` (Tier 2), a service-tier DLL (Tier 2.5) | **no, and the run names it** | nothing ties the DLL to the package's `src/` text, so a line mapping would be unverified |
+
+**Attributed:** `PackagedDependencySources` records each Tier-3 package and, when a coverage map
+is built, materializes its `src/**/*.al` into `compiled-deps/<cacheKey>.src/` beside the compiled
+DLL, at the package's own paths. `AlCoverageSourceMap.RootsWithParsedSourceDependencies` adds
+those directories, so the CLI, `--server` and the DAP maps all see them. The cache key hashes the
+package's content, so the directory is written once and reused by every later run; the warm run
+(a `source-cache HIT`, which never writes the Tier-3 scratch directory) reads the same one.
+Pinned cold and warm, against one cache root, by `CoveragePackagedDependencyTests`.
+
+**Microsoft's packages are not recorded**, Tier 3 or not. The runner compiles Microsoft's Test
+Runner this way on an ordinary run (measured on `28.1.49838.53910`); mapping it filled a
+one-codeunit fixture's report with the Test Runner's files and cut its total from 50% to under 5%.
+Microsoft code is outside the report by design, the same as Microsoft's precompiled apps.
+
+**Named, not attributed:** after writing the report the CLI lists every non-Microsoft dependency
+whose AL executed and that no root maps:
+
+```
+Coverage note: AL executed in these dependencies is not in the report above, because their code was precompiled rather than compiled from source by this run (docs/limitations.md#packaged-dependency-coverage):
+  AL Runner_Runner Tests Fixture - Coverage Dependency Source Subject_1.0.0.0  (1 object(s) executed)
+```
+
+It reads the hit-tracked keys only (`AlCoverageTracker.UnattributedExecutedObjects`), which is
+where a question-4 failure means AL that ran — see
+[the two causes](#the-two-causes-of-a-null-resolution-are-separable-4350). It is a note, not an
+incomplete-coverage exit: the omission is declared in `docs/limitations.md`.
 
 ## The resolution chain
 
@@ -86,7 +122,11 @@ One test calling `Base64Convert.ToBase64('abc')`, with System Application suppli
 The packaged dependency's AL genuinely executes and its statements are genuinely counted — 97
 distinct scope types recorded hits. They are discarded at question 1.
 
-## The embedded-source route is a dead end, and this is the measurement
+## The embedded-source route was a dead end under the old key
+
+**Superseded by #4697 and #4273** — kept because the measurement explains why the key had to move
+first. Under `scope.GetType()` keying no amount of source could help; under `AlScopeKey` the
+embedded source is exactly what attributes a Tier-3 package.
 
 #4273 proposed recovering attribution from the `.app`'s embedded AL source. The premise that the
 source is unavailable is **false** — Microsoft's `.app`s ship it, 1,319 `.al` files under `src/`
