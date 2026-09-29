@@ -198,7 +198,8 @@ internal partial class LiveNavTestPage
     internal void MarkPartOf(LiveNavTestPage host) => _editabilityHost = host;
 
     /// <summary>Run the page's OnOpenPage — see RunnerTestPageState.MarkOpened.</summary>
-    internal void RaiseOnOpenPage() => _page?.RaiseOnOpenPage();
+    internal void RaiseOnOpenPage(Action<NavRecord>? beforeSourceTableView = null)
+        => _page?.RaiseOnOpenPage(beforeSourceTableView);
 
     /// <summary>
     /// Reach every subpage PART this page declares, the way <see cref="RunnerTestPageState.MarkOpened"/>

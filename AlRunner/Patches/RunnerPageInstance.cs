@@ -616,7 +616,8 @@ internal sealed partial class RunnerPageInstance
     /// (BC's own uiParts lookup fails), or reifying the adopted object throws.
     /// </summary>
     internal static RunnerPageInstance? AdoptFromHost(
-        object? hostForm, int controlId, int partPageId, NavRecord? recordToBind, bool recordless)
+        object? hostForm, int controlId, int partPageId, NavRecord? recordToBind, bool recordless,
+        Action<NavRecord>? beforeSourceTableView = null)
     {
         var trace = Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PAGE_METADATA") == "1";
         if (hostForm is not Microsoft.Dynamics.Nav.Runtime.NavForm host)
@@ -728,7 +729,7 @@ internal sealed partial class RunnerPageInstance
         // presence fixes that without reopening #2201 (TestPageTempPart_Part.al, the
         // SourceTableTemporary shape #2201 pinned, declares no OnOpenPage trigger at all, so
         // running it once here is a no-op either way; codeunit 60807 stays green).
-        instance.RaiseOnOpenPage();
+        instance.RaiseOnOpenPage(beforeSourceTableView);
 
         return instance;
     }
@@ -2571,7 +2572,9 @@ internal sealed partial class RunnerPageInstance
     /// a Validate) failed against a row that was never fetched — and the error named a
     /// missing record rather than a trigger that never ran.
     /// </summary>
-    internal void RaiseOnOpenPage()
+    /// <param name="beforeSourceTableView">What a part's host control imposes on the part's
+    /// record ahead of the part page's own view and trigger — its SubPageView sorting (#4969).</param>
+    internal void RaiseOnOpenPage(Action<NavRecord>? beforeSourceTableView = null)
     {
         // A reopen: reset the page's OWN global variables to their AL type defaults before
         // anything (including OnOpenPage) can read or re-seed them, matching a freshly
@@ -2587,6 +2590,8 @@ internal sealed partial class RunnerPageInstance
         // CurrPage.Close() would have GetBuiltInAction refusing "The TestPage is not open."
         // forever, on a page BC considers open again.
         ClosedForms.Remove(_form);
+
+        if (beforeSourceTableView != null && _record != null) beforeSourceTableView(_record);
 
         // BEFORE the trigger, exactly where BC puts it: NavForm.OpenFormAsync runs
         // ApplySourceTableViewAndSavedValuesAsync() and only then RaiseOnOpenPageAsync().
