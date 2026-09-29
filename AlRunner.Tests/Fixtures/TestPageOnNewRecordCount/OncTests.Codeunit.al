@@ -1,14 +1,11 @@
-// Issue #3029. A part page's OnNewRecord must run ONCE for one draft-line row.
+// Issues #3029 and #3481. How often a part page's OnNewRecord runs, asserted as DELTAS.
 //
-// The runner has two paths that each start a record: EnterNewRowLine, when the cursor lands on
-// the implicit new-row line, and PromoteNewRowLineForWrite -> InsertEmptyRow, when a write turns
-// that line into a pending insert. On the commonest sequence -- First()/Next() onto the draft
-// line, then SetValue -- both run for one row.
-//
-// The witness is a COUNT, not an assignment. Every existing fixture in this area writes
-// `Rec."Set By OnNewRecord" := 'NEWREC'`, which is idempotent and so passes whether the trigger
-// fired once or five times. Each assertion here names a concrete integer, so it fails against a
-// double firing (2) and against a missing one (0) alike.
+// The witness is a COUNT, not an assignment: `Rec.X := 'NEWREC'` is idempotent and passes whether
+// the trigger fired once or five times. Every assertion is a delta from a baseline the arm
+// measures itself, the same shape corpus codeunit 60358 "ONRC Tests" asserts on real BC. The
+// absolute cost of OPENING over an empty part is tier-dependent (3 on the Windows reference
+// tier) and the runner does not model a viewport, so it is asserted only as "> 0". Absolutes
+// appear only on a part that already has rows, where both tiers measured 0 and +1.
 codeunit 70646 "ONC Tests"
 {
     Subtype = Test;
@@ -76,67 +73,81 @@ codeunit 70646 "ONC Tests"
         exit(Line.Count());
     end;
 
-    // THE CONTROL. New() is one new-record step by construction, so a count other than 1 here
-    // would mean the fixture cannot count and no other number in this file could be read.
+    // New() on an empty part: exactly +1 over what opening the card already cost. Opening parks
+    // the part on its draft line and starts that row, but New() is not a no-op on it: BC runs its
+    // new-record step again (corpus 60358 New_OnEmptyLinkedPart_RunsOnNewRecordOncePlusTheOpenCost,
+    // #3029). The write after New() then costs +0.
     [Test]
-    procedure New_OnEmptyLinkedPart_RaisesOnNewRecordOnce()
+    procedure New_OnEmptyLinkedPart_RaisesOnNewRecordOnceMoreThanTheOpen()
     var
         Card: TestPage "ONC Card";
+        AfterOpen: Integer;
+        AfterNew: Integer;
     begin
         Initialize();
         AddLine('H2', 10000, 'foreign');
 
         OpenCardOn('H1', Card);
+        AfterOpen := FiringCount();
+        Assert.IsTrue(AfterOpen > 0,
+            'opening a card on an empty part must raise the part''s OnNewRecord at least once -- the draft line is shown and started');
+
         Card.Lines.New();
 
-        Assert.AreEqual(1, FiringCount(),
-            'New() on an empty linked part must raise the part page''s OnNewRecord exactly once');
+        AfterNew := FiringCount();
+        Assert.AreEqual(AfterOpen + 1, AfterNew,
+            'New() on an empty linked part must raise OnNewRecord exactly once more than opening the card already did');
 
         Card.Lines.Descr.SetValue('typed after New');
 
-        Assert.AreEqual(1, FiringCount(),
+        Assert.AreEqual(AfterNew, FiringCount(),
             'writing into the row New() started must not raise OnNewRecord again');
 
         Card.Close();
 
-        Assert.AreEqual(1, FiringCount(), 'closing the card must not raise OnNewRecord again');
+        Assert.AreEqual(AfterNew, FiringCount(), 'closing the card must not raise OnNewRecord again');
         Assert.AreEqual(1, LineCountFor('H1'), 'exactly one line must be written for H1');
         Assert.AreEqual(1, LineCountFor('H2'), 'H2''s own line must be untouched');
     end;
 
-    // Merely showing the draft line. Not zero -- corpus codeunit 60996 measured on all 8 BC legs
-    // that the trigger has already run by this point. This says how often.
+    // Merely showing the draft line. Not zero -- corpus 60996 measured that the trigger has
+    // already run by this point -- and First() on the already-open empty part adds nothing.
     [Test]
-    procedure DraftLine_ShownAndUntouched_RaisesOnNewRecordOnce()
+    procedure DraftLine_ShownAndUntouched_FirstAddsNothingToTheOpen()
     var
         Card: TestPage "ONC Card";
+        AfterOpen: Integer;
     begin
         Initialize();
         AddLine('H2', 10000, 'foreign');
 
         OpenCardOn('H1', Card);
+        AfterOpen := FiringCount();
+        Assert.IsTrue(AfterOpen > 0,
+            'opening a card on an empty part must raise the part''s OnNewRecord at least once');
+
         Assert.IsFalse(Card.Lines.First(),
             'H1 has no lines, so First() must return false and land on the draft line');
 
-        Assert.AreEqual(1, FiringCount(),
-            'landing on the draft line must raise the part page''s OnNewRecord exactly once');
+        Assert.AreEqual(AfterOpen, FiringCount(),
+            'First() on an empty part must not raise OnNewRecord again -- the draft line was started while the card opened');
 
         Card.Close();
 
-        Assert.AreEqual(1, FiringCount(),
+        Assert.AreEqual(AfterOpen, FiringCount(),
             'closing over an untouched draft line must not raise OnNewRecord again');
         Assert.AreEqual(0, LineCountFor('H1'),
-            'an untouched draft line must not be written -- so the firing above is not a saved row');
+            'an untouched draft line must not be written -- so the firings above are not saved rows');
     end;
 
-    // THE DEFECT #3029 REPORTS. Show the draft line, then write one field. Against the arm above
-    // this isolates what the WRITE costs: equal counts mean typing only marks an already-started
-    // row for saving; a higher count means the promotion starts the record a second time.
+    // Show the draft line, then write one field: the write costs +0 over the firings before it,
+    // because typing commits the row the draft line already started.
     [Test]
-    procedure DraftLine_ShownThenWritten_RaisesOnNewRecordOnce()
+    procedure DraftLine_ShownThenWritten_WriteAddsNothing()
     var
         Line: Record "ONC Line";
         Card: TestPage "ONC Card";
+        AfterShown: Integer;
     begin
         Initialize();
         AddLine('H2', 10000, 'foreign');
@@ -144,19 +155,20 @@ codeunit 70646 "ONC Tests"
         OpenCardOn('H1', Card);
         Assert.IsFalse(Card.Lines.First(),
             'H1 has no lines, so First() must return false and land on the draft line');
-        Assert.AreEqual(1, FiringCount(),
-            'landing on the draft line must raise OnNewRecord once, before anything is typed');
+        AfterShown := FiringCount();
+        Assert.IsTrue(AfterShown > 0,
+            'the draft line must already have raised OnNewRecord before anything is typed');
 
         Card.Lines.Descr.SetValue('typed into the draft line');
 
-        // THE MEASUREMENT. Read before Close(), so a firing on the way out cannot be mistaken
-        // for one the write caused.
-        Assert.AreEqual(1, FiringCount(),
-            'writing into the draft line must not raise OnNewRecord a second time -- the row was already started when the blank line became current');
+        // Read before Close(), so a firing on the way out cannot be mistaken for one the write
+        // caused.
+        Assert.AreEqual(AfterShown, FiringCount(),
+            'writing into the draft line must not raise OnNewRecord again -- the row was already started when the blank line became current');
 
         Card.Close();
 
-        Assert.AreEqual(1, FiringCount(),
+        Assert.AreEqual(AfterShown, FiringCount(),
             'saving the promoted draft line on close must not raise OnNewRecord again');
         Assert.AreEqual(1, LineCountFor('H1'),
             'typing into the draft line must insert exactly one line for H1');
@@ -167,11 +179,11 @@ codeunit 70646 "ONC Tests"
         Assert.AreEqual('typed into the draft line', Line.Descr,
             'the typed value must reach the backing table -- the count above is for a row really written');
         Assert.AreEqual('H1', Line."Header No.",
-            'the promoted row must still carry the SubPageLink''s value: de-duplicating the firing must not cost the link stamping');
+            'the promoted row must still carry the SubPageLink''s value');
     end;
 
-    // The other route onto the draft line: walking off the end of existing data. The 0 assertion
-    // on the real row is what stops the counts here being read as "any cursor move fires it".
+    // The other route onto the draft line: walking off the end of existing data. On a part that
+    // HAS rows these are absolutes, and both service tiers measured them (corpus 60358 arm 4).
     [Test]
     procedure DraftLine_ReachedByNextThenWritten_RaisesOnNewRecordOnce()
     var
@@ -208,21 +220,12 @@ codeunit 70646 "ONC Tests"
         Assert.AreEqual(1, Line.Count(), 'exactly one line must carry the typed description');
         Line.FindFirst();
         Assert.IsTrue(Line."Line No." > 10000,
-            'AutoSplitKey must still number the promoted line past the line already there: de-duplicating the firing must not cost the insert-position capture');
+            'AutoSplitKey must still number the promoted line past the line already there');
     end;
 
-    // THE ARM THAT DOES NOT REST ON THE OPENING COST, and the one the two service tiers agree
-    // with exactly. Every other arm in this file compares against 1, which is the RUNNER's own
-    // cost of opening a card over an EMPTY part; the tiers answer 6 (bc-linux, corpus run
-    // 34140530877) and 3 (Microsoft Windows container, nightly run 34182689878) for that same
-    // step, and which of those is right is under investigation. So the opening cost is not a
-    // portable claim and is deliberately not asserted here.
-    //
-    // What IS portable is this: a part that already HAS rows never renders a blank draft line
-    // while opening, so opening it costs ZERO -- both tiers measured 0 -- and walking across its
-    // existing rows adds nothing, because standing on a row that is already there is not
-    // starting a record. This arm asserts the whole walk as a DELTA of zero from a baseline it
-    // captures itself, so it holds whatever the empty-part opening cost turns out to be.
+    // A part that already HAS rows lands on real data while opening, so opening costs ZERO
+    // (both tiers measured 0) and walking across existing rows adds nothing: standing on a row
+    // that is already there is not starting a record.
     //
     // Three seeded rows rather than one: a single row cannot distinguish "landing costs zero"
     // from "the first landing is free and every later one is not", which is exactly the shape
@@ -275,68 +278,73 @@ codeunit 70646 "ONC Tests"
         Assert.AreEqual(1, LineCountFor('H2'), 'H2''s own line must be untouched');
     end;
 
-    // THE NEGATIVE DIRECTION, and what stops every "exactly once" above from being satisfied by
-    // an implementation that simply latched after the first firing. Two rows, two firings.
+    // THE NEGATIVE DIRECTION: two rows cost one firing more than one row. A latch that never
+    // reset would pass every +0 above and fail this (corpus 60358
+    // TwoRowsWrittenThroughTheDraftLine_SecondRowRaisesOnNewRecordOnceMore).
     [Test]
-    procedure TwoRowsThroughTheDraftLine_RaiseOnNewRecordTwice()
+    procedure TwoRowsThroughTheDraftLine_SecondRowRaisesOnNewRecordOnceMore()
     var
         Card: TestPage "ONC Card";
+        AfterShown: Integer;
+        AfterFirstRow: Integer;
     begin
         Initialize();
         AddLine('H2', 10000, 'foreign');
 
         OpenCardOn('H1', Card);
         Assert.IsFalse(Card.Lines.First(), 'H1 has no lines, so First() must return false');
+        AfterShown := FiringCount();
 
         Card.Lines.Descr.SetValue('first line');
-        Assert.AreEqual(1, FiringCount(), 'the first row must account for exactly one firing');
+        AfterFirstRow := FiringCount();
+        Assert.AreEqual(AfterShown, AfterFirstRow,
+            'writing the first row must cost nothing beyond the firings the draft line already paid');
 
         Assert.IsTrue(Card.Lines.Next(),
             'Next() must leave the row just written and land on a fresh draft line');
         Card.Lines.Descr.SetValue('second line');
 
-        Assert.AreEqual(2, FiringCount(),
-            'a second row started through the draft line must raise OnNewRecord once more -- one firing per row, not one per page');
+        Assert.AreEqual(AfterFirstRow + 1, FiringCount(),
+            'a second row started through the draft line must raise OnNewRecord exactly once more -- one firing per row, not one per page');
 
         Card.Close();
 
-        Assert.AreEqual(2, FiringCount(), 'closing the card must not raise OnNewRecord again');
+        Assert.AreEqual(AfterFirstRow + 1, FiringCount(), 'closing the card must not raise OnNewRecord again');
         Assert.AreEqual(2, LineCountFor('H1'), 'both rows must be written for H1');
         Assert.AreEqual(1, LineCountFor('H2'), 'H2''s own line must be untouched');
     end;
 
-    // The latch is ONCE PER ROW, and this is the arm that says so. Every other arm here stays
-    // within one parent row, so all of them pass with the latch never cleared at all -- "once
-    // per page" satisfies them. Only walking onto a draft line, moving the PARENT, and walking
-    // onto a second draft line can tell the two apart: the first draft line is abandoned rather
-    // than left, so if the latch survives that, the second row silently owes no firing.
-    //
-    // Written because review found that removing BOTH latch resets left every existing arm
-    // green -- the fixture and all four corpus arms. The comment on AbandonNewRowLine claimed
-    // this was "the failure a count-based test catches"; it was not, until this arm.
+    // The runner's latch is ONCE PER ROW, not once per page: a draft line abandoned by a parent
+    // move leaves the next parent's draft line owing its own firing. Every other arm stays
+    // within one parent row, so all of them pass with the latch never cleared. Asserted as
+    // "more than before the move" rather than an exact figure: what a parent move over an empty
+    // part costs is the same tier-dependent render cost as the open, and is not measured.
     [Test]
     procedure DraftLineAbandonedByAParentMove_MakesTheNextRowOweItsOwnFiring()
     var
         Card: TestPage "ONC Card";
+        AfterFirstParent: Integer;
+        AfterSecondParent: Integer;
     begin
         Initialize();
         AddHeader('H3');
 
         OpenCardOn('H1', Card);
         Assert.IsFalse(Card.Lines.First(), 'H1 has no lines, so First() must return false');
-        Assert.AreEqual(1, FiringCount(),
-            'landing on H1''s draft line must raise OnNewRecord exactly once');
+        AfterFirstParent := FiringCount();
+        Assert.IsTrue(AfterFirstParent > 0, 'H1''s draft line must have raised OnNewRecord');
 
         // Re-point the part at a different parent WITHOUT writing the draft line. The part
         // abandons that line rather than leaving it, which is the path AbandonNewRowLine owns.
         Card.GoToKey('H3');
         Assert.IsFalse(Card.Lines.First(), 'H3 has no lines either, so First() must return false');
 
-        Assert.AreEqual(2, FiringCount(),
-            'the draft line under the NEW parent is a different row and owes its own firing -- if the latch survived the parent move this reads 1, which is "once per page" rather than once per row');
+        AfterSecondParent := FiringCount();
+        Assert.IsTrue(AfterSecondParent > AfterFirstParent,
+            'the draft line under the NEW parent is a different row and owes its own firing -- if the latch survived the parent move the count does not move, which is "once per page" rather than once per row');
 
         Card.Lines.Descr.SetValue('written under H3');
-        Assert.AreEqual(2, FiringCount(),
+        Assert.AreEqual(AfterSecondParent, FiringCount(),
             'writing into a draft line already started must not raise OnNewRecord again');
 
         Card.Close();
