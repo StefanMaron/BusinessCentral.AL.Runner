@@ -557,7 +557,35 @@ include:
   set changes, removed/unclassifiable files, duplicate declaration ambiguity);
 - coverage recorded under a different environment (BC version/artifact or
   package-cache closure);
+- the change model's baseline for a module in the request is not the code the
+  coverage was recorded on (see below);
 - compile/dependency failures before test execution.
+
+#### affectedOnly and the AL-output cache
+
+`changedObjects` is a diff against the change model's per-module baseline (the
+incremental compiler's record of the last source it compiled). It is only a
+correct selection input when that baseline is the code the stored per-test
+coverage was measured on. Two things can break that, and both are handled:
+
+- **A cache HIT loads code without compiling it**, so it cannot move the
+  baseline (#4971: edit, revert, re-apply). A request that records coverage
+  (`affectedOnly` or `perTestCoverage`) therefore takes a HIT only when the
+  module's current baseline was itself compiled from the source under that cache
+  key; otherwise it compiles, which moves the baseline to the loaded source. A
+  server started on a warm cache has no baseline, so its first request compiles
+  (and reports `forcedFull` with the change model's "no incremental baseline"
+  reason); from the second request on, unchanged bundles are HITs again and
+  selection narrows (#4972). A request that records nothing keeps taking HITs
+  freely.
+- **Another request can move the baseline without recording coverage** — a
+  `runTests` without `affectedOnly`, an `execute`, or a module reused from an
+  earlier load. Each baseline carries a generation number; coverage remembers the
+  generation of every request module it was recorded against, and the next
+  `affectedOnly` request compares those with the generations it found at its
+  start. Any difference forces a full run with a reason naming the module.
+
+The baseline lives in the server process only; nothing here is persisted.
 
 ### `shutdown`
 
