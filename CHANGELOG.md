@@ -7,6 +7,8 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Fixed
+- **testpage-parts:** a part page's own view and OnOpenPage override its control's SubPageView sorting
+- **permissions:** Metadata Permission and Expanded Permission are served by BC's own providers
 - **coverage:** attribute or loudly report a packaged dependency's executed statements
 - **tests:** list ServerAffectedSelectionCacheHitTests in the collection weight table
 - **server:** affectedOnly compares against the source actually loaded after a cache HIT
