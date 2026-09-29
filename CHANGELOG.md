@@ -6,6 +6,9 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+### Added
+- **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
+
 ### Fixed
 - **testpage-parts:** a part page's own view and OnOpenPage override its control's SubPageView sorting
 - **permissions:** Metadata Permission and Expanded Permission are served by BC's own providers
