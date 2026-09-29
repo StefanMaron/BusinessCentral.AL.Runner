@@ -163,8 +163,10 @@ Two things about the verdicts it produces, because both change what "stop" means
   failure and reports the attempt count as a WARN rather than failing the box; a genuine
   refusal — permission, authentication, no such repository — still FAILs on the first attempt
   and is never retried (#3076). The `github` check WARNs when the token has no `workflow`
-  scope, which is not a reason to stop: it means pull requests touching `.github/workflows/`
-  need a human to merge them, and the loop must not route them differently (#3192).
+  scope, which is not a reason to stop: a pull request touching `.github/workflows/` still
+  merges from this box (#4504), and GitHub refuses the merge only while `main` has changed the
+  same workflow file since the branch point — rebase, then merge (#3110, #4511). Trap: that
+  refusal is not "workflow PRs need a human", the claim #3192 shipped and #4511 retracted.
 
 1. **Known-good baseline — run the corpus.** `tests/al-language` is green or it is not, which
    makes it the right health check: a box that cannot run it clean is a box whose results

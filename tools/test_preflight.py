@@ -1622,10 +1622,10 @@ check("run_retry never sleeps after a first-attempt success",
       len(_calls) == 1 and _slept == [], f"{len(_calls)} {_slept}")
 
 
-# --------------------------------------- token scopes: what this box can merge (#3192)
-# check_github reported "merge a PR: yes" from the REPOSITORY's permissions while
-# the token had no `workflow` scope, so every PR touching .github/workflows/ was
-# unmergeable -- discovered at the last step, after review and after CI.
+# --------------------------------------- token scopes: what this box can merge (#3192, #4511)
+# Without `workflow` scope a merge is refused only when main changed the same
+# workflow file since the branch point (#3110); #4504 merged as it was, so the
+# warning must not say such PRs "cannot be merged".
 GH_AUTH_STATUS = ("github.com\n"
                   "  ✓ Logged in to github.com account StefanMaron (keyring)\n"
                   "  - Active account: true\n"
@@ -1687,12 +1687,18 @@ check("a token without `workflow` scope is a WARN, not a silent PASS",
       _res.status == "WARN", f"{_res.status}: {_res.summary}")
 check("the warning names the scope that is missing",
       "workflow" in _res.summary, _res.summary)
-check("the report says which class of PR this box cannot merge",
+check("the report says which class of PR the missing scope concerns",
       any(".github/workflows/" in d for d in _res.detail), _res.detail)
 check("the machine-readable answer records it too",
-      _res.data.get("can_merge_workflow_changes") is False, _res.data)
-check("the remedy does not teach the loop a second mode",
-      "human" in _res.remedy or "gh auth refresh" in _res.remedy, _res.remedy)
+      _res.data.get("has_workflow_scope") is False, _res.data)
+_said = " ".join([_res.summary, _res.remedy] + list(_res.detail)).lower()
+check("the warning does not claim workflow-touching PRs cannot be merged (#4511: #4504 merged)",
+      "cannot be merged" not in _said and "need a human" not in _said, _said)
+check("the warning names the condition GitHub actually refuses: main changed the same "
+      "workflow file since the branch point (#3110)",
+      "changed the same workflow file" in _res.summary, _res.summary)
+check("the remedy names the fix that landed #3110: rebase, then merge",
+      "rebase" in _res.remedy and "gh auth refresh" in _res.remedy, _res.remedy)
 
 _res = github_result(auth_status=GH_AUTH_STATUS.replace(
     "'read:org'", "'read:org', 'workflow'"))
@@ -1701,7 +1707,7 @@ check("a token WITH `workflow` scope passes",
 check("and says so, rather than staying silent about the class",
       any(".github/workflows/" in d and "yes" in d for d in _res.detail), _res.detail)
 check("the machine-readable answer records the affirmative",
-      _res.data.get("can_merge_workflow_changes") is True, _res.data)
+      _res.data.get("has_workflow_scope") is True, _res.data)
 
 _res = github_result(auth_status="github.com\n  - Active account: true\n")
 check("unreadable scopes never manufacture a warning",
@@ -1710,7 +1716,7 @@ check("unreadable scopes are said out loud rather than assumed",
       any("scope" in d and ("not" in d or "could not" in d) for d in _res.detail),
       _res.detail)
 check("and the machine-readable answer is unknown, not False",
-      _res.data.get("can_merge_workflow_changes") is None, _res.data)
+      _res.data.get("has_workflow_scope") is None, _res.data)
 
 
 # ---- the same dropped packet, one function over: `gh auth status` also uses the network
