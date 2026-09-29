@@ -45,6 +45,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **preflight:** the missing workflow scope blocks pushing workflow changes, not merging them
 - **events:** a manual binding a SingleInstance codeunit keeps alive survives the test-codeunit boundary
 - **record-link:** the link readers filter Company like BC, and a Rename moves the links
 - **record-link:** AddLink writes the session's user into Record Link "User ID"
