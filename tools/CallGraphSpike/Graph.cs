@@ -8,6 +8,7 @@ sealed class GraphOptions
     public bool GlobalRoots = true;
     public bool TableRelation = true;
     public bool ProcedureLevelTests = true;
+    public bool PreciseRecordOps; // procedure graph: Insert/Modify/Delete/Rename/Validate(Field) reach only the matching triggers
     public HashSet<string> DroppedEdges = new(StringComparer.OrdinalIgnoreCase); // ablation: edge kinds (EdgeCounts keys) left out
 }
 

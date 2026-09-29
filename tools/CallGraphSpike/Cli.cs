@@ -12,8 +12,10 @@ namespace CallGraphSpike;
 ///       per test method of every Subtype=Test codeunit: the objects of the target apps it can reach
 ///   CallGraphSpike buckets --app Name=dir ... --bucket Name=dir ... --out result.json [flags]
 ///       one graph per bucket (shared apps + that bucket); per object, how many tests reach it
+///   CallGraphSpike proc-project | proc-buckets  (same arguments): procedure-granularity graph (ProcGraph.cs)
 /// flags: --no-wildcards all|Kind,Kind   --no-global-roots   --no-tablerelation   --object-level-tests
 ///        --drop-edges via,via (ablation; names as printed in stats.EdgeCounts)
+///        --precise-record-ops (proc-* only: a record operation reaches only its own triggers/field triggers)
 /// </summary>
 static class Cli
 {
@@ -41,6 +43,7 @@ static class Cli
                 case "--no-global-roots": opt.GlobalRoots = false; break;
                 case "--no-tablerelation": opt.TableRelation = false; break;
                 case "--object-level-tests": opt.ProcedureLevelTests = false; break;
+                case "--precise-record-ops": opt.PreciseRecordOps = true; break;
                 case "--drop-edges": foreach (var e in args[++i].Split(',')) opt.DroppedEdges.Add(e); break;
                 default: Console.Error.WriteLine("unknown arg " + args[i]); return 2;
             }
@@ -50,6 +53,8 @@ static class Cli
         {
             "project" => Project(apps, targets, outPath, opt),
             "buckets" => Buckets(apps, buckets, outPath, opt),
+            "proc-project" => ProcCli.Project(apps, targets, outPath, opt),
+            "proc-buckets" => ProcCli.Buckets(apps, buckets, outPath, opt),
             _ => 2,
         };
     }
