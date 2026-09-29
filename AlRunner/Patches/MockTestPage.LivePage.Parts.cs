@@ -342,13 +342,15 @@ internal partial class LiveNavTestPage
     /// Order the part's rows by its <c>SubPageView</c>'s <c>sorting()</c> / <c>order()</c> (#4188).
     ///
     /// <para>Observably equivalent to BC's client, which builds a part through
-    /// <c>PageInfopartBuilder.CreatePagePart</c> (Client.Builder.dll, 28.4.53241.54346): when the
-    /// view has a <c>Sorting</c> it sets the part's ascending flag from <c>Sorting.Ascending</c>
-    /// unconditionally and its sort fields from <c>KeyFields</c>. Corpus codeunit 67930
-    /// "SPS Tests" measures the rows that produces (StefanMaron/BusinessCentral.AL.Language.Tests#503).</para>
+    /// <c>PageInfopartBuilder.CreatePagePart</c> (Client.Builder.dll, 28.4.53241.54346) and hands
+    /// it <c>Sorting.Ascending</c> and the <c>KeyFields</c>. Corpus codeunit 67930 "SPS Tests"
+    /// (StefanMaron/BusinessCentral.AL.Language.Tests#503) measures the rows: a named key orders
+    /// the part in the view's direction, and <c>order()</c> with no key leaves primary-key
+    /// ascending order — every cloud leg and the Windows nightly agree.</para>
     ///
-    /// <para>Trap: the page path's <c>NavForm.ApplySourceTableView</c> gates on the
-    /// <c>*SetByView</c> flags; the part path does not, so do not copy those gates here.</para>
+    /// <para>Traps: the direction is applied only WITH a key, never alone; and the page path's
+    /// <c>NavForm.ApplySourceTableView</c> gates on the <c>*SetByView</c> flags, which the part
+    /// path does not read.</para>
     /// </summary>
     internal static void ApplySubPageViewSorting(
         Microsoft.Dynamics.Nav.Types.Metadata.InfopartPageDefinition definition, NavRecord? record)
@@ -360,17 +362,14 @@ internal partial class LiveNavTestPage
         if (ascending is { } value) record.ALAscending = value;
     }
 
-    /// <summary>What <see cref="ApplySubPageViewSorting"/> sets: the key's field ids (null when
-    /// the view names none) and the direction (null when the view has no <c>Sorting</c>).</summary>
+    /// <summary>What <see cref="ApplySubPageViewSorting"/> sets: the key's field ids and the
+    /// direction, both null when the view names no key.</summary>
     internal static (int[]? KeyFieldIds, bool? Ascending) SubPageViewSortOrder(
         Microsoft.Dynamics.Nav.Types.Metadata.InfopartPageDefinition definition)
     {
         var sorting = definition.SubFormView?.Sorting;
-        if (sorting == null) return (null, null);
-        var keyFieldIds = string.IsNullOrEmpty(sorting.KeyFields)
-            ? null
-            : Microsoft.Dynamics.Nav.Types.Metadata.MetaTable.GetKeyFieldIds(sorting.KeyFields);
-        return (keyFieldIds, sorting.Ascending);
+        if (sorting == null || string.IsNullOrEmpty(sorting.KeyFields)) return (null, null);
+        return (Microsoft.Dynamics.Nav.Types.Metadata.MetaTable.GetKeyFieldIds(sorting.KeyFields), sorting.Ascending);
     }
 
     /// <summary>

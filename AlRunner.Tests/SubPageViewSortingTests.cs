@@ -25,9 +25,10 @@ public sealed class SubPageViewSortingTests
         Assert.False(ascending);
     }
 
-    // order(descending) alone: no key, direction still applied.
+    // order(descending) alone leaves the part in primary-key ascending order on real BC
+    // (corpus 67930 SubPageViewOrderOnly_KeepsPrimaryKeyOrder, every cloud leg and Windows).
     [Fact]
-    public void SortOrder_OrderWithoutSorting_SetsOnlyTheDirection()
+    public void SortOrder_OrderWithoutSorting_SetsNothing()
     {
         var (keys, ascending) = LiveNavTestPage.SubPageViewSortOrder(Part(new ViewDefinitionSorting
         {
@@ -35,7 +36,7 @@ public sealed class SubPageViewSortingTests
         }));
 
         Assert.Null(keys);
-        Assert.False(ascending);
+        Assert.Null(ascending);
     }
 
     // BC's client (PageInfopartBuilder.CreatePagePart) copies Ascending without reading the
