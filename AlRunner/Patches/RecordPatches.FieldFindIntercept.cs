@@ -158,13 +158,6 @@ public static partial class RecordPatches
             RepopulatePermissionSetSystemTableForRequest(self, request, includeNonAssignable: false);
             return false;
         }
-        if (IsPermissionFamilyTableId(tableId))
-        {
-            // Permission / Metadata Permission / Expanded Permission are computed per request
-            // on a real tier (#3705). Rebuild, then fall through to the ORIGINAL InnerFindAsync.
-            RedrivePermissionFamilyForRequest(self, request);
-            return false;
-        }
         return tableId == FieldFindTableId;
     }
 
