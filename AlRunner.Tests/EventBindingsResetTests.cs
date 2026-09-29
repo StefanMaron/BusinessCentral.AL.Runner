@@ -24,9 +24,10 @@
 // Contract 10, submitted against StefanMaron/BusinessCentral.AL.Language.Tests. This file
 // pins the RUNNER'S OWN bookkeeping instead — that ResetEventBindingsForTestBoundary
 // actually reaches and clears Session.EventBindings when RecordPatches.ResetPerTestState()
-// runs, and does nothing (rather than throw) when the skeleton session or its EventBindings
-// property is unavailable — which no AL test can address directly, since AL has no way to
-// invoke ResetPerTestState() out of turn.
+// runs, keeps the bindings a cached SingleInstance codeunit still reaches (#4799), and does
+// nothing (rather than throw) when the skeleton session or its EventBindings property is
+// unavailable — which no AL test can address directly, since AL has no way to invoke
+// ResetPerTestState() out of turn.
 using System.Reflection;
 using AlRunner;
 using Microsoft.Dynamics.Nav.Runtime;
@@ -43,8 +44,8 @@ namespace AlRunner.Tests;
 /// FindCodeunitType resolves an id to the type literally named <c>Codeunit{id}</c>, and
 /// 69002 sits outside every AL idRange this repo declares, so it can never collide with a
 /// compiled AL object. Not marked IsEventManualBinding/IsSubscriptionBound — the reset
-/// under test clears the list unconditionally, so it doesn't need a faithful bind/unbind
-/// dance, only a type the list will actually accept.
+/// under test decides by reachability from the SingleInstance cache, not by bind state, so
+/// it needs no faithful bind/unbind dance, only a type the list will actually accept.
 /// </summary>
 internal sealed class Codeunit69002 : NavCodeunit
 {
@@ -112,6 +113,52 @@ public class EventBindingsResetTests
         BcRuntime.ResetEventBindingsForTestBoundary();
 
         Assert.Equal(0, bindings.Count);
+    }
+
+    /// <summary>
+    /// #4799: a binding whose subscriber a cached SingleInstance codeunit keeps alive stays
+    /// bound across the boundary — the SingleInstance instance itself, and an ordinary
+    /// instance its global handle references — while an unreachable one beside them is
+    /// dropped. Corpus 67693/67694 is the AL-level claim; this pins the reachability walk.
+    /// </summary>
+    [SkippableFact]
+    public void BindingsASingleInstanceKeepsAlive_SurviveTheTestBoundary_OthersAreDropped()
+    {
+        TestArtifacts.SkipIf(!_engine.Ready,
+            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
+
+        var cache = (System.Collections.IDictionary)typeof(BcRuntime).GetField(
+            "_singleInstanceCache", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
+        const int SingleInstanceKey = 69003;
+        Assert.False(cache.Contains(SingleInstanceKey),
+            "codeunit id 69003 is already in the SingleInstance cache, so this test cannot tell its " +
+            "own entry from a leftover.");
+
+        var bindings = EventBindings();
+        bindings.Clear();
+        var root = Root();
+        var singleInstance = new Codeunit69002(root);
+        var heldBySingleInstance = new Codeunit69002(root);
+        var unreachable = new Codeunit69002(root);
+        _ = new NavCodeunitHandle(singleInstance, heldBySingleInstance);
+        cache[SingleInstanceKey] = singleInstance;
+        try
+        {
+            bindings.Add(unreachable);
+            bindings.Add(singleInstance);
+            bindings.Add(heldBySingleInstance);
+
+            BcRuntime.ResetEventBindingsForTestBoundary();
+
+            Assert.Equal(2, bindings.Count);
+            Assert.Same(singleInstance, bindings[0]);
+            Assert.Same(heldBySingleInstance, bindings[1]);
+        }
+        finally
+        {
+            cache.Remove(SingleInstanceKey);
+            bindings.Clear();
+        }
     }
 
     /// <summary>
