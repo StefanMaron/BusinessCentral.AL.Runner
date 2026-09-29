@@ -105,6 +105,23 @@ public class ServerProtocolAckSummaryTests
         Assert.False(sel.TryGetProperty("reason", out _));
     }
 
+    // #4978: a client keeps showing a skipped failure as failed only if it is told one was skipped.
+    [Fact]
+    public void Summary_Selection_EmitsSkippedFailing_AndOmitsItWhenUnset()
+    {
+        var withCount = new ServerSelection("affected", Ran: 1, Skipped: 3,
+            ChangedObjects: Array.Empty<string>(), ForcedFull: false, Reason: null, SkippedFailing: 2);
+        var sel = JsonDocument.Parse(ServerProtocol.Summary(new[] { PassResult }, 0, false, selection: withCount))
+            .RootElement.GetProperty("selection");
+        Assert.Equal(2, sel.GetProperty("skippedFailing").GetInt32());
+
+        var unset = new ServerSelection("affected", Ran: 1, Skipped: 0,
+            ChangedObjects: Array.Empty<string>(), ForcedFull: true, Reason: "execute");
+        var execSel = JsonDocument.Parse(ServerProtocol.Execute(new[] { PassResult }, 0, selection: unset))
+            .RootElement.GetProperty("selection");
+        Assert.False(execSel.TryGetProperty("skippedFailing", out _));
+    }
+
     [Fact]
     public void Execute_Selection_EmitsForcedFullReason()
     {

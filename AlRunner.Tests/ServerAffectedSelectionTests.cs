@@ -58,13 +58,14 @@ public class ServerAffectedSelectionTests
         return dir;
     }
 
-    private static string RunTestsRequest(string bundle, bool affectedOnly)
+    private static string RunTestsRequest(string bundle, bool affectedOnly, bool includeFailing = false)
         => JsonSerializer.Serialize(new
         {
             command = "runTests",
             sourcePaths = new[] { bundle },
             packagePaths = Array.Empty<string>(),
             affectedOnly,
+            includeFailing,
             perTestCoverage = true,
         });
 
@@ -362,8 +363,9 @@ public class ServerAffectedSelectionTests
     }
 
     // #3337, the other direction: only a SKIPPED test keeps its previous coverage. A test that was
-    // selected and failed must still become unknown, so an unrelated later edit reruns it rather
-    // than hiding a red test behind its last green coverage.
+    // selected and failed must not hide behind its last green coverage. Since #4978 that rerun on
+    // an unrelated edit is what includeFailing:true asks for (ServerAffectedSelectionIncludeFailingTests
+    // covers the default).
     [SkippableFact]
     public async Task AffectedOnly_SelectedTestThatFailed_RerunsOnUnrelatedLaterEdit()
     {
@@ -399,7 +401,7 @@ public class ServerAffectedSelectionTests
             end;
         }
         """);
-        var lines = await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true));
+        var lines = await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true, includeFailing: true));
         var (events, summary) = ProtocolV2Streaming.Split(lines);
 
         Assert.True(summary.TryGetProperty("selection", out var selection), string.Join(" | ", lines));
@@ -410,7 +412,7 @@ public class ServerAffectedSelectionTests
     }
 
     // #3337: a FULL request (no narrowing) must not carry old entries forward either. OnlyA fails
-    // during a forced-full run; an unrelated later edit must still rerun it.
+    // during a forced-full run; with includeFailing (#4978) an unrelated later edit still reruns it.
     [SkippableFact]
     public async Task AffectedOnly_TestFailingDuringForcedFullRun_RerunsOnUnrelatedLaterEdit()
     {
@@ -450,7 +452,7 @@ public class ServerAffectedSelectionTests
             end;
         }
         """);
-        var lines = await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true));
+        var lines = await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true, includeFailing: true));
         var (events, summary) = ProtocolV2Streaming.Split(lines);
 
         Assert.True(summary.TryGetProperty("selection", out var selection), string.Join(" | ", lines));

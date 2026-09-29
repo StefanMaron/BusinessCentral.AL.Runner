@@ -1360,6 +1360,11 @@ public sealed class DependencyLoader
         };
     }
 
+    /// <summary>#4973: where the module currently registered for <paramref name="appId"/> was loaded
+    /// from (a package path or a bundle directory), or null when none is.</summary>
+    internal static string? LoadedSourcePath(Guid appId)
+        => _cache.TryGetValue(appId, out var entry) ? entry.SourcePath : null;
+
     /// <summary>
     /// Lookup helper for the bundle loop's own-AppGroup dedup check (Program.cs,
     /// issue #1683 for the CLI loop, #1892 for --server's per-request bundle loop):

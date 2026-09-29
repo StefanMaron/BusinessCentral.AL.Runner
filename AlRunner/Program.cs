@@ -5916,6 +5916,16 @@ return strictExitCode ? computedExitCode : 0;
                 SetBundleCompileReferences();
                 var loaded = depLoader.LoadAll(ordered, bucketRoot);
                 AlRunner.Infrastructure.PhaseLog.NoteDepAssembliesLoaded(loaded.Count);
+                // #4973: selection ignores statements a packaged dependency executes, which is sound
+                // only while a changed package changes this key AND the package is what runs. After
+                // LoadAll, so a module reused from another directory (#1892) is not vouched for.
+                // Workspace-deps packages are request bundles or sibling sources, which the change
+                // model or the unmappable rule covers.
+                if (pinLoadToChangeModel)
+                    selectionEnvironmentKey += AlRunner.Infrastructure.DependencyPackageFingerprint.KeySegment(
+                        ordered, p => IsUnderDirectory(Path.GetFullPath(p), workspaceDepsRoot),
+                        (appId, appPath) => string.Equals(
+                            DependencyLoader.LoadedSourcePath(appId), appPath, StringComparison.OrdinalIgnoreCase));
                 // New bundle in the server session: replace (not inherit) the
                 // install-trigger registrations, then register this bundle's deps.
                 AlRunner.InstallTriggerRunner.ResetForNewBundle();
@@ -7148,6 +7158,9 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     // this coverage was recorded under.
     var affectedCoverageByBundle = new Dictionary<string, Dictionary<string, HashSet<string>>>(StringComparer.Ordinal);
     var affectedUnknownTestsByBundle = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+    // #4978: tests whose last recorded result was not a pass but whose coverage is stored; a
+    // subset of the coverage keys, never of the unknown set.
+    var affectedFailingTestsByBundle = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
     var affectedEnvironmentKeyByBundle = new Dictionary<string, string>(StringComparer.Ordinal);
     // #4971: per bundle, every request module's change-model baseline generation at the moment its
     // coverage was recorded. Selection trusts changedObjects only when each module's baseline at
@@ -7443,6 +7456,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         var requestCoverage = req.Coverage == true;
         var requestPerTestCoverage = req.PerTestCoverage == true;
         var affectedOnly = req.AffectedOnly == true;
+        var includeFailing = req.IncludeFailing == true;
         // #2441: affected-only selection needs per-test coverage from this run to seed
         // the next run's selection baseline, even when the caller doesn't ask to emit
         // `perTestCoverage` on the wire.
@@ -7482,6 +7496,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             var activeBundleKey = "";
             Dictionary<string, HashSet<string>>? activePreviousCoverage = null;
             HashSet<string>? activePreviousUnknown = null;
+            HashSet<string>? activePreviousFailing = null;
             HashSet<string>? activeChangedObjectKeys = null;
             List<string> activeChangedObjectDisplay = new();
             bool activeForcedFull = false;
@@ -7505,6 +7520,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     HashSet<string>? exactSelection = null;
                     var plannedRan = discovered.Count;
                     var plannedSkipped = 0;
+                    var plannedSkippedFailing = 0;
                     if (affectedOnly && !activeForcedFull)
                     {
                         exactSelection = new HashSet<string>(StringComparer.Ordinal);
@@ -7518,8 +7534,12 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                                 exactSelection.Add(testKey);
                                 continue;
                             }
-                            if (activeChangedObjectKeys != null && coveredObjects.Overlaps(activeChangedObjectKeys))
+                            var previouslyFailing = activePreviousFailing?.Contains(testKey) ?? false;
+                            if ((includeFailing && previouslyFailing)
+                                || (activeChangedObjectKeys != null && coveredObjects.Overlaps(activeChangedObjectKeys)))
                                 exactSelection.Add(testKey);
+                            else if (previouslyFailing)
+                                plannedSkippedFailing++;
                         }
                         plannedRan = exactSelection.Count;
                         plannedSkipped = Math.Max(0, discovered.Count - plannedRan);
@@ -7533,7 +7553,8 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                             plannedSkipped,
                             activeChangedObjectDisplay,
                             activeForcedFull,
-                            activeForcedReason);
+                            activeForcedReason,
+                            plannedSkippedFailing);
                     }
 
                     requestSelectedTestsByBundle[activeBundleKey] = exactSelection;
@@ -7559,6 +7580,8 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                         ? prevCov : null;
                     activePreviousUnknown = affectedUnknownTestsByBundle.TryGetValue(bundlePath, out var prevUnknown)
                         ? prevUnknown : null;
+                    activePreviousFailing = affectedFailingTestsByBundle.TryGetValue(bundlePath, out var prevFailing)
+                        ? prevFailing : null;
 
                     activeForcedFull = false;
                     activeForcedReason = null;
@@ -7587,7 +7610,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     {
                         activeForcedFull = true;
                         activeForcedReason =
-                            "coverage baseline environment changed (BC version/artifact/package cache)";
+                            "coverage baseline environment changed (BC version/artifact/package cache/dependency package content)";
                         return;
                     }
                     // #4971: changedObjects is relative to each module's baseline as this request found
@@ -7731,6 +7754,13 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
 
                     var nextCoverage = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
                     var nextUnknown = new HashSet<string>(StringComparer.Ordinal);
+                    var nextFailing = new HashSet<string>(StringComparer.Ordinal);
+                    // #4973: source folders of packages whose content envKey carries; a statement
+                    // attributed there ran from that package, which a rebuild can change only by
+                    // changing envKey (docs/server-mode.md#affectedonly-and-packaged-dependencies).
+                    var packagedSourceRoots = AlRunner.Infrastructure.DependencyPackageFingerprint.PackagedSourceRoots(
+                        AlRunner.Patches.RecordPatches.RegisteredSourceDirs(), req.SourcePaths,
+                        AlRunner.Infrastructure.DependencyPackageFingerprint.AppIdsIn(envKey));
 
                     // #3884: an incomplete scan poisons this baseline SILENTLY, and the
                     // `unmappable` check below cannot see it. A statement whose object never
@@ -7750,6 +7780,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                         foreach (var testKey in discoveredTests) nextUnknown.Add(testKey);
                         affectedCoverageByBundle[bundlePath] = nextCoverage;
                         affectedUnknownTestsByBundle[bundlePath] = nextUnknown;
+                        affectedFailingTestsByBundle[bundlePath] = nextFailing;
                         affectedEnvironmentKeyByBundle[bundlePath] = envKey;
                         affectedBaselineGenerationsByBundle[bundlePath] = CurrentBaselineGenerations();
                         continue;
@@ -7762,6 +7793,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     // stays unknown, or a stale entry would hide it from the change it missed.
                     requestSelectedTestsByBundle.TryGetValue(bundlePath, out var selectedThisRequest);
                     affectedCoverageByBundle.TryGetValue(bundlePath, out var previousCoverage);
+                    affectedFailingTestsByBundle.TryGetValue(bundlePath, out var previousFailing);
                     foreach (var testKey in discoveredTests)
                     {
                         if (selectedThisRequest != null
@@ -7770,16 +7802,22 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                             && previousCoverage.TryGetValue(testKey, out var carried))
                         {
                             nextCoverage[testKey] = carried;
+                            if (previousFailing?.Contains(testKey) ?? false) nextFailing.Add(testKey);
                             continue;
                         }
 
+                        // #4978: a failed test's coverage is what ran up to the failure, which decides
+                        // its outcome, so it is recorded like a pass's. A timed-out test was stopped by
+                        // the clock and may still be running, so its record is incomplete; a skipped
+                        // test ran nothing of its own.
                         if (!resultByTest.TryGetValue(testKey, out var result)
-                            || result.Outcome != TestOutcome.Pass
+                            || result.Outcome == TestOutcome.Skipped
                             || result.TimedOut)
                         {
                             nextUnknown.Add(testKey);
                             continue;
                         }
+                        var failed = result.Outcome != TestOutcome.Pass;
 
                         if (!perTestStatementTable.TryGetValue(testKey, out var statements) || statements.Count == 0)
                         {
@@ -7793,6 +7831,8 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                         {
                             if (!requestWideTrackedObjectsByPath.TryGetValue(s.FilePath, out var identity))
                             {
+                                if (AlRunner.Infrastructure.DependencyPackageFingerprint.IsUnderAny(s.FilePath, packagedSourceRoots))
+                                    continue;
                                 unmappable = true;
                                 break;
                             }
@@ -7815,10 +7855,12 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                             continue;
                         }
                         nextCoverage[testKey] = coveredObjects;
+                        if (failed) nextFailing.Add(testKey);
                     }
 
                     affectedCoverageByBundle[bundlePath] = nextCoverage;
                     affectedUnknownTestsByBundle[bundlePath] = nextUnknown;
+                    affectedFailingTestsByBundle[bundlePath] = nextFailing;
                     affectedEnvironmentKeyByBundle[bundlePath] = envKey;
                     affectedBaselineGenerationsByBundle[bundlePath] = CurrentBaselineGenerations();
                 }
@@ -7845,7 +7887,8 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     selectionByBundle.Values.Sum(s => s.Skipped),
                     changedObjects,
                     forcedReasons.Count > 0,
-                    forcedReasons.Count > 0 ? string.Join(" | ", forcedReasons) : null);
+                    forcedReasons.Count > 0 ? string.Join(" | ", forcedReasons) : null,
+                    selectionByBundle.Values.Sum(s => s.SkippedFailing ?? 0));
             }
 
             // #3561: drained ONCE PER REQUEST, here. CompanyInitializer's accumulator is
