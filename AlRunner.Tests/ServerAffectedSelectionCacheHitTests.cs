@@ -137,7 +137,7 @@ public class ServerAffectedSelectionCacheHitTests
             affectedOnly,
         });
 
-    private sealed record Outcome(Dictionary<string, (string Status, string Message)> Tests, List<JsonElement> Selections, string Raw);
+    private sealed record Outcome(Dictionary<string, (string Status, string Message)> Tests, List<JsonElement> Selections, bool Cached, string Raw);
 
     private static async Task<Outcome> Send(CliServer server, string[] sourcePaths, bool affectedOnly = true)
     {
@@ -154,7 +154,8 @@ public class ServerAffectedSelectionCacheHitTests
         }
         var selections = new List<JsonElement>();
         if (summary.TryGetProperty("selection", out var s)) selections.Add(s);
-        return new Outcome(tests, selections, string.Join(" | ", lines) + "\n--- stderr ---\n" + server.StdErr);
+        var cached = summary.TryGetProperty("cached", out var c) && c.ValueKind == JsonValueKind.True;
+        return new Outcome(tests, selections, cached, string.Join(" | ", lines) + "\n--- stderr ---\n" + server.StdErr);
     }
 
     /// <summary>The probe is in the loaded code: every helper-calling test must RUN, and fail with it.</summary>
@@ -274,6 +275,8 @@ public class ServerAffectedSelectionCacheHitTests
         Assert.False(sel.GetProperty("forcedFull").GetBoolean(),
             $"an unchanged second request must narrow, not force a full run: {second.Raw}");
         Assert.True(sel.GetProperty("skipped").GetInt32() > 0, $"nothing changed, so tests must be skipped: {second.Raw}");
+        // The first request compiled and so re-established the baseline; the unchanged second one is a HIT again.
+        Assert.True(second.Cached, $"an unchanged request after the baseline exists must be served from the cache: {second.Raw}");
 
         File.WriteAllText(Path.Combine(app, "Helper.al"), HelperProbe);
         var edited = await Send(server, paths);
