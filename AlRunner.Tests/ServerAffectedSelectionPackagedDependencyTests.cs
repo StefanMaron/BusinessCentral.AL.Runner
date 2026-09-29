@@ -142,6 +142,25 @@ public class ServerAffectedSelectionPackagedDependencyTests
         Assert.Equal(2, unchanged.Skipped);
     }
 
+    // The same, served from the AL-output cache: a second server on the cache the first one filled.
+    [SkippableFact]
+    public async Task UnchangedRequest_OnAWarmCache_SkipsTheTestThatCallsIntoThePackagedApp()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (_, testApp) = Layout();
+        var cache = TestScratch.Dir("al-runner-server-affected-pkgdep-cache");
+        for (var server = 1; server <= 2; server++)
+        {
+            await using var s = await CliServer.StartAsync(new[] { "--cache", cache });
+            var first = await Send(s, testApp);
+            Assert.True(first.Status.GetValueOrDefault("CallsApp") == "pass", first.Raw);
+            var unchanged = await Send(s, testApp);
+            Assert.False(unchanged.ForcedFull, $"server {server}: {unchanged.Raw}");
+            Assert.Equal(0, unchanged.Ran);
+            Assert.Equal(2, unchanged.Skipped);
+        }
+    }
+
     [SkippableFact]
     public async Task RebuiltPackage_SameVersion_RunsTheTestThatCallsIntoIt_AgainstTheNewCode()
     {

@@ -7594,7 +7594,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     {
                         activeForcedFull = true;
                         activeForcedReason =
-                            "coverage baseline environment changed (BC version/artifact/package cache)";
+                            "coverage baseline environment changed (BC version/artifact/package cache/dependency package content)";
                         return;
                     }
                     // #4971: changedObjects is relative to each module's baseline as this request found

@@ -560,8 +560,9 @@ include:
 - no previous per-test coverage baseline for that bundle;
 - incremental change model fallback (for example `app.json` changes, dependency
   set changes, removed/unclassifiable files, duplicate declaration ambiguity);
-- coverage recorded under a different environment (BC version/artifact or
-  package-cache closure);
+- coverage recorded under a different environment (BC version/artifact,
+  package-cache closure, or the content of a non-Microsoft dependency package —
+  see "affectedOnly and packaged dependencies");
 - the change model's baseline for a module in the request is not the code the
   coverage was recorded on (see below);
 - compile/dependency failures before test execution.
@@ -589,6 +590,28 @@ It stays **unknown**, and always runs, when the record is not complete:
 recorded result was not a pass runs again, whatever changed. Either way a failed
 test that selection skips keeps its failing status until it runs again, and the
 summary counts it in `selection.skippedFailing`.
+
+#### affectedOnly and packaged dependencies
+
+A common layout is `App/` (source), `App.Test/` (source) and
+`App.Test/.alpackages/App.app`, with a request naming only `App.Test`. The app then
+runs from the package, and the statements it executes are attributed to the files
+of its source folder `App/`, which the runner registers as a sibling source. No
+module of the request tracks those files, so they used to make every test that
+calls into the app unknown, and it reran on every request (#4973).
+
+The environment key (see the forced-full causes above) now carries a SHA-256 of
+each resolved dependency package that is not published by Microsoft and was not
+synthesized by the runner from a sibling source (`workspace-deps`). Replacing such
+a package, even with a rebuild of the same version, changes the key and forces a
+full run. That is what makes it safe for selection to ignore a statement
+attributed to the source folder of a package the key covers: the code that
+statement came from can only change by changing the key. Statements under any
+other untracked file still make the test unknown.
+
+Editing `App/` without rebuilding the package changes nothing the tests execute,
+so nothing is selected for it. Microsoft packages are left to the BC version and
+package-directory parts of the key.
 
 #### affectedOnly and the AL-output cache
 
