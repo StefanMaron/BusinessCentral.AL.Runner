@@ -20,24 +20,20 @@ internal partial class LiveNavTestPage
     // must initialise the buffer and remember to flush it.
     private bool _pendingNewRow;
 
+    // Set only while PromoteNewRowLineForWrite is inside InsertEmptyRow. A field is used rather
+    // than a parameter so the promotion still dispatches through LiveNavTestPart's override.
+    private bool _promotingDraftLine;
+
     /// <summary>
     /// Turn the current position into a pending insert.
     ///
-    /// <para>SKIPS THE PLATFORM'S NEW-RECORD STEP WHEN THE ROW IS ALREADY STARTED (#3029). Two
-    /// callers arrive on a draft line <see cref="EnterNewRowLine"/> has already started: a
-    /// write promoting it (<see cref="PromoteNewRowLineForWrite"/>) and a <c>New()</c> on a
-    /// part that opened over an empty rowset. Neither creates a SECOND row — both commit to
-    /// the one the blank line already stands for — so re-running the step would raise the
-    /// page's OnNewRecord twice for one row AND re-blank the buffer, discarding what that
-    /// trigger wrote.</para>
-    ///
-    /// <para>Read off <c>_newRowLineRecordStarted</c> rather than passed in by each caller.
-    /// Both spellings were built and mutation-tested; the parameter turned out to be dead,
-    /// because the state it duplicated is exactly the state the callers would have had to
-    /// consult in order to set it. One source of truth is what stops the two from disagreeing.
-    /// Everything else the entry point does is still owed on these paths — the flush of a
-    /// previous pending row, the insert-position capture that feeds AutoSplitKey, a part's
-    /// SubPageLink stamping and its validate step — so only the one call is skipped.</para>
+    /// <para>The platform's new-record step is skipped for ONE caller only: a write promoting
+    /// a draft line <see cref="EnterNewRowLine"/> already started. Typing commits that row, so
+    /// re-running the step would raise OnNewRecord twice for one row and re-blank the buffer
+    /// under the trigger's output (#3029). <c>New()</c> is NOT that caller: on a part parked on
+    /// its started draft line it still costs one more OnNewRecord — corpus 60358
+    /// <c>New_OnEmptyLinkedPart_RunsOnNewRecordOncePlusTheOpenCost</c>, green on every cloud leg
+    /// and on the Windows nightly.</para>
     /// </summary>
     public override void InsertEmptyRow(bool beforeCurrent)
     {
@@ -52,13 +48,7 @@ internal partial class LiveNavTestPage
         // superseded by the CaptureInsertPosition below, and its saved return position must
         // not survive to drag the cursor back off the row being created.
         //
-        // NEW() ON A STARTED DRAFT LINE IS THE SAME ROW (#3029). A part that opened over an
-        // empty rowset is already parked on its draft line, and the platform has already run
-        // its new-record step for it. New() there does not create a SECOND row — it commits to
-        // the one the blank line already stands for, exactly as typing into it does. So the
-        // same fact the promotion passes explicitly is also true when the caller did not say
-        // so, and is read off the latch rather than demanded of every caller.
-        var alreadyStarted = _onNewRowLine && _newRowLineRecordStarted;
+        var alreadyStarted = _promotingDraftLine && _onNewRowLine && _newRowLineRecordStarted;
 
         _onNewRowLine = false;
         _newRowLineReturnPosition = null;
@@ -89,9 +79,6 @@ internal partial class LiveNavTestPage
         // so the row arrived with blank keys and the damage surfaced one step later: an
         // OnValidate looking its parent up found nothing, and the test failed naming a derived
         // field rather than the key that was never set.
-        // alreadyStarted: the draft line being promoted already ran this exact step when the
-        // cursor landed on it, so running it again would raise the page's OnNewRecord a second
-        // time for one row AND re-blank the buffer, discarding what that trigger wrote (#3029).
         var pageStartedRow = !alreadyStarted && (_page?.TryNewRecord(!beforeCurrent) ?? false);
         if (!alreadyStarted && !pageStartedRow)
         {
@@ -677,7 +664,9 @@ internal partial class LiveNavTestPage
         //
         // Virtual on purpose: a part must reach LiveNavTestPart's override, whose SubPageLink
         // stamping and validate step are still owed on this path.
-        InsertEmptyRow(beforeCurrent: false);
+        _promotingDraftLine = true;
+        try { InsertEmptyRow(beforeCurrent: false); }
+        finally { _promotingDraftLine = false; }
     }
 
     /// <summary>A control wrote to the record. Called by the field, which owns no page state.</summary>
