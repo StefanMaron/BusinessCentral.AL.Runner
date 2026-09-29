@@ -17,11 +17,11 @@ namespace AlRunner.Tests;
 /// it had no lookup at all — even though the handler was already wired onto the metafield by
 /// <c>RecordPatches.NclMetaTableBuilder</c> and nothing ever dispatched it.</para>
 ///
-/// <para>Only the third case is genuinely out of scope: a field with neither trigger gets its
-/// lookup from a TableRelation, which on real BC opens the related table's list page. That one
-/// must keep refusing, and the last test here is what stops a fix for the first two from
-/// quietly turning the refusal into a no-op — which is the failure mode
-/// <c>.claude/rules/loud-failures.md</c> exists for.</para>
+/// <para>The third case — a field with neither trigger — gets its lookup from a TableRelation.
+/// Here that relation points at a table declaring no LookupPageId or DrillDownPageId, so with no
+/// handler bound BC raises "Unhandled UI: ModalPage" (corpus 60569; #4403). The last test pins
+/// that the runner answers with that error rather than a no-op, which is what stops a fix for the
+/// first two from quietly turning the lookup into nothing.</para>
 ///
 /// <para>The BC-behaviour half of this claim — that BC runs the table field's trigger, and that
 /// a control trigger wins over it — is adjudicated upstream in the al-language corpus per
@@ -104,8 +104,8 @@ public class TestPageFieldTableLookupTests
                         Both := 'FROM-TABLE';
                     end;
                 }
-                // Neither: the lookup would come from the TableRelation, i.e. from a list page
-                // the runner cannot stand up. Must keep refusing.
+                // Neither: the lookup comes from the TableRelation, whose target declares no
+                // lookup page — BC raises "Unhandled UI: ModalPage" with no handler bound.
                 field(4; "Relation Only"; Code[20])
                 {
                     TableRelation = "Tftl Row"."No.";
@@ -186,14 +186,19 @@ public class TestPageFieldTableLookupTests
             end;
 
             [Test]
-            procedure FieldWithNeitherTriggerStillRefuses()
+            procedure FieldWithNeitherTriggerRaisesUnhandledModalPage()
             var
                 Card: TestPage "Tftl Card";
             begin
                 OpenOn(Card);
+                Card."Relation Only".SetValue('R1');
                 asserterror Card."Relation Only".Lookup();
-                if StrPos(GetLastErrorText(), 'testpage-lookup') = 0 then
-                    Error('a TableRelation-only lookup must still refuse by name, got: %1', GetLastErrorText());
+                if StrPos(GetLastErrorText(), 'Unhandled UI: ModalPage') = 0 then
+                    Error('a TableRelation-only lookup to a pageless table must raise BC''s unhandled-UI error, got: %1', GetLastErrorText());
+                if StrPos(GetLastErrorText(), 'out-of-scope') <> 0 then
+                    Error('the lookup must not be refused as out of scope, got: %1', GetLastErrorText());
+                if Card."Relation Only".Value <> 'R1' then
+                    Error('the failed lookup must leave the field unchanged, field reads %1', Card."Relation Only".Value);
                 Card.Close();
             end;
         }
@@ -204,7 +209,7 @@ public class TestPageFieldTableLookupTests
 
     /// <summary>
     /// All three cases on one bundle. Splitting them would let a fix that dispatches the table
-    /// trigger for EVERY field — turning the third case's loud refusal into a silent no-op —
+    /// trigger for EVERY field — turning the third case's unhandled-UI error into a silent no-op —
     /// pass two tests out of three and look like progress.
     /// </summary>
     [SkippableFact]
@@ -217,7 +222,7 @@ public class TestPageFieldTableLookupTests
         Assert.True(exit == 0, $"Expected the bundle to pass; exit={exit}\n{output}");
         Assert.Contains("PASS  Codeunit62562.TableFieldOnLookupRunsWhenTheControlDeclaresNone", output);
         Assert.Contains("PASS  Codeunit62562.ControlOnLookupWinsOverTheTableFieldTrigger", output);
-        Assert.Contains("PASS  Codeunit62562.FieldWithNeitherTriggerStillRefuses", output);
+        Assert.Contains("PASS  Codeunit62562.FieldWithNeitherTriggerRaisesUnhandledModalPage", output);
         Assert.DoesNotContain("FAIL", output);
     }
 }

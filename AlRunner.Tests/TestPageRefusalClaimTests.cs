@@ -592,7 +592,9 @@ public sealed class TestPageRefusalClaimTests
     {
         // EXACT, and it is the assertion that stops #3518's narrowing from drifting in either
         // direction. Of the shapes a TableRelation lookup can reach, exactly ONE still refuses:
-        // a relation that resolves to a table with no LookupPageId or DrillDownPageId.
+        // a relation to a table with no LookupPageId or DrillDownPageId WITH a ModalPage handler
+        // bound, where BC itself NREs (#4403). Without a handler that shape raises BC's own
+        // "Unhandled UI: ModalPage" and cites nothing.
         //
         // A second citation appearing here means a shape started refusing that BC serves --
         // including, specifically, the no-relation-at-all shape, which real BC answers with

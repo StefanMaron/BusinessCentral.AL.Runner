@@ -8,17 +8,13 @@
 // All three run here since #3518 — the third through BC's own lookup-mode RunModal, which needs
 // no client (see tests/runner-extras/testpage-lookup-tablerelation-served, the positive side).
 //
-// What this bundle now pins is the REMAINING boundary. "Tlr Row" declares no LookupPageId, so a
-// relation pointing at it resolves and still has no page to open, and that must stay a refusal
-// by name with reason `testpage-lookup` (docs/scope.md) rather than doing nothing — doing
-// nothing is what let a test invoke a lookup, observe no change, and compare two empty strings
-// successfully, which is the failure mode .claude/rules/loud-failures.md exists for.
-//
-// The message changed with the boundary, deliberately. It used to assert "neither the control
-// nor its source table field declares an OnLookup trigger, so the lookup comes from a
-// TableRelation" — true, and no longer the REASON, since a TableRelation is now served. The
-// reason here is narrower and is what a reader has to act on: the related table has no lookup
-// page.
+// What this bundle now pins is the REMAINING boundary (#4403). "Tlr Row" declares no
+// LookupPageId, so a relation pointing at it resolves and has no page. With no handler bound,
+// the runner raises BC's own "Unhandled UI: ModalPage" -- plain BC behaviour, pinned upstream by
+// corpus codeunit 60569. With a [ModalPageHandler] bound, real BC hands that handler a form it
+// never registered and fails with a NullReferenceException; the runner refuses that by name
+// with reason `testpage-lookup` instead of imitating the crash, and that refusal -- a
+// runner-specific claim -- is what the first test here asserts.
 //
 // Everything that is plain BC behaviour — that BC runs the table field's trigger, and that a
 // control trigger wins over it — is proven upstream in the al-language corpus against a real
@@ -30,6 +26,7 @@ codeunit 65563 "Tlr Tests"
 
     var
         Assert: Codeunit "Tlr Assert";
+        HandlerRan: Boolean;
 
     local procedure OpenOn(var Card: TestPage "Tlr Card")
     var
@@ -44,29 +41,28 @@ codeunit 65563 "Tlr Tests"
     end;
 
     [Test]
-    procedure Lookup_TableRelationToTableWithoutLookupPage_IsRefusedByName()
+    [HandlerFunctions('AnyModalHandler')]
+    procedure Lookup_TableRelationToTableWithoutLookupPage_HandlerBound_IsRefusedByName()
     var
         Card: TestPage "Tlr Card";
     begin
-        // The subject, and the boundary #3518 left standing. Neither the control nor the table
-        // field declares an OnLookup, so the lookup comes from the TableRelation — which points
-        // at "Tlr Row", a table declaring no LookupPageId. There is nothing to open.
+        // Neither the control nor the table field declares an OnLookup, so the lookup comes from
+        // the TableRelation, which points at "Tlr Row", a table declaring no LookupPageId. A
+        // ModalPage handler IS bound, which is the one shape the runner still refuses.
         OpenOn(Card);
+        HandlerRan := false;
 
         asserterror Card."Relation Only".Lookup();
 
-        // Each fragment is a separate assertion because each carries a different part of the
-        // contract, and a message change that dropped any one of them would leave a consumer
-        // without it. Naming them individually also keeps this from being a bare asserterror,
-        // which would pass on any error at all — including the runner failing to open the page.
+        // Separate fragments, each a different part of the contract: that it is a scope
+        // refusal, which one, what resolved, and why BC itself has no answer to imitate.
         Assert.ExpectedError('out-of-scope:');
         Assert.ExpectedError('testpage-lookup');
-        // The reason the refusal exists, and the part a reader needs in order to know this is
-        // a scope boundary and not a bug in their AL. It names the RELATION as resolved and the
-        // missing page as the cause — if it named the absence of a trigger instead, a reader
-        // would go looking for AL to add rather than a LookupPageId to declare.
         Assert.ExpectedError('comes from its TableRelation to table 65561');
         Assert.ExpectedError('declares no LookupPageId or DrillDownPageId');
+        Assert.ExpectedError('NullReferenceException inside NavTestExecution.ShowLookupForm');
+        // BC's FindHandler returns the handler without ever invoking it; so does the runner.
+        Assert.AreEqual(false, HandlerRan, 'the bound handler must not run for a page that was never opened');
 
         Card.Close();
     end;
@@ -106,5 +102,11 @@ codeunit 65563 "Tlr Tests"
             'the page control''s OnLookup must run and write its text back to the field');
 
         Card.Close();
+    end;
+
+    [ModalPageHandler]
+    procedure AnyModalHandler(var Modal: TestPage "Tlr Card")
+    begin
+        HandlerRan := true;
     end;
 }

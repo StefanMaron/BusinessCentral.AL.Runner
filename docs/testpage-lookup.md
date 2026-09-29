@@ -97,11 +97,12 @@ two shapes with nothing to open, only **one** turned out to be a runner boundary
 | shape | answer | why |
 |---|---|---|
 | no trigger and **no `TableRelation`** | **does nothing**, faithfully | real BC raises nothing and opens nothing here — measured, see below |
-| relation resolves, target table declares **no `LookupPageId` or `DrillDownPageId`** | **refuses** `testpage-lookup` — **and the refusal's premise is now known to be false** | real BC opens a modal page here, measured on all eight cloud legs (#4403); the refusal says "there is no page to open", which is wrong. It stays only until the page BC picks is identified — see below |
+| relation resolves, target table declares **no `LookupPageId` or `DrillDownPageId`**, no `[ModalPageHandler]` left | **raises BC's own `Unhandled UI: ModalPage`**, field unchanged | the runner calls BC's `NavTestExecution.FindHandler(ModalPage, null)`, which is what `ShowLookupForm` does — see [below](#what-the-runner-does-for-a-pageless-relation) |
+| the same, with a `[ModalPageHandler]` bound | **refuses** `testpage-lookup` | BC hands the handler a form it never registered and NREs inside `ShowLookupForm`, uncatchable by `asserterror`; the runner does not imitate that crash — see [below](#what-the-runner-does-for-a-pageless-relation) |
 | the control is bound to a **page global**, not a source-table field | **refuses** `testpage-lookup` | no table field to fall back to and no relation to resolve |
 | BC's metafield shape could not be read | **refuses** `BcShapeGapException` | the read could not be performed, which is not the same as the read saying "no trigger" |
 
-The first row was a refusal in the first version of #3518, and that was wrong.
+The first two rows were refusals once, and both were wrong.
 
 ### The measurement that corrected it
 
@@ -154,7 +155,7 @@ without `asserterror` precisely so this could come out: that form distinguishes 
 possible answers and cannot pass for the wrong reason, while an `asserterror` form would have
 swallowed the opened page's error and could have reported green.
 
-### Why the refusal has not yet been replaced
+### Which page BC picks, and why no probe can say
 
 "A page opens" is not a rule the runner can implement. It needs the page **id**, and
 `NavRecord.GetPageToOpen` answers `0` for such a table, so whatever picks it is downstream of
@@ -190,20 +191,46 @@ nothing about which page BC picked.
 `ShowLookupForm` is byte-identical on `bc270` and `bc284` (`compare_symbols`:
 `bodyChanged: false`), consistent with every leg agreeing.
 
-**So BC decides to open a modal page for this shape and then fails to produce one.** The
-refusal's premise stays false; its *conclusion* — that the runner cannot serve this shape — is
-better supported than before, since BC cannot either. What no instrument here has yet
-established is which page BC intended, and no `[ModalPageHandler]` probe can, because the
-discriminating check is skipped exactly when the form is missing.
+**So BC decides to open a modal page for this shape and then fails to produce one.** What no
+instrument here has established is which page BC intended, and no `[ModalPageHandler]` probe
+can, because the discriminating check is skipped exactly when the form is missing.
 
-**The refusal therefore stays, as a known-wrong-premise refusal rather than an unmeasured
-one.** Replacing it with silence would be a second unmeasured inference, and one the
-measurement contradicts: silence is what BC does for the no-relation shape, not this one.
+### What the runner does for a pageless relation
+
+**Without a bound handler** it raises exactly what BC raises, by calling BC's own
+`FindHandler(NavHandlerType.ModalPage, null, throwIfNotFound: true)` — the call
+`ShowLookupForm` makes with the null form. That throws `NavNCLMissingUIHandlerException`
+(`Unhandled UI: ModalPage`), which `asserterror` catches, and nothing is written back. Corpus
+60569's `Lookup_RelationToTableWithNoLookupPage_RaisesTheUnhandledUiSignal` and
+`..._LeavesTheFieldUnchanged` pin it; both are green on every cloud leg and on the Windows
+nightly (run `36516164576`, official BC 28.4 container).
+
+**With a ModalPage handler bound**, `FindHandler` returns it and strikes it off the handler
+worklist, and BC then NREs. The runner makes the same `FindHandler` call, so the handler is
+consumed exactly as on BC and never runs, and then refuses by name instead of throwing a
+`NullReferenceException`.
+
+Corpus PR 505 asked what AL observes of BC's NRE. On every cloud leg of run `36603980438`
+(27.0 through 28.5) the arm failed at the `asserterror` line itself:
+
+```
+FAIL  Lookup_RelationToTableWithNoLookupPage_HandlerBound_FailsWithoutRunningIt — Unexpected CLR
+      exception thrown.: System.NullReferenceException: Object reference not set to an instance
+      of an object.   at Microsoft.Dynamics.Nav.Runtime.NavTestExecution.ShowLookupForm(Guid handle)
+```
+
+So `asserterror` does not catch it: on BC a test that reaches this shape fails, whatever it
+wraps the call in. No corpus test can assert that, so the PR was withdrawn as a measurement.
+The runner cannot reproduce it either — its `asserterror` catches a raw `NullReferenceException`
+(probed on this branch) — so a named refusal is the honest answer; the runner-extras
+`testpage-lookup-tablerelation-oos` bundle pins it.
+
+Which page BC *intended* remains unmeasurable, for the reason above, and nothing here needs it.
 
 ## Where the tests are
 
 | claim | lives in |
 |---|---|
 | what BC does — the page opens, the selection writes back, a cancel does not, a relation's `where()` narrows the rowset, and a field with no relation does nothing | corpus codeunit 60569 `TRL Tests` (upstream; `bc-behavior-tests-go-upstream.md`) |
-| which of the runner's paths a shape takes, and that the remaining refusal stays loud and names its cause | `tests/runner-extras/testpage-lookup-tablerelation-served`, `tests/runner-extras/testpage-lookup-tablerelation-oos` |
+| which of the runner's paths a shape takes, and that the handler-bound pageless refusal stays loud and names its cause | `tests/runner-extras/testpage-lookup-tablerelation-served`, `tests/runner-extras/testpage-lookup-tablerelation-oos` |
 | routes 1 and 2, and that a control trigger wins over a table-field one | corpus codeunit 60316 `TFL Tests` |
