@@ -334,3 +334,38 @@ public sealed class PackagedDependencySourcePrecedenceTests : IDisposable
         Assert.Equal(Abs(Path.Combine(packaged, "src", "OnlyPackaged.Codeunit.al")), map[("CodeUnit", 79861)]);
     }
 }
+
+/// <summary>
+/// #4273 review: a registered package whose AL cannot be extracted must leave the coverage map
+/// INCOMPLETE, naming the package — never drop out so the report reads as complete.
+/// </summary>
+[Collection(BcEngineCollection.Name)]
+public sealed class PackagedDependencyExtractionFailureTests : IDisposable
+{
+    private readonly string _root = TestScratch.Dir("al-runner-packaged-extract-fail");
+
+    public void Dispose()
+    {
+        PackagedDependencySources.ResetForReload();
+        try { Directory.Delete(_root, recursive: true); } catch { }
+    }
+
+    [Fact]
+    public void AnUnextractablePackage_MarksTheMapIncomplete_NamingThePackage()
+    {
+        PackagedDependencySources.ResetForReload();
+        var missingApp = Path.Combine(_root, "gone", "Vanished_1.0.0.0.app");
+        PackagedDependencySources.Register(Guid.NewGuid(), "AL Runner", missingApp, "vanishedkey");
+
+        var roots = PackagedDependencySources.Roots(_root);
+
+        var expected = Path.Combine(_root, "vanishedkey.src");
+        Assert.Equal(new[] { expected }, roots);
+        var map = AlCoverageSourceMap.Build(roots, relativeTo: null);
+        Assert.True(map.IsIncomplete);
+        var failure = Assert.Single(map.ScanFailures);
+        Assert.Equal(expected, failure.Path);
+        Assert.Equal(SourceScanFailureKind.Root, failure.Kind);
+        Assert.Contains(missingApp, failure.Reason, StringComparison.Ordinal);
+    }
+}

@@ -9,6 +9,7 @@ namespace AlRunner.Infrastructure;
 internal static class PackagedDependencySources
 {
     private static readonly ConcurrentDictionary<Guid, (string AppPath, string CacheKey)> _apps = new();
+    private static readonly ConcurrentDictionary<string, string> _extractionFailures = new(StringComparer.Ordinal);
 
     /// <summary>
     /// Records that <paramref name="appId"/>'s code is the Tier-3 compile of the package at
@@ -30,7 +31,17 @@ internal static class PackagedDependencySources
     /// <summary>Forget every registration. Called with RecordPatches.ResetForReload, once per
     /// --server request and --watch cycle: a registration names a path, and a later request must
     /// not re-read a package that only an earlier one resolved (#4273 review).</summary>
-    internal static void ResetForReload() => _apps.Clear();
+    internal static void ResetForReload()
+    {
+        _apps.Clear();
+        _extractionFailures.Clear();
+    }
+
+    /// <summary>Why <paramref name="root"/>, a directory <see cref="Roots()"/> returned, holds no
+    /// source; null for any other path. Read by the source map, so its scan failure names the
+    /// package and not only the cache directory.</summary>
+    internal static string? ExtractionFailureFor(string root) =>
+        _extractionFailures.TryGetValue(root, out var reason) ? reason : null;
 
     internal static int RegisteredCount => _apps.Count;
 
@@ -38,10 +49,11 @@ internal static class PackagedDependencySources
     /// One directory per registered package holding the AL it was compiled from, written on first
     /// use. Called only when a coverage map is built, so a run without coverage never extracts.
     /// </summary>
-    public static IReadOnlyList<string> Roots()
+    public static IReadOnlyList<string> Roots() => Roots(CacheRoots.Resolve("compiled-deps"));
+
+    internal static IReadOnlyList<string> Roots(string cacheDir)
     {
         var roots = new List<string>();
-        var cacheDir = CacheRoots.Resolve("compiled-deps");
         foreach (var (_, (appPath, cacheKey)) in _apps.OrderBy(kv => kv.Value.CacheKey, StringComparer.Ordinal))
         {
             try { roots.Add(Materialize(appPath, cacheKey, cacheDir)); }
@@ -49,9 +61,11 @@ internal static class PackagedDependencySources
             {
                 // The absent directory is still returned: Build reports it as a scan failure, so
                 // the report is marked incomplete rather than the whole coverage request failing.
-                Console.Error.WriteLine(
-                    $"[source-map] {appPath}: the package's AL could not be extracted ({ex.GetType().Name}: {ex.Message}).");
-                roots.Add(Path.Combine(cacheDir, cacheKey + ".src"));
+                // Dropping it instead would make the report look complete (loud-failures.md).
+                var dir = Path.Combine(cacheDir, cacheKey + ".src");
+                _extractionFailures[dir] =
+                    $"the AL of package {appPath} could not be extracted ({ex.GetType().Name}: {ex.Message})";
+                roots.Add(dir);
             }
         }
         return roots;

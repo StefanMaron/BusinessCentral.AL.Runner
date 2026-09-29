@@ -222,7 +222,8 @@ public sealed class DependencyLoader
                     if (existing.Tier3CacheKey != null)
                     {
                         ReplayDependencyMetadataSidecars(m, existing.Tier3CacheKey);
-                        // #4273: the registry is per request; the bytes were just checked against the key.
+                        // #4273: the registry is per request. Same path: the bytes were checked against the
+                        // key above; a different path (#1892) reuses the first path's module unchecked.
                         AlRunner.Infrastructure.PackagedDependencySources.Register(m.AppId, m.Publisher, existing.SourcePath, existing.Tier3CacheKey);
                     }
                     // #3054: every assembly, not just the primary — see

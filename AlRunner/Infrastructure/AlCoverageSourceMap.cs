@@ -304,7 +304,7 @@ public static class AlCoverageSourceMap
                 map.AddScanFailure(root,
                     rootIsFile
                         ? "the source root is a file, and a source root must be a directory"
-                        : "the source root does not exist",
+                        : PackagedDependencySources.ExtractionFailureFor(root) ?? "the source root does not exist",
                     rootIsFile ? SourceScanFailureKind.File : SourceScanFailureKind.Root);
                 continue;
             }
