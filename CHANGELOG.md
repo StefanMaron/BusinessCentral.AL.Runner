@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Fixed
+- **server:** affectedOnly compares against the source actually loaded after a cache HIT
 - **testpage-lookup:** a TableRelation lookup to a table declaring no page matches BC
 - **metadata:** a precompiled dependency page's part SubPageView reaches the part
 - **testpage:** a part's SubPageView Sorting orders the part's rows
