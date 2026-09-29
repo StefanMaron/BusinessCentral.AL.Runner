@@ -91,6 +91,12 @@ public sealed class ServerCoveragePackagedDependencyTests
             Directory.Move(packages, moved);
             var second = await RunAsync(server, Request(unrelated, coverage: true), "2 unrelated, coverage");
             Assert.Null(SubjectFile(second));
+            // Nothing of the earlier request's package may reach this map: not as a root to read,
+            // and not as a scan failure marking this unrelated report incomplete.
+            Assert.True(!second.TryGetProperty("sourceScanFailures", out var failures)
+                    || failures.ValueKind == JsonValueKind.Null
+                    || failures.GetArrayLength() == 0,
+                $"2: the unrelated request's coverage was marked incomplete: {second}");
             Directory.Move(moved, packages);
 
             // 3. The package is reused from the loader's cache, not reloaded, and must be attributed.

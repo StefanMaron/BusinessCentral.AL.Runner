@@ -1856,10 +1856,14 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
 - **`--coverage` does not attribute a dependency's *precompiled* code.** A dependency consumed as
   a packaged `.app` that ships its AL and no DLL is compiled here from that AL and appears in the
   Cobertura report like source ([#4273](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4273)).
+  Its files are reported where the runner wrote that AL, under the cache's
+  `compiled-deps/<key>.src/`, relative to the working directory — with the default cache that is
+  a path like `../../.cache/al-runner/compiled-deps/…`, not the package's own name.
   One whose code arrives precompiled — a `.deps-bin` sidecar, or an R2R DLL inside the `.app` —
   runs and is counted but is not placed on lines, because nothing ties that DLL to the package's
-  source text. The run says so: after the report, a `Coverage note:` names each such dependency
-  and how many of its objects executed. Microsoft's apps are outside the report either way and
+  source text. The CLI says so: after the report, a `Coverage note:` names each such dependency
+  and how many of its objects executed (CLI only;
+  [#4987](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4987)). Microsoft's apps are outside the report either way and
   are not named. Detail: [`coverage-attribution.md`](coverage-attribution.md#what-a-packaged-dependency-contributes-since-4273).
 
 <a id="code-coverage-virtual-tables"></a>

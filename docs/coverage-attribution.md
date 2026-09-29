@@ -35,6 +35,13 @@ package's content, so the directory is written once and reused by every later ru
 (a `source-cache HIT`, which never writes the Tier-3 scratch directory) reads the same one.
 Pinned cold and warm, against one cache root, by `CoveragePackagedDependencyTests`.
 
+The registry is cleared with the other per-request source state (`RecordPatches.ResetForReload`,
+once per `--server` request and `--watch` cycle), and a request that reuses an already-loaded
+package registers it again. Held for the whole process, it made a later request re-read a
+package only an earlier one had resolved, and fail when that file had gone
+(`ServerCoveragePackagedDependencyTests`). A package whose AL cannot be extracted is reported as a
+scan failure — the report is marked incomplete — rather than failing the request.
+
 **Microsoft's packages are not recorded**, Tier 3 or not. The runner compiles Microsoft's Test
 Runner this way on an ordinary run (measured on `28.1.49838.53910`); mapping it filled a
 one-codeunit fixture's report with the Test Runner's files and cut its total from 50% to under 5%.
