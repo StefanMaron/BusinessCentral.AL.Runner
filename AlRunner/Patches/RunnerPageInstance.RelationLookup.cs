@@ -154,7 +154,7 @@ internal sealed partial class RunnerPageInstance
                   + "the runner does not imitate that crash (issue #4403). "
                 : "BC's handler lookup answered nothing and raised nothing, a state no service "
                   + "tier has measured for this shape. ")
-            + "See docs/testpage-lookup.md");
+            + "See docs/scope.md and docs/testpage-lookup.md");
     }
 
     /// <summary>
