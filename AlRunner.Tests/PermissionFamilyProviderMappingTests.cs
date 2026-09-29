@@ -74,6 +74,18 @@ public sealed class PermissionFamilyProviderMappingTests
         Assert.Equal(new[] { 2000000005, 2000000251, 2000000254 },
             RecordPatches.PermissionFamilyTables.Select(t => t.TableId).OrderBy(i => i).ToArray());
 
+        // The population, read from BC rather than from this file: every concrete
+        // PermissionDataProviderBase in the loaded Ncl is routed, and nothing else is.
+        Type[] nclTypes;
+        try { nclTypes = typeof(NCLMetaTable).Assembly.GetTypes(); }
+        catch (ReflectionTypeLoadException e) { nclTypes = e.Types.Where(t => t != null).ToArray()!; }
+        var bcProviders = nclTypes
+            .Where(t => !t.IsAbstract && t.BaseType?.FullName == Rt + "PermissionDataProviderBase")
+            .Select(t => t.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray();
+        Assert.NotEmpty(bcProviders);
+        Assert.Equal(bcProviders,
+            RecordPatches.PermissionFamilyTables.Select(t => t.ProviderTypeName).OrderBy(n => n, StringComparer.Ordinal).ToArray());
+
         foreach (var id in new[] { 2000000005, 2000000251, 2000000254 })
             Assert.True(RecordPatches.IsPermissionFamilyTableId(id), $"{id} must be redriven");
 
