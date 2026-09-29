@@ -406,6 +406,9 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // end of an observed range sits on the 60s freshness threshold, which satisfies
             // the gate while leaving dispatch order at the fallback and the tail in place.
             ["ServerAffectedSelectionTests"] = 71,
+            // #4995: added by #4981; failed the 75s gate on run 36622416591's BC 27.5 leg
+            // (90.6s) and stayed under the 60s report band on the other eight legs.
+            ["ServerAffectedSelectionCacheHitTests"] = 90,
             // #2223: added by PR #4478, which introduces this collection. 4 tests, each
             // spawning a real runner subprocess against a bundle declaring an `application`
             // floor, and one of them spawning a second: the warm-skip path runs the bundle
