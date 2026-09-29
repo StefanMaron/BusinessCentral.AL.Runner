@@ -1,0 +1,26 @@
+[
+  {
+    "codeunitId": 67950,
+    "CodeunitName": "SPO Tests",
+    "Method": "ListPageOnOpenPageSetAscending",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4989",
+    "Note": "Real BC shows a page's rows in its key's GLOBAL direction and drops a per-field direction set by OnOpenPage SetAscending(Score, false): every required cloud leg 27.0-28.5 shows Score ascending (corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#507, run 36623074751). The runner reads the rows from the record, which honours SetAscending, and shows Score descending. Tracked as #4989, open and not closed by the PR that added this entry (#4969's); the fix for #4989 removes it."
+  },
+  {
+    "codeunitId": 67950,
+    "CodeunitName": "SPO Tests",
+    "Method": "PartOnOpenPageSetAscending_NoSubPageView_ShowsAscending",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4989",
+    "Note": "Real BC shows a page's rows in its key's GLOBAL direction and drops a per-field direction set by OnOpenPage SetAscending(Score, false): every required cloud leg 27.0-28.5 shows Score ascending (corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#507, run 36623074751). The runner reads the rows from the record, which honours SetAscending, and shows Score descending. Tracked as #4989, open and not closed by the PR that added this entry (#4969's); the fix for #4989 removes it."
+  },
+  {
+    "codeunitId": 67950,
+    "CodeunitName": "SPO Tests",
+    "Method": "PartOnOpenPageSetAscending_WithSubPageViewSorting",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4989",
+    "Note": "Real BC shows a page's rows in its key's GLOBAL direction and drops a per-field direction set by OnOpenPage SetAscending(Score, false): every required cloud leg 27.0-28.5 shows Score ascending (corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#507, run 36623074751). The runner reads the rows from the record, which honours SetAscending, and shows Score descending. Tracked as #4989, open and not closed by the PR that added this entry (#4969's); the fix for #4989 removes it."
+  }
+]

@@ -140,7 +140,8 @@ internal partial class LiveNavTestPage
         if (partKind == TestPageClientKind.LiveOverRecord)
         {
             partRecord = built!.Record;
-            var fromHost = RunnerPageInstance.AdoptFromHost(_page?.Form, controlId, partPageId, partRecord, recordless: false);
+            var fromHost = RunnerPageInstance.AdoptFromHost(_page?.Form, controlId, partPageId, partRecord, recordless: false,
+                beforeSourceTableView: r => ApplySubPageViewSorting(definition, r));
             adopted = fromHost != null;
             partPage = fromHost ?? built.Page;
             // AdoptFromHost may have reused a record ALREADY bound on the adopted instance
@@ -228,10 +229,13 @@ internal partial class LiveNavTestPage
         // once, at the moment it reified the host's own shared instance (issue #2201) —
         // raising it a second time here would clobber whatever the host's own AL (or an
         // earlier TestPage touch) already wrote through that same instance.
-        if (!adopted) part.RaiseOnOpenPage();
-
-        // After OnOpenPage, before the part's first row-load: see ApplySubPageViewSorting.
-        ApplySubPageViewSorting(definition, partRecord);
+        // The SubPageView's sorting goes in BEFORE the part's own SourceTableView and
+        // OnOpenPage, so either can override it: see ApplySubPageViewSorting.
+        if (!adopted)
+        {
+            if (partPage != null) part.RaiseOnOpenPage(r => ApplySubPageViewSorting(definition, r));
+            else ApplySubPageViewSorting(definition, partRecord);
+        }
 
         // Position the part on its SubPageLink-matched row and run OnAfterGetRecord/
         // OnAfterGetCurrRecord — issue #2677, measured against real BC (corpus PR
@@ -348,9 +352,15 @@ internal partial class LiveNavTestPage
     /// the part in the view's direction, and <c>order()</c> with no key leaves primary-key
     /// ascending order — every cloud leg and the Windows nightly agree.</para>
     ///
-    /// <para>Traps: the direction is applied only WITH a key, never alone; and the page path's
-    /// <c>NavForm.ApplySourceTableView</c> gates on the <c>*SetByView</c> flags, which the part
-    /// path does not read.</para>
+    /// <para>Applied FIRST, before the part page's own <c>SourceTableView</c> and its
+    /// <c>OnOpenPage</c>, both of which override it. The part's view sets only the halves it
+    /// names (BC's <c>NavForm.ApplySourceTableView</c> gates each on its <c>*SetByView</c> flag),
+    /// so <c>sorting(Score)</c> on the part under a control's <c>sorting(Rank) order(descending)</c>
+    /// shows Score descending. Corpus codeunit 67950 "SPO Tests"
+    /// (StefanMaron/BusinessCentral.AL.Language.Tests#507) measures every combination (#4969).</para>
+    ///
+    /// <para>Traps: the direction is applied only WITH a key, never alone; and this method
+    /// itself does not read the <c>*SetByView</c> flags, which the part path ignores.</para>
     /// </summary>
     internal static void ApplySubPageViewSorting(
         Microsoft.Dynamics.Nav.Types.Metadata.InfopartPageDefinition definition, NavRecord? record)
