@@ -6,6 +6,9 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+### Fixed
+- **testpage:** New() on an empty linked part raises the part's OnNewRecord
+
 ## [2.12.0] - 2026-09-29
 
 ### Added
