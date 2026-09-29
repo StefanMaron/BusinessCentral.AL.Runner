@@ -5887,6 +5887,12 @@ return strictExitCode ? computedExitCode : 0;
                 var resolver = new DependencyResolver(resolverDirs, AlRunner.Infrastructure.CacheRoots.SourceBuiltPackageDirs());
                 ordered = resolver.Resolve(roots);
                 AlRunner.Infrastructure.PhaseLog.NoteDepsResolved(ordered.Count);
+                // #4973: selection ignores statements a packaged dependency executes, which is sound
+                // only while a changed package changes this key. Workspace-deps packages are request
+                // bundles or sibling sources, which the change model or the unmappable rule covers.
+                if (pinLoadToChangeModel)
+                    selectionEnvironmentKey += AlRunner.Infrastructure.DependencyPackageFingerprint.KeySegment(
+                        ordered, p => IsUnderDirectory(Path.GetFullPath(p), workspaceDepsRoot));
                 // Same split as the CLI loop: workspace dirs reach the compiler only as the
                 // *.symbols.json of this bundle's resolved closure, never through the package
                 // scan, which would make every source app built this session a reference (#2237).
@@ -7733,6 +7739,12 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     var nextCoverage = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
                     var nextUnknown = new HashSet<string>(StringComparer.Ordinal);
                     var nextFailing = new HashSet<string>(StringComparer.Ordinal);
+                    // #4973: source folders of packages whose content envKey carries; a statement
+                    // attributed there ran from that package, which a rebuild can change only by
+                    // changing envKey (docs/server-mode.md#affectedonly-and-packaged-dependencies).
+                    var packagedSourceRoots = AlRunner.Infrastructure.DependencyPackageFingerprint.PackagedSourceRoots(
+                        AlRunner.Patches.RecordPatches.RegisteredSourceDirs(), req.SourcePaths,
+                        AlRunner.Infrastructure.DependencyPackageFingerprint.AppIdsIn(envKey));
 
                     // #3884: an incomplete scan poisons this baseline SILENTLY, and the
                     // `unmappable` check below cannot see it. A statement whose object never
@@ -7803,6 +7815,8 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                         {
                             if (!requestWideTrackedObjectsByPath.TryGetValue(s.FilePath, out var identity))
                             {
+                                if (AlRunner.Infrastructure.DependencyPackageFingerprint.IsUnderAny(s.FilePath, packagedSourceRoots))
+                                    continue;
                                 unmappable = true;
                                 break;
                             }
