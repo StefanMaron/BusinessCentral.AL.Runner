@@ -111,8 +111,10 @@ internal sealed partial class RunnerPageInstance
     ///
     /// <para>A ModalPage handler bound: <c>FindHandler</c> skips its page-id check when the form is
     /// null, hands back (and consumes) the first ModalPage handler, and BC then dereferences the
-    /// null form — an NRE inside <c>ShowLookupForm</c> (#4403). The handler never runs. That crash is
-    /// refused by name rather than imitated; corpus PR 505 measures what AL observes of it.</para>
+    /// null form — an NRE inside <c>ShowLookupForm</c> that <c>asserterror</c> does NOT catch: the
+    /// test fails with "Unexpected CLR exception thrown" (corpus PR 505, run 36603980438, every
+    /// cloud leg). The handler never runs. Refused by name rather than imitated, because the
+    /// runner's asserterror would catch an imitated NRE where BC's does not.</para>
     ///
     /// <para>Trap: do not snapshot/restore <c>executingHandlers</c> the way
     /// <c>HasHandler</c> does — this is the real dispatch, and BC consumes the entry.</para>

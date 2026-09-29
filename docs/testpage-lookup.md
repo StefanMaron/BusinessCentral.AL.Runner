@@ -98,7 +98,7 @@ two shapes with nothing to open, only **one** turned out to be a runner boundary
 |---|---|---|
 | no trigger and **no `TableRelation`** | **does nothing**, faithfully | real BC raises nothing and opens nothing here — measured, see below |
 | relation resolves, target table declares **no `LookupPageId` or `DrillDownPageId`**, no `[ModalPageHandler]` left | **raises BC's own `Unhandled UI: ModalPage`**, field unchanged | the runner calls BC's `NavTestExecution.FindHandler(ModalPage, null)`, which is what `ShowLookupForm` does — see [below](#what-the-runner-does-for-a-pageless-relation) |
-| the same, with a `[ModalPageHandler]` bound | **refuses** `testpage-lookup` | BC hands the handler a form it never registered and NREs inside `ShowLookupForm`; the runner does not imitate that crash (corpus PR 505 measures what AL sees of it) |
+| the same, with a `[ModalPageHandler]` bound | **refuses** `testpage-lookup` | BC hands the handler a form it never registered and NREs inside `ShowLookupForm`, uncatchable by `asserterror`; the runner does not imitate that crash — see [below](#what-the-runner-does-for-a-pageless-relation) |
 | the control is bound to a **page global**, not a source-table field | **refuses** `testpage-lookup` | no table field to fall back to and no relation to resolve |
 | BC's metafield shape could not be read | **refuses** `BcShapeGapException` | the read could not be performed, which is not the same as the read saying "no trigger" |
 
@@ -208,9 +208,22 @@ nightly (run `36516164576`, official BC 28.4 container).
 **With a ModalPage handler bound**, `FindHandler` returns it and strikes it off the handler
 worklist, and BC then NREs. The runner makes the same `FindHandler` call, so the handler is
 consumed exactly as on BC and never runs, and then refuses by name instead of throwing a
-`NullReferenceException`. Whether AL's `asserterror` can catch BC's NRE, and what
-`GetLastErrorText` reads, is what corpus PR 505's
-`Lookup_RelationToTableWithNoLookupPage_HandlerBound_FailsWithoutRunningIt` measures (#4403).
+`NullReferenceException`.
+
+Corpus PR 505 asked what AL observes of BC's NRE. On every cloud leg of run `36603980438`
+(27.0 through 28.5) the arm failed at the `asserterror` line itself:
+
+```
+FAIL  Lookup_RelationToTableWithNoLookupPage_HandlerBound_FailsWithoutRunningIt — Unexpected CLR
+      exception thrown.: System.NullReferenceException: Object reference not set to an instance
+      of an object.   at Microsoft.Dynamics.Nav.Runtime.NavTestExecution.ShowLookupForm(Guid handle)
+```
+
+So `asserterror` does not catch it: on BC a test that reaches this shape fails, whatever it
+wraps the call in. No corpus test can assert that, so the PR was withdrawn as a measurement.
+The runner cannot reproduce it either — its `asserterror` catches a raw `NullReferenceException`
+(probed on this branch) — so a named refusal is the honest answer; the runner-extras
+`testpage-lookup-tablerelation-oos` bundle pins it.
 
 Which page BC *intended* remains unmeasurable, for the reason above, and nothing here needs it.
 
