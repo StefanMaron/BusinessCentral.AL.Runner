@@ -220,7 +220,11 @@ public sealed class DependencyLoader
                     // through the shared content-hash memo, so that half of the rationale is gone
                     // and "nothing to replay" is the whole of it.)
                     if (existing.Tier3CacheKey != null)
+                    {
                         ReplayDependencyMetadataSidecars(m, existing.Tier3CacheKey);
+                        // #4273: the registry is per request; the bytes were just checked against the key.
+                        AlRunner.Infrastructure.PackagedDependencySources.Register(m.AppId, m.Publisher, existing.SourcePath, existing.Tier3CacheKey);
+                    }
                     // #3054: every assembly, not just the primary — see
                     // LoadedAppEntry.Assemblies. Handing back only the cached primary here
                     // would put every app group after the first back into the pre-fix state.

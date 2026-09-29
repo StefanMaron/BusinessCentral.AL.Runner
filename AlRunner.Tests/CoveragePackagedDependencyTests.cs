@@ -32,7 +32,7 @@ public sealed class CoveragePackagedDependencyTests : IDisposable
     private const string DepAppId = "c9a37e51-6d24-4b83-a15f-8e2760d4bb31";
     private const string DepName = "Runner Tests Fixture - Coverage Dependency Source Subject";
     private const string DepPublisher = "AL Runner";
-    private const string DepPackageFile = "AL Runner_" + DepName + "_1.0.0.0.app";
+    internal const string DepPackageFile = "AL Runner_" + DepName + "_1.0.0.0.app";
     private const string NoteHeader = "Coverage note: AL executed in these dependencies is not in the report above";
 
     // The executed statement and the never-executed one, read from dep/CdsSubject.Codeunit.al.
@@ -56,7 +56,7 @@ public sealed class CoveragePackagedDependencyTests : IDisposable
         try { Directory.Delete(_scratch, recursive: true); } catch { }
     }
 
-    private static byte[] BuildSubjectApp()
+    internal static byte[] BuildSubjectApp()
     {
         var manifest = $"""
             <?xml version="1.0" encoding="utf-8"?>
@@ -173,6 +173,9 @@ public sealed class CoveragePackagedDependencyTests : IDisposable
             Assert.True(subject is not null,
                 $"{pass}: the packaged dependency's executed statement is absent from the report. Files: {Files(doc)}");
             Assert.True(Hits(subject!, TwiceLine) >= 1, $"{pass}: Twice() executed, so line {TwiceLine} must carry a hit");
+            // The file the report names must hold the compiled text on the reported line.
+            var named = Path.Combine(_scratch, subject!.Attribute("filename")!.Value);
+            Assert.Contains("exit(Value * 2);", File.ReadAllLines(named)[TwiceLine - 1], StringComparison.Ordinal);
             Assert.True(Hits(subject!, NeverLine) == 0,
                 $"{pass}: Never() is not called, so line {NeverLine} must be present with no hit; got {Hits(subject!, NeverLine)}");
 
@@ -274,15 +277,16 @@ public sealed class PackagedDependencySourcesTests : IDisposable
     [InlineData("Microsoft", false)]
     [InlineData("microsoft", false)]
     [InlineData("AL Runner", true)]
+    [InlineData("Contoso Microsoft Partner", true)]
     public void Register_RecordsEveryPublisherButMicrosoft(string publisher, bool expectRoot)
     {
-        PackagedDependencySources.ResetForTests();
+        PackagedDependencySources.ResetForReload();
         try
         {
             PackagedDependencySources.Register(Guid.NewGuid(), publisher, Path.Combine(_scratch, "none.app"), "k");
             Assert.Equal(expectRoot, PackagedDependencySources.RegisteredCount == 1);
         }
-        finally { PackagedDependencySources.ResetForTests(); }
+        finally { PackagedDependencySources.ResetForReload(); }
     }
 }
 

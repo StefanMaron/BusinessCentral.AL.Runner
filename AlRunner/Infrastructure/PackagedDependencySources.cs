@@ -27,7 +27,10 @@ internal static class PackagedDependencySources
     internal static bool IsMicrosoft(string publisher) =>
         string.Equals(publisher, "Microsoft", StringComparison.OrdinalIgnoreCase);
 
-    internal static void ResetForTests() => _apps.Clear();
+    /// <summary>Forget every registration. Called with RecordPatches.ResetForReload, once per
+    /// --server request and --watch cycle: a registration names a path, and a later request must
+    /// not re-read a package that only an earlier one resolved (#4273 review).</summary>
+    internal static void ResetForReload() => _apps.Clear();
 
     internal static int RegisteredCount => _apps.Count;
 
@@ -38,8 +41,19 @@ internal static class PackagedDependencySources
     public static IReadOnlyList<string> Roots()
     {
         var roots = new List<string>();
+        var cacheDir = CacheRoots.Resolve("compiled-deps");
         foreach (var (_, (appPath, cacheKey)) in _apps.OrderBy(kv => kv.Value.CacheKey, StringComparer.Ordinal))
-            roots.Add(Materialize(appPath, cacheKey, CacheRoots.Resolve("compiled-deps")));
+        {
+            try { roots.Add(Materialize(appPath, cacheKey, cacheDir)); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+            {
+                // The absent directory is still returned: Build reports it as a scan failure, so
+                // the report is marked incomplete rather than the whole coverage request failing.
+                Console.Error.WriteLine(
+                    $"[source-map] {appPath}: the package's AL could not be extracted ({ex.GetType().Name}: {ex.Message}).");
+                roots.Add(Path.Combine(cacheDir, cacheKey + ".src"));
+            }
+        }
         return roots;
     }
 
