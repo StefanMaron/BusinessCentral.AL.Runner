@@ -10,6 +10,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **pages:** an action's RunPageView filters and sorts the page it runs
 - **testpage-parts:** a part page's own view and OnOpenPage override its control's SubPageView sorting
 - **permissions:** Metadata Permission and Expanded Permission are served by BC's own providers
 - **coverage:** attribute or loudly report a packaged dependency's executed statements
