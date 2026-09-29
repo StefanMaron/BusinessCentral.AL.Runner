@@ -431,7 +431,11 @@ internal static partial class BcAppSymbolCache
         List<PageSubFormLinkSymbol>? RunPageLink = null,
         // Trailing + optional so the record still deserialises positionally; guarded by the
         // v33 CacheVersion bump, so null here only ever means "every entry was readable".
-        List<string>? UnreadableRunPageLinkEntries = null)
+        List<string>? UnreadableRunPageLinkEntries = null,
+        // The action's RunPageView (#4974), in the grammar a page's SourceTableView uses, so
+        // ParseSourceTableView reads both. Null when the action declares none. Field names
+        // resolve against the TARGET page's table in RunnerPageInstance.ViewFromSymbols.
+        PageTableViewSymbol? RunPageView = null)
     {
         internal bool HasRunPageLink => DeclaredRunPageLinkEntries > 0;
     }
@@ -2087,6 +2091,7 @@ internal static partial class BcAppSymbolCache
             // instead of only how many did.
             parsedLink = ParseSubPageLink(link, out unreadableLink);
         }
+        props.TryGetValue("RunPageView", out var view);
         return new ActionRunObjectSymbol(
             runObject!,
             // AL's default is false, so only an explicit "1"/"true" sets it — the compiler
@@ -2094,7 +2099,9 @@ internal static partial class BcAppSymbolCache
             SymbolBool(props, "RunPageOnRec"),
             declaredEntries,
             parsedLink,
-            unreadableLink);
+            unreadableLink,
+            ParseSourceTableView(
+                $"action \"{(node.TryGetProperty("Name", out var n) ? n.GetString() : null)}\" RunPageView", view));
     }
 
     /// <summary>

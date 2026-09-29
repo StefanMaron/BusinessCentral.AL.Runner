@@ -131,7 +131,25 @@ internal sealed partial class RunnerPageInstance
         int ObjectId,
         string? ObjectName,
         bool RunPageOnRec,
-        IReadOnlyList<ActionRunLink> Links);
+        IReadOnlyList<ActionRunLink> Links,
+        ActionRunView? View = null);
+
+    /// <summary>
+    /// An action's <c>RunPageView</c> (#4974), resolved to field numbers: the key and direction
+    /// its <c>sorting()</c> / <c>order()</c> name, and its <c>where()</c> entries as CONST or
+    /// FILTER filters, each in the filter group it lands in. <paramref name="KeyFieldIds"/> is
+    /// null when the view names no key.
+    /// </summary>
+    internal sealed record ActionRunView(
+        int[]? KeyFieldIds,
+        bool Ascending,
+        IReadOnlyList<ActionRunViewFilter> Filters);
+
+    internal readonly record struct ActionRunViewFilter(
+        int FieldNo,
+        MetaTypes.FilterType Kind,
+        string Value,
+        int FilterGroup);
 
     /// <summary>
     /// One entry of an action's <c>RunPageLink</c>, resolved to the three things applying it
@@ -226,12 +244,84 @@ internal sealed partial class RunnerPageInstance
     /// </summary>
     private void RunTargetPage(int actionId, ActionRunTarget target)
     {
-        RunPageThroughBcFrontDoor(
-            target.ObjectId,
-            target.Links.Count > 0
-                ? BuildLinkedTargetRecord(actionId, target)
-                : (target.RunPageOnRec ? CopyHostRowForTarget() : null));
+        NavRecord? record;
+        if (target.Links.Count > 0)
+            record = BuildLinkedTargetRecord(actionId, target);
+        else if (target.View != null)
+            record = target.RunPageOnRec
+                ? CopyHostRowForTarget()
+                : BuildBlankTargetRecord(actionId, target, "a RunPageView");
+        else
+            record = target.RunPageOnRec ? CopyHostRowForTarget() : null;
+
+        if (target.View is { } view && record != null)
+            ApplyActionRunView(record, view);
+
+        RunPageThroughBcFrontDoor(target.ObjectId, record);
         RereadHostRowAfterTarget();
+    }
+
+    /// <summary>
+    /// Apply an action's <c>RunPageView</c> to the target's cursor before the page opens: the
+    /// key and direction, then each filter in its own filter group. BC's client does the same
+    /// from <c>ActionBuilder.GetApplicationFilters</c> (Client.Builder, 28.1), which puts the
+    /// view's <c>TableFilters</c> into the action's filter context beside the RunPageLink and
+    /// its <c>Sorting</c> into <c>RunFormViewKeyFields</c> / <c>RunFormSortingAscending</c>.
+    /// Corpus codeunits 67006 and 67007 (StefanMaron/BusinessCentral.AL.Language.Tests#508)
+    /// measure the rows, order and filter group on a service tier.
+    /// Trap: the direction is applied only with a key, as a part's SubPageView does
+    /// (<c>MockTestPage.ApplySubPageViewSorting</c>); an action view with order() and no
+    /// sorting() is unmeasured.
+    /// </summary>
+    private static void ApplyActionRunView(NavRecord record, ActionRunView view)
+    {
+        if (view.KeyFieldIds is { Length: > 0 } keyFieldIds)
+        {
+            record.ALSetCurrentKey(keyFieldIds);
+            record.ALAscending = view.Ascending;
+        }
+
+        var previousGroup = record.ALFilterGroup;
+        try
+        {
+            foreach (var filter in view.Filters)
+            {
+                record.ALFilterGroup = filter.FilterGroup;
+                record.ALSetFilter(filter.FieldNo, filter.Kind == MetaTypes.FilterType.CONST
+                    ? LiveNavTestPart.ConstFilterExpression(record, filter.FieldNo, filter.Value)
+                    : filter.Value);
+            }
+        }
+        finally
+        {
+            record.ALFilterGroup = previousGroup;
+        }
+    }
+
+    /// <summary>
+    /// A fresh cursor over the TARGET page's source table, with nothing set on it, for a
+    /// property of the action (<paramref name="what"/>) to be applied to. Refuses by name when
+    /// the target has no table this run can resolve: opening the page without the property
+    /// would show a different rowset than real BC.
+    /// </summary>
+    private NavRecord BuildBlankTargetRecord(int actionId, ActionRunTarget target, string what)
+    {
+        var tableId = RecordPatches.ResolveSourceTableIdForAnyPage(target.ObjectId);
+        if (tableId == 0)
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                $"TestPage action {actionId} on page {_pageId}",
+                $"not-yet-implemented — the action declares RunObject = Page {Describe(target)} "
+                + $"with {what}, but the target page has no SourceTable this run can resolve, so "
+                + "there is no rowset to apply it to. Opening it without it would show a "
+                + "different rowset than real BC");
+
+        return TestPageFactory.TryBuildBlankRecord(
+                _owner, tableId, RecordPatches.ResolveSourceTableTemporaryForAnyPage(target.ObjectId), out var why)
+            ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                $"TestPage action {actionId} on page {_pageId}",
+                $"not-yet-implemented — the action declares RunObject = Page {Describe(target)} "
+                + $"with {what}, and the runner could not build a cursor for its SourceTable "
+                + $"{tableId} to apply it to ({why})");
     }
 
     /// <summary>
@@ -521,24 +611,8 @@ internal sealed partial class RunnerPageInstance
     /// </summary>
     private NavRecord BuildLinkedTargetRecord(int actionId, ActionRunTarget target)
     {
-        var pageId = target.ObjectId;
-        var tableId = RecordPatches.ResolveSourceTableIdForAnyPage(pageId);
-        if (tableId == 0)
-            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                $"TestPage action {actionId} on page {_pageId}",
-                $"not-yet-implemented — the action declares RunObject = Page {Describe(target)} "
-                + "with a RunPageLink, but the target page has no SourceTable this run can "
-                + "resolve, so there is no rowset for the link to filter. Opening it without the "
-                + "link would show a different rowset than real BC");
-
-        var isTemporary = RecordPatches.ResolveSourceTableTemporaryForAnyPage(pageId);
-        var record = TestPageFactory.TryBuildBlankRecord(_owner, tableId, isTemporary, out var why);
-        if (record == null)
-            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                $"TestPage action {actionId} on page {_pageId}",
-                $"not-yet-implemented — the action declares RunObject = Page {Describe(target)} "
-                + $"with a RunPageLink, and the runner could not build a cursor for its "
-                + $"SourceTable {tableId} to apply the link to ({why})");
+        var record = BuildBlankTargetRecord(actionId, target, "a RunPageLink");
+        var tableId = record.TableID;
 
         if (target.RunPageOnRec)
         {
@@ -706,7 +780,27 @@ internal sealed partial class RunnerPageInstance
             // refused with "RunObject = Report 'Prb Decoy Page' (64701)".
             RecordPatches.TryGetObjectNameOfKind(action.RunObjectType.ToString(), action.TargetID),
             action.RunPageOnRec,
-            LinksFromMetadata(action));
+            LinksFromMetadata(action),
+            ViewFromMetadata(action.RunFormView));
+    }
+
+    /// <summary>
+    /// The action's <c>RunPageView</c> as BC's compiled metadata carries it: a
+    /// <c>ViewDefinition</c> whose <c>TableFilters</c> already hold field numbers, kinds and the
+    /// filter group the compiler assigned. Null when the action declares no view.
+    /// </summary>
+    internal static ActionRunView? ViewFromMetadata(MetaTypes.ViewDefinition? view)
+    {
+        if (view == null) return null;
+        var sorting = view.Sorting;
+        var keyFieldIds = string.IsNullOrEmpty(sorting?.KeyFields)
+            ? null
+            : MetaTypes.MetaTable.GetKeyFieldIds(sorting!.KeyFields);
+        var filters = new List<ActionRunViewFilter>();
+        foreach (var f in view.TableFilters ?? new List<MetaTypes.FilterDefinition>())
+            filters.Add(new ActionRunViewFilter(f.FieldID, f.FilterType, f.FilterValue ?? string.Empty, f.FilterGroup));
+        if (keyFieldIds == null && filters.Count == 0) return null;
+        return new ActionRunView(keyFieldIds, sorting?.Ascending ?? true, filters);
     }
 
     /// <summary>
@@ -809,7 +903,73 @@ internal sealed partial class RunnerPageInstance
             // dispatch never reads it, and neither does the compiled-metadata route above.
             runObjectType == MetaTypes.RunObjectType.Page
                 ? LinksFromSymbols(actionId, spec, objectId)
-                : NoLinks);
+                : NoLinks,
+            runObjectType == MetaTypes.RunObjectType.Page
+                ? ViewFromSymbols(actionId, spec, objectId)
+                : null);
+    }
+
+    /// <summary>
+    /// The filter group the AL compiler assigns an action RunPageView's <c>where()</c> entries
+    /// in <c>ActionDefinition.RunFormView.TableFilters</c> — the value the metadata route reads
+    /// off a page this run compiles, written here for a precompiled page, which ships none.
+    /// </summary>
+    internal const int ActionRunPageViewFilterGroup = 3;
+
+    /// <summary>
+    /// The action's <c>RunPageView</c> for a PRECOMPILED page, resolved from the AL text
+    /// SymbolReference.json states to field numbers on the TARGET's table, through the same
+    /// resolver and normalisers the part and SourceTableView paths use
+    /// (<c>DependencyPageMetadataXml.EmitTableViewXml</c>).
+    /// Refuses by name rather than applying part of the view: a dropped filter shows MORE rows
+    /// than BC, a dropped sort field a different order. A conditional (<c>#if</c>) entry whose
+    /// field this app does not have is omitted, as EmitTableViewXml omits it.
+    /// </summary>
+    internal ActionRunView? ViewFromSymbols(
+        int actionId, BcAppSymbolCache.ActionRunObjectSymbol spec, int targetPageId)
+    {
+        if (spec.RunPageView is not { } view) return null;
+
+        Exception Refuse(string why) => new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            $"TestPage action {actionId} on page {_pageId}",
+            $"not-yet-implemented — the action declares RunObject = '{spec.ObjectName}' with a "
+            + $"RunPageView, and {why}. Applying the rest alone would show different rows than "
+            + "real BC, so it is refused instead");
+
+        if (view.UnreadableEntries is { Count: > 0 } unreadable)
+            throw Refuse($"this run could not read these entries of it out of the symbol file: {string.Join(" | ", unreadable)}");
+
+        var tableId = RecordPatches.ResolveSourceTableIdForAnyPage(targetPageId);
+        if (tableId == 0)
+            throw Refuse("the target page has no SourceTable this run can resolve");
+
+        var keyFieldIds = new List<int>(view.SortingFields.Count);
+        foreach (var sortField in view.SortingFields)
+        {
+            var id = RecordPatches.TryResolveDependencyFieldId(tableId, sortField.FieldName);
+            if (id is null && sortField.Conditional) continue;
+            if (id is null) throw Refuse($"its sorting field \"{sortField.FieldName}\" did not resolve against table {tableId}");
+            keyFieldIds.Add(id.Value);
+        }
+
+        var filters = new List<ActionRunViewFilter>(view.Filters.Count);
+        foreach (var filter in view.Filters)
+        {
+            var id = RecordPatches.TryResolveDependencyFieldId(tableId, filter.FieldName);
+            if (id is null && filter.Conditional) continue;
+            if (id is null) throw Refuse($"its where() field \"{filter.FieldName}\" did not resolve against table {tableId}");
+            filters.Add(string.Equals(filter.Kind, "const", StringComparison.OrdinalIgnoreCase)
+                ? new ActionRunViewFilter(id.Value, MetaTypes.FilterType.CONST,
+                    RecordPatches.NormalizeConstLinkValue(filter.Value), ActionRunPageViewFilterGroup)
+                : new ActionRunViewFilter(id.Value, MetaTypes.FilterType.FILTER,
+                    RecordPatches.FilterValueText(filter.Value), ActionRunPageViewFilterGroup));
+        }
+
+        if (keyFieldIds.Count == 0 && filters.Count == 0) return null;
+        return new ActionRunView(
+            keyFieldIds.Count > 0 ? keyFieldIds.ToArray() : null,
+            view.Ascending ?? true,
+            filters);
     }
 
     /// <summary>
