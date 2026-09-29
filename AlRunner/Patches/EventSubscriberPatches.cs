@@ -435,29 +435,7 @@ public static partial class EventSubscriberPatches
         string publisherKindLabel)
     {
         if (totalKeyCount == 0) return;
-        if (_tNavEventScope == null || _tNavEventSubscription == null) return;
-
-        if (_sentinelNavEventScope == null)
-        {
-            try
-            {
-                _sentinelNavEventScope = System.Runtime.CompilerServices.RuntimeHelpers
-                    .GetUninitializedObject(_tNavEventScope);
-                var fLock = _tNavEventScope.GetField("lockObject",
-                    BindingFlags.NonPublic | BindingFlags.Instance);
-                if (fLock != null) FieldPoke.SetInstance(fLock, _sentinelNavEventScope, new object());
-                // Empty array (not null) — BC's HasSubscribers reads .Length safely; any
-                // JIT-inlined Length read also returns 0 without segfaulting on a null array.
-                var emptySubs = Array.CreateInstance(_tNavEventSubscription, 0);
-                if (_fRegisteredSubscriptions != null)
-                    FieldPoke.SetInstance(_fRegisteredSubscriptions, _sentinelNavEventScope, emptySubs);
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"[Subscribers] sentinel NavEventScope build failed: {ex.GetType().Name}: {ex.Message}");
-                return;
-            }
-        }
+        if (EnsureSentinelNavEventScope() == null) return;
 
         int seeded = 0, missing = 0;
         bool diagLogged = false;
@@ -483,10 +461,7 @@ public static partial class EventSubscriberPatches
                     }
                     anyScope = true;
                     if (_seededScopeTypes.Contains(scopeType)) continue;
-                    // Match the Greek-gamma field by suffix — the IL gamma codepoint differs from
-                    // a C# source-literal "γ" so GetField("γeventScope") returns null. EndsWith works.
-                    var fld = scopeType.GetFields(BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static)
-                        .FirstOrDefault(f => f.Name.EndsWith("eventScope", StringComparison.Ordinal) && f.FieldType == _tNavEventScope);
+                    var fld = EventScopeField(scopeType);
                     if (fld == null)
                     {
                         missing++;
@@ -501,6 +476,40 @@ public static partial class EventSubscriberPatches
         }
         if (seeded > 0)
             Console.Error.WriteLine($"[Subscribers] γeventScope seeded ({publisherKindLabel}): seeded={seeded} missing={missing} total-keys={totalKeyCount}");
+    }
+
+    // Match the Greek-gamma field by suffix — the IL gamma codepoint differs from a C#
+    // source-literal "γ" so GetField("γeventScope") returns null. EndsWith works.
+    private static FieldInfo? EventScopeField(Type scopeType)
+        => scopeType.GetFields(BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static)
+            .FirstOrDefault(f => f.Name.EndsWith("eventScope", StringComparison.Ordinal) && f.FieldType == _tNavEventScope);
+
+    private static object? EnsureSentinelNavEventScope()
+    {
+        if (_tNavEventScope == null || _tNavEventSubscription == null) return null;
+        if (_sentinelNavEventScope == null)
+        {
+            try
+            {
+                _sentinelNavEventScope = System.Runtime.CompilerServices.RuntimeHelpers
+                    .GetUninitializedObject(_tNavEventScope);
+                var fLock = _tNavEventScope.GetField("lockObject",
+                    BindingFlags.NonPublic | BindingFlags.Instance);
+                if (fLock != null) FieldPoke.SetInstance(fLock, _sentinelNavEventScope, new object());
+                // Empty array (not null) — BC's HasSubscribers reads .Length safely; any
+                // JIT-inlined Length read also returns 0 without segfaulting on a null array.
+                var emptySubs = Array.CreateInstance(_tNavEventSubscription, 0);
+                if (_fRegisteredSubscriptions != null)
+                    FieldPoke.SetInstance(_fRegisteredSubscriptions, _sentinelNavEventScope, emptySubs);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[Subscribers] sentinel NavEventScope build failed: {ex.GetType().Name}: {ex.Message}");
+                return null;
+            }
+        }
+
+        return _sentinelNavEventScope;
     }
 
     /// <summary>

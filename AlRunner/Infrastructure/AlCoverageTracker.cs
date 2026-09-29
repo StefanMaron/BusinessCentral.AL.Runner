@@ -80,6 +80,10 @@ public static class AlCoverageTracker
     /// <summary>Marks the end of the current test's execution window. See <see cref="BeginTest"/>.</summary>
     public static void EndTest() => _currentTestKey = null;
 
+    /// <summary>The test whose execution window is open, or null. Read by
+    /// <see cref="AlEventRaiseTracker"/> so events share this attribution window.</summary>
+    internal static string? CurrentTestKey => _currentTestKey;
+
     /// <summary>
     /// Issue #2481's behavioural regression gate. <c>Total</c> is incremented UNCONDITIONALLY,
     /// first thing, on every call — proving the Cecil-rewritten call site actually fires on

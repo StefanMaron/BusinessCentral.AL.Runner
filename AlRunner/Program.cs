@@ -7166,6 +7166,11 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     // coverage was recorded. Selection trusts changedObjects only when each module's baseline at
     // the start of the next request is that same generation.
     var affectedBaselineGenerationsByBundle = new Dictionary<string, Dictionary<string, long?>>(StringComparer.Ordinal);
+    // #4988: per bundle, the events each covered test raised, and the subscriber bindings and
+    // event observability its tests ran with. Written and dropped together with the coverage.
+    var affectedEventsByBundle = new Dictionary<string, Dictionary<string, HashSet<string>>>(StringComparer.Ordinal);
+    var affectedBindingsByBundle = new Dictionary<string, List<AlRunner.Patches.SubscriberBinding>>(StringComparer.Ordinal);
+    var affectedObservabilityByBundle = new Dictionary<string, AlRunner.Patches.EventObservability>(StringComparer.Ordinal);
 
     // Guards every write to `output`: the reader thread's cancel-ack and this
     // method's normal command responses / streaming runtests output are now genuine
@@ -7322,6 +7327,24 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     // ToAffectedObjectKey result (no AL identifier can contain "::").
     static string ToAffectedScopeKey(string objectKey, string scopeName) => $"{objectKey}::proc:{scopeName}";
 
+    // #4988: the subscriber's whole object changed, or the one procedure the change was narrowed to
+    // is this subscriber (a scope name may be qualified; AL names compare case-insensitively).
+    static bool SubscriberCodeChanged(AlRunner.Patches.SubscriberBinding b, HashSet<string> changedKeys)
+    {
+        var objKey = ToAffectedObjectKey(new AffectedObjectId(b.SubscriberKind, b.SubscriberId, ""));
+        if (changedKeys.Contains(objKey)) return true;
+        var prefix = ToAffectedScopeKey(objKey, "");
+        foreach (var k in changedKeys)
+        {
+            if (!k.StartsWith(prefix, StringComparison.Ordinal)) continue;
+            var scope = k.Substring(prefix.Length);
+            if (string.Equals(scope, b.ProcedureName, StringComparison.OrdinalIgnoreCase)
+                || scope.EndsWith("." + b.ProcedureName, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
     /// <summary>
     /// Builds the set affectedOnly's overlap check compares a test's coveredObjects against —
     /// object-level keys by default (identical to pre-#2539 behaviour), REFINED to a
@@ -7464,7 +7487,11 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         AlRunner.Infrastructure.AlCoverageTracker.Enabled = requestCoverage;
         if (requestCoverage) AlRunner.Infrastructure.AlCoverageTracker.Reset();
         AlRunner.Infrastructure.AlCoverageTracker.PerTestEnabled = collectPerTestForSelection;
-        if (collectPerTestForSelection) AlRunner.Infrastructure.AlCoverageTracker.ResetPerTest();
+        if (collectPerTestForSelection)
+        {
+            AlRunner.Infrastructure.AlCoverageTracker.ResetPerTest();
+            AlRunner.Infrastructure.AlEventRaiseTracker.ResetPerTest();
+        }
 
         var cts = new System.Threading.CancellationTokenSource();
         System.Threading.Interlocked.Exchange(ref activeRunCts, cts);
@@ -7497,6 +7524,9 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             Dictionary<string, HashSet<string>>? activePreviousCoverage = null;
             HashSet<string>? activePreviousUnknown = null;
             HashSet<string>? activePreviousFailing = null;
+            Dictionary<string, HashSet<string>>? activePreviousEvents = null;
+            var requestBindingsByBundle = new Dictionary<string, List<AlRunner.Patches.SubscriberBinding>?>(StringComparer.Ordinal);
+            var requestObservabilityByBundle = new Dictionary<string, AlRunner.Patches.EventObservability>(StringComparer.Ordinal);
             HashSet<string>? activeChangedObjectKeys = null;
             List<string> activeChangedObjectDisplay = new();
             bool activeForcedFull = false;
@@ -7517,6 +7547,33 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     requestDiscoveredTestsByBundle[activeBundleKey] =
                         new HashSet<string>(discovered, StringComparer.Ordinal);
 
+                    // #4988: the bindings and event observability these tests run with — the next
+                    // request's baseline — and, under affectedOnly, the events whose subscribers changed.
+                    HashSet<string> changedEventKeys = new(StringComparer.Ordinal);
+                    if (collectPerTestForSelection)
+                    {
+                        var observability = AlRunner.Patches.EventSubscriberPatches.SeedAllEventScopesForRecording();
+                        var bindings = AlRunner.Patches.EventSubscriberPatches.CurrentModuleSubscriberBindings();
+                        requestObservabilityByBundle[activeBundleKey] = observability;
+                        requestBindingsByBundle[activeBundleKey] = bindings;
+                        if (affectedOnly && !activeForcedFull)
+                        {
+                            var changedObjectKeys = activeChangedObjectKeys ?? new HashSet<string>(StringComparer.Ordinal);
+                            var eventResult = AlRunner.Infrastructure.AffectedEventSelection.ChangedEventKeys(
+                                affectedBindingsByBundle.TryGetValue(activeBundleKey, out var prevBindings) ? prevBindings : null,
+                                bindings,
+                                affectedObservabilityByBundle.TryGetValue(activeBundleKey, out var prevObs) ? prevObs : null,
+                                observability.PublisherObjects.Keys.ToHashSet(StringComparer.Ordinal),
+                                b => SubscriberCodeChanged(b, changedObjectKeys));
+                            if (eventResult.ForceFullReason != null)
+                            {
+                                activeForcedFull = true;
+                                activeForcedReason = eventResult.ForceFullReason;
+                            }
+                            else changedEventKeys = eventResult.Keys;
+                        }
+                    }
+
                     HashSet<string>? exactSelection = null;
                     var plannedRan = discovered.Count;
                     var plannedSkipped = 0;
@@ -7536,7 +7593,10 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                             }
                             var previouslyFailing = activePreviousFailing?.Contains(testKey) ?? false;
                             if ((includeFailing && previouslyFailing)
-                                || (activeChangedObjectKeys != null && coveredObjects.Overlaps(activeChangedObjectKeys)))
+                                || (activeChangedObjectKeys != null && coveredObjects.Overlaps(activeChangedObjectKeys))
+                                || AlRunner.Infrastructure.AffectedEventSelection.Overlaps(
+                                    activePreviousEvents != null && activePreviousEvents.TryGetValue(testKey, out var raised) ? raised : null,
+                                    changedEventKeys))
                                 exactSelection.Add(testKey);
                             else if (previouslyFailing)
                                 plannedSkippedFailing++;
@@ -7582,6 +7642,8 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                         ? prevUnknown : null;
                     activePreviousFailing = affectedFailingTestsByBundle.TryGetValue(bundlePath, out var prevFailing)
                         ? prevFailing : null;
+                    activePreviousEvents = affectedEventsByBundle.TryGetValue(bundlePath, out var prevEvents)
+                        ? prevEvents : null;
 
                     activeForcedFull = false;
                     activeForcedReason = null;
@@ -7742,6 +7804,21 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                         requestWideTrackedObjectsByPath[kv.Key] = kv.Value;
                 }
 
+                var eventsByTest = AlRunner.Infrastructure.AlEventRaiseTracker.CollectPerTest();
+                // #4988: the event side of the baseline, stored whenever the coverage is.
+                void StoreEventBaseline(string bundlePath, Dictionary<string, HashSet<string>> nextEvents)
+                {
+                    affectedEventsByBundle[bundlePath] = nextEvents;
+                    if (requestBindingsByBundle.TryGetValue(bundlePath, out var bindings) && bindings != null)
+                        affectedBindingsByBundle[bundlePath] = bindings;
+                    else
+                        affectedBindingsByBundle.Remove(bundlePath);
+                    if (requestObservabilityByBundle.TryGetValue(bundlePath, out var observability))
+                        affectedObservabilityByBundle[bundlePath] = observability;
+                    else
+                        affectedObservabilityByBundle.Remove(bundlePath);
+                }
+
                 foreach (var (bundlePath, discoveredTests) in requestDiscoveredTestsByBundle)
                 {
                     if (!requestModuleByBundle.TryGetValue(bundlePath, out var moduleName)) continue;
@@ -7755,6 +7832,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     var nextCoverage = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
                     var nextUnknown = new HashSet<string>(StringComparer.Ordinal);
                     var nextFailing = new HashSet<string>(StringComparer.Ordinal);
+                    var nextEvents = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
                     // #4973: source folders of packages whose content envKey carries; a statement
                     // attributed there ran from that package, which a rebuild can change only by
                     // changing envKey (docs/server-mode.md#affectedonly-and-packaged-dependencies).
@@ -7783,6 +7861,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                         affectedFailingTestsByBundle[bundlePath] = nextFailing;
                         affectedEnvironmentKeyByBundle[bundlePath] = envKey;
                         affectedBaselineGenerationsByBundle[bundlePath] = CurrentBaselineGenerations();
+                        StoreEventBaseline(bundlePath, nextEvents);
                         continue;
                     }
 
@@ -7794,6 +7873,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     requestSelectedTestsByBundle.TryGetValue(bundlePath, out var selectedThisRequest);
                     affectedCoverageByBundle.TryGetValue(bundlePath, out var previousCoverage);
                     affectedFailingTestsByBundle.TryGetValue(bundlePath, out var previousFailing);
+                    affectedEventsByBundle.TryGetValue(bundlePath, out var previousEvents);
                     foreach (var testKey in discoveredTests)
                     {
                         if (selectedThisRequest != null
@@ -7803,6 +7883,9 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                         {
                             nextCoverage[testKey] = carried;
                             if (previousFailing?.Contains(testKey) ?? false) nextFailing.Add(testKey);
+                            // No carried record means none was taken; a missing entry selects on any change.
+                            if (previousEvents != null && previousEvents.TryGetValue(testKey, out var carriedEvents))
+                                nextEvents[testKey] = carriedEvents;
                             continue;
                         }
 
@@ -7855,6 +7938,8 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                             continue;
                         }
                         nextCoverage[testKey] = coveredObjects;
+                        nextEvents[testKey] = eventsByTest.TryGetValue(testKey, out var raised)
+                            ? raised : new HashSet<string>(StringComparer.Ordinal);
                         if (failed) nextFailing.Add(testKey);
                     }
 
@@ -7863,6 +7948,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     affectedFailingTestsByBundle[bundlePath] = nextFailing;
                     affectedEnvironmentKeyByBundle[bundlePath] = envKey;
                     affectedBaselineGenerationsByBundle[bundlePath] = CurrentBaselineGenerations();
+                    StoreEventBaseline(bundlePath, nextEvents);
                 }
             }
 
