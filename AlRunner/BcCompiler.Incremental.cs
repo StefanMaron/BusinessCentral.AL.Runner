@@ -202,11 +202,18 @@ internal sealed class RadBaseline
     public required Dictionary<string, RadObjectIdentity> ObjectByPath;
     public required Dictionary<string, EmittedSource> SourceByKey;
     public required BcEmitOutput LastOutput;
+    // #4971: identity of this baseline; --server's affectedOnly coverage is held to it
+    // (docs/server-mode.md#affectedonly-and-the-al-output-cache).
+    public required long Generation;
+    // The AL-output cache key of the source this baseline describes, once a compile from it succeeded.
+    public string? CacheKey;
 }
 
 public sealed partial class BcCompiler
 {
     private readonly Dictionary<string, RadBaseline> _radBaselines = new();
+    private static long _lastRadGeneration;
+    private static long NextRadGeneration() => System.Threading.Interlocked.Increment(ref _lastRadGeneration);
 
     // #2593/#2579: AlPageMetadataRegistry/AlXmlPortMetadataRegistry are populated ONLY as a
     // side effect of BC's own Compilation.Emit (CaptureOutputter.AddApplicationObject), and
@@ -1068,6 +1075,7 @@ public sealed partial class BcCompiler
             ObjectByPath = newObjectByPath,
             SourceByKey = newSourceByKey,
             LastOutput = output,
+            Generation = NextRadGeneration(),
         };
 
         // #2593/#2579: this delta's own radComp.Emit(...) above already refreshed the live
@@ -1087,6 +1095,20 @@ public sealed partial class BcCompiler
     internal BcEmitOutput? TryEmitIncremental(
         IEnumerable<string> alFolders, string moduleName, string? appRootDir, out string fallbackReason)
         => TryEmitIncremental(alFolders, moduleName, appRootDir, out fallbackReason, out _);
+
+    /// <summary>#4971: the current baseline's generation, which changes whenever the baseline is replaced; null when there is none.</summary>
+    internal long? RadBaselineGeneration(string moduleName)
+        => _radBaselines.TryGetValue(moduleName, out var b) ? b.Generation : null;
+
+    /// <summary>#4971: records that the current baseline describes the source cached under <paramref name="cacheKey"/>.</summary>
+    internal void TagRadBaselineCacheKey(string moduleName, string cacheKey)
+    {
+        if (_radBaselines.TryGetValue(moduleName, out var b)) b.CacheKey = cacheKey;
+    }
+
+    /// <summary>#4971: true only when the current baseline was compiled from the source cached under <paramref name="cacheKey"/>.</summary>
+    internal bool RadBaselineDescribesCacheKey(string moduleName, string cacheKey)
+        => _radBaselines.TryGetValue(moduleName, out var b) && string.Equals(b.CacheKey, cacheKey, StringComparison.Ordinal);
 
     internal IReadOnlyDictionary<string, AffectedObjectId>? TryGetTrackedObjectsByPath(string moduleName)
         => _radBaselines.TryGetValue(moduleName, out var baseline)
@@ -1534,6 +1556,7 @@ public sealed partial class BcCompiler
             ObjectByPath = objectByPath,
             SourceByKey = sourceByKey,
             LastOutput = fullOutput,
+            Generation = NextRadGeneration(),
         };
 
         // #2593/#2579: this Emit already ran for real (that is how `captured`/the live

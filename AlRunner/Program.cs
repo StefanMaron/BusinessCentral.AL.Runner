@@ -5321,7 +5321,10 @@ return strictExitCode ? computedExitCode : 0;
         // unioned across every bundle — see requestWideChangedScopes), appended by the
         // effectiveBeforeRun wrap below. RunBundleForServer's own (5-arg) beforeRun delegate
         // is unchanged, since it has no access to that request-wide list.
-        Action<string, string, string, IReadOnlyList<AffectedObjectId>?, string?, IReadOnlyList<AffectedScopeId>?>? beforeRun = null)
+        Action<string, string, string, IReadOnlyList<AffectedObjectId>?, string?, IReadOnlyList<AffectedScopeId>?>? beforeRun = null,
+        // #4971: this request records per-test coverage, so each bundle's loaded code must be the
+        // source its change-model baseline describes (docs/server-mode.md#affectedonly-and-the-al-output-cache).
+        bool pinLoadToChangeModel = false)
     {
         // Server requests share a process, so give each request the same fresh
         // NumberSequence lifetime as a standalone CLI/watch execution.
@@ -5628,6 +5631,7 @@ return strictExitCode ? computedExitCode : 0;
             var result = RunBundleForServer(bundleDir, requestPackagePaths, runStep,
                 useIncrementalChangeModel && sawFallbackReason == null
                     && !forcedFullBundles.Contains(Path.GetFullPath(bundleDir)),
+                pinLoadToChangeModel,
                 EffectiveBeforeRun(sawFallbackReason),
                 deferRuns, out var deferred,
                 out var emitElapsed, out var compileElapsed, out var runElapsed);
@@ -5806,6 +5810,7 @@ return strictExitCode ? computedExitCode : 0;
     ServerRunResult? RunBundleForServer(string bundleDir, string[]? requestPackagePaths,
         Func<Assembly, IReadOnlyList<TestResult>> runStep,
         bool useIncrementalChangeModel,
+        bool pinLoadToChangeModel,
         Action<string, string, string, IReadOnlyList<AffectedObjectId>?, string?>? beforeRun,
         bool deferRun,
         out (string ModuleName, string? ChangeModelFallbackReason, Func<(ServerRunResult Result, TimeSpan RunElapsed)> Run)? deferred,
@@ -5990,6 +5995,9 @@ return strictExitCode ? computedExitCode : 0;
                     $"  [server] {moduleName}: AppId {bundleId.AppId} already loaded earlier in " +
                     "this request/session — reusing that module instead of recompiling " +
                     "(see issue #1683/#1892).");
+            // #4971: nothing says which source the reused module came from, so no baseline may claim it.
+            if (reusedAsm != null && pinLoadToChangeModel)
+                emitter.ClearIncrementalBaseline(moduleName);
             // #3250: this request's ResetForNewBundleReload cleared the registries the reused
             // module's emit populated, and the cache block below is skipped on reuse. Null for a
             // module DependencyLoader.LoadAll registered, which replays its own Tier-3 sidecars.
@@ -6057,9 +6065,20 @@ return strictExitCode ? computedExitCode : 0;
                 cachePath = Path.Combine(alCacheDir, cacheKey + ".dll");
                 sidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.EnumRegistrySuffix);
                 querySidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.QuerySymbolsSuffix);
-                if (AlRunner.Infrastructure.AlCacheSidecars.IsCompleteEntry(
-                        File.Exists(cachePath), File.Exists(sidecarPath),
-                        bundleDeclaresQuery, File.Exists(querySidecarPath)))
+                var cacheEntryComplete = AlRunner.Infrastructure.AlCacheSidecars.IsCompleteEntry(
+                    File.Exists(cachePath), File.Exists(sidecarPath),
+                    bundleDeclaresQuery, File.Exists(querySidecarPath));
+                // #4971/#4972: a HIT loads code without moving the change model's baseline, so under
+                // selection it is taken only when that baseline was compiled from this exact source.
+                if (cacheEntryComplete && pinLoadToChangeModel
+                    && !emitter.RadBaselineDescribesCacheKey(moduleName, cacheKey))
+                {
+                    Console.Error.WriteLine(
+                        $"  [server] {moduleName}: [cache] entry not used — the affectedOnly change model's "
+                        + "baseline is not this source, so this request compiles it (#4971)");
+                    cacheEntryComplete = false;
+                }
+                if (cacheEntryComplete)
                 {
                     try
                     {
@@ -6089,6 +6108,7 @@ return strictExitCode ? computedExitCode : 0;
             var compileErrors = new List<string>();
             IReadOnlyList<AffectedObjectId>? changedObjects = Array.Empty<AffectedObjectId>();
             string? changeModelFallbackReason = null;
+            var baselineDescribesEmit = false;
             if (reusedAsm == null && assemblyBytes == null)
             {
                 // cacheKey == null here means #2954's do-not-cache path (see the gate above):
@@ -6101,6 +6121,7 @@ return strictExitCode ? computedExitCode : 0;
                 IReadOnlyList<string> excludedObjects;
                 IReadOnlyList<string> excludedObjectDiagnostics;
                 var et = System.Diagnostics.Stopwatch.StartNew();
+                var generationBeforeEmit = emitter.RadBaselineGeneration(moduleName);
                 try
                 {
                     BcEmitOutput emitOutput;
@@ -6113,6 +6134,7 @@ return strictExitCode ? computedExitCode : 0;
                         {
                             emitOutput = incrementalOutput;
                             changedObjects = incrementalChangedObjects ?? Array.Empty<AffectedObjectId>();
+                            baselineDescribesEmit = true;
                         }
                         else
                         {
@@ -6124,6 +6146,15 @@ return strictExitCode ? computedExitCode : 0;
                     else
                     {
                         emitOutput = emitter.Emit(allPaths, moduleName, bucketRoot, trackIncrementalBaseline: true);
+                    }
+                    // #4971: a full Emit that did not record a fresh baseline leaves the previous one
+                    // describing source that is no longer loaded; drop it rather than diff against it.
+                    if (!baselineDescribesEmit)
+                    {
+                        if (emitter.RadBaselineGeneration(moduleName) is { } after && after != generationBeforeEmit)
+                            baselineDescribesEmit = true;
+                        else
+                            emitter.ClearIncrementalBaseline(moduleName);
                     }
                     sources = emitOutput.Sources;
                     alDiagnostics = emitOutput.Diagnostics;
@@ -6207,6 +6238,8 @@ return strictExitCode ? computedExitCode : 0;
                         new List<CompilationErrorGroup> { new(moduleName, compileErrors) }, fileHashes);
                 }
                 assemblyBytes = compile.AssemblyBytes;
+                if (baselineDescribesEmit && cacheKey != null)
+                    emitter.TagRadBaselineCacheKey(moduleName, cacheKey);
                 if (cachePath != null && assemblyBytes != null)
                 {
                     try
@@ -6227,7 +6260,8 @@ return strictExitCode ? computedExitCode : 0;
             }
             else if (beforeRun != null)
             {
-                // Cache hit (or cross-bundle reuse) means this bundle's AL content is unchanged.
+                // Nothing compiled. Under pinLoadToChangeModel a HIT is this baseline's own source, and a
+                // reuse cleared the baseline, which the selection's generation check turns into a full run.
                 changedObjects = Array.Empty<AffectedObjectId>();
             }
 
@@ -7103,6 +7137,10 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     var affectedCoverageByBundle = new Dictionary<string, Dictionary<string, HashSet<string>>>(StringComparer.Ordinal);
     var affectedUnknownTestsByBundle = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
     var affectedEnvironmentKeyByBundle = new Dictionary<string, string>(StringComparer.Ordinal);
+    // #4971: per bundle, every request module's change-model baseline generation at the moment its
+    // coverage was recorded. Selection trusts changedObjects only when each module's baseline at
+    // the start of the next request is that same generation.
+    var affectedBaselineGenerationsByBundle = new Dictionary<string, Dictionary<string, long?>>(StringComparer.Ordinal);
 
     // Guards every write to `output`: the reader thread's cancel-ack and this
     // method's normal command responses / streaming runtests output are now genuine
@@ -7437,6 +7475,14 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             bool activeForcedFull = false;
             string? activeForcedReason = null;
 
+            // Same derivation RunBundleForServer uses for its module name.
+            var requestModuleNames = req.SourcePaths
+                .Select(p => $"V2_{Path.GetFileName(Path.GetFullPath(p))}")
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            var baselineGenerationAtRequestStart = requestModuleNames
+                .ToDictionary(m => m, m => emitter.RadBaselineGeneration(m), StringComparer.Ordinal);
+
             var runs = RunAllBundlesForServer(req.SourcePaths, req.PackagePaths,
                 asm =>
                 {
@@ -7530,8 +7576,26 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                         activeForcedFull = true;
                         activeForcedReason =
                             "coverage baseline environment changed (BC version/artifact/package cache)";
+                        return;
                     }
-                });
+                    // #4971: changedObjects is relative to each module's baseline as this request found
+                    // it; that has to be the baseline the stored coverage was measured against.
+                    affectedBaselineGenerationsByBundle.TryGetValue(bundlePath, out var coverageGenerations);
+                    var movedModule = requestModuleNames.FirstOrDefault(m =>
+                        coverageGenerations == null
+                        || !coverageGenerations.TryGetValue(m, out var recorded)
+                        || recorded == null
+                        || recorded != baselineGenerationAtRequestStart[m]);
+                    if (movedModule != null)
+                    {
+                        activeForcedFull = true;
+                        activeForcedReason =
+                            $"the change model's baseline for {movedModule} is not the code the per-test coverage "
+                            + "baseline was recorded on (a request without affectedOnly recompiled it, or the "
+                            + "module was loaded from a source no baseline describes)";
+                    }
+                },
+                pinLoadToChangeModel: collectPerTestForSelection);
 
             var allTests = runs.SelectMany(r => r.Tests).ToList();
             var allCompileErrors = runs.SelectMany(r => r.CompileErrors ?? Array.Empty<CompilationErrorGroup>()).ToList();
@@ -7630,6 +7694,10 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 // declaring codeunit only) — so the defect is unmappable cross-bundle
                 // statements, not over-broad coverage sets. Built ONCE per request (not
                 // per bundle) from every module this request has already resolved.
+                // With pinLoadToChangeModel every module's current baseline is the code this request ran.
+                Dictionary<string, long?> CurrentBaselineGenerations() => requestModuleNames
+                    .ToDictionary(m => m, m => emitter.RadBaselineGeneration(m), StringComparer.Ordinal);
+
                 var requestWideTrackedObjectsByPath = new Dictionary<string, AffectedObjectId>(StringComparer.Ordinal);
                 foreach (var trackedModuleName in requestModuleByBundle.Values.Distinct(StringComparer.Ordinal))
                 {
@@ -7671,6 +7739,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                         affectedCoverageByBundle[bundlePath] = nextCoverage;
                         affectedUnknownTestsByBundle[bundlePath] = nextUnknown;
                         affectedEnvironmentKeyByBundle[bundlePath] = envKey;
+                        affectedBaselineGenerationsByBundle[bundlePath] = CurrentBaselineGenerations();
                         continue;
                     }
 
@@ -7739,6 +7808,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     affectedCoverageByBundle[bundlePath] = nextCoverage;
                     affectedUnknownTestsByBundle[bundlePath] = nextUnknown;
                     affectedEnvironmentKeyByBundle[bundlePath] = envKey;
+                    affectedBaselineGenerationsByBundle[bundlePath] = CurrentBaselineGenerations();
                 }
             }
 
