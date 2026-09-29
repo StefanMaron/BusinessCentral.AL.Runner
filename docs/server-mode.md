@@ -44,6 +44,7 @@ al-runner --server [--package-cache PATH ...] [--cache DIR]
   "coverage": false,            // runTests + execute — per-statement hit counts + position table, see #2042
   "perTestCoverage": false,     // runTests + execute — per-test statement attribution, see #2135
   "affectedOnly": false,        // runTests: select only tests affected by object changes since the previous run (#2441)
+  "includeFailing": false,      // with affectedOnly: rerun every test that did not pass last time, whatever changed (#4978)
   "testIsolation": "codeunit"   // optional: "codeunit" (default) | "test"/"method" | "disabled"
                                  // — see #1616. Applies to this request only; a later
                                  // request that omits the field falls back to the
@@ -130,8 +131,11 @@ answer an event in a request that omits it. A single-bundle request is unchanged
 - `coverage` (#2042) is present on the summary only when the request set
   `coverage: true` — see "Per-statement hit counts (`coverage`)" below.
 - `selection` (#2441) is present on the summary when the request set
-  `affectedOnly: true`: `{mode:"affected", ran, skipped, changedObjects[],
-  forcedFull, reason|null}`.
+  `affectedOnly: true`: `{mode:"affected", ran, skipped, skippedFailing,
+  changedObjects[], forcedFull, reason|null}`.
+  - `skippedFailing` counts the skipped tests whose last recorded result was not a
+    pass (#4978). A client that keeps each test's previous result should keep
+    showing those as failed; `0` on a forced-full run and with `includeFailing: true`.
   - `forcedFull:false` means the run used affected-only selection and `ran + skipped`
     equals the discovered tests for this request.
   - `forcedFull:true` means the runner deliberately ran everything and says why in
@@ -545,8 +549,9 @@ process. The runner:
    (Added/Modified/Removed/rename-attributed object identities);
 3. runs tests whose previous coverage intersects those changed objects;
 4. always includes unknown tests (new/renamed tests, tests with no recorded
-   coverage, and tests that did not finish with a passing result in the
-   recording run).
+   coverage, tests that timed out or were skipped in the recording run);
+5. selects a test that failed in the recording run by its recorded coverage, like
+   any other test, unless the request sets `includeFailing: true` — see below.
 
 When the runner cannot prove a safe object delta, it **forces a full run**
 (`selection.forcedFull:true`) and sets `selection.reason`. Forced-full causes
@@ -560,6 +565,30 @@ include:
 - the change model's baseline for a module in the request is not the code the
   coverage was recorded on (see below);
 - compile/dependency failures before test execution.
+
+#### affectedOnly and previously failing tests
+
+A failing test's per-test coverage is the part of the test that ran before it
+failed, and that part decides its outcome: a change that can make it pass must
+touch code it already executed, because code after the failure point runs only
+once something before it changes. So a test that failed in the recording run
+keeps that coverage and is selected by it (#4978). The exceptions are the ones
+passing tests already have (a newly added object such as an event subscriber,
+table-shape changes).
+
+It stays **unknown**, and always runs, when the record is not complete:
+
+- no statement was recorded for it at all (for example it failed in setup before
+  any AL statement), or a recorded statement could not be attributed to an object
+  of this request;
+- it timed out: the watchdog stopped it, not the code, and its body may still be
+  running;
+- it was skipped, or has no result (the run was cancelled before it).
+
+`includeFailing: true` restores the earlier behavior: every test whose last
+recorded result was not a pass runs again, whatever changed. Either way a failed
+test that selection skips keeps its failing status until it runs again, and the
+summary counts it in `selection.skippedFailing`.
 
 #### affectedOnly and the AL-output cache
 
