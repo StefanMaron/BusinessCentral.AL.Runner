@@ -17,10 +17,8 @@
 //   no relation at all      -> BC does NOTHING. Measured on all eight cloud legs, run
 //                              35445556865. The runner must not refuse, and this bundle pins
 //                              that it does not.
-//   relation, but no page   -> still refused, by name. The AL genuinely names a related table
-//                              and BC's client has a page-picking rule for it that no corpus
-//                              test has measured, so the runner says so rather than guessing
-//                              silence by analogy with the row above.
+//   relation, but no page   -> BC's own handler lookup, which raises "Unhandled UI:
+//                              ModalPage" with no handler bound (#4403; measured upstream).
 codeunit 65796 "Tls Tests"
 {
     Subtype = Test;
@@ -119,11 +117,12 @@ codeunit 65796 "Tls Tests"
         Card.Close();
     end;
 
-    // GREEN CONTROL 1 -- the refusal that must SURVIVE. The relation resolves, the related
-    // table declares no LookupPageId, so there is genuinely no page to open. The message must
-    // say THAT, and must not claim there is no relation.
+    // GREEN CONTROL 1 -- the relation resolves, the related table declares no LookupPageId, and
+    // no handler is bound. This used to be a runner refusal; it is now BC's own handler lookup
+    // (#4403), which raises BC's "Unhandled UI: ModalPage" (corpus codeunit 60569 pins that on
+    // real BC). What is runner-specific here is the PATH: BC's error, not an out-of-scope one.
     [Test]
-    procedure Lookup_RelationToTableWithNoLookupPage_IsRefusedNamingThatCause()
+    procedure Lookup_RelationToTableWithNoLookupPage_RaisesBcsUnhandledUi_NotARefusal()
     var
         Card: TestPage "Tls Card";
     begin
@@ -131,13 +130,8 @@ codeunit 65796 "Tls Tests"
 
         asserterror Card."No Page".Lookup();
 
-        Assert.ExpectedError('out-of-scope:');
-        Assert.ExpectedError('testpage-lookup');
-        // The cause, specifically: a relation exists and its target has no lookup page.
-        Assert.ExpectedError('declares no LookupPageId or DrillDownPageId');
-        // ...and NOT the other refusal's cause. Without this the two could share one message
-        // and both tests would still pass.
-        Assert.ErrorDoesNotContain('no TableRelation arm');
+        Assert.ExpectedError('Unhandled UI: ModalPage');
+        Assert.ErrorDoesNotContain('out-of-scope');
 
         Card.Close();
     end;

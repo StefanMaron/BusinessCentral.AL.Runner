@@ -59,9 +59,9 @@ internal sealed partial class RunnerPageInstance
     /// rather than handed back as a text, so the caller reads the field's value off the record
     /// where it has already been put.</para>
     ///
-    /// <para>ONE shape still throws <see cref="RunnerOutOfScopeException"/>, and it is not the
-    /// one this method was first written with — see the two comments inside, which record what
-    /// a service tier measured about each.</para>
+    /// <para>A relation to a table declaring no page raises BC's own unhandled-UI error, or
+    /// refuses by name when a ModalPage handler is bound — see
+    /// <see cref="RaisePagelessRelationLookup"/>.</para>
     /// </summary>
     private NavText? RaiseTableRelationLookup(int controlId, NavRecord sourceRecord, int sourceFieldNo)
     {
@@ -84,41 +84,77 @@ internal sealed partial class RunnerPageInstance
         var (relatedTable, relatedFieldId, metaFieldRelation) = relation.Value;
         var lookupPageId = LookupPageIdFor(relatedTable);
 
-        // Shape 2: the relation RESOLVES and its target table declares neither LookupPageId nor
-        // DrillDownPageId. This one still refuses, and the distinction from shape 1 is the
-        // point: there a lookup has nothing to resolve and BC's answer is documented silence;
-        // here the AL genuinely names a related table and BC's client has a page-picking rule
-        // for it that NO corpus test has measured. Guessing "silence" for both would make the
-        // runner's answer independent of a difference BC's client does act on.
-        //
-        // MEASURED, and this refusal's stated premise is now known to be FALSE: real BC opens
-        // a modal page here. Corpus codeunit 60569 (fixture "TRL Pageless" 60570, corpus PR
-        // 391) answered "Unhandled UI: ModalPage" on all eight cloud legs, run 35493508143 —
-        // raised from inside NavTestExecution.ShowLookupForm, which registers the form before
-        // it looks for a handler, so BC had already chosen a page.
-        //
-        // It is NOT yet replaced, and the follow-up measurement sharpened why: BC decides to
-        // open a page and then FAILS TO PRODUCE ONE. A handler-bound probe (corpus 391 head
-        // af4b986b) NREs inside ShowLookupForm, which only happens when GetRegisteredForm
-        // answers null — FindHandler's page-id check sits inside `if (appObject != null)`, so
-        // a null form skips it and .ObjectId then dereferences null. No [ModalPageHandler]
-        // probe can name the page for that reason.
-        //
-        // So silence would be a second unmeasured inference, and one the measurement
-        // contradicts: silence is what BC does for shape 1, not for this shape. What is not
-        // established is which page BC intended; #4403 tracks it.
-        // See docs/testpage-lookup.md#why-the-refusal-has-not-yet-been-replaced.
+        // Shape 2: the relation RESOLVES and its target declares neither LookupPageId nor
+        // DrillDownPageId. BC decides to show a modal form it never materialises, and answers
+        // with its own handler lookup — see RaisePagelessRelationLookup.
         if (lookupPageId <= 0)
-            throw new RunnerOutOfScopeException(
-                $"TestPage lookup on control {controlId} (page {_pageId})",
-                $"testpage-lookup — the lookup on field {sourceFieldNo} comes from its "
-                + $"TableRelation to table {relatedTable.TableId}, and that table declares no "
-                + "LookupPageId or DrillDownPageId, so there is no page to open. "
-                + "See docs/scope.md");
+        {
+            RaisePagelessRelationLookup(controlId, sourceFieldNo, relatedTable);
+            return null;
+        }
 
         RunRelationLookupPage(
             lookupPageId, sourceRecord, sourceFieldNo, relatedTable, relatedFieldId, metaFieldRelation);
         return null;
+    }
+
+    /// <summary>
+    /// A lookup whose relation resolves to a table naming no page: what BC's
+    /// <c>NavTestExecution.ShowLookupForm</c> does with a form handle that
+    /// <c>GetRegisteredForm</c> answers null for — <c>FindHandler(NavHandlerType.ModalPage, null)</c>,
+    /// called here as BC's own member rather than re-implemented.
+    ///
+    /// <para>No [ModalPageHandler] left: BC's <c>FindHandler</c> raises
+    /// "Unhandled UI: ModalPage" and the field is unchanged. Corpus 60569
+    /// <c>Lookup_RelationToTableWithNoLookupPage_*</c>, green on every cloud leg and on the Windows
+    /// nightly (run 36516164576). Observably equivalent because it IS BC's throw.</para>
+    ///
+    /// <para>A ModalPage handler bound: <c>FindHandler</c> skips its page-id check when the form is
+    /// null, hands back (and consumes) the first ModalPage handler, and BC then dereferences the
+    /// null form — an NRE inside <c>ShowLookupForm</c> (#4403). The handler never runs. That crash is
+    /// refused by name rather than imitated; corpus PR 505 measures what AL observes of it.</para>
+    ///
+    /// <para>Trap: do not snapshot/restore <c>executingHandlers</c> the way
+    /// <c>HasHandler</c> does — this is the real dispatch, and BC consumes the entry.</para>
+    /// </summary>
+    private void RaisePagelessRelationLookup(int controlId, int sourceFieldNo, NCLMetaTable relatedTable)
+    {
+        var testExecution = NavCurrentThread.Session.TestExecution;
+        var findHandler = testExecution.GetType().GetMethod(
+            "FindHandler",
+            BindingFlags.NonPublic | BindingFlags.Instance,
+            binder: null,
+            types: new[] { typeof(NavHandlerType), typeof(NavApplicationObjectBase), typeof(bool), typeof(string) },
+            modifiers: null)
+            ?? throw new BcShapeGapException(
+                $"TestPage lookup on control {controlId} (page {_pageId})",
+                "NavTestExecution.FindHandler(NavHandlerType, NavApplicationObjectBase, bool, string)",
+                "method not found on this BC build, so the runner cannot ask BC's own matcher "
+                + "what a lookup to a table declaring no page dispatches to");
+
+        object? handler;
+        try
+        {
+            handler = findHandler.Invoke(
+                testExecution, new object?[] { NavHandlerType.ModalPage, null, true, null });
+        }
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+            throw; // unreachable
+        }
+
+        throw new RunnerOutOfScopeException(
+            $"TestPage lookup on control {controlId} (page {_pageId})",
+            $"testpage-lookup — the lookup on field {sourceFieldNo} comes from its TableRelation "
+            + $"to table {relatedTable.TableId}, which declares no LookupPageId or DrillDownPageId. "
+            + (handler != null
+                ? "BC hands such a lookup a [ModalPageHandler] for a page it never opens and then "
+                  + "fails with a NullReferenceException inside NavTestExecution.ShowLookupForm; "
+                  + "the runner does not imitate that crash (issue #4403). "
+                : "BC's handler lookup answered nothing and raised nothing, a state no service "
+                  + "tier has measured for this shape. ")
+            + "See docs/testpage-lookup.md");
     }
 
     /// <summary>

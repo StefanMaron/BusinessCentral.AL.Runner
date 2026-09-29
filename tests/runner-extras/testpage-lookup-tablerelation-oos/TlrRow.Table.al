@@ -11,10 +11,9 @@ table 65561 "Tlr Row"
         {
             DataClassification = CustomerContent;
         }
-        // The subject. No trigger on either side, so on real BC the lookup comes from the
-        // TableRelation and opens table 65561's list page. The relation points back at this
-        // same table on purpose: it keeps the bundle to one table, and the refusal does not
-        // depend on which table is named.
+        // The subject. No trigger on either side, so the lookup comes from the TableRelation,
+        // whose target (this same table, to keep the bundle to one table) declares no
+        // LookupPageId or DrillDownPageId.
         field(2; "Relation Only"; Code[20])
         {
             DataClassification = CustomerContent;
