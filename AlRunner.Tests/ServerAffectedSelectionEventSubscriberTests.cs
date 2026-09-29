@@ -186,11 +186,30 @@ public class ServerAffectedSelectionEventSubscriberTests
         Assert.Equal("fail", added.Status[Work]);
         Assert.Contains("SUBSCRIBER-PROBE", added.Line[Work]);
 
+        // Emptied: selected through coverage, which now holds the subscriber's statement.
+        WriteSubscriber(bundle, Subscriber(OnWork, "", ""));
+        var emptied = await Send(server, bundle);
+        Assert.Equal(new[] { Work }, emptied.Ran);
+        Assert.Equal("pass", emptied.Status[Work]);
+
+        // Removed: an empty body leaves nothing in coverage, so only the recorded binding selects.
         WriteSubscriber(bundle, Subscriber("", "", ""));
         var removed = await Send(server, bundle);
         Assert.False(removed.ForcedFull, removed.Raw);
         Assert.Equal(new[] { Work }, removed.Ran);
         Assert.Equal("pass", removed.Status[Work]);
+
+        WriteSubscriber(bundle, Subscriber(OnWork, "", ""));
+        var readded = await Send(server, bundle);
+        Assert.Equal(new[] { Work }, readded.Ran);
+
+        // Filled: same binding, and the empty body that ran is in no coverage — the subscriber's
+        // own changed code is what selects.
+        WriteSubscriber(bundle, Subscriber(OnWork, "", Probe));
+        var filled = await Send(server, bundle);
+        Assert.False(filled.ForcedFull, filled.Raw);
+        Assert.Equal(new[] { Work }, filled.Ran);
+        Assert.Equal("fail", filled.Status[Work]);
     }
 
     // A rebound subscriber selects the raisers of its old event and of its new one. The old
