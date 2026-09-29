@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-
 namespace AlRunner.Infrastructure;
 
 /// <summary>
@@ -13,31 +11,31 @@ internal static class DependencyPackageFingerprint
     private const string Marker = "|pkg:";
 
     /// <summary>
-    /// One entry per resolved package that is not <paramref name="excludePath"/>'d and not
-    /// published by Microsoft, as <c>|pkg:&lt;appId&gt;=&lt;sha256&gt;</c>, ordered by AppId.
-    /// Microsoft packages are left to the key's BC-version and package-directory parts: they are
-    /// large, and none of their statements is ever attributed to a source file.
+    /// One entry per resolved package that is not <paramref name="excludePath"/>'d, not published
+    /// by Microsoft, and is the module actually loaded for its AppId
+    /// (<paramref name="loadedFromPackage"/>), as <c>|pkg:&lt;appId&gt;=&lt;sha256&gt;</c>, ordered
+    /// by AppId. A package whose AppId runs a module compiled elsewhere (#1892 reuses a bundle
+    /// compiled by an earlier request) is left out, so its statements stay unknown: its bytes do
+    /// not describe the code that ran. Microsoft packages are left to the key's BC-version and
+    /// package-directory parts: they are large, and none of their statements is ever attributed
+    /// to a source file.
     /// </summary>
     public static string KeySegment(
-        IEnumerable<(AppManifest Manifest, string AppPath)> resolved, Func<string, bool> excludePath)
+        IEnumerable<(AppManifest Manifest, string AppPath)> resolved, Func<string, bool> excludePath,
+        Func<Guid, string, bool> loadedFromPackage, Func<string, string>? contentHashOf = null)
     {
+        contentHashOf ??= RunnerFingerprint.ComputeFileContentHashMemoized;
         var entries = new SortedDictionary<Guid, string>();
         foreach (var (manifest, appPath) in resolved)
         {
             if (manifest.AppId == Guid.Empty || excludePath(appPath)) continue;
             if (string.Equals(manifest.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) continue;
+            if (!loadedFromPackage(manifest.AppId, appPath)) continue;
             // An unreadable package cannot be vouched for, so the key must differ from every
             // readable state and from every other unreadable request: never a stable placeholder.
-            string hash;
-            try
-            {
-                using var fs = File.OpenRead(appPath);
-                hash = Convert.ToHexString(SHA256.HashData(fs));
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
+            var hash = contentHashOf(appPath);
+            if (string.IsNullOrEmpty(hash) || hash == RunnerFingerprint.UnknownContentHash)
                 hash = "unreadable-" + Guid.NewGuid().ToString("N");
-            }
             entries[manifest.AppId] = hash;
         }
         return string.Concat(entries.Select(e => $"{Marker}{e.Key:D}={e.Value}"));
@@ -52,12 +50,16 @@ internal static class DependencyPackageFingerprint
     public static IReadOnlyList<string> PackagedSourceRoots(
         IEnumerable<string> registeredDirs, IEnumerable<string> requestRoots, IReadOnlySet<Guid> packagedAppIds)
     {
-        var requests = requestRoots.Select(Normalize).ToList();
+        var requests = requestRoots.Select(r => new RequestRoot(Normalize(r), BundleRootDeduplication.Canonicalize(r))).ToList();
         var roots = new List<string>();
         if (packagedAppIds.Count == 0) return roots;
         foreach (var dir in registeredDirs.Select(Normalize).Distinct(StringComparer.Ordinal))
         {
-            if (requests.Any(r => IsUnder(dir, r) || IsUnder(r, dir))) continue;
+            // Canonical (symlinks resolved) for this exclusion only: two spellings of one request
+            // folder must never let it through. The root keeps the lexical spelling statements use.
+            var canonicalDir = BundleRootDeduplication.Canonicalize(dir);
+            if (requests.Any(r => IsUnder(dir, r.Lexical) || IsUnder(r.Lexical, dir)
+                || IsUnder(canonicalDir, r.Canonical) || IsUnder(r.Canonical, canonicalDir))) continue;
             var identity = InProcessAppPackager.ReadIdentity(Path.Combine(dir, "app.json"));
             if (identity != null && packagedAppIds.Contains(identity.AppId)) roots.Add(dir);
         }
@@ -70,6 +72,8 @@ internal static class DependencyPackageFingerprint
         var full = Normalize(path);
         return roots.Any(r => IsUnder(full, r));
     }
+
+    private sealed record RequestRoot(string Lexical, string Canonical);
 
     private static string Normalize(string path)
         => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));

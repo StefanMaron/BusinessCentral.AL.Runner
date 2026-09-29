@@ -5887,12 +5887,6 @@ return strictExitCode ? computedExitCode : 0;
                 var resolver = new DependencyResolver(resolverDirs, AlRunner.Infrastructure.CacheRoots.SourceBuiltPackageDirs());
                 ordered = resolver.Resolve(roots);
                 AlRunner.Infrastructure.PhaseLog.NoteDepsResolved(ordered.Count);
-                // #4973: selection ignores statements a packaged dependency executes, which is sound
-                // only while a changed package changes this key. Workspace-deps packages are request
-                // bundles or sibling sources, which the change model or the unmappable rule covers.
-                if (pinLoadToChangeModel)
-                    selectionEnvironmentKey += AlRunner.Infrastructure.DependencyPackageFingerprint.KeySegment(
-                        ordered, p => IsUnderDirectory(Path.GetFullPath(p), workspaceDepsRoot));
                 // Same split as the CLI loop: workspace dirs reach the compiler only as the
                 // *.symbols.json of this bundle's resolved closure, never through the package
                 // scan, which would make every source app built this session a reference (#2237).
@@ -5910,6 +5904,16 @@ return strictExitCode ? computedExitCode : 0;
                 SetBundleCompileReferences();
                 var loaded = depLoader.LoadAll(ordered, bucketRoot);
                 AlRunner.Infrastructure.PhaseLog.NoteDepAssembliesLoaded(loaded.Count);
+                // #4973: selection ignores statements a packaged dependency executes, which is sound
+                // only while a changed package changes this key AND the package is what runs. After
+                // LoadAll, so a module reused from another directory (#1892) is not vouched for.
+                // Workspace-deps packages are request bundles or sibling sources, which the change
+                // model or the unmappable rule covers.
+                if (pinLoadToChangeModel)
+                    selectionEnvironmentKey += AlRunner.Infrastructure.DependencyPackageFingerprint.KeySegment(
+                        ordered, p => IsUnderDirectory(Path.GetFullPath(p), workspaceDepsRoot),
+                        (appId, appPath) => string.Equals(
+                            DependencyLoader.LoadedSourcePath(appId), appPath, StringComparison.OrdinalIgnoreCase));
                 // New bundle in the server session: replace (not inherit) the
                 // install-trigger registrations, then register this bundle's deps.
                 AlRunner.InstallTriggerRunner.ResetForNewBundle();

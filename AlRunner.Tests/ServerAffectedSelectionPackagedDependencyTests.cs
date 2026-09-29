@@ -161,6 +161,34 @@ public class ServerAffectedSelectionPackagedDependencyTests
         }
     }
 
+    // Review of #4986: once a request has compiled App/ as its own bundle, a later [App.Test] request
+    // resolves the package but runs that source-compiled module (#1892 reuse by AppId). Editing App/
+    // and recompiling it changes what runs while the package bytes stay the same.
+    [SkippableFact]
+    public async Task SourceCompiledModuleRunsForThePackage_EditWithoutRepackaging_RunsTheCaller()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (app, testApp) = Layout();
+        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        var plainApp = JsonSerializer.Serialize(new
+        {
+            command = "runTests", sourcePaths = new[] { app }, packagePaths = Array.Empty<string>(),
+        });
+
+        await server.SendRequestStreamingAsync(plainApp, TimeSpan.FromSeconds(180));
+        var baseline = await Send(server, testApp);
+        Assert.True(baseline.Status.GetValueOrDefault("CallsApp") == "pass", baseline.Raw);
+        await Send(server, testApp);
+
+        File.WriteAllText(Path.Combine(app, "src", "Helper.Codeunit.al"), HelperSource(3));
+        await server.SendRequestStreamingAsync(plainApp, TimeSpan.FromSeconds(180));
+
+        var afterEdit = await Send(server, testApp);
+        Assert.True(afterEdit.Status.TryGetValue("CallsApp", out var status), afterEdit.Raw);
+        Assert.True(status == "fail", afterEdit.Raw);
+        Assert.Contains("the app returned 63", afterEdit.Raw, StringComparison.Ordinal);
+    }
+
     [SkippableFact]
     public async Task RebuiltPackage_SameVersion_RunsTheTestThatCallsIntoIt_AgainstTheNewCode()
     {
