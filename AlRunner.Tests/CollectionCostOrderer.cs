@@ -408,7 +408,10 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             ["ServerAffectedSelectionTests"] = 71,
             // #4993: added by #4981 and absent from this table; tripped
             // check-collection-weights.py on main at 90.6s (BC 27.5, run 36622416591).
-            ["ServerAffectedSelectionCacheHitTests"] = 90,
+            // Raised to the observed maximum, 96.2s on PR #4986's BC 27.5 leg (run 36632347509).
+            ["ServerAffectedSelectionCacheHitTests"] = 96,
+            // #4973: added by PR #4986; 78.3s on BC 28.5 and 109.0s on BC 27.5 (run 36632347509).
+            ["ServerAffectedSelectionPackagedDependencyTests"] = 109,
             // #2223: added by PR #4478, which introduces this collection. 4 tests, each
             // spawning a real runner subprocess against a bundle declaring an `application`
             // floor, and one of them spawning a second: the warm-skip path runs the bundle
