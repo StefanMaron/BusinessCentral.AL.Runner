@@ -2075,11 +2075,13 @@ def check_github(slug: Optional[str]) -> CheckResult:
         perms = {}
     can_push = bool(perms.get("push") or perms.get("maintain") or perms.get("admin"))
     # The REPOSITORY's permissions and the TOKEN's scopes answer different
-    # questions, and reporting only the first said "merge a PR: yes" while every
-    # PR touching .github/workflows/ was unmergeable (#3192): `gh pr merge`
-    # refuses with "refusing to allow an OAuth App to create or update workflow
-    # ... without `workflow` scope". That arrived at the LAST step, after review
-    # and after CI -- the most expensive place to discover a missing permission.
+    # questions. Without `workflow` scope, GitHub refuses a merge only when the
+    # merge result carries .github/workflows/ content the PR head does not
+    # (main changed the same file since the branch point): #3110 refused with
+    # "refusing to allow an OAuth App to create or update workflow" and merged
+    # once rebased; #4504 and #4846 merged as they were (#3192, #4511).
+    # Trap: do not state "cannot be merged" -- a head already carrying the
+    # workflow content merges with this token.
     scopes = parse_token_scopes((auth.out or "") + "\n" + (auth.err or ""))
     can_workflow = None if scopes is None else ("workflow" in scopes)
     detail = [f"account: {login or 'unknown'}; repository: {slug}",
@@ -2087,12 +2089,18 @@ def check_github(slug: Optional[str]) -> CheckResult:
               f"merge a PR: {'yes' if can_push else 'no'}; label and assign: "
               f"{'yes' if (can_push or perms.get('triage')) else 'no'} (both need push or triage)"]
     if can_workflow is None:
-        detail.append("merge a PR that touches .github/workflows/: unknown - `gh auth status` "
-                      "did not report classic token scopes (a fine-grained token reports none)")
+        detail.append("token `workflow` scope: unknown - `gh auth status` did not report "
+                      "classic token scopes (a fine-grained token reports none)")
+    elif can_workflow:
+        detail.append(f"token `workflow` scope: yes - pull requests touching "
+                      f".github/workflows/ merge like any other; scopes: {', '.join(sorted(scopes))}")
     else:
-        detail.append(f"merge a PR that touches .github/workflows/: "
-                      f"{'yes' if can_workflow else 'no'} - needs the token's `workflow` "
-                      f"scope; scopes: {', '.join(sorted(scopes))}")
+        detail.append(f"token `workflow` scope: no - a pull request touching .github/workflows/ "
+                      f"merges when its head already carries the merged workflow content, and is "
+                      f"refused (\"refusing to allow an OAuth App to create or update workflow\") "
+                      f"when main changed the same workflow file after its branch point, until "
+                      f"it is rebased (#3110 refused, then merged rebased; #4504 merged); "
+                      f"scopes: {', '.join(sorted(scopes))}")
     if not can_push:
         return CheckResult(name="github", status="FAIL",
                            summary=f"{login or 'this account'} cannot push to {slug}, so the "
@@ -2103,19 +2111,22 @@ def check_github(slug: Optional[str]) -> CheckResult:
                                   "implement.")
     data = {"login": login, "permissions": perms,
             "token_scopes": sorted(scopes) if scopes else None,
-            "can_merge_workflow_changes": can_workflow}
+            "has_workflow_scope": can_workflow}
     if can_workflow is False:
         return CheckResult(
             name="github", status="WARN",
             summary=f"authenticated as {login} with push access to {slug}, but the token has "
-                    f"no `workflow` scope: pull requests touching .github/workflows/ cannot "
-                    f"be merged from this box",
+                    f"no `workflow` scope: merging a pull request that touches "
+                    f".github/workflows/ is refused while main has changed the same workflow "
+                    f"file since the pull request's branch point",
             command="gh auth status; gh api repos/%s --jq .permissions" % slug,
             detail=detail, data=data,
-            remedy="Either grant it (`gh auth refresh -h github.com -s workflow`), or accept "
-                   "that workflow-touching pull requests need a human to merge them and know "
-                   "that up front. Do NOT teach the loop to route them differently: a missing "
-                   "permission is a precondition to report, not a second mode to implement.")
+            remedy="Nothing is needed for a pull request whose head already carries the "
+                   "workflow content it will merge. When a merge is refused with \"refusing "
+                   "to allow an OAuth App to create or update workflow\", rebase the branch "
+                   "onto main and merge again (#3110); the rebase is a push, which token "
+                   "scopes gate over HTTPS but not over ssh. Or grant the scope "
+                   "(`gh auth refresh -h github.com -s workflow`).")
     return CheckResult(name="github", status="PASS",
                        summary=f"authenticated as {login} with push access to {slug}",
                        command=f"gh auth status; gh api repos/{slug} --jq .permissions",
