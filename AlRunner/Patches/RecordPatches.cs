@@ -1424,13 +1424,8 @@ public static partial class RecordPatches
         // on the company scope, which no test-isolation rollback disposes, so its state survives
         // every codeunit and test boundary on BC (#4781). TestExecutor.Run resets it per bundle.
 
-        // Manual-binding event subscriptions (BindSubscription/Session.EventBindings) are
-        // likewise a live-instance leak risk across the same boundary: a subscriber a test
-        // bound and never unbound must not still be bound when the next test codeunit runs
-        // (corpus-verified — TestEventManualBindingCrossCodeunit, 60244/60245 — a within-
-        // codeunit leak across [Test] procedures IS faithful BC behaviour and is untouched
-        // by this reset, since ResetPerTestState only runs at the codeunit/Test-isolation
-        // boundary, not between methods sharing one codeunit instance). See #2466.
+        // Manual bindings (Session.EventBindings) end here unless a SingleInstance codeunit
+        // keeps the subscriber alive (#2466, #4799).
         AlRunner.BcRuntime.ResetEventBindingsForTestBoundary();
     }
 

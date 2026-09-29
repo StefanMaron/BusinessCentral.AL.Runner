@@ -329,46 +329,33 @@ public static partial class BcRuntime
     }
 
     /// <summary>
-    /// Drop every manually-bound event subscription (real BC's own
-    /// <c>Session.EventBindings</c> list — see <see cref="BoundInstancesOf"/>) at the
-    /// per-test-isolation boundary, from <c>RecordPatches.ResetPerTestState()</c>. Unlike
-    /// SingleInstance codeunit state, which that boundary deliberately keeps (#4781), a
-    /// leftover manual binding does not reach the next test codeunit on BC.
+    /// At the per-test-isolation boundary (<c>RecordPatches.ResetPerTestState()</c>), drop every
+    /// manual binding (<c>Session.EventBindings</c>) whose subscriber instance BC would dispose
+    /// there, and keep the ones a cached SingleInstance codeunit still reaches.
     ///
-    /// Corpus-verified (TestEventManualBindingCrossCodeunit, 60244/60245): a manual
-    /// subscription left open (Unbind never reached) by one test CODEUNIT does not fire
-    /// in the NEXT test codeunit's run — TestIsolation = Codeunit starts each new codeunit
-    /// with no leftover bindings, even though a binding DOES survive across [Test]
-    /// procedures within the SAME codeunit (TestEventManualBinding Contract 9 — that
-    /// within-codeunit persistence is real, faithful BC behaviour and must NOT be
-    /// disturbed here; this reset only runs at the codeunit/test boundary in
-    /// ResetPerTestState, never between two [Test] methods sharing one codeunit instance
-    /// under TestIsolation = Codeunit). Filed as AL Runner issue #2466 — Base App codeunit
-    /// 9178 "Application Area Mgmt." failed 18 corpus tests once ANY test codeunit ahead
-    /// of it in the run bound (and never unbound) a manual event subscriber that clears
-    /// "Application Area Setup".Basic on OnGetBasicExperienceAppAreas.
+    /// On BC a binding ends only by UnbindSubscription or by <c>NavCodeunit.Dispose</c>; the
+    /// boundary disposes the test codeunit and what only it referenced (corpus 60244/60245,
+    /// #2466), but not a SingleInstance instance or what its globals hold, which the company
+    /// scope keeps (#4781). Corpus 67693/67694 (#4799). Never call this between two [Test]
+    /// methods sharing one codeunit instance: bindings survive there (TestEventManualBinding
+    /// Contract 9).
     /// </summary>
     internal static void ResetEventBindingsForTestBoundary()
     {
-        var session = SkeletonSession;
-        if (session == null) return;
-        if (_piSessionEventBindings == null && !_eventBindingsLookupFailed)
+        if (SessionEventBindings() is not { Count: > 0 } bindings) return;
+        var keep = TreeObjectsReachableFromSingleInstances();
+        for (var i = bindings.Count - 1; i >= 0; i--)
         {
-            _piSessionEventBindings = session.GetType().GetProperty("EventBindings",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            if (_piSessionEventBindings == null)
-                _eventBindingsLookupFailed = true;
+            if (bindings[i] is not Microsoft.Dynamics.Nav.Runtime.ITreeObject bound || !keep.Contains(bound))
+                bindings.RemoveAt(i);
         }
-        if (_piSessionEventBindings?.GetValue(session) is System.Collections.IList bindings)
-            bindings.Clear();
     }
 
     /// <summary>
     /// Session.EventBindings as a mutable list, resolving <see cref="_piSessionEventBindings"/>
-    /// lazily the same way <see cref="ResetEventBindingsForTestBoundary"/> and
-    /// <see cref="BoundInstancesOf"/> already do — shared so a third caller (see
-    /// MethodScopePatches.UnbindLocalManualSubscriptions, #2476) does not need its own copy
-    /// of the reflection lookup. Null when the skeleton session or the Ncl property itself is
+    /// lazily the same way <see cref="BoundInstancesOf"/> does — shared by
+    /// <see cref="ResetEventBindingsForTestBoundary"/> and
+    /// MethodScopePatches.UnbindLocalManualSubscriptions (#2476). Null when the skeleton session or the Ncl property itself is
     /// unavailable — every caller already treats that as "nothing to touch".
     /// </summary>
     internal static System.Collections.IList? SessionEventBindings()
