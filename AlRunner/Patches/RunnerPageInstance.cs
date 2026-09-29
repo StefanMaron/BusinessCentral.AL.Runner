@@ -2602,6 +2602,8 @@ internal sealed partial class RunnerPageInstance
 
         InvokeRecordTrigger("OnOpenPage", Type.EmptyTypes, Array.Empty<object>());
 
+        ReapplyViewSortingAsTheServiceTierDoes();
+
         // Re-take the open-time snapshot AFTER the trigger, not before. OnOpenPage is where a
         // page seeds the globals its control properties are bound to, and the constructor runs
         // well before it — snapshotting only there froze every such global at its type default,
@@ -2613,6 +2615,24 @@ internal sealed partial class RunnerPageInstance
         // registered a binding between construction and here must be in the name index too, and
         // a memoized index (including its negatives) would keep answering from before OnOpenPage.
         _bindingsByName = null;
+    }
+
+    /// <summary>
+    /// The sorting half of the page-state round trip BC runs on the page's record before the
+    /// first row read: <c>NSDataSetState.UpdateFromRecordAsync</c> keeps <c>GetTableView()</c>,
+    /// <c>ApplyToRecordWithoutPositioning</c> puts it back through <c>NavRecord.SetTableView</c>
+    /// (<c>SetCurrentKey(view)</c>, then <c>ALAscending = view.Ascending</c>). A
+    /// <c>NavTableView</c> holds the key and the default direction only, so a per-field
+    /// <c>SetAscending</c> is dropped and <c>Ascending(false)</c> survives — corpus 67950
+    /// "SPO Tests", green on every required cloud leg and Windows 28.4 (#4989).
+    /// </summary>
+    private void ReapplyViewSortingAsTheServiceTierDoes()
+    {
+        if (_record == null) return;
+        var view = _record.GetTableView();
+        if (view.CurrentSortingFieldIds is { Length: > 0 } keyFields) _record.ALSetCurrentKey(keyFields);
+        else _record.ALCurrentKeyIndex = 1;
+        _record.ALAscending = view.Ascending;
     }
 
     /// <summary>
