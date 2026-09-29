@@ -407,13 +407,13 @@ public static partial class BcRuntime
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static bool RecordLink_TableHasLinks(object parentTree, object table, string companyName)
-        => AlRunner.Patches.RecordPatches.RecordLinkStore_TableHasLinks(RecordLinkTableIdOf(table));
+        => AlRunner.Patches.RecordPatches.RecordLinkStore_TableHasLinks(
+            RecordLinkTableIdOf(table),
+            table is Microsoft.Dynamics.Nav.Runtime.NCLMetaTable { DataPerCompany: true } ? companyName : null);
 
     /// <summary>The table id BC's TableHasLinks was asked about. BC hands it the table's own
     /// NCLMetaTable, whose public TableId is the id — a cast the compiler checks, rather than a
-    /// property name looked up by string with a silent 0 (= matches no row) when it misses.
-    /// The companyName argument is not read: the runner is single-company, so every stored row's
-    /// Company column already holds the one company a filter could name.</summary>
+    /// property name looked up by string with a silent 0 (= matches no row) when it misses.</summary>
     private static int RecordLinkTableIdOf(object? table)
         => table switch
         {
