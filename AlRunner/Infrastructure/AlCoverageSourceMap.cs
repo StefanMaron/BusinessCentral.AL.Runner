@@ -214,7 +214,9 @@ public static class AlCoverageSourceMap
     /// second execution bundle attributed it correctly, which is what localised the defect to
     /// the root set rather than to the tracker.</para>
     ///
-    /// <para>Why a packaged .app dependency contributes nothing here: see docs/coverage-attribution.md#the-two-scope-shapes-bcs-compiler-emits-and-where-sourcespans-sits.</para>
+    /// <para>#4273: a packaged .app dependency this run compiled from its embedded AL adds the
+    /// directory that AL was materialized into (<see cref="PackagedDependencySources"/>). A
+    /// precompiled package adds nothing: docs/coverage-attribution.md#what-a-packaged-dependency-contributes-since-4273.</para>
     /// </summary>
     public static IReadOnlyList<string> RootsWithParsedSourceDependencies(IEnumerable<string> executionRoots)
     {
@@ -256,6 +258,7 @@ public static class AlCoverageSourceMap
         foreach (var root in executionRoots) Add(root);
         // After the execution roots, so a directory that is both keeps the caller's spelling.
         foreach (var dir in AlRunner.Patches.RecordPatches.RegisteredSourceDirs()) Add(dir);
+        foreach (var dir in PackagedDependencySources.Roots()) Add(dir);
         return roots;
     }
 

@@ -5115,11 +5115,9 @@ if (coverageEnabled)
     // working directory so cobertura's <source> (".") lines up with the filename
     // attributes, matching v1's convention.
     //
-    // #3965: the execution bundles are not the whole set. A sibling SOURCE dependency is
-    // compiled and executed without being a bundle, so RootsWithParsedSourceDependencies adds
-    // the dirs the run actually parsed. A packaged .app dep adds nothing here and cannot be
-    // rescued by adding one — its statements execute and are dropped for a different reason,
-    // one step earlier (#4273). See docs/coverage-attribution.md.
+    // #3965/#4273: the execution bundles are not the whole set. RootsWithParsedSourceDependencies
+    // adds the sibling SOURCE dependencies the run parsed and the packaged dependencies it
+    // compiled from their embedded AL. See docs/coverage-attribution.md.
     var coverageSourceMap = AlRunner.Infrastructure.AlCoverageSourceMap.Build(
         AlRunner.Infrastructure.AlCoverageSourceMap.RootsWithParsedSourceDependencies(bundles),
         relativeTo: AlRunner.Infrastructure.WorkingDirectory.TryGet());   // #3120: null → absolute filenames
@@ -5160,6 +5158,20 @@ if (coverageEnabled)
         foreach (var failure in coverageSourceMap.ScanFailures)
             Console.Error.WriteLine($"  {failure.Path}  ({failure.Reason})");
         incompleteCoverage = true;
+    }
+
+    // #4273: executed AL the report cannot place — a precompiled package's. Declared in
+    // docs/limitations.md, so it is a note rather than an incomplete-coverage exit.
+    var unattributed = AlRunner.Infrastructure.AlCoverageTracker.UnattributedExecutedObjects(coverageSourceMap);
+    if (coverageProblem == null && unattributed.Count > 0)
+    {
+        Console.Error.WriteLine();
+        Console.Error.WriteLine(
+            "Coverage note: AL executed in these dependencies is not in the report above, because their "
+            + "code was precompiled rather than compiled from source by this run "
+            + "(docs/limitations.md#packaged-dependency-coverage):");
+        foreach (var (app, objects) in unattributed)
+            Console.Error.WriteLine($"  {app}  ({objects} object(s) executed)");
     }
 }
 
