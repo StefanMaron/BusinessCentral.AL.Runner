@@ -576,8 +576,12 @@ once something before it changes. So a test that failed in the recording run
 keeps that coverage and is selected by it (#4978). It shares the gaps passing
 tests have: an object added since the recording run, such as a new event
 subscriber, is in no test's coverage, so a test that raises its event is not
-selected for it (#4988). A test failing for want of that subscriber is therefore
-skipped too; `includeFailing: true` runs it.
+selected for it (#4988). A failing test's result depends on code it never ran more
+often than a passing test's does: a subscriber that does not exist yet (#4988), an
+object added and reached by id (`Codeunit.Run(<id>)`, `RecordRef.Open`),
+install/setup code that runs outside the test, and state left by earlier tests in
+the same codeunit. None of those is in its coverage, so a change there skips it;
+`skippedFailing` says so, and `includeFailing: true` runs it.
 
 It stays **unknown**, and always runs, when the record is not complete:
 
@@ -603,17 +607,27 @@ module of the request tracks those files, so they used to make every test that
 calls into the app unknown, and it reran on every request (#4973).
 
 The environment key (see the forced-full causes above) now carries a SHA-256 of
-each resolved dependency package that is not published by Microsoft and was not
-synthesized by the runner from a sibling source (`workspace-deps`). Replacing such
-a package, even with a rebuild of the same version, changes the key and forces a
-full run. That is what makes it safe for selection to ignore a statement
-attributed to the source folder of a package the key covers: the code that
-statement came from can only change by changing the key. Statements under any
-other untracked file still make the test unknown.
+each resolved dependency package that is not published by Microsoft, was not
+synthesized by the runner from a sibling source (`workspace-deps`), and **is the
+module that actually runs** for its AppId. Replacing such a package, even with a
+rebuild of the same version, changes the key and forces a full run. That is what
+makes it safe for selection to ignore a statement attributed to the source folder
+of a package the key covers: the code that statement came from can only change by
+changing the key. Statements under any other untracked file still make the test
+unknown.
 
-Editing `App/` without rebuilding the package changes nothing the tests execute,
-so nothing is selected for it. Microsoft packages are left to the BC version and
-package-directory parts of the key.
+The "actually runs" condition matters: once a request has compiled `App/` as its
+own bundle, a later request that resolves `App.app` reuses that source-compiled
+module for the AppId (#1892) rather than loading the package. The package's bytes
+then say nothing about what runs, so it is left out of the key and the statements
+stay unknown: an edit to `App/` followed by a request naming `App/` is picked up.
+While the package is the module that runs, an edit to `App/` that is not rebuilt
+into the package changes nothing the tests execute and selects nothing.
+
+The request-bundle exclusion compares symlink-resolved paths, so a request folder
+reached through a link is never ignored. Package hashes go through the process's
+shared content-hash memo, so an unchanged package is not re-read. Microsoft
+packages are left to the BC version and package-directory parts of the key.
 
 #### affectedOnly and the AL-output cache
 
