@@ -305,11 +305,18 @@ public static partial class RecordPatches
     /// any enclosing scope, or the top-level commit-point tracker, is still holding for the
     /// tables this scope touched, so neither can roll a durably-committed write back past
     /// this point.
+    ///
+    /// A rollback also ends the world's transaction for BC's SystemTableTriggers.OnTransactionEnded,
+    /// which fires on commit AND rollback, so the permission SetupVersion advances here too; the
+    /// commit half gets its bump from MarkCommitPoint. Corpus 67947 FailedGuardedRun (#5022).
+    /// Trap: keep it above the empty-scope return — the monitored-table set is tracked apart
+    /// from the scope's row snapshots, so an empty scope does not mean no monitored write.
     /// </summary>
     public static void PopTransactionWorldScope(bool restore)
     {
         if (_txScopeStack.Count == 0) return; // defensive; Begin/End must always pair
         var scope = _txScopeStack.Pop();
+        if (restore) EndPermissionSetupTransaction();
         if (scope.Count == 0) return;
 
         if (restore)
