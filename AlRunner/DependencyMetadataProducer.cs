@@ -40,7 +40,7 @@
 //   default, so a failure that reached the consumer would be indistinguishable from absence.
 //
 // COST, AND WHY IT IS OPT-IN PER APP
-//   Once per (package content, --define symbols, BC version), never per run: the documents persist to
+//   Once per (runner build, package content, --define symbols, BC version), never per run: the documents persist to
 //   AlObjectMetadataRegistry's sidecar format under the `dep-metadata` cache root and are
 //   replayed on every later run. Business Foundation (96 AL files): ~6.2 s cold, 55 documents.
 //
@@ -99,8 +99,10 @@ internal static class DependencyMetadataProducer
 
     /// <summary>
     /// The file name a dependency's metadata cache entry is stored under, or null when the
-    /// package's content cannot be read — such a package is compiled without the cache rather
-    /// than sharing one key with every other unreadable package.
+    /// package's content or the runner's own identity cannot be read — such a package is
+    /// compiled without the cache rather than sharing one key with every other unreadable one.
+    /// <paramref name="defines"/> is the --define set the compile applies: the run's for a
+    /// dependency the runner compiles from source, none for one it loads precompiled (#5051).
     /// </summary>
     internal static string? CacheKey(AppManifest m, string appPath, IEnumerable<string> defines)
         => CacheKeyCore(m, RunnerFingerprint.ComputeFileContentHashMemoized(appPath), defines,
@@ -108,20 +110,27 @@ internal static class DependencyMetadataProducer
 
     /// <summary>
     /// App id, version and BC build stay readable at the front. The hash carries what else
-    /// changes the documents at an unchanged version (#5039): the package bytes, and the
-    /// --define symbols the compile applies (<see cref="BcCompiler.BuildParseOptions"/>),
-    /// normalised as in <see cref="BcCompiler.GetExtraPreprocessorSymbols"/>. The package's own
-    /// <c>PreprocessorSymbols</c> are inside its bytes.
+    /// changes the documents at an unchanged version: the runner build and its emit mode
+    /// (#5049, as <see cref="DependencyLoader.ComputeSourceDependencyCacheKeyCore"/> keys
+    /// <c>compiled-deps</c>), the package bytes, and the --define symbols the compile applies
+    /// (#5039), normalised as in <see cref="BcCompiler.GetExtraPreprocessorSymbols"/>. The
+    /// package's own <c>PreprocessorSymbols</c> are inside its bytes.
     /// </summary>
     internal static string? CacheKeyCore(
         AppManifest m, string contentHash, IEnumerable<string> defines, string runnerContentHash)
     {
         if (string.IsNullOrEmpty(contentHash) || contentHash == RunnerFingerprint.UnknownContentHash)
             return null;
+        if (RunnerFingerprint.UncacheableReasonFor(runnerContentHash) != null)
+            return null;
         var normalised = defines.Distinct(StringComparer.Ordinal).OrderBy(s => s, StringComparer.Ordinal);
-        var terms = $"schema:v2\napp-bytes:{contentHash}\ndefines:{string.Join(",", normalised)}\n";
+        var terms = new System.Text.StringBuilder("schema:v2\n");
+        RunnerFingerprint.WriteKeyLines(
+            line => terms.Append(line).Append('\n'), runnerContentHash, BcArtifacts.SelectedVersion);
+        terms.Append(BcCompiler.RunnerEmitModeCacheTerm).Append('\n');
+        terms.Append($"app-bytes:{contentHash}\ndefines:{string.Join(",", normalised)}\n");
         var hash = Convert.ToHexString(
-            System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(terms)))
+            System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(terms.ToString())))
             .ToLowerInvariant();
         return $"{m.AppId:N}_{m.Version}_{BcArtifacts.SelectedVersion}_{hash[..32]}";
     }
@@ -163,15 +172,22 @@ internal static class DependencyMetadataProducer
     /// cache entry exists yet. Returns the number of documents now available for this app,
     /// or 0 when the app has no source to compile (the ordinary symbol-only case).
     /// </summary>
+    /// <param name="runsPrecompiledCode">
+    /// True when the runner loads this dependency's code precompiled (Tier 1/2/2.5, see
+    /// <see cref="DependencyLoader.RunsPrecompiledCode"/>): the documents must then describe
+    /// that code, so the compile applies only the package's own symbols (#5051). False when
+    /// the runner compiles the source itself, with the run's --define.
+    /// </param>
     /// <exception cref="DependencyLoadException">
     /// The package HAS source and the compile or emit failed. Never downgraded to a silent 0 —
     /// see the header.
     /// </exception>
-    internal static int Ensure(AppManifest m, string appPath, BcCompiler compiler)
+    internal static int Ensure(AppManifest m, string appPath, BcCompiler compiler, bool runsPrecompiledCode = false)
     {
         if (IsExcluded(m)) return 0;
 
-        var key = CacheKey(m, appPath, BcCompiler.GetExtraPreprocessorSymbols());
+        var defines = runsPrecompiledCode ? Array.Empty<string>() : BcCompiler.GetExtraPreprocessorSymbols();
+        var key = CacheKey(m, appPath, defines);
         var sidecar = key is null ? null : SidecarPath(key);
         if (sidecar != null && File.Exists(sidecar))
         {
@@ -226,6 +242,7 @@ internal static class DependencyMetadataProducer
             try
             {
                 using (BcCompiler.ScopeCurrentAppIdentity(m.AppId, m.Publisher, m.Version))
+                using (runsPrecompiledCode ? BcCompiler.ScopeWithoutExtraPreprocessorSymbols() : null)
                     emitOutput = compiler.Emit(new[] { work }, m.Name, work);
             }
             catch (Exception ex)

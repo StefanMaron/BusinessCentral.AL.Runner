@@ -383,12 +383,35 @@ public sealed partial class BcCompiler
     /// </summary>
     public static IReadOnlyList<string> GetExtraPreprocessorSymbols()
     {
+        if (_extraSymbolsWithheld.Value) return [];
         lock (_refSync)
         {
             return _extraPreprocessorSymbols is null
                 ? []
                 : _extraPreprocessorSymbols.OrderBy(s => s, StringComparer.Ordinal).ToList();
         }
+    }
+
+    // AsyncLocal, not a locked static like ScopeCurrentAppIdentity's: every other compile and
+    // cache key in the process must keep reading the run's --define while one scope is open.
+    private static readonly System.Threading.AsyncLocal<bool> _extraSymbolsWithheld = new();
+
+    /// <summary>
+    /// Within the scope <see cref="GetExtraPreprocessorSymbols"/> answers empty, so a compile
+    /// applies only CLEANSCHEMA and the app.json's own <c>preprocessorSymbols</c>. For a
+    /// dependency whose code the runner loads precompiled: the publisher's compile fixed its
+    /// shape, and the test run's --define was never one of its inputs (#5051).
+    /// </summary>
+    internal static IDisposable ScopeWithoutExtraPreprocessorSymbols()
+    {
+        var previous = _extraSymbolsWithheld.Value;
+        _extraSymbolsWithheld.Value = true;
+        return new WithheldSymbolsScope(previous);
+    }
+
+    private sealed class WithheldSymbolsScope(bool previous) : IDisposable
+    {
+        public void Dispose() => _extraSymbolsWithheld.Value = previous;
     }
 
     /// <summary>
