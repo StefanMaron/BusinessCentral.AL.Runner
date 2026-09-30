@@ -76,7 +76,8 @@ internal static class AffectedEventSelection
     }
 
     /// <summary>
-    /// The keys a changed table or tableextension selects on (#5008). A table with no triggers
+    /// The keys a changed table or tableextension selects on (#5008), or why a changed page forces
+    /// a full run (#5011). A table with no triggers
     /// contributes no statement to any coverage, yet an added trigger, a field property or a key
     /// changes what every test holding a record of it observes. Rules:
     /// docs/server-mode.md#affectedonly-and-changed-tables.
@@ -93,6 +94,10 @@ internal static class AffectedEventSelection
         var keys = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (kind, id) in changed)
         {
+            // Which tests open a page is not recorded, and a page that ran no statement is in no
+            // coverage — an added OnOpenPage would select nothing (#5011).
+            if (kind == "Page" || kind == "PageExtension")
+                return new(keys, $"{kind} {id} changed, and the tests that open a page are not recorded (#5011)");
             if (kind != "Table" && kind != "TableExtension") continue;
             if (id is not int n)
                 return new(keys, $"a changed {kind} has no object id, so the tests holding its records cannot be looked up");

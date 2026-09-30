@@ -136,10 +136,17 @@ public class AffectedEventSelectionTests
     [Fact]
     public void ChangedTable_KeysItsRecordsAndTriggerConsults_OtherKindsKeyNothing()
     {
-        var r = Tables(new (string, int?)[] { ("Table", 50101), ("Codeunit", 50100), ("Page", 50103) });
+        var r = Tables(new (string, int?)[] { ("Table", 50101), ("Codeunit", 50100), ("Report", 50104) });
         Assert.Null(r.ForceFullReason);
         Assert.Equal(new[] { "tbl|Table|50101", "trig|?", "trig|Table|50101" }, r.Keys.OrderBy(k => k, StringComparer.Ordinal));
         Assert.Empty(Tables(new (string, int?)[] { ("Codeunit", 50100) }, null, "<none>").Keys);
+    }
+
+    [Fact]
+    public void ChangedPageOrPageExtension_ForcesFull_UntilPageOpensAreRecorded()
+    {
+        Assert.Contains("Page 50103 changed", Tables(new (string, int?)[] { ("Page", 50103) }).ForceFullReason);
+        Assert.Contains("PageExtension 50105 changed", Tables(new (string, int?)[] { ("PageExtension", 50105) }).ForceFullReason);
     }
 
     [Fact]

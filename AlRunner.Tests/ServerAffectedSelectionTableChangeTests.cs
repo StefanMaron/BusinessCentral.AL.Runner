@@ -265,6 +265,12 @@ public class ServerAffectedSelectionTableChangeTests
         Assert.True(held.ForcedFull, held.Raw);
         Assert.Contains("Table 60672 was held outside any one test", held.Reason, StringComparison.Ordinal);
         Assert.Equal(6, held.Ran.Length);
+
+        // A page: which tests open one is not recorded yet (#5011), so it runs everything.
+        Write(bundle, "Page.Page.al", "page 60677 \"TabSel Page SX\"\n{\n    SourceTable = \"TabSel Tab SX\";\n}\n");
+        var page = await Send(server, bundle);
+        Assert.True(page.ForcedFull, page.Raw);
+        Assert.Contains("Page 60677 changed", page.Reason, StringComparison.Ordinal);
     }
 
     // #5007's path: the same changes made while no server runs.
@@ -288,6 +294,11 @@ public class ServerAffectedSelectionTableChangeTests
         Assert.Equal("pass", edited.Status["ReadsInit"]);
 
         Write(bundle, "Tab.Table.al", Table());
+        var reverted = await SendFresh(cache, bundle);
+        Assert.Equal(Holders, reverted.Ran);
+        Assert.All(reverted.Status.Values, s => Assert.Equal("pass", s));
+
+        // The extension alone, so only its own mapping to the table can select.
         Write(bundle, "Ext.TableExt.al", Extension(ExtensionInsertProbe));
         AssertNarrowedToHolders(await SendFresh(cache, bundle), "InsertsRow", "PROBE-EXT");
     }

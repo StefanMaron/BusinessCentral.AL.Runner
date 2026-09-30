@@ -418,6 +418,9 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             ["ServerAffectedSelectionPackagedDependencyTests"] = 154,
             // #4979: added by PR #5007; 116.6s on BC 28.5, 118.8s on BC 27.5 (run 36658745839).
             ["ServerAffectedSelectionPersistedBaselineTests"] = 118,
+            // #5008: added by its PR, one server with eleven requests plus four server starts; 36s
+            // locally. An estimate until a CI leg measures it: replace with the observed maximum.
+            ["ServerAffectedSelectionTableChangeTests"] = 90,
             // #2223: added by PR #4478, which introduces this collection. 4 tests, each
             // spawning a real runner subprocess against a bundle declaring an `application`
             // floor, and one of them spawning a second: the warm-skip path runs the bundle
