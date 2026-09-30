@@ -159,6 +159,23 @@ public class ServerAffectedSelectionUnknownRecordTests
         }
         """;
 
+    // Touches the table before the reader, so in a run with both it computes the mask.
+    private const string TriggerFirst = """
+        codeunit 61904 "SU Trigger First"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure InsertsFirst()
+            var
+                R: Record "SU Rows";
+            begin
+                R.PK := 2;
+                R.Insert();
+            end;
+        }
+        """;
+
     private static string TriggerBundle(string prefix, string appIdSuffix)
     {
         var dir = Bundle(prefix, appIdSuffix, TriggerReader);
@@ -296,6 +313,36 @@ public class ServerAffectedSelectionUnknownRecordTests
         AssertRan(await Send(server, bundle), "unchanged 1", "InsertsRow", "FillsTriggerStore");
         // Reads the record that narrowed run wrote.
         AssertRan(await Send(server, bundle), "unchanged 2", "InsertsRow", "FillsTriggerStore");
+    }
+
+    /// <summary>
+    /// #5069, the cache itself: a reader first recorded in a later request still records its use
+    /// of the store, because each request's bundle starts a new session with no table masks. In
+    /// the first request another test computed the mask and is then deleted; the reader arrives
+    /// in the second, has no earlier record to keep, and gets the key only from a fresh mask.
+    /// </summary>
+    [SkippableFact]
+    public async Task TriggerMaskUse_IsRecordedForATestFirstRecordedInALaterRequest()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = TriggerBundle("al-runner-server-affected-unknown-record-mask-new", "000000000005");
+        File.WriteAllText(Path.Combine(bundle, "TriggerFirst.Codeunit.al"), TriggerFirst);
+        var reader = Path.Combine(bundle, "Reader.Codeunit.al");
+        File.Move(reader, reader + ".later");
+        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+
+        var baseline = await Send(server, bundle);
+        Assert.True(baseline.ForcedFull, baseline.Raw);
+        Assert.True(baseline.Tests.Values.All(t => t.Status == "pass"), baseline.Raw);
+
+        File.Move(reader + ".later", reader);
+        File.Delete(Path.Combine(bundle, "TriggerFirst.Codeunit.al"));
+        // A deleted file forces a full run; nothing before the reader touches the table in it.
+        var swapped = await Send(server, bundle);
+        Assert.True(swapped.Tests.ContainsKey("InsertsRow"), swapped.Raw);
+
+        // The store's writer comes along; the WorkDate writer stays out.
+        AssertRan(await Send(server, bundle), "unchanged", "InsertsRow", "FillsTriggerStore");
     }
 
     /// <summary>

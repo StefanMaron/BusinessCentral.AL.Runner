@@ -7966,7 +7966,8 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                         var keys = eventsByTest.TryGetValue(testKey, out var raised)
                             ? new HashSet<string>(raised, StringComparer.Ordinal) : new HashSet<string>(StringComparer.Ordinal);
                         if (stateByTest.TryGetValue(testKey, out var state)) keys.UnionWith(state);
-                        return keys;
+                        return AlRunner.Infrastructure.AffectedSessionStateSelection.WithPreviousState(
+                            keys, previousEvents != null && previousEvents.TryGetValue(testKey, out var prior) ? prior : null);
                     }
 
                     perTestStatementTable.TryGetValue(testKey, out var statements);
