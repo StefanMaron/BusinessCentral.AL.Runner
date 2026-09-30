@@ -49,13 +49,35 @@ internal static class RunnerPendingPageOpenMode
 {
     [ThreadStatic] private static int _pageId;
     [ThreadStatic] private static bool _readOnly;
+    [ThreadStatic] private static bool _create;
+
+    // A form opened in Create mode, from ApplyPendingPageOpenMode (before OnOpenPage) to the
+    // handler page RunnerTestClientSession.GetPage builds for it (after): the mode is consumed
+    // at the first point and acted on at the second.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, object> OpensOnNewRecordForms = new();
 
     /// <summary>Arm the mode for the next open of <paramref name="pageId"/> on this thread.</summary>
     internal static void Arm(int pageId, bool readOnly)
     {
         _pageId = pageId;
         _readOnly = readOnly;
+        _create = false;
     }
+
+    /// <summary>Arm Create mode — an action's <c>RunPageMode = Create</c> (#4997): the next open
+    /// of <paramref name="pageId"/> starts on a new record, as <c>TestPage.OpenNew()</c> does.</summary>
+    internal static void ArmCreate(int pageId)
+    {
+        _pageId = pageId;
+        _readOnly = false;
+        _create = true;
+    }
+
+    /// <summary>Record that <paramref name="form"/> was opened in Create mode.</summary>
+    internal static void MarkOpensOnNewRecord(object form) => OpensOnNewRecordForms.AddOrUpdate(form, form);
+
+    /// <summary>Whether <paramref name="form"/> was opened in Create mode; consumed.</summary>
+    internal static bool TryConsumeOpensOnNewRecord(object form) => OpensOnNewRecordForms.Remove(form);
 
     /// <summary>Drop an armed mode that was never consumed — the page refused to open, or BC
     /// answered the run some other way. Without this a later, unrelated open of the same page
@@ -66,11 +88,13 @@ internal static class RunnerPendingPageOpenMode
     /// The mode armed for <paramref name="pageId"/>, consumed. False when nothing was armed
     /// for that page, which is the normal case for every other page open in the run.
     /// </summary>
-    internal static bool TryConsume(int pageId, out bool readOnly)
+    internal static bool TryConsume(int pageId, out bool readOnly, out bool create)
     {
         readOnly = false;
+        create = false;
         if (pageId == 0 || _pageId != pageId) return false;
         readOnly = _readOnly;
+        create = _create;
         _pageId = 0;
         return true;
     }

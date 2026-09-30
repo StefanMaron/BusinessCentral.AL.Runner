@@ -214,11 +214,13 @@ public static class RunnerModalDispatch
     /// <para>Applied BEFORE OpenForm so the page's own OnOpenPage sees it, and read once, so a
     /// page opened from inside that trigger does not inherit it.</para>
     /// </summary>
-    private static void ApplyPendingPageOpenMode(object? form)
+    internal static void ApplyPendingPageOpenMode(object? form)
     {
         if (form is not NavForm navForm) return;
-        if (!RunnerPendingPageOpenMode.TryConsume(PageIdOf(form), out var readOnly)) return;
+        if (!RunnerPendingPageOpenMode.TryConsume(PageIdOf(form), out var readOnly, out var create)) return;
         if (readOnly) navForm.Editable = false;
+        // Create: the page shown to the handler starts on a new record (RunnerTestClientSession.GetPage).
+        if (create) RunnerPendingPageOpenMode.MarkOpensOnNewRecord(navForm);
     }
 
     /// <summary>The page number of <paramref name="form"/>, or 0 when it cannot be read.</summary>
