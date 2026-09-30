@@ -979,9 +979,11 @@ triggers and Company-Initialize (cached per dependency set since #1867), then th
 User / Company / Published Application / Access Control / Active Session rows, then the
 bundle's own Install triggers, and finally a capture that every test codeunit restores.
 
-Since #5060 a later run of the **same** bundle in the same process (a warm `runTests`, a
-`--watch` cycle) reuses that whole captured baseline and skips everything after the dependency
-step. The first test codeunit's boundary restore puts it in place, so every test still starts
+Since #5060 a repeated `runTests` in the same process with **no edit** in between (a re-run
+with a different filter, say) reuses that whole captured baseline and skips everything after the
+dependency step. An edit to **any** loaded bundle changes the event-subscriber scope below, so
+the next run reseeds every bundle; a `--watch` cycle, which an edit usually starts, therefore
+usually misses. The first test codeunit's boundary restore puts it in place, so every test still starts
 from the rows a cold run would give it. The cache is in memory only.
 
 The key holds everything the baseline's rows depend on. When any part of it changes, the seed
@@ -1002,9 +1004,13 @@ Runs that are never reused, and seed fresh every time:
 - **A seed that used a `NumberSequence` or the `WorkDate`.** Both are session state outside the
   store: sequences are reset per request, so a reuse would leave the tests without them, and a
   `WorkDate` an earlier test moved would be stamped by a fresh seed but not by a reuse.
-- **A seed that changed the session identity** (the #2983 adoption of a `--test-data` user), a
-  change no snapshot carries.
+- **A seed that changed the session identity** (the #2983 adoption, by a `--test-data` user or
+  by a dependency's Install trigger writing one), a change no snapshot carries.
 - **`AL_RUNNER_NO_DEP_COMPANY_CACHE=1`**, the kill switch for both install-baseline caches.
+
+Not covered: a value an Install trigger takes from the clock (`Today()`, `Time()`,
+`CurrentDateTime()`) or from `CreateGuid()` / `Random`. A reuse keeps the first run's value, so
+a server that crosses midnight can hand a test yesterday's `Today()` stamp.
 
 Under `AL_RUNNER_PERF=1` each run logs `InstallBaseline.BundleCache HIT`, `MISS … stored`,
 `MISS … not-stored: <why>` or `NOKEY <why>`. A bundle's first warm run can still miss once

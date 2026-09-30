@@ -137,13 +137,67 @@ public sealed class ServerBundleInstallBaselineReuseTests
         }
     }
 
+    /// <summary>The #2983 adoption moves the session onto another user id, a poke no snapshot
+    /// carries. The fixture's dependency Install trigger arranges it with no backup; a reuse would
+    /// leave the session on the generated id while the rows name the adopted one.</summary>
+    [SkippableFact]
+    public async Task SeedThatAdoptsAnotherSessionUser_IsNotReused()
+    {
+        TestArtifacts.SkipIfMissing();
+        var fixture = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..",
+            "AlRunner.Tests", "Fixtures", "InstallTriggerSessionIdentity", "main"));
+        await using var server = await CliServer.StartAsync(
+            extraArgs: new[] { "--package-cache", TestArtifacts.PlatformAppsDir() }, extraEnv: PerfEnv);
+
+        // All three first: a reuse fails the fixture's own AL assertions on requests 2 and 3.
+        var slices = new List<string>();
+        for (var request = 1; request <= 3; request++)
+            slices.Add(await RunAsync(server, new[] { fixture }, "codeunit", expectedPassed: 6));
+        Assert.All(slices, stderr =>
+        {
+            Assert.Contains("not-stored: the seed changed the session identity", stderr);
+            Assert.Equal(0, Count(stderr, HitLine));
+        });
+    }
+
+    /// <summary>A version-only edit to app.json leaves the bundle assembly's MVID alone, so the
+    /// bundle identity term is what stops the Published Application row keeping the old version.</summary>
+    [SkippableFact]
+    public async Task VersionOnlyEditToAppJson_RedoesTheSeed()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = CreateBundle(0, seed: "7777", useNumberSequence: false, checkPublishedVersion: true);
+        try
+        {
+            await using var server = await CliServer.StartAsync(extraEnv: PerfEnv);
+
+            var v1 = await RunAsync(server, new[] { bundle }, "codeunit", expectedPassed: 4);
+            var v1Again = await RunAsync(server, new[] { bundle }, "codeunit", expectedPassed: 4);
+            var appJson = Path.Combine(bundle, "app.json");
+            File.WriteAllText(appJson, File.ReadAllText(appJson).Replace("\"1.0.0.0\"", "\"2.0.0.0\""));
+            var v2 = await RunAsync(server, new[] { bundle }, "codeunit", expectedPassed: 4);
+            var v2Again = await RunAsync(server, new[] { bundle }, "codeunit", expectedPassed: 4);
+
+            Assert.Equal(0, Count(v1, HitLine));
+            Assert.Equal(1, Count(v1Again, HitLine));
+            Assert.Equal(0, Count(v2, HitLine));
+            Assert.Equal(1, Count(v2, InstallTriggerLine(0)));
+            Assert.Equal(1, Count(v2Again, HitLine));
+        }
+        finally
+        {
+            try { Directory.Delete(bundle, recursive: true); } catch { }
+        }
+    }
+
     private static Task<string> RunAsync(CliServer server, params string[] bundles)
         => RunAsync(server, bundles, "codeunit");
 
     /// <summary>Send one runTests request, assert every test passed, and return the request's
     /// own slice of stderr once every bundle's seed line is in it (the seed line is logged after
     /// every line these tests assert on, absent ones included).</summary>
-    private static async Task<string> RunAsync(CliServer server, string[] bundles, string isolation)
+    private static async Task<string> RunAsync(CliServer server, string[] bundles, string isolation,
+        int? expectedPassed = null)
     {
         var mark = server.StdErrMark;
         var response = await server.SendRequestStreamingAsync(JsonSerializer.Serialize(new
@@ -161,7 +215,7 @@ public sealed class ServerBundleInstallBaselineReuseTests
         }
         Assert.True(summary.GetProperty("failed").GetInt32() == 0 && summary.GetProperty("errors").GetInt32() == 0,
             "a runTests request failed:\n" + string.Join("\n", response) + "\n--- stderr ---\n" + stderr);
-        Assert.Equal(3 * bundles.Length, summary.GetProperty("passed").GetInt32());
+        Assert.Equal(expectedPassed ?? 3 * bundles.Length, summary.GetProperty("passed").GetInt32());
         Assert.All(events, e => Assert.Equal("pass", e.GetProperty("status").GetString()));
         Assert.Equal(bundles.Length, Count(stderr, SeedLine));
         return stderr;
@@ -177,7 +231,8 @@ public sealed class ServerBundleInstallBaselineReuseTests
     /// <summary>A bundle with one table, an Install trigger seeding one row with
     /// <paramref name="seed"/>, and three tests in two codeunits reading it back. Object ids are
     /// 50600 + <paramref name="offset"/> onward, so two bundles can share a request.</summary>
-    private static string CreateBundle(int offset, string seed, bool useNumberSequence, bool useWorkDate = false)
+    private static string CreateBundle(int offset, string seed, bool useNumberSequence, bool useWorkDate = false,
+        bool checkPublishedVersion = false)
     {
         var directory = TestScratch.Dir("al-runner-5060-bundle-baseline");
         Directory.CreateDirectory(directory);
@@ -191,7 +246,7 @@ public sealed class ServerBundleInstallBaselineReuseTests
           "dependencies": [],
           "platform": "1.0.0.0",
           "idRanges": [ { "from": {{id(0)}}, "to": {{id(4)}} } ],
-          "runtime": "14.0"
+          "runtime": "14.0"{{(checkPublishedVersion ? ",\n          \"target\": \"OnPrem\"" : "")}}
         }
         """);
         var sequenceInstall = useNumberSequence
@@ -200,6 +255,22 @@ public sealed class ServerBundleInstallBaselineReuseTests
         var sequenceCheck = useNumberSequence
             ? "if not NumberSequence.Exists('IBRSeq') then Error('the install trigger''s number sequence is missing');"
             : "";
+        // Published Application is OnPrem-scoped, hence the target above for this variant.
+        var publishedVersionTest = checkPublishedVersion ? """
+
+            [Test]
+            procedure PublishedVersionIsTheManifestVersion()
+            var
+                Published: Record "Published Application";
+                Info: ModuleInfo;
+            begin
+                NavApp.GetCurrentModuleInfo(Info);
+                Published.SetRange(ID, Info.Id);
+                Published.FindFirst();
+                if Published."Version Major" <> Info.AppVersion.Major then
+                    Error('Published Application says major %1, module info says %2', Published."Version Major", Info.AppVersion.Major);
+            end;
+        """ : "";
         var workDateInstall = useWorkDate ? "Setup.Stamp := WorkDate(); Setup.Modify();" : "";
         // Checks this request's seed stamped the current WorkDate, then moves it for the next request.
         var workDateCheck = useWorkDate
@@ -279,6 +350,7 @@ public sealed class ServerBundleInstallBaselineReuseTests
                 if Setup.Counter <> {{seed}} + 1 then
                     Error('the first codeunit''s write leaked: expected %1, got %2', {{seed}} + 1, Setup.Counter);
             end;
+        {{publishedVersionTest}}
         }
         """);
         return directory;
