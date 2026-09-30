@@ -21,6 +21,9 @@ internal sealed class AffectedSelectionState
     // of the coverage keys, never of the unknown set.
     public Dictionary<string, HashSet<string>> FailingTestsByBundle { get; } = new(StringComparer.Ordinal);
     public Dictionary<string, string> EnvironmentKeyByBundle { get; } = new(StringComparer.Ordinal);
+    // #5028: per bundle, the environment each test's record was taken in, which a later run in
+    // another environment diffs per object. Absent for a baseline from before #5028.
+    public Dictionary<string, BundleEnvironments> EnvironmentsByBundle { get; } = new(StringComparer.Ordinal);
     // #4971: per bundle, every request module's change-model baseline generation at the moment its
     // coverage was recorded. Selection trusts changedObjects only when each module's baseline at the
     // start of the next run is that same generation.

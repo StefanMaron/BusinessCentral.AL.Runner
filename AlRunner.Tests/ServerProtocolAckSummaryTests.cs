@@ -105,6 +105,43 @@ public class ServerProtocolAckSummaryTests
         Assert.False(sel.TryGetProperty("reason", out _));
     }
 
+    // #5028: a selection made from a baseline recorded in another environment says so, on both responses.
+    [Fact]
+    public void Selection_EmitsEnvironmentDrift_AndOmitsItWhenUnset()
+    {
+        var drift = new EnvironmentDriftInfo("27.5.46862.53931", "28.4.51311.0", 1, EnvironmentDriftInfo.Diffed,
+            new[] { "Codeunit 80 Sales-Post" }, null);
+        var withDrift = new ServerSelection("affected", Ran: 1, Skipped: 3,
+            ChangedObjects: Array.Empty<string>(), ForcedFull: false, Reason: null, EnvironmentDrift: drift);
+        foreach (var json in new[]
+                 {
+                     ServerProtocol.Summary(new[] { PassResult }, 0, false, selection: withDrift),
+                     ServerProtocol.Execute(new[] { PassResult }, 0, selection: withDrift),
+                 })
+        {
+            var d = JsonDocument.Parse(json).RootElement.GetProperty("selection").GetProperty("environmentDrift");
+            Assert.Equal("27.5.46862.53931", d.GetProperty("recorded").GetString());
+            Assert.Equal("28.4.51311.0", d.GetProperty("current").GetString());
+            Assert.Equal(1, d.GetProperty("changedObjects").GetInt32());
+            Assert.Equal("diffed", d.GetProperty("mode").GetString());
+            Assert.Equal(new[] { "Codeunit 80 Sales-Post" }, d.GetProperty("objects").EnumerateArray().Select(o => o.GetString()));
+            Assert.False(d.TryGetProperty("reason", out _), json);
+        }
+
+        var approximate = withDrift with
+        {
+            EnvironmentDrift = drift with { Mode = EnvironmentDriftInfo.Approximate, Reason = "no record" },
+        };
+        var a = JsonDocument.Parse(ServerProtocol.Summary(new[] { PassResult }, 0, false, selection: approximate))
+            .RootElement.GetProperty("selection").GetProperty("environmentDrift");
+        Assert.Equal("approximate", a.GetProperty("mode").GetString());
+        Assert.Equal("no record", a.GetProperty("reason").GetString());
+
+        var none = JsonDocument.Parse(ServerProtocol.Summary(new[] { PassResult }, 0, false,
+            selection: withDrift with { EnvironmentDrift = null })).RootElement.GetProperty("selection");
+        Assert.False(none.TryGetProperty("environmentDrift", out _));
+    }
+
     // #4978: a client keeps showing a skipped failure as failed only if it is told one was skipped.
     [Fact]
     public void Summary_Selection_EmitsSkippedFailing_AndOmitsItWhenUnset()
