@@ -109,6 +109,9 @@ public sealed class RunnerTestClientSession : ITestClientSession
         // skipped the only path that fires them (issue #2797).
         if (record != null)
         {
+            // The service tier's view round trip after the open, before the first row read — as
+            // RaiseOnOpenPage does for a page the TestPage opens itself (corpus 67962, #5000).
+            RunnerPageInstance.ReapplyViewSorting(record);
             if (IsUnpositioned(record)) live.MoveFirstDuringOpen();
             else
             {
