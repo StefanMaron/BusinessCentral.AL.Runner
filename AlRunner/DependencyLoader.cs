@@ -503,12 +503,34 @@ public sealed class DependencyLoader
     /// whose emit failed is a broken build, and continuing would answer its tables from the
     /// weaker derivation under a green run (`.claude/rules/loud-failures.md`).
     /// </summary>
-    private void EnsureDependencyMetadata(AppManifest m, string appPath)
+    private void EnsureDependencyMetadata(AppManifest m, string appPath, string bucketRoot)
     {
         var filter = DependencyMetadataAppFilter();
         if (filter is null) return;
         if (filter.Count > 0 && !filter.Contains(m.Name, StringComparer.OrdinalIgnoreCase)) return;
-        DependencyMetadataProducer.Ensure(m, appPath, _compiler);
+        DependencyMetadataProducer.Ensure(m, appPath, _compiler, RunsPrecompiledCode(m, appPath, bucketRoot));
+    }
+
+    /// <summary>
+    /// Whether <see cref="LoadOne"/> serves this dependency's code from compiled artifacts —
+    /// Tier 1, 2 or 2.5 — rather than compiling its source with the run's --define (Tier 3).
+    /// The same checks, in the same order, as the tiers themselves, so the metadata producer
+    /// compiles with the inputs of the code that actually runs (#5051).
+    /// </summary>
+    internal static bool RunsPrecompiledCode(AppManifest m, string appPath, string bucketRoot)
+    {
+        if (FindPrecompiledSidecar(m, bucketRoot) != null) return true;
+        if (AppLoader.IsR2R(appPath) && AppLoader.ExtractAllDllPaths(appPath).Count > 0) return true;
+        return IsServedFromServiceTierDlls(AppLoader.ExtractAl(appPath));
+    }
+
+    /// <summary>Tier 2.5's condition: every codeunit the package declares is in the extracted
+    /// service-tier DLL cache.</summary>
+    private static bool IsServedFromServiceTierDlls(IReadOnlyList<(string Name, string Source)> alSources)
+    {
+        if (alSources.Count == 0 || !ServiceTierDllIndex.Available) return false;
+        var codeunitIds = ExtractCodeunitTypeNames(alSources);
+        return codeunitIds.Count > 0 && codeunitIds.All(ServiceTierDllIndex.Contains);
     }
 
     /// <summary>
@@ -531,7 +553,7 @@ public sealed class DependencyLoader
         // app's METADATA, and which tier supplies its CODE does not change what its tables
         // look like. DependencyMetadataProducer's header has the availability-vs-failure
         // split this depends on.
-        EnsureDependencyMetadata(m, appPath);
+        EnsureDependencyMetadata(m, appPath, bucketRoot);
 
         // Tier 1: precompiled DLL.
         var precompiled = FindPrecompiledSidecar(m, bucketRoot);
@@ -638,16 +660,12 @@ public sealed class DependencyLoader
         // source compile and let CodeunitPatches.FindCodeunitType resolve each codeunit body
         // lazily from the cache at dispatch (runs the REAL Microsoft code). Per the chosen
         // policy: source-compile only remains the fallback for objects the cache lacks.
-        if (alSources.Count > 0 && ServiceTierDllIndex.Available)
+        if (IsServedFromServiceTierDlls(alSources))
         {
-            var codeunitIds = ExtractCodeunitTypeNames(alSources);
-            if (codeunitIds.Count > 0 && codeunitIds.All(ServiceTierDllIndex.Contains))
-            {
-                Console.Error.WriteLine(
-                    $"[deps] DLL-first: {m.Publisher}_{m.Name} v{m.Version} — {codeunitIds.Count} codeunit(s) " +
-                    $"served from extracted service-tier DLLs; skipping source compile");
-                return (null, null, EmptyAssemblies); // lazy dispatch via ServiceTierDllIndex
-            }
+            Console.Error.WriteLine(
+                $"[deps] DLL-first: {m.Publisher}_{m.Name} v{m.Version} — {ExtractCodeunitTypeNames(alSources).Count} codeunit(s) " +
+                $"served from extracted service-tier DLLs; skipping source compile");
+            return (null, null, EmptyAssemblies); // lazy dispatch via ServiceTierDllIndex
         }
 
         if (alSources.Count == 0)

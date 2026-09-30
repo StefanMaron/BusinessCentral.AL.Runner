@@ -570,7 +570,7 @@ public sealed class DependencyMetadataPartialEmitTests
         // Negative direction, and the half that makes the throw worth having: nothing was
         // persisted. A cached partial set is replayed by every later run without recompiling,
         // so it would record 1 document as this app's complete metadata permanently.
-        var key = DependencyMetadataProducer.CacheKey(manifest, pkg);
+        var key = DependencyMetadataProducer.CacheKey(manifest, pkg, BcCompiler.GetExtraPreprocessorSymbols());
         Assert.NotNull(key);
         var sidecar = Path.Combine(
             AlRunner.Infrastructure.CacheRoots.Resolve("dep-metadata"),
