@@ -40,7 +40,7 @@
 //   default, so a failure that reached the consumer would be indistinguishable from absence.
 //
 // COST, AND WHY IT IS OPT-IN PER APP
-//   Once per (app id, app version, BC version), never per run: the documents persist to
+//   Once per (package content, --define symbols, BC version), never per run: the documents persist to
 //   AlObjectMetadataRegistry's sidecar format under the `dep-metadata` cache root and are
 //   replayed on every later run. Business Foundation (96 AL files): ~6.2 s cold, 55 documents.
 //
@@ -82,7 +82,7 @@ namespace AlRunner;
 /// <summary>
 /// Compiles a source-shipping dependency's AL with BC's own compiler so BC's metadata
 /// documents reach <see cref="AlObjectMetadataRegistry"/>, and persists them per
-/// (app id, app version, BC version).
+/// (package content, --define symbols, BC version) — see <see cref="CacheKeyCore"/>.
 /// </summary>
 internal static class DependencyMetadataProducer
 {
@@ -98,18 +98,35 @@ internal static class DependencyMetadataProducer
     internal static bool IsExcluded(AppManifest m) => NeverCompile.Contains(m.Name);
 
     /// <summary>
-    /// The identity a dependency's metadata cache entry is stored under. The BC version is
-    /// part of it because the documents are BC's own emitter output for one exact build — a
-    /// key without it would serve one BC version's metadata to another, which is the failure
-    /// the ground-truth generator avoids by keying its bundles the same way.
+    /// The file name a dependency's metadata cache entry is stored under, or null when the
+    /// package's content cannot be read — such a package is compiled without the cache rather
+    /// than sharing one key with every other unreadable package.
     /// </summary>
-    internal static string CacheKey(AppManifest m)
-        => $"{m.AppId:N}_{m.Version}_{AlRunner.Infrastructure.BcArtifacts.SelectedVersion}";
+    internal static string? CacheKey(AppManifest m, string appPath)
+        => CacheKeyCore(m, RunnerFingerprint.ComputeFileContentHashMemoized(appPath),
+            BcCompiler.GetExtraPreprocessorSymbols());
 
-    private static string SidecarPath(AppManifest m)
-        => Path.Combine(
-            AlRunner.Infrastructure.CacheRoots.Resolve("dep-metadata"),
-            CacheKey(m) + ".object-metadata.json");
+    /// <summary>
+    /// App id, version and BC build stay readable at the front. The hash carries what else
+    /// changes the documents at an unchanged version (#5039): the package bytes, and the
+    /// --define symbols the compile applies (<see cref="BcCompiler.BuildParseOptions"/>),
+    /// normalised as in <see cref="BcCompiler.GetExtraPreprocessorSymbols"/>. The package's own
+    /// <c>PreprocessorSymbols</c> are inside its bytes.
+    /// </summary>
+    internal static string? CacheKeyCore(AppManifest m, string contentHash, IEnumerable<string> defines)
+    {
+        if (string.IsNullOrEmpty(contentHash) || contentHash == RunnerFingerprint.UnknownContentHash)
+            return null;
+        var normalised = defines.Distinct(StringComparer.Ordinal).OrderBy(s => s, StringComparer.Ordinal);
+        var terms = $"schema:v2\napp-bytes:{contentHash}\ndefines:{string.Join(",", normalised)}\n";
+        var hash = Convert.ToHexString(
+            System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(terms)))
+            .ToLowerInvariant();
+        return $"{m.AppId:N}_{m.Version}_{BcArtifacts.SelectedVersion}_{hash[..32]}";
+    }
+
+    private static string SidecarPath(string key)
+        => Path.Combine(CacheRoots.Resolve("dep-metadata"), key + ".object-metadata.json");
 
     /// <summary>
     /// The container the per-compile scratch directories live under, exposed so a test can
@@ -153,8 +170,9 @@ internal static class DependencyMetadataProducer
     {
         if (IsExcluded(m)) return 0;
 
-        var sidecar = SidecarPath(m);
-        if (File.Exists(sidecar))
+        var key = CacheKey(m, appPath);
+        var sidecar = key is null ? null : SidecarPath(key);
+        if (sidecar != null && File.Exists(sidecar))
         {
             try
             {
@@ -251,7 +269,8 @@ internal static class DependencyMetadataProducer
                     "leave every table on the hand-derivation with nothing saying why. " +
                     "See issue #3549.", null);
 
-            Persist(sidecar, produced, m, sw.ElapsedMilliseconds);
+            if (sidecar != null) Persist(sidecar, produced, m, sw.ElapsedMilliseconds);
+            else Trace($"not cached: {m.Name} v{m.Version} has no readable content hash");
             return produced.Length;
         }
         finally

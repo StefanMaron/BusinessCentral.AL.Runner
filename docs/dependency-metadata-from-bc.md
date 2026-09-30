@@ -53,7 +53,7 @@ under-specified (#3816). Business Foundation is 70 on all four.
 | Base Application | 8,025 | not attempted — see below | — |
 
 The feature stays **opt-in**, `AL_RUNNER_DEP_METADATA_FROM_BC` — the cost of the first compile
-per (app, BC version) is real even though it is paid once:
+per (package, symbol set, BC version) is real even though it is paid once:
 
 - unset / `0` — off. Byte-identical to the behaviour before #3549; verified as a regression arm.
 - `1` — every source-shipping dependency.
@@ -279,14 +279,25 @@ problem rather than the app's build breaking.
 
 ## The cache
 
-One entry per **(app id, app version, BC version)** under the `dep-metadata` cache root, in
-`AlObjectMetadataRegistry`'s sidecar format. The BC version is part of the key because the
-documents are one exact build's emitter output; a key without it serves one build's metadata to
-another. Written through a temp file and moved into place, so an interrupted run leaves no
-half-file.
+One entry per **(package content, `--define` symbols, BC version)** under the `dep-metadata`
+cache root, in `AlObjectMetadataRegistry`'s sidecar format. The file name starts with the app id,
+version and BC version so a listing stays readable; the hash after them
+(`DependencyMetadataProducer.CacheKeyCore`) is what separates entries:
 
-Cost is paid once per app per BC version — a provisioning cost, not a per-run one. Business
-Foundation: 6.0–6.2 s to produce, then a cache hit.
+- **the BC version**, because the documents are one exact build's emitter output; a key without it
+  serves one build's metadata to another;
+- **the package bytes** (#5039), because a dependency rebuilt at an unchanged version has
+  different documents — the package's own `PreprocessorSymbols` are inside those bytes;
+- **the `--define` symbols** (#5039), because the compile applies them
+  (`BcCompiler.BuildParseOptions`) and a `#if` around a field changes the table's document. They
+  are sorted and de-duplicated ordinally, as `BcCompiler.GetExtraPreprocessorSymbols` does.
+
+A package whose bytes cannot be hashed gets no key: it is compiled without the cache rather than
+sharing one entry with every other unreadable package. Written through a temp file and moved into
+place, so an interrupted run leaves no half-file.
+
+Cost is paid once per package per symbol set per BC version — a provisioning cost, not a per-run
+one. Business Foundation: 6.0–6.2 s to produce, then a cache hit.
 
 ## Verified arms
 
