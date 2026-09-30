@@ -55,9 +55,28 @@ public class ServerAffectedSelectionEnteredScopeTests
         }
         """;
 
-    private static string Page(string triggers = "")
+    // A field trigger and an action trigger, both empty: their AL names ("PK - OnValidate",
+    // "Act - OnAction") differ from their C# method names, which is what selection must key on.
+    private static string Page(string triggers = "", string validateBody = "", string actionBody = "")
         => "page 60696 \"EnterSel Page SX\"\n{\n    SourceTable = \"EnterSel Tab SX\";\n"
-           + "    layout { area(Content) { field(PK; Rec.PK) { } } }\n" + triggers + "}\n";
+           + "    layout\n    {\n        area(Content)\n        {\n            field(PK; Rec.PK)\n            {\n"
+           + "                trigger OnValidate()\n                begin\n" + validateBody
+           + "                end;\n            }\n        }\n    }\n"
+           + "    actions\n    {\n        area(Processing)\n        {\n            action(Act)\n            {\n"
+           + "                trigger OnAction()\n                begin\n" + actionBody
+           + "                end;\n            }\n        }\n    }\n"
+           + triggers + "}\n";
+
+    // A processing-only report whose dataitem trigger is empty.
+    private static string Report(string body = "")
+        => "report 60700 \"EnterSel Report SX\"\n{\n    ProcessingOnly = true;\n\n    dataset\n    {\n"
+           + "        dataitem(T; \"EnterSel Tab SX\")\n        {\n"
+           + "            trigger OnAfterGetRecord()\n            begin\n" + body
+           + "            end;\n        }\n    }\n}\n";
+
+    private const string ProbeValidate = "                    Error('PROBE-VALIDATE');\n";
+    private const string ProbeAction = "                    Error('PROBE-ACTION');\n";
+    private const string ProbeReport = "                Error('PROBE-REPORT');\n";
 
     private const string ProbeEmpty = "        Error('PROBE-EMPTY');\n";
     private const string ProbeRun = "        Error('PROBE-RUN');\n";
@@ -108,6 +127,36 @@ public class ServerAffectedSelectionEnteredScopeTests
             end;
 
             [Test]
+            procedure ValidatesPageField()
+            var
+                TP: TestPage "EnterSel Page SX";
+            begin
+                TP.OpenNew();
+                TP.PK.SetValue(5);
+                TP.Close();
+            end;
+
+            [Test]
+            procedure InvokesPageAction()
+            var
+                TP: TestPage "EnterSel Page SX";
+            begin
+                TP.OpenView();
+                TP.Act.Invoke();
+                TP.Close();
+            end;
+
+            [Test]
+            procedure RunsReport()
+            var
+                T: Record "EnterSel Tab SX";
+            begin
+                T.PK := 1;
+                T.Insert();
+                Report.Run(60700, false);
+            end;
+
+            [Test]
             procedure Unrelated()
             begin
                 if 1 + 1 <> 2 then
@@ -117,7 +166,8 @@ public class ServerAffectedSelectionEnteredScopeTests
         """;
 
     private static readonly string[] All =
-        { "CallsEmpty", "CallsQ", "OpensPage", "RunsById", "RunsGlobalA", "RunsGlobalB", "RunsNoTriggerById", "Unrelated" };
+        { "CallsEmpty", "CallsQ", "InvokesPageAction", "OpensPage", "RunsById", "RunsGlobalA", "RunsGlobalB",
+          "RunsNoTriggerById", "RunsReport", "Unrelated", "ValidatesPageField" };
 
     private static string Bundle(string prefix, string appIdSuffix)
     {
@@ -131,7 +181,7 @@ public class ServerAffectedSelectionEnteredScopeTests
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "1.0.0.0",
-          "idRanges": [ { "from": 60690, "to": 60699 } ],
+          "idRanges": [ { "from": 60690, "to": 60709 } ],
           "runtime": "14.0"
         }
         """);
@@ -140,6 +190,7 @@ public class ServerAffectedSelectionEnteredScopeTests
         Write(dir, "NoTrig.Codeunit.al", NoTriggerCodeunit());
         Write(dir, "Tab.Table.al", Table);
         Write(dir, "Page.Page.al", Page());
+        Write(dir, "Report.Report.al", Report());
         Write(dir, "Tests.Codeunit.al", Tests);
         Write(dir, "Global.Codeunit.al", GlobalCodeunit());
         Write(dir, "GlobalTests.Codeunit.al", GlobalTests);
@@ -234,9 +285,36 @@ public class ServerAffectedSelectionEnteredScopeTests
         Write(bundle, "NoTrig.Codeunit.al", NoTriggerCodeunit());
         AssertSelectedAndPass(await Send(server, bundle), "RunsNoTriggerById");
 
-        // A page without triggers gains one: the test that opened it built its instance.
+        // Empty triggers whose AL name is not their C# method name: a page field's OnValidate,
+        // a page action's OnAction, a report dataitem's OnAfterGetRecord. Each change is narrowed
+        // to that trigger, so only the test that drives it runs, not the other tests opening the page.
+        Write(bundle, "Page.Page.al", Page(validateBody: ProbeValidate));
+        AssertSelectedAndFails(await Send(server, bundle), "ValidatesPageField", "PROBE-VALIDATE");
+        Write(bundle, "Page.Page.al", Page(actionBody: ProbeAction));
+        var action = await Send(server, bundle);
+        // The revert of OnValidate is a deletion, which widens to the whole page.
+        Assert.False(action.ForcedFull, action.Raw);
+        Assert.Equal(new[] { "InvokesPageAction", "OpensPage", "ValidatesPageField" }, action.Ran);
+        Assert.Contains("PROBE-ACTION", action.Line["InvokesPageAction"], StringComparison.Ordinal);
+        Assert.Equal("pass", action.Status["OpensPage"]);
+        Assert.Equal("pass", action.Status["ValidatesPageField"]);
+        Write(bundle, "Page.Page.al", Page());
+        Assert.Equal(new[] { "InvokesPageAction", "OpensPage", "ValidatesPageField" }, (await Send(server, bundle)).Ran);
+        Write(bundle, "Page.Page.al", Page(actionBody: ProbeAction));
+        AssertSelectedAndFails(await Send(server, bundle), "InvokesPageAction", "PROBE-ACTION");
+        Write(bundle, "Page.Page.al", Page());
+        await Send(server, bundle);
+
+        Write(bundle, "Report.Report.al", Report(ProbeReport));
+        AssertSelectedAndFails(await Send(server, bundle), "RunsReport", "PROBE-REPORT");
+
+        // A page trigger added where none existed: whole-object, so every test that opened the page.
         Write(bundle, "Page.Page.al", Page(ProbePage));
-        AssertSelectedAndFails(await Send(server, bundle), "OpensPage", "PROBE-PAGE");
+        var page = await Send(server, bundle);
+        Assert.False(page.ForcedFull, page.Raw);
+        Assert.Equal(new[] { "InvokesPageAction", "OpensPage", "ValidatesPageField" }, page.Ran);
+        foreach (var t in page.Ran)
+            Assert.Contains("PROBE-PAGE", page.Line[t], StringComparison.Ordinal);
 
         // An instance no one test built: which tests use it is not recorded, so everything runs.
         Write(bundle, "Global.Codeunit.al", GlobalCodeunit(ProbeGlobal));
