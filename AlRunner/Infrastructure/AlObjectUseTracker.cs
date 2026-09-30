@@ -9,17 +9,17 @@ namespace AlRunner.Infrastructure;
 /// empty procedure or a page without triggers, so a change adding their first statement would
 /// otherwise select no test. See docs/server-mode.md#affectedonly-and-entered-scopes.
 ///
-/// Three observation points, all in runner helpers Ncl already calls on every construction or
-/// entry, and all a volatile read unless <see cref="AlCoverageTracker.PerTestEnabled"/> is set:
+/// Two observation points, both in runner helpers Ncl already calls on every construction or
+/// entry, and both a volatile read unless <see cref="AlCoverageTracker.PerTestEnabled"/> is set:
 /// <list type="bullet">
 /// <item><see cref="NoteObjectConstructed"/>: <c>NavApplicationObjectBase</c>'s constructor
 /// replacement, for every codeunit, page, report, xmlport and query instance.</item>
 /// <item><see cref="NoteInlineScopeEntered"/>: <c>ALMethodScope.AssignScopeId</c>, which BC calls
 /// only from <c>ALStart</c> — the first thing every inline-emitted AL method does, empty or not.
 /// The method id is not assigned yet when the base constructor runs, so it is read here.</item>
-/// <item><see cref="NoteScopeClassEntered"/>: <c>NavMethodScope</c>'s constructor replacement, for
-/// the scope-class shape (event publishers).</item>
 /// </list>
+/// The other scope shape, a nested scope class, is emitted in inline mode only for event
+/// publishers, which cannot contain code (AL0286); their object's instance is recorded either way.
 /// </summary>
 public static class AlObjectUseTracker
 {
@@ -27,7 +27,6 @@ public static class AlObjectUseTracker
     {
         public readonly HashSet<Type> Objects = new();
         public readonly HashSet<(Type Owner, int MethodId)> InlineScopes = new();
-        public readonly HashSet<Type> ScopeClasses = new();
     }
 
     /// <summary>What one test used: the AL object classes it constructed, and the scope keys
@@ -83,14 +82,6 @@ public static class AlObjectUseTracker
         lock (_lock) CurrentBucket()?.InlineScopes.Add((owner.GetType(), al.MethodId));
     }
 
-    /// <summary>A method scope was constructed; only the scope-class shape is recorded here, an
-    /// <see cref="ALMethodScope"/> is recorded when it starts.</summary>
-    public static void NoteScopeClassEntered(object? scope)
-    {
-        if (!AlCoverageTracker.PerTestEnabled || scope == null || scope is ALMethodScope) return;
-        lock (_lock) CurrentBucket()?.ScopeClasses.Add(scope.GetType());
-    }
-
     /// <summary>What each test used since the last <see cref="ResetPerTest"/>.</summary>
     public static Dictionary<string, Use> CollectPerTest()
     {
@@ -99,7 +90,7 @@ public static class AlObjectUseTracker
         {
             foreach (var (testKey, bucket) in _perTest)
             {
-                var scopes = new List<MemberInfo>(bucket.ScopeClasses);
+                var scopes = new List<MemberInfo>();
                 var unresolved = new HashSet<Type>();
                 foreach (var (owner, methodId) in bucket.InlineScopes)
                 {

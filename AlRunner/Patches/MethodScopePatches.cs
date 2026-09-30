@@ -307,8 +307,6 @@ public static partial class BcRuntime
             // 7. NavSession.CurrentMethodScope backing field = self  (mirrors real ctor's session.CurrentMethodScope = this)
             if (_fSessCurrentScope != null && _skeletonSession != null)
                 FieldPoke.SetInstance(_fSessCurrentScope, _skeletonSession, self);
-            // #5011: a scope-class frame (event publishers) has entered its method.
-            AlRunner.Infrastructure.AlObjectUseTracker.NoteScopeClassEntered(self);
             // cancellationToken, sqlStatisticsAvailable, globalSql*AtStart all left at default
             // (zero-value structs / false) — safe for the test harness since no SQL paths run.
         }
