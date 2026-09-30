@@ -97,13 +97,13 @@ public sealed class ActionRunPageModeTests
         });
 
     [Theory]
-    [InlineData("View", RunnerPageInstance.ActionRunPageMode.View)]
-    [InlineData("Edit", RunnerPageInstance.ActionRunPageMode.Edit)]
-    [InlineData("Create", RunnerPageInstance.ActionRunPageMode.Create)]
-    [InlineData("create", RunnerPageInstance.ActionRunPageMode.Create)]
-    [InlineData(null, RunnerPageInstance.ActionRunPageMode.Default)]
-    public void RunPageModeFromText_MapsAlsThreeModes(string? text, RunnerPageInstance.ActionRunPageMode expected)
-        => Assert.Equal(expected, Instance().RunPageModeFromText(4242, text));
+    [InlineData("View", "View")]
+    [InlineData("Edit", "Edit")]
+    [InlineData("Create", "Create")]
+    [InlineData("create", "Create")]
+    [InlineData(null, "Default")]
+    public void RunPageModeFromText_MapsAlsThreeModes(string? text, string expected)
+        => Assert.Equal(expected, Instance().RunPageModeFromText(4242, text).ToString());
 
     [Fact]
     public void RunPageModeFromText_AnUnknownMode_IsRefusedByName()
