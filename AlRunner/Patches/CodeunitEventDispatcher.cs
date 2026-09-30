@@ -160,8 +160,6 @@ public static partial class BcRuntime
 
     private static bool _firstDispatchLogged;
     private static bool _firstFireLogged;
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, byte> _unresolvedExtensionPublishers = new();
-
     private static void DispatchCore(object publisherScope)
     {
         if (publisherScope == null) return;
@@ -202,14 +200,7 @@ public static partial class BcRuntime
             // #5004: an extension's event is published under its base object.
             var extensionInstance = navMethodScopeType.GetProperty("ApplicationObject", BindingFlags.Public | BindingFlags.Instance)?
                 .GetValue(publisherScope);
-            if (ResolveExtensionPublisher(extensionKind, extensionId, extensionInstance) is not { } resolved)
-            {
-                if (_unresolvedExtensionPublishers.TryAdd(scopeType, 0))
-                    Console.Error.WriteLine(
-                        $"[warn] {extensionKind} {extensionId} raised {eventMethodName}, but the object it extends could not "
-                        + "be resolved, so no subscriber of that event is called");
-                return;
-            }
+            var resolved = ResolveExtensionPublisherOrThrow(extensionKind, extensionId, eventMethodName, extensionInstance);
             publisherId = resolved.BaseId;
             pubObj = resolved.BaseInstance;
         }

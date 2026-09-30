@@ -63,6 +63,21 @@ public static partial class BcRuntime
         return ids.Count == 1 ? (null, ids[0]) : null;
     }
 
+    /// <summary>
+    /// <see cref="ResolveExtensionPublisher"/>, refusing when no base is found: without the base
+    /// the event's subscribers cannot be looked up, and returning would read as "nobody
+    /// subscribes" (loud-failures.md). BC's constructors set <c>ParentObject</c> with an
+    /// <c>as</c> cast, so a parent of another type leaves it null.
+    /// </summary>
+    internal static (object? BaseInstance, int BaseId) ResolveExtensionPublisherOrThrow(
+        string extensionKind, int extensionId, string eventName, object? extensionInstance)
+        => ResolveExtensionPublisher(extensionKind, extensionId, extensionInstance)
+           ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+               $"{extensionKind} {extensionId} event {eventName}",
+               "not-yet-implemented — the object this extension extends could not be resolved: the extension "
+               + "instance has no ParentObject and the source registry names no single base, so the event's "
+               + "subscribers cannot be looked up (#5004)");
+
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, PropertyInfo?> _parentObjectProperty = new();
 
     private static object? ReadParentObject(object extensionInstance)

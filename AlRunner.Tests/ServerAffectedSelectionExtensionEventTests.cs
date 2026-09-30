@@ -97,15 +97,101 @@ public class ServerAffectedSelectionExtensionEventTests
         return dir;
     }
 
+    // Two unrelated apps in one request each declare a table named "Dup Tab", so the source
+    // registry cannot name the tableextension's single base and its raise cannot be keyed.
+    private static (string X, string Y) DuplicateBaseNameBundles()
+    {
+        var x = TestScratch.Dir("al-runner-server-affected-extevent-dupx");
+        var y = TestScratch.Dir("al-runner-server-affected-extevent-dupy");
+        Directory.CreateDirectory(x);
+        Directory.CreateDirectory(y);
+        File.WriteAllText(Path.Combine(x, "app.json"), """
+        {
+          "id": "0b7c2f4e-5004-4a1e-8c55-3b8f2a9e5005",
+          "name": "Dup Base Name X",
+          "publisher": "AL Runner",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": 60740, "to": 60749 } ],
+          "runtime": "14.0"
+        }
+        """);
+        File.WriteAllText(Path.Combine(y, "app.json"), """
+        {
+          "id": "0b7c2f4e-5004-4a1e-8c55-3b8f2a9e5006",
+          "name": "Dup Base Name Y",
+          "publisher": "AL Runner",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": 60750, "to": 60759 } ],
+          "runtime": "14.0"
+        }
+        """);
+        File.WriteAllText(Path.Combine(x, "Tab.Table.al"), """
+            table 60740 "Dup Tab"
+            {
+                fields { field(1; PK; Integer) { } }
+                keys { key(PK; PK) { Clustered = true; } }
+            }
+            """);
+        File.WriteAllText(Path.Combine(x, "TabExt.TableExt.al"), """
+            tableextension 60741 "Dup TabExt" extends "Dup Tab"
+            {
+                procedure RaiseExt()
+                begin
+                    OnExtEvent();
+                end;
+
+                [IntegrationEvent(false, false)]
+                local procedure OnExtEvent()
+                begin
+                end;
+            }
+            """);
+        File.WriteAllText(Path.Combine(x, "Tests.Codeunit.al"), """
+            codeunit 60743 "Dup Tests"
+            {
+                Subtype = Test;
+
+                [Test]
+                procedure RaisesExt()
+                var
+                    T: Record "Dup Tab";
+                begin
+                    T.RaiseExt();
+                end;
+            }
+            """);
+        File.WriteAllText(Path.Combine(y, "Tab.Table.al"), """
+            table 60750 "Dup Tab"
+            {
+                fields { field(1; PK; Integer) { } }
+                keys { key(PK; PK) { Clustered = true; } }
+            }
+            """);
+        return (x, y);
+    }
+
+    private static string DupSubscriber(bool bound)
+        => "codeunit 60742 \"Dup Sub\"\n{\n"
+           + "    procedure Helper(): Integer\n    begin\n        exit(1);\n    end;\n"
+           + (bound
+               ? "\n    [EventSubscriber(ObjectType::Table, Database::\"Dup Tab\", 'OnExtEvent', '', false, false)]\n"
+                 + "    local procedure Handle()\n    begin\n        Error('PROBE-DUP');\n    end;\n"
+               : "")
+           + "}\n";
+
     private sealed record Observed(string[] Ran, Dictionary<string, string> Status,
         Dictionary<string, string> Line, bool ForcedFull, string Raw);
 
-    private static async Task<Observed> Send(CliServer server, string bundle)
+    private static async Task<Observed> Send(CliServer server, params string[] bundles)
     {
         var request = JsonSerializer.Serialize(new Dictionary<string, object?>
         {
             ["command"] = "runTests",
-            ["sourcePaths"] = new[] { bundle },
+            ["sourcePaths"] = bundles,
             ["packagePaths"] = Array.Empty<string>(),
             ["affectedOnly"] = true,
         });
@@ -150,5 +236,29 @@ public class ServerAffectedSelectionExtensionEventTests
         Assert.Equal(new[] { RaisesExt }, added.Ran);
         Assert.Equal("fail", added.Status[RaisesExt]);
         Assert.Contains("PROBE-EXT", added.Line[RaisesExt]);
+    }
+
+    // The raise of an extension event whose base the registry cannot name is recorded under no
+    // key, so "fully seeded publisher, event never observed" would skip its raiser. The module
+    // must count as not fully seeded instead, forcing a full run in which the subscriber fires.
+    [SkippableFact]
+    public async Task SubscriberAddedToAnUnkeyableExtensionEvent_ForcesAFullRun()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (x, y) = DuplicateBaseNameBundles();
+        var subscriberFile = Path.Combine(x, "Sub.Codeunit.al");
+        File.WriteAllText(subscriberFile, DupSubscriber(bound: false));
+        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+
+        var baseline = await Send(server, x, y);
+        Assert.True(baseline.ForcedFull, baseline.Raw);
+        Assert.Equal("pass", baseline.Status["Codeunit60743.RaisesExt"]);
+
+        File.WriteAllText(subscriberFile, DupSubscriber(bound: true));
+        var added = await Send(server, x, y);
+        Assert.True(added.ForcedFull, added.Raw);
+        Assert.Contains("could not all be recorded", added.Raw);
+        Assert.Equal("fail", added.Status["Codeunit60743.RaisesExt"]);
+        Assert.Contains("PROBE-DUP", added.Line["Codeunit60743.RaisesExt"]);
     }
 }
