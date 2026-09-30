@@ -72,7 +72,9 @@ public sealed class DependencyMetadataPrecompiledDefineTests : IDisposable
     /// <summary>
     /// The DLL was compiled without FLAG, so the table has field 1 and nothing else, whatever
     /// the run defines. Field 1 is the control: a table the run could not see at all would fail
-    /// it, where it would pass the field-20 test.
+    /// it, where it would pass the field-20 test. The second procedure exists only under FLAG:
+    /// it counts in run 1 only if the scope that withheld --define from the dependency's
+    /// metadata compile has ENDED before the test app itself compiles.
     /// </summary>
     private const string TestSource = """
         codeunit 50250 DllProbeTests
@@ -92,6 +94,18 @@ public sealed class DependencyMetadataPrecompiledDefineTests : IDisposable
                 if R.FieldCount() <> 1 then
                     Error('DLLPROBE FieldCount=%1, expected 1', R.FieldCount());
             end;
+        #if FLAG
+
+            [Test]
+            procedure RunDefineStillReachesTheTestApp()
+            var
+                R: RecordRef;
+            begin
+                R.Open(50200);
+                if R.FieldCount() <> 1 then
+                    Error('DLLPROBE FieldCount=%1 in the FLAG-only test', R.FieldCount());
+            end;
+        #endif
         }
         """;
 
@@ -165,10 +179,13 @@ public sealed class DependencyMetadataPrecompiledDefineTests : IDisposable
         lock (sb) return (sb.ToString(), p.ExitCode);
     }
 
-    private static void AssertPassed((string Output, int Exit) r, string run)
+    private static void AssertPassed((string Output, int Exit) r, string run, int expectedPassed)
     {
         Assert.True(r.Exit == 0, $"{run}: exit {r.Exit}\n{r.Output}");
-        Assert.Contains("passed 1", r.Output);
+        var summary = r.Output.Split('\n').Select(l => l.Trim()).LastOrDefault(l => l.StartsWith("Tests:")) ?? "(no Tests: line)";
+        Assert.True(
+            System.Text.RegularExpressions.Regex.IsMatch(summary, $@"^Tests: +{expectedPassed} +passed {expectedPassed} +failed 0 "),
+            $"{run}: expected {expectedPassed} passed, got '{summary}'");
         Assert.DoesNotContain("DLLPROBE", r.Output);
         Assert.Empty(RunnerFailureLines.All(r.Output));
     }
@@ -190,12 +207,13 @@ public sealed class DependencyMetadataPrecompiledDefineTests : IDisposable
         WriteFixture();
 
         var first = Run("FLAG");
-        AssertPassed(first, "run 1 (--define FLAG, empty cache)");
+        // 2: the FLAG-only procedure compiled, so the test app still saw the run's --define.
+        AssertPassed(first, "run 1 (--define FLAG, empty cache)", expectedPassed: 2);
         Assert.True(first.Output.Contains($"[dep-metadata] WROTE {DepName}"),
             $"run 1: expected the producer to compile the dependency's metadata\n{first.Output}");
 
         var second = Run();
-        AssertPassed(second, "run 2 (no symbols)");
+        AssertPassed(second, "run 2 (no symbols)", expectedPassed: 1);
         Assert.True(second.Output.Contains($"[dep-metadata] cache HIT {DepName}"),
             $"run 2: expected run 1's entry to be replayed\n{second.Output}");
         Assert.DoesNotContain($"[dep-metadata] WROTE {DepName}", second.Output);
