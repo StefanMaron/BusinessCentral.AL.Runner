@@ -1018,6 +1018,16 @@ public static partial class NclCecilRewrite
                     ByParams(Rt + "NavRecord", ".ctor", "ITreeObject", "Int32", "NCLMetaTable", "Boolean",
                         "NavRecord", "String", "SecurityFiltering"),
                     H(raise, "NoteRecordConstructed"), 1, 2);
+
+                // #5050: WorkDate outlives every test isolation. Observed at its storage, the session
+                // property, because the 'w' token of Evaluate and of date filters reads it without
+                // AL's WorkDate() (ALSystemDate.ALWorkDate). The backing field has no other accessor
+                // (bc284). Observer only; no args.
+                var state = typeof(AlRunner.Infrastructure.AlSessionStateTracker);
+                PrependStaticCall(nclMod, ByParams(Rt + "NavSession", "get_WorkDate"),
+                    H(state, "NoteWorkDateRead"), argSlots: 0);
+                PrependStaticCall(nclMod, ByParams(Rt + "NavSession", "set_WorkDate", "NavDate"),
+                    H(state, "NoteWorkDateWrite"), argSlots: 0);
             }
 
             // ── TempTableDataProvider.Find / FindFromPosition (query column projection) ──

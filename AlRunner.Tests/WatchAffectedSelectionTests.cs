@@ -450,6 +450,30 @@ public class WatchAffectedSelectionTests
         }
     }
 
+    /// <summary>
+    /// #5050 through watch, under the default Codeunit isolation: an edit to the SingleInstance
+    /// store's writer selects the test in another codeunit that reads it; the control stays skipped.
+    /// </summary>
+    [SkippableFact]
+    public async Task WatchAffected_SingleInstanceWriterEdit_SelectsTheReaderInAnotherCodeunit()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = ServerAffectedSelectionSessionStateTests.StoreBundle("al-runner-watch-affected-session-si", "000000000011");
+        var cache = TestScratch.Dir("al-runner-watch-affected-session-si-cache");
+        using var watch = new WatchProcess(new[] { bundle, "--watch", "--affected", "--show-pass", "--cache", cache });
+
+        var first = await watch.NextCycle(ColdCycle);
+        AssertRan(first, "cycle 1", new[] { "Independent", "Reads", "Writes" });
+        AssertAllPass(first, "cycle 1");
+
+        WatchEdit.Replace(Path.Combine(bundle, "Store.Codeunit.al"), ServerAffectedSelectionSessionStateTests.Store("Stored := V + 1;"));
+        var edit = await watch.NextCycle(WarmCycle);
+        AssertRan(edit, "writer edit", new[] { "Reads", "Writes" });
+        AssertFailsWith(edit, "writer edit", "Reads", "READS-43");
+        AssertCounts(edit, "writer edit", 2, 3, 1, 0);
+        AssertNarrowed(edit, "writer edit");
+    }
+
     /// <summary>Without --affected, --watch is unchanged: every test runs on every cycle.</summary>
     [SkippableFact]
     public async Task Watch_WithoutAffected_RunsEveryTestEveryCycle()
