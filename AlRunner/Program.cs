@@ -8107,12 +8107,21 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     response = AlRunner.ServerProtocol.Error("Invalid request (missing 'command')");
                     break;
                 case "runtests":
-                    HandleServerRunTests(req, output);
+                {
+                    var fields = AlRunner.ServerProtocol.CheckFields(req);
+                    if (fields.Error != null) { response = AlRunner.ServerProtocol.Error(fields.Error); break; }
+                    HandleServerRunTests(req, output, fields.Warnings);
                     response = null;
                     break;
+                }
                 case "execute":
-                    response = HandleServerExecute(req);
+                {
+                    var fields = AlRunner.ServerProtocol.CheckFields(req);
+                    response = fields.Error != null
+                        ? AlRunner.ServerProtocol.Error(fields.Error)
+                        : HandleServerExecute(req, fields.Warnings);
                     break;
+                }
                 case "shutdown":
                     response = AlRunner.ServerProtocol.Shutdown();
                     shuttingDown = true;
@@ -8175,7 +8184,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     // remaining bundles. Cooperative only (TestExecutor.Run's doc comment): a test
     // already in flight always finishes; cancellation stops the NEXT one.
     // ─────────────────────────────────────────────────────────────────────────
-    void HandleServerRunTests(AlRunner.ServerRequest req, System.IO.TextWriter output)
+    void HandleServerRunTests(AlRunner.ServerRequest req, System.IO.TextWriter output, IReadOnlyList<string>? fieldWarnings = null)
     {
         // #1936: real wall-clock duration of THIS request (received → summary
         // written), for the `wallSeconds` field on the terminal summary line. Not
@@ -8304,7 +8313,8 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     statementTable: statementTable,
                     perTestStatementTable: requestPerTestCoverage ? perTestStatementTable : null,
                     companyInitFailures: companyInitFailures,
-                    sourceScanFailures: scanFailures));
+                    sourceScanFailures: scanFailures,
+                    warnings: fieldWarnings));
                 output.Flush();
             }
         }
@@ -8329,7 +8339,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     // second execution path. `captureValues` (#1640, second slice — --coverage
     // was the first, #1922) gates AlValueCapture.Enabled for the duration of
     // this call; RunFirstCodeunitOnRun resets+collects it per bundle.
-    string HandleServerExecute(AlRunner.ServerRequest req)
+    string HandleServerExecute(AlRunner.ServerRequest req, IReadOnlyList<string>? fieldWarnings = null)
     {
         string? scratchDir = null;
         string[] sourcePaths;
@@ -8485,7 +8495,8 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 statementTable: statementTable,
                 perTestStatementTable: perTestStatementTable,
                 companyInitFailures: companyInitFailures,
-                sourceScanFailures: scanFailures);
+                sourceScanFailures: scanFailures,
+                warnings: fieldWarnings);
         }
         finally
         {

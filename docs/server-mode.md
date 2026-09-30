@@ -9,8 +9,11 @@ side channel that can interrupt a `runTests` in progress (see below); every
 other command (`execute`, `shutdown`, errors) is a single response line.
 
 ```
-al-runner --server [--package-cache PATH ...] [--cache DIR]
+al-runner --server [--package-cache PATH ...] [--cache DIR] [--define SYM ...] [--preprocessor-symbols A,B,...]
 ```
+
+Preprocessor symbols are **daemon-wide**: `--define` / `--preprocessor-symbols` at start
+select the build every request compiles, and a request cannot change them (#4952).
 
 ## Transport
 
@@ -52,6 +55,25 @@ al-runner --server [--package-cache PATH ...] [--cache DIR]
                                  // request's value.
 }
 ```
+
+### Request fields
+
+Field names are case-sensitive. What happens to a field depends on the command (#4952):
+
+| the field | `runTests` / `execute` | `cancel` / `shutdown` |
+|---|---|---|
+| read by this command | used | — |
+| declared above, but read only by the other command, or by none (`stubPaths`) | the request runs; the response carries `warnings: ["'<field>' has no effect on …"]` — unless the value asks for nothing (`false`, `[]`, `""`, `null`) | ignored |
+| not declared above (`preprocessorSymbols`, `testFilter`, `SourcePaths`, …) | **refused** with one `{"error": …}` line naming the field; nothing runs | ignored |
+
+`runTests` reads `sourcePaths`, `packagePaths`, `coverage`, `perTestCoverage`, `affectedOnly`,
+`includeFailing` and `testIsolation`. `execute` reads `sourcePaths`, `code`, `packagePaths`,
+`captureValues`, `iterationTracking`, `coverage`, `perTestCoverage`, `affectedOnly` and
+`testIsolation`.
+
+`warnings` sits on the `runTests` summary line and on the `execute` response, and is omitted
+when empty. Preprocessor symbols have no request field: start the server with `--define SYM` or
+`--preprocessor-symbols A,B`.
 
 ## Responses
 
