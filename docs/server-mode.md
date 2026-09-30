@@ -999,8 +999,9 @@ Runs that are never reused, and seed fresh every time:
 
 - **`testIsolation` other than `codeunit`.** Only Codeunit isolation restores (and so clears every
   non-table leftover of the Install triggers) before any test code runs.
-- **A seed that used a `NumberSequence`.** Sequences live outside the store and are reset per
-  request, so a reuse would leave the tests without them.
+- **A seed that used a `NumberSequence` or the `WorkDate`.** Both are session state outside the
+  store: sequences are reset per request, so a reuse would leave the tests without them, and a
+  `WorkDate` an earlier test moved would be stamped by a fresh seed but not by a reuse.
 - **A seed that changed the session identity** (the #2983 adoption of a `--test-data` user), a
   change no snapshot carries.
 - **`AL_RUNNER_NO_DEP_COMPANY_CACHE=1`**, the kill switch for both install-baseline caches.

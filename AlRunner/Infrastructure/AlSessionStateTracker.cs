@@ -64,10 +64,23 @@ public static class AlSessionStateTracker
 
     /// <summary>Prepended to <c>NavSession.get_WorkDate</c>: AL's <c>WorkDate()</c> and the
     /// <c>'w'</c> token of Evaluate and date filters all read it.</summary>
-    public static void NoteWorkDateRead() => NoteRead(WorkDateKind);
+    public static void NoteWorkDateRead()
+    {
+        Interlocked.Increment(ref _workDateAccessCount);
+        NoteRead(WorkDateKind);
+    }
 
     /// <summary>Prepended to <c>NavSession.set_WorkDate</c>.</summary>
-    public static void NoteWorkDateWrite() => NoteWrite(WorkDateKind);
+    public static void NoteWorkDateWrite()
+    {
+        Interlocked.Increment(ref _workDateAccessCount);
+        NoteWrite(WorkDateKind);
+    }
+
+    // #5060: every WorkDate read or write, per-test tracking on or off, so TestExecutor can tell
+    // whether an install seed depended on session state no install-baseline snapshot carries.
+    private static long _workDateAccessCount;
+    internal static long WorkDateAccessCount => Interlocked.Read(ref _workDateAccessCount);
 
     internal static string NumberSequenceKind(string name, bool companySpecific)
         => $"NumberSequence|{name.ToLowerInvariant()}|{(companySpecific ? "company" : "database")}";

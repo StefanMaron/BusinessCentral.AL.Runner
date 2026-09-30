@@ -325,20 +325,29 @@ public sealed class TestExecutor
             "session=" + identity);
     }
 
+    /// <summary>Session state an install seed can read or write that no snapshot carries (#5054
+    /// lists the kinds). SingleInstance is absent: it is reset at bundle start and after the seed.</summary>
+    private static (long NumberSequence, long WorkDate) SessionStateAccessCounts()
+        => (AlRunner.Patches.NumberSequencePatches.AccessCount,
+            AlRunner.Infrastructure.AlSessionStateTracker.WorkDateAccessCount);
+
     /// <summary>Keep this app group's freshly captured baseline for the next run on
-    /// <paramref name="key"/> — unless the seed left state outside the snapshot, which a reuse
-    /// would silently drop: a NumberSequence it read or wrote, or a session identity it moved
-    /// (the #2983 adoption, a poke no snapshot carries).</summary>
+    /// <paramref name="key"/> — unless the seed depended on state outside the snapshot, which a
+    /// reuse would get wrong: a NumberSequence or the WorkDate it read or wrote, or a session
+    /// identity it moved (the #2983 adoption, a poke no snapshot carries).</summary>
     private static void StoreBundleBaseline(string key, string? identityAtKey,
         AlRunner.Patches.RecordPatches.InstallBaselineSnapshot captured, CompanyInitFailure? initFailure,
-        bool touchedNumberSequences)
+        (long NumberSequence, long WorkDate) stateBefore)
     {
         var shortKey = AlRunner.Infrastructure.InstallBaselineDiskCache.HashKey(key)[..8];
-        string? notStored = touchedNumberSequences
+        var stateAfter = SessionStateAccessCounts();
+        string? notStored = stateAfter.NumberSequence != stateBefore.NumberSequence
             ? "the seed used a NumberSequence"
-            : AlRunner.Patches.RecordPatches.SessionIdentityForBaselineKey() != identityAtKey
-                ? "the seed changed the session identity"
-                : null;
+            : stateAfter.WorkDate != stateBefore.WorkDate
+                ? "the seed used the WorkDate"
+                : AlRunner.Patches.RecordPatches.SessionIdentityForBaselineKey() != identityAtKey
+                    ? "the seed changed the session identity"
+                    : null;
         if (notStored != null)
         {
             PerfTrace.Log($"InstallBaseline.BundleCache MISS {shortKey} not-stored: {notStored}");
@@ -781,7 +790,7 @@ public sealed class TestExecutor
         // this block wrote, so none of it runs.
         if (bundleHit == null)
         {
-            var sequenceAccessBefore = AlRunner.Patches.NumberSequencePatches.AccessCount;
+            var stateBefore = SessionStateAccessCounts();
             AlRunner.Patches.RecordPatches.InstallBaselineSnapshot captured;
             // #2296 — the session user's own row in the User system table, and with it the #2983
             // adoption DECISION, re-made here per app group on every path. The row itself is seeded
@@ -847,8 +856,7 @@ public sealed class TestExecutor
             using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-capture-baseline"))
                 captured = AlRunner.Patches.RecordPatches.CaptureInstallBaseline();
             if (bundleKey != null)
-                StoreBundleBaseline(bundleKey, bundleKeyIdentity, captured, depInitFailure,
-                    AlRunner.Patches.NumberSequencePatches.AccessCount != sequenceAccessBefore);
+                StoreBundleBaseline(bundleKey, bundleKeyIdentity, captured, depInitFailure, stateBefore);
         }
         // SingleInstance state lives for the whole test session (#4781), so the codeunit
         // boundaries below no longer reset it. The Install triggers and Company-Initialize above

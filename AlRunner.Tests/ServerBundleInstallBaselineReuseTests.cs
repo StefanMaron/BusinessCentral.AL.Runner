@@ -114,6 +114,29 @@ public sealed class ServerBundleInstallBaselineReuseTests
         }
     }
 
+    /// <summary>The WorkDate is session state no snapshot carries: a test here moves it, and the
+    /// next request's seed has to stamp the moved date, which a reuse would not.</summary>
+    [SkippableFact]
+    public async Task InstallTriggerReadingTheWorkDate_IsNotReused()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = CreateBundle(0, seed: "7777", useNumberSequence: false, useWorkDate: true);
+        try
+        {
+            await using var server = await CliServer.StartAsync(extraEnv: PerfEnv);
+
+            var first = await RunAsync(server, bundle);
+            var second = await RunAsync(server, bundle);
+            Assert.Equal(1, Count(second, InstallTriggerLine(0)));
+            Assert.Equal(0, Count(second, HitLine));
+            Assert.Contains("not-stored: the seed used the WorkDate", first);
+        }
+        finally
+        {
+            try { Directory.Delete(bundle, recursive: true); } catch { }
+        }
+    }
+
     private static Task<string> RunAsync(CliServer server, params string[] bundles)
         => RunAsync(server, bundles, "codeunit");
 
@@ -154,7 +177,7 @@ public sealed class ServerBundleInstallBaselineReuseTests
     /// <summary>A bundle with one table, an Install trigger seeding one row with
     /// <paramref name="seed"/>, and three tests in two codeunits reading it back. Object ids are
     /// 50600 + <paramref name="offset"/> onward, so two bundles can share a request.</summary>
-    private static string CreateBundle(int offset, string seed, bool useNumberSequence)
+    private static string CreateBundle(int offset, string seed, bool useNumberSequence, bool useWorkDate = false)
     {
         var directory = TestScratch.Dir("al-runner-5060-bundle-baseline");
         Directory.CreateDirectory(directory);
@@ -177,6 +200,11 @@ public sealed class ServerBundleInstallBaselineReuseTests
         var sequenceCheck = useNumberSequence
             ? "if not NumberSequence.Exists('IBRSeq') then Error('the install trigger''s number sequence is missing');"
             : "";
+        var workDateInstall = useWorkDate ? "Setup.Stamp := WorkDate(); Setup.Modify();" : "";
+        // Checks this request's seed stamped the current WorkDate, then moves it for the next request.
+        var workDateCheck = useWorkDate
+            ? "if Setup.Stamp <> WorkDate() then Error('stamped %1 but the WorkDate is %2', Setup.Stamp, WorkDate()); WorkDate(CalcDate('<+1D>', WorkDate()));"
+            : "";
         File.WriteAllText(Path.Combine(directory, "Bundle.al"), $$"""
         table {{id(0)}} "IBR Setup {{offset}}"
         {
@@ -184,6 +212,7 @@ public sealed class ServerBundleInstallBaselineReuseTests
             {
                 field(1; "Key"; Code[10]) { }
                 field(2; Counter; Integer) { }
+                field(3; Stamp; Date) { }
             }
             keys
             {
@@ -203,6 +232,7 @@ public sealed class ServerBundleInstallBaselineReuseTests
                 Setup.Counter := {{seed}};
                 Setup.Insert();
                 {{sequenceInstall}}
+                {{workDateInstall}}
             end;
         }
 
@@ -221,6 +251,7 @@ public sealed class ServerBundleInstallBaselineReuseTests
                 if Setup.Counter <> {{seed}} + 1 then
                     Error('expected %1, got %2', {{seed}} + 1, Setup.Counter);
                 {{sequenceCheck}}
+                {{workDateCheck}}
             end;
 
             [Test]
