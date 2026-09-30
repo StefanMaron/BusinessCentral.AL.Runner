@@ -158,7 +158,7 @@ public class ServerAffectedSelectionSessionStateTests
     private static string SessionBundle(string prefix, string suffix) => Bundle(prefix, suffix,
         ("Helper.Codeunit.al", SessionHelper()), ("Tests.Codeunit.al", SessionTests));
 
-    private static string StoreBundle(string prefix, string suffix) => Bundle(prefix, suffix,
+    internal static string StoreBundle(string prefix, string suffix) => Bundle(prefix, suffix,
         ("Store.Codeunit.al", Store()), ("Writer.Codeunit.al", WriterTests), ("Reader.Codeunit.al", ReaderTests),
         ("Control.Codeunit.al", ControlTests));
 
