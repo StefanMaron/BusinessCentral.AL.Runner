@@ -1078,6 +1078,8 @@ public sealed class DependencyLoader
         AlRunner.Infrastructure.RunnerFingerprint.WriteKeyLines(WriteLine);
         // #4697: a source dependency is emitted in the runner's emit mode too.
         WriteLine(AlRunner.BcCompiler.RunnerEmitModeCacheTerm);
+        // #4990: the source compile applies the --define symbols (BuildParseOptions).
+        WriteLine($"defines:{string.Join(",", AlRunner.BcCompiler.GetExtraPreprocessorSymbols())}");
         WriteLine($"app:{manifest.AppId}:{manifest.Publisher}:{manifest.Name}:{manifest.Version}");
         foreach (var dep in manifest.Dependencies.OrderBy(d => $"{d.Publisher}/{d.Name}/{d.Version}/{d.AppId}", StringComparer.OrdinalIgnoreCase))
             WriteLine($"dep:{dep.AppId}:{dep.Publisher}:{dep.Name}:{dep.Version}");

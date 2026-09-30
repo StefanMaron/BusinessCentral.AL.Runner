@@ -160,6 +160,8 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             ["RunSummaryOutputTests"] = 131,
             // Runs 36297442575 and 36296544176: observed maximum, rounded down (#2498 convention).
             ["NoCacheLastWinsIntegrationTests"] = 66,
+            // #4990: nine runner spawns on one cache root; 39-43s locally, not yet on CI.
+            ["DefineSymbolsDependencyCacheTests"] = 43,
             // #4204: five collections absent from this table on run 35017043142's BC 28.4
             // leg. FloorOnlyBundleEnumFieldTests at 76.4s crossed the >= 75s band and failed
             // the leg; the other four sat in the >= 60s advisory band, and

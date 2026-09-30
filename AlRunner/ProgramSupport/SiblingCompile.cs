@@ -1134,6 +1134,9 @@ internal static partial class ProgramSupport
         // interchangeable in either direction and the schema line has to move.
         WriteLine("schema:v3");
         AlRunner.Infrastructure.RunnerFingerprint.WriteKeyLines(WriteLine);
+        // #4990: the *.symbols.json is compiled with the --define symbols (BuildParseOptions), so
+        // a #if around a declaration changes it. Same line as the AL-output key's `defines:`.
+        WriteLine($"defines:{string.Join(",", AlRunner.BcCompiler.GetExtraPreprocessorSymbols())}");
 
         // The RESOLVED dependency winners, by CONTENT — issue #2846, and the same substitution
         // #2754/f3ca2b00 made for the AL-output key one layer over.
