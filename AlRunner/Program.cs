@@ -7147,35 +7147,804 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
 // (bypassing the normal one-line-processed-at-a-time queue entirely), while every
 // other command still goes through `mainQueue` and is processed sequentially by
 // this method exactly as before. See `outputLock`/`activeRunCts` below.
+static string ToAffectedObjectKey(AffectedObjectId id)
+    => $"{id.Kind}|{(id.Id.HasValue ? "id:" + id.Id.Value : "name:" + id.Name)}";
+
+static string ToAffectedObjectDisplay(AffectedObjectId id)
+    => id.Id.HasValue
+        ? $"{id.Kind} {id.Id.Value} {id.Name}"
+        : $"{id.Kind} {id.Name}";
+
+// #2539: the SAME compound key both the changed side (below) and the coverage-attribution
+// side (the collectPerTestForSelection loop) must build for a specific changed procedure —
+// an object-level key plus its scope name, separated so it can never collide with a bare
+// ToAffectedObjectKey result (no AL identifier can contain "::").
+static string ToAffectedScopeKey(string objectKey, string scopeName) => $"{objectKey}::proc:{scopeName}";
+
+// #4988: the subscriber's whole object changed, or the one procedure the change was narrowed to
+// is this subscriber (a scope name may be qualified; AL names compare case-insensitively).
+static bool SubscriberCodeChanged(AlRunner.Patches.SubscriberBinding b, HashSet<string> changedKeys)
+{
+    var objKey = ToAffectedObjectKey(new AffectedObjectId(b.SubscriberKind, b.SubscriberId, ""));
+    if (changedKeys.Contains(objKey)) return true;
+    var prefix = ToAffectedScopeKey(objKey, "");
+    foreach (var k in changedKeys)
+    {
+        if (!k.StartsWith(prefix, StringComparison.Ordinal)) continue;
+        var scope = k.Substring(prefix.Length);
+        if (string.Equals(scope, b.ProcedureName, StringComparison.OrdinalIgnoreCase)
+            || scope.EndsWith("." + b.ProcedureName, StringComparison.OrdinalIgnoreCase))
+            return true;
+    }
+    return false;
+}
+
+/// <summary>
+/// Builds the set affectedOnly's overlap check compares a test's coveredObjects against —
+/// object-level keys by default (identical to pre-#2539 behaviour), REFINED to a
+/// procedure-level compound key wherever <paramref name="requestWideChangedScopes"/> (the
+/// REQUEST-WIDE <c>PeekChangedScopes</c> union — every bundle in the request, not just
+/// this one, mirroring #2492's own object-level union) confidently narrowed that SAME
+/// object this cycle. An object <paramref name="requestWideChangedScopes"/> explicitly
+/// widened (a null-ScopeName entry) is NEVER narrowed, even if some other entry for the
+/// same object looks narrow — the widen always wins. An object with NO entry in
+/// <paramref name="requestWideChangedScopes"/> at all (its own bundle's peek was
+/// uncertain, or #2539's scope-level peek simply hasn't run for it) falls back to the
+/// plain object-level key — the same safe default as pre-#2539.
+/// </summary>
+static HashSet<string>? BuildAffectedChangedKeys(
+    IReadOnlyList<AffectedObjectId>? changedObjects, IReadOnlyList<AffectedScopeId>? requestWideChangedScopes)
+{
+    if (changedObjects == null) return null;
+
+    var widenedObjectKeys = new HashSet<string>(StringComparer.Ordinal);
+    var scopesByObjectKey = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+    if (requestWideChangedScopes != null)
+    {
+        foreach (var sc in requestWideChangedScopes)
+        {
+            var objKey = ToAffectedObjectKey(sc.Object);
+            if (sc.ScopeName == null) { widenedObjectKeys.Add(objKey); continue; }
+            if (!scopesByObjectKey.TryGetValue(objKey, out var list))
+                scopesByObjectKey[objKey] = list = new List<string>();
+            list.Add(sc.ScopeName);
+        }
+    }
+
+    var keys = new HashSet<string>(StringComparer.Ordinal);
+    foreach (var id in changedObjects)
+    {
+        var objKey = ToAffectedObjectKey(id);
+        if (!widenedObjectKeys.Contains(objKey)
+            && scopesByObjectKey.TryGetValue(objKey, out var scopes) && scopes.Count > 0)
+        {
+            foreach (var s in scopes) keys.Add(ToAffectedScopeKey(objKey, s));
+        }
+        else
+        {
+            keys.Add(objKey);
+        }
+    }
+    return keys;
+}
+
+// #4979: docs/server-mode.md#affectedonly-across-server-processes. Fills the selection state of
+// every stored bundle this process holds none for; returns why the file could not be used, or null.
+string? LoadPersistedAffectedBaseline(AlRunner.Infrastructure.AffectedSelectionState affected, string[] sourcePaths)
+{
+    var affectedCoverageByBundle = affected.CoverageByBundle;
+    var affectedUnknownTestsByBundle = affected.UnknownTestsByBundle;
+    var affectedFailingTestsByBundle = affected.FailingTestsByBundle;
+    var affectedEnvironmentKeyByBundle = affected.EnvironmentKeyByBundle;
+    var affectedBaselineGenerationsByBundle = affected.BaselineGenerationsByBundle;
+    var affectedEventsByBundle = affected.EventsByBundle;
+    var affectedBindingsByBundle = affected.BindingsByBundle;
+    var affectedObservabilityByBundle = affected.ObservabilityByBundle;
+    var affectedPersistedModulesByBundle = affected.PersistedModulesByBundle;
+    AlRunner.Infrastructure.AffectedBaselineStore.LoadResult loaded;
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    string path;
+    try
+    {
+        path = AlRunner.Infrastructure.AffectedBaselineStore.PathFor(
+            AlRunner.Infrastructure.CacheRoots.Resolve(AlRunner.Infrastructure.AffectedBaselineStore.CacheName), sourcePaths);
+        loaded = AlRunner.Infrastructure.AffectedBaselineStore.Load(path);
+    }
+    catch (Exception ex)
+    {
+        return $"the store could not be located: {ex.GetType().Name}: {ex.Message.Split('\n')[0]}";
+    }
+    if (loaded.Baseline is not { } persisted) return loaded.Unusable;
+    Console.Error.WriteLine(
+        $"  [{affected.LogTag}] affectedOnly: loaded the persisted baseline {path} ({new FileInfo(path).Length} bytes) in {sw.ElapsedMilliseconds} ms");
+    foreach (var (bundle, b) in persisted.Bundles)
+    {
+        if (affectedCoverageByBundle.ContainsKey(bundle)) continue;
+        affectedCoverageByBundle[bundle] = b.Coverage;
+        affectedUnknownTestsByBundle[bundle] = b.Unknown;
+        affectedFailingTestsByBundle[bundle] = b.Failing;
+        affectedEnvironmentKeyByBundle[bundle] = b.EnvironmentKey;
+        affectedBaselineGenerationsByBundle.Remove(bundle);
+        affectedEventsByBundle[bundle] = b.Events;
+        if (b.Bindings != null) affectedBindingsByBundle[bundle] = b.Bindings;
+        else affectedBindingsByBundle.Remove(bundle);
+        if (b.Observability != null) affectedObservabilityByBundle[bundle] = b.Observability;
+        else affectedObservabilityByBundle.Remove(bundle);
+        affectedPersistedModulesByBundle[bundle] = persisted.Modules;
+    }
+    return null;
+}
+
+// Writes the bundles this request recorded, with the change-model snapshots their coverage was
+// measured on. Skipped when a snapshot is missing: an older file stays, and is still consistent.
+void PersistAffectedBaseline(AlRunner.Infrastructure.AffectedSelectionState affected, string[] sourcePaths,
+    IReadOnlyList<string> moduleNames, IReadOnlyCollection<string> recorded)
+{
+    var affectedCoverageByBundle = affected.CoverageByBundle;
+    var affectedUnknownTestsByBundle = affected.UnknownTestsByBundle;
+    var affectedFailingTestsByBundle = affected.FailingTestsByBundle;
+    var affectedEnvironmentKeyByBundle = affected.EnvironmentKeyByBundle;
+    var affectedBaselineGenerationsByBundle = affected.BaselineGenerationsByBundle;
+    var affectedEventsByBundle = affected.EventsByBundle;
+    var affectedBindingsByBundle = affected.BindingsByBundle;
+    var affectedObservabilityByBundle = affected.ObservabilityByBundle;
+    var affectedPersistedModulesByBundle = affected.PersistedModulesByBundle;
+    if (recorded.Count == 0) return;
+    try
+    {
+        var modules = new Dictionary<string, AlRunner.Infrastructure.AffectedModuleSnapshot>(StringComparer.Ordinal);
+        foreach (var m in moduleNames)
+        {
+            if (emitter.TryGetAffectedModuleSnapshot(m) is not { } snapshot)
+            {
+                Console.Error.WriteLine($"  [{affected.LogTag}] affectedOnly baseline not persisted: {m} has no change-model baseline");
+                return;
+            }
+            modules[m] = snapshot;
+        }
+        var bundles = new Dictionary<string, AlRunner.Infrastructure.AffectedBundleBaseline>(StringComparer.Ordinal);
+        foreach (var bundle in recorded)
+            bundles[bundle] = new AlRunner.Infrastructure.AffectedBundleBaseline(
+                affectedEnvironmentKeyByBundle[bundle],
+                affectedCoverageByBundle[bundle],
+                affectedUnknownTestsByBundle[bundle],
+                affectedFailingTestsByBundle[bundle],
+                affectedEventsByBundle[bundle],
+                affectedBindingsByBundle.TryGetValue(bundle, out var bindings) ? bindings : null,
+                affectedObservabilityByBundle.TryGetValue(bundle, out var observability) ? observability : null);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var path = AlRunner.Infrastructure.AffectedBaselineStore.PathFor(
+            AlRunner.Infrastructure.CacheRoots.Resolve(AlRunner.Infrastructure.AffectedBaselineStore.CacheName), sourcePaths);
+        AlRunner.Infrastructure.AffectedBaselineStore.Write(path, new AlRunner.Infrastructure.AffectedBaseline(modules, bundles));
+        Console.Error.WriteLine(
+            $"  [{affected.LogTag}] affectedOnly: persisted the baseline to {path} ({new FileInfo(path).Length} bytes) in {sw.ElapsedMilliseconds} ms");
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"  [{affected.LogTag}] affectedOnly baseline not persisted: {ex.GetType().Name}: {ex.Message.Split('\n')[0]}");
+    }
+}
+
+// Compile, select, run and record one affected-selection run over sourcePaths: the whole of a
+// server `runTests` request short of writing its protocol lines, and a `--watch --affected` cycle.
+// afterRuns is called once the tests have run, before the coverage is recorded (#1809's ordering).
+AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infrastructure.AffectedSelectionState affected,
+    string[] sourcePaths, string[]? packagePaths, bool requestCoverage, bool requestPerTestCoverage,
+    bool affectedOnly, bool includeFailing, Action<TestResult> onTestComplete,
+    System.Threading.CancellationToken token, Action? afterRuns = null)
+{
+    var affectedCoverageByBundle = affected.CoverageByBundle;
+    var affectedUnknownTestsByBundle = affected.UnknownTestsByBundle;
+    var affectedFailingTestsByBundle = affected.FailingTestsByBundle;
+    var affectedEnvironmentKeyByBundle = affected.EnvironmentKeyByBundle;
+    var affectedBaselineGenerationsByBundle = affected.BaselineGenerationsByBundle;
+    var affectedEventsByBundle = affected.EventsByBundle;
+    var affectedBindingsByBundle = affected.BindingsByBundle;
+    var affectedObservabilityByBundle = affected.ObservabilityByBundle;
+    var affectedPersistedModulesByBundle = affected.PersistedModulesByBundle;
+    // #2042: 'coverage:true' opts into per-statement hit counts + a position table
+    // on the terminal summary line — reuses AlCoverageTracker's existing StmtHit
+    // hook (#1922), same process-global-flag pattern as AlValueCapture.Enabled in
+    // HandleServerExecute below. Reset() (not just Enabled=true) so a warm
+    // server's hit counts from a PRIOR request never leak into this one — the
+    // dictionary is process-global and this process outlives many requests.
+    // #2441: affected-only selection needs per-test coverage from this run to seed
+    // the next run's selection baseline, even when the caller doesn't ask to emit
+    // `perTestCoverage` on the wire.
+    var collectPerTestForSelection = requestPerTestCoverage || affectedOnly;
+    AlRunner.Infrastructure.AlCoverageTracker.Enabled = requestCoverage;
+    if (requestCoverage) AlRunner.Infrastructure.AlCoverageTracker.Reset();
+    AlRunner.Infrastructure.AlCoverageTracker.PerTestEnabled = collectPerTestForSelection;
+    if (collectPerTestForSelection)
+    {
+        AlRunner.Infrastructure.AlCoverageTracker.ResetPerTest();
+        AlRunner.Infrastructure.AlEventRaiseTracker.ResetPerTest();
+        AlRunner.Infrastructure.AlObjectUseTracker.ResetPerTest();
+    }
+
+    try
+    {
+        var requestDiscoveredTestsByBundle = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        // #3337: null = no narrowing (every discovered test was selected).
+        var requestSelectedTestsByBundle = new Dictionary<string, HashSet<string>?>(StringComparer.Ordinal);
+        var requestModuleByBundle = new Dictionary<string, string>(StringComparer.Ordinal);
+        var requestEnvironmentByBundle = new Dictionary<string, string>(StringComparer.Ordinal);
+        var selectionByBundle = new Dictionary<string, ServerSelection>(StringComparer.Ordinal);
+        var activeBundleKey = "";
+        Dictionary<string, HashSet<string>>? activePreviousCoverage = null;
+        HashSet<string>? activePreviousUnknown = null;
+        HashSet<string>? activePreviousFailing = null;
+        Dictionary<string, HashSet<string>>? activePreviousEvents = null;
+        var requestBindingsByBundle = new Dictionary<string, List<AlRunner.Patches.SubscriberBinding>?>(StringComparer.Ordinal);
+        var requestObservabilityByBundle = new Dictionary<string, AlRunner.Patches.EventObservability>(StringComparer.Ordinal);
+        HashSet<string>? activeChangedObjectKeys = null;
+        IReadOnlyList<AffectedObjectId> activeChangedObjectIds = Array.Empty<AffectedObjectId>();
+        List<string> activeChangedObjectDisplay = new();
+        bool activeForcedFull = false;
+        string? activeForcedReason = null;
+
+        // Same derivation RunBundleForServer uses for its module name.
+        var requestModuleNames = sourcePaths
+            .Select(p => $"V2_{Path.GetFileName(Path.GetFullPath(p))}")
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var baselineGenerationAtRequestStart = requestModuleNames
+            .ToDictionary(m => m, m => emitter.RadBaselineGeneration(m), StringComparer.Ordinal);
+        // #4979: a bundle this process holds no selection state for starts from the persisted one.
+        var persistedBaselineUnusable = affectedOnly
+            && sourcePaths.Any(p => !affectedCoverageByBundle.ContainsKey(Path.GetFullPath(p)))
+            ? LoadPersistedAffectedBaseline(affected, sourcePaths)
+            : null;
+
+        var runs = RunAllBundlesForServer(sourcePaths, packagePaths,
+            asm =>
+            {
+                var discovered = executor.DiscoverTests(asm);
+                requestDiscoveredTestsByBundle[activeBundleKey] =
+                    new HashSet<string>(discovered, StringComparer.Ordinal);
+
+                // #4988: the bindings and event observability these tests run with — the next
+                // request's baseline — and, under affectedOnly, the events whose subscribers changed.
+                HashSet<string> changedEventKeys = new(StringComparer.Ordinal);
+                if (collectPerTestForSelection)
+                {
+                    var observability = AlRunner.Patches.EventSubscriberPatches.SeedAllEventScopesForRecording();
+                    var bindings = AlRunner.Patches.EventSubscriberPatches.CurrentModuleSubscriberBindings();
+                    requestObservabilityByBundle[activeBundleKey] = observability;
+                    requestBindingsByBundle[activeBundleKey] = bindings;
+                    if (affectedOnly && !activeForcedFull)
+                    {
+                        var changedObjectKeys = activeChangedObjectKeys ?? new HashSet<string>(StringComparer.Ordinal);
+                        var eventResult = AlRunner.Infrastructure.AffectedEventSelection.ChangedEventKeys(
+                            affectedBindingsByBundle.TryGetValue(activeBundleKey, out var prevBindings) ? prevBindings : null,
+                            bindings,
+                            affectedObservabilityByBundle.TryGetValue(activeBundleKey, out var prevObs) ? prevObs : null,
+                            observability.PublisherObjects.Keys.ToHashSet(StringComparer.Ordinal),
+                            b => SubscriberCodeChanged(b, changedObjectKeys));
+                        // #5008: a table that executed no statement is in no coverage.
+                        var tableResult = AlRunner.Infrastructure.AffectedEventSelection.ChangedTableKeys(
+                            activeChangedObjectIds.Select(o => (o.Kind, o.Id)),
+                            AlRunner.Patches.RecordPatches.TableExtensionBaseTableIds(),
+                            activePreviousEvents != null
+                            && activePreviousEvents.TryGetValue(AlRunner.Infrastructure.AlEventRaiseTracker.BundleWideKey, out var bundleWide)
+                                ? bundleWide : null);
+                        // #5011: a whole-object change to an instance no one test owns.
+                        var longLivedReason = AlRunner.Infrastructure.AffectedEventSelection.LongLivedObjectChange(
+                            changedObjectKeys,
+                            activePreviousEvents != null
+                            && activePreviousEvents.TryGetValue(AlRunner.Infrastructure.AlEventRaiseTracker.BundleWideKey, out var bundleWideObjects)
+                                ? bundleWideObjects : null);
+                        if (eventResult.ForceFullReason != null || tableResult.ForceFullReason != null || longLivedReason != null)
+                        {
+                            activeForcedFull = true;
+                            activeForcedReason = eventResult.ForceFullReason ?? tableResult.ForceFullReason ?? longLivedReason;
+                        }
+                        else changedEventKeys = eventResult.Keys.Union(tableResult.Keys).ToHashSet(StringComparer.Ordinal);
+                    }
+                }
+
+                HashSet<string>? exactSelection = null;
+                var plannedRan = discovered.Count;
+                var plannedSkipped = 0;
+                var plannedSkippedFailing = 0;
+                if (affectedOnly && !activeForcedFull)
+                {
+                    exactSelection = new HashSet<string>(StringComparer.Ordinal);
+                    foreach (var testKey in discovered)
+                    {
+                        if (activePreviousCoverage == null
+                            || !activePreviousCoverage.TryGetValue(testKey, out var coveredObjects)
+                            || coveredObjects.Count == 0
+                            || (activePreviousUnknown?.Contains(testKey) ?? false))
+                        {
+                            exactSelection.Add(testKey);
+                            continue;
+                        }
+                        var previouslyFailing = activePreviousFailing?.Contains(testKey) ?? false;
+                        if ((includeFailing && previouslyFailing)
+                            || (activeChangedObjectKeys != null && coveredObjects.Overlaps(activeChangedObjectKeys))
+                            || AlRunner.Infrastructure.AffectedEventSelection.Overlaps(
+                                activePreviousEvents != null && activePreviousEvents.TryGetValue(testKey, out var raised) ? raised : null,
+                                changedEventKeys))
+                            exactSelection.Add(testKey);
+                        else if (previouslyFailing)
+                            plannedSkippedFailing++;
+                    }
+                    plannedRan = exactSelection.Count;
+                    plannedSkipped = Math.Max(0, discovered.Count - plannedRan);
+                }
+
+                if (affectedOnly)
+                {
+                    selectionByBundle[activeBundleKey] = new ServerSelection(
+                        "affected",
+                        plannedRan,
+                        plannedSkipped,
+                        activeChangedObjectDisplay,
+                        activeForcedFull,
+                        activeForcedReason,
+                        plannedSkippedFailing);
+                }
+
+                requestSelectedTestsByBundle[activeBundleKey] = exactSelection;
+                var previousExact = executor.ExactTestFilter;
+                executor.ExactTestFilter = exactSelection;
+                try { return executor.Run(asm, onTestComplete, token); }
+                finally { executor.ExactTestFilter = previousExact; }
+            },
+            token,
+            affectedOnly,
+            (bundlePath, moduleName, selectionEnvironmentKey, changedObjects, changeModelFallbackReason, ownChangedScopes) =>
+            {
+                activeBundleKey = bundlePath;
+                requestModuleByBundle[bundlePath] = moduleName;
+                requestEnvironmentByBundle[bundlePath] = selectionEnvironmentKey;
+                activeChangedObjectKeys = BuildAffectedChangedKeys(changedObjects, ownChangedScopes);
+                activeChangedObjectIds = changedObjects ?? Array.Empty<AffectedObjectId>();
+                activeChangedObjectDisplay = (changedObjects ?? Array.Empty<AffectedObjectId>())
+                    .Select(ToAffectedObjectDisplay)
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(x => x, StringComparer.Ordinal)
+                    .ToList();
+                activePreviousCoverage = affectedCoverageByBundle.TryGetValue(bundlePath, out var prevCov)
+                    ? prevCov : null;
+                activePreviousUnknown = affectedUnknownTestsByBundle.TryGetValue(bundlePath, out var prevUnknown)
+                    ? prevUnknown : null;
+                activePreviousFailing = affectedFailingTestsByBundle.TryGetValue(bundlePath, out var prevFailing)
+                    ? prevFailing : null;
+                activePreviousEvents = affectedEventsByBundle.TryGetValue(bundlePath, out var prevEvents)
+                    ? prevEvents : null;
+
+                activeForcedFull = false;
+                activeForcedReason = null;
+                if (!affectedOnly) return;
+
+                if (activePreviousCoverage == null && persistedBaselineUnusable != null)
+                {
+                    activeForcedFull = true;
+                    activeForcedReason = $"the persisted per-test coverage baseline is unusable: {persistedBaselineUnusable}";
+                    return;
+                }
+                // #4979: state loaded from disk was recorded in another process, so no generation can
+                // vouch for it; the file hashes it was recorded on decide what changed instead.
+                if (affectedPersistedModulesByBundle.TryGetValue(bundlePath, out var persistedModules))
+                {
+                    if (activePreviousCoverage == null || activePreviousUnknown == null
+                        || !affectedEnvironmentKeyByBundle.TryGetValue(bundlePath, out var persistedEnv)
+                        || !string.Equals(persistedEnv, selectionEnvironmentKey, StringComparison.Ordinal))
+                    {
+                        activeForcedFull = true;
+                        activeForcedReason =
+                            "coverage baseline environment changed (BC version/artifact/package cache/dependency package content)";
+                        return;
+                    }
+                    var persistedDiff = AlRunner.Infrastructure.AffectedBaselineStore.ChangedSince(
+                        persistedModules, requestModuleNames, emitter.TryGetAffectedModuleSnapshot);
+                    if (persistedDiff.ForceFullReason != null)
+                    {
+                        activeForcedFull = true;
+                        activeForcedReason =
+                            $"the persisted per-test coverage baseline cannot vouch for this source: {persistedDiff.ForceFullReason}";
+                        return;
+                    }
+                    activeChangedObjectKeys = persistedDiff.Changed.Select(ToAffectedObjectKey).ToHashSet(StringComparer.Ordinal);
+                    activeChangedObjectIds = persistedDiff.Changed;
+                    activeChangedObjectDisplay = persistedDiff.Changed.Select(ToAffectedObjectDisplay)
+                        .Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal).ToList();
+                    return;
+                }
+
+                if (changeModelFallbackReason != null)
+                {
+                    activeForcedFull = true;
+                    activeForcedReason = $"change model unavailable: {changeModelFallbackReason}";
+                    return;
+                }
+                if (changedObjects == null)
+                {
+                    activeForcedFull = true;
+                    activeForcedReason = "changed files could not be attributed to AL objects";
+                    return;
+                }
+                if (activePreviousCoverage == null || activePreviousUnknown == null)
+                {
+                    activeForcedFull = true;
+                    activeForcedReason = "no previous per-test coverage baseline for this bundle";
+                    return;
+                }
+                if (!affectedEnvironmentKeyByBundle.TryGetValue(bundlePath, out var previousEnv)
+                    || !string.Equals(previousEnv, selectionEnvironmentKey, StringComparison.Ordinal))
+                {
+                    activeForcedFull = true;
+                    activeForcedReason =
+                        "coverage baseline environment changed (BC version/artifact/package cache/dependency package content)";
+                    return;
+                }
+                // #4971: changedObjects is relative to each module's baseline as this request found
+                // it; that has to be the baseline the stored coverage was measured against.
+                affectedBaselineGenerationsByBundle.TryGetValue(bundlePath, out var coverageGenerations);
+                var movedModule = requestModuleNames.FirstOrDefault(m =>
+                    coverageGenerations == null
+                    || !coverageGenerations.TryGetValue(m, out var recorded)
+                    || recorded == null
+                    || recorded != baselineGenerationAtRequestStart[m]);
+                if (movedModule != null)
+                {
+                    activeForcedFull = true;
+                    activeForcedReason =
+                        $"the change model's baseline for {movedModule} is not the code the per-test coverage "
+                        + "baseline was recorded on (a request without affectedOnly recompiled it, or the "
+                        + "module was loaded from a source no baseline describes)";
+                }
+            },
+            pinLoadToChangeModel: collectPerTestForSelection);
+
+        var allTests = runs.SelectMany(r => r.Tests).ToList();
+        var allCompileErrors = runs.SelectMany(r => r.CompileErrors ?? Array.Empty<CompilationErrorGroup>()).ToList();
+        // Max() is the right aggregator ONLY because the codes a per-bundle run can carry
+        // happen to rank in numeric order: 3 (compile) > 2 (exec) > 1 (test fail) > 0. The
+        // whole-run codes do not — the CLI ranks 4 (count baseline) above 1 (#3350) — but
+        // 4 and 5 are audits over the FULL run, computed once in the CLI path, so no
+        // BundleRun ever carries one and Max() cannot meet them here. Give a bundle a code
+        // that is not in that ordered set and this silently picks the wrong one.
+        var exitCode = runs.Count > 0 ? runs.Max(r => r.ExitCode) : 0;
+        var cached = runs.Count > 0 && runs.All(r => r.Cached);
+        var cancelled = token.IsCancellationRequested;
+        afterRuns?.Invoke();
+
+        // #2042: built from the SAME roots the run just compiled, matching the CLI
+        // --coverage path's AlCoverageSourceMap.Build call. #4272: sourcePaths alone
+        // was not that set — it is what RunAllBundlesForServer was given, and the compile
+        // also parses sibling SOURCE dependencies discovered from it, whose executed
+        // statements were tracked and then dropped for want of a root —
+        // scopes whose owning object isn't found here (framework/dependency
+        // assemblies outside the bundle under test) are silently excluded, same
+        // as --coverage. Only built when requested: reflection-scanning every
+        // loaded assembly's types on every plain runTests call would be wasted
+        // work for callers who never asked for it.
+        IReadOnlyList<AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord>? statementTable = null;
+        IReadOnlyDictionary<string, List<AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord>>? perTestStatementTable = null;
+        IReadOnlyList<AlRunner.Infrastructure.SourceScanFailure>? scanFailures = null;
+        AlRunner.Infrastructure.AlSourceLocationMap? selectionSourceMap = null;
+        if (requestCoverage || collectPerTestForSelection)
+        {
+            var covSourceMap = AlRunner.Infrastructure.AlCoverageSourceMap.Build(
+                AlRunner.Infrastructure.AlCoverageSourceMap.RootsWithParsedSourceDependencies(
+                    sourcePaths),
+                relativeTo: null);
+            // #3884: a table built from a map that could not read everything is short, and
+            // the response has to say so — otherwise the client gets an ordinary success
+            // and no way to tell an uncovered statement from an unread one.
+            if (covSourceMap.IsIncomplete) scanFailures = covSourceMap.ScanFailures;
+            if (requestCoverage)
+                statementTable = AlRunner.Infrastructure.AlCoverageTracker.CollectStatementTable(covSourceMap);
+            // #2135: independent of the aggregate table above — see
+            // AlCoverageTracker.CollectPerTestStatementTable's doc comment.
+            if (collectPerTestForSelection)
+            {
+                perTestStatementTable = AlRunner.Infrastructure.AlCoverageTracker.CollectPerTestStatementTable(covSourceMap);
+                selectionSourceMap = covSourceMap;
+            }
+        }
+
+        if (collectPerTestForSelection && perTestStatementTable != null && selectionSourceMap != null)
+        {
+            var resultByTest = allTests
+                .Where(t => t.Method != "<ctor>")
+                .GroupBy(t => $"{t.Codeunit}.{t.Method}", StringComparer.Ordinal)
+                .ToDictionary(g => g.Key, g => g.Last(), StringComparer.Ordinal);
+
+            // #2535: file-to-object attribution must be REQUEST-WIDE (every bundle's
+            // module unioned into one map), not per-module. `statements` is RUNTIME
+            // coverage — it contains every statement the test actually executed,
+            // including statements in a DEPENDENCY bundle's files (a real cross-app
+            // call, not a hypothetical: see the Pageworks/Pageworks.Test repro in
+            // #2535, mirroring #2492's PeekChangedObjects cross-bundle case on the
+            // CHANGED-object side — see that method's docstring). A per-module map
+            // cannot resolve a path belonging to a sibling bundle's module, so a single
+            // ordinary cross-app helper call made the whole test "unmappable" ->
+            // permanently "unknown" -> the test reran on EVERY future edit no matter
+            // how unrelated, forever. Measured on the real corpus (1012 tests): 897
+            // were unmappable this way, only 9 ever got a real coverage entry, and
+            // every one of those 9 had a coverage-set size of exactly 1 (their own
+            // declaring codeunit only) — so the defect is unmappable cross-bundle
+            // statements, not over-broad coverage sets. Built ONCE per request (not
+            // per bundle) from every module this request has already resolved.
+            // With pinLoadToChangeModel every module's current baseline is the code this request ran.
+            Dictionary<string, long?> CurrentBaselineGenerations() => requestModuleNames
+                .ToDictionary(m => m, m => emitter.RadBaselineGeneration(m), StringComparer.Ordinal);
+
+            var requestWideTrackedObjectsByPath = new Dictionary<string, AffectedObjectId>(StringComparer.Ordinal);
+            foreach (var trackedModuleName in requestModuleByBundle.Values.Distinct(StringComparer.Ordinal))
+            {
+                var m = emitter.TryGetTrackedObjectsByPath(trackedModuleName);
+                if (m == null) continue;
+                foreach (var kv in m)
+                    requestWideTrackedObjectsByPath[kv.Key] = kv.Value;
+            }
+
+            var extensionsOfTable = new Dictionary<int, List<int>>();
+            foreach (var (ext, bases) in AlRunner.Patches.RecordPatches.TableExtensionBaseTableIds())
+                foreach (var b in bases)
+                {
+                    if (!extensionsOfTable.TryGetValue(b, out var exts)) extensionsOfTable[b] = exts = new List<int>();
+                    exts.Add(ext);
+                }
+            var eventsByTest = AlRunner.Infrastructure.AlEventRaiseTracker.CollectPerTest(extensionsOfTable);
+            var bundleWideKey = AlRunner.Infrastructure.AlEventRaiseTracker.BundleWideKey;
+            // #5011: objects built and scopes entered, which an empty body or a page without
+            // triggers leaves out of statement coverage.
+            var useByTest = AlRunner.Infrastructure.AlObjectUseTracker.CollectPerTest();
+            var longLivedObjectKeys = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var type in AlRunner.Infrastructure.AlObjectUseTracker.LongLivedObjects())
+                if (UsedObjectOf(type) is { } o)
+                    longLivedObjectKeys.Add(AlRunner.Infrastructure.AffectedEventSelection.LongLivedObjectKey(o.Key));
+
+            // The key and file of an AL object class from this request's sources; null outside them.
+            // The class names its object, so a file declaring several objects (#5003) still keys.
+            (string Key, string Path)? UsedObjectOf(Type objectType)
+            {
+                var (label, id) = AlRunner.Infrastructure.AlCallStackCapture.ParseObjectTypeAndId(objectType);
+                if (id == 0 || !selectionSourceMap.TryGetValue((label, id), out var path)) return null;
+                return (requestWideTrackedObjectsByPath.TryGetValue(path, out var identity)
+                    ? ToAffectedObjectKey(identity)
+                    : ToAffectedObjectKey(new AffectedObjectId(label == "CodeUnit" ? "Codeunit" : label, id, "")), path);
+            }
+            // #4988: the event side of the baseline, stored whenever the coverage is.
+            var recordedThisRequest = new List<string>();
+            void StoreEventBaseline(string bundlePath, Dictionary<string, HashSet<string>> nextEvents)
+            {
+                affectedPersistedModulesByBundle.Remove(bundlePath);
+                affectedEventsByBundle[bundlePath] = nextEvents;
+                if (requestBindingsByBundle.TryGetValue(bundlePath, out var bindings) && bindings != null)
+                    affectedBindingsByBundle[bundlePath] = bindings;
+                else
+                    affectedBindingsByBundle.Remove(bundlePath);
+                if (requestObservabilityByBundle.TryGetValue(bundlePath, out var observability))
+                    affectedObservabilityByBundle[bundlePath] = observability;
+                else
+                    affectedObservabilityByBundle.Remove(bundlePath);
+            }
+
+            foreach (var (bundlePath, discoveredTests) in requestDiscoveredTestsByBundle)
+            {
+                if (!requestModuleByBundle.TryGetValue(bundlePath, out var moduleName)) continue;
+                if (!requestEnvironmentByBundle.TryGetValue(bundlePath, out var envKey)) continue;
+                // Still require THIS bundle's own module to have a RAD baseline before
+                // attributing ITS tests at all — same posture as before #2535, only the
+                // per-statement lookup below now consults the request-wide map instead
+                // of just this one module's.
+                if (emitter.TryGetTrackedObjectsByPath(moduleName) == null) continue;
+
+                var nextCoverage = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+                var nextUnknown = new HashSet<string>(StringComparer.Ordinal);
+                var nextFailing = new HashSet<string>(StringComparer.Ordinal);
+                var nextEvents = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+                // #4973: source folders of packages whose content envKey carries; a statement
+                // attributed there ran from that package, which a rebuild can change only by
+                // changing envKey (docs/server-mode.md#affectedonly-and-packaged-dependencies).
+                var packagedSourceRoots = AlRunner.Infrastructure.DependencyPackageFingerprint.PackagedSourceRoots(
+                    AlRunner.Patches.RecordPatches.RegisteredSourceDirs(), sourcePaths,
+                    AlRunner.Infrastructure.DependencyPackageFingerprint.AppIdsIn(envKey));
+
+                // #3884: an incomplete scan poisons this baseline SILENTLY, and the
+                // `unmappable` check below cannot see it. A statement whose object never
+                // reached the source map is dropped by CollectPerTestStatementTable before
+                // it gets here, so what survives is a non-empty, entirely mappable list —
+                // indistinguishable from a test that genuinely only touched those objects.
+                // Storing it means a later edit to the source that could not be read does
+                // not intersect any stored coverage, and the test that calls into it is
+                // SKIPPED. That is a wrong answer, not a missing warning.
+                //
+                // So every test of this bundle is recorded unknown, which forces the next
+                // affected-only request to run them. Not merely "skip the update": leaving
+                // the previous baseline in place keeps trusting numbers that may be just
+                // as stale.
+                if (scanFailures is { Count: > 0 })
+                {
+                    foreach (var testKey in discoveredTests) nextUnknown.Add(testKey);
+                    affectedCoverageByBundle[bundlePath] = nextCoverage;
+                    affectedUnknownTestsByBundle[bundlePath] = nextUnknown;
+                    affectedFailingTestsByBundle[bundlePath] = nextFailing;
+                    affectedEnvironmentKeyByBundle[bundlePath] = envKey;
+                    affectedBaselineGenerationsByBundle[bundlePath] = CurrentBaselineGenerations();
+                    StoreEventBaseline(bundlePath, nextEvents);
+                    recordedThisRequest.Add(bundlePath);
+                    continue;
+                }
+
+                // #3337: a test selection deliberately SKIPPED keeps its previous entry. Its
+                // covered objects did not change, so the entry still holds; dropping it made
+                // the next request rerun it as unknown, and narrow/full runs alternated. Only
+                // a skip counts — a selected test with no result (cancelled, never reached)
+                // stays unknown, or a stale entry would hide it from the change it missed.
+                requestSelectedTestsByBundle.TryGetValue(bundlePath, out var selectedThisRequest);
+                affectedCoverageByBundle.TryGetValue(bundlePath, out var previousCoverage);
+                affectedFailingTestsByBundle.TryGetValue(bundlePath, out var previousFailing);
+                affectedEventsByBundle.TryGetValue(bundlePath, out var previousEvents);
+                foreach (var testKey in discoveredTests)
+                {
+                    if (selectedThisRequest != null
+                        && !selectedThisRequest.Contains(testKey)
+                        && previousCoverage != null
+                        && previousCoverage.TryGetValue(testKey, out var carried))
+                    {
+                        nextCoverage[testKey] = carried;
+                        if (previousFailing?.Contains(testKey) ?? false) nextFailing.Add(testKey);
+                        // No carried record means none was taken; a missing entry selects on any change.
+                        if (previousEvents != null && previousEvents.TryGetValue(testKey, out var carriedEvents))
+                            nextEvents[testKey] = carriedEvents;
+                        continue;
+                    }
+
+                    // #4978: a failed test's coverage is what ran up to the failure, which decides
+                    // its outcome, so it is recorded like a pass's. A timed-out test was stopped by
+                    // the clock and may still be running, so its record is incomplete; a skipped
+                    // test ran nothing of its own.
+                    if (!resultByTest.TryGetValue(testKey, out var result)
+                        || result.Outcome == TestOutcome.Skipped
+                        || result.TimedOut)
+                    {
+                        nextUnknown.Add(testKey);
+                        continue;
+                    }
+                    var failed = result.Outcome != TestOutcome.Pass;
+
+                    perTestStatementTable.TryGetValue(testKey, out var statements);
+                    useByTest.TryGetValue(testKey, out var used);
+                    if ((statements == null || statements.Count == 0) && used == null)
+                    {
+                        nextUnknown.Add(testKey);
+                        continue;
+                    }
+
+                    var coveredObjects = new HashSet<string>(StringComparer.Ordinal);
+                    var unmappable = false;
+                    // False when the file maps to no single object (#5003) and is not packaged.
+                    bool Cover(string filePath, string? scopeName)
+                    {
+                        if (!requestWideTrackedObjectsByPath.TryGetValue(filePath, out var identity))
+                            return AlRunner.Infrastructure.DependencyPackageFingerprint.IsUnderAny(filePath, packagedSourceRoots);
+                        AddKeys(ToAffectedObjectKey(identity), scopeName);
+                        return true;
+                    }
+                    void AddKeys(string objKey, string? scopeName)
+                    {
+                        coveredObjects.Add(objKey);
+                        // #2539: ALSO the procedure-level compound key, so a change narrowed to one
+                        // procedure selects only the tests that ran it. The plain object-level key
+                        // stays too — it is what a WIDENED (whole-object) change matches.
+                        if (!string.IsNullOrEmpty(scopeName))
+                            coveredObjects.Add(ToAffectedScopeKey(objKey, scopeName));
+                    }
+                    foreach (var s in statements ?? Enumerable.Empty<AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord>())
+                        if (!Cover(s.FilePath, s.ScopeName)) { unmappable = true; break; }
+                    if (used != null && !unmappable)
+                    {
+                        // Outside this request's sources, or packaged: skipped, as a statement there is.
+                        bool Keyed(Type objectType, out string key)
+                        {
+                            key = "";
+                            if (UsedObjectOf(objectType) is not { } o
+                                || AlRunner.Infrastructure.DependencyPackageFingerprint.IsUnderAny(o.Path, packagedSourceRoots))
+                                return false;
+                            key = o.Key;
+                            return true;
+                        }
+                        foreach (var scope in used.Scopes)
+                        {
+                            if (!Keyed(AlRunner.Infrastructure.AlScopeKey.ObjectTypeOf(scope), out var objKey)) continue;
+                            // An entered method that cannot be named cannot carry its scope key.
+                            if (AlRunner.Infrastructure.AlCoverageTracker.TryResolveScope(scope, selectionSourceMap) is not { } resolved)
+                            {
+                                unmappable = true;
+                                break;
+                            }
+                            AddKeys(objKey, resolved.ScopeName);
+                        }
+                        foreach (var type in used.UnresolvedScopeOwners)
+                            if (Keyed(type, out _)) unmappable = true;
+                        foreach (var type in used.Objects)
+                            if (Keyed(type, out var objKey)) AddKeys(objKey, null);
+                    }
+
+                    if (unmappable || coveredObjects.Count == 0)
+                    {
+                        nextUnknown.Add(testKey);
+                        continue;
+                    }
+                    nextCoverage[testKey] = coveredObjects;
+                    nextEvents[testKey] = eventsByTest.TryGetValue(testKey, out var raised)
+                        ? raised : new HashSet<string>(StringComparer.Ordinal);
+                    if (failed) nextFailing.Add(testKey);
+                }
+
+                // #5008: what no single test holds. A narrowed run constructed only its own
+                // tests' long-lived records, so the previous entry's are kept as well.
+                var bundleWide = new HashSet<string>(eventsByTest[bundleWideKey], StringComparer.Ordinal);
+                bundleWide.UnionWith(longLivedObjectKeys);
+                if (selectedThisRequest != null && previousEvents != null
+                    && previousEvents.TryGetValue(bundleWideKey, out var previousBundleWide))
+                    bundleWide.UnionWith(previousBundleWide);
+                nextEvents[bundleWideKey] = bundleWide;
+
+                affectedCoverageByBundle[bundlePath] = nextCoverage;
+                affectedUnknownTestsByBundle[bundlePath] = nextUnknown;
+                affectedFailingTestsByBundle[bundlePath] = nextFailing;
+                affectedEnvironmentKeyByBundle[bundlePath] = envKey;
+                affectedBaselineGenerationsByBundle[bundlePath] = CurrentBaselineGenerations();
+                StoreEventBaseline(bundlePath, nextEvents);
+                recordedThisRequest.Add(bundlePath);
+            }
+            PersistAffectedBaseline(affected, sourcePaths, requestModuleNames, recordedThisRequest);
+        }
+
+        ServerSelection? requestSelection = null;
+        if (affectedOnly)
+        {
+            var changedObjects = selectionByBundle.Values
+                .SelectMany(s => s.ChangedObjects)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(x => x, StringComparer.Ordinal)
+                .ToList();
+            var forcedReasons = selectionByBundle.Values
+                .Where(s => s.ForcedFull && !string.IsNullOrWhiteSpace(s.Reason))
+                .Select(s => s.Reason!)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            if (selectionByBundle.Count == 0 && allCompileErrors.Count > 0)
+                forcedReasons.Add("bundle did not reach test execution (compile/dependency failure)");
+            requestSelection = new ServerSelection(
+                "affected",
+                selectionByBundle.Values.Sum(s => s.Ran),
+                selectionByBundle.Values.Sum(s => s.Skipped),
+                changedObjects,
+                forcedReasons.Count > 0,
+                forcedReasons.Count > 0 ? string.Join(" | ", forcedReasons) : null,
+                selectionByBundle.Values.Sum(s => s.SkippedFailing ?? 0));
+        }
+
+        return new AlRunner.Infrastructure.AffectedRunOutcome(runs, allTests, allCompileErrors, exitCode, cached, cancelled,
+            statementTable, perTestStatementTable, scanFailures, requestSelection,
+            requestDiscoveredTestsByBundle, requestSelectedTestsByBundle);
+    }
+    finally
+    {
+        // Scoped to THIS run only — a coverage:true request must never leave hit-count tracking
+        // on for a later request that didn't ask for it.
+        AlRunner.Infrastructure.AlCoverageTracker.Enabled = false;
+        // #2135: same per-request scoping as Enabled above.
+        AlRunner.Infrastructure.AlCoverageTracker.PerTestEnabled = false;
+    }
+}
+
 int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
 {
     // Per-session memory of the last served request's .al file hashes, so a cache
     // miss can report which files changed (v1 `changedFiles`).
     Dictionary<string, string>? lastFileHashes = null;
-    // Per-bundle memory for affected-only test selection (#2441): previous run's
-    // per-test object coverage (object-key strings), tests that were unknown on that
-    // run (no mappable coverage or non-pass outcome), and the runtime environment key
-    // this coverage was recorded under.
-    var affectedCoverageByBundle = new Dictionary<string, Dictionary<string, HashSet<string>>>(StringComparer.Ordinal);
-    var affectedUnknownTestsByBundle = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
-    // #4978: tests whose last recorded result was not a pass but whose coverage is stored; a
-    // subset of the coverage keys, never of the unknown set.
-    var affectedFailingTestsByBundle = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
-    var affectedEnvironmentKeyByBundle = new Dictionary<string, string>(StringComparer.Ordinal);
-    // #4971: per bundle, every request module's change-model baseline generation at the moment its
-    // coverage was recorded. Selection trusts changedObjects only when each module's baseline at
-    // the start of the next request is that same generation.
-    var affectedBaselineGenerationsByBundle = new Dictionary<string, Dictionary<string, long?>>(StringComparer.Ordinal);
-    // #4988: per bundle, the events each covered test raised, and the subscriber bindings and
-    // event observability its tests ran with. Written and dropped together with the coverage.
-    var affectedEventsByBundle = new Dictionary<string, Dictionary<string, HashSet<string>>>(StringComparer.Ordinal);
-    var affectedBindingsByBundle = new Dictionary<string, List<AlRunner.Patches.SubscriberBinding>>(StringComparer.Ordinal);
-    var affectedObservabilityByBundle = new Dictionary<string, AlRunner.Patches.EventObservability>(StringComparer.Ordinal);
-    // #4979: bundles whose state above was loaded from the persisted baseline and not re-recorded in
-    // this process, with the module snapshots it was recorded on. Selection compares those with the
-    // change model's baselines by file content in place of the generation check.
-    var affectedPersistedModulesByBundle =
-        new Dictionary<string, Dictionary<string, AlRunner.Infrastructure.AffectedModuleSnapshot>>(StringComparer.Ordinal);
+    // Per-bundle memory for affected-only test selection (#2441).
+    var affected = new AlRunner.Infrastructure.AffectedSelectionState("server");
 
     // Guards every write to `output`: the reader thread's cancel-ack and this
     // method's normal command responses / streaming runtests output are now genuine
@@ -7318,165 +8087,6 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     // EOF — client disconnected.
     return 0;
 
-    static string ToAffectedObjectKey(AffectedObjectId id)
-        => $"{id.Kind}|{(id.Id.HasValue ? "id:" + id.Id.Value : "name:" + id.Name)}";
-
-    static string ToAffectedObjectDisplay(AffectedObjectId id)
-        => id.Id.HasValue
-            ? $"{id.Kind} {id.Id.Value} {id.Name}"
-            : $"{id.Kind} {id.Name}";
-
-    // #2539: the SAME compound key both the changed side (below) and the coverage-attribution
-    // side (the collectPerTestForSelection loop) must build for a specific changed procedure —
-    // an object-level key plus its scope name, separated so it can never collide with a bare
-    // ToAffectedObjectKey result (no AL identifier can contain "::").
-    static string ToAffectedScopeKey(string objectKey, string scopeName) => $"{objectKey}::proc:{scopeName}";
-
-    // #4988: the subscriber's whole object changed, or the one procedure the change was narrowed to
-    // is this subscriber (a scope name may be qualified; AL names compare case-insensitively).
-    static bool SubscriberCodeChanged(AlRunner.Patches.SubscriberBinding b, HashSet<string> changedKeys)
-    {
-        var objKey = ToAffectedObjectKey(new AffectedObjectId(b.SubscriberKind, b.SubscriberId, ""));
-        if (changedKeys.Contains(objKey)) return true;
-        var prefix = ToAffectedScopeKey(objKey, "");
-        foreach (var k in changedKeys)
-        {
-            if (!k.StartsWith(prefix, StringComparison.Ordinal)) continue;
-            var scope = k.Substring(prefix.Length);
-            if (string.Equals(scope, b.ProcedureName, StringComparison.OrdinalIgnoreCase)
-                || scope.EndsWith("." + b.ProcedureName, StringComparison.OrdinalIgnoreCase))
-                return true;
-        }
-        return false;
-    }
-
-    /// <summary>
-    /// Builds the set affectedOnly's overlap check compares a test's coveredObjects against —
-    /// object-level keys by default (identical to pre-#2539 behaviour), REFINED to a
-    /// procedure-level compound key wherever <paramref name="requestWideChangedScopes"/> (the
-    /// REQUEST-WIDE <c>PeekChangedScopes</c> union — every bundle in the request, not just
-    /// this one, mirroring #2492's own object-level union) confidently narrowed that SAME
-    /// object this cycle. An object <paramref name="requestWideChangedScopes"/> explicitly
-    /// widened (a null-ScopeName entry) is NEVER narrowed, even if some other entry for the
-    /// same object looks narrow — the widen always wins. An object with NO entry in
-    /// <paramref name="requestWideChangedScopes"/> at all (its own bundle's peek was
-    /// uncertain, or #2539's scope-level peek simply hasn't run for it) falls back to the
-    /// plain object-level key — the same safe default as pre-#2539.
-    /// </summary>
-    static HashSet<string>? BuildAffectedChangedKeys(
-        IReadOnlyList<AffectedObjectId>? changedObjects, IReadOnlyList<AffectedScopeId>? requestWideChangedScopes)
-    {
-        if (changedObjects == null) return null;
-
-        var widenedObjectKeys = new HashSet<string>(StringComparer.Ordinal);
-        var scopesByObjectKey = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-        if (requestWideChangedScopes != null)
-        {
-            foreach (var sc in requestWideChangedScopes)
-            {
-                var objKey = ToAffectedObjectKey(sc.Object);
-                if (sc.ScopeName == null) { widenedObjectKeys.Add(objKey); continue; }
-                if (!scopesByObjectKey.TryGetValue(objKey, out var list))
-                    scopesByObjectKey[objKey] = list = new List<string>();
-                list.Add(sc.ScopeName);
-            }
-        }
-
-        var keys = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var id in changedObjects)
-        {
-            var objKey = ToAffectedObjectKey(id);
-            if (!widenedObjectKeys.Contains(objKey)
-                && scopesByObjectKey.TryGetValue(objKey, out var scopes) && scopes.Count > 0)
-            {
-                foreach (var s in scopes) keys.Add(ToAffectedScopeKey(objKey, s));
-            }
-            else
-            {
-                keys.Add(objKey);
-            }
-        }
-        return keys;
-    }
-
-    // #4979: docs/server-mode.md#affectedonly-across-server-processes. Fills the selection state of
-    // every stored bundle this process holds none for; returns why the file could not be used, or null.
-    string? LoadPersistedAffectedBaseline(string[] sourcePaths)
-    {
-        AlRunner.Infrastructure.AffectedBaselineStore.LoadResult loaded;
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        string path;
-        try
-        {
-            path = AlRunner.Infrastructure.AffectedBaselineStore.PathFor(
-                AlRunner.Infrastructure.CacheRoots.Resolve(AlRunner.Infrastructure.AffectedBaselineStore.CacheName), sourcePaths);
-            loaded = AlRunner.Infrastructure.AffectedBaselineStore.Load(path);
-        }
-        catch (Exception ex)
-        {
-            return $"the store could not be located: {ex.GetType().Name}: {ex.Message.Split('\n')[0]}";
-        }
-        if (loaded.Baseline is not { } persisted) return loaded.Unusable;
-        Console.Error.WriteLine(
-            $"  [server] affectedOnly: loaded the persisted baseline {path} ({new FileInfo(path).Length} bytes) in {sw.ElapsedMilliseconds} ms");
-        foreach (var (bundle, b) in persisted.Bundles)
-        {
-            if (affectedCoverageByBundle.ContainsKey(bundle)) continue;
-            affectedCoverageByBundle[bundle] = b.Coverage;
-            affectedUnknownTestsByBundle[bundle] = b.Unknown;
-            affectedFailingTestsByBundle[bundle] = b.Failing;
-            affectedEnvironmentKeyByBundle[bundle] = b.EnvironmentKey;
-            affectedBaselineGenerationsByBundle.Remove(bundle);
-            affectedEventsByBundle[bundle] = b.Events;
-            if (b.Bindings != null) affectedBindingsByBundle[bundle] = b.Bindings;
-            else affectedBindingsByBundle.Remove(bundle);
-            if (b.Observability != null) affectedObservabilityByBundle[bundle] = b.Observability;
-            else affectedObservabilityByBundle.Remove(bundle);
-            affectedPersistedModulesByBundle[bundle] = persisted.Modules;
-        }
-        return null;
-    }
-
-    // Writes the bundles this request recorded, with the change-model snapshots their coverage was
-    // measured on. Skipped when a snapshot is missing: an older file stays, and is still consistent.
-    void PersistAffectedBaseline(string[] sourcePaths, IReadOnlyList<string> moduleNames, IReadOnlyCollection<string> recorded)
-    {
-        if (recorded.Count == 0) return;
-        try
-        {
-            var modules = new Dictionary<string, AlRunner.Infrastructure.AffectedModuleSnapshot>(StringComparer.Ordinal);
-            foreach (var m in moduleNames)
-            {
-                if (emitter.TryGetAffectedModuleSnapshot(m) is not { } snapshot)
-                {
-                    Console.Error.WriteLine($"  [server] affectedOnly baseline not persisted: {m} has no change-model baseline");
-                    return;
-                }
-                modules[m] = snapshot;
-            }
-            var bundles = new Dictionary<string, AlRunner.Infrastructure.AffectedBundleBaseline>(StringComparer.Ordinal);
-            foreach (var bundle in recorded)
-                bundles[bundle] = new AlRunner.Infrastructure.AffectedBundleBaseline(
-                    affectedEnvironmentKeyByBundle[bundle],
-                    affectedCoverageByBundle[bundle],
-                    affectedUnknownTestsByBundle[bundle],
-                    affectedFailingTestsByBundle[bundle],
-                    affectedEventsByBundle[bundle],
-                    affectedBindingsByBundle.TryGetValue(bundle, out var bindings) ? bindings : null,
-                    affectedObservabilityByBundle.TryGetValue(bundle, out var observability) ? observability : null);
-            var sw = System.Diagnostics.Stopwatch.StartNew();
-            var path = AlRunner.Infrastructure.AffectedBaselineStore.PathFor(
-                AlRunner.Infrastructure.CacheRoots.Resolve(AlRunner.Infrastructure.AffectedBaselineStore.CacheName), sourcePaths);
-            AlRunner.Infrastructure.AffectedBaselineStore.Write(path, new AlRunner.Infrastructure.AffectedBaseline(modules, bundles));
-            Console.Error.WriteLine(
-                $"  [server] affectedOnly: persisted the baseline to {path} ({new FileInfo(path).Length} bytes) in {sw.ElapsedMilliseconds} ms");
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"  [server] affectedOnly baseline not persisted: {ex.GetType().Name}: {ex.Message.Split('\n')[0]}");
-        }
-    }
-
     // Sets executor.Isolation from req.TestIsolation (see #1616), falling back to
     // defaultServerIsolation when the request doesn't specify one. Returns an
     // error response string on an unrecognised mode, else null.
@@ -7553,30 +8163,6 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             return;
         }
 
-        // #2042: 'coverage:true' opts into per-statement hit counts + a position table
-        // on the terminal summary line — reuses AlCoverageTracker's existing StmtHit
-        // hook (#1922), same process-global-flag pattern as AlValueCapture.Enabled in
-        // HandleServerExecute below. Reset() (not just Enabled=true) so a warm
-        // server's hit counts from a PRIOR request never leak into this one — the
-        // dictionary is process-global and this process outlives many requests.
-        var requestCoverage = req.Coverage == true;
-        var requestPerTestCoverage = req.PerTestCoverage == true;
-        var affectedOnly = req.AffectedOnly == true;
-        var includeFailing = req.IncludeFailing == true;
-        // #2441: affected-only selection needs per-test coverage from this run to seed
-        // the next run's selection baseline, even when the caller doesn't ask to emit
-        // `perTestCoverage` on the wire.
-        var collectPerTestForSelection = requestPerTestCoverage || affectedOnly;
-        AlRunner.Infrastructure.AlCoverageTracker.Enabled = requestCoverage;
-        if (requestCoverage) AlRunner.Infrastructure.AlCoverageTracker.Reset();
-        AlRunner.Infrastructure.AlCoverageTracker.PerTestEnabled = collectPerTestForSelection;
-        if (collectPerTestForSelection)
-        {
-            AlRunner.Infrastructure.AlCoverageTracker.ResetPerTest();
-            AlRunner.Infrastructure.AlEventRaiseTracker.ResetPerTest();
-            AlRunner.Infrastructure.AlObjectUseTracker.ResetPerTest();
-        }
-
         var cts = new System.Threading.CancellationTokenSource();
         System.Threading.Interlocked.Exchange(ref activeRunCts, cts);
         try
@@ -7598,251 +8184,25 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 AlRunner.Infrastructure.TestBarrier.WaitForRelease();
             }
 
-            var requestDiscoveredTestsByBundle = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
-            // #3337: null = no narrowing (every discovered test was selected).
-            var requestSelectedTestsByBundle = new Dictionary<string, HashSet<string>?>(StringComparer.Ordinal);
-            var requestModuleByBundle = new Dictionary<string, string>(StringComparer.Ordinal);
-            var requestEnvironmentByBundle = new Dictionary<string, string>(StringComparer.Ordinal);
-            var selectionByBundle = new Dictionary<string, ServerSelection>(StringComparer.Ordinal);
-            var activeBundleKey = "";
-            Dictionary<string, HashSet<string>>? activePreviousCoverage = null;
-            HashSet<string>? activePreviousUnknown = null;
-            HashSet<string>? activePreviousFailing = null;
-            Dictionary<string, HashSet<string>>? activePreviousEvents = null;
-            var requestBindingsByBundle = new Dictionary<string, List<AlRunner.Patches.SubscriberBinding>?>(StringComparer.Ordinal);
-            var requestObservabilityByBundle = new Dictionary<string, AlRunner.Patches.EventObservability>(StringComparer.Ordinal);
-            HashSet<string>? activeChangedObjectKeys = null;
-            IReadOnlyList<AffectedObjectId> activeChangedObjectIds = Array.Empty<AffectedObjectId>();
-            List<string> activeChangedObjectDisplay = new();
-            bool activeForcedFull = false;
-            string? activeForcedReason = null;
-
-            // Same derivation RunBundleForServer uses for its module name.
-            var requestModuleNames = req.SourcePaths
-                .Select(p => $"V2_{Path.GetFileName(Path.GetFullPath(p))}")
-                .Distinct(StringComparer.Ordinal)
-                .ToList();
-            var baselineGenerationAtRequestStart = requestModuleNames
-                .ToDictionary(m => m, m => emitter.RadBaselineGeneration(m), StringComparer.Ordinal);
-            // #4979: a bundle this process holds no selection state for starts from the persisted one.
-            var persistedBaselineUnusable = affectedOnly
-                && req.SourcePaths.Any(p => !affectedCoverageByBundle.ContainsKey(Path.GetFullPath(p)))
-                ? LoadPersistedAffectedBaseline(req.SourcePaths)
-                : null;
-
-            var runs = RunAllBundlesForServer(req.SourcePaths, req.PackagePaths,
-                asm =>
-                {
-                    var discovered = executor.DiscoverTests(asm);
-                    requestDiscoveredTestsByBundle[activeBundleKey] =
-                        new HashSet<string>(discovered, StringComparer.Ordinal);
-
-                    // #4988: the bindings and event observability these tests run with — the next
-                    // request's baseline — and, under affectedOnly, the events whose subscribers changed.
-                    HashSet<string> changedEventKeys = new(StringComparer.Ordinal);
-                    if (collectPerTestForSelection)
-                    {
-                        var observability = AlRunner.Patches.EventSubscriberPatches.SeedAllEventScopesForRecording();
-                        var bindings = AlRunner.Patches.EventSubscriberPatches.CurrentModuleSubscriberBindings();
-                        requestObservabilityByBundle[activeBundleKey] = observability;
-                        requestBindingsByBundle[activeBundleKey] = bindings;
-                        if (affectedOnly && !activeForcedFull)
-                        {
-                            var changedObjectKeys = activeChangedObjectKeys ?? new HashSet<string>(StringComparer.Ordinal);
-                            var eventResult = AlRunner.Infrastructure.AffectedEventSelection.ChangedEventKeys(
-                                affectedBindingsByBundle.TryGetValue(activeBundleKey, out var prevBindings) ? prevBindings : null,
-                                bindings,
-                                affectedObservabilityByBundle.TryGetValue(activeBundleKey, out var prevObs) ? prevObs : null,
-                                observability.PublisherObjects.Keys.ToHashSet(StringComparer.Ordinal),
-                                b => SubscriberCodeChanged(b, changedObjectKeys));
-                            // #5008: a table that executed no statement is in no coverage.
-                            var tableResult = AlRunner.Infrastructure.AffectedEventSelection.ChangedTableKeys(
-                                activeChangedObjectIds.Select(o => (o.Kind, o.Id)),
-                                AlRunner.Patches.RecordPatches.TableExtensionBaseTableIds(),
-                                activePreviousEvents != null
-                                && activePreviousEvents.TryGetValue(AlRunner.Infrastructure.AlEventRaiseTracker.BundleWideKey, out var bundleWide)
-                                    ? bundleWide : null);
-                            // #5011: a whole-object change to an instance no one test owns.
-                            var longLivedReason = AlRunner.Infrastructure.AffectedEventSelection.LongLivedObjectChange(
-                                changedObjectKeys,
-                                activePreviousEvents != null
-                                && activePreviousEvents.TryGetValue(AlRunner.Infrastructure.AlEventRaiseTracker.BundleWideKey, out var bundleWideObjects)
-                                    ? bundleWideObjects : null);
-                            if (eventResult.ForceFullReason != null || tableResult.ForceFullReason != null || longLivedReason != null)
-                            {
-                                activeForcedFull = true;
-                                activeForcedReason = eventResult.ForceFullReason ?? tableResult.ForceFullReason ?? longLivedReason;
-                            }
-                            else changedEventKeys = eventResult.Keys.Union(tableResult.Keys).ToHashSet(StringComparer.Ordinal);
-                        }
-                    }
-
-                    HashSet<string>? exactSelection = null;
-                    var plannedRan = discovered.Count;
-                    var plannedSkipped = 0;
-                    var plannedSkippedFailing = 0;
-                    if (affectedOnly && !activeForcedFull)
-                    {
-                        exactSelection = new HashSet<string>(StringComparer.Ordinal);
-                        foreach (var testKey in discovered)
-                        {
-                            if (activePreviousCoverage == null
-                                || !activePreviousCoverage.TryGetValue(testKey, out var coveredObjects)
-                                || coveredObjects.Count == 0
-                                || (activePreviousUnknown?.Contains(testKey) ?? false))
-                            {
-                                exactSelection.Add(testKey);
-                                continue;
-                            }
-                            var previouslyFailing = activePreviousFailing?.Contains(testKey) ?? false;
-                            if ((includeFailing && previouslyFailing)
-                                || (activeChangedObjectKeys != null && coveredObjects.Overlaps(activeChangedObjectKeys))
-                                || AlRunner.Infrastructure.AffectedEventSelection.Overlaps(
-                                    activePreviousEvents != null && activePreviousEvents.TryGetValue(testKey, out var raised) ? raised : null,
-                                    changedEventKeys))
-                                exactSelection.Add(testKey);
-                            else if (previouslyFailing)
-                                plannedSkippedFailing++;
-                        }
-                        plannedRan = exactSelection.Count;
-                        plannedSkipped = Math.Max(0, discovered.Count - plannedRan);
-                    }
-
-                    if (affectedOnly)
-                    {
-                        selectionByBundle[activeBundleKey] = new ServerSelection(
-                            "affected",
-                            plannedRan,
-                            plannedSkipped,
-                            activeChangedObjectDisplay,
-                            activeForcedFull,
-                            activeForcedReason,
-                            plannedSkippedFailing);
-                    }
-
-                    requestSelectedTestsByBundle[activeBundleKey] = exactSelection;
-                    var previousExact = executor.ExactTestFilter;
-                    executor.ExactTestFilter = exactSelection;
-                    try { return executor.Run(asm, OnTestComplete, cts.Token); }
-                    finally { executor.ExactTestFilter = previousExact; }
-                },
-                cts.Token,
-                affectedOnly,
-                (bundlePath, moduleName, selectionEnvironmentKey, changedObjects, changeModelFallbackReason, ownChangedScopes) =>
-                {
-                    activeBundleKey = bundlePath;
-                    requestModuleByBundle[bundlePath] = moduleName;
-                    requestEnvironmentByBundle[bundlePath] = selectionEnvironmentKey;
-                    activeChangedObjectKeys = BuildAffectedChangedKeys(changedObjects, ownChangedScopes);
-                    activeChangedObjectIds = changedObjects ?? Array.Empty<AffectedObjectId>();
-                    activeChangedObjectDisplay = (changedObjects ?? Array.Empty<AffectedObjectId>())
-                        .Select(ToAffectedObjectDisplay)
-                        .Distinct(StringComparer.Ordinal)
-                        .OrderBy(x => x, StringComparer.Ordinal)
-                        .ToList();
-                    activePreviousCoverage = affectedCoverageByBundle.TryGetValue(bundlePath, out var prevCov)
-                        ? prevCov : null;
-                    activePreviousUnknown = affectedUnknownTestsByBundle.TryGetValue(bundlePath, out var prevUnknown)
-                        ? prevUnknown : null;
-                    activePreviousFailing = affectedFailingTestsByBundle.TryGetValue(bundlePath, out var prevFailing)
-                        ? prevFailing : null;
-                    activePreviousEvents = affectedEventsByBundle.TryGetValue(bundlePath, out var prevEvents)
-                        ? prevEvents : null;
-
-                    activeForcedFull = false;
-                    activeForcedReason = null;
-                    if (!affectedOnly) return;
-
-                    if (activePreviousCoverage == null && persistedBaselineUnusable != null)
-                    {
-                        activeForcedFull = true;
-                        activeForcedReason = $"the persisted per-test coverage baseline is unusable: {persistedBaselineUnusable}";
-                        return;
-                    }
-                    // #4979: state loaded from disk was recorded in another process, so no generation can
-                    // vouch for it; the file hashes it was recorded on decide what changed instead.
-                    if (affectedPersistedModulesByBundle.TryGetValue(bundlePath, out var persistedModules))
-                    {
-                        if (activePreviousCoverage == null || activePreviousUnknown == null
-                            || !affectedEnvironmentKeyByBundle.TryGetValue(bundlePath, out var persistedEnv)
-                            || !string.Equals(persistedEnv, selectionEnvironmentKey, StringComparison.Ordinal))
-                        {
-                            activeForcedFull = true;
-                            activeForcedReason =
-                                "coverage baseline environment changed (BC version/artifact/package cache/dependency package content)";
-                            return;
-                        }
-                        var persistedDiff = AlRunner.Infrastructure.AffectedBaselineStore.ChangedSince(
-                            persistedModules, requestModuleNames, emitter.TryGetAffectedModuleSnapshot);
-                        if (persistedDiff.ForceFullReason != null)
-                        {
-                            activeForcedFull = true;
-                            activeForcedReason =
-                                $"the persisted per-test coverage baseline cannot vouch for this source: {persistedDiff.ForceFullReason}";
-                            return;
-                        }
-                        activeChangedObjectKeys = persistedDiff.Changed.Select(ToAffectedObjectKey).ToHashSet(StringComparer.Ordinal);
-                        activeChangedObjectIds = persistedDiff.Changed;
-                        activeChangedObjectDisplay = persistedDiff.Changed.Select(ToAffectedObjectDisplay)
-                            .Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal).ToList();
-                        return;
-                    }
-
-                    if (changeModelFallbackReason != null)
-                    {
-                        activeForcedFull = true;
-                        activeForcedReason = $"change model unavailable: {changeModelFallbackReason}";
-                        return;
-                    }
-                    if (changedObjects == null)
-                    {
-                        activeForcedFull = true;
-                        activeForcedReason = "changed files could not be attributed to AL objects";
-                        return;
-                    }
-                    if (activePreviousCoverage == null || activePreviousUnknown == null)
-                    {
-                        activeForcedFull = true;
-                        activeForcedReason = "no previous per-test coverage baseline for this bundle";
-                        return;
-                    }
-                    if (!affectedEnvironmentKeyByBundle.TryGetValue(bundlePath, out var previousEnv)
-                        || !string.Equals(previousEnv, selectionEnvironmentKey, StringComparison.Ordinal))
-                    {
-                        activeForcedFull = true;
-                        activeForcedReason =
-                            "coverage baseline environment changed (BC version/artifact/package cache/dependency package content)";
-                        return;
-                    }
-                    // #4971: changedObjects is relative to each module's baseline as this request found
-                    // it; that has to be the baseline the stored coverage was measured against.
-                    affectedBaselineGenerationsByBundle.TryGetValue(bundlePath, out var coverageGenerations);
-                    var movedModule = requestModuleNames.FirstOrDefault(m =>
-                        coverageGenerations == null
-                        || !coverageGenerations.TryGetValue(m, out var recorded)
-                        || recorded == null
-                        || recorded != baselineGenerationAtRequestStart[m]);
-                    if (movedModule != null)
-                    {
-                        activeForcedFull = true;
-                        activeForcedReason =
-                            $"the change model's baseline for {movedModule} is not the code the per-test coverage "
-                            + "baseline was recorded on (a request without affectedOnly recompiled it, or the "
-                            + "module was loaded from a source no baseline describes)";
-                    }
-                },
-                pinLoadToChangeModel: collectPerTestForSelection);
-
-            var allTests = runs.SelectMany(r => r.Tests).ToList();
-            var allCompileErrors = runs.SelectMany(r => r.CompileErrors ?? Array.Empty<CompilationErrorGroup>()).ToList();
-            // Max() is the right aggregator ONLY because the codes a per-bundle run can carry
-            // happen to rank in numeric order: 3 (compile) > 2 (exec) > 1 (test fail) > 0. The
-            // whole-run codes do not — the CLI ranks 4 (count baseline) above 1 (#3350) — but
-            // 4 and 5 are audits over the FULL run, computed once in the CLI path, so no
-            // BundleRun ever carries one and Max() cannot meet them here. Give a bundle a code
-            // that is not in that ordered set and this silently picks the wrong one.
-            var exitCode = runs.Count > 0 ? runs.Max(r => r.ExitCode) : 0;
-            var cached = runs.Count > 0 && runs.All(r => r.Cached);
+            // #1809: activeRunCts is cleared once the tests have run and BEFORE the summary line is
+            // written, so a `cancel` sent after reading the summary always sees it null — by program
+            // order on this thread, not by winning a race against the reader thread. See
+            // ServerCancelTests.Cancel_AfterRunTestsCompletes_IsNoop.
+            var outcome = RunTestsWithSelection(affected, req.SourcePaths, req.PackagePaths,
+                req.Coverage == true, req.PerTestCoverage == true, req.AffectedOnly == true, req.IncludeFailing == true,
+                OnTestComplete, cts.Token,
+                afterRuns: () => System.Threading.Interlocked.CompareExchange(ref activeRunCts, null, cts));
+            var runs = outcome.Runs;
+            var allTests = outcome.AllTests;
+            var allCompileErrors = outcome.CompileErrors;
+            var exitCode = outcome.ExitCode;
+            var cached = outcome.Cached;
+            var cancelled = outcome.Cancelled;
+            var statementTable = outcome.StatementTable;
+            var perTestStatementTable = outcome.PerTestStatementTable;
+            var scanFailures = outcome.ScanFailures;
+            var requestSelection = outcome.Selection;
+            var requestPerTestCoverage = req.PerTestCoverage == true;
 
             var combinedHashes = new Dictionary<string, string>();
             foreach (var r in runs)
@@ -7854,339 +8214,6 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             if (!cached)
                 changed = DiffServerFiles(lastFileHashes, combinedHashes);
             lastFileHashes = combinedHashes;
-
-            // Read BEFORE clearing activeRunCts below (still valid — not yet disposed).
-            var cancelled = cts.Token.IsCancellationRequested;
-
-            // #1809: clear activeRunCts BEFORE writing+flushing the summary line, not
-            // after (the old code cleared it in `finally`, which runs AFTER this write).
-            // The reader thread's `cancel` side channel (HandleSideChannelCommand,
-            // above) only has something to observe once the client sends a `cancel`
-            // request, and a well-behaved client can only do that once it has actually
-            // read the summary line this method is about to emit. So clearing first
-            // makes "cancel sent right after the summary" ALWAYS see activeRunCts
-            // already null — by program order on this one thread, not by winning a race
-            // against the reader thread. The old ordering left a real gap: the client
-            // could read+flush-observe the summary and fire `cancel` before this
-            // thread ever reached its `finally`, during which HandleSideChannelCommand
-            // would still see the stale non-null cts and answer noop:false for a run
-            // that had already finished — a bug the wider concurrency #1809 introduces
-            // (more collections running at once → more scheduler contention → this
-            // window widens) makes far more likely to actually land, not merely a
-            // theoretical TOCTOU. See ServerCancelTests.Cancel_AfterRunTestsCompletes_IsNoop.
-            System.Threading.Interlocked.CompareExchange(ref activeRunCts, null, cts);
-
-            // #2042: built from the SAME roots the run just compiled, matching the CLI
-            // --coverage path's AlCoverageSourceMap.Build call. #4272: req.SourcePaths alone
-            // was not that set — it is what RunAllBundlesForServer was given, and the compile
-            // also parses sibling SOURCE dependencies discovered from it, whose executed
-            // statements were tracked and then dropped for want of a root —
-            // scopes whose owning object isn't found here (framework/dependency
-            // assemblies outside the bundle under test) are silently excluded, same
-            // as --coverage. Only built when requested: reflection-scanning every
-            // loaded assembly's types on every plain runTests call would be wasted
-            // work for callers who never asked for it.
-            IReadOnlyList<AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord>? statementTable = null;
-            IReadOnlyDictionary<string, List<AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord>>? perTestStatementTable = null;
-            IReadOnlyList<AlRunner.Infrastructure.SourceScanFailure>? scanFailures = null;
-            AlRunner.Infrastructure.AlSourceLocationMap? selectionSourceMap = null;
-            if (requestCoverage || collectPerTestForSelection)
-            {
-                var covSourceMap = AlRunner.Infrastructure.AlCoverageSourceMap.Build(
-                    AlRunner.Infrastructure.AlCoverageSourceMap.RootsWithParsedSourceDependencies(
-                        req.SourcePaths),
-                    relativeTo: null);
-                // #3884: a table built from a map that could not read everything is short, and
-                // the response has to say so — otherwise the client gets an ordinary success
-                // and no way to tell an uncovered statement from an unread one.
-                if (covSourceMap.IsIncomplete) scanFailures = covSourceMap.ScanFailures;
-                if (requestCoverage)
-                    statementTable = AlRunner.Infrastructure.AlCoverageTracker.CollectStatementTable(covSourceMap);
-                // #2135: independent of the aggregate table above — see
-                // AlCoverageTracker.CollectPerTestStatementTable's doc comment.
-                if (collectPerTestForSelection)
-                {
-                    perTestStatementTable = AlRunner.Infrastructure.AlCoverageTracker.CollectPerTestStatementTable(covSourceMap);
-                    selectionSourceMap = covSourceMap;
-                }
-            }
-
-            if (collectPerTestForSelection && perTestStatementTable != null && selectionSourceMap != null)
-            {
-                var resultByTest = allTests
-                    .Where(t => t.Method != "<ctor>")
-                    .GroupBy(t => $"{t.Codeunit}.{t.Method}", StringComparer.Ordinal)
-                    .ToDictionary(g => g.Key, g => g.Last(), StringComparer.Ordinal);
-
-                // #2535: file-to-object attribution must be REQUEST-WIDE (every bundle's
-                // module unioned into one map), not per-module. `statements` is RUNTIME
-                // coverage — it contains every statement the test actually executed,
-                // including statements in a DEPENDENCY bundle's files (a real cross-app
-                // call, not a hypothetical: see the Pageworks/Pageworks.Test repro in
-                // #2535, mirroring #2492's PeekChangedObjects cross-bundle case on the
-                // CHANGED-object side — see that method's docstring). A per-module map
-                // cannot resolve a path belonging to a sibling bundle's module, so a single
-                // ordinary cross-app helper call made the whole test "unmappable" ->
-                // permanently "unknown" -> the test reran on EVERY future edit no matter
-                // how unrelated, forever. Measured on the real corpus (1012 tests): 897
-                // were unmappable this way, only 9 ever got a real coverage entry, and
-                // every one of those 9 had a coverage-set size of exactly 1 (their own
-                // declaring codeunit only) — so the defect is unmappable cross-bundle
-                // statements, not over-broad coverage sets. Built ONCE per request (not
-                // per bundle) from every module this request has already resolved.
-                // With pinLoadToChangeModel every module's current baseline is the code this request ran.
-                Dictionary<string, long?> CurrentBaselineGenerations() => requestModuleNames
-                    .ToDictionary(m => m, m => emitter.RadBaselineGeneration(m), StringComparer.Ordinal);
-
-                var requestWideTrackedObjectsByPath = new Dictionary<string, AffectedObjectId>(StringComparer.Ordinal);
-                foreach (var trackedModuleName in requestModuleByBundle.Values.Distinct(StringComparer.Ordinal))
-                {
-                    var m = emitter.TryGetTrackedObjectsByPath(trackedModuleName);
-                    if (m == null) continue;
-                    foreach (var kv in m)
-                        requestWideTrackedObjectsByPath[kv.Key] = kv.Value;
-                }
-
-                var extensionsOfTable = new Dictionary<int, List<int>>();
-                foreach (var (ext, bases) in AlRunner.Patches.RecordPatches.TableExtensionBaseTableIds())
-                    foreach (var b in bases)
-                    {
-                        if (!extensionsOfTable.TryGetValue(b, out var exts)) extensionsOfTable[b] = exts = new List<int>();
-                        exts.Add(ext);
-                    }
-                var eventsByTest = AlRunner.Infrastructure.AlEventRaiseTracker.CollectPerTest(extensionsOfTable);
-                var bundleWideKey = AlRunner.Infrastructure.AlEventRaiseTracker.BundleWideKey;
-                // #5011: objects built and scopes entered, which an empty body or a page without
-                // triggers leaves out of statement coverage.
-                var useByTest = AlRunner.Infrastructure.AlObjectUseTracker.CollectPerTest();
-                var longLivedObjectKeys = new HashSet<string>(StringComparer.Ordinal);
-                foreach (var type in AlRunner.Infrastructure.AlObjectUseTracker.LongLivedObjects())
-                    if (UsedObjectOf(type) is { } o)
-                        longLivedObjectKeys.Add(AlRunner.Infrastructure.AffectedEventSelection.LongLivedObjectKey(o.Key));
-
-                // The key and file of an AL object class from this request's sources; null outside them.
-                // The class names its object, so a file declaring several objects (#5003) still keys.
-                (string Key, string Path)? UsedObjectOf(Type objectType)
-                {
-                    var (label, id) = AlRunner.Infrastructure.AlCallStackCapture.ParseObjectTypeAndId(objectType);
-                    if (id == 0 || !selectionSourceMap.TryGetValue((label, id), out var path)) return null;
-                    return (requestWideTrackedObjectsByPath.TryGetValue(path, out var identity)
-                        ? ToAffectedObjectKey(identity)
-                        : ToAffectedObjectKey(new AffectedObjectId(label == "CodeUnit" ? "Codeunit" : label, id, "")), path);
-                }
-                // #4988: the event side of the baseline, stored whenever the coverage is.
-                var recordedThisRequest = new List<string>();
-                void StoreEventBaseline(string bundlePath, Dictionary<string, HashSet<string>> nextEvents)
-                {
-                    affectedPersistedModulesByBundle.Remove(bundlePath);
-                    affectedEventsByBundle[bundlePath] = nextEvents;
-                    if (requestBindingsByBundle.TryGetValue(bundlePath, out var bindings) && bindings != null)
-                        affectedBindingsByBundle[bundlePath] = bindings;
-                    else
-                        affectedBindingsByBundle.Remove(bundlePath);
-                    if (requestObservabilityByBundle.TryGetValue(bundlePath, out var observability))
-                        affectedObservabilityByBundle[bundlePath] = observability;
-                    else
-                        affectedObservabilityByBundle.Remove(bundlePath);
-                }
-
-                foreach (var (bundlePath, discoveredTests) in requestDiscoveredTestsByBundle)
-                {
-                    if (!requestModuleByBundle.TryGetValue(bundlePath, out var moduleName)) continue;
-                    if (!requestEnvironmentByBundle.TryGetValue(bundlePath, out var envKey)) continue;
-                    // Still require THIS bundle's own module to have a RAD baseline before
-                    // attributing ITS tests at all — same posture as before #2535, only the
-                    // per-statement lookup below now consults the request-wide map instead
-                    // of just this one module's.
-                    if (emitter.TryGetTrackedObjectsByPath(moduleName) == null) continue;
-
-                    var nextCoverage = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
-                    var nextUnknown = new HashSet<string>(StringComparer.Ordinal);
-                    var nextFailing = new HashSet<string>(StringComparer.Ordinal);
-                    var nextEvents = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
-                    // #4973: source folders of packages whose content envKey carries; a statement
-                    // attributed there ran from that package, which a rebuild can change only by
-                    // changing envKey (docs/server-mode.md#affectedonly-and-packaged-dependencies).
-                    var packagedSourceRoots = AlRunner.Infrastructure.DependencyPackageFingerprint.PackagedSourceRoots(
-                        AlRunner.Patches.RecordPatches.RegisteredSourceDirs(), req.SourcePaths,
-                        AlRunner.Infrastructure.DependencyPackageFingerprint.AppIdsIn(envKey));
-
-                    // #3884: an incomplete scan poisons this baseline SILENTLY, and the
-                    // `unmappable` check below cannot see it. A statement whose object never
-                    // reached the source map is dropped by CollectPerTestStatementTable before
-                    // it gets here, so what survives is a non-empty, entirely mappable list —
-                    // indistinguishable from a test that genuinely only touched those objects.
-                    // Storing it means a later edit to the source that could not be read does
-                    // not intersect any stored coverage, and the test that calls into it is
-                    // SKIPPED. That is a wrong answer, not a missing warning.
-                    //
-                    // So every test of this bundle is recorded unknown, which forces the next
-                    // affected-only request to run them. Not merely "skip the update": leaving
-                    // the previous baseline in place keeps trusting numbers that may be just
-                    // as stale.
-                    if (scanFailures is { Count: > 0 })
-                    {
-                        foreach (var testKey in discoveredTests) nextUnknown.Add(testKey);
-                        affectedCoverageByBundle[bundlePath] = nextCoverage;
-                        affectedUnknownTestsByBundle[bundlePath] = nextUnknown;
-                        affectedFailingTestsByBundle[bundlePath] = nextFailing;
-                        affectedEnvironmentKeyByBundle[bundlePath] = envKey;
-                        affectedBaselineGenerationsByBundle[bundlePath] = CurrentBaselineGenerations();
-                        StoreEventBaseline(bundlePath, nextEvents);
-                        recordedThisRequest.Add(bundlePath);
-                        continue;
-                    }
-
-                    // #3337: a test selection deliberately SKIPPED keeps its previous entry. Its
-                    // covered objects did not change, so the entry still holds; dropping it made
-                    // the next request rerun it as unknown, and narrow/full runs alternated. Only
-                    // a skip counts — a selected test with no result (cancelled, never reached)
-                    // stays unknown, or a stale entry would hide it from the change it missed.
-                    requestSelectedTestsByBundle.TryGetValue(bundlePath, out var selectedThisRequest);
-                    affectedCoverageByBundle.TryGetValue(bundlePath, out var previousCoverage);
-                    affectedFailingTestsByBundle.TryGetValue(bundlePath, out var previousFailing);
-                    affectedEventsByBundle.TryGetValue(bundlePath, out var previousEvents);
-                    foreach (var testKey in discoveredTests)
-                    {
-                        if (selectedThisRequest != null
-                            && !selectedThisRequest.Contains(testKey)
-                            && previousCoverage != null
-                            && previousCoverage.TryGetValue(testKey, out var carried))
-                        {
-                            nextCoverage[testKey] = carried;
-                            if (previousFailing?.Contains(testKey) ?? false) nextFailing.Add(testKey);
-                            // No carried record means none was taken; a missing entry selects on any change.
-                            if (previousEvents != null && previousEvents.TryGetValue(testKey, out var carriedEvents))
-                                nextEvents[testKey] = carriedEvents;
-                            continue;
-                        }
-
-                        // #4978: a failed test's coverage is what ran up to the failure, which decides
-                        // its outcome, so it is recorded like a pass's. A timed-out test was stopped by
-                        // the clock and may still be running, so its record is incomplete; a skipped
-                        // test ran nothing of its own.
-                        if (!resultByTest.TryGetValue(testKey, out var result)
-                            || result.Outcome == TestOutcome.Skipped
-                            || result.TimedOut)
-                        {
-                            nextUnknown.Add(testKey);
-                            continue;
-                        }
-                        var failed = result.Outcome != TestOutcome.Pass;
-
-                        perTestStatementTable.TryGetValue(testKey, out var statements);
-                        useByTest.TryGetValue(testKey, out var used);
-                        if ((statements == null || statements.Count == 0) && used == null)
-                        {
-                            nextUnknown.Add(testKey);
-                            continue;
-                        }
-
-                        var coveredObjects = new HashSet<string>(StringComparer.Ordinal);
-                        var unmappable = false;
-                        // False when the file maps to no single object (#5003) and is not packaged.
-                        bool Cover(string filePath, string? scopeName)
-                        {
-                            if (!requestWideTrackedObjectsByPath.TryGetValue(filePath, out var identity))
-                                return AlRunner.Infrastructure.DependencyPackageFingerprint.IsUnderAny(filePath, packagedSourceRoots);
-                            AddKeys(ToAffectedObjectKey(identity), scopeName);
-                            return true;
-                        }
-                        void AddKeys(string objKey, string? scopeName)
-                        {
-                            coveredObjects.Add(objKey);
-                            // #2539: ALSO the procedure-level compound key, so a change narrowed to one
-                            // procedure selects only the tests that ran it. The plain object-level key
-                            // stays too — it is what a WIDENED (whole-object) change matches.
-                            if (!string.IsNullOrEmpty(scopeName))
-                                coveredObjects.Add(ToAffectedScopeKey(objKey, scopeName));
-                        }
-                        foreach (var s in statements ?? Enumerable.Empty<AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord>())
-                            if (!Cover(s.FilePath, s.ScopeName)) { unmappable = true; break; }
-                        if (used != null && !unmappable)
-                        {
-                            // Outside this request's sources, or packaged: skipped, as a statement there is.
-                            bool Keyed(Type objectType, out string key)
-                            {
-                                key = "";
-                                if (UsedObjectOf(objectType) is not { } o
-                                    || AlRunner.Infrastructure.DependencyPackageFingerprint.IsUnderAny(o.Path, packagedSourceRoots))
-                                    return false;
-                                key = o.Key;
-                                return true;
-                            }
-                            foreach (var scope in used.Scopes)
-                            {
-                                if (!Keyed(AlRunner.Infrastructure.AlScopeKey.ObjectTypeOf(scope), out var objKey)) continue;
-                                // An entered method that cannot be named cannot carry its scope key.
-                                if (AlRunner.Infrastructure.AlCoverageTracker.TryResolveScope(scope, selectionSourceMap) is not { } resolved)
-                                {
-                                    unmappable = true;
-                                    break;
-                                }
-                                AddKeys(objKey, resolved.ScopeName);
-                            }
-                            foreach (var type in used.UnresolvedScopeOwners)
-                                if (Keyed(type, out _)) unmappable = true;
-                            foreach (var type in used.Objects)
-                                if (Keyed(type, out var objKey)) AddKeys(objKey, null);
-                        }
-
-                        if (unmappable || coveredObjects.Count == 0)
-                        {
-                            nextUnknown.Add(testKey);
-                            continue;
-                        }
-                        nextCoverage[testKey] = coveredObjects;
-                        nextEvents[testKey] = eventsByTest.TryGetValue(testKey, out var raised)
-                            ? raised : new HashSet<string>(StringComparer.Ordinal);
-                        if (failed) nextFailing.Add(testKey);
-                    }
-
-                    // #5008: what no single test holds. A narrowed run constructed only its own
-                    // tests' long-lived records, so the previous entry's are kept as well.
-                    var bundleWide = new HashSet<string>(eventsByTest[bundleWideKey], StringComparer.Ordinal);
-                    bundleWide.UnionWith(longLivedObjectKeys);
-                    if (selectedThisRequest != null && previousEvents != null
-                        && previousEvents.TryGetValue(bundleWideKey, out var previousBundleWide))
-                        bundleWide.UnionWith(previousBundleWide);
-                    nextEvents[bundleWideKey] = bundleWide;
-
-                    affectedCoverageByBundle[bundlePath] = nextCoverage;
-                    affectedUnknownTestsByBundle[bundlePath] = nextUnknown;
-                    affectedFailingTestsByBundle[bundlePath] = nextFailing;
-                    affectedEnvironmentKeyByBundle[bundlePath] = envKey;
-                    affectedBaselineGenerationsByBundle[bundlePath] = CurrentBaselineGenerations();
-                    StoreEventBaseline(bundlePath, nextEvents);
-                    recordedThisRequest.Add(bundlePath);
-                }
-                PersistAffectedBaseline(req.SourcePaths, requestModuleNames, recordedThisRequest);
-            }
-
-            ServerSelection? requestSelection = null;
-            if (affectedOnly)
-            {
-                var changedObjects = selectionByBundle.Values
-                    .SelectMany(s => s.ChangedObjects)
-                    .Distinct(StringComparer.Ordinal)
-                    .OrderBy(x => x, StringComparer.Ordinal)
-                    .ToList();
-                var forcedReasons = selectionByBundle.Values
-                    .Where(s => s.ForcedFull && !string.IsNullOrWhiteSpace(s.Reason))
-                    .Select(s => s.Reason!)
-                    .Distinct(StringComparer.Ordinal)
-                    .ToList();
-                if (selectionByBundle.Count == 0 && allCompileErrors.Count > 0)
-                    forcedReasons.Add("bundle did not reach test execution (compile/dependency failure)");
-                requestSelection = new ServerSelection(
-                    "affected",
-                    selectionByBundle.Values.Sum(s => s.Ran),
-                    selectionByBundle.Values.Sum(s => s.Skipped),
-                    changedObjects,
-                    forcedReasons.Count > 0,
-                    forcedReasons.Count > 0 ? string.Join(" | ", forcedReasons) : null,
-                    selectionByBundle.Values.Sum(s => s.SkippedFailing ?? 0));
-            }
 
             // #3561: drained ONCE PER REQUEST, here. CompanyInitializer's accumulator is
             // run-wide and the CLI drains it where it builds a bucket's BucketResult, a path
@@ -8230,12 +8257,6 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         }
         finally
         {
-            // Scoped to THIS request only, same reasoning as HandleServerExecute's
-            // AlValueCapture.Enabled reset below — a coverage:true request must never
-            // leave hit-count tracking on for a later request that didn't ask for it.
-            AlRunner.Infrastructure.AlCoverageTracker.Enabled = false;
-            // #2135: same per-request scoping as Enabled above.
-            AlRunner.Infrastructure.AlCoverageTracker.PerTestEnabled = false;
             // Belt-and-braces: reaches the same state as the explicit clear above on
             // every path, INCLUDING an exception thrown before that point (e.g. from
             // RunAllBundlesForServer) — a pathological caller must never be left with a
