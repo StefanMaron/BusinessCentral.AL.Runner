@@ -12,6 +12,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **selection:** keep the session-state record of unmappable tests
 - **permissions:** a rolled-back transaction world advances PermissionSetupMonitor.SetupVersion
 - **tdd:** infer Enum parameter types from enumextension values and namespace-qualified enum references
 - **selection:** link tests across the session state they share (WorkDate, NumberSequence, SingleInstance)
