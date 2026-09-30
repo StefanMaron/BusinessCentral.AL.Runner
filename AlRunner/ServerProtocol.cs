@@ -207,7 +207,16 @@ public sealed class ServerRequest
     /// identical CLI invocation with --test-isolation method passes.
     /// </summary>
     [JsonPropertyName("testIsolation")] public string? TestIsolation { get; set; }
+
+    /// <summary>
+    /// Every field the request carried that no property above declares. <c>runTests</c> and
+    /// <c>execute</c> refuse a request with any (#4952); see <see cref="ServerProtocol.CheckFields"/>.
+    /// </summary>
+    [JsonExtensionData] public Dictionary<string, JsonElement>? UnknownFields { get; set; }
 }
+
+/// <summary>Outcome of <see cref="ServerProtocol.CheckFields"/>: a refusal, or the warnings to carry on the response.</summary>
+public sealed record RequestFieldCheck(string? Error, IReadOnlyList<string> Warnings);
 
 /// <summary>A file-grouped compilation error block, matching v1's response shape.</summary>
 public sealed record CompilationErrorGroup(string File, IReadOnlyList<string> Errors);
@@ -244,6 +253,91 @@ public static class ServerProtocol
 
     public static ServerRequest? Parse(string line)
         => JsonSerializer.Deserialize<ServerRequest>(line);
+
+    // The JSON fields each command READS. A field outside its command's set is refused when
+    // ServerRequest does not declare it and warned about when it does (docs/server-mode.md#request-fields).
+    // Adding a request property means classifying it here; ServerRequestFieldCheckTests pins that.
+    internal static readonly IReadOnlyDictionary<string, IReadOnlySet<string>> FieldsReadBy =
+        new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal)
+        {
+            ["runtests"] = new HashSet<string>(StringComparer.Ordinal)
+            {
+                "command", "sourcePaths", "packagePaths", "coverage", "perTestCoverage",
+                "affectedOnly", "includeFailing", "testIsolation",
+            },
+            ["execute"] = new HashSet<string>(StringComparer.Ordinal)
+            {
+                "command", "sourcePaths", "packagePaths", "code", "captureValues", "iterationTracking",
+                "coverage", "perTestCoverage", "affectedOnly", "testIsolation",
+            },
+        };
+
+    internal static readonly IReadOnlyList<(string Name, System.Reflection.PropertyInfo Property)> DeclaredFields =
+        typeof(ServerRequest).GetProperties()
+            .Select(p => (Name: p.GetCustomAttributes(typeof(JsonPropertyNameAttribute), false)
+                .Cast<JsonPropertyNameAttribute>().FirstOrDefault()?.Name, Property: p))
+            .Where(x => x.Name != null)
+            .Select(x => (x.Name!, x.Property))
+            .ToList();
+
+    /// <summary>
+    /// #4952: refuses a <c>runTests</c>/<c>execute</c> request carrying a field
+    /// <see cref="ServerRequest"/> does not declare, and lists a warning for each declared field
+    /// that asks for something this command never reads. Any other command (<c>cancel</c>,
+    /// <c>shutdown</c>) accepts extra fields, as documented.
+    /// </summary>
+    public static RequestFieldCheck CheckFields(ServerRequest req)
+    {
+        var command = req.Command?.ToLowerInvariant();
+        if (command == null || !FieldsReadBy.TryGetValue(command, out var reads))
+            return new RequestFieldCheck(null, Array.Empty<string>());
+        var wireCommand = command == "runtests" ? "runTests" : command;
+
+        if (req.UnknownFields is { Count: > 0 } unknown)
+        {
+            var names = unknown.Keys.OrderBy(k => k, StringComparer.Ordinal).ToList();
+            var parts = new List<string>
+            {
+                $"{wireCommand}: unknown request field{(names.Count > 1 ? "s" : "")} "
+                + string.Join(", ", names.Select(n => $"'{n}'"))
+                + " — refused rather than ignored, because the server cannot do what it asks.",
+            };
+            foreach (var n in names)
+            {
+                var cased = DeclaredFields.FirstOrDefault(f => string.Equals(f.Name, n, StringComparison.OrdinalIgnoreCase)).Name;
+                if (cased != null)
+                    parts.Add($"Field names are case-sensitive: did you mean '{cased}'?");
+            }
+            if (names.Any(n => n.Contains("symbol", StringComparison.OrdinalIgnoreCase)
+                            || n.Contains("define", StringComparison.OrdinalIgnoreCase)))
+                parts.Add("Preprocessor symbols are daemon-wide: start the server with --define SYM "
+                    + "(or --preprocessor-symbols A,B); a request cannot change them.");
+            parts.Add("Fields " + wireCommand + " reads: "
+                + string.Join(", ", reads.Where(r => r != "command").OrderBy(r => r, StringComparer.Ordinal)) + ".");
+            return new RequestFieldCheck(string.Join(" ", parts), Array.Empty<string>());
+        }
+
+        var warnings = new List<string>();
+        foreach (var (name, prop) in DeclaredFields)
+        {
+            if (reads.Contains(name) || !AsksForSomething(prop.GetValue(req))) continue;
+            var readers = FieldsReadBy.Where(kv => kv.Value.Contains(name)).Select(kv => kv.Key == "runtests" ? "runTests" : kv.Key).ToList();
+            warnings.Add(readers.Count > 0
+                ? $"'{name}' has no effect on {wireCommand}; only {string.Join(", ", readers)} reads it — ignored."
+                : $"'{name}' is read by no command (v1 field) — ignored.");
+        }
+        return new RequestFieldCheck(null, warnings);
+    }
+
+    // A false flag, an empty list or an empty string asks for nothing, so ignoring it is exact.
+    private static bool AsksForSomething(object? value) => value switch
+    {
+        null => false,
+        bool b => b,
+        string s => !string.IsNullOrWhiteSpace(s),
+        Array a => a.Length > 0,
+        _ => true,
+    };
 
     public static string Error(string message)
         => JsonSerializer.Serialize(new { error = message }, Opts);
@@ -344,7 +438,8 @@ public static class ServerProtocol
         IReadOnlyList<Infrastructure.AlCoverageTracker.AlStatementRecord>? statementTable = null,
         IReadOnlyDictionary<string, List<Infrastructure.AlCoverageTracker.AlStatementRecord>>? perTestStatementTable = null,
         IReadOnlyList<CompanyInitFailure>? companyInitFailures = null,
-        IReadOnlyList<Infrastructure.SourceScanFailure>? sourceScanFailures = null)
+        IReadOnlyList<Infrastructure.SourceScanFailure>? sourceScanFailures = null,
+        IReadOnlyList<string>? warnings = null)
     {
         var payload = new
         {
@@ -374,6 +469,7 @@ public static class ServerProtocol
             perTestCoverage = ToPerTestCoverageWire(perTestStatementTable),
             companyInitFailures = ToCompanyInitWire(companyInitFailures),
             sourceScanFailures = ToScanFailureWire(sourceScanFailures),
+            warnings = warnings is { Count: > 0 } ? warnings : null,
             wallSeconds,
             protocolVersion = 2,
         };
@@ -411,7 +507,8 @@ public static class ServerProtocol
         IReadOnlyList<Infrastructure.AlCoverageTracker.AlStatementRecord>? statementTable = null,
         IReadOnlyDictionary<string, List<Infrastructure.AlCoverageTracker.AlStatementRecord>>? perTestStatementTable = null,
         IReadOnlyList<CompanyInitFailure>? companyInitFailures = null,
-        IReadOnlyList<Infrastructure.SourceScanFailure>? sourceScanFailures = null)
+        IReadOnlyList<Infrastructure.SourceScanFailure>? sourceScanFailures = null,
+        IReadOnlyList<string>? warnings = null)
     {
         var payload = new
         {
@@ -435,6 +532,7 @@ public static class ServerProtocol
             coverage = ToStatementTableWire(statementTable),
             perTestCoverage = ToPerTestCoverageWire(perTestStatementTable),
             companyInitFailures = ToCompanyInitWire(companyInitFailures),
+            warnings = warnings is { Count: > 0 } ? warnings : null,
         };
         return JsonSerializer.Serialize(payload, Opts);
     }
