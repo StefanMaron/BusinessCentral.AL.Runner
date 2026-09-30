@@ -3,7 +3,6 @@
 // generated into the app's source IN MEMORY (TddSourceOverlay), and the cycle is re-run so the app
 // is recompiled — its symbols, its workspace package and its own module — before the test bundle
 // compiles again. Nothing is written to the watched tree; see TddGeneration.cs's header.
-// Design notes: docs/tdd-mode.md#generating-into-another-source-bundle
 using NavSyntax = Microsoft.Dynamics.Nav.CodeAnalysis.Syntax;
 
 namespace AlRunner;
