@@ -250,6 +250,28 @@ public class ServerAffectedSelectionSessionStateTests
         AssertFailsWith(edited, "Reads", "READS-43");
     }
 
+    /// <summary>
+    /// The other direction: an edit to a reader alone brings the test that writes what it reads,
+    /// so the reader sees the state a full run gives it and passes. Without the writer it would
+    /// find no sequence and fail where a full run passes.
+    /// </summary>
+    [SkippableFact]
+    public async Task TestIsolation_ASelectedReader_BringsTheWriterItReadsFrom()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = SessionBundle("al-runner-server-affected-session-provenance", "000000000004");
+        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+
+        Assert.True((await Send(server, bundle, "test")).ForcedFull);
+
+        File.WriteAllText(Path.Combine(bundle, "Tests.Codeunit.al"),
+            SessionTests.Replace("'SEQ-%1'", "'SEQUENCE-%1'", StringComparison.Ordinal));
+        var edited = await Send(server, bundle, "test");
+        Assert.False(edited.ForcedFull, edited.Raw);
+        AssertRan(edited, "reader edit", "A_SetsState", "C_ReadsSequence");
+        Assert.True(edited.Tests.Values.All(t => t.Status == "pass"), edited.Raw);
+    }
+
     /// <summary>The same through the persisted baseline: a restarted server selects the reader first time.</summary>
     [SkippableFact]
     public async Task AcrossARestart_TheSessionStateReadersAreSelected()
