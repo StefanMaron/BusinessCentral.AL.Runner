@@ -417,7 +417,11 @@
        live in separate packages on cross-platform .NET. Versions pinned per TFM
        to match the .NET runtime major. -->
   <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
-    <PackageReference Include="System.Diagnostics.EventLog" Version="8.0.1" />
+    <!-- 10.0.0, not 8.0.x: BC 28 builds from 28.x.*.554xx on bind System.Diagnostics.EventLog
+         10.0.0.0 (ship its net8 build), and an app-local 8.0 copy owns the default ALC's slot
+         for the name, so the resolver cannot serve BC's 10.0 copy (#5030). A higher copy
+         satisfies the 8.0.0.0 references of earlier builds. AppLocalAssemblyFloorTests. -->
+    <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.0" />
     <PackageReference Include="System.Configuration.ConfigurationManager" Version="8.0.1" />
     <!-- BC28 is a .NET 8 product (Server.runtimeconfig.json tfm=net8.0) but ships a
          net8-targeted build of System.Text.Json 10 in its Service dir, and its

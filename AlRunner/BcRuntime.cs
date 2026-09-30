@@ -1030,15 +1030,33 @@ public static partial class BcRuntime
     /// path entirely instead of broadening the resolver scope).
     /// </summary>
     private static void SuppressEventLogWriter()
+        => SuppressEventLogWriter(AppDomain.CurrentDomain.GetAssemblies()
+               .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Types")
+           ?? Assembly.Load(new AssemblyName("Microsoft.Dynamics.Nav.Types")));
+
+    /// <summary>
+    /// Every bind is required: an absent member refuses as a shape gap rather than leaving
+    /// BC's writer live (#5030). Present on every build 27.0–28.5 provisioned when written.
+    /// </summary>
+    internal static void SuppressEventLogWriter(Assembly? typesAsm)
     {
-        var typesAsm = AppDomain.CurrentDomain.GetAssemblies()
-            .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Types");
-        var elw = typesAsm?.GetType("Microsoft.Dynamics.Nav.Types.EventLogWriter");
-        var prop = elw?.GetProperty("CustomWriter", BindingFlags.Public | BindingFlags.Static);
-        if (prop?.SetMethod == null) return;
+        const string surface = "event-log writer suppression (BcRuntime.EnsureApplied)";
+        const string detail = "without it BC's EventLogWriter reaches System.Diagnostics.EventLog.WriteEntry";
+        if (typesAsm == null)
+            throw new BcShapeGapException(surface, "Microsoft.Dynamics.Nav.Types",
+                $"assembly not loaded — {detail}");
+        var elw = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.EventLogWriter")
+            ?? throw new BcShapeGapException(surface, "EventLogWriter",
+                $"type not found in {typesAsm.GetName().Name} — {detail}");
+        var prop = elw.GetProperty("CustomWriter", BindingFlags.Public | BindingFlags.Static);
+        if (prop?.SetMethod == null)
+            throw new BcShapeGapException(surface, "EventLogWriter.CustomWriter",
+                $"settable static property not found — {detail}");
         // CustomWriter is Action<string, EventLogEntryType, string>. Build a
         // matching no-op via DynamicMethod so we don't have to import
         // System.Diagnostics.EventLog (which is what we're avoiding).
+        // PropertyType loads System.Diagnostics.EventLog at the version Types binds;
+        // the app-local copy must be at least that version (#5030).
         var args = prop.PropertyType.GetGenericArguments(); // [string, EventLogEntryType, string]
         var dm = new System.Reflection.Emit.DynamicMethod(
             "EventLogNoOpDyn", typeof(void), args, typeof(BcRuntime).Module);
