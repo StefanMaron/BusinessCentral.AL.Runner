@@ -74,6 +74,7 @@ internal sealed class LiveNavTestAction : ITestAction
         }
 
         _page.RaiseOnAction(_actionId);
+        _page.ReapplyViewSortingAsTheServiceTierDoes();
         _testPage.CloseIfCurrentRowDeleted(wasOnNewRow);
     }
 

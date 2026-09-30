@@ -2625,14 +2625,22 @@ internal sealed partial class RunnerPageInstance
     /// <c>NavTableView</c> holds the key and the default direction only, so a per-field
     /// <c>SetAscending</c> is dropped and <c>Ascending(false)</c> survives — corpus 67950
     /// "SPO Tests", green on every required cloud leg and Windows 28.4 (#4989).
+    ///
+    /// <para>BC runs the round trip around every service call, so it also runs after a page
+    /// opened for a handler or a Trap() (<see cref="RunnerTestClientSession.GetPage"/>) and
+    /// after a TestPage action's OnAction — corpus 67962 "SPR Tests" (#5000). Idempotent, so a
+    /// route reaching two of these call sites is not double-counted.</para>
     /// </summary>
-    private void ReapplyViewSortingAsTheServiceTierDoes()
+    internal void ReapplyViewSortingAsTheServiceTierDoes() => ReapplyViewSorting(_record);
+
+    /// <inheritdoc cref="ReapplyViewSortingAsTheServiceTierDoes"/>
+    internal static void ReapplyViewSorting(NavRecord? record)
     {
-        if (_record == null) return;
-        var view = _record.GetTableView();
-        if (view.CurrentSortingFieldIds is { Length: > 0 } keyFields) _record.ALSetCurrentKey(keyFields);
-        else _record.ALCurrentKeyIndex = 1;
-        _record.ALAscending = view.Ascending;
+        if (record == null) return;
+        var view = record.GetTableView();
+        if (view.CurrentSortingFieldIds is { Length: > 0 } keyFields) record.ALSetCurrentKey(keyFields);
+        else record.ALCurrentKeyIndex = 1;
+        record.ALAscending = view.Ascending;
     }
 
     /// <summary>
