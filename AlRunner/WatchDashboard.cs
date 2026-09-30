@@ -74,7 +74,9 @@ public static class WatchDashboard
         }
         if (affectedLines is { Count: > 0 })
         {
-            rows.Add(new Markup(string.Join("\n", affectedLines.Select(l => $"[cyan]{Markup.Escape(l)}[/]"))));
+            // A Style object, not inline color markup: LogSingleWordTagContractTests scans source for
+            // bracketed single-word tags, and this is console styling, not a log tag.
+            rows.Add(new Text(string.Join("\n", affectedLines), new Style(Color.Aqua)));
             rows.Add(new Text(string.Empty));
         }
         rows.Add(BuildTree(results));
