@@ -7404,16 +7404,21 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     string? LoadPersistedAffectedBaseline(string[] sourcePaths)
     {
         AlRunner.Infrastructure.AffectedBaselineStore.LoadResult loaded;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        string path;
         try
         {
-            loaded = AlRunner.Infrastructure.AffectedBaselineStore.Load(AlRunner.Infrastructure.AffectedBaselineStore.PathFor(
-                AlRunner.Infrastructure.CacheRoots.Resolve(AlRunner.Infrastructure.AffectedBaselineStore.CacheName), sourcePaths));
+            path = AlRunner.Infrastructure.AffectedBaselineStore.PathFor(
+                AlRunner.Infrastructure.CacheRoots.Resolve(AlRunner.Infrastructure.AffectedBaselineStore.CacheName), sourcePaths);
+            loaded = AlRunner.Infrastructure.AffectedBaselineStore.Load(path);
         }
         catch (Exception ex)
         {
             return $"the store could not be located: {ex.GetType().Name}: {ex.Message.Split('\n')[0]}";
         }
         if (loaded.Baseline is not { } persisted) return loaded.Unusable;
+        Console.Error.WriteLine(
+            $"  [server] affectedOnly: loaded the persisted baseline {path} ({new FileInfo(path).Length} bytes) in {sw.ElapsedMilliseconds} ms");
         foreach (var (bundle, b) in persisted.Bundles)
         {
             if (affectedCoverageByBundle.ContainsKey(bundle)) continue;
@@ -7459,10 +7464,12 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     affectedEventsByBundle[bundle],
                     affectedBindingsByBundle.TryGetValue(bundle, out var bindings) ? bindings : null,
                     affectedObservabilityByBundle.TryGetValue(bundle, out var observability) ? observability : null);
-            AlRunner.Infrastructure.AffectedBaselineStore.Write(
-                AlRunner.Infrastructure.AffectedBaselineStore.PathFor(
-                    AlRunner.Infrastructure.CacheRoots.Resolve(AlRunner.Infrastructure.AffectedBaselineStore.CacheName), sourcePaths),
-                new AlRunner.Infrastructure.AffectedBaseline(modules, bundles));
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var path = AlRunner.Infrastructure.AffectedBaselineStore.PathFor(
+                AlRunner.Infrastructure.CacheRoots.Resolve(AlRunner.Infrastructure.AffectedBaselineStore.CacheName), sourcePaths);
+            AlRunner.Infrastructure.AffectedBaselineStore.Write(path, new AlRunner.Infrastructure.AffectedBaseline(modules, bundles));
+            Console.Error.WriteLine(
+                $"  [server] affectedOnly: persisted the baseline to {path} ({new FileInfo(path).Length} bytes) in {sw.ElapsedMilliseconds} ms");
         }
         catch (Exception ex)
         {
