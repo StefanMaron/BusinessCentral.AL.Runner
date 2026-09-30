@@ -1011,6 +1011,13 @@ public static partial class NclCecilRewrite
                 PrependStaticCall(nclMod,
                     ByParams(Rt + "NCLMetaField", "IsEventSubscribed", "NavTriggerEventType", "NavAppGroup"),
                     H(raise, "NoteTriggerConsult"), argSlots: 1);
+                // #5008: every record instance, read-only ones included — the 4-arg constructor and
+                // every emitted Record<N> reach this one. Slots 1 (parent) and 2 (tableId) only:
+                // slot 0 is not yet initialized before the base call.
+                PrependStaticCallArgs(nclMod,
+                    ByParams(Rt + "NavRecord", ".ctor", "ITreeObject", "Int32", "NCLMetaTable", "Boolean",
+                        "NavRecord", "String", "SecurityFiltering"),
+                    H(raise, "NoteRecordConstructed"), 1, 2);
             }
 
             // ── TempTableDataProvider.Find / FindFromPosition (query column projection) ──

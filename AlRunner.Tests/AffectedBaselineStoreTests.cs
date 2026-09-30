@@ -124,12 +124,13 @@ public class AffectedBaselineStoreTests
         Assert.Contains("could not be read", truncated.Unusable);
 
         AffectedBaselineStore.Write(path, Sample());
-        File.WriteAllText(path, File.ReadAllText(path).Replace("\"Schema\":1,", "\"Schema\":2,", StringComparison.Ordinal));
+        var current = AffectedBaselineStore.SchemaVersion;
+        File.WriteAllText(path, File.ReadAllText(path).Replace($"\"Schema\":{current},", "\"Schema\":1,", StringComparison.Ordinal));
         var otherSchema = AffectedBaselineStore.Load(path);
         Assert.Null(otherSchema.Baseline);
-        Assert.Contains("schema version 2", otherSchema.Unusable);
+        Assert.Contains("schema version 1", otherSchema.Unusable);
 
-        File.WriteAllText(path, "{\"Schema\":1,\"Keys\":[],\"Modules\":{},\"Bundles\":{\"/b\":{\"Env\":\"e\",\"Coverage\":{\"T\":[3]},"
+        File.WriteAllText(path, "{\"Schema\":" + current + ",\"Keys\":[],\"Modules\":{},\"Bundles\":{\"/b\":{\"Env\":\"e\",\"Coverage\":{\"T\":[3]},"
             + "\"Unknown\":[],\"Failing\":[],\"Events\":{}}}}");
         Assert.Contains("out of range", AffectedBaselineStore.Load(path).Unusable);
     }

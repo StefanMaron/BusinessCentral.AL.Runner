@@ -653,6 +653,42 @@ a steady-state `perTestCoverage` run took 38.0 s with the event recording and 38
 with it stubbed out, against 37.5 s for a run recording nothing; the difference is
 inside run-to-run noise.
 
+#### affectedOnly and changed tables
+
+A table with no triggers executes no statement, so it is in no test's coverage, yet
+adding an `OnInsert`, a field `OnValidate`, an `InitValue`, a key or a tableextension
+changes what every test holding a record of it observes (#5008). The recording run
+therefore also records, per test, `tbl|Table|<id>` for every table the test built a
+record of, read-only records included (the runner observes BC's `NavRecord`
+constructor, which every record variable, `RecordRef`, page source record and
+table-relation lookup goes through), and `tbl|TableExtension|<id>` for each
+tableextension extending such a table at the time.
+
+A changed `Table` (added, edited, removed) adds `tbl|Table|<id>`, `trig|Table|<id>`
+and `trig|?` to the changed keys. A changed `TableExtension` adds its own
+`tbl|TableExtension|<id>` (the tests that held its base table when it existed) and
+the keys of the table it extends now, from the runner's tableextension registry; a new
+extension is found through the second, a removed one through the first. A test is
+selected when its recorded keys meet them, so an edit to one table selects the tests
+that used that table and no others.
+
+A full run is forced, with a `reason`, when the tests reading a changed table cannot be
+told apart:
+
+- a record of the table was held outside any one test: built while no test was
+  running, or a global of a test codeunit or of a SingleInstance codeunit, which a
+  later test reads without building one (a test codeunit's instance outlives its
+  tests). The runner walks the record's owner chain: a procedure scope first is a
+  local; a test codeunit or a SingleInstance codeunit first is not;
+- a tableextension's base table is in neither the current registry nor the recording;
+- the baseline holds no table record (one recorded before #5008; the persisted store's
+  schema changed with it, so a store written earlier is no baseline);
+- a `Page` or `PageExtension` changed: which tests open a page is not recorded yet,
+  and a page trigger added where none ran selects nothing (#5011).
+
+Not covered here: a test that reads a table only through a query builds no record of
+it; and a procedure that ran no statement (empty) and then gains a body, #5011.
+
 #### affectedOnly and packaged dependencies
 
 A common layout is `App/` (source), `App.Test/` (source) and
@@ -727,7 +763,8 @@ holds no coverage for loads it.
   file sees the previous version or the new one. Two servers on one cache root
   replace each other's file (last writer wins); each version is a complete baseline.
 - **What**: per bundle, what the process keeps in memory (per-test covered object and
-  procedure keys, the unknown and failing tests, per-test raised events, the
+  procedure keys, the unknown and failing tests, per-test raised events and table keys
+  (plus a `<bundle>` entry for records held outside any one test), the
   subscriber bindings and event observability, the environment key), and per request
   module, the change model's baseline at the moment the coverage was recorded: the
   SHA-256 of every `.al` file, the one object each file declares, and the fingerprints

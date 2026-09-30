@@ -32,7 +32,8 @@ internal sealed record AffectedBaseline(
 internal static class AffectedBaselineStore
 {
     // Bump on any change to the file's shape or to what a key means; a mismatch is "no baseline".
-    internal const int SchemaVersion = 1;
+    // 2: #5008's table keys and the per-bundle "<bundle>" events entry.
+    internal const int SchemaVersion = 2;
     internal const string CacheName = "affected-baseline";
 
     /// <summary>The file for one request's bundle set. Order and duplicates do not change the key.</summary>

@@ -7611,6 +7611,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             var requestBindingsByBundle = new Dictionary<string, List<AlRunner.Patches.SubscriberBinding>?>(StringComparer.Ordinal);
             var requestObservabilityByBundle = new Dictionary<string, AlRunner.Patches.EventObservability>(StringComparer.Ordinal);
             HashSet<string>? activeChangedObjectKeys = null;
+            IReadOnlyList<AffectedObjectId> activeChangedObjectIds = Array.Empty<AffectedObjectId>();
             List<string> activeChangedObjectDisplay = new();
             bool activeForcedFull = false;
             string? activeForcedReason = null;
@@ -7653,12 +7654,19 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                                 affectedObservabilityByBundle.TryGetValue(activeBundleKey, out var prevObs) ? prevObs : null,
                                 observability.PublisherObjects.Keys.ToHashSet(StringComparer.Ordinal),
                                 b => SubscriberCodeChanged(b, changedObjectKeys));
-                            if (eventResult.ForceFullReason != null)
+                            // #5008: a table that executed no statement is in no coverage.
+                            var tableResult = AlRunner.Infrastructure.AffectedEventSelection.ChangedTableKeys(
+                                activeChangedObjectIds.Select(o => (o.Kind, o.Id)),
+                                AlRunner.Patches.RecordPatches.TableExtensionBaseTableIds(),
+                                activePreviousEvents != null
+                                && activePreviousEvents.TryGetValue(AlRunner.Infrastructure.AlEventRaiseTracker.BundleWideKey, out var bundleWide)
+                                    ? bundleWide : null);
+                            if (eventResult.ForceFullReason != null || tableResult.ForceFullReason != null)
                             {
                                 activeForcedFull = true;
-                                activeForcedReason = eventResult.ForceFullReason;
+                                activeForcedReason = eventResult.ForceFullReason ?? tableResult.ForceFullReason;
                             }
-                            else changedEventKeys = eventResult.Keys;
+                            else changedEventKeys = eventResult.Keys.Union(tableResult.Keys).ToHashSet(StringComparer.Ordinal);
                         }
                     }
 
@@ -7719,6 +7727,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     requestModuleByBundle[bundlePath] = moduleName;
                     requestEnvironmentByBundle[bundlePath] = selectionEnvironmentKey;
                     activeChangedObjectKeys = BuildAffectedChangedKeys(changedObjects, ownChangedScopes);
+                    activeChangedObjectIds = changedObjects ?? Array.Empty<AffectedObjectId>();
                     activeChangedObjectDisplay = (changedObjects ?? Array.Empty<AffectedObjectId>())
                         .Select(ToAffectedObjectDisplay)
                         .Distinct(StringComparer.Ordinal)
@@ -7766,6 +7775,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                             return;
                         }
                         activeChangedObjectKeys = persistedDiff.Changed.Select(ToAffectedObjectKey).ToHashSet(StringComparer.Ordinal);
+                        activeChangedObjectIds = persistedDiff.Changed;
                         activeChangedObjectDisplay = persistedDiff.Changed.Select(ToAffectedObjectDisplay)
                             .Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal).ToList();
                         return;
@@ -7926,7 +7936,15 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                         requestWideTrackedObjectsByPath[kv.Key] = kv.Value;
                 }
 
-                var eventsByTest = AlRunner.Infrastructure.AlEventRaiseTracker.CollectPerTest();
+                var extensionsOfTable = new Dictionary<int, List<int>>();
+                foreach (var (ext, bases) in AlRunner.Patches.RecordPatches.TableExtensionBaseTableIds())
+                    foreach (var b in bases)
+                    {
+                        if (!extensionsOfTable.TryGetValue(b, out var exts)) extensionsOfTable[b] = exts = new List<int>();
+                        exts.Add(ext);
+                    }
+                var eventsByTest = AlRunner.Infrastructure.AlEventRaiseTracker.CollectPerTest(extensionsOfTable);
+                var bundleWideKey = AlRunner.Infrastructure.AlEventRaiseTracker.BundleWideKey;
                 // #4988: the event side of the baseline, stored whenever the coverage is.
                 var recordedThisRequest = new List<string>();
                 void StoreEventBaseline(string bundlePath, Dictionary<string, HashSet<string>> nextEvents)
@@ -8067,6 +8085,14 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                             ? raised : new HashSet<string>(StringComparer.Ordinal);
                         if (failed) nextFailing.Add(testKey);
                     }
+
+                    // #5008: what no single test holds. A narrowed run constructed only its own
+                    // tests' long-lived records, so the previous entry's are kept as well.
+                    var bundleWide = new HashSet<string>(eventsByTest[bundleWideKey], StringComparer.Ordinal);
+                    if (selectedThisRequest != null && previousEvents != null
+                        && previousEvents.TryGetValue(bundleWideKey, out var previousBundleWide))
+                        bundleWide.UnionWith(previousBundleWide);
+                    nextEvents[bundleWideKey] = bundleWide;
 
                     affectedCoverageByBundle[bundlePath] = nextCoverage;
                     affectedUnknownTestsByBundle[bundlePath] = nextUnknown;

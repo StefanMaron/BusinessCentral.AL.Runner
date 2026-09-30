@@ -667,6 +667,51 @@ public static partial class NclCecilRewrite
     }
 
     /// <summary>
+    /// <see cref="PrependStaticCall"/> forwarding the chosen arg slots, in order. A value-typed
+    /// slot needs a helper parameter of exactly its type (no boxing is emitted); a reference slot
+    /// needs a reference-typed parameter. Skipping slot 0 is what lets a constructor be observed
+    /// before its base call without handing out an uninitialized <c>this</c>.
+    /// </summary>
+    private static void PrependStaticCallArgs(
+        ModuleDefinition module, MethodDefinition target, MethodInfo helperMi, params int[] argIndices)
+    {
+        var ps = helperMi.GetParameters();
+        if (helperMi.ReturnType != typeof(void) || ps.Length != argIndices.Length)
+            throw new InvalidOperationException(
+                $"[Cecil] prepend helper {helperMi.DeclaringType?.Name}.{helperMi.Name} must return void "
+                + $"and take {argIndices.Length} parameter(s)");
+        int offset = target.HasThis ? 1 : 0;
+        for (int i = 0; i < argIndices.Length; i++)
+        {
+            int slot = argIndices[i];
+            if (slot < offset || slot - offset >= target.Parameters.Count)
+                throw new InvalidOperationException(
+                    $"[Cecil] {target.DeclaringType.Name}.{target.Name} has no parameter in arg slot {slot} — "
+                    + "Ncl shape changed; do not commit");
+            var slotType = target.Parameters[slot - offset].ParameterType;
+            var ok = slotType.IsValueType
+                ? ps[i].ParameterType.FullName == slotType.FullName
+                : !ps[i].ParameterType.IsValueType;
+            if (!ok)
+                throw new InvalidOperationException(
+                    $"[Cecil] {helperMi.Name} parameter {i} ({ps[i].ParameterType.Name}) cannot take "
+                    + $"{target.DeclaringType.Name}.{target.Name} slot {slot} ({slotType.Name})");
+        }
+
+        var helperRef = module.ImportReference(helperMi);
+        var body = target.Body;
+        var il = body.GetILProcessor();
+        var first = body.Instructions[0];
+        foreach (var slot in argIndices)
+            il.InsertBefore(first, il.Create(OpCodes.Ldarg, slot));
+        il.InsertBefore(first, il.Create(OpCodes.Call, helperRef));
+        if (body.MaxStackSize < argIndices.Length) body.MaxStackSize = argIndices.Length;
+        Console.Error.WriteLine(
+            $"[Cecil] Prepended {helperMi.DeclaringType?.Name}.{helperMi.Name} to "
+            + $"{target.DeclaringType.Name}.{target.Name}");
+    }
+
+    /// <summary>
     /// Refuse a helper whose parameter count does not match the number of IL arg slots the
     /// rewritten body will forward. <see cref="PrependStaticCall"/> has always thrown on
     /// exactly this mistake; <see cref="ReplaceBodyWithHelper"/> did not, and that asymmetry
