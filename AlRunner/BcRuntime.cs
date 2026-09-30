@@ -117,6 +117,8 @@ public static partial class BcRuntime
     public static void SetCurrentBundleInfo(Guid appId, string name, string publisher, string version)
         => _currentBundleInfo = (appId, name, publisher, version);
 
+    internal static (Guid AppId, string Name, string Publisher, string Version) CurrentBundleInfo => _currentBundleInfo;
+
     // Per-assembly module identity: every emitted AL assembly (test bundle emit AND
     // each dependency emit) is a distinct BC "module". NavApp.GetCurrentModuleInfo
     // inside a dependency's code (e.g. SPBLIC's CheckSupportedVersion) must see THAT

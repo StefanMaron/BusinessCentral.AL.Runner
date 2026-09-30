@@ -113,7 +113,8 @@ public static class InstallTriggerRunner
 
     /// <summary>Fire ONLY the bundle's own registered test assembly's Install triggers, if
     /// it declares any — never the dependency assemblies. The complement of
-    /// <see cref="RunDependenciesOnly"/>; always genuinely per-app-group, never cached.</summary>
+    /// <see cref="RunDependenciesOnly"/>; per-app-group, skipped only when TestExecutor reuses
+    /// the whole bundle baseline (#5060).</summary>
     public static void RunTestAssemblyOnly()
     {
         Assembly? asm;

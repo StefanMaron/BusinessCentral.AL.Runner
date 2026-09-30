@@ -972,6 +972,51 @@ The server writes this response, then exits. EOF on stdin also exits.
 Any request-level problem returns `{"error":"<message>"}` and the server keeps
 running.
 
+## The install baseline across requests
+
+Before a bundle's first test the runner builds its install baseline: the dependency Install
+triggers and Company-Initialize (cached per dependency set since #1867), then the runner's own
+User / Company / Published Application / Access Control / Active Session rows, then the
+bundle's own Install triggers, and finally a capture that every test codeunit restores.
+
+Since #5060 a repeated `runTests` in the same process with **no edit** in between (a re-run
+with a different filter, say) reuses that whole captured baseline and skips everything after the
+dependency step. An edit to **any** loaded bundle changes the event-subscriber scope below, so
+the next run reseeds every bundle; a `--watch` cycle, which an edit usually starts, therefore
+usually misses. The first test codeunit's boundary restore puts it in place, so every test still starts
+from the rows a cold run would give it. The cache is in memory only.
+
+The key holds everything the baseline's rows depend on. When any part of it changes, the seed
+runs again:
+
+| key part | covers |
+|---|---|
+| the dependency+company key | dependency assembly MVIDs, the registered BC symbol apps, and the `--test-data` backup and company |
+| the bundle's assembly MVID | any edit to the bundle's own AL |
+| the event-subscriber scope | the MVIDs of every assembly the subscriber scan reads, because an Install trigger's events can reach any of them |
+| the bundle identity | the `app.json` id, name, publisher and version the Published Application row is written from |
+| the session identity | the session user and company the rows are written for |
+
+Runs that are never reused, and seed fresh every time:
+
+- **`testIsolation` other than `codeunit`.** Only Codeunit isolation restores (and so clears every
+  non-table leftover of the Install triggers) before any test code runs.
+- **A seed that used a `NumberSequence` or the `WorkDate`.** Both are session state outside the
+  store: sequences are reset per request, so a reuse would leave the tests without them, and a
+  `WorkDate` an earlier test moved would be stamped by a fresh seed but not by a reuse.
+- **A seed that changed the session identity** (the #2983 adoption, by a `--test-data` user or
+  by a dependency's Install trigger writing one), a change no snapshot carries.
+- **`AL_RUNNER_NO_DEP_COMPANY_CACHE=1`**, the kill switch for both install-baseline caches.
+
+Not covered: a value an Install trigger takes from the clock (`Today()`, `Time()`,
+`CurrentDateTime()`) or from `CreateGuid()` / `Random`. A reuse keeps the first run's value, so
+a server that crosses midnight can hand a test yesterday's `Today()` stamp.
+
+Under `AL_RUNNER_PERF=1` each run logs `InstallBaseline.BundleCache HIT`, `MISS … stored`,
+`MISS … not-stored: <why>` or `NOKEY <why>`. A bundle's first warm run can still miss once
+when the previous run loaded more assemblies while seeding, which widens the subscriber scope;
+the run after it hits.
+
 ## The reload contract (same-bundle, in-process)
 
 The server's value is staying warm across **edits**. .NET cannot unload an
