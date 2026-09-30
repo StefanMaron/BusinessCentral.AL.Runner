@@ -11,6 +11,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **events:** dispatch events declared in extension objects
 - **ncl-shadow:** stop replacing an identical Ncl.dll on every cache hit, and reap Windows ReplaceFile backups
 - **runtime:** start on BC builds whose assemblies reference System.Diagnostics.EventLog 10.0.0.0
 - **server:** affectedOnly selects tests that entered an object or scope without running its statements
