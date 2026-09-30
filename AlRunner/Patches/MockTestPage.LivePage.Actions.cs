@@ -339,6 +339,13 @@ internal partial class LiveNavTestPage
     internal bool StaticEditableNow => _staticEditable;
 
     /// <summary>
+    /// The mode the TEST put this page in — <c>OpenView</c>/<c>OpenEdit</c>, or the built-in
+    /// View/Edit action switching it in place. True for a page no such mode was set on (a
+    /// handler's page, a part), which the open mode does not narrow.
+    /// </summary>
+    internal bool OpenModeEditable => _staticEditableOverride ?? true;
+
+    /// <summary>
     /// The in-place half of a built-in page-mode action: the page already open changes mode,
     /// nothing opens, and OnOpenPage does not run again (corpus 60479
     /// CardOpenedReadOnlyIsMadeEditableInPlaceByItsEditAction asserts the open count stays 1).

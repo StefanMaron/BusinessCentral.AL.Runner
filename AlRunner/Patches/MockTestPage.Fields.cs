@@ -289,8 +289,11 @@ internal sealed class LiveNavTestField : ITestField
     // only when there is no page object to ask — the record-only mode, which has no control
     // metadata at all and never claimed to model these.
     public bool Enabled  => _page?.ControlEnabled(_controlId) ?? true;
-    public bool Editable => _page?.ControlEditable(_controlId) ?? true;
+    public bool Editable => TestPageControlEditable.Combine(OpenModeEditable, _page?.ControlEditable(_controlId) ?? true);
     public bool Visible  => _page?.ControlVisible(_controlId) ?? true;
+
+    /// <summary>The TestPage's open mode — see <see cref="TestPageControlEditable"/>. Null: no mode narrows it.</summary>
+    internal Func<bool>? OpenModeEditable { get; init; }
     public bool HideValue => false;
     public bool ShowMandatory => false;
 
@@ -635,6 +638,8 @@ internal sealed class PageVariableTestField : ITestField
     // See LiveNavTestField — a control bound to a page variable declares the same properties
     // as one bound to a record field, and they are read the same way.
     public bool Enabled  => _page.ControlEnabled(_controlId);
+    // NOT narrowed by the open mode, unlike LiveNavTestField: on an OpenView page BC answers
+    // Editable() = Yes for a page-variable control (corpus 68015, see TestPageControlEditable).
     public bool Editable => _page.ControlEditable(_controlId);
     public bool Visible  => _page.ControlVisible(_controlId);
     public bool HideValue => false;

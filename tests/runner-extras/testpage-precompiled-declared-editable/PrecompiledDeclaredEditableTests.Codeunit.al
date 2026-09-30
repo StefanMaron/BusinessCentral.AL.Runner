@@ -61,8 +61,9 @@ codeunit 65921 "TPDE Declared Editable Tests"
         // [GIVEN] A row on the precompiled dependency page's source table.
         Seed(DepRow, 1);
 
-        // [WHEN] The page is opened and positioned on it.
-        DepPage.OpenView();
+        // [WHEN] The page is opened and positioned on it. OpenEdit, not OpenView: OpenView makes
+        // every Rec-bound control read-only (corpus 68015, #5002), which would make this vacuous.
+        DepPage.OpenEdit();
         DepPage.GotoRecord(DepRow);
 
         // [THEN] The "Description" control, whose symbol file declares Editable = false,
@@ -103,7 +104,8 @@ codeunit 65921 "TPDE Declared Editable Tests"
         // stops it: null must keep meaning "declares none", never "declares false".
         Seed(DepRow, 3);
 
-        DepPage.OpenView();
+        // OpenEdit: on an OpenView page BC answers Editable() = false for every Rec-bound control.
+        DepPage.OpenEdit();
         DepPage.GotoRecord(DepRow);
 
         Assert.IsTrue(DepPage."Additional Information".Editable(),
