@@ -4,7 +4,7 @@ import gzip, os, shutil, glob
 S = os.path.dirname(os.path.abspath(__file__))
 D = "/home/stefan/Documents/Repos/community/BusinessCentral.AL.Runner/.claude/worktrees/agent-a49b61abb5ee11c8c/spike-3415"
 os.makedirs(f"{D}/results", exist_ok=True)
-for f in ["srv.py", "runcli.sh", "mkprobes.py", "peek.py", "waitrun.sh", "st.sh", "save.py", "analyze.py"]:
+for f in ["srv.py", "runcli.sh", "mkprobes.py", "peek.py", "waitrun.sh", "st.sh", "save.py", "analyze.py", "chain.sh", "selruns.sh", "mksel.py", "stability.py", "sel-p1-test.txt", "sel-p1-cu.txt"]:
     if os.path.exists(f"{S}/{f}"): shutil.copy(f"{S}/{f}", f"{D}/{f}")
 if os.path.isdir(f"{S}/probes"):
     shutil.copytree(f"{S}/probes", f"{D}/probes", dirs_exist_ok=True)

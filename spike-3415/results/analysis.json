@@ -1,0 +1,476 @@
+{
+ "1": {
+  "keys": [
+   "ev|Codeunit|80|OnBeforePostSalesDoc"
+  ],
+  "selected_tests": 47,
+  "selected_by_codeunit": 275,
+  "codeunits_selected": 11,
+  "selected_suffix_rule": 254,
+  "miss_strict_suffix": [],
+  "miss_broad_suffix": [
+   "Codeunit138009.AmountOnUnpostedCrMemos"
+  ],
+  "truth_strict": 36,
+  "truth_broad": 62,
+  "miss_strict_test": [
+   "Codeunit139126.AmountsAreCalculatedWhenLastModifiedIsSetTo0",
+   "Codeunit139126.AmountsAreRefreshedWhenActivitiesPageIsOpened",
+   "Codeunit139126.AmountsAreRefreshedWhenDataIsStale",
+   "Codeunit139126.CalcAverageCollectionDays",
+   "Codeunit139126.CalcOverduePurchaseAmount",
+   "Codeunit139126.CalcSalesThisMonthAmount",
+   "Codeunit139126.CalcSalesYTD",
+   "Codeunit139126.CalcTop10CustomerSalesRatioYTD",
+   "Codeunit139126.CalcTop10CustomerSalesYTD",
+   "Codeunit139126.DrillDownCalcOverdueSalesInvoiceAmount",
+   "Codeunit139126.DrillDownOverduePurchaseInvoiceAmount",
+   "Codeunit139126.DrillDownSalesThisMonth",
+   "Codeunit139126.OverduePurchInvoiceRemainingAmountLCYSortingTest",
+   "Codeunit139126.OverdueSalesInvoiceRemainingAmountLCYSortingTest"
+  ],
+  "miss_broad_test": [
+   "Codeunit138009.AmountOnUnpostedCrMemos",
+   "Codeunit139126.AmountsAreCalculatedWhenLastModifiedIsSetTo0",
+   "Codeunit139126.AmountsAreRefreshedWhenActivitiesPageIsOpened",
+   "Codeunit139126.AmountsAreRefreshedWhenDataIsStale",
+   "Codeunit139126.CalcAverageCollectionDays",
+   "Codeunit139126.CalcOverduePurchaseAmount",
+   "Codeunit139126.CalcSalesThisMonthAmount",
+   "Codeunit139126.CalcSalesYTD",
+   "Codeunit139126.CalcTop10CustomerSalesRatioYTD",
+   "Codeunit139126.CalcTop10CustomerSalesYTD",
+   "Codeunit139126.DrillDownCalcOverdueSalesInvoiceAmount",
+   "Codeunit139126.DrillDownOverduePurchaseInvoiceAmount",
+   "Codeunit139126.DrillDownSalesThisMonth",
+   "Codeunit139126.OverduePurchInvoiceRemainingAmountLCYSortingTest",
+   "Codeunit139126.OverdueSalesInvoiceRemainingAmountLCYSortingTest"
+  ],
+  "miss_strict_codeunit": [],
+  "miss_broad_codeunit": [
+   "Codeunit138009.AmountOnUnpostedCrMemos"
+  ],
+  "over_test_vs_broad": 0,
+  "over_codeunit_vs_broad": 214,
+  "selected_already_failing_in_control": 9,
+  "selcu_already_failing_in_control": 122,
+  "changed_without_probe_text": {
+   "Codeunit138000.PostSalesInvoiceFromCard": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138000.PostSalesInvoiceFromList": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138000.SalesInvoiceLinesControlsItem": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138000.SalesInvoiceLinesControlsService": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138004.CreditMemoPostSalesInvoiceOpensDialogAndPostedInvoice": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138004.InvoicePostSalesInvoiceOpensDialogAndPostedInvoice": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138007.PostSalesInvoiceForCustomerWithShippingAgentService": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138007.PostSalesInvoiceWithShippingAgent": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138007.PostSalesInvoiceWithShippingAgentSAAS": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138007.PostSalesInvoiceWithShippingAgentService": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138009.AmountOnUnpostedCrMemos": [
+    "pass",
+    "fail",
+    "NavNCLDialogException: Assert.AreEqual failed. Expected:<-10.92> (Decimal). Actual:<-10.93> (Decimal). Wrong Amounts on Unposted Credit Memos.. NavNCLDialogException: Assert.AreEqual failed. Expected:"
+   ],
+   "Codeunit138016.PostFromCard": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138016.PostFromList": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138016.SalesCreditMemoLinesControlsItem": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138016.SalesCreditMemoLinesControlsService": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138033.TestFindByContact": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138033.TestFindByDocument": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138033.TestFindByExternalDocumentSales": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138033.TestNavigatePageOpensPage": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138047.S475203_TestPostSalesInvoiceWithNavigate_EqualNoSeries": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138047.TestPostSalesCreditMemoNoWarning": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138047.TestPostSalesCreditMemoWithNavigate": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138047.TestPostSalesInvoiceWithNavigate": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138047.TestPostSalesInvoiceWithoutNavigate": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138047.TestPostSalesReturnOrderWithNavigate": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138047.TestPostSalesReturnOrderWithoutNavigate": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ]
+  },
+  "probe_run_fail": 339
+ },
+ "2": {
+  "keys": [
+   "ev|Codeunit|80|OnAfterPostSalesDoc"
+  ],
+  "selected_tests": 47,
+  "selected_by_codeunit": 275,
+  "codeunits_selected": 11,
+  "selected_suffix_rule": 254,
+  "miss_strict_suffix": [],
+  "miss_broad_suffix": [
+   "Codeunit138009.AmountOnUnpostedCrMemos"
+  ],
+  "truth_strict": 36,
+  "truth_broad": 62,
+  "miss_strict_test": [
+   "Codeunit139126.AmountsAreCalculatedWhenLastModifiedIsSetTo0",
+   "Codeunit139126.AmountsAreRefreshedWhenActivitiesPageIsOpened",
+   "Codeunit139126.AmountsAreRefreshedWhenDataIsStale",
+   "Codeunit139126.CalcAverageCollectionDays",
+   "Codeunit139126.CalcOverduePurchaseAmount",
+   "Codeunit139126.CalcSalesThisMonthAmount",
+   "Codeunit139126.CalcSalesYTD",
+   "Codeunit139126.CalcTop10CustomerSalesRatioYTD",
+   "Codeunit139126.CalcTop10CustomerSalesYTD",
+   "Codeunit139126.DrillDownCalcOverdueSalesInvoiceAmount",
+   "Codeunit139126.DrillDownOverduePurchaseInvoiceAmount",
+   "Codeunit139126.DrillDownSalesThisMonth",
+   "Codeunit139126.OverduePurchInvoiceRemainingAmountLCYSortingTest",
+   "Codeunit139126.OverdueSalesInvoiceRemainingAmountLCYSortingTest"
+  ],
+  "miss_broad_test": [
+   "Codeunit138009.AmountOnUnpostedCrMemos",
+   "Codeunit139126.AmountsAreCalculatedWhenLastModifiedIsSetTo0",
+   "Codeunit139126.AmountsAreRefreshedWhenActivitiesPageIsOpened",
+   "Codeunit139126.AmountsAreRefreshedWhenDataIsStale",
+   "Codeunit139126.CalcAverageCollectionDays",
+   "Codeunit139126.CalcOverduePurchaseAmount",
+   "Codeunit139126.CalcSalesThisMonthAmount",
+   "Codeunit139126.CalcSalesYTD",
+   "Codeunit139126.CalcTop10CustomerSalesRatioYTD",
+   "Codeunit139126.CalcTop10CustomerSalesYTD",
+   "Codeunit139126.DrillDownCalcOverdueSalesInvoiceAmount",
+   "Codeunit139126.DrillDownOverduePurchaseInvoiceAmount",
+   "Codeunit139126.DrillDownSalesThisMonth",
+   "Codeunit139126.OverduePurchInvoiceRemainingAmountLCYSortingTest",
+   "Codeunit139126.OverdueSalesInvoiceRemainingAmountLCYSortingTest"
+  ],
+  "miss_strict_codeunit": [],
+  "miss_broad_codeunit": [
+   "Codeunit138009.AmountOnUnpostedCrMemos"
+  ],
+  "over_test_vs_broad": 0,
+  "over_codeunit_vs_broad": 214,
+  "selected_already_failing_in_control": 9,
+  "selcu_already_failing_in_control": 122,
+  "changed_without_probe_text": {
+   "Codeunit138000.PostSalesInvoiceFromCard": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138000.PostSalesInvoiceFromList": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138000.SalesInvoiceLinesControlsItem": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138000.SalesInvoiceLinesControlsService": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138004.CreditMemoPostSalesInvoiceOpensDialogAndPostedInvoice": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138004.InvoicePostSalesInvoiceOpensDialogAndPostedInvoice": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138007.PostSalesInvoiceForCustomerWithShippingAgentService": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138007.PostSalesInvoiceWithShippingAgent": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138007.PostSalesInvoiceWithShippingAgentSAAS": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138007.PostSalesInvoiceWithShippingAgentService": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138009.AmountOnUnpostedCrMemos": [
+    "pass",
+    "fail",
+    "NavNCLDialogException: Assert.AreEqual failed. Expected:<-15.83> (Decimal). Actual:<-15.84> (Decimal). Wrong Amounts on Unposted Credit Memos.. NavNCLDialogException: Assert.AreEqual failed. Expected:"
+   ],
+   "Codeunit138016.PostFromCard": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138016.PostFromList": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138016.SalesCreditMemoLinesControlsItem": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138016.SalesCreditMemoLinesControlsService": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138033.TestFindByContact": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138033.TestFindByDocument": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138033.TestFindByExternalDocumentSales": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138033.TestNavigatePageOpensPage": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138047.S475203_TestPostSalesInvoiceWithNavigate_EqualNoSeries": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138047.TestPostSalesCreditMemoNoWarning": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138047.TestPostSalesCreditMemoWithNavigate": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138047.TestPostSalesInvoiceWithNavigate": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138047.TestPostSalesInvoiceWithoutNavigate": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138047.TestPostSalesReturnOrderWithNavigate": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ],
+   "Codeunit138047.TestPostSalesReturnOrderWithoutNavigate": [
+    "pass",
+    "fail",
+    "NavNCLMissingUIHandlerException: Unhandled UI: Page 700 NavNCLMissingUIHandlerException: Unhandled UI: Page 700\n\n\"Error Message\"(Table 700).ShowErrors line 19 - Base Application by Microsoft version 2"
+   ]
+  },
+  "probe_run_fail": 339
+ },
+ "3": {
+  "keys": [
+   "trig|Table|37",
+   "trig|?"
+  ],
+  "selected_tests": 212,
+  "selected_by_codeunit": 410,
+  "codeunits_selected": 18,
+  "selected_suffix_rule": 396,
+  "miss_strict_suffix": [],
+  "miss_broad_suffix": [],
+  "truth_strict": 224,
+  "truth_broad": 224,
+  "miss_strict_test": [
+   "Codeunit139126.AmountsAreCalculatedWhenLastModifiedIsSetTo0",
+   "Codeunit139126.AmountsAreRefreshedWhenActivitiesPageIsOpened",
+   "Codeunit139126.AmountsAreRefreshedWhenDataIsStale",
+   "Codeunit139126.CalcAverageCollectionDays",
+   "Codeunit139126.CalcOverduePurchaseAmount",
+   "Codeunit139126.CalcSalesThisMonthAmount",
+   "Codeunit139126.CalcSalesYTD",
+   "Codeunit139126.CalcTop10CustomerSalesRatioYTD",
+   "Codeunit139126.CalcTop10CustomerSalesYTD",
+   "Codeunit139126.DrillDownCalcOverdueSalesInvoiceAmount",
+   "Codeunit139126.DrillDownOverduePurchaseInvoiceAmount",
+   "Codeunit139126.DrillDownSalesThisMonth",
+   "Codeunit139126.OverduePurchInvoiceRemainingAmountLCYSortingTest",
+   "Codeunit139126.OverdueSalesInvoiceRemainingAmountLCYSortingTest"
+  ],
+  "miss_broad_test": [
+   "Codeunit139126.AmountsAreCalculatedWhenLastModifiedIsSetTo0",
+   "Codeunit139126.AmountsAreRefreshedWhenActivitiesPageIsOpened",
+   "Codeunit139126.AmountsAreRefreshedWhenDataIsStale",
+   "Codeunit139126.CalcAverageCollectionDays",
+   "Codeunit139126.CalcOverduePurchaseAmount",
+   "Codeunit139126.CalcSalesThisMonthAmount",
+   "Codeunit139126.CalcSalesYTD",
+   "Codeunit139126.CalcTop10CustomerSalesRatioYTD",
+   "Codeunit139126.CalcTop10CustomerSalesYTD",
+   "Codeunit139126.DrillDownCalcOverdueSalesInvoiceAmount",
+   "Codeunit139126.DrillDownOverduePurchaseInvoiceAmount",
+   "Codeunit139126.DrillDownSalesThisMonth",
+   "Codeunit139126.OverduePurchInvoiceRemainingAmountLCYSortingTest",
+   "Codeunit139126.OverdueSalesInvoiceRemainingAmountLCYSortingTest"
+  ],
+  "miss_strict_codeunit": [],
+  "miss_broad_codeunit": [],
+  "over_test_vs_broad": 2,
+  "over_codeunit_vs_broad": 186,
+  "selected_already_failing_in_control": 110,
+  "selcu_already_failing_in_control": 188,
+  "changed_without_probe_text": {},
+  "probe_run_fail": 400
+ },
+ "4": {
+  "keys": [
+   "ev|Codeunit|86|OnBeforeOnRun"
+  ],
+  "selected_tests": 0,
+  "selected_by_codeunit": 0,
+  "codeunits_selected": 0,
+  "selected_suffix_rule": 0,
+  "miss_strict_suffix": [],
+  "miss_broad_suffix": [
+   "Codeunit138009.AmountOnQuotes"
+  ],
+  "truth_strict": 0,
+  "truth_broad": 1,
+  "miss_strict_test": [],
+  "miss_broad_test": [
+   "Codeunit138009.AmountOnQuotes"
+  ],
+  "miss_strict_codeunit": [],
+  "miss_broad_codeunit": [
+   "Codeunit138009.AmountOnQuotes"
+  ],
+  "over_test_vs_broad": 0,
+  "over_codeunit_vs_broad": 0,
+  "selected_already_failing_in_control": 0,
+  "selcu_already_failing_in_control": 0,
+  "changed_without_probe_text": {
+   "Codeunit138009.AmountOnQuotes": [
+    "pass",
+    "fail",
+    "NavNCLDialogException: Assert.AreEqual failed. Expected:<13.53> (Decimal). Actual:<13.54> (Decimal). Wrong Amounts on Quotes.. NavNCLDialogException: Assert.AreEqual failed. Expected:<13.53> (Decimal)"
+   ]
+  },
+  "probe_run_fail": 297
+ },
+ "union": {
+  "sel": 212,
+  "selcu": 410,
+  "tail": 396,
+  "strict": 224,
+  "broad": 224
+ }
+}

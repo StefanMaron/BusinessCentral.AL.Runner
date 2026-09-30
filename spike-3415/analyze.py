@@ -36,17 +36,26 @@ def junit(path):
 
 def cu(t): return t.split(".", 1)[0]
 
+def order(path):
+    return [f"{tc.get('classname')}.{tc.get('name')}" for tc in ET.parse(path).getroot().iter("testcase")]
+
 ev = json.load(open(events_path)); ev.pop("<bundle>", None)
 ctl = junit(control_junit)
+ORDER = order(control_junit)
 ctl_fail = {t for t, (s, _) in ctl.items() if s != "pass"}
 print(f"bucket tests {len(ctl)}; control failing {len(ctl_fail)}; recorded tests {len(ev)}")
 tests_by_cu = {}
 for t in ctl: tests_by_cu.setdefault(cu(t), set()).add(t)
 out = {}
-U = {k: set() for k in ["sel", "selcu", "strict", "broad"]}
+U = {k: set() for k in ["sel", "selcu", "tail", "strict", "broad"]}
 for n, keys in KEYS.items():
     sel = {t for t, v in ev.items() if any(k in v for k in keys)}
     selcu = {t for c in {cu(t) for t in sel} for t in tests_by_cu.get(c, ())}
+    # "suffix": a selected test and every test that runs after it in the same codeunit
+    seltail, seen = set(), set()
+    for t in ORDER:
+        if t in sel: seen.add(cu(t))
+        if cu(t) in seen: seltail.add(t)
     pj = f"{S}/runs/cli-probe{n}/junit.xml"
     if not os.path.exists(pj):
         print(f"probe {n}: selected {len(sel)} tests / {len(selcu)} by codeunit (no truth run yet)"); continue
@@ -54,9 +63,11 @@ for n, keys in KEYS.items():
     strict = {t for t, (s, m) in pr.items() if s != "pass" and f"PROBE-{n}" in m}
     changed = {t for t, (s, m) in pr.items() if t not in strict and ctl.get(t, ("?",))[0] != s}
     broad = strict | changed
-    for k, v in [("sel", sel), ("selcu", selcu), ("strict", strict), ("broad", broad)]: U[k] |= v
+    for k, v in [("sel", sel), ("selcu", selcu), ("tail", seltail), ("strict", strict), ("broad", broad)]: U[k] |= v
+    print(f"   suffix rule: {len(seltail)} tests, misses strict/broad {len(strict-seltail)}/{len(broad-seltail)}, over {len(seltail-broad)}")
     r = {"keys": keys, "selected_tests": len(sel), "selected_by_codeunit": len(selcu),
-         "codeunits_selected": len({cu(t) for t in sel}),
+         "codeunits_selected": len({cu(t) for t in sel}), "selected_suffix_rule": len(seltail),
+         "miss_strict_suffix": sorted(strict - seltail), "miss_broad_suffix": sorted(broad - seltail),
          "truth_strict": len(strict), "truth_broad": len(broad),
          "miss_strict_test": sorted(strict - sel), "miss_broad_test": sorted(broad - sel),
          "miss_strict_codeunit": sorted(strict - selcu), "miss_broad_codeunit": sorted(broad - selcu),
