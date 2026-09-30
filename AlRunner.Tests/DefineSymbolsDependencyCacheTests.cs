@@ -8,13 +8,14 @@
 //                         *.symbols.json the test app COMPILES against (the declaration shape);
 //   compiled-deps/<key>   DependencyLoader.ComputeSourceDependencyCacheKeyCore — the DLL the
 //                         test RUNS against when the dependency is reached only as a sibling
-//                         (the body shape).
+//                         (the body shape), or when it is a packaged .app shipping source.
 //
 // Each test runs three times — none, FLAG, none — and also counts the entries on disk: two
 // distinct symbol sets must give exactly two entries, so a key that never moves (the defect)
 // and a key that never repeats (a destroyed cache) both fail.
 
 using System.Diagnostics;
+using System.IO.Compression;
 using System.Text;
 using Xunit;
 
@@ -149,17 +150,7 @@ public sealed class DefineSymbolsDependencyCacheTests : IDisposable
         Assert.Equal(2, Entries("workspace-deps", "*", directories: true));
     }
 
-    /// <summary>
-    /// The symbols select only a procedure BODY, and the dependency is reached only as a
-    /// sibling of the one bundle passed — so what runs is the compiled-deps DLL, and a stale
-    /// one returns the other build's value with nothing failing to compile.
-    /// </summary>
-    [SkippableFact]
-    public void BodyGatedByDefine_DependencyReachedAsSibling_RunsEachRunsBuild()
-    {
-        TestArtifacts.SkipIfMissing();
-        WriteFixture(
-            """
+    private const string BodyAnswer = """
             codeunit 50100 Answer
             {
                 procedure Value(): Integer
@@ -171,8 +162,9 @@ public sealed class DefineSymbolsDependencyCacheTests : IDisposable
             #endif
                 end;
             }
-            """,
-            """
+            """;
+
+    private const string BodyTest = """
             codeunit 50150 AnswerTests
             {
                 Subtype = Test;
@@ -191,7 +183,18 @@ public sealed class DefineSymbolsDependencyCacheTests : IDisposable
             #endif
                 end;
             }
-            """);
+            """;
+
+    /// <summary>
+    /// The symbols select only a procedure BODY, and the dependency is reached only as a
+    /// sibling of the one bundle passed — so what runs is the compiled-deps DLL, and a stale
+    /// one returns the other build's value with nothing failing to compile.
+    /// </summary>
+    [SkippableFact]
+    public void BodyGatedByDefine_DependencyReachedAsSibling_RunsEachRunsBuild()
+    {
+        TestArtifacts.SkipIfMissing();
+        WriteFixture(BodyAnswer, BodyTest);
 
         AssertPassed(Run(flag: false, "test"), "run 1 (no symbols)");
         var second = Run(flag: true, "test");
@@ -201,5 +204,75 @@ public sealed class DefineSymbolsDependencyCacheTests : IDisposable
 
         Assert.Equal(2, Entries("compiled-deps", "*.dll", directories: false));
         Assert.Equal(2, Entries("workspace-deps", "*", directories: true));
+    }
+
+    /// <summary>
+    /// A packaged dependency that ships source and no DLL (the test-toolkit shape) is
+    /// compiled here from that source, with the --define symbols applied. Its package bytes
+    /// do not change between the runs, so only a defines term can separate the two
+    /// compiled-deps entries. The sibling case above cannot show this: every run writes a
+    /// fresh workspace .app, whose zip timestamps already move that key.
+    /// </summary>
+    [SkippableFact]
+    public void BodyGatedByDefine_PackagedSourceDependency_RunsEachRunsBuild()
+    {
+        TestArtifacts.SkipIfMissing();
+        WriteFixture(BodyAnswer, BodyTest);
+        var packages = Directory.CreateDirectory(Path.Combine(_root, "test", ".alpackages")).FullName;
+        File.WriteAllBytes(Path.Combine(packages, "repro_define-cache-app_1.0.0.0.app"), BuildPackagedApp(BodyAnswer));
+        Directory.Delete(Path.Combine(_root, "app"), recursive: true);
+
+        AssertPassed(Run(flag: false, "test"), "run 1 (no symbols)");
+        var second = Run(flag: true, "test");
+        Assert.DoesNotContain("should be 1 under FLAG, got 2", second.Output);
+        AssertPassed(second, "run 2 (--define FLAG)");
+        AssertPassed(Run(flag: false, "test"), "run 3 (no symbols again)");
+
+        Assert.Equal(2, Entries("compiled-deps", "*.dll", directories: false));
+    }
+
+    private static byte[] BuildPackagedApp(string answerSource)
+    {
+        const string appId = "7d1c3a52-0b6e-4f3e-9a41-5e2b8c9d4990";
+        var manifest = $"""
+            <?xml version="1.0" encoding="utf-8"?>
+            <Package xmlns="http://schemas.microsoft.com/navx/2015/manifest">
+              <App Id="{appId}" Name="define-cache-app" Publisher="repro" Version="1.0.0.0" Runtime="16.0" Target="Cloud" ShowMyCode="True" />
+              <IdRanges><IdRange MinObjectId="50100" MaxObjectId="50149" /></IdRanges>
+              <Dependencies />
+              <ResourceExposurePolicy AllowDebugging="true" AllowDownloadingSource="true" IncludeSourceInSymbolFile="true" />
+            </Package>
+            """;
+        const string symbols = """
+            {"RuntimeVersion":"16.0","Codeunits":[{"Methods":[{"ReturnTypeDefinition":{"Name":"Integer"},"Id":-163786484,"Name":"Value"}],"ReferenceSourceFileName":"Answer.Codeunit.al","Id":50100,"Name":"Answer"}],"Reports":[],"XmlPorts":[],"Queries":[],"ControlAddIns":[],"EnumTypes":[],"DotNetPackages":[],"Interfaces":[],"PermissionSets":[],"PermissionSetExtensions":[],"ReportExtensions":[],"InternalsVisibleToModules":[],"AppId":"7d1c3a52-0b6e-4f3e-9a41-5e2b8c9d4990","Name":"define-cache-app","Publisher":"repro","Version":"1.0.0.0"}
+            """;
+        using var zipBuffer = new MemoryStream();
+        using (var zip = new ZipArchive(zipBuffer, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            void Add(string name, string content)
+            {
+                using var w = new StreamWriter(zip.CreateEntry(name).Open());
+                w.Write(content);
+            }
+            // Without the OPC content-types part BC's compiler rejects the package (AL1023).
+            Add("[Content_Types].xml", """
+                <?xml version="1.0" encoding="utf-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="" /><Default Extension="al" ContentType="" /><Default Extension="json" ContentType="" /></Types>
+                """);
+            Add("NavxManifest.xml", manifest);
+            Add("SymbolReference.json", symbols);
+            Add("src/Answer.Codeunit.al", answerSource);
+        }
+        var payload = zipBuffer.ToArray();
+        using var app = new MemoryStream();
+        using var bw = new BinaryWriter(app);
+        bw.Write(Encoding.ASCII.GetBytes("NAVX"));
+        bw.Write(40);
+        bw.Write(2);
+        bw.Write(Guid.Parse(appId).ToByteArray());
+        bw.Write((long)payload.Length);
+        bw.Write(Encoding.ASCII.GetBytes("NAVX"));
+        bw.Write(payload);
+        bw.Flush();
+        return app.ToArray();
     }
 }
