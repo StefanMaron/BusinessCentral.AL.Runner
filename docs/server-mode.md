@@ -550,7 +550,9 @@ server processes"). The runner:
    (Added/Modified/Removed/rename-attributed object identities);
 3. runs tests whose previous coverage intersects those changed objects, or that
    raised an event whose subscribers changed (see "affectedOnly and event
-   subscribers");
+   subscribers"). A test's coverage is the statements it executed plus the objects it
+   built and the procedures and triggers it entered, so an empty procedure or a page
+   without triggers is in it too (see "affectedOnly and entered scopes");
 4. always includes unknown tests (new/renamed tests, tests with no recorded
    coverage, tests that timed out or were skipped in the recording run);
 5. selects a test that failed in the recording run by its recorded coverage, like
@@ -573,7 +575,9 @@ include:
   coverage was recorded on (see below);
 - compile/dependency failures before test execution;
 - a changed subscriber whose event's raises the recording run could not see (see
-  "affectedOnly and event subscribers").
+  "affectedOnly and event subscribers");
+- a whole-object change to an object with an instance no one test built, or a changed
+  `PageExtension` (see "affectedOnly and entered scopes").
 
 #### affectedOnly and previously failing tests
 
@@ -591,7 +595,7 @@ the same codeunit. None of those is in its coverage, so a change there skips it;
 
 It stays **unknown**, and always runs, when the record is not complete:
 
-- no statement was recorded for it at all (for example it failed in setup before
+- nothing was recorded for it at all (for example it failed in setup before
   any AL statement), or a recorded statement could not be attributed to an object
   of this request;
 - it timed out: the watchdog stopped it, not the code, and its body may still be
@@ -682,12 +686,55 @@ told apart:
   local; a test codeunit or a SingleInstance codeunit first is not;
 - a tableextension's base table is in neither the current registry nor the recording;
 - the baseline holds no table record (one recorded before #5008; the persisted store's
-  schema changed with it, so a store written earlier is no baseline);
-- a `Page` or `PageExtension` changed: which tests open a page is not recorded yet,
-  and a page trigger added where none ran selects nothing (#5011).
+  schema changed with it, so a store written earlier is no baseline).
 
 Not covered here: a test that reads a table only through a query builds no record of
-it; and a procedure that ran no statement (empty) and then gains a body, #5011.
+it.
+
+#### affectedOnly and entered scopes
+
+Statement coverage records nothing for code that has no statement: an empty procedure
+or trigger, or a page with no triggers at all. A change adding the first statement
+there used to select no test, while a full run failed the tests that used it (#5011).
+The recording run therefore also records, per test:
+
+- every procedure and trigger the test entered, empty or not, as the same
+  `<object>::proc:<name>` key a statement in it records. The runner observes BC's
+  `ALMethodScope.ALStart`, which every AL method runs first;
+- every codeunit, page, report, xmlport and query instance the test built, as the
+  object's key. The runner observes BC's `NavApplicationObjectBase` constructor.
+  Records and tableextensions are left to the table keys above, and a test codeunit's
+  own instance is not recorded.
+
+So an empty procedure that gains a body selects the tests that called it, an empty
+`OnRun` reached by `Codeunit.Run(<id>)` selects the tests that ran it, and a page
+without triggers that gains an `OnOpenPage` (a whole-object change) selects the tests
+that opened it. A changed `Page` no longer forces a full run.
+
+An object's key comes from its class, so an object declared in a file with several
+objects keys too, instead of making the test unknown; a change to such a file still
+forces a full run, as before (#5003).
+
+A full run is forced, with a `reason`, when the tests using a changed object cannot be
+told apart:
+
+- an instance of it was built outside any one test: while no test was running, or as a
+  global of a test codeunit or of a SingleInstance codeunit (the same owner walk as for
+  records). A later test can use that instance without building it or entering any of
+  its code, for example `Run()` on a codeunit with no `OnRun`. Only a whole-object
+  change forces this; a change narrowed to one procedure selects the tests that
+  entered it, whichever instance they ran on;
+- a `PageExtension` changed: which page it extends is not recorded, so which tests
+  open that page is not known.
+
+The persisted store's schema changed with this (schema 3), so a store written earlier
+is no baseline. A request that records nothing does not record these either.
+
+Recording cost, measured for #5011 on the al-language corpus at 31b033d6 (one server
+process per build, same cache, steady state after the first request): a
+`perTestCoverage` run took 39.5 s on average with this recording and 40.0 s with it
+stubbed out (four runs each); a plain run took 38.6 s and 40.0 s (six runs each). Both
+differences are inside run-to-run noise.
 
 #### affectedOnly and packaged dependencies
 

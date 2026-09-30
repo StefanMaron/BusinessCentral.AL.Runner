@@ -75,7 +75,10 @@ public static class AlObjectUseTracker
     }
 
     // A tableextension instance is built with a record of its base table, which #5008 keys.
-    private static bool IsTableExtension(Type t) => AlCallStackCapture.ParseObjectTypeAndId(t).Item1 == "TableExtension";
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, bool> _isTableExtension = new();
+
+    private static bool IsTableExtension(Type t) => _isTableExtension.GetOrAdd(t,
+        static type => AlCallStackCapture.ParseObjectTypeAndId(type).Item1 == "TableExtension");
 
     /// <summary>An inline-emitted AL method started (<c>ALMethodScope.ALStart</c>).</summary>
     public static void NoteInlineScopeEntered(object? scope)
