@@ -448,8 +448,9 @@ internal sealed partial class RunnerPageInstance
             // already opened, then throws NavTestPageInvokedWithoutHandlerException — a
             // NavTestBaseException, which NavOpenTaskPageAction.ShowForm rethrows into AL. So
             // the target opens and AL gets that exception, not "Unhandled UI". Corpus codeunit
-            // 60285 arms 7-9 (issue #3223) put this in front of a service tier.
-            OpenTargetUnattended(session, form);
+            // 60285 arms 7-9 (issue #3223) put this in front of a service tier. Whether a Create
+            // mark starts a new record before that refusal is unmeasured (#5014), so it does not.
+            OpenTargetUnattended(session, form, startNewRecord: false);
             throw NavTestPageInvokedWithoutHandlerException.Create(
                 System.Globalization.CultureInfo.CurrentCulture, pageId);
         }
@@ -465,7 +466,7 @@ internal sealed partial class RunnerPageInstance
             return;
         }
 
-        OpenTargetUnattended(session, form);
+        OpenTargetUnattended(session, form, startNewRecord: true);
     }
 
     /// <summary>
@@ -492,7 +493,7 @@ internal sealed partial class RunnerPageInstance
     /// no <c>Commit()</c>: the target's OnOpenPage ran and its row was gone. Real BC never raises
     /// on this route at all, so neither does this.</para>
     /// </summary>
-    private static void OpenTargetUnattended(NavSession session, NavForm form)
+    private static void OpenTargetUnattended(NavSession session, NavForm form, bool startNewRecord)
     {
         session.Company.RegisterForm(form);
         try
@@ -501,10 +502,11 @@ internal sealed partial class RunnerPageInstance
             // record through BC's own NavForm.NewRecord (ALInit, filters, OnNewRecord), after
             // OnOpenPage, as the handler path does: corpus 67018
             // RunPageModeCreate_NoHandlerBound_Triggers (#5005). The forced close saves nothing.
+            // The mark is consumed either way, so it cannot leak to a later open of this form.
             RunnerModalDispatch.ApplyPendingPageOpenMode(form);
             var opensOnNewRecord = RunnerPendingPageOpenMode.TryConsumeOpensOnNewRecord(form);
             form.OpenForm();
-            if (opensOnNewRecord) form.NewRecord(belowXRec: false);
+            if (opensOnNewRecord && startNewRecord) form.NewRecord(belowXRec: false);
         }
         finally
         {
