@@ -110,7 +110,7 @@ public sealed class RunnerTestClientSession : ITestClientSession
         // Opened in Create mode (an action's RunPageMode = Create, #4997): the handler is handed
         // a new record, exactly as RunnerTestPageState.MarkOpened starts one for OpenNew().
         if (record != null && RunnerPendingPageOpenMode.TryConsumeOpensOnNewRecord(form))
-            live.InsertEmptyRow(beforeCurrent: true);
+            live.StartNewRecordOnOpen();
         else if (record != null)
         {
             // The service tier's view round trip after the open, before the first row read — as

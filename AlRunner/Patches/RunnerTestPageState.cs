@@ -99,7 +99,7 @@ public static class RunnerTestPageState
             // (HostOpen;PartOpen;HostAGCR;PartAGCR) on all 8 BC legs.
             live.EagerlyBuildParts();
             if (viewMode == Microsoft.Dynamics.Nav.Types.Metadata.ViewMode.Create)
-                live.InsertEmptyRow(beforeCurrent: true);
+                live.StartNewRecordOnOpen();
             else if (live.Record != null && AlRunner.Patches.RunnerTestClientSession.IsUnpositioned(live.Record))
                 // A real client positions on the first row (or the implicit new-row line, if
                 // the view has none — see LiveNavTestPage.MoveFirst) the instant the page

@@ -101,6 +101,15 @@ internal partial class LiveNavTestPage
             NewRowBecameCurrent();
     }
 
+    /// <summary>
+    /// Start the new record a page opened in Create mode stands on (OpenNew, a RunPageMode =
+    /// Create target). Its OnNewRecord gets BelowxRec = true — no row was positioned before it
+    /// (<see cref="RunnerPageInstance.CalculateXRecPosition"/>, corpus 67036, #5015).
+    /// Trap: InsertEmptyRow passes <c>!beforeCurrent</c> as belowXRec.
+    /// </summary>
+    internal void StartNewRecordOnOpen()
+        => InsertEmptyRow(beforeCurrent: !RunnerPageInstance.CalculateXRecPosition(lastPositionedRowIndex: null));
+
     private void NewRowBecameCurrent()
     {
         // Measured BEFORE the trigger: a new row whose starting key (usually blank) already
