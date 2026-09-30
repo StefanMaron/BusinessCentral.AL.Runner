@@ -497,11 +497,14 @@ internal sealed partial class RunnerPageInstance
         session.Company.RegisterForm(form);
         try
         {
-            // The mode an action asked for reaches OnOpenPage here too; nothing builds a handler
-            // page afterwards, so a Create mark is dropped rather than left for GC.
+            // The mode an action asked for reaches OnOpenPage here too. Create then starts the new
+            // record through BC's own NavForm.NewRecord (ALInit, filters, OnNewRecord), after
+            // OnOpenPage, as the handler path does: corpus 67018
+            // RunPageModeCreate_NoHandlerBound_Triggers (#5005). The forced close saves nothing.
             RunnerModalDispatch.ApplyPendingPageOpenMode(form);
-            RunnerPendingPageOpenMode.TryConsumeOpensOnNewRecord(form);
+            var opensOnNewRecord = RunnerPendingPageOpenMode.TryConsumeOpensOnNewRecord(form);
             form.OpenForm();
+            if (opensOnNewRecord) form.NewRecord(belowXRec: false);
         }
         finally
         {
