@@ -49,13 +49,17 @@ public static class WatchDashboard
     /// absent entirely on a proportional one, so it can't be trained into background
     /// noise the way an always-present line would be.
     /// </param>
+    /// <param name="affectedLines">#5027: under <c>--watch --affected</c>, what the cycle's test
+    /// selection did (WatchAffectedReport.Describe). Rendered above the tree, so a narrowed cycle
+    /// never reads as a full run; null renders nothing.</param>
     public static IRenderable Build(
         IReadOnlyList<BucketResult> results,
         string bundleName,
         WatchStatus status,
         DateTime lastRun,
         TimeSpan lastDuration,
-        IReadOnlyList<(string Module, string Reason)>? fullRebuildReasons = null)
+        IReadOnlyList<(string Module, string Reason)>? fullRebuildReasons = null,
+        IReadOnlyList<string>? affectedLines = null)
     {
         var rows = new List<IRenderable>
         {
@@ -66,6 +70,11 @@ public static class WatchDashboard
         if (banner != null)
         {
             rows.Add(banner);
+            rows.Add(new Text(string.Empty));
+        }
+        if (affectedLines is { Count: > 0 })
+        {
+            rows.Add(new Markup(string.Join("\n", affectedLines.Select(l => $"[cyan]{Markup.Escape(l)}[/]"))));
             rows.Add(new Text(string.Empty));
         }
         rows.Add(BuildTree(results));

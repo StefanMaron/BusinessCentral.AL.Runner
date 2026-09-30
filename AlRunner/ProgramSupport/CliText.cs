@@ -375,6 +375,20 @@ internal static partial class ProgramSupport
         w.WriteLine("  compiled bodies, and that diagnostic falls through to the same refuse path.");
         w.WriteLine();
 
+        w.WriteLine("WATCH: RERUN ONLY WHAT AN EDIT AFFECTS (--watch --affected)");
+        w.WriteLine("    al-runner MyApp MyApp.Test --watch --affected");
+        w.WriteLine("  Each cycle runs the tests the change can affect and skips the rest, with the");
+        w.WriteLine("  same selection --server's runTests uses for affectedOnly. The first cycle runs");
+        w.WriteLine("  everything, unless an earlier --watch --affected or --server run on the same");
+        w.WriteLine("  cache root left a baseline for these bundles. After each cycle's summary, a");
+        w.WriteLine("  \"[watch] affected:\" line gives how many tests ran, how many were skipped as");
+        w.WriteLine("  unaffected, and how many were skipped while still failing from an earlier cycle");
+        w.WriteLine("  (named on the next line); a cycle that had to run everything says why. The");
+        w.WriteLine("  Tests: line counts only what ran. --include-failing also reruns every test whose");
+        w.WriteLine("  last result was not a pass. --affected is rejected (exit 2) without --watch and");
+        w.WriteLine("  with --tdd, --per-suite or --test. Details: docs/watch-affected.md.");
+        w.WriteLine();
+
         w.WriteLine("REPORTING A RUNNER GAP");
         w.WriteLine("  Only after PRE-FLIGHT and TROUBLESHOOTING have been worked through, and the");
         w.WriteLine("  behaviour is not described in docs/limitations.md or docs/scope.md. A gap");
@@ -415,6 +429,7 @@ internal static partial class ProgramSupport
         w.WriteLine("  docs/limitations.md          the real architectural limits");
         w.WriteLine("  docs/scope.md                in-scope vs out-of-scope-by-design surfaces");
         w.WriteLine("  docs/server-mode.md          the --server JSON-RPC protocol");
+        w.WriteLine("  docs/watch-affected.md       --watch --affected test selection");
         w.WriteLine("  docs/dap-mode.md             the --dap Debug Adapter Protocol server");
     }
 
@@ -670,6 +685,20 @@ internal static partial class ProgramSupport
         w.WriteLine("  --watch                 Stay resident with warm dependencies and re-run IN-PROCESS");
         w.WriteLine("                          on every .al change (deps loaded once → ~seconds/save, not");
         w.WriteLine("                          a cold re-run). Ctrl+C to quit.");
+        w.WriteLine("  --affected              With --watch: each cycle runs only the tests the edit can");
+        w.WriteLine("                          affect, using --server's affectedOnly selection (per-test");
+        w.WriteLine("                          coverage, entered scopes, raised events, tables; every");
+        w.WriteLine("                          forced-full rule unchanged). A \"[watch] affected:\" line");
+        w.WriteLine("                          after each cycle's summary says how many ran, were skipped");
+        w.WriteLine("                          as unaffected, and were skipped while still failing, or");
+        w.WriteLine("                          why the cycle ran everything. Skipped tests are neither");
+        w.WriteLine("                          printed nor counted. Cycle 1 runs everything unless an");
+        w.WriteLine("                          earlier run on the same cache root left a baseline. Not");
+        w.WriteLine("                          valid without --watch, or with --tdd, --per-suite or");
+        w.WriteLine("                          --test. See docs/watch-affected.md.");
+        w.WriteLine("  --include-failing       With --watch --affected: also rerun every test whose last");
+        w.WriteLine("                          result was not a pass, whatever changed (runTests'");
+        w.WriteLine("                          includeFailing).");
         w.WriteLine("  --server                Long-running JSON-RPC daemon over stdin/stdout (warm");
         w.WriteLine("                          deps + BC patches loaded once; ~19s->~4s per run). One");
         w.WriteLine("                          JSON request/response per line. stdout carries ONLY the");

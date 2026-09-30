@@ -373,6 +373,10 @@ int? testTimeoutSeconds = null;
 // same-bundle in-process reload is now safe because the type finders prefer the current
 // test assembly. Net: ~seconds per save instead of a cold re-run.
 bool watchMode = false;
+// #5027: --watch --affected runs each cycle through the server's affected selection
+// (RunTestsWithSelection); --include-failing is its includeFailing. docs/watch-affected.md.
+bool watchAffected = false;
+bool watchIncludeFailing = false;
 // --tdd (issue #1997): local-development-only flag, off by default. Normally a test
 // referencing a not-yet-implemented table field / procedure / enum value is a
 // method-body compile ERROR, which drops the WHOLE app group (BC's ContinueBuildOnError
@@ -578,6 +582,8 @@ for (int i = 0; i < args.Length; i++)
     if (args[i] == "--no-cache") { alCacheDir = null; noCacheRequested = true; continue; }
     if (args[i] == "--print-cache-key") { printCacheKeyOnly = true; continue; }
     if (args[i] == "--watch") { watchMode = true; continue; }
+    if (args[i] == "--affected") { watchAffected = true; continue; }
+    if (args[i] == "--include-failing") { watchIncludeFailing = true; continue; }
     if (args[i] == "--tdd") { tddMode = true; continue; }
     if (args[i] == "--server") { continue; }  // handled above (serverMode); consume so it isn't "unknown"
     if (args[i] == "--dap")  // handled above (dapMode/dapPort/dapStdioMode); consume the flag and its optional value (numeric port, or "stdio")
@@ -670,6 +676,24 @@ if (serverMode && watchMode)
 {
     Console.Error.WriteLine("--server and --watch are mutually exclusive (both stay warm in-process; pick one).");
     return 2;
+}
+// #5027: --affected changes how --watch runs a cycle and means nothing elsewhere; the server's
+// per-request form is runTests' affectedOnly. The refused combinations are options the selecting
+// run does not apply, so accepting them would drop them without a word.
+if (watchAffected || watchIncludeFailing)
+{
+    string? affectedProblem =
+        watchIncludeFailing && !watchAffected ? "--include-failing is only valid with --watch --affected."
+        : !watchMode ? "--affected is only valid with --watch (a --server client sets runTests' affectedOnly instead)."
+        : tddMode ? "--affected cannot be combined with --tdd."
+        : !bundledMode ? "--affected cannot be combined with --per-suite."
+        : testFilter != null ? "--affected cannot be combined with --test/--filter: selection decides which tests run."
+        : null;
+    if (affectedProblem != null)
+    {
+        Console.Error.WriteLine(affectedProblem);
+        return 2;
+    }
 }
 // #2502: resolve the run seed before anything can spawn a child, so every process shares it.
 try { _ = AlRunner.Infrastructure.RunSeed.Value; }
@@ -2589,6 +2613,11 @@ string watchBundleName = bundles.Count == 1
 // the arrow/page/home/end keys. Reset to 0 on each fresh cycle paint.
 int watchScroll = 0;
 
+// #5027: one selection state for the life of the watch process, as --server keeps one per process.
+var watchAffectedState = watchAffected ? new AlRunner.Infrastructure.AffectedSelectionState("watch") : null;
+// What the last --affected cycle's selection did; printed under its summary and on the dashboard.
+List<string>? watchAffectedLines = null;
+
 // Render the dashboard to a flat list of (already-ANSI-markup) lines at the current
 // console width, so the idle branch can window it into the visible viewport.
 List<string> RenderDashboardLines(WatchStatus status, DateTime ts, TimeSpan dur)
@@ -2608,7 +2637,7 @@ List<string> RenderDashboardLines(WatchStatus status, DateTime ts, TimeSpan dur)
     // below deliberately does NOT pass it: while "⟳ running…" is showing, the reason
     // in this list (if any) is stale — it belongs to the PREVIOUS cycle, and the cycle
     // in flight hasn't decided whether it needs a full rebuild yet.
-    rec.Write(WatchDashboard.Build(results, watchBundleName, status, ts, dur, watchFullRebuildReasons));
+    rec.Write(WatchDashboard.Build(results, watchBundleName, status, ts, dur, watchFullRebuildReasons, watchAffectedLines));
     return sw.ToString().Replace("\r\n", "\n").TrimEnd('\n').Split('\n').ToList();
 }
 
@@ -2716,7 +2745,8 @@ AlRunner.Patches.NumberSequencePatches.ResetForNewExecution();
 // bundle can be told from an earlier one without destroying what the earlier one registered.
 // The expensive dependency symbol loader is keyed on the dep set, not the bundle source, so it
 // stays warm across cycles — that is what makes a watch re-run fast.
-if (watchMode)
+// Under --affected the selecting run resets per run itself (RunAllBundlesForServer).
+if (watchMode && !watchAffected)
     BcRuntime.ResetForNewBundleReload();
 
 // #2218: a user can add an .alpackages between cycles, so each cycle after the first walks afresh.
@@ -2746,7 +2776,8 @@ watchFullRebuildReasons.Clear();
 // failure is printed and the cycle continues with the base caches and NO workspace dirs, so
 // the dependent bundle fails its own compile naming the dependency it cannot resolve —
 // loud and true — rather than quietly resolving the previous cycle's copy.
-if (watchMode && watchCycleIndex > 0)
+// Under --affected the selecting run re-runs both pre-passes itself (RunAllBundlesForServer).
+if (watchMode && watchCycleIndex > 0 && !watchAffected)
 {
     var prePassExit = RunDependencyPrePasses();
     if (prePassExit != null)
@@ -2783,12 +2814,25 @@ if (watchUi && !AlRunner.Log.Verbose)
 // whole set: every bundle named is installed together. --per-suite keeps one pass per bundle, and
 // so does AL_RUNNER_SEQUENTIAL_BUNDLES=1: the ordered-bundle CI steps need an earlier bundle to run
 // before a later one registers, which is the order their cache-poisoning defects need (#4450).
-var deferBundleRuns = bundledMode && bundles.Count > 1
+var deferBundleRuns = bundledMode && bundles.Count > 1 && !watchAffected
     && Environment.GetEnvironmentVariable("AL_RUNNER_SEQUENTIAL_BUNDLES") != "1";
 var deferredBundleRuns = new List<Action>();
 if (deferBundleRuns) BcRuntime.BeginBundleEpoch();
+// #5027: --watch --affected runs the cycle through the server's selecting run instead of the
+// loop below, so every forced-full rule --server applies holds here unchanged.
+if (watchAffected)
+{
+    var affectedSw = System.Diagnostics.Stopwatch.StartNew();
+    var affectedOutcome = RunTestsWithSelection(watchAffectedState!, bundles.ToArray(), null,
+        requestCoverage: false, requestPerTestCoverage: false, affectedOnly: true,
+        includeFailing: watchIncludeFailing, onTestComplete: _ => { }, token: default);
+    results.AddRange(WatchAffectedReport.ToBuckets(bundles, affectedOutcome, affectedSw.Elapsed,
+        Reporter.FinalizeCompanyInitFailures(CompanyInitializer.DrainFailures(), expectations)));
+    watchAffectedLines = WatchAffectedReport.Describe(affectedOutcome.Selection,
+        WatchAffectedReport.SkippedFailing(affectedOutcome, watchAffectedState!));
+}
 int i2 = 0;
-foreach (var bundle in bundles)
+foreach (var bundle in watchAffected ? new List<string>() : bundles)
 {
     i2++;
     var bundleAbs = Path.GetFullPath(bundle);
@@ -4550,6 +4594,8 @@ else
     // integration test asserts on these exact markers — do not change them.
     Reporter.PrintPerTest(results, Console.Out, showPassChoice ?? AlRunner.Log.Verbose);
     Reporter.PrintSummary(results, Console.Out);
+    foreach (var line in watchAffectedLines ?? new List<string>())
+        Console.WriteLine(line);
     // #4561: the one-shot flush is never reached from --watch; once per cycle.
     AlRunner.Infrastructure.FailureOnlyNotes.FlushAfter(Console.Error, results.SelectMany(b => b.Tests));
     Reporter.PrintActionNeeded(results, Console.Out);

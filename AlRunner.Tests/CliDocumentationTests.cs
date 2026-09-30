@@ -305,6 +305,8 @@ public sealed class CliDocumentationTests
         "--test-data-normalize-company",
         // Issue #2502: --seed changes the Random() values the run executes against.
         "--seed",
+        // #5027: --affected decides which tests a --watch cycle runs; --include-failing adds to them.
+        "--affected", "--include-failing",
     };
 
     /// <summary>Negative: an unknown documentation flag must not be silently accepted.</summary>
