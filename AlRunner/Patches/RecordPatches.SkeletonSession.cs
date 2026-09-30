@@ -253,6 +253,27 @@ public static partial class RecordPatches
         Console.Error.WriteLine("[RecordPatches] NavCurrentThread.Session wired to skeleton");
     }
 
+    private static object? _skeletonGlobalTriggers;
+    private static MethodInfo? _flushTriggerCache;
+
+    /// <summary>
+    /// Empties the per-table trigger masks <c>NavSystemCodeunitGlobalTriggers.GetTriggersOnTable</c>
+    /// caches for the session, through BC's own <c>FlushTriggerCache</c>. Observably equivalent to a
+    /// new BC session, which starts with an empty cache: the runner starts one per bundle, where it
+    /// also drops the SingleInstance codeunits the mask's subscribers read (#5069).
+    /// Trap: without it the mask is computed once per process, so the SingleInstance uses of that
+    /// computation land on whichever test first touched the table in the first request (#5069).
+    /// </summary>
+    internal static void FlushGlobalTriggerCache()
+    {
+        if (_skeletonGlobalTriggers is not { } gt) return; // no skeleton session built yet: nothing cached
+        _flushTriggerCache ??= AlRunner.Infrastructure.BcShape.RequiredMethod(
+            gt.GetType(), "FlushTriggerCache", BindingFlags.Public | BindingFlags.Instance,
+            "Global table triggers", "NavSystemCodeunitGlobalTriggers.FlushTriggerCache",
+            "the per-table trigger masks would survive into the next bundle's session", Type.EmptyTypes);
+        _flushTriggerCache.Invoke(gt, null);
+    }
+
     private static void InjectSkeletonSystemCodeunitFactory(object skeletonSession)
     {
         var nclAsm = AppDomain.CurrentDomain.GetAssemblies()
@@ -334,6 +355,7 @@ public static partial class RecordPatches
 
         // GetTriggersOnTable is BC's own body again — it invokes GetDatabaseTableTriggerSetup
         // on the Global Triggers codeunit, whose AL subscribers decide the per-table mask.
+        _skeletonGlobalTriggers = globalTriggers;
 
         // Wire global triggers into factory.
         var fGlobalTriggers = tFactory.GetField("globalTriggers",

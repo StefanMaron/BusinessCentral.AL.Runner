@@ -83,6 +83,92 @@ public class ServerAffectedSelectionUnknownRecordTests
         }
         """;
 
+    // #5069: a SingleInstance codeunit reached only through BC's per-session trigger-mask cache.
+    // GetTriggersOnTable asks its GetDatabaseTableTriggerSetup subscribers once per table per
+    // session, so only the test that first touches the table in a session enters this codeunit.
+    private const string TriggerStore = """
+        codeunit 61905 "SU Trigger Store"
+        {
+            SingleInstance = true;
+
+            var
+                Stored: Integer;
+                Seen: Integer;
+
+            procedure Put(V: Integer)
+            begin
+                Stored := V;
+            end;
+
+            [EventSubscriber(ObjectType::Codeunit, Codeunit::"Global Triggers", 'GetDatabaseTableTriggerSetup', '', false, false)]
+            local procedure OnGetSetup(TableId: Integer; var OnDatabaseInsert: Boolean; var OnDatabaseModify: Boolean; var OnDatabaseDelete: Boolean; var OnDatabaseRename: Boolean)
+            begin
+                if TableId = Database::"SU Rows" then
+                    Seen := Stored;
+            end;
+        }
+        """;
+
+    private const string RowsTable = """
+        table 61906 "SU Rows"
+        {
+            fields
+            {
+                field(1; PK; Integer) { }
+            }
+            keys { key(PK; PK) { Clustered = true; } }
+        }
+        """;
+
+    private const string TriggerWriter = """
+        codeunit 61907 "SU Trigger Writer"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure FillsTriggerStore()
+            var
+                S: Codeunit "SU Trigger Store";
+            begin
+                S.Put(42);
+            end;
+        }
+        """;
+
+    // Unknown by unmappable statements, as UnmappableReader; reads the store only through the mask.
+    private const string TriggerReader = """
+        codeunit 61908 "SU Trigger Reader"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure InsertsRow()
+            var
+                R: Record "SU Rows";
+            begin
+                R.PK := 1;
+                R.Insert();
+            end;
+        }
+
+        codeunit 61909 "SU Trigger Other"
+        {
+            procedure Nothing()
+            begin
+            end;
+        }
+        """;
+
+    private static string TriggerBundle(string prefix, string appIdSuffix)
+    {
+        var dir = Bundle(prefix, appIdSuffix, TriggerReader);
+        File.Delete(Path.Combine(dir, "WriterA.Codeunit.al"));
+        File.WriteAllText(Path.Combine(dir, "TriggerStore.Codeunit.al"), TriggerStore);
+        File.WriteAllText(Path.Combine(dir, "Rows.Table.al"), RowsTable);
+        File.WriteAllText(Path.Combine(dir, "TriggerWriter.Codeunit.al"), TriggerWriter);
+        return dir;
+    }
+
     private static string Bundle(string prefix, string appIdSuffix, string reader)
     {
         var dir = TestScratch.Dir(prefix);
@@ -187,6 +273,29 @@ public class ServerAffectedSelectionUnknownRecordTests
         var second = await Send(again, bundle);
         Assert.False(second.ForcedFull, second.Raw);
         AssertRan(second, "second restart", "ReadsStore", "WritesStore");
+    }
+
+    /// <summary>
+    /// #5069: the reader reaches the SingleInstance store only while BC computes the table's
+    /// trigger mask, which it caches per session. Re-recorded in the next request, the reader
+    /// must record that use again, so a second unchanged request still brings the writer.
+    /// Before the fix the mask survived from the first request: the re-recording lost the key.
+    /// </summary>
+    [SkippableFact]
+    public async Task TriggerMaskUse_IsRecordedAgainInEveryRequest()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = TriggerBundle("al-runner-server-affected-unknown-record-mask", "000000000004");
+        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+
+        var baseline = await Send(server, bundle);
+        Assert.True(baseline.ForcedFull, baseline.Raw);
+        Assert.True(baseline.Tests.Values.All(t => t.Status == "pass"), baseline.Raw);
+
+        // Reads the record the full run wrote, then re-records the reader in a narrowed run.
+        AssertRan(await Send(server, bundle), "unchanged 1", "InsertsRow", "FillsTriggerStore");
+        // Reads the record that narrowed run wrote.
+        AssertRan(await Send(server, bundle), "unchanged 2", "InsertsRow", "FillsTriggerStore");
     }
 
     /// <summary>
