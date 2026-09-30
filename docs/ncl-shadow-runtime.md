@@ -104,3 +104,69 @@ deleting** rather than relying on the delete failing.
 - A directory whose lock is held **and** whose file set is incomplete cannot be renamed aside,
   so it is healed in place; if the heal cannot complete, `PublishShadowDir` falls back to
   running from the `.building.*` temp dir, as it did before.
+
+## Publishing Ncl.dll (#5018, #5019)
+
+`NclCecilRewrite.RewriteInPlace` runs at every start and publishes the Cecil-rewritten Ncl.dll
+into the directory the process is about to load it from — the shadow dir for a shadow child.
+It goes through `NclFilePublisher` (`AlRunner/Infrastructure/NclFilePublisher.cs`):
+
+1. **An identical destination is not written.** `PublishIfChanged` compares the destination's
+   bytes with the cached rewrite and returns without touching the file when they match. Every
+   process sharing one shadow dir computes the same bytes (the key pins the runner build and
+   the source Ncl.dll), so after the first start this is the only path taken.
+2. **Equality has to be established, not assumed.** A symlink, a missing file, or a read that
+   keeps failing answers "not current", and the file is written as before. A symlink is never
+   current because its content can change without our path being written.
+3. **When a write is needed, the one-step rename goes first.** `File.Move(overwrite: true)` —
+   rename(2), or MoveFileEx with `MOVEFILE_REPLACE_EXISTING` — never makes the name disappear.
+   `File.Replace` (Win32 ReplaceFile) comes second, only when the rename is refused, because it
+   gets past a real-time scanner holding the fresh temp file (#1650). ReplaceFile renames the old
+   file aside and then moves the new one in, so between the two steps the name does not exist.
+4. **Leftover `Microsoft.Dynamics.Nav.Ncl.dll~RF<hex>.TMP` files are reaped** from that directory
+   at every start. A backup another live process still has loaded is the file ReplaceFile itself
+   could not delete, so our delete is refused too and it is left for a later start.
+
+### What each Windows report was
+
+- **#5019** — ReplaceFile on every cache hit, while another al-runner process had the old
+  Ncl.dll loaded, left one ~11 MB `~RF*.TMP` per start. Step 1 removes the replace; step 4
+  removes the files earlier versions left.
+- **#5018** — a sibling loading Ncl.dll inside ReplaceFile's window got `FileNotFoundException`.
+  Step 1 removes the window from the steady state; step 3 keeps it out of the write path unless
+  a rename is refused.
+
+### Why the skip is back after #2489 withdrew it
+
+PR #2512 first shipped this skip, then withdrew it: with it, subprocess tests
+(`BatchAppIdentityTests`, `TestFilterFlagTests`, `TestIsolationMethodAliasTests`) failed
+roughly 1 run in 5 to 1 in 8 under the parallel C# suite, and 5 runs with it disabled were
+clean. The cause was never identified. Five clean runs do not separate the two arms at that
+rate (about a one-in-three chance under no difference), and the same PR was fixing two
+self-heal defects that corrupt or rename a live shadow dir at the same time.
+
+Re-measured on this change (Linux, `-p:_BCVersion=28.1.49838.53910`, default xUnit
+parallelism, those three classes together, default cache root):
+
+| arm | runs | failed runs | shadow `Ncl.dll` inode across the arm |
+|---|---|---|---|
+| warm (shadow dir and `ncl-cecil` entry present) | 14 | 0 | unchanged — the skip ran every time |
+| cold (both removed before each run) | 7 | 0 | new per run — the directory was rebuilt each time |
+
+At a 1-in-8 rate, 0 failures in 21 runs has about a 6% chance; at 1 in 5, under 1%.
+
+What differs from the #2512 version: it followed symlinks (`File.Exists`), and read the
+destination with `FileShare.Read` behind a 60-attempt retry. This one refuses a symlink and
+opens the destination with `FileShare.ReadWrite | FileShare.Delete`, so it never blocks a
+sibling's rename. None of that is shown to be what went wrong in #2512.
+
+### Not verified on Windows
+
+This suite runs on Linux. The Windows ordering and the reap are driven through `NclFileOps`
+in `NclFilePublisherTests`, which stands in for Windows rather than running on it. Not measured
+on Windows:
+
+- that a DLL another process has loaded refuses deletion — the reap's safety rests on it; the
+  reporter's `~RF*.TMP` files are ReplaceFile's own delete being refused in exactly that case;
+- that trying the rename before ReplaceFile costs the #1650 antivirus case nothing but one
+  refused MoveFileEx — ReplaceFile still runs on the same attempt, before any backoff.

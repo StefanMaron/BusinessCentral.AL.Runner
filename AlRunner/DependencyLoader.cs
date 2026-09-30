@@ -896,7 +896,7 @@ public sealed class DependencyLoader
     /// File.WriteAllBytes/WriteAllText into these exact paths. A reader's
     /// File.Exists(cachedDll) check (LoadOne, above) could observe a file mid-write from
     /// another process's FileStream and hand a torn read to Assembly.Load — same defect
-    /// class as the Ncl.dll SIGBUS fix (NclCecilRewrite.AtomicReplace) and the #1810/#1812
+    /// class as the Ncl.dll SIGBUS fix (NclFilePublisher.AtomicReplace) and the #1810/#1812
     /// AL-output cache fix, just with a louder failure mode here
     /// (BadImageFormatException, not a crash) because Assembly.Load(byte[]) copies rather
     /// than memory-maps. Parallelizing AlRunner.Tests's subprocess collections (#1809)
