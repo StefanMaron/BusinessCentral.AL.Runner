@@ -620,7 +620,13 @@ recording run therefore also records, per test, the events the test raised:
   seeds every event scope of the request's modules (bundle and dependency modules the
   runner compiled or loaded, not Microsoft's Base or System Application) to make each
   raise reach the dispatcher. With no subscriber the dispatcher returns at once,
-  which is what an unseeded publisher does.
+  which is what an unseeded publisher does. An event that a tableextension,
+  pageextension or reportextension declares is published under the object it extends
+  (#5004), so it is recorded under the base object's key, the same key the
+  subscriber's `ObjectType::Table` / `Page` / `Report` attribute names. If an
+  extension declares an event and the source parse cannot name exactly one base object
+  for it, the raise cannot be keyed, and that module's publishers do not count as
+  fully seeded.
 - `trig|Table|<id>` when the test inserted, modified, deleted, renamed or validated a
   record of that table, in any app: BC asks the table's metadata (or the field's, for
   validate) whether a trigger event is subscribed on each of those operations,

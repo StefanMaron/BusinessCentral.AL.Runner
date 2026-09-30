@@ -385,7 +385,8 @@ public static partial class EventSubscriberPatches
             _byTableEventKey.Keys.Select(k => (k.PublisherTableId, k.EventMethodName)),
             _byTableEventKey.Count,
             id => FindPublisherClrTypes(_tableTypeCache, "Record", "table", id),
-            "Table");
+            "Table",
+            id => ExtensionClrTypesOf("Table", id));
     }
 
     /// <summary>
@@ -412,7 +413,10 @@ public static partial class EventSubscriberPatches
                 id => RecordPatches.IsDeclaredBySeveralAppGroups(kind, id)
                     ? ResolveAllBusinessApplicationTypes(kind + id)
                     : FindObjectEventClrType(kind, id) is { } t ? new[] { t } : Array.Empty<Type>(),
-                kind);
+                kind,
+                kind is BcRuntime.PublisherKindPage or BcRuntime.PublisherKindReport
+                    ? id => ExtensionClrTypesOf(kind, id)
+                    : null);
         }
     }
 
@@ -432,7 +436,8 @@ public static partial class EventSubscriberPatches
         IEnumerable<(int PublisherId, string EventMethodName)> keys,
         int totalKeyCount,
         Func<int, IReadOnlyList<Type>> resolveClrTypes,
-        string publisherKindLabel)
+        string publisherKindLabel,
+        Func<int, IReadOnlyList<Type>>? resolveExtensionClrTypes = null)
     {
         if (totalKeyCount == 0) return;
         if (EnsureSentinelNavEventScope() == null) return;
@@ -445,6 +450,10 @@ public static partial class EventSubscriberPatches
             foreach (var (publisherId, eventMethodName) in keys)
             {
                 var clrTypes = resolveClrTypes(publisherId);
+                // #5004: an event the base object does not declare may be declared by one of its extensions.
+                if (resolveExtensionClrTypes != null
+                    && !clrTypes.Any(t => AssemblyTypeIndex.For(t.Assembly).FindNestedType(t, eventMethodName + "_Scope") != null))
+                    clrTypes = clrTypes.Concat(resolveExtensionClrTypes(publisherId)).ToList();
                 if (clrTypes.Count == 0) { missing++; if (!diagLogged) { diagLogged = true; Console.Error.WriteLine($"[Subscribers] seed-miss: {publisherKindLabel}{publisherId} type not found"); } continue; }
                 bool anyScope = false;
                 foreach (var clrType in clrTypes)
