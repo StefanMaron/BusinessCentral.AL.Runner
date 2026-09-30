@@ -682,7 +682,7 @@ next (SingleInstance codeunits are reset per bundle), so a change in an earlier 
 full run of it) selects every reader of a later one, and a bundle followed by another runs its WorkDate and
 sequence writers whatever changed.
 
-Not recorded, so not linked: static .NET state reached through DotNet interop,
+Not recorded, so not linked (#5057): static .NET state reached through DotNet interop,
 `Randomize` seeds, and the last error text. `GlobalLanguage` is not session state here: the
 runner answers 1033 whatever a test sets. The persisted baseline is schema 4 from this
 change, so a baseline without these keys is not used.
