@@ -86,6 +86,7 @@ public static class ErrorClassifier
     {
         if (result.Outcome is TestOutcome.Pass or TestOutcome.Skipped) return null;
         if (result.TimedOut) return AlErrorKind.Timeout;
+        if (result.KnownErrorKind is { } known) return known;
         return Classify(result.Exception, new TestExecutionContext(result.InsideTestProc));
     }
 }

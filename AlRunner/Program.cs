@@ -782,15 +782,13 @@ if (provisionSubcommand && (provisionPlatformApps || provisionTestApps || provis
     return RunExplicitProvisionModes(bcVersionArg, bundles, provisionPlatformApps, provisionTestApps,
         provisionServiceTier, provisionForce, provisionResolveVersionPrefix);
 }
-// --tdd (issue #1997) only changes the bundled-mode CLI run loop's EMIT-EXCLUDED
-// handling (Program.cs, below). --server has its own, separate EMIT-EXCLUDED guard
-// (a different Emit() call site) that this issue's reduced scope does not touch, so
-// --tdd + --server stays rejected. Rejecting explicitly beats silently ignoring the
-// flag — a --tdd run that quietly behaved like a normal run under --server would be
-// far more confusing than an upfront error naming the gap.
-if (tddMode && serverMode)
+// --tdd under --server is a per-request `tdd` field on runTests, defaulting to this flag (#5034;
+// RunTestsWithSelection). --dap runs through the same bundle loop but has no such field, and a
+// debug session stepping through generated stubs as if they were the app's code is the silent
+// fake loud-failures.md forbids — so it refuses rather than ignoring the flag.
+if (tddMode && dapMode)
 {
-    Console.Error.WriteLine("--tdd is not supported together with --server yet (local-development flag; --server's EMIT-EXCLUDED handling is a separate code path this hasn't reached). Run --tdd from the CLI directly.");
+    Console.Error.WriteLine("--tdd is not supported together with --dap: a debug session runs the code as written, and --tdd would run generated stubs in its place. Use --tdd from the CLI, or --server with runTests' tdd field.");
     return 2;
 }
 // --tdd + --watch (issue #2002, follow-up to #1997): NOT rejected. --watch's
@@ -832,7 +830,8 @@ if (tddMode && serverMode)
 // of which would silently discard this notice along with it if it were queued instead
 // of printed immediately. It duplicates on a stacked re-exec exactly like the lines
 // below do, but staying immediate here is the smaller cost versus losing it on error.
-if (tddMode && alCacheDir != null)
+// --server decides per request instead (RunBundleForServer), so its non-tdd requests keep the cache.
+if (tddMode && alCacheDir != null && !serverMode)
 {
     Console.Error.WriteLine(
         "--tdd disables the AL-output cache for this run — its synthetic FAILED tests " +
@@ -3229,39 +3228,10 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
     // is counted/added, so a test that only ran against scaffolding can never report pass —
     // see TddGeneratedMember.DependentTests' doc comment for why a generated field is a fully
     // functional fake, not a default return, and must be treated as strictly WORSE.
-    var bundleTddDependents = new Dictionary<string, List<TddGeneratedMember>>();
-    // --tdd (orchestrator review on #2005): forces every TestResult whose compile depended on
-    // a --tdd-generated member to report FAIL, regardless of what actually happened when it
-    // ran. The test still executes in full — "keep running the test... only the reported
-    // outcome changes" — a generated PROCEDURE stub already fails on its own (it raises
-    // Error()), but a generated FIELD or enum value has nothing to fail on: it is real,
-    // functioning storage, so a test that only writes and reads it back legitimately passes,
-    // and a green result there would be the exact lie loud-failures.md's first paragraph
-    // describes — worse than a default return, because it's a fully working fake. Message is
-    // rewritten uniformly for BOTH cases (not just the field/enum one) so the failure always
-    // names the generated member(s) and their inferred type(s) explicitly, per the review.
-    List<TestResult> OverrideTddDependentResults(IReadOnlyList<TestResult> raw)
-    {
-        if (bundleTddDependents.Count == 0) return raw as List<TestResult> ?? raw.ToList();
-        var overridden = new List<TestResult>(raw.Count);
-        foreach (var t in raw)
-        {
-            var label = string.IsNullOrEmpty(t.CodeunitDisplayName) ? t.Codeunit : t.CodeunitDisplayName!;
-            if (bundleTddDependents.TryGetValue($"{label}.{t.Method}", out var deps) && deps.Count > 0)
-            {
-                var depList = string.Join("; ", deps.Select(d => $"{d.ObjectDisplayName}: {d.MemberKind} {d.Signature}"));
-                var msg = $"--tdd: this test depends on {deps.Count} generated member(s) the " +
-                    $"implementing app has not defined yet: {depList}";
-                if (!string.IsNullOrEmpty(t.Message)) msg += $" (underlying result: {t.Message})";
-                overridden.Add(t with { Outcome = TestOutcome.Fail, Message = msg });
-            }
-            else
-            {
-                overridden.Add(t);
-            }
-        }
-        return overridden;
-    }
+    var bundleTddDependents = new TddDependents();
+    // --tdd (orchestrator review on #2005): every TestResult whose compile depended on a
+    // --tdd-generated member reports FAIL, whatever happened when it ran — see TddDependents.
+    List<TestResult> OverrideTddDependentResults(IReadOnlyList<TestResult> raw) => bundleTddDependents.Apply(raw);
     // #1880: counts app groups (bundled mode) / suites (--per-suite) that actually
     // reached test execution and contributed to bundleTests — incremented at the
     // SAME point as bundleTests.AddRange below, in both loops, so a group that threw
@@ -3727,25 +3697,11 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
                     // exclusion remaining, and that case still belongs in criterion 8's list.
                     // #5037: members generated into another bundle for this module on an earlier
                     // pass of this cycle — this compile resolved them, so it reports none itself.
-                    var crossBundleMembers = tddMode
-                        ? TddCrossBundle.GeneratedFor(moduleName)
-                            .Where(m => emitOutput.TddGeneratedMembers?.Contains(m) != true).ToList()
-                        : new List<TddGeneratedMember>();
-                    if (emitOutput.TddGeneratedMembers != null || crossBundleMembers.Count > 0)
+                    if (tddMode)
                     {
-                        var bundleGenerated = (emitOutput.TddGeneratedMembers ?? Array.Empty<TddGeneratedMember>())
-                            .Concat(crossBundleMembers).ToList();
+                        var bundleGenerated = TddSupport.MembersFor(emitOutput, moduleName);
                         allTddGeneratedMembers.AddRange(bundleGenerated);
-                        // Invert DependentTests (member -> tests) into (test -> members), so
-                        // OverrideTddDependentResults can look a REAL TestResult up by its own
-                        // (CodeunitDisplayName ?? Codeunit, Method) in O(1).
-                        foreach (var m in bundleGenerated)
-                            foreach (var testLabel in m.DependentTests)
-                            {
-                                if (!bundleTddDependents.TryGetValue(testLabel, out var list))
-                                    bundleTddDependents[testLabel] = list = new List<TddGeneratedMember>();
-                                list.Add(m);
-                            }
+                        bundleTddDependents.Add(bundleGenerated);
                     }
 
                     // An emit-retry exclusion means one or more AL objects are NOT in the
@@ -5464,8 +5420,72 @@ return strictExitCode ? computedExitCode : 0;
         Action<string, string, string, IReadOnlyList<AffectedObjectId>?, string?, IReadOnlyList<AffectedScopeId>?>? beforeRun = null,
         // #4971: this request records per-test coverage, so each bundle's loaded code must be the
         // source its change-model baseline describes (docs/server-mode.md#affectedonly-and-the-al-output-cache).
-        bool pinLoadToChangeModel = false)
+        bool pinLoadToChangeModel = false,
+        // #5034: runTests' `tdd`. Null runs exactly as before.
+        TddServerRequest? tdd = null)
     {
+        if (tdd == null)
+            return RunAllBundlesForServerPass(sourcePaths, requestPackagePaths, runStep, cancellationToken,
+                useIncrementalChangeModel, beforeRun, pinLoadToChangeModel, null, false, false, out _);
+
+        // A request is one --tdd cycle: generation starts from the files on disk, and nothing
+        // generated outlives it (the overlay would otherwise reach the next, non-tdd request).
+        TddCrossBundle.ResetForNewCycle();
+        TddCrossBundle.ClearSourceImpls();
+        try
+        {
+            // #5037: members generated into another bundle of the request need that bundle
+            // recompiled before its dependents compile again — the CLI loop's re-run, bounded alike.
+            for (var pass = 0; ; pass++)
+            {
+                var results = RunAllBundlesForServerPass(sourcePaths, requestPackagePaths, runStep, cancellationToken,
+                    useIncrementalChangeModel, beforeRun, pinLoadToChangeModel, tdd,
+                    tddAllowRerun: pass < 3, tddRerunPass: pass > 0, out var rerun);
+                if (!rerun)
+                {
+                    // A module compiled with a generated member describes source that is not on
+                    // disk, and one generated INTO holds overlay text; neither may seed the change
+                    // model or the affectedOnly record, so the next request compiles them in full.
+                    if (tdd.Generated.Any(m => m.GeneratedIntoFile != null))
+                        foreach (var p in sourcePaths)
+                            emitter.ClearIncrementalBaseline($"V2_{Path.GetFileName(Path.GetFullPath(p))}");
+                    WriteTddSummary(tdd);
+                    return results;
+                }
+                Console.Error.WriteLine(
+                    "--tdd: generated member(s) into another bundle of this request — recompiling it and " +
+                    "compiling the bundles that depend on it again.");
+                tdd.Generated.Clear();
+            }
+        }
+        finally
+        {
+            TddCrossBundle.ResetForNewCycle();
+        }
+    }
+
+    // The CLI's closing --tdd line, on stderr: stdout is the protocol.
+    static void WriteTddSummary(TddServerRequest tdd)
+    {
+        if (tdd.Generated.Count == 0)
+        {
+            Console.Error.WriteLine("--tdd: no members were generated this request.");
+            return;
+        }
+        Console.Error.WriteLine($"--tdd: generated {tdd.Generated.Count} member(s) this request:");
+        foreach (var m in tdd.Generated)
+            Console.Error.WriteLine($"  {m.ObjectDisplayName}: {m.MemberKind} {m.Signature}");
+    }
+
+    List<ServerRunResult> RunAllBundlesForServerPass(string[] sourcePaths, string[]? requestPackagePaths,
+        Func<Assembly, IReadOnlyList<TestResult>> runStep,
+        System.Threading.CancellationToken cancellationToken,
+        bool useIncrementalChangeModel,
+        Action<string, string, string, IReadOnlyList<AffectedObjectId>?, string?, IReadOnlyList<AffectedScopeId>?>? beforeRun,
+        bool pinLoadToChangeModel,
+        TddServerRequest? tdd, bool tddAllowRerun, bool tddRerunPass, out bool tddRerun)
+    {
+        tddRerun = false;
         // Server requests share a process, so give each request the same fresh
         // NumberSequence lifetime as a standalone CLI/watch execution.
         AlRunner.Patches.NumberSequencePatches.ResetForNewExecution();
@@ -5529,7 +5549,21 @@ return strictExitCode ? computedExitCode : 0;
         {
             try
             {
-                packageCacheDirs = RunLayeredPrePass(bundleList, packageCacheDirs, workspaceScratch);
+                try
+                {
+                    packageCacheDirs = RunLayeredPrePass(bundleList, packageCacheDirs, workspaceScratch);
+                }
+                // #5037, as the CLI's re-run does: a generated member that breaks the bundle it
+                // went into is dropped and never retried this request, so the tests that need it
+                // fall through to the refuse path and report FAILED naming the missing symbol.
+                catch (Exception) when (tdd != null && tddRerunPass)
+                {
+                    Console.Error.WriteLine(
+                        "--tdd: the bundle a member was generated into did not compile with it; the " +
+                        "generated member(s) are dropped and the tests that need them report FAILED instead.");
+                    TddCrossBundle.RollBackPending(TddCrossBundle.AttemptedKeys());
+                    packageCacheDirs = RunLayeredPrePass(bundleList, packageCacheDirs, workspaceScratch);
+                }
             }
             // #2956: the same #2095 special case the CLI path applies, which server mode
             // never had — a missing/too-old package reported as "LAYERED-PREPASS-FAIL:
@@ -5773,7 +5807,7 @@ return strictExitCode ? computedExitCode : 0;
                     && !forcedFullBundles.Contains(Path.GetFullPath(bundleDir)),
                 pinLoadToChangeModel,
                 EffectiveBeforeRun(sawFallbackReason),
-                deferRuns, out var deferred,
+                deferRuns, tdd, out var deferred,
                 out var emitElapsed, out var compileElapsed, out var runElapsed);
             // A deferred bundle keeps one row: set aside here, resumed for its run below.
             var phaseRow = deferred != null ? AlRunner.Infrastructure.PhaseLog.SuspendBundle() : null;
@@ -5782,6 +5816,20 @@ return strictExitCode ? computedExitCode : 0;
             if (beforeRun != null && deferred is { ChangeModelFallbackReason: { } fellBack } loadedBundle)
                 sawFallbackReason ??= $"{loadedBundle.ModuleName}: {fellBack}";
             loadedBundles.Add((result, deferred, phaseRow, emitElapsed, compileElapsed));
+        }
+
+        // #5037: no test has run yet (a multi-bundle request defers every run), so a re-run
+        // streams nothing twice.
+        if (tdd != null && tddAllowRerun && TddCrossBundle.TakePendingRecompile())
+        {
+            foreach (var (_, _, phaseRow, emit, compile) in loadedBundles)
+                if (phaseRow != null)
+                {
+                    AlRunner.Infrastructure.PhaseLog.ResumeBundle(phaseRow);
+                    AlRunner.Infrastructure.PhaseLog.EndBundle(emit, compile, TimeSpan.Zero);
+                }
+            tddRerun = true;
+            return results;
         }
 
         foreach (var (loadResult, deferred, phaseRow, emit, compile) in loadedBundles)
@@ -5953,6 +6001,7 @@ return strictExitCode ? computedExitCode : 0;
         bool pinLoadToChangeModel,
         Action<string, string, string, IReadOnlyList<AffectedObjectId>?, string?>? beforeRun,
         bool deferRun,
+        TddServerRequest? tdd,
         out (string ModuleName, string? ChangeModelFallbackReason, Func<(ServerRunResult Result, TimeSpan RunElapsed)> Run)? deferred,
         out TimeSpan emitElapsed, out TimeSpan compileElapsed, out TimeSpan runElapsed)
     {
@@ -6190,7 +6239,9 @@ return strictExitCode ? computedExitCode : 0;
             bool cached = reusedAsm != null;
             string? cacheKey = null, cachePath = null, sidecarPath = null, querySidecarPath = null;
             bool? cacheGateDeclaresQuery = null;
-            if (reusedAsm == null && alCacheDir != null)
+            // #5034: a tdd request neither reads nor writes the cache, as a --tdd CLI run does not —
+            // a HIT skips the Emit that generates members and reports the excluded objects' tests.
+            if (reusedAsm == null && alCacheDir != null && tdd == null)
             {
                 // See AlCacheSidecars: a query bundle without its query-symbols sidecar must
                 // MISS. Computed INSIDE the gate (#2557), same reasoning as the CLI path: both
@@ -6267,6 +6318,10 @@ return strictExitCode ? computedExitCode : 0;
             IReadOnlyList<AffectedObjectId>? changedObjects = Array.Empty<AffectedObjectId>();
             string? changeModelFallbackReason = null;
             var baselineDescribesEmit = false;
+            // #5034: the tests --tdd reports itself (TDD-EXCLUDED objects' [Test] procedures) and
+            // the tests whose compile needed a generated member.
+            IReadOnlyList<TestResult> tddSynthetic = Array.Empty<TestResult>();
+            TddDependents? tddDependents = null;
             if (reusedAsm == null && assemblyBytes == null)
             {
                 // cacheKey == null here means #2954's do-not-cache path (see the gate above):
@@ -6318,6 +6373,25 @@ return strictExitCode ? computedExitCode : 0;
                     alDiagnostics = emitOutput.Diagnostics;
                     excludedObjects = emitOutput.ExcludedObjects;
                     excludedObjectDiagnostics = emitOutput.ExcludedObjectDiagnostics ?? Array.Empty<string>();
+                    if (tdd != null)
+                    {
+                        var generated = TddSupport.MembersFor(emitOutput, moduleName);
+                        tdd.Generated.AddRange(generated);
+                        tddDependents = new TddDependents();
+                        tddDependents.Add(generated);
+                        if (excludedObjects.Count > 0)
+                            tddSynthetic = TddSupport.BuildFailedTests(
+                                emitOutput.TddExcludedDetails ?? Array.Empty<TddExcludedObjectDetail>());
+                        // A baseline recorded with a generated member describes source that is not
+                        // on disk: an unchanged next request would replay the stub, and affectedOnly
+                        // would trust coverage measured against it. Dropped, so that request compiles
+                        // in full and reruns these tests (docs/server-mode.md#tdd).
+                        if (generated.Count > 0 || excludedObjects.Count > 0)
+                        {
+                            emitter.ClearIncrementalBaseline(moduleName);
+                            baselineDescribesEmit = false;
+                        }
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -6335,7 +6409,31 @@ return strictExitCode ? computedExitCode : 0;
                 // bundled-mode EMIT-EXCLUDED guard uses (.claude/rules/loud-failures.md);
                 // without this the server path ran the surviving objects and reported
                 // exitCode 0 while e.g. a whole test codeunit was missing from the run.
-                if (excludedObjects.Count > 0)
+                // #5034: under tdd the recovered module runs and the excluded objects' tests are
+                // reported FAILED (compile) instead, as the CLI's TDD-EXCLUDED branch does. Only
+                // when nothing survives and there is no test to report does it fall through.
+                if (excludedObjects.Count > 0 && tdd != null && (sources.Count > 0 || tddSynthetic.Count > 0))
+                {
+                    Console.Error.WriteLine(
+                        $"[server] {moduleName}: TDD-EXCLUDED — {excludedObjects.Count} object(s) could not be " +
+                        $"compiled: [{string.Join(", ", excludedObjects)}]. {tddSynthetic.Count} [Test] procedure(s) " +
+                        "they declare report as FAILED instead of vanishing from the run.");
+                    if (sources.Count == 0)
+                    {
+                        (ServerRunResult Result, TimeSpan RunElapsed) ReportOnly()
+                        {
+                            foreach (var t in tddSynthetic) tdd.Report(t);
+                            return (new ServerRunResult(tddSynthetic, 1, false, null, fileHashes), TimeSpan.Zero);
+                        }
+                        if (deferRun)
+                        {
+                            deferred = (moduleName, changeModelFallbackReason, ReportOnly);
+                            return null;
+                        }
+                        return ReportOnly().Result;
+                    }
+                }
+                else if (excludedObjects.Count > 0)
                 {
                     var names = string.Join(", ", excludedObjects);
                     // #2207: read the dedicated ExcludedObjectDiagnostics field, not
@@ -6495,7 +6593,13 @@ return strictExitCode ? computedExitCode : 0;
                     BcRuntime.SetTestAssembly(asm);
                     BcRuntime.RegisterTestAssemblyInfo(asm);
                     BcRuntime.OosHooksActive = true;
+                    if (tdd != null)
+                    {
+                        foreach (var t in tddSynthetic) tdd.Report(t);
+                        tdd.Active = tddDependents;
+                    }
                     tests = runStep(asm);
+                    if (tddSynthetic.Count > 0) tests = tddSynthetic.Concat(tests).ToList();
                 }
                 catch (Exception ex)
                 {
@@ -6503,6 +6607,7 @@ return strictExitCode ? computedExitCode : 0;
                 }
                 finally
                 {
+                    if (tdd != null) tdd.Active = null;
                     BcRuntime.OosHooksActive = false;
                     rt.Stop();
                     AlRunner.Infrastructure.PhaseLog.AddAppRun(rt.Elapsed);
@@ -7470,8 +7575,12 @@ void PersistAffectedBaseline(AlRunner.Infrastructure.AffectedSelectionState affe
 AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infrastructure.AffectedSelectionState affected,
     string[] sourcePaths, string[]? packagePaths, bool requestCoverage, bool requestPerTestCoverage,
     bool affectedOnly, bool includeFailing, Action<TestResult> onTestComplete,
-    System.Threading.CancellationToken token, Action? afterRuns = null, bool strictEnvironment = false)
+    System.Threading.CancellationToken token, Action? afterRuns = null, bool strictEnvironment = false, bool tdd = false)
 {
+    // #5034: the emit reads the mode from BcCompiler, so it is this request's, and only for it.
+    var tddRequest = tdd ? new TddServerRequest(onTestComplete) : null;
+    var previousTddMode = BcCompiler.IsTddMode();
+    BcCompiler.SetTddMode(tdd);
     var affectedCoverageByBundle = affected.CoverageByBundle;
     var affectedUnknownTestsByBundle = affected.UnknownTestsByBundle;
     var affectedFailingTestsByBundle = affected.FailingTestsByBundle;
@@ -7705,7 +7814,13 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 if (exactSelection == null && affectedOnly) requestChangedAnyBundle = true;
                 var previousExact = executor.ExactTestFilter;
                 executor.ExactTestFilter = exactSelection;
-                try { return executor.Run(asm, onTestComplete, token); }
+                try
+                {
+                    if (tddRequest == null) return executor.Run(asm, onTestComplete, token);
+                    // A test that ran against a generated member streams, and is returned, FAILED.
+                    return executor.Run(asm, t => onTestComplete(tddRequest.Apply(t)), token)
+                        .Select(tddRequest.Apply).ToList();
+                }
                 finally { executor.ExactTestFilter = previousExact; }
             },
             token,
@@ -7824,7 +7939,8 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                         + "module was loaded from a source no baseline describes)";
                 }
             },
-            pinLoadToChangeModel: collectPerTestForSelection);
+            pinLoadToChangeModel: collectPerTestForSelection,
+            tdd: tddRequest);
 
         var allTests = runs.SelectMany(r => r.Tests).ToList();
         var allCompileErrors = runs.SelectMany(r => r.CompileErrors ?? Array.Empty<CompilationErrorGroup>()).ToList();
@@ -8206,6 +8322,7 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
     }
     finally
     {
+        BcCompiler.SetTddMode(previousTddMode);
         // Scoped to THIS run only — a coverage:true request must never leave hit-count tracking
         // on for a later request that didn't ask for it.
         AlRunner.Infrastructure.AlCoverageTracker.Enabled = false;
@@ -8300,6 +8417,10 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     // doesn't (see #1616 — the whole point is per-request control, not a sticky
     // session-wide override).
     var defaultServerIsolation = executor.Isolation;
+    // #5034: --tdd is the default for a runTests request that omits `tdd`; every other command
+    // compiles without it (RunTestsWithSelection sets it for the request it serves).
+    var defaultServerTdd = tddMode;
+    BcCompiler.SetTddMode(false);
 
     // Readiness handshake — MUST be the first line on stdout.
     lock (outputLock)
@@ -8477,7 +8598,8 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 req.Coverage == true, req.PerTestCoverage == true, req.AffectedOnly == true, req.IncludeFailing == true,
                 OnTestComplete, cts.Token,
                 afterRuns: () => System.Threading.Interlocked.CompareExchange(ref activeRunCts, null, cts),
-                strictEnvironment: req.StrictEnvironment == true);
+                strictEnvironment: req.StrictEnvironment == true,
+                tdd: req.Tdd ?? defaultServerTdd);
             var runs = outcome.Runs;
             var allTests = outcome.AllTests;
             var allCompileErrors = outcome.CompileErrors;

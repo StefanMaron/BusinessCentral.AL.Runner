@@ -31,7 +31,7 @@ public class ServerRequestFieldCheckTests
         Assert.NotNull(r.Error);
         Assert.StartsWith("runTests: unknown request fields 'cobertura', 'testFilter' ", r.Error);
         Assert.DoesNotContain("--define", r.Error);
-        Assert.Contains("Fields runTests reads: affectedOnly, coverage, includeFailing, packagePaths, perTestCoverage, sourcePaths, strictEnvironment, testIsolation.", r.Error);
+        Assert.Contains("Fields runTests reads: affectedOnly, coverage, includeFailing, packagePaths, perTestCoverage, sourcePaths, strictEnvironment, tdd, testIsolation.", r.Error);
     }
 
     [Fact]
@@ -62,6 +62,8 @@ public class ServerRequestFieldCheckTests
     [InlineData("""{"command":"execute","captureValues":true,"code":"x","iterationTracking":true}""")]
     [InlineData("""{"command":"runTests","sourcePaths":["/a"],"affectedOnly":true,"includeFailing":true}""")]
     [InlineData("""{"command":"runTests","sourcePaths":["/a"],"affectedOnly":true,"strictEnvironment":true}""")]
+    // #5034
+    [InlineData("""{"command":"runTests","sourcePaths":["/a"],"tdd":true}""")]
     // A field that asks for nothing is exact to ignore.
     [InlineData("""{"command":"runTests","sourcePaths":["/a"],"captureValues":false,"stubPaths":[],"code":""}""")]
     [InlineData("""{"command":"runTests","sourcePaths":["/a"],"code":null}""")]
@@ -112,6 +114,14 @@ public class ServerRequestFieldCheckTests
         var r = Check("""{"command":"execute","sourcePaths":["/a"],"strictEnvironment":true}""");
         Assert.Null(r.Error);
         Assert.Equal(new[] { "'strictEnvironment' has no effect on execute; only runTests reads it — ignored." }, r.Warnings);
+    }
+
+    [Fact]
+    public void Execute_Tdd_WarnsOnlyRunTestsReadsIt()
+    {
+        var r = Check("""{"command":"execute","sourcePaths":["/a"],"tdd":true}""");
+        Assert.Null(r.Error);
+        Assert.Equal(new[] { "'tdd' has no effect on execute; only runTests reads it — ignored." }, r.Warnings);
     }
 
     // Every declared request field is either read by some command or is the one v1 field no

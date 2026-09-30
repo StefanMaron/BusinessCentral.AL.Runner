@@ -84,6 +84,13 @@ public static class TddCrossBundle
         lock (Sync) Impls[Path.GetFullPath(dir)] = (Path.GetFullPath(dir), appJsonPath);
     }
 
+    /// <summary>--server (#5034): each request registers its own bundles; one from an earlier
+    /// request is not a bundle this request compiles, so nothing may be generated into it.</summary>
+    public static void ClearSourceImpls()
+    {
+        lock (Sync) Impls.Clear();
+    }
+
     internal static IReadOnlyList<(string Dir, string? AppJson)> SourceImpls()
     {
         lock (Sync) return Impls.Values.ToList();
