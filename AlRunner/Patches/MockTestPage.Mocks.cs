@@ -241,7 +241,6 @@ internal sealed class ExtensionOnlyTestAction : ITestAction
         _testPage.SaveCurrentRow();
         if (!RunnerPageInstance.TryRaiseExtensionOnlyAction(_owner, _record, _pageId, _actionId))
             throw UnreachableTestAction.Refusal(_pageId, _actionId);
-        RunnerPageInstance.ReapplyViewSorting(_record);
     }
 
     public bool Visible => true;
