@@ -280,12 +280,24 @@ public static partial class RecordPatches
         target.Tables.Add(new BaselineTable(tableId, metaTable, rows));
     }
 
-    public static void CaptureInstallBaseline()
+    /// <summary>Capture the live store as this app group's baseline and publish it. Returns the
+    /// published snapshot, whose <c>Sources</c> list IS the singleton a lazy --test-data load
+    /// appends to, so a caller holding it sees those appends.</summary>
+    internal static InstallBaselineSnapshot CaptureInstallBaseline()
     {
         // The capture itself walks the live store and must NOT hold the lock; only the
         // publication of the three fields does (#2914), so the set is swapped in as a unit and a
         // reader cannot pair this capture's rows with the previous one's isolated storage.
         var snapshot = CaptureInstallBaselineSnapshot();
+        PublishInstallBaseline(snapshot);
+        return snapshot;
+    }
+
+    /// <summary>Make <paramref name="snapshot"/> the baseline every codeunit/test boundary
+    /// restores, without capturing. #5060: a warm run of an unchanged bundle publishes the
+    /// snapshot a previous run captured, by reference, so appends keep accumulating in it.</summary>
+    internal static void PublishInstallBaseline(InstallBaselineSnapshot snapshot)
+    {
         lock (_baselineMutationLock)
         {
             _installBaseline = snapshot.Sources;

@@ -345,6 +345,41 @@ public static partial class EventSubscriberPatches
         SeedSubscriptionMetadata();
     }
 
+    /// <summary>Whether the [EventSubscriber] discovery scan reads <paramref name="asm"/>: not a
+    /// framework/runner assembly, and not a superseded bundle generation (whose subscribers would
+    /// otherwise fire alongside the fresh ones). <see cref="SubscriberScopeKey"/> keys on the same
+    /// predicate, so the two cannot disagree about which code an event can reach.</summary>
+    internal static bool IsSubscriberScanCandidate(Assembly asm)
+    {
+        var name = asm.GetName().Name ?? "";
+        if (name.StartsWith("System.") || name.StartsWith("Microsoft.Extensions.")
+            || name.StartsWith("Microsoft.Dynamics.Nav.") || name == "netstandard"
+            || name == "mscorlib" || name == "Microsoft.CodeAnalysis"
+            || name.StartsWith("Microsoft.CodeAnalysis.")
+            || name == "AlRunner" || name == "Runner") return false;
+        return !BcRuntime.IsStaleBundleAssembly(asm);
+    }
+
+    /// <summary>
+    /// The identity of every assembly an event raised right now can dispatch into: the sorted
+    /// Module Version IDs of the assemblies <see cref="IsSubscriberScanCandidate"/> admits
+    /// (a dynamic one without a readable MVID contributes its full name instead).
+    /// #5060: an install trigger's output depends on this set as much as on its own code.
+    /// </summary>
+    internal static string SubscriberScopeKey()
+    {
+        var ids = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            if (!IsSubscriberScanCandidate(asm)) continue;
+            string id;
+            try { id = asm.ManifestModule.ModuleVersionId.ToString("N"); }
+            catch (Exception) when (asm.IsDynamic) { id = "dynamic:" + asm.FullName; }
+            ids.Add(id);
+        }
+        return string.Join("|", ids);
+    }
+
     private static readonly HashSet<Type> _seededScopeTypes = new();
     private static readonly Dictionary<int, Type?> _codeunitTypeCache = new();
     private static readonly Dictionary<int, Type?> _tableTypeCache = new();
@@ -1193,19 +1228,10 @@ public static partial class EventSubscriberPatches
             {
                 if (_scannedAssemblies.Contains(asm)) continue;
                 var name = asm.GetName().Name ?? "";
-                if (name.StartsWith("System.") || name.StartsWith("Microsoft.Extensions.")
-                    || name.StartsWith("Microsoft.Dynamics.Nav.") || name == "netstandard"
-                    || name == "mscorlib" || name == "Microsoft.CodeAnalysis"
-                    || name.StartsWith("Microsoft.CodeAnalysis.")
-                    || name == "AlRunner" || name == "Runner") continue;
-                // Skip a previous bundle assembly still loaded after a server reload —
-                // otherwise its [EventSubscriber] codeunits re-register alongside the
-                // new ones and events fire twice. No-op in normal one-shot mode.
-                //
-                // Deliberately NOT marked as scanned: staleness is decided by BcRuntime's
-                // current generation bookkeeping, and this pass must keep re-asking rather
-                // than freezing today's answer into the once-only set.
-                if (BcRuntime.IsStaleBundleAssembly(asm)) continue;
+                // Skips a previous bundle assembly still loaded after a server reload too, and
+                // deliberately does NOT mark it scanned: staleness is BcRuntime's current
+                // generation bookkeeping, re-asked on every pass.
+                if (!IsSubscriberScanCandidate(asm)) continue;
 
                 // Only AL codeunits can host [NavEventSubscriberAttribute] methods, so the
                 // scan is scoped to types whose simple name starts with "Codeunit" — exactly

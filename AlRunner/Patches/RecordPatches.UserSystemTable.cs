@@ -429,6 +429,19 @@ public static partial class RecordPatches
     /// back rather than recomputed, so the row and the session are the same user by
     /// construction — the same reasoning as ReadSkeletonCompanyIdentity next door.
     /// </summary>
+    /// <summary>The session user and company the install seed writes its rows for, as one
+    /// string, or null when either cannot be read. #5060 keys a reused install baseline on it; an
+    /// adoption (#2983) moves the user id, so a seed that adopted is visible as a changed value.</summary>
+    internal static string? SessionIdentityForBaselineKey()
+    {
+        var session = AlRunner.BcRuntime.SkeletonSession;
+        if (session == null) return null;
+        var (userName, fullName, userSid) = ReadSkeletonUserIdentity(session);
+        var (companyName, companyId) = ReadSkeletonCompanyIdentity();
+        if (userName == null || userSid == null || companyName == null) return null;
+        return $"{userName}|{fullName}|{userSid}|{companyName}|{companyId}";
+    }
+
     private static (string? Name, string? FullName, NavGuid? Sid) ReadSkeletonUserIdentity(object session)
     {
         const BindingFlags F = BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public;

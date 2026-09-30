@@ -255,8 +255,8 @@ public sealed class TestExecutor
     // GetDataAccessForTableCore re-populates them on EVERY access as an idempotent top-up, so
     // a restore that omits them is re-derived in full on the next read.
     //
-    // NOT cached here: the bundle's OWN test assembly's Install triggers
-    // (InstallTriggerRunner.RunTestAssemblyOnly, genuinely per-app-group, always re-run) and
+    // NOT cached here (see _bundleBaselineCache below for the #5060 cache that does): the
+    // bundle's OWN test assembly's Install triggers (InstallTriggerRunner.RunTestAssemblyOnly) and
     // CaptureInstallBaseline's per-app-group singleton (which layers the bundle's own
     // install-seeded rows on top of whichever dep+company snapshot below was used, and is
     // what RestoreInstallBaseline's per-codeunit/per-test boundary restores — unaffected by
@@ -280,6 +280,74 @@ public sealed class TestExecutor
     // missing objects came back byte-identical to a clean one.
     private static readonly Dictionary<string, CompanyInitFailure> _depCompanyBaselineInitFailure = new();
     private static readonly object _depCompanyBaselineCacheLock = new();
+
+    // #5060: one app group's WHOLE install baseline — the dep+company snapshot above plus the
+    // runner's own seeds and the bundle's own Install triggers — so a warm --server/--watch run of
+    // an unchanged bundle restores it instead of redoing all of it. In memory only, under the lock
+    // above. What the key carries and which runs refuse it: docs/server-mode.md#the-install-baseline-across-requests
+    private sealed record BundleBaseline(
+        AlRunner.Patches.RecordPatches.InstallBaselineSnapshot Snapshot, CompanyInitFailure? InitFailure);
+    private static readonly Dictionary<string, BundleBaseline> _bundleBaselineCache = new();
+
+    /// <summary>
+    /// The key a reused whole-bundle install baseline (#5060) is stored and found under, or null
+    /// with <paramref name="refusal"/> naming why this run cannot be keyed and must seed fresh.
+    /// Every term is an input the seed's rows depend on; see the docs anchor on the cache field.
+    /// </summary>
+    internal static string? BundleBaselineCacheKey(Assembly testAssembly, string depKey,
+        TestIsolation isolation, out string? refusal)
+    {
+        // Only Codeunit isolation restores (and so resets every non-table leftover of the
+        // install triggers) before the first test code runs; the other modes can observe them.
+        if (isolation != TestIsolation.Codeunit)
+        {
+            refusal = $"isolation {isolation}";
+            return null;
+        }
+        if (Environment.GetEnvironmentVariable("AL_RUNNER_NO_DEP_COMPANY_CACHE") == "1")
+        {
+            refusal = "AL_RUNNER_NO_DEP_COMPANY_CACHE=1";
+            return null;
+        }
+        var identity = AlRunner.Patches.RecordPatches.SessionIdentityForBaselineKey();
+        if (identity == null)
+        {
+            refusal = "the session user or company could not be read";
+            return null;
+        }
+        var (appId, name, publisher, version) = AlRunner.BcRuntime.CurrentBundleInfo;
+        refusal = null;
+        return string.Join("\n",
+            depKey,
+            "asm=" + testAssembly.ManifestModule.ModuleVersionId.ToString("N"),
+            "subscribers=" + AlRunner.Patches.EventSubscriberPatches.SubscriberScopeKey(),
+            $"bundle={appId:N}|{name}|{publisher}|{version}",
+            "session=" + identity);
+    }
+
+    /// <summary>Keep this app group's freshly captured baseline for the next run on
+    /// <paramref name="key"/> — unless the seed left state outside the snapshot, which a reuse
+    /// would silently drop: a NumberSequence it read or wrote, or a session identity it moved
+    /// (the #2983 adoption, a poke no snapshot carries).</summary>
+    private static void StoreBundleBaseline(string key, string? identityAtKey,
+        AlRunner.Patches.RecordPatches.InstallBaselineSnapshot captured, CompanyInitFailure? initFailure,
+        bool touchedNumberSequences)
+    {
+        var shortKey = AlRunner.Infrastructure.InstallBaselineDiskCache.HashKey(key)[..8];
+        string? notStored = touchedNumberSequences
+            ? "the seed used a NumberSequence"
+            : AlRunner.Patches.RecordPatches.SessionIdentityForBaselineKey() != identityAtKey
+                ? "the seed changed the session identity"
+                : null;
+        if (notStored != null)
+        {
+            PerfTrace.Log($"InstallBaseline.BundleCache MISS {shortKey} not-stored: {notStored}");
+            return;
+        }
+        lock (_depCompanyBaselineCacheLock)
+            _bundleBaselineCache[key] = new BundleBaseline(captured, initFailure);
+        PerfTrace.Log($"InstallBaseline.BundleCache MISS {shortKey} stored");
+    }
 
     // ── Second tier: the same snapshot, persisted across PROCESSES ──────────────────────
     // The dictionary above dies with the process, and the cost it removes is per-process:
@@ -496,6 +564,10 @@ public sealed class TestExecutor
         // it just closes the window before the FIRST Install trigger runs.
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-arm-event-subscribers"))
             AlRunner.Patches.EventSubscriberPatches.InjectAllUsingStoredLookup();
+        // #5060: set inside the dep-company block, read after it.
+        string? bundleKey = null, bundleKeyIdentity = null;
+        BundleBaseline? bundleHit = null;
+        CompanyInitFailure? depInitFailure = null;
         // #1867: install-seed-run-install-triggers + install-seed-ensure-company-initialized
         // were 62.4% + 20.1% = 82.5% of run_ms (#1866's own APP STAGES measurement), and both
         // are re-executing the SAME dependency assemblies' Install triggers / the SAME
@@ -522,6 +594,15 @@ public sealed class TestExecutor
             // dependency key. Anything loaded in that window is picked up by the capture at
             // the end of the MISS branch anyway, because the capture walks the live store.
             AlRunner.Patches.RecordPatches.SetActiveDepCompanyBaseline(null);
+            bundleKey = BundleBaselineCacheKey(assembly, depKey, Isolation, out var bundleKeyRefusal);
+            if (bundleKey == null)
+                PerfTrace.Log($"InstallBaseline.BundleCache NOKEY {bundleKeyRefusal}");
+            else
+            {
+                bundleKeyIdentity = AlRunner.Patches.RecordPatches.SessionIdentityForBaselineKey();
+                lock (_depCompanyBaselineCacheLock)
+                    _bundleBaselineCache.TryGetValue(bundleKey, out bundleHit);
+            }
             AlRunner.Patches.RecordPatches.InstallBaselineSnapshot? cached;
             // Permanent kill switch (see the field's doc comment above for why it exists):
             // forces every lookup to MISS, as if the cache were never populated, so the
@@ -547,8 +628,22 @@ public sealed class TestExecutor
             // via the same helper the on-disk filename uses, so distinct keys are distinct
             // tokens. Same token shape, so the AL_RUNNER_PERF marker format is unchanged.
             var shortKey = AlRunner.Infrastructure.InstallBaselineDiskCache.HashKey(depKey)[..8];
-            if (cached != null)
+            if (bundleHit != null)
             {
+                // #5060: this bundle's own seeds, Install triggers and capture are skipped below.
+                AlRunner.Patches.RecordPatches.RestoreInstallBaselineSnapshot(bundleHit.Snapshot);
+                AlRunner.Patches.RecordPatches.PublishInstallBaseline(bundleHit.Snapshot);
+                // The dep+company snapshot still takes lazy --test-data appends for the next app
+                // group on this dependency key, as on every other branch.
+                AlRunner.Patches.RecordPatches.SetActiveDepCompanyBaseline(cached);
+                PerfTrace.Log("InstallBaseline.BundleCache HIT "
+                    + AlRunner.Infrastructure.InstallBaselineDiskCache.HashKey(bundleKey!)[..8]);
+                if (bundleHit.InitFailure != null)
+                    CompanyInitializer.ReportCachedFailure(bundleHit.InitFailure);
+            }
+            else if (cached != null)
+            {
+                depInitFailure = cachedInitFailure;
                 AlRunner.Patches.RecordPatches.RestoreInstallBaselineSnapshot(cached);
                 // #2262: this is the snapshot the store now reflects, and the one a lazily
                 // loaded --test-data table has to be written into as well as the per-app-group
@@ -644,6 +739,7 @@ public sealed class TestExecutor
                     InstallTriggerRunner.RunDependenciesOnly();
                     CompanyInitializer.EnsureCompanyInitialized();
                     var initFailure = CompanyInitializer.LastRecordedFailure;
+                    depInitFailure = initFailure;
                     var snapshot = AlRunner.Patches.RecordPatches.CaptureInstallBaselineSnapshot();
                     lock (_depCompanyBaselineCacheLock)
                     {
@@ -679,69 +775,79 @@ public sealed class TestExecutor
                 }
             }
         }
-        // #2296 — the session user's own row in the User system table, and with it the #2983
-        // adoption DECISION, re-made here per app group on every path. The row itself is seeded
-        // one call earlier, inside the dep-company window (#3698), so a dependency's install
-        // code sees it; this call is what a cache HIT needs, because adoption is a poke at the
-        // skeleton session rather than a row and no snapshot carries it. Also before this
-        // bundle's own install triggers below (#3268). See docs/session-user-seed-ordering.md.
-        //
-        // Still before CaptureInstallBaseline below, the constraint it has always had: the
-        // per-codeunit restore puts the store back to that baseline, so a row added after it
-        // would survive only until the first codeunit boundary. Without this row every
-        // TableRelation pointing at User."User Security ID" refuses the id UserSecurityId()
-        // itself returns.
-        using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-user-row"))
-            AlRunner.Patches.RecordPatches.EnsureUserSystemTableRowSeeded();
-        // #2329 — the Company system table row (2000000006). Since #3757 it is seeded BEFORE
-        // this bundle's own install triggers below, so install code that resolves CompanyName()
-        // against Company finds a row, exactly as it would on a service tier. On a dep-company
-        // cache MISS the row is already there from the in-window call above and this one exits
-        // on the latch; on a HIT this call is what writes it (measured: `seeded` after Restore).
-        //
-        // Still BEFORE CaptureInstallBaseline below, the constraint all three of these seeds have
-        // always had: the per-codeunit restore puts the store back to that baseline, so a row
-        // added after it survives only until the first codeunit boundary.
-        using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-company-row"))
-            AlRunner.Patches.RecordPatches.EnsureCompanySystemTableRowSeeded();
-        // #2963 — the bundle's OWN Published Application row, here rather than with the
-        // dependency rows above: this one is per-app-group, and the dependency snapshot is
-        // shared across every app group with the same dependency closure. That is why #3757
-        // moved it to just before the bundle's own install triggers rather than into the window
-        // — a row captured there would be restored into a different app group that shares the
-        // dependency closure, reporting an app that is not loaded as published. The position it
-        // has now is also the BC-faithful one: an app is published before its own install
-        // triggers run, and its dependencies were installed before it was published at all.
-        //
-        // AFTER the User row since #3268 moved that seed ahead of this bundle's install
-        // triggers. It used to run before it, DEFENSIVELY — not because anything required it.
-        // The measurement that says the inversion is safe — 9 subscribers on Database::User
-        // across 9,441 System Application / Base Application / Business Foundation .al files, one
-        // of them on insert, none of them reaching a module-ownership check — is in
-        // docs/session-user-seed-ordering.md#what-constrains-the-order, with the file and line.
-        using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-published-application-row"))
-            AlRunner.Patches.RecordPatches.EnsurePublishedApplicationBundleRowSeeded();
-        // #3176: the Access Control row that BACKS that user's SUPER status. Ordered after the
-        // User row (its "User Security ID" relates to User's), and since #3757 before this
-        // bundle's own install triggers, so install code asking whether the session user is
-        // SUPER reads the same table the tests read. Called in the window above as well; this
-        // call is the one that re-decides after an adoption moved the session onto another id.
-        using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-access-control-row"))
-            AlRunner.Patches.RecordPatches.EnsureAccessControlSuperRowSeeded();
-        // #3233: the session's Active Session row. After the User seed (its "User SID" is the id
-        // an adoption settled on) and deliberately NOT in the dep-company window above: the
-        // login instant and unique id are this process's, and a disk-cached snapshot would
-        // replay another process's.
-        using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-active-session-row"))
-            AlRunner.Patches.RecordPatches.EnsureActiveSessionRowSeeded();
-        // Genuinely per-app-group — the bundle's own Install codeunits (if any) are never
-        // shared across app groups, so this always runs fresh, cache or no cache. Last of the
-        // install-seed steps since #3757: everything a service tier has in place before an
-        // extension installs is in place before this line.
-        using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-run-own-install-triggers"))
-            InstallTriggerRunner.RunTestAssemblyOnly();
-        using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-capture-baseline"))
-            AlRunner.Patches.RecordPatches.CaptureInstallBaseline();
+        // #5060: on a whole-bundle HIT the restored snapshot already holds what everything in
+        // this block wrote, so none of it runs.
+        if (bundleHit == null)
+        {
+            var sequenceAccessBefore = AlRunner.Patches.NumberSequencePatches.AccessCount;
+            AlRunner.Patches.RecordPatches.InstallBaselineSnapshot captured;
+            // #2296 — the session user's own row in the User system table, and with it the #2983
+            // adoption DECISION, re-made here per app group on every path. The row itself is seeded
+            // one call earlier, inside the dep-company window (#3698), so a dependency's install
+            // code sees it; this call is what a cache HIT needs, because adoption is a poke at the
+            // skeleton session rather than a row and no snapshot carries it. Also before this
+            // bundle's own install triggers below (#3268). See docs/session-user-seed-ordering.md.
+            //
+            // Still before CaptureInstallBaseline below, the constraint it has always had: the
+            // per-codeunit restore puts the store back to that baseline, so a row added after it
+            // would survive only until the first codeunit boundary. Without this row every
+            // TableRelation pointing at User."User Security ID" refuses the id UserSecurityId()
+            // itself returns.
+            using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-user-row"))
+                AlRunner.Patches.RecordPatches.EnsureUserSystemTableRowSeeded();
+            // #2329 — the Company system table row (2000000006). Since #3757 it is seeded BEFORE
+            // this bundle's own install triggers below, so install code that resolves CompanyName()
+            // against Company finds a row, exactly as it would on a service tier. On a dep-company
+            // cache MISS the row is already there from the in-window call above and this one exits
+            // on the latch; on a HIT this call is what writes it (measured: `seeded` after Restore).
+            //
+            // Still BEFORE CaptureInstallBaseline below, the constraint all three of these seeds have
+            // always had: the per-codeunit restore puts the store back to that baseline, so a row
+            // added after it survives only until the first codeunit boundary.
+            using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-company-row"))
+                AlRunner.Patches.RecordPatches.EnsureCompanySystemTableRowSeeded();
+            // #2963 — the bundle's OWN Published Application row, here rather than with the
+            // dependency rows above: this one is per-app-group, and the dependency snapshot is
+            // shared across every app group with the same dependency closure. That is why #3757
+            // moved it to just before the bundle's own install triggers rather than into the window
+            // — a row captured there would be restored into a different app group that shares the
+            // dependency closure, reporting an app that is not loaded as published. The position it
+            // has now is also the BC-faithful one: an app is published before its own install
+            // triggers run, and its dependencies were installed before it was published at all.
+            //
+            // AFTER the User row since #3268 moved that seed ahead of this bundle's install
+            // triggers. It used to run before it, DEFENSIVELY — not because anything required it.
+            // The measurement that says the inversion is safe — 9 subscribers on Database::User
+            // across 9,441 System Application / Base Application / Business Foundation .al files, one
+            // of them on insert, none of them reaching a module-ownership check — is in
+            // docs/session-user-seed-ordering.md#what-constrains-the-order, with the file and line.
+            using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-published-application-row"))
+                AlRunner.Patches.RecordPatches.EnsurePublishedApplicationBundleRowSeeded();
+            // #3176: the Access Control row that BACKS that user's SUPER status. Ordered after the
+            // User row (its "User Security ID" relates to User's), and since #3757 before this
+            // bundle's own install triggers, so install code asking whether the session user is
+            // SUPER reads the same table the tests read. Called in the window above as well; this
+            // call is the one that re-decides after an adoption moved the session onto another id.
+            using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-access-control-row"))
+                AlRunner.Patches.RecordPatches.EnsureAccessControlSuperRowSeeded();
+            // #3233: the session's Active Session row. After the User seed (its "User SID" is the id
+            // an adoption settled on) and deliberately NOT in the dep-company window above: the
+            // login instant and unique id are this process's, and a disk-cached snapshot would
+            // replay another process's.
+            using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-active-session-row"))
+                AlRunner.Patches.RecordPatches.EnsureActiveSessionRowSeeded();
+            // Genuinely per-app-group — the bundle's own Install codeunits (if any) are never
+            // shared across app groups; only a whole-bundle HIT above skips them. Last of the
+            // install-seed steps since #3757: everything a service tier has in place before an
+            // extension installs is in place before this line.
+            using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-run-own-install-triggers"))
+                InstallTriggerRunner.RunTestAssemblyOnly();
+            using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-capture-baseline"))
+                captured = AlRunner.Patches.RecordPatches.CaptureInstallBaseline();
+            if (bundleKey != null)
+                StoreBundleBaseline(bundleKey, bundleKeyIdentity, captured, depInitFailure,
+                    AlRunner.Patches.NumberSequencePatches.AccessCount != sequenceAccessBefore);
+        }
         // SingleInstance state lives for the whole test session (#4781), so the codeunit
         // boundaries below no longer reset it. The Install triggers and Company-Initialize above
         // run in their own session on BC, and on a dep-company cache HIT they do not run at all
