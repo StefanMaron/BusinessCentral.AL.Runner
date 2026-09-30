@@ -33,7 +33,7 @@ public class AffectedSessionStateSelectionTests
     public void ASelectedTest_PullsLaterReaders_AndEarlierWriters_NotEarlierReadersLaterWritersOrPlainTests()
     {
         var selected = Keys("C.Changed");
-        var added = AffectedSessionStateSelection.Widen(Order, selected, Recorded(), false, false);
+        var added = AffectedSessionStateSelection.Widen(Order, selected, Recorded(), true, false, false);
         Assert.Equal(new[] { "C.Changed", "C.LateReader", "C.Writer" }, Sorted(selected));
         Assert.Equal(2, added);
     }
@@ -42,7 +42,7 @@ public class AffectedSessionStateSelectionTests
     public void NothingSelected_AddsNothing()
     {
         var selected = Keys();
-        Assert.Equal(0, AffectedSessionStateSelection.Widen(Order, selected, Recorded(), false, false));
+        Assert.Equal(0, AffectedSessionStateSelection.Widen(Order, selected, Recorded(), true, false, false));
         Assert.Empty(selected);
     }
 
@@ -52,15 +52,15 @@ public class AffectedSessionStateSelectionTests
         var recorded = Recorded();
         recorded.Remove("C.Plain");
         var selected = Keys("C.Changed");
-        AffectedSessionStateSelection.Widen(Order, selected, recorded, false, false);
+        AffectedSessionStateSelection.Widen(Order, selected, recorded, true, false, false);
         Assert.Contains("C.Plain", selected);
     }
 
     [Fact]
-    public void AnEarlierBundleSelection_PullsEveryReader_EvenBeforeThisBundlesFirstSelectedTest()
+    public void AnEarlierBundleChange_PullsEveryReader_EvenBeforeThisBundlesFirstSelectedTest()
     {
         var selected = Keys();
-        AffectedSessionStateSelection.Widen(Order, selected, Recorded(), earlierBundleSelected: true, laterBundleFollows: false);
+        AffectedSessionStateSelection.Widen(Order, selected, Recorded(), changed: false, earlierBundleChanged: true, laterBundleFollows: false);
         Assert.Equal(new[] { "C.EarlyReader", "C.LateReader", "C.Writer" }, Sorted(selected));
     }
 
@@ -75,7 +75,27 @@ public class AffectedSessionStateSelectionTests
             ["C.Plain"] = Keys(),
         };
         var selected = Keys();
-        AffectedSessionStateSelection.Widen(order, selected, recorded, earlierBundleSelected: false, laterBundleFollows: true);
+        AffectedSessionStateSelection.Widen(order, selected, recorded, changed: false, earlierBundleChanged: false, laterBundleFollows: true);
         Assert.Equal(new[] { "C.WorkDateWriter" }, Sorted(selected));
+    }
+
+    /// <summary>With nothing changed, a selected test (an unknown one, say) brings only the earlier
+    /// writers of what it read, transitively; no reader is pulled.</summary>
+    [Fact]
+    public void NoChange_ASelectedReader_BringsOnlyTheEarlierWritersOfWhatItRead_Transitively()
+    {
+        const string seq = "NumberSequence|s|database";
+        var order = new[] { "C.SeqWriter", "C.WorkDateWriterReadingSeq", "C.OtherWriter", "C.Reader", "C.LaterReader" };
+        var recorded = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal)
+        {
+            ["C.SeqWriter"] = Keys(AlSessionStateTracker.WriteKey(seq)),
+            ["C.WorkDateWriterReadingSeq"] = Keys(W, AlSessionStateTracker.ReadKey(seq)),
+            ["C.OtherWriter"] = Keys(SiW, SiR),
+            ["C.Reader"] = Keys(R),
+            ["C.LaterReader"] = Keys(R),
+        };
+        var selected = Keys("C.Reader");
+        AffectedSessionStateSelection.Widen(order, selected, recorded, changed: false, earlierBundleChanged: false, laterBundleFollows: false);
+        Assert.Equal(new[] { "C.Reader", "C.SeqWriter", "C.WorkDateWriterReadingSeq" }, Sorted(selected));
     }
 }

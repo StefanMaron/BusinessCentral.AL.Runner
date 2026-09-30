@@ -660,11 +660,16 @@ A read counts only when the test had not written that state itself first, so a t
 sets WorkDate and then reads it is not a reader. That is a property of the test's own code,
 so a record taken in a narrowed run means the same as one taken in a full run.
 
-When anything in the request is selected, the selection gains:
+When the request changed code or subscriber bindings in the bundle (or in a bundle that ran
+before it) and anything is selected, the selection gains:
 
 - every test **after the first selected one** that read session state an earlier test
   left, and
 - every test **before the last selected one** that wrote session state.
+
+When nothing changed and tests are selected anyway (unknown tests, `includeFailing`), every
+test does what its record says, so a selected test brings only the earlier tests that wrote
+what it read, and their writers in turn.
 
 Why every reader and every writer, not only those of the state a selected test recorded:
 the recording is of the old code. A changed test can start writing WorkDate, or start
@@ -673,8 +678,8 @@ fail where it passed, and a changed test can fail for want of state another test
 give it (a reader run alone finds no sequence). A test with no record counts as both.
 
 Across bundles of one request: WorkDate and number sequences carry from one bundle to the
-next (SingleInstance codeunits are reset per bundle), so a selection in an earlier bundle
-selects every reader of a later one, and a bundle followed by another runs its WorkDate and
+next (SingleInstance codeunits are reset per bundle), so a change in an earlier bundle (or a
+full run of it) selects every reader of a later one, and a bundle followed by another runs its WorkDate and
 sequence writers whatever changed.
 
 Not recorded, so not linked: static .NET state reached through DotNet interop,

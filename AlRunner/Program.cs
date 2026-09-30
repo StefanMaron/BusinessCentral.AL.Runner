@@ -7437,7 +7437,7 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
         bool activeForcedFull = false;
         string? activeForcedReason = null;
         // #5050: session state crosses bundle boundaries within one request.
-        var requestSelectedAnyTest = false;
+        var requestChangedAnyBundle = false;
         var bundlesStarted = 0;
 
         // Same derivation RunBundleForServer uses for its module name.
@@ -7531,10 +7531,13 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                         Console.Error.WriteLine(
                             $"  [{affected.LogTag}] affectedOnly: selected {widened} more test(s) that share state with a selected one (TestIsolation={executor.Isolation})");
                     // #5050: session state (WorkDate, number sequences, SingleInstance) outlives every isolation.
+                    var bundleChanged = (activeChangedObjectKeys?.Count ?? 0) > 0 || changedEventKeys.Count > 0;
                     var stateWidened = AlRunner.Infrastructure.AffectedSessionStateSelection.Widen(
                         discovered, exactSelection, activePreviousEvents,
-                        earlierBundleSelected: requestSelectedAnyTest,
+                        changed: bundleChanged,
+                        earlierBundleChanged: requestChangedAnyBundle,
                         laterBundleFollows: bundlesStarted < requestModuleNames.Count);
+                    requestChangedAnyBundle |= bundleChanged;
                     if (stateWidened > 0)
                         Console.Error.WriteLine(
                             $"  [{affected.LogTag}] affectedOnly: selected {stateWidened} more test(s) linked to a selected one through session state");
@@ -7556,7 +7559,8 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 }
 
                 requestSelectedTestsByBundle[activeBundleKey] = exactSelection;
-                if (exactSelection == null ? discovered.Count > 0 : exactSelection.Count > 0) requestSelectedAnyTest = true;
+                // A full run of this bundle is a change as far as a later bundle's session state goes.
+                if (exactSelection == null && affectedOnly) requestChangedAnyBundle = true;
                 var previousExact = executor.ExactTestFilter;
                 executor.ExactTestFilter = exactSelection;
                 try { return executor.Run(asm, onTestComplete, token); }
