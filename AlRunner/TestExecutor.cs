@@ -631,7 +631,9 @@ public sealed class TestExecutor
             if (bundleHit != null)
             {
                 // #5060: this bundle's own seeds, Install triggers and capture are skipped below.
-                AlRunner.Patches.RecordPatches.RestoreInstallBaselineSnapshot(bundleHit.Snapshot);
+                // Published, not restored: only Codeunit isolation is keyed, and there every test
+                // codeunit's boundary restores the baseline before any AL runs, so the store is
+                // not read until then. A bundle without tests never pays for the restore.
                 AlRunner.Patches.RecordPatches.PublishInstallBaseline(bundleHit.Snapshot);
                 // The dep+company snapshot still takes lazy --test-data appends for the next app
                 // group on this dependency key, as on every other branch.

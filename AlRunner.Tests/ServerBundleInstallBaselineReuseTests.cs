@@ -2,11 +2,11 @@
 //
 // A warm --server request for an unchanged bundle restores the install baseline the previous
 // request captured, instead of re-running the bundle's own Install triggers and re-capturing.
-// The observable is the bundle's own Install trigger: TestExecutor logs one
+// The observable is the bundle's own Install trigger: InstallTriggerRunner logs one
 // `InstallTrigger Codeunit<N>` line per firing under AL_RUNNER_PERF=1, so "the seed was not
 // redone" is that line being absent from a request's slice of stderr. The AL tests read the
-// seeded row back by value in two codeunits, so a reuse that restored nothing, or restored a
-// stale row, fails them.
+// seeded row back by value in two codeunits, so a reuse that restored nothing, restored a
+// stale row, or restored another bundle's baseline fails them.
 using System.Text.Json;
 using Xunit;
 
@@ -14,39 +14,47 @@ namespace AlRunner.Tests;
 
 public sealed class ServerBundleInstallBaselineReuseTests
 {
-    private const string InstallTriggerLine = "InstallTrigger Codeunit50601 ";
     private const string HitLine = "InstallBaseline.BundleCache HIT";
+    private const string SeedLine = "TestExecutor.InitialInstallSeed";
 
     private static readonly Dictionary<string, string> PerfEnv = new() { ["AL_RUNNER_PERF"] = "1" };
+
+    private static string InstallTriggerLine(int offset) => $"InstallTrigger Codeunit{50601 + offset} ";
 
     [SkippableFact]
     public async Task SecondIdenticalRequest_ReusesTheInstallBaseline_AndEveryCodeunitStillStartsFromTheSeed()
     {
         TestArtifacts.SkipIfMissing();
-        var bundle = CreateBundle(seed: "7777", useNumberSequence: false);
+        // Two independent bundles in one request, so each HIT has to publish its own baseline:
+        // the codeunit boundaries restore whichever baseline was published last.
+        var a = CreateBundle(0, seed: "7777", useNumberSequence: false);
+        var b = CreateBundle(5, seed: "3333", useNumberSequence: false);
         try
         {
             await using var server = await CliServer.StartAsync(extraEnv: PerfEnv);
 
-            var first = await RunAsync(server, bundle);
-            Assert.Equal(1, Count(first, InstallTriggerLine));
+            var first = await RunAsync(server, a, b);
+            Assert.Equal(1, Count(first, InstallTriggerLine(0)));
+            Assert.Equal(1, Count(first, InstallTriggerLine(5)));
             Assert.Equal(0, Count(first, HitLine));
-            Assert.Equal(1, Count(first, "InstallBaseline.BundleCache MISS"));
+            Assert.Equal(2, Count(first, "InstallBaseline.BundleCache MISS"));
 
-            var second = await RunAsync(server, bundle);
-            Assert.Equal(0, Count(second, InstallTriggerLine));
-            Assert.Equal(1, Count(second, HitLine));
+            var second = await RunAsync(server, a, b);
+            Assert.Equal(0, Count(second, InstallTriggerLine(0)));
+            Assert.Equal(0, Count(second, InstallTriggerLine(5)));
+            Assert.Equal(2, Count(second, HitLine));
 
             // Only Codeunit isolation is keyed: the other modes can observe what an Install
             // trigger leaves outside the store before the first restore.
-            var testIsolation = await RunAsync(server, bundle, isolation: "test");
-            Assert.Equal(1, Count(testIsolation, InstallTriggerLine));
+            var testIsolation = await RunAsync(server, new[] { a, b }, isolation: "test");
+            Assert.Equal(1, Count(testIsolation, InstallTriggerLine(0)));
             Assert.Equal(0, Count(testIsolation, HitLine));
             Assert.Contains("InstallBaseline.BundleCache NOKEY isolation Test", testIsolation);
         }
         finally
         {
-            try { Directory.Delete(bundle, recursive: true); } catch { }
+            try { Directory.Delete(a, recursive: true); } catch { }
+            try { Directory.Delete(b, recursive: true); } catch { }
         }
     }
 
@@ -56,23 +64,23 @@ public sealed class ServerBundleInstallBaselineReuseTests
     public async Task EditToTheInstallTrigger_RedoesTheSeed_AndTheTestsSeeTheNewRow()
     {
         TestArtifacts.SkipIfMissing();
-        var bundle = CreateBundle(seed: "7777", useNumberSequence: false);
+        var bundle = CreateBundle(0, seed: "7777", useNumberSequence: false);
         try
         {
             await using var server = await CliServer.StartAsync(extraEnv: PerfEnv);
 
             var first = await RunAsync(server, bundle);
-            Assert.Equal(1, Count(first, InstallTriggerLine));
+            Assert.Equal(1, Count(first, InstallTriggerLine(0)));
 
             var source = Path.Combine(bundle, "Bundle.al");
             File.WriteAllText(source, File.ReadAllText(source).Replace("7777", "4242"));
 
             var edited = await RunAsync(server, bundle);
-            Assert.Equal(1, Count(edited, InstallTriggerLine));
+            Assert.Equal(1, Count(edited, InstallTriggerLine(0)));
             Assert.Equal(0, Count(edited, HitLine));
 
             var again = await RunAsync(server, bundle);
-            Assert.Equal(0, Count(again, InstallTriggerLine));
+            Assert.Equal(0, Count(again, InstallTriggerLine(0)));
             Assert.Equal(1, Count(again, HitLine));
         }
         finally
@@ -87,17 +95,18 @@ public sealed class ServerBundleInstallBaselineReuseTests
     public async Task InstallTriggerUsingANumberSequence_IsNotReused()
     {
         TestArtifacts.SkipIfMissing();
-        var bundle = CreateBundle(seed: "7777", useNumberSequence: true);
+        var bundle = CreateBundle(0, seed: "7777", useNumberSequence: true);
         try
         {
             await using var server = await CliServer.StartAsync(extraEnv: PerfEnv);
 
+            // The second request's own AL test fails if its sequence was not created, which is
+            // what a reuse would do.
             var first = await RunAsync(server, bundle);
-            Assert.Contains("not-stored: the seed used a NumberSequence", first);
-
             var second = await RunAsync(server, bundle);
-            Assert.Equal(1, Count(second, InstallTriggerLine));
+            Assert.Equal(1, Count(second, InstallTriggerLine(0)));
             Assert.Equal(0, Count(second, HitLine));
+            Assert.Contains("not-stored: the seed used a NumberSequence", first);
         }
         finally
         {
@@ -105,24 +114,33 @@ public sealed class ServerBundleInstallBaselineReuseTests
         }
     }
 
-    /// <summary>Send one runTests request, assert all three tests passed, and return the
-    /// request's own slice of stderr.</summary>
-    private static async Task<string> RunAsync(CliServer server, string bundle, string isolation = "codeunit")
+    private static Task<string> RunAsync(CliServer server, params string[] bundles)
+        => RunAsync(server, bundles, "codeunit");
+
+    /// <summary>Send one runTests request, assert every test passed, and return the request's
+    /// own slice of stderr once every bundle's seed line is in it (the seed line is logged after
+    /// every line these tests assert on, absent ones included).</summary>
+    private static async Task<string> RunAsync(CliServer server, string[] bundles, string isolation)
     {
         var mark = server.StdErrMark;
         var response = await server.SendRequestStreamingAsync(JsonSerializer.Serialize(new
         {
             command = "runTests",
-            sourcePaths = new[] { bundle },
+            sourcePaths = bundles,
             testIsolation = isolation,
         }));
         var (events, summary) = ProtocolV2Streaming.Split(response);
-        // Logged after every line these tests assert on, absent ones included.
-        var stderr = await server.StdErrSinceAsync(mark, "TestExecutor.InitialInstallSeed");
+        var stderr = await server.StdErrSinceAsync(mark, SeedLine);
+        for (var wait = 0; Count(stderr, SeedLine) < bundles.Length && wait < 400; wait++)
+        {
+            await Task.Delay(25);
+            stderr = server.StdErrSince(mark);
+        }
         Assert.True(summary.GetProperty("failed").GetInt32() == 0 && summary.GetProperty("errors").GetInt32() == 0,
             "a runTests request failed:\n" + string.Join("\n", response) + "\n--- stderr ---\n" + stderr);
-        Assert.Equal(3, summary.GetProperty("passed").GetInt32());
+        Assert.Equal(3 * bundles.Length, summary.GetProperty("passed").GetInt32());
         Assert.All(events, e => Assert.Equal("pass", e.GetProperty("status").GetString()));
+        Assert.Equal(bundles.Length, Count(stderr, SeedLine));
         return stderr;
     }
 
@@ -133,19 +151,23 @@ public sealed class ServerBundleInstallBaselineReuseTests
         return n;
     }
 
-    private static string CreateBundle(string seed, bool useNumberSequence)
+    /// <summary>A bundle with one table, an Install trigger seeding one row with
+    /// <paramref name="seed"/>, and three tests in two codeunits reading it back. Object ids are
+    /// 50600 + <paramref name="offset"/> onward, so two bundles can share a request.</summary>
+    private static string CreateBundle(int offset, string seed, bool useNumberSequence)
     {
         var directory = TestScratch.Dir("al-runner-5060-bundle-baseline");
         Directory.CreateDirectory(directory);
-        File.WriteAllText(Path.Combine(directory, "app.json"), """
+        int id(int n) => 50600 + offset + n;
+        File.WriteAllText(Path.Combine(directory, "app.json"), $$"""
         {
-          "id": "5a0f5060-1b2c-4d3e-8f40-506050605060",
-          "name": "Runner Tests - Bundle Baseline Reuse",
+          "id": "5a0f5060-1b2c-4d3e-8f40-5060506050{{60 + offset}}",
+          "name": "Runner Tests - Bundle Baseline Reuse {{offset}}",
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "1.0.0.0",
-          "idRanges": [ { "from": 50600, "to": 50609 } ],
+          "idRanges": [ { "from": {{id(0)}}, "to": {{id(4)}} } ],
           "runtime": "14.0"
         }
         """);
@@ -156,7 +178,7 @@ public sealed class ServerBundleInstallBaselineReuseTests
             ? "if not NumberSequence.Exists('IBRSeq') then Error('the install trigger''s number sequence is missing');"
             : "";
         File.WriteAllText(Path.Combine(directory, "Bundle.al"), $$"""
-        table 50600 "IBR Setup"
+        table {{id(0)}} "IBR Setup {{offset}}"
         {
             fields
             {
@@ -169,13 +191,13 @@ public sealed class ServerBundleInstallBaselineReuseTests
             }
         }
 
-        codeunit 50601 "IBR Install"
+        codeunit {{id(1)}} "IBR Install {{offset}}"
         {
             Subtype = Install;
 
             trigger OnInstallAppPerCompany()
             var
-                Setup: Record "IBR Setup";
+                Setup: Record "IBR Setup {{offset}}";
             begin
                 Setup."Key" := '';
                 Setup.Counter := {{seed}};
@@ -184,14 +206,14 @@ public sealed class ServerBundleInstallBaselineReuseTests
             end;
         }
 
-        codeunit 50602 "IBR Tests A"
+        codeunit {{id(2)}} "IBR Tests A {{offset}}"
         {
             Subtype = Test;
 
             [Test]
             procedure BumpStartsFromTheSeed()
             var
-                Setup: Record "IBR Setup";
+                Setup: Record "IBR Setup {{offset}}";
             begin
                 Setup.Get('');
                 Setup.Counter += 1;
@@ -204,21 +226,21 @@ public sealed class ServerBundleInstallBaselineReuseTests
             [Test]
             procedure SeedRowIsTheOnlyRow()
             var
-                Setup: Record "IBR Setup";
+                Setup: Record "IBR Setup {{offset}}";
             begin
                 if Setup.Count() <> 1 then
                     Error('expected exactly the seeded row, found %1', Setup.Count());
             end;
         }
 
-        codeunit 50603 "IBR Tests B"
+        codeunit {{id(3)}} "IBR Tests B {{offset}}"
         {
             Subtype = Test;
 
             [Test]
             procedure SecondCodeunitAlsoStartsFromTheSeed()
             var
-                Setup: Record "IBR Setup";
+                Setup: Record "IBR Setup {{offset}}";
             begin
                 Setup.Get('');
                 Setup.Counter += 1;
