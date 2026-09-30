@@ -962,7 +962,7 @@ holds no coverage for loads it.
   of `app.json`/preprocessor symbols and of the resolved dependency set. Since
   schema 5, also each bundle's environment: per resolved package, its content hash
   and a hash per object, each package stored once however many bundles resolved it
-  (see the next section). Statement tables are not stored. Object and scope keys are
+  and per test the environment its record was taken in (see the next section). Statement tables are not stored. Object and scope keys are
   stored once and referenced by index. A `Schema` field is compared with the
   runner's: schema 4 (before #5028) is still read, without an environment; any other
   value is no baseline.
@@ -1022,15 +1022,25 @@ full run.
   record of its environment (written by a runner before #5028), the current closure
   could not be read, a changed package has no AL source and does carry compiled code, a
   changed file declares no object, a changed object is of a kind no recording holds
-  (an enum, a permission set, a report or page extension, …), or a changed object's
-  instance or record was held outside any one test. Tests that reached what could not
-  be attributed may be skipped; the account holder chose that over a full run (#5028).
+  (an enum, a permission set, a report or page extension, …), a changed object's
+  instance or record was held outside any one test, or the BC build changed. What the
+  diff did resolve still selects its tests. Tests that reached only what could not be
+  attributed may be skipped; the account holder chose that over a full run (#5028).
+- **A request module's own `app.json`**: when it changes (a version bump included), the
+  change model cannot vouch for the module and the run is a full run, as before
+  (#5075).
 - **What is never diffed**: the platform itself (the service tier and the runtime the
-  runner loads), which is not made of AL objects.
-- **After the run**: the run records coverage in the current environment. A test the
-  run skipped keeps its old record, so the recorded environment is kept only when the
-  diff was exact; after an approximate run it is recorded as unknown, and the next
-  change of environment is approximate again until a full run records everything.
+  runner loads), which is not made of AL objects. So a change of BC build is always
+  `approximate`, with a reason naming both builds, even when every package is
+  byte-equal.
+- **Each record keeps its own environment**: every test's record names the environment
+  it was taken in, and the baseline keeps each environment a record still names. A
+  test that ran is recorded in the current environment. A test the run skipped keeps
+  its record, which moves to the current environment only when the diff from its own
+  environment was exact; otherwise it keeps its older environment. The next change of
+  environment then diffs that record from where it was taken, so what changed in
+  between is never lost, only selected again. A record with no environment (from a
+  baseline written before #5028) is used as is.
 - **Strict mode**: `strictEnvironment: true` (`--strict-environment` under
   `--watch --affected`) keeps the behaviour from before #5028: any change of
   environment forces a full run.

@@ -18,12 +18,44 @@ internal sealed record EnvironmentApp(string ContentHash, string Name, IReadOnly
 /// <summary>The apps a bundle resolved, by AppId.</summary>
 internal sealed record EnvironmentSnapshot(IReadOnlyDictionary<Guid, EnvironmentApp> Apps);
 
+/// <summary>
+/// The environments a bundle's test records were taken in: each test's record names the snapshot
+/// of the run that took it, so a later run diffs every record against its own environment. A test
+/// with no entry has no known environment (a baseline from before #5028).
+/// </summary>
+internal sealed class BundleEnvironments
+{
+    public Dictionary<string, EnvironmentSnapshot> Snapshots { get; } = new(StringComparer.Ordinal);
+    public Dictionary<string, string> ByTest { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Records <paramref name="test"/> as taken in <paramref name="snapshot"/>.</summary>
+    public void Set(string test, EnvironmentSnapshot snapshot)
+    {
+        var id = AffectedEnvironmentDrift.IdOf(snapshot);
+        Snapshots.TryAdd(id, snapshot);
+        ByTest[test] = id;
+    }
+
+    /// <summary>Drops the snapshots no test record names any more.</summary>
+    public void Prune()
+    {
+        var live = ByTest.Values.ToHashSet(StringComparer.Ordinal);
+        foreach (var id in Snapshots.Keys.Where(k => !live.Contains(k)).ToList()) Snapshots.Remove(id);
+    }
+}
+
 /// <summary>What changed between two environments. <see cref="Approximate"/> lists why the diff is
 /// incomplete; empty means every difference is in <see cref="Changed"/>.</summary>
 internal sealed record EnvironmentDiff(IReadOnlyList<AffectedObjectId> Changed, IReadOnlyList<string> Approximate);
 
 /// <summary>The selection keys an environment diff selects on, and the changes no key can carry.</summary>
 internal sealed record EnvironmentDriftKeys(HashSet<string> CoverageKeys, HashSet<string> EventKeys, IReadOnlyList<string> Unattributed);
+
+/// <summary>A bundle's drift: the warning, each record environment's keys, and which of those diffs were exact.</summary>
+internal sealed record EnvironmentDriftResolution(
+    EnvironmentDriftInfo Info,
+    IReadOnlyDictionary<string, EnvironmentDriftKeys> KeysByRecord,
+    IReadOnlySet<string> ExactRecords);
 
 internal static class AffectedEnvironmentDrift
 {
@@ -78,6 +110,22 @@ internal static class AffectedEnvironmentDrift
     // Per bundle: the resolved closure of its last load (RunBundleForServer), read when selection needs it.
     private static readonly ConcurrentDictionary<string, IReadOnlyList<(AppManifest Manifest, string AppPath)>> _closureByBundle = new(StringComparer.Ordinal);
     private static readonly ConcurrentDictionary<string, EnvironmentApp> _appByContentHash = new(StringComparer.Ordinal);
+
+    /// <summary>A stable id for a snapshot: its apps' content hashes, which are all a diff reads.</summary>
+    internal static string IdOf(EnvironmentSnapshot snapshot)
+        => ShortHash(string.Join("\n", snapshot.Apps
+            .OrderBy(a => a.Key)
+            .Select(a => $"{a.Key:D}={a.Value.ContentHash}")));
+
+    /// <summary>Why a change of BC build makes any diff approximate: the platform is not made of AL
+    /// objects, so its changes select nothing. Null when the build is the same.</summary>
+    internal static string? PlatformReason(string recordedKey, string currentKey)
+    {
+        var (before, now) = (BuildOf(recordedKey), BuildOf(currentKey));
+        return string.Equals(before, now, StringComparison.Ordinal)
+            ? null
+            : $"the BC platform changed ({before} to {now}) and is not diffed";
+    }
 
     internal static string ObjectKey(string kind, int? id, string name)
         => $"{kind}|{(id.HasValue ? "id:" + id.Value : "name:" + name)}";
@@ -295,9 +343,48 @@ internal static class AffectedEnvironmentDrift
                 if (r.ForceFullReason != null) unattributed.Add(r.ForceFullReason);
                 continue;
             }
-            unattributed.Add($"{Display(o)} is a {o.Kind}, whose use no test recording holds");
+            unattributed.Add($"{Display(o)} changed, and no test recording holds the use of this kind of object ({o.Kind})");
         }
         return new EnvironmentDriftKeys(coverage, events, unattributed);
+    }
+
+    /// <summary>
+    /// A bundle's drift: each test record's environment (<paramref name="recordEnvs"/>, "" for a
+    /// record with none) is diffed against <paramref name="current"/> on its own, so the keys and the
+    /// exactness are per record environment. A change of BC build makes every one approximate,
+    /// because the platform is not diffed.
+    /// </summary>
+    internal static EnvironmentDriftResolution Resolve(string recordedKey, string currentKey,
+        IEnumerable<string> recordEnvs, BundleEnvironments? recorded, EnvironmentSnapshot? current,
+        IReadOnlyDictionary<int, List<int>> currentExtensionBases, HashSet<string>? recordedBundleWide)
+    {
+        var keysByRecord = new Dictionary<string, EnvironmentDriftKeys>(StringComparer.Ordinal);
+        var exact = new HashSet<string>(StringComparer.Ordinal);
+        var changed = new List<AffectedObjectId>();
+        var why = new List<string>();
+        var platform = PlatformReason(recordedKey, currentKey);
+        if (platform != null) why.Add(platform);
+        foreach (var recordEnv in recordEnvs.Distinct(StringComparer.Ordinal).OrderBy(e => e, StringComparer.Ordinal))
+        {
+            var snapshot = recordEnv.Length > 0 && recorded != null && recorded.Snapshots.TryGetValue(recordEnv, out var s) ? s : null;
+            var diff = Diff(snapshot, current);
+            var keys = SelectionKeys(diff.Changed, currentExtensionBases, recordedBundleWide);
+            keysByRecord[recordEnv] = keys;
+            if (platform == null && diff.Approximate.Count == 0 && keys.Unattributed.Count == 0) exact.Add(recordEnv);
+            changed.AddRange(diff.Changed);
+            why.AddRange(diff.Approximate);
+            why.AddRange(keys.Unattributed);
+        }
+        changed = changed.Distinct().ToList();
+        why = why.Distinct(StringComparer.Ordinal).ToList();
+        var info = new EnvironmentDriftInfo(
+            BuildOf(recordedKey),
+            BuildOf(currentKey),
+            changed.Count,
+            why.Count == 0 ? EnvironmentDriftInfo.Diffed : EnvironmentDriftInfo.Approximate,
+            changed.Select(Display).Take(NamedObjectLimit).ToList(),
+            why.Count == 0 ? null : string.Join("; ", why.Take(5)) + (why.Count > 5 ? $"; and {why.Count - 5} more" : ""));
+        return new EnvironmentDriftResolution(info, keysByRecord, exact);
     }
 
     /// <summary>The environment key without its test-isolation part (AffectedIsolationWidening.EnvironmentKey).</summary>

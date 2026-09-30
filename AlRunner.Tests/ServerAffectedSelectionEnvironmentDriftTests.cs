@@ -28,13 +28,21 @@ public class ServerAffectedSelectionEnvironmentDriftTests
         }
         """;
 
-    private const string OtherSource = """
+    private static string OtherSource(int factor) => $$"""
         codeunit 60472 "Drift Other SX"
         {
             procedure Twice(Value: Integer): Integer
             begin
-                exit(Value * 2);
+                exit(Value * {{factor}});
             end;
+        }
+        """;
+
+    // An enum no test uses: a changed object of a kind no recording holds, so the diff is approximate.
+    private const string KindSource = """
+        enum 60473 "Drift Kind SX"
+        {
+            value(0; First) { }
         }
         """;
 
@@ -73,7 +81,7 @@ public class ServerAffectedSelectionEnvironmentDriftTests
         }
         """;
 
-    private static void WriteManifest(string dir, Guid id, string name, bool dependsOnApp)
+    private static void WriteManifest(string dir, Guid id, string name, bool dependsOnApp, string version = "1.0.0.0")
     {
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "app.json"), JsonSerializer.Serialize(new
@@ -81,7 +89,7 @@ public class ServerAffectedSelectionEnvironmentDriftTests
             id,
             name,
             publisher = "AL Runner",
-            version = "1.0.0.0",
+            version,
             platform = "1.0.0.0",
             runtime = "14.0",
             idRanges = new[] { new { from = 60470, to = 60489 } },
@@ -99,19 +107,22 @@ public class ServerAffectedSelectionEnvironmentDriftTests
         WriteManifest(app, AppId, "Drift App", dependsOnApp: false);
         Directory.CreateDirectory(Path.Combine(app, "src"));
         File.WriteAllText(Path.Combine(app, "src", "Helper.Codeunit.al"), HelperSource(2));
-        File.WriteAllText(Path.Combine(app, "src", "Other.Codeunit.al"), OtherSource);
+        File.WriteAllText(Path.Combine(app, "src", "Other.Codeunit.al"), OtherSource(2));
         WriteManifest(testApp, TestAppId, "Drift App Test", dependsOnApp: true);
         File.WriteAllText(Path.Combine(testApp, "Tests.Codeunit.al"), TestsSource);
         Package(app, testApp);
         return (app, testApp, Path.Combine(root, "cache"));
     }
 
-    // Rebuilds App.app in place from App/, same identity and version: the second environment.
+    // Rebuilds App.app from App/, at App/app.json's version, replacing the previous build: the
+    // second environment.
     private static void Package(string app, string testApp)
     {
         var identity = InProcessAppPackager.ReadIdentity(Path.Combine(app, "app.json"))!;
         var packages = Path.Combine(testApp, ".alpackages");
         Directory.CreateDirectory(packages);
+        foreach (var old in Directory.GetFiles(packages, "*.app")) File.Delete(old);
+        var version = identity.Version.ToString();
         object Codeunit(int id, string name) => new
         {
             Id = id, Name = name, Methods = new[] { new {
@@ -121,11 +132,11 @@ public class ServerAffectedSelectionEnvironmentDriftTests
         };
         var symbols = JsonSerializer.SerializeToUtf8Bytes(new
         {
-            AppId, Name = "Drift App", Publisher = "AL Runner", Version = "1.0.0.0", RuntimeVersion = "14.0",
+            AppId, Name = "Drift App", Publisher = "AL Runner", Version = version, RuntimeVersion = "14.0",
             Codeunits = new[] { Codeunit(60471, "Drift Helper SX"), Codeunit(60472, "Drift Other SX") },
         });
         InProcessAppPackager.EmitAppPackageToFile(app, identity,
-            Path.Combine(packages, "AL Runner_Drift App_1.0.0.0.app"), symbols);
+            Path.Combine(packages, $"AL Runner_Drift App_{version}.app"), symbols);
     }
 
     private static void ChangeHelper(string app, string testApp)
@@ -214,6 +225,64 @@ public class ServerAffectedSelectionEnvironmentDriftTests
         Assert.Equal(0, reloaded.Ran);
     }
 
+    // Review of #5073, findings 1 and 2. Drift 1 changes a codeunit and adds an enum no recording
+    // holds: approximate, yet the changed codeunit's caller still runs. The tests drift 1 skipped keep
+    // their record from the first environment, so drift 2, changing another codeunit, still diffs them
+    // against it and runs that codeunit's caller.
+    [SkippableFact]
+    public async Task ApproximateDrift_StillSelectsWhatItResolved_AndTheNextDriftStillDiffsTheSkippedTests()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (app, testApp, cache) = Layout("two-drifts");
+        await RecordBaseline(testApp, cache);
+
+        File.WriteAllText(Path.Combine(app, "src", "Kind.Enum.al"), KindSource);
+        ChangeHelper(app, testApp);
+        await using (var second = await CliServer.StartAsync(new[] { "--cache", cache }))
+        {
+            var first = await Send(second, testApp);
+            Assert.False(first.ForcedFull, first.Raw);
+            var d = first.Drift ?? throw new Xunit.Sdk.XunitException("no environmentDrift: " + first.Raw);
+            Assert.Equal("approximate", d.GetProperty("mode").GetString());
+            Assert.Contains("Enum 60473 Drift Kind SX changed", d.GetProperty("reason").GetString());
+            Assert.Equal(new[] { "CallsHelper" }, first.Status.Keys);
+            Assert.True(first.Status["CallsHelper"] == "fail", first.Raw);
+            Assert.Contains("the app returned 63", first.Raw, StringComparison.Ordinal);
+        }
+
+        File.WriteAllText(Path.Combine(app, "src", "Other.Codeunit.al"), OtherSource(5));
+        Package(app, testApp);
+        await using var third = await CliServer.StartAsync(new[] { "--cache", cache });
+        var second2 = await Send(third, testApp);
+        Assert.False(second2.ForcedFull, second2.Raw);
+        Assert.Equal(new[] { "CallsOther" }, second2.Status.Keys);
+        Assert.True(second2.Status["CallsOther"] == "fail", second2.Raw);
+        Assert.Contains("CallsOther: the app returned 105", second2.Raw, StringComparison.Ordinal);
+        var d2 = second2.Drift ?? throw new Xunit.Sdk.XunitException("no environmentDrift: " + second2.Raw);
+        Assert.Contains("Codeunit 60472 Drift Other SX",
+            d2.GetProperty("objects").EnumerateArray().Select(o => o.GetString()));
+    }
+
+    // Review of #5073, finding 3. A new BC build moves the resolved version of every Microsoft
+    // dependency while a test app's app.json, which names them through $(app_*) placeholders, stays the
+    // same. The dependency set a module was compiled against then differs, and must not force a full run.
+    [SkippableFact]
+    public async Task DependencyVersionMoves_TheRequestsAppJsonDoesNot_DiffsInsteadOfAFullRun()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (app, testApp, cache) = Layout("version");
+        await RecordBaseline(testApp, cache);
+
+        WriteManifest(app, AppId, "Drift App", dependsOnApp: false, version: "1.0.0.1");
+        ChangeHelper(app, testApp);
+        await using var second = await CliServer.StartAsync(new[] { "--cache", cache });
+        var drifted = await Send(second, testApp);
+        Assert.False(drifted.ForcedFull, drifted.Raw);
+        Assert.Equal(new[] { "CallsHelper" }, drifted.Status.Keys);
+        Assert.Contains("the app returned 63", drifted.Raw, StringComparison.Ordinal);
+        Assert.Equal("diffed", (drifted.Drift ?? throw new Xunit.Sdk.XunitException(drifted.Raw)).GetProperty("mode").GetString());
+    }
+
     [SkippableFact]
     public async Task NoPerObjectRecord_UsesTheBaselineAsIs_AndSaysItIsApproximate()
     {
@@ -226,7 +295,11 @@ public class ServerAffectedSelectionEnvironmentDriftTests
         var json = JsonNode.Parse(File.ReadAllText(file))!.AsObject();
         json["Schema"] = 4;
         json.Remove("EnvApps");
-        foreach (var bundle in json["Bundles"]!.AsObject()) bundle.Value!.AsObject().Remove("EnvApps");
+        foreach (var bundle in json["Bundles"]!.AsObject())
+        {
+            bundle.Value!.AsObject().Remove("Envs");
+            bundle.Value!.AsObject().Remove("TestEnv");
+        }
         File.WriteAllText(file, json.ToJsonString());
         ChangeHelper(app, testApp);
 

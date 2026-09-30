@@ -24,7 +24,7 @@ internal sealed record AffectedBundleBaseline(
     Dictionary<string, HashSet<string>> Events,
     List<SubscriberBinding>? Bindings,
     EventObservability? Observability,
-    EnvironmentSnapshot? Environment = null);
+    BundleEnvironments? Environments = null);
 
 internal sealed record AffectedBaseline(
     Dictionary<string, AffectedModuleSnapshot> Modules,
@@ -36,7 +36,7 @@ internal static class AffectedBaselineStore
     // 2: #5008's table keys and the per-bundle "<bundle>" events entry.
     // 3: #5011's entered-scope and constructed-object coverage keys, and "obj|" bundle-wide keys.
     // 4: #5050's session-state keys ("st|w|", "st|r|") in each test's events entry.
-    // 5: #5028's per-bundle environment (EnvApps) and "dep|" coverage keys. A version-4 file is
+    // 5: #5028's per-test environments (Envs, TestEnv) and "dep|" coverage keys. A version-4 file is
     //    still read, with no environment, so a run in another environment uses it approximately.
     internal const int SchemaVersion = 5;
     internal const int OldestReadableSchema = 4;
@@ -187,8 +187,10 @@ internal static class AffectedBaselineStore
         public Dictionary<string, int[]> Events { get; set; } = new();
         public List<BindingDto>? Bindings { get; set; }
         public ObservabilityDto? Observability { get; set; }
-        // AppId to the content hash of the package, an EnvApps key; null when no environment is recorded.
-        public Dictionary<string, string>? EnvApps { get; set; }
+        // Per environment id, AppId to the content hash of the package (an EnvApps key); and per
+        // test, the id of the environment its record was taken in. Null when none is recorded.
+        public Dictionary<string, Dictionary<string, string>>? Envs { get; set; }
+        public Dictionary<string, string>? TestEnv { get; set; }
     }
 
     private sealed class BindingDto
@@ -256,7 +258,11 @@ internal static class AffectedBaselineStore
                     Observable = x.Observability.ObservableEventKeys.OrderBy(k => k, StringComparer.Ordinal).ToList(),
                     Publishers = new Dictionary<string, bool>(x.Observability.PublisherObjects, StringComparer.Ordinal),
                 },
-                EnvApps = x.Environment?.Apps.ToDictionary(kv => kv.Key.ToString("D"), kv => AddEnvApp(kv.Value), StringComparer.Ordinal),
+                Envs = x.Environments?.Snapshots.ToDictionary(
+                    s => s.Key,
+                    s => s.Value.Apps.ToDictionary(kv => kv.Key.ToString("D"), kv => AddEnvApp(kv.Value), StringComparer.Ordinal),
+                    StringComparer.Ordinal),
+                TestEnv = x.Environments == null ? null : new Dictionary<string, string>(x.Environments.ByTest, StringComparer.Ordinal),
             };
         return dto;
 
@@ -322,9 +328,23 @@ internal static class AffectedBaselineStore
                 x.Observability == null ? null : new EventObservability(
                     new HashSet<string>(Required(x.Observability.Observable, "observable events"), StringComparer.Ordinal),
                     new Dictionary<string, bool>(Required(x.Observability.Publishers, "publishers"), StringComparer.Ordinal)),
-                dto.Schema < 5 || x.EnvApps == null ? null : Environment(x.EnvApps));
+                dto.Schema < 5 || x.Envs == null || x.TestEnv == null ? null : Environments(x.Envs, x.TestEnv));
         }
         return new AffectedBaseline(modules, bundles);
+
+        BundleEnvironments Environments(Dictionary<string, Dictionary<string, string>> envs, Dictionary<string, string> byTest)
+        {
+            var result = new BundleEnvironments();
+            foreach (var (id, apps) in envs)
+                result.Snapshots[id] = Environment(Required(apps, $"environment {id}"));
+            foreach (var (test, id) in byTest)
+            {
+                if (id == null || !result.Snapshots.ContainsKey(id))
+                    throw new InvalidDataException($"test {test} names environment '{id}', which is not stored");
+                result.ByTest[test] = id;
+            }
+            return result;
+        }
 
         EnvironmentSnapshot Environment(Dictionary<string, string> apps)
         {

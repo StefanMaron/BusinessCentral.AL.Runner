@@ -92,7 +92,8 @@ public class AffectedEnvironmentDriftTests
             new HashSet<string>(StringComparer.Ordinal));
         Assert.Equal(new[] { "dep|Codeunit|id:80" }, keys.CoverageKeys);
         Assert.Contains("tbl|Table|18", keys.EventKeys);
-        Assert.Contains("Enum 36 Document Type is a Enum", Assert.Single(keys.Unattributed));
+        Assert.Equal("Enum 36 Document Type changed, and no test recording holds the use of this kind of object (Enum)",
+            Assert.Single(keys.Unattributed));
 
         var longLived = AffectedEnvironmentDrift.SelectionKeys(new[] { new AffectedObjectId("Codeunit", 80, "Sales-Post") },
             new Dictionary<int, List<int>>(),
@@ -121,6 +122,60 @@ public class AffectedEnvironmentDriftTests
         Assert.Contains("APPROXIMATE: no record", a);
     }
 
+    // Review of #5073: the platform is not diffed, so a change of build is never an exact diff.
+    [Fact]
+    public void PlatformReason_NamesBothBuilds_OnlyWhenTheBuildDiffers()
+    {
+        Assert.Null(AffectedEnvironmentDrift.PlatformReason("28.1.1.0|/bc|/p", "28.1.1.0|/bc|/q|isolation=Test"));
+        Assert.Equal("the BC platform changed (28.1.1.0 to 28.2.2.0) and is not diffed",
+            AffectedEnvironmentDrift.PlatformReason("28.1.1.0|/bc|/p", "28.2.2.0|/bc|/p"));
+    }
+
+    [Fact]
+    public void Resolve_PlatformOnlyChange_IsApproximate_NotAnExactEmptyDiff()
+    {
+        var env = Env((Base, "B1", Objects(("Codeunit|id:80", "h1:Sales-Post"))));
+        var envs = new BundleEnvironments();
+        envs.Set("T.A", env);
+        var r = AffectedEnvironmentDrift.Resolve("28.1.1.0|/bc", "28.2.2.0|/bc", new[] { AffectedEnvironmentDrift.IdOf(env) },
+            envs, env, new Dictionary<int, List<int>>(), new HashSet<string>(StringComparer.Ordinal));
+        Assert.Equal(EnvironmentDriftInfo.Approximate, r.Info.Mode);
+        Assert.Equal(0, r.Info.ChangedObjects);
+        Assert.Contains("the BC platform changed (28.1.1.0 to 28.2.2.0) and is not diffed", r.Info.Reason);
+        Assert.Empty(r.ExactRecords);
+    }
+
+    [Fact]
+    public void Resolve_DiffsEachRecordAgainstTheEnvironmentItWasTakenIn()
+    {
+        var e1 = Env((Base, "B1", Objects(("Codeunit|id:80", "h1:Sales-Post"), ("Codeunit|id:90", "h2:Purch-Post"))));
+        var e2 = Env((Base, "B2", Objects(("Codeunit|id:80", "h9:Sales-Post"), ("Codeunit|id:90", "h2:Purch-Post"))));
+        var e3 = Env((Base, "B3", Objects(("Codeunit|id:80", "h9:Sales-Post"), ("Codeunit|id:90", "h8:Purch-Post"))));
+        var envs = new BundleEnvironments();
+        envs.Set("T.Old", e1);
+        envs.Set("T.New", e2);
+        var (id1, id2) = (AffectedEnvironmentDrift.IdOf(e1), AffectedEnvironmentDrift.IdOf(e2));
+        var r = AffectedEnvironmentDrift.Resolve("28.1.1.0|/bc|/p", "28.1.1.0|/bc|/q", new[] { id1, id2, id1, "" },
+            envs, e3, new Dictionary<int, List<int>>(), new HashSet<string>(StringComparer.Ordinal));
+
+        Assert.Equal(new[] { "dep|Codeunit|id:80", "dep|Codeunit|id:90" }, r.KeysByRecord[id1].CoverageKeys.OrderBy(k => k, StringComparer.Ordinal));
+        Assert.Equal(new[] { "dep|Codeunit|id:90" }, r.KeysByRecord[id2].CoverageKeys);
+        Assert.Empty(r.KeysByRecord[""].CoverageKeys);
+        Assert.Equal(new[] { id1, id2 }.OrderBy(i => i, StringComparer.Ordinal), r.ExactRecords.OrderBy(i => i, StringComparer.Ordinal));
+        Assert.Equal(EnvironmentDriftInfo.Approximate, r.Info.Mode);   // the record with no environment
+        Assert.Equal(2, r.Info.ChangedObjects);
+    }
+
+    [Fact]
+    public void IdOf_DependsOnlyOnThePackagesContent()
+    {
+        var a = Env((Base, "B1", Objects(("Codeunit|id:80", "h1:x"))), (Sys, "S1", null));
+        var sameBytes = Env((Sys, "S1", Objects()), (Base, "B1", null));
+        var other = Env((Base, "B2", Objects(("Codeunit|id:80", "h1:x"))), (Sys, "S1", null));
+        Assert.Equal(AffectedEnvironmentDrift.IdOf(a), AffectedEnvironmentDrift.IdOf(sameBytes));
+        Assert.NotEqual(AffectedEnvironmentDrift.IdOf(a), AffectedEnvironmentDrift.IdOf(other));
+    }
+
     [Fact]
     public void KeyParts_SplitTheBuildAndTheIsolation()
     {
@@ -130,39 +185,53 @@ public class AffectedEnvironmentDriftTests
         Assert.Equal("28.4.51311.0|/bc|/pkgs|pkg:x=y", AffectedEnvironmentDrift.WithoutIsolation(key));
     }
 
-    private static AffectedBaseline Stored(EnvironmentSnapshot? environment) => new(
+    private static AffectedBaseline Stored(BundleEnvironments? environments) => new(
         new Dictionary<string, AffectedModuleSnapshot>(),
         new Dictionary<string, AffectedBundleBaseline>
         {
-            ["/b"] = new("env", new() { ["T.A"] = new() { "dep|Codeunit|id:80" } }, new(), new(), new() { ["T.A"] = new() },
-                new List<SubscriberBinding>(), null, environment),
-            ["/c"] = new("env", new(), new(), new(), new(), null, null, environment),
+            ["/b"] = new("env", new() { ["T.A"] = new() { "dep|Codeunit|id:80" }, ["T.B"] = new() { "dep|Codeunit|id:90" } },
+                new(), new(), new() { ["T.A"] = new(), ["T.B"] = new() },
+                new List<SubscriberBinding>(), null, environments),
+            ["/c"] = new("env", new(), new(), new(), new(), null, null, environments),
         });
 
     [Fact]
-    public void Store_RoundTripsTheEnvironment_OncePerPackage_AndReadsAnOlderSchemaWithoutOne()
+    public void Store_RoundTripsEachRecordsEnvironment_OncePerPackage_AndReadsAnOlderSchemaWithoutOne()
     {
-        var env = Env((Base, "B1", Objects(("Codeunit|id:80", "h1:Sales-Post"))), (Sys, "S1", null));
+        var env1 = Env((Base, "B1", Objects(("Codeunit|id:80", "h1:Sales-Post"))), (Sys, "S1", null));
+        var env2 = Env((Base, "B2", Objects(("Codeunit|id:80", "h2:Sales-Post"))), (Sys, "S1", null));
+        var envs = new BundleEnvironments();
+        envs.Set("T.A", env2);
+        envs.Set("T.B", env1);
         var path = Path.Combine(TestScratch.Dir("al-runner-affected-env-store"), "s.json");
-        AffectedBaselineStore.Write(path, Stored(env));
+        AffectedBaselineStore.Write(path, Stored(envs));
         var text = File.ReadAllText(path);
         Assert.Equal(1, System.Text.RegularExpressions.Regex.Matches(text, "\"h1:Sales-Post\"").Count);
 
         var loaded = AffectedBaselineStore.Load(path).Baseline!;
         foreach (var bundle in new[] { "/b", "/c" })
         {
-            var e = loaded.Bundles[bundle].Environment!;
-            Assert.Equal("h1:Sales-Post", e.Apps[Base].Objects!["Codeunit|id:80"]);
-            Assert.Null(e.Apps[Sys].Objects);
-            Assert.Equal("S1", e.Apps[Sys].ContentHash);
+            var e = loaded.Bundles[bundle].Environments!;
+            Assert.Equal(2, e.Snapshots.Count);
+            var b = e.Snapshots[e.ByTest["T.B"]];
+            Assert.Equal("h1:Sales-Post", b.Apps[Base].Objects!["Codeunit|id:80"]);
+            Assert.Null(b.Apps[Sys].Objects);
+            Assert.Equal("S1", b.Apps[Sys].ContentHash);
+            Assert.Equal("h2:Sales-Post", e.Snapshots[e.ByTest["T.A"]].Apps[Base].Objects!["Codeunit|id:80"]);
         }
-        Assert.Empty(AffectedEnvironmentDrift.Diff(loaded.Bundles["/b"].Environment, env).Changed);
+        var stored = loaded.Bundles["/b"].Environments!;
+        Assert.Empty(AffectedEnvironmentDrift.Diff(stored.Snapshots[stored.ByTest["T.B"]], env1).Changed);
+
+        // A snapshot no record names any more is dropped.
+        envs.Set("T.B", env2);
+        envs.Prune();
+        Assert.Single(envs.Snapshots);
 
         // A version-4 file (before #5028) loads, with no environment to diff against.
         File.WriteAllText(path, text.Replace($"\"Schema\":{AffectedBaselineStore.SchemaVersion},", "\"Schema\":4,", StringComparison.Ordinal));
         var old = AffectedBaselineStore.Load(path);
         Assert.Null(old.Unusable);
-        Assert.Null(old.Baseline!.Bundles["/b"].Environment);
+        Assert.Null(old.Baseline!.Bundles["/b"].Environments);
 
         File.WriteAllText(path, text.Replace($"\"Schema\":{AffectedBaselineStore.SchemaVersion},", "\"Schema\":3,", StringComparison.Ordinal));
         Assert.Contains("schema version 3", AffectedBaselineStore.Load(path).Unusable);

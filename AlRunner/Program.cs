@@ -7400,7 +7400,8 @@ string? LoadPersistedAffectedBaseline(AlRunner.Infrastructure.AffectedSelectionS
         affectedUnknownTestsByBundle[bundle] = b.Unknown;
         affectedFailingTestsByBundle[bundle] = b.Failing;
         affectedEnvironmentKeyByBundle[bundle] = b.EnvironmentKey;
-        affected.EnvironmentByBundle[bundle] = b.Environment;
+        if (b.Environments != null) affected.EnvironmentsByBundle[bundle] = b.Environments;
+        else affected.EnvironmentsByBundle.Remove(bundle);
         affectedBaselineGenerationsByBundle.Remove(bundle);
         affectedEventsByBundle[bundle] = b.Events;
         if (b.Bindings != null) affectedBindingsByBundle[bundle] = b.Bindings;
@@ -7449,7 +7450,7 @@ void PersistAffectedBaseline(AlRunner.Infrastructure.AffectedSelectionState affe
                 affectedEventsByBundle[bundle],
                 affectedBindingsByBundle.TryGetValue(bundle, out var bindings) ? bindings : null,
                 affectedObservabilityByBundle.TryGetValue(bundle, out var observability) ? observability : null,
-                affected.EnvironmentByBundle.TryGetValue(bundle, out var environment) ? environment : null);
+                affected.EnvironmentsByBundle.TryGetValue(bundle, out var environments) ? environments : null);
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var path = AlRunner.Infrastructure.AffectedBaselineStore.PathFor(
             AlRunner.Infrastructure.CacheRoots.Resolve(AlRunner.Infrastructure.AffectedBaselineStore.CacheName), sourcePaths);
@@ -7521,11 +7522,19 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
         List<string> activeChangedObjectDisplay = new();
         bool activeForcedFull = false;
         string? activeForcedReason = null;
-        // #5028: what an environment diff selects on, for the bundle about to run.
-        HashSet<string> activeEnvCoverageKeys = new(StringComparer.Ordinal);
-        HashSet<string> activeEnvEventKeys = new(StringComparer.Ordinal);
+        // #5028: what an environment diff selects on for the bundle about to run, per environment a
+        // test record was taken in ("" for records with none), and which of those diffs were exact.
+        var activeEnvKeysByRecord = new Dictionary<string, AlRunner.Infrastructure.EnvironmentDriftKeys>(StringComparer.Ordinal);
+        var activeExactRecordEnvs = new HashSet<string>(StringComparer.Ordinal);
         EnvironmentDriftInfo? activeDrift = null;
         var requestDriftByBundle = new Dictionary<string, EnvironmentDriftInfo>(StringComparer.Ordinal);
+        var requestExactRecordEnvsByBundle = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        string RecordEnvOf(string bundlePath, string testKey)
+            => affected.EnvironmentsByBundle.TryGetValue(bundlePath, out var envs) && envs.ByTest.TryGetValue(testKey, out var id) ? id : "";
+        // Whether the environment diff for the record this test was taken in reaches what it recorded.
+        bool EnvironmentDiffSelects(string testKey, HashSet<string> covered, HashSet<string>? events)
+            => activeEnvKeysByRecord.TryGetValue(RecordEnvOf(activeBundleKey, testKey), out var keys)
+               && (covered.Overlaps(keys.CoverageKeys) || AlRunner.Infrastructure.AffectedEventSelection.Overlaps(events, keys.EventKeys));
         var requestEnvironmentSnapshotByBundle = new Dictionary<string, AlRunner.Infrastructure.EnvironmentSnapshot?>(StringComparer.Ordinal);
         // #5050: session state crosses bundle boundaries within one request.
         var requestChangedAnyBundle = false;
@@ -7559,26 +7568,19 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 activeForcedReason = EnvironmentChangedReason + (strictEnvironment && !isolationChanged ? "; strictEnvironment is set" : "");
                 return false;
             }
-            var diff = AlRunner.Infrastructure.AffectedEnvironmentDrift.Diff(
-                affected.EnvironmentByBundle.TryGetValue(bundlePath, out var recorded) ? recorded : null,
-                requestEnvironmentSnapshotByBundle.TryGetValue(bundlePath, out var current) ? current : null);
-            var keys = AlRunner.Infrastructure.AffectedEnvironmentDrift.SelectionKeys(diff.Changed,
-                AlRunner.Patches.RecordPatches.TableExtensionBaseTableIds(),
+            // Every record is diffed against the environment it was taken in: after an approximate run
+            // a skipped test keeps its older record, so one bundle can hold records of several.
+            affected.EnvironmentsByBundle.TryGetValue(bundlePath, out var recordedEnvs);
+            requestEnvironmentSnapshotByBundle.TryGetValue(bundlePath, out var current);
+            var resolved = AlRunner.Infrastructure.AffectedEnvironmentDrift.Resolve(recordedKey, currentKey,
+                (activePreviousCoverage?.Keys ?? Enumerable.Empty<string>()).Select(t => RecordEnvOf(bundlePath, t)),
+                recordedEnvs, current, AlRunner.Patches.RecordPatches.TableExtensionBaseTableIds(),
                 activePreviousEvents != null
                 && activePreviousEvents.TryGetValue(AlRunner.Infrastructure.AlEventRaiseTracker.BundleWideKey, out var bundleWide)
                     ? bundleWide : null);
-            activeEnvCoverageKeys = keys.CoverageKeys;
-            activeEnvEventKeys = keys.EventKeys;
-            var why = diff.Approximate.Concat(keys.Unattributed).Distinct(StringComparer.Ordinal).ToList();
-            activeDrift = new EnvironmentDriftInfo(
-                AlRunner.Infrastructure.AffectedEnvironmentDrift.BuildOf(recordedKey),
-                AlRunner.Infrastructure.AffectedEnvironmentDrift.BuildOf(currentKey),
-                diff.Changed.Count,
-                why.Count == 0 ? EnvironmentDriftInfo.Diffed : EnvironmentDriftInfo.Approximate,
-                diff.Changed.Select(AlRunner.Infrastructure.AffectedEnvironmentDrift.Display)
-                    .Take(AlRunner.Infrastructure.AffectedEnvironmentDrift.NamedObjectLimit).ToList(),
-                why.Count == 0 ? null
-                    : string.Join("; ", why.Take(5)) + (why.Count > 5 ? $"; and {why.Count - 5} more" : ""));
+            foreach (var (recordEnv, keys) in resolved.KeysByRecord) activeEnvKeysByRecord[recordEnv] = keys;
+            activeExactRecordEnvs.UnionWith(resolved.ExactRecords);
+            activeDrift = resolved.Info;
             return true;
         }
 
@@ -7635,7 +7637,6 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 var plannedSkippedFailing = 0;
                 if (affectedOnly && !activeForcedFull)
                 {
-                    changedEventKeys.UnionWith(activeEnvEventKeys);
                     exactSelection = new HashSet<string>(StringComparer.Ordinal);
                     foreach (var testKey in discovered)
                     {
@@ -7650,7 +7651,8 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                         var previouslyFailing = activePreviousFailing?.Contains(testKey) ?? false;
                         if ((includeFailing && previouslyFailing)
                             || (activeChangedObjectKeys != null && coveredObjects.Overlaps(activeChangedObjectKeys))
-                            || coveredObjects.Overlaps(activeEnvCoverageKeys)
+                            || EnvironmentDiffSelects(testKey, coveredObjects,
+                                activePreviousEvents != null && activePreviousEvents.TryGetValue(testKey, out var envRaised) ? envRaised : null)
                             || AlRunner.Infrastructure.AffectedEventSelection.Overlaps(
                                 activePreviousEvents != null && activePreviousEvents.TryGetValue(testKey, out var raised) ? raised : null,
                                 changedEventKeys))
@@ -7663,7 +7665,7 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                             $"  [{affected.LogTag}] affectedOnly: selected {widened} more test(s) that share state with a selected one (TestIsolation={executor.Isolation})");
                     // #5050: session state (WorkDate, number sequences, SingleInstance) outlives every isolation.
                     var bundleChanged = (activeChangedObjectKeys?.Count ?? 0) > 0 || changedEventKeys.Count > 0
-                        || activeEnvCoverageKeys.Count > 0;
+                        || activeEnvKeysByRecord.Values.Any(k => k.CoverageKeys.Count > 0 || k.EventKeys.Count > 0);
                     var stateWidened = AlRunner.Infrastructure.AffectedSessionStateSelection.Widen(
                         discovered, exactSelection, activePreviousEvents,
                         changed: bundleChanged,
@@ -7692,6 +7694,7 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                     if (!activeForcedFull && activeDrift != null)
                     {
                         requestDriftByBundle[activeBundleKey] = activeDrift;
+                        requestExactRecordEnvsByBundle[activeBundleKey] = new HashSet<string>(activeExactRecordEnvs, StringComparer.Ordinal);
                         Console.Error.WriteLine($"  [{affected.LogTag}] affectedOnly: "
                             + AlRunner.Infrastructure.AffectedEnvironmentDrift.Warning(activeDrift));
                     }
@@ -7733,8 +7736,8 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
 
                 activeForcedFull = false;
                 activeForcedReason = null;
-                activeEnvCoverageKeys = new HashSet<string>(StringComparer.Ordinal);
-                activeEnvEventKeys = new HashSet<string>(StringComparer.Ordinal);
+                activeEnvKeysByRecord.Clear();
+                activeExactRecordEnvs.Clear();
                 activeDrift = null;
                 requestEnvironmentSnapshotByBundle[bundlePath] =
                     AlRunner.Infrastructure.AffectedEnvironmentDrift.CurrentFor(bundlePath);
@@ -7995,7 +7998,7 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                     affectedUnknownTestsByBundle[bundlePath] = nextUnknown;
                     affectedFailingTestsByBundle[bundlePath] = nextFailing;
                     affectedEnvironmentKeyByBundle[bundlePath] = envKey;
-                    affected.EnvironmentByBundle[bundlePath] = CurrentEnvironmentOf(bundlePath);
+                    affected.EnvironmentsByBundle[bundlePath] = new AlRunner.Infrastructure.BundleEnvironments();
                     affectedBaselineGenerationsByBundle[bundlePath] = CurrentBaselineGenerations();
                     StoreEventBaseline(bundlePath, nextEvents);
                     recordedThisRequest.Add(bundlePath);
@@ -8011,6 +8014,14 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 affectedCoverageByBundle.TryGetValue(bundlePath, out var previousCoverage);
                 affectedFailingTestsByBundle.TryGetValue(bundlePath, out var previousFailing);
                 affectedEventsByBundle.TryGetValue(bundlePath, out var previousEvents);
+                // #5028: each record names the environment it was taken in. A skipped test's record
+                // moves to this environment only when this run diffed its own environment exactly;
+                // otherwise it keeps its older one, so a later run diffs it from there.
+                var nextEnvs = new AlRunner.Infrastructure.BundleEnvironments();
+                affected.EnvironmentsByBundle.TryGetValue(bundlePath, out var previousEnvs);
+                var currentEnv = CurrentEnvironmentOf(bundlePath);
+                requestExactRecordEnvsByBundle.TryGetValue(bundlePath, out var exactRecordEnvs);
+                var diffedThisRun = requestDriftByBundle.ContainsKey(bundlePath);
                 foreach (var testKey in discoveredTests)
                 {
                     if (selectedThisRequest != null
@@ -8018,6 +8029,11 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                         && previousCoverage != null
                         && previousCoverage.TryGetValue(testKey, out var carried))
                     {
+                        var carriedEnv = RecordEnvOf(bundlePath, testKey);
+                        if (diffedThisRun && currentEnv != null && (exactRecordEnvs?.Contains(carriedEnv) ?? false))
+                            nextEnvs.Set(testKey, currentEnv);
+                        else if (carriedEnv.Length > 0 && previousEnvs!.Snapshots.TryGetValue(carriedEnv, out var carriedSnapshot))
+                            nextEnvs.Set(testKey, carriedSnapshot);
                         nextCoverage[testKey] = carried;
                         if (previousFailing?.Contains(testKey) ?? false) nextFailing.Add(testKey);
                         // No carried record means none was taken; a missing entry selects on any change.
@@ -8127,6 +8143,7 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                     }
                     coveredObjects.UnionWith(dependencyKeys);
                     nextCoverage[testKey] = coveredObjects;
+                    if (currentEnv != null) nextEnvs.Set(testKey, currentEnv);
                     nextEvents[testKey] = RecordedKeys();
                     if (failed) nextFailing.Add(testKey);
                 }
@@ -8149,14 +8166,7 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 affectedUnknownTestsByBundle[bundlePath] = nextUnknown;
                 affectedFailingTestsByBundle[bundlePath] = nextFailing;
                 affectedEnvironmentKeyByBundle[bundlePath] = envKey;
-                // #5028: a skipped test keeps its record, which vouches for this environment only if
-                // the one it was recorded in was known and this run's diff of the two was exact.
-                affected.EnvironmentByBundle[bundlePath] =
-                    selectedThisRequest == null
-                    || (!(requestDriftByBundle.TryGetValue(bundlePath, out var drift) && drift.Mode == EnvironmentDriftInfo.Approximate)
-                        && affected.EnvironmentByBundle.TryGetValue(bundlePath, out var recordedIn) && recordedIn != null)
-                        ? CurrentEnvironmentOf(bundlePath)
-                        : null;
+                affected.EnvironmentsByBundle[bundlePath] = nextEnvs;
                 affectedBaselineGenerationsByBundle[bundlePath] = CurrentBaselineGenerations();
                 StoreEventBaseline(bundlePath, nextEvents);
                 recordedThisRequest.Add(bundlePath);
