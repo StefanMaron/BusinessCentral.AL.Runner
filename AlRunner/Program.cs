@@ -7592,7 +7592,11 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                             exactSelection.Add(testKey);
                     }
                     // #5035: a test's recording holds only what it ran, not the state earlier tests left it.
-                    var widened = AlRunner.Infrastructure.AffectedIsolationWidening.Widen(discovered, exactSelection, executor.Isolation);
+                    var statefulCodeunits = executor.Isolation == TestIsolation.Test
+                        ? TestExecutor.CodeunitsSharingStateAcrossTests(asm)
+                        : null;
+                    var widened = AlRunner.Infrastructure.AffectedIsolationWidening.Widen(discovered, exactSelection,
+                        executor.Isolation, statefulCodeunits == null ? null : statefulCodeunits.Contains);
                     if (widened > 0)
                         Console.Error.WriteLine(
                             $"  [{affected.LogTag}] affectedOnly: selected {widened} more test(s) that share state with a selected one (TestIsolation={executor.Isolation})");

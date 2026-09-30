@@ -1581,6 +1581,22 @@ public sealed class TestExecutor
     }
 
     /// <summary>
+    /// #4826: the test codeunits of <paramref name="assembly"/> that can carry state from one test to
+    /// the next under Test isolation, where the database resets per test but the instance does not:
+    /// those declaring an instance field (every AL global is one) or their own OnRun.
+    /// </summary>
+    internal static HashSet<string> CodeunitsSharingStateAcrossTests(Assembly assembly)
+    {
+        const BindingFlags declared = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic
+                                      | BindingFlags.DeclaredOnly;
+        return assembly.GetTypes()
+            .Where(t => IsTestCodeunit(t)
+                        && (ResolveDeclaredTestCodeunitOnRun(t) != null || t.GetFields(declared).Length > 0))
+            .Select(t => t.Name)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    /// <summary>
     /// The OnRun trigger <paramref name="t"/> itself declares, or null. BC runs a test codeunit's
     /// OnRun only when the codeunit declares one (<c>onRunMethod.DeclaringType == GetType()</c> in
     /// <c>NavTestCodeunit.DoRunAsync</c>); the inherited empty base is never invoked.

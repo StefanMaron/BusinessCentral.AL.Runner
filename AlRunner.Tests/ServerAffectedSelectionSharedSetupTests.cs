@@ -224,12 +224,14 @@ public class ServerAffectedSelectionSharedSetupTests
     }
 
     /// <summary>
-    /// Under Test isolation every test gets a fresh instance and database, so each reader ran the
-    /// setup itself and the selection stays per test: the test that never initializes is skipped.
-    /// Switching the isolation between requests cannot reuse that recording and runs everything.
+    /// Under Test isolation the database resets per test but the codeunit instance does not (#4826:
+    /// BC's TestIsolation = Function, measured by corpus PR #517, Windows nightly run 36727084058),
+    /// so IsInitialized carries across tests exactly as under Codeunit isolation and the selection
+    /// widens to the whole codeunit. Switching the isolation between requests cannot reuse that
+    /// recording and runs everything.
     /// </summary>
     [SkippableFact]
-    public async Task TestIsolation_SelectsPerTest_AndAnIsolationChangeForcesAFullRun()
+    public async Task TestIsolation_SetupEditSelectsTheWholeCodeunit_AndAnIsolationChangeForcesAFullRun()
     {
         TestArtifacts.SkipIfMissing();
         var bundle = Bundle("al-runner-server-affected-shared-setup-testiso", "000000000003");
@@ -240,8 +242,9 @@ public class ServerAffectedSelectionSharedSetupTests
         File.WriteAllText(Path.Combine(bundle, "Helper.Codeunit.al"), Helper(Probe));
         var edited = await Send(server, bundle, "test");
         Assert.False(edited.ForcedFull, edited.Raw);
-        AssertRan(edited, "test isolation", Readers);
+        AssertRan(edited, "test isolation", WholeTestCodeunit);
         AssertReadersFailWithProbe(edited, "test isolation");
+        Assert.Equal("pass", edited.Tests["NeverInitializes"].Status);
 
         File.WriteAllText(Path.Combine(bundle, "Helper.Codeunit.al"), Helper());
         var switched = await Send(server, bundle, "codeunit");

@@ -22,12 +22,25 @@ public class AffectedIsolationWideningTests
             selected.OrderBy(x => x, StringComparer.Ordinal));
     }
 
+    // #4826: TestIsolation = Function runs a codeunit's tests on one instance on BC (corpus PR #517,
+    // Windows nightly run 36727084058), so a codeunit with AL globals or an OnRun carries state
+    // across its tests; one with neither does not, and keeps per-test selection.
     [Fact]
-    public void Test_LeavesTheSelectionAsItIs()
+    public void Test_WidensOnlyTheCodeunitsThatCarryState()
     {
-        var selected = new HashSet<string> { "Codeunit50100.A3" };
-        Assert.Equal(0, AffectedIsolationWidening.Widen(Discovered, selected, TestIsolation.Test));
-        Assert.Equal(new[] { "Codeunit50100.A3" }, selected);
+        var selected = new HashSet<string> { "Codeunit50100.A3", "Codeunit50101.B2" };
+        Assert.Equal(2, AffectedIsolationWidening.Widen(Discovered, selected, TestIsolation.Test,
+            c => c == "Codeunit50100"));
+        Assert.Equal(new[] { "Codeunit50100.A1", "Codeunit50100.A2", "Codeunit50100.A3", "Codeunit50101.B2" },
+            selected.OrderBy(x => x, StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void Test_WithoutAnAnswer_AssumesEveryCodeunitCarriesState()
+    {
+        var selected = new HashSet<string> { "Codeunit50101.B2" };
+        Assert.Equal(1, AffectedIsolationWidening.Widen(Discovered, selected, TestIsolation.Test));
+        Assert.Equal(new[] { "Codeunit50101.B1", "Codeunit50101.B2" }, selected.OrderBy(x => x, StringComparer.Ordinal));
     }
 
     [Fact]
@@ -40,6 +53,7 @@ public class AffectedIsolationWideningTests
 
     [Theory]
     [InlineData(TestIsolation.Codeunit)]
+    [InlineData(TestIsolation.Test)]
     [InlineData(TestIsolation.Disabled)]
     public void EmptySelection_StaysEmpty(TestIsolation isolation)
     {

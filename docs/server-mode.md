@@ -581,7 +581,8 @@ server processes"). The runner:
    any other test, unless the request sets `includeFailing: true` — see below;
 6. widens the selection to the tests that share state with a selected one: under the
    default `TestIsolation = Codeunit` every test of a selected test's codeunit, under
-   `disabled` every test of the bundle (see "affectedOnly and test isolation").
+   `test` the same for a codeunit that declares AL globals or an OnRun, under `disabled`
+   every test of the bundle (see "affectedOnly and test isolation").
 
 When the runner cannot prove a safe object delta, it **forces a full run**
 (`selection.forcedFull:true`) and sets `selection.reason`. Forced-full causes
@@ -621,7 +622,7 @@ So selection widens by what the isolation shares:
 |---|---|
 | `codeunit` (default) | every test of its codeunit |
 | `disabled` | every test of the bundle, since nothing is reset between codeunits |
-| `test` (`method`) | nothing: each test gets a fresh codeunit instance and a fresh database |
+| `test` (`method`) | every test of its codeunit when the codeunit declares AL globals or an `OnRun`, otherwise nothing: the database resets per test, but the tests share one codeunit instance, so globals such as an `isInitialized` flag and what `OnRun` left carry across them (#4826) |
 
 Why the whole codeunit and not only the tests after the first selected one: the test
 order is fixed (source declaration order, not the run seed), so the tests before it ran no
