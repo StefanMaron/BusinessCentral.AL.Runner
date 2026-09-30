@@ -7574,6 +7574,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         {
             AlRunner.Infrastructure.AlCoverageTracker.ResetPerTest();
             AlRunner.Infrastructure.AlEventRaiseTracker.ResetPerTest();
+            AlRunner.Infrastructure.AlObjectUseTracker.ResetPerTest();
         }
 
         var cts = new System.Threading.CancellationTokenSource();
@@ -7661,10 +7662,16 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                                 activePreviousEvents != null
                                 && activePreviousEvents.TryGetValue(AlRunner.Infrastructure.AlEventRaiseTracker.BundleWideKey, out var bundleWide)
                                     ? bundleWide : null);
-                            if (eventResult.ForceFullReason != null || tableResult.ForceFullReason != null)
+                            // #5011: a whole-object change to an instance no one test owns.
+                            var longLivedReason = AlRunner.Infrastructure.AffectedEventSelection.LongLivedObjectChange(
+                                changedObjectKeys,
+                                activePreviousEvents != null
+                                && activePreviousEvents.TryGetValue(AlRunner.Infrastructure.AlEventRaiseTracker.BundleWideKey, out var bundleWideObjects)
+                                    ? bundleWideObjects : null);
+                            if (eventResult.ForceFullReason != null || tableResult.ForceFullReason != null || longLivedReason != null)
                             {
                                 activeForcedFull = true;
-                                activeForcedReason = eventResult.ForceFullReason ?? tableResult.ForceFullReason;
+                                activeForcedReason = eventResult.ForceFullReason ?? tableResult.ForceFullReason ?? longLivedReason;
                             }
                             else changedEventKeys = eventResult.Keys.Union(tableResult.Keys).ToHashSet(StringComparer.Ordinal);
                         }
@@ -7882,6 +7889,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             IReadOnlyList<AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord>? statementTable = null;
             IReadOnlyDictionary<string, List<AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord>>? perTestStatementTable = null;
             IReadOnlyList<AlRunner.Infrastructure.SourceScanFailure>? scanFailures = null;
+            AlRunner.Infrastructure.AlSourceLocationMap? selectionSourceMap = null;
             if (requestCoverage || collectPerTestForSelection)
             {
                 var covSourceMap = AlRunner.Infrastructure.AlCoverageSourceMap.Build(
@@ -7897,10 +7905,13 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 // #2135: independent of the aggregate table above — see
                 // AlCoverageTracker.CollectPerTestStatementTable's doc comment.
                 if (collectPerTestForSelection)
+                {
                     perTestStatementTable = AlRunner.Infrastructure.AlCoverageTracker.CollectPerTestStatementTable(covSourceMap);
+                    selectionSourceMap = covSourceMap;
+                }
             }
 
-            if (collectPerTestForSelection && perTestStatementTable != null)
+            if (collectPerTestForSelection && perTestStatementTable != null && selectionSourceMap != null)
             {
                 var resultByTest = allTests
                     .Where(t => t.Method != "<ctor>")
@@ -7945,6 +7956,24 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     }
                 var eventsByTest = AlRunner.Infrastructure.AlEventRaiseTracker.CollectPerTest(extensionsOfTable);
                 var bundleWideKey = AlRunner.Infrastructure.AlEventRaiseTracker.BundleWideKey;
+                // #5011: objects built and scopes entered, which an empty body or a page without
+                // triggers leaves out of statement coverage.
+                var useByTest = AlRunner.Infrastructure.AlObjectUseTracker.CollectPerTest();
+                var longLivedObjectKeys = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var type in AlRunner.Infrastructure.AlObjectUseTracker.LongLivedObjects())
+                    if (UsedObjectOf(type) is { } o)
+                        longLivedObjectKeys.Add(AlRunner.Infrastructure.AffectedEventSelection.LongLivedObjectKey(o.Key));
+
+                // The key and file of an AL object class from this request's sources; null outside them.
+                // The class names its object, so a file declaring several objects (#5003) still keys.
+                (string Key, string Path)? UsedObjectOf(Type objectType)
+                {
+                    var (label, id) = AlRunner.Infrastructure.AlCallStackCapture.ParseObjectTypeAndId(objectType);
+                    if (id == 0 || !selectionSourceMap.TryGetValue((label, id), out var path)) return null;
+                    return (requestWideTrackedObjectsByPath.TryGetValue(path, out var identity)
+                        ? ToAffectedObjectKey(identity)
+                        : ToAffectedObjectKey(new AffectedObjectId(label == "CodeUnit" ? "Codeunit" : label, id, "")), path);
+                }
                 // #4988: the event side of the baseline, stored whenever the coverage is.
                 var recordedThisRequest = new List<string>();
                 void StoreEventBaseline(string bundlePath, Dictionary<string, HashSet<string>> nextEvents)
@@ -8045,7 +8074,9 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                         }
                         var failed = result.Outcome != TestOutcome.Pass;
 
-                        if (!perTestStatementTable.TryGetValue(testKey, out var statements) || statements.Count == 0)
+                        perTestStatementTable.TryGetValue(testKey, out var statements);
+                        useByTest.TryGetValue(testKey, out var used);
+                        if ((statements == null || statements.Count == 0) && used == null)
                         {
                             nextUnknown.Add(testKey);
                             continue;
@@ -8053,26 +8084,52 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
 
                         var coveredObjects = new HashSet<string>(StringComparer.Ordinal);
                         var unmappable = false;
-                        foreach (var s in statements)
+                        // False when the file maps to no single object (#5003) and is not packaged.
+                        bool Cover(string filePath, string? scopeName)
                         {
-                            if (!requestWideTrackedObjectsByPath.TryGetValue(s.FilePath, out var identity))
-                            {
-                                if (AlRunner.Infrastructure.DependencyPackageFingerprint.IsUnderAny(s.FilePath, packagedSourceRoots))
-                                    continue;
-                                unmappable = true;
-                                break;
-                            }
-                            var objKey = ToAffectedObjectKey(identity);
+                            if (!requestWideTrackedObjectsByPath.TryGetValue(filePath, out var identity))
+                                return AlRunner.Infrastructure.DependencyPackageFingerprint.IsUnderAny(filePath, packagedSourceRoots);
+                            AddKeys(ToAffectedObjectKey(identity), scopeName);
+                            return true;
+                        }
+                        void AddKeys(string objKey, string? scopeName)
+                        {
                             coveredObjects.Add(objKey);
-                            // #2539: ALSO record the procedure-level compound key for this
-                            // statement's scope, so a test whose coverage never leaves the one
-                            // procedure that changed can be selected WITHOUT the plain
-                            // object-level key matching every other test that merely touched a
-                            // DIFFERENT procedure of the same object. The plain object-level key
-                            // stays too — it is what makes a WIDENED (whole-object) changed
-                            // entry still match every test that covered the object at all.
-                            if (!string.IsNullOrEmpty(s.ScopeName))
-                                coveredObjects.Add(ToAffectedScopeKey(objKey, s.ScopeName));
+                            // #2539: ALSO the procedure-level compound key, so a change narrowed to one
+                            // procedure selects only the tests that ran it. The plain object-level key
+                            // stays too — it is what a WIDENED (whole-object) change matches.
+                            if (!string.IsNullOrEmpty(scopeName))
+                                coveredObjects.Add(ToAffectedScopeKey(objKey, scopeName));
+                        }
+                        foreach (var s in statements ?? Enumerable.Empty<AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord>())
+                            if (!Cover(s.FilePath, s.ScopeName)) { unmappable = true; break; }
+                        if (used != null && !unmappable)
+                        {
+                            // Outside this request's sources, or packaged: skipped, as a statement there is.
+                            bool Keyed(Type objectType, out string key)
+                            {
+                                key = "";
+                                if (UsedObjectOf(objectType) is not { } o
+                                    || AlRunner.Infrastructure.DependencyPackageFingerprint.IsUnderAny(o.Path, packagedSourceRoots))
+                                    return false;
+                                key = o.Key;
+                                return true;
+                            }
+                            foreach (var scope in used.Scopes)
+                            {
+                                if (!Keyed(AlRunner.Infrastructure.AlScopeKey.ObjectTypeOf(scope), out var objKey)) continue;
+                                // An entered method that cannot be named cannot carry its scope key.
+                                if (AlRunner.Infrastructure.AlCoverageTracker.TryResolveScope(scope, selectionSourceMap) is not { } resolved)
+                                {
+                                    unmappable = true;
+                                    break;
+                                }
+                                AddKeys(objKey, resolved.ScopeName);
+                            }
+                            foreach (var type in used.UnresolvedScopeOwners)
+                                if (Keyed(type, out _)) unmappable = true;
+                            foreach (var type in used.Objects)
+                                if (Keyed(type, out var objKey)) AddKeys(objKey, null);
                         }
 
                         if (unmappable || coveredObjects.Count == 0)
@@ -8089,6 +8146,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     // #5008: what no single test holds. A narrowed run constructed only its own
                     // tests' long-lived records, so the previous entry's are kept as well.
                     var bundleWide = new HashSet<string>(eventsByTest[bundleWideKey], StringComparer.Ordinal);
+                    bundleWide.UnionWith(longLivedObjectKeys);
                     if (selectedThisRequest != null && previousEvents != null
                         && previousEvents.TryGetValue(bundleWideKey, out var previousBundleWide))
                         bundleWide.UnionWith(previousBundleWide);

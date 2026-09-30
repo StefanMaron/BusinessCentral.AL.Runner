@@ -86,6 +86,8 @@ public static partial class BcRuntime
         if (_fAoRuntimeGroupId != null) FieldPoke.SetInstance(_fAoRuntimeGroupId, self, 0);
         // 4. `AppId = objectId.IsDynamic ? null : navAppGroup.GetObjectOwner(objectId)?.AppId`.
         StampOwningAppId(self, objectId);
+        // #5011: which tests used which AL objects, for affectedOnly. Observer only.
+        AlObjectUseTracker.NoteObjectConstructed(self, parent);
     }
 
     /// <summary>

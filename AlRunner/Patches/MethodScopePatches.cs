@@ -713,5 +713,6 @@ public static partial class BcRuntime
     /// `ScopeId` getter tolerates that (`value.HasValue ? value.Value : 0`).
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void ALMethodScope_AssignScopeId(object? self) { }
+    public static void ALMethodScope_AssignScopeId(object? self)
+        => AlRunner.Infrastructure.AlObjectUseTracker.NoteInlineScopeEntered(self); // #5011
 }
