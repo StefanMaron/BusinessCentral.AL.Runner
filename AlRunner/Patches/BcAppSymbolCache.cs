@@ -435,7 +435,10 @@ internal static partial class BcAppSymbolCache
         // The action's RunPageView (#4974), in the grammar a page's SourceTableView uses, so
         // ParseSourceTableView reads both. Null when the action declares none. Field names
         // resolve against the TARGET page's table in RunnerPageInstance.ViewFromSymbols.
-        PageTableViewSymbol? RunPageView = null)
+        PageTableViewSymbol? RunPageView = null,
+        // The action's RunPageMode (#4997) verbatim — "View", "Edit" or "Create" — or null when
+        // it declares none. Adding it re-keys the cache through PayloadShape.
+        string? RunPageMode = null)
     {
         internal bool HasRunPageLink => DeclaredRunPageLinkEntries > 0;
     }
@@ -2101,7 +2104,8 @@ internal static partial class BcAppSymbolCache
             parsedLink,
             unreadableLink,
             ParseSourceTableView(
-                $"action \"{(node.TryGetProperty("Name", out var n) ? n.GetString() : null)}\" RunPageView", view));
+                $"action \"{(node.TryGetProperty("Name", out var n) ? n.GetString() : null)}\" RunPageView", view),
+            props.TryGetValue("RunPageMode", out var mode) && !string.IsNullOrWhiteSpace(mode) ? mode : null);
     }
 
     /// <summary>

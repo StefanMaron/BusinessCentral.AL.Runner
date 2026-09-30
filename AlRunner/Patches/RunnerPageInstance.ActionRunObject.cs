@@ -132,7 +132,11 @@ internal sealed partial class RunnerPageInstance
         string? ObjectName,
         bool RunPageOnRec,
         IReadOnlyList<ActionRunLink> Links,
-        ActionRunView? View = null);
+        ActionRunView? View = null,
+        ActionRunPageMode Mode = ActionRunPageMode.Default);
+
+    /// <summary>An action's <c>RunPageMode</c> (#4997); <c>Default</c> when it declares none.</summary>
+    internal enum ActionRunPageMode { Default, View, Edit, Create }
 
     /// <summary>
     /// An action's <c>RunPageView</c> (#4974), resolved to field numbers: the key and direction
@@ -257,7 +261,23 @@ internal sealed partial class RunnerPageInstance
         if (target.View is { } view && record != null)
             ApplyActionRunView(record, view);
 
-        RunPageThroughBcFrontDoor(target.ObjectId, record);
+        // RunPageMode rides the same pending-mode channel a list's built-in View/Edit action
+        // uses (BuiltInPageModeAction), so the target's OnOpenPage and the handler see it.
+        // Edit arms nothing: the target keeps its declared Editable, as an Edit-mode open does.
+        // Corpus codeunits 67018 / 67019 (StefanMaron/BusinessCentral.AL.Language.Tests#509).
+        if (target.Mode == ActionRunPageMode.View)
+            RunnerPendingPageOpenMode.Arm(target.ObjectId, readOnly: true);
+        else if (target.Mode == ActionRunPageMode.Create)
+            RunnerPendingPageOpenMode.ArmCreate(target.ObjectId);
+        try
+        {
+            RunPageThroughBcFrontDoor(target.ObjectId, record);
+        }
+        finally
+        {
+            if (target.Mode is ActionRunPageMode.View or ActionRunPageMode.Create)
+                RunnerPendingPageOpenMode.Disarm();
+        }
         RereadHostRowAfterTarget();
     }
 
@@ -477,6 +497,10 @@ internal sealed partial class RunnerPageInstance
         session.Company.RegisterForm(form);
         try
         {
+            // The mode an action asked for reaches OnOpenPage here too; nothing builds a handler
+            // page afterwards, so a Create mark is dropped rather than left for GC.
+            RunnerModalDispatch.ApplyPendingPageOpenMode(form);
+            RunnerPendingPageOpenMode.TryConsumeOpensOnNewRecord(form);
             form.OpenForm();
         }
         finally
@@ -778,8 +802,29 @@ internal sealed partial class RunnerPageInstance
             RecordPatches.TryGetObjectNameOfKind(action.RunObjectType.ToString(), action.TargetID),
             action.RunPageOnRec,
             LinksFromMetadata(action),
-            ViewFromMetadata(action.RunFormView));
+            ViewFromMetadata(action.RunFormView),
+            action.RunPageModeSpecified
+                ? RunPageModeFromText(actionId, action.RunPageMode.ToString())
+                : ActionRunPageMode.Default);
     }
+
+    /// <summary>
+    /// An action's <c>RunPageMode</c> from its name, as BC's metadata enum and SymbolReference.json
+    /// both spell it. A value that is none of AL's three is refused by name: opening the target in
+    /// some other mode than the one declared is the silent wrong answer.
+    /// </summary>
+    internal ActionRunPageMode RunPageModeFromText(int actionId, string? text)
+        => text switch
+        {
+            null or "" => ActionRunPageMode.Default,
+            _ when text.Equals("View", StringComparison.OrdinalIgnoreCase) => ActionRunPageMode.View,
+            _ when text.Equals("Edit", StringComparison.OrdinalIgnoreCase) => ActionRunPageMode.Edit,
+            _ when text.Equals("Create", StringComparison.OrdinalIgnoreCase) => ActionRunPageMode.Create,
+            _ => throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                $"TestPage action {actionId} on page {_pageId}",
+                $"not-yet-implemented — the action declares RunPageMode = '{text}', which is not one "
+                + "of AL's three modes (View / Edit / Create)"),
+        };
 
     /// <summary>
     /// The action's <c>RunPageView</c> as BC's compiled metadata carries it: a
@@ -903,7 +948,10 @@ internal sealed partial class RunnerPageInstance
                 : NoLinks,
             runObjectType == MetaTypes.RunObjectType.Page
                 ? ViewFromSymbols(actionId, spec, objectId)
-                : null);
+                : null,
+            runObjectType == MetaTypes.RunObjectType.Page
+                ? RunPageModeFromText(actionId, spec.RunPageMode)
+                : ActionRunPageMode.Default);
     }
 
     /// <summary>

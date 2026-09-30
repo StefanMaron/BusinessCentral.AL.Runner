@@ -147,7 +147,7 @@ public class RunnerPendingPageOpenModeTests
     [Fact]
     public void NothingArmed_ConsumesNothing()
     {
-        Assert.False(RunnerPendingPageOpenMode.TryConsume(60458, out var readOnly));
+        Assert.False(RunnerPendingPageOpenMode.TryConsume(60458, out var readOnly, out _));
         Assert.False(readOnly);
     }
 
@@ -155,7 +155,7 @@ public class RunnerPendingPageOpenModeTests
     public void ArmedReadOnly_IsConsumedByTheArmedPage()
     {
         RunnerPendingPageOpenMode.Arm(60458, readOnly: true);
-        Assert.True(RunnerPendingPageOpenMode.TryConsume(60458, out var readOnly));
+        Assert.True(RunnerPendingPageOpenMode.TryConsume(60458, out var readOnly, out _));
         Assert.True(readOnly);
     }
 
@@ -167,7 +167,7 @@ public class RunnerPendingPageOpenModeTests
     public void ArmedEditable_IsConsumedAndReportsNotReadOnly()
     {
         RunnerPendingPageOpenMode.Arm(60458, readOnly: false);
-        Assert.True(RunnerPendingPageOpenMode.TryConsume(60458, out var readOnly));
+        Assert.True(RunnerPendingPageOpenMode.TryConsume(60458, out var readOnly, out _));
         Assert.False(readOnly);
     }
 
@@ -177,8 +177,8 @@ public class RunnerPendingPageOpenModeTests
     public void ConsumedOnce_TheSecondReadFindsNothing()
     {
         RunnerPendingPageOpenMode.Arm(60458, readOnly: true);
-        Assert.True(RunnerPendingPageOpenMode.TryConsume(60458, out _));
-        Assert.False(RunnerPendingPageOpenMode.TryConsume(60458, out var readOnly));
+        Assert.True(RunnerPendingPageOpenMode.TryConsume(60458, out _, out _));
+        Assert.False(RunnerPendingPageOpenMode.TryConsume(60458, out var readOnly, out _));
         Assert.False(readOnly);
     }
 
@@ -188,9 +188,9 @@ public class RunnerPendingPageOpenModeTests
     public void ADifferentPageDoesNotConsumeIt()
     {
         RunnerPendingPageOpenMode.Arm(60458, readOnly: true);
-        Assert.False(RunnerPendingPageOpenMode.TryConsume(60459, out var readOnly));
+        Assert.False(RunnerPendingPageOpenMode.TryConsume(60459, out var readOnly, out _));
         Assert.False(readOnly);
-        Assert.True(RunnerPendingPageOpenMode.TryConsume(60458, out readOnly));
+        Assert.True(RunnerPendingPageOpenMode.TryConsume(60458, out readOnly, out _));
         Assert.True(readOnly);
     }
 
@@ -199,8 +199,8 @@ public class RunnerPendingPageOpenModeTests
     public void PageIdZeroNeverConsumes()
     {
         RunnerPendingPageOpenMode.Arm(60458, readOnly: true);
-        Assert.False(RunnerPendingPageOpenMode.TryConsume(0, out _));
-        Assert.True(RunnerPendingPageOpenMode.TryConsume(60458, out _));
+        Assert.False(RunnerPendingPageOpenMode.TryConsume(0, out _, out _));
+        Assert.True(RunnerPendingPageOpenMode.TryConsume(60458, out _, out _));
     }
 
     // Disarm is what RunnerPendingPageOpenMode's caller runs in a finally: an open that never
@@ -211,6 +211,6 @@ public class RunnerPendingPageOpenModeTests
     {
         RunnerPendingPageOpenMode.Arm(60458, readOnly: true);
         RunnerPendingPageOpenMode.Disarm();
-        Assert.False(RunnerPendingPageOpenMode.TryConsume(60458, out _));
+        Assert.False(RunnerPendingPageOpenMode.TryConsume(60458, out _, out _));
     }
 }

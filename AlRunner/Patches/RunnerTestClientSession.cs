@@ -107,7 +107,11 @@ public sealed class RunnerTestClientSession : ITestClientSession
         // RefreshOnAfterGetRecord() off OnAfterGetRecord, and nothing in OnOpenPage; opened
         // modally on a caller-positioned Purchase Header it showed zeros, because this line
         // skipped the only path that fires them (issue #2797).
-        if (record != null)
+        // Opened in Create mode (an action's RunPageMode = Create, #4997): the handler is handed
+        // a new record, exactly as RunnerTestPageState.MarkOpened starts one for OpenNew().
+        if (record != null && RunnerPendingPageOpenMode.TryConsumeOpensOnNewRecord(form))
+            live.InsertEmptyRow(beforeCurrent: true);
+        else if (record != null)
         {
             if (IsUnpositioned(record)) live.MoveFirstDuringOpen();
             else
