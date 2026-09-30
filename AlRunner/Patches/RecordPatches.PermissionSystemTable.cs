@@ -19,8 +19,8 @@
 // SetupVersion. BC bumps it from SystemTableTriggers.OnTransactionEnded (commit AND rollback):
 // every system table written in the transaction goes to TableChangeMonitors.NotifyTableChanges,
 // which runs PermissionSetupMonitor.ResetSetup for the ones in its TableIds. The runner mirrors
-// that at its transaction ends (NotePermissionSetupTableWrite / EndPermissionSetupTransaction,
-// #4983; corpus 67947). Not mirrored: the immediate, mid-transaction bump
+// that at its transaction ends, including a transaction world that ends without committing
+// (NotePermissionSetupTableWrite / EndPermissionSetupTransaction, #4983, #5022; corpus 67947). Not mirrored: the immediate, mid-transaction bump
 // SystemTableTriggers.OnWriteToCompanyTable makes on a Company insert, rename or delete.
 using System;
 using System.Collections.Generic;

@@ -12,6 +12,10 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **permissions:** a rolled-back transaction world advances PermissionSetupMonitor.SetupVersion
+- **tdd:** infer Enum parameter types from enumextension values and namespace-qualified enum references
+- **selection:** link tests across the session state they share (WorkDate, NumberSequence, SingleInstance)
+- **dep-metadata:** key on the runner build, and compile a precompiled dependency's metadata without --define
 - **cache:** the dep-metadata cache key carries the package content and --define symbols
 - **tdd:** generate members across source bundles and report lost tests
 - **selection:** select the whole codeunit when shared setup can carry state across its tests

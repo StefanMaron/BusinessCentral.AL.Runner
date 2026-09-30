@@ -253,11 +253,16 @@ public class ServerAffectedSelectionTableChangeTests
 
     private static readonly string[] Holders = { "InsertsRow", "ReadsInit", "ValidatesName" };
 
+    // #5050: the SingleInstance tests run after the holders and read state a changed test could
+    // start writing, so any selection brings them (docs/server-mode.md#affectedonly-and-session-state).
+    private static readonly string[] Selected =
+        Holders.Concat(new[] { "ViaSingleInstance", "ViaSingleInstance2" }).OrderBy(x => x, StringComparer.Ordinal).ToArray();
+
     private static void AssertNarrowedToHolders(Observed o, string failing, string probe)
     {
         Assert.False(o.ForcedFull, o.Raw);
-        Assert.Equal(Holders, o.Ran);
-        foreach (var t in Holders)
+        Assert.Equal(Selected, o.Ran);
+        foreach (var t in Selected)
             Assert.True(o.Status[t] == (t == failing ? "fail" : "pass"), $"{t}: {o.Raw}");
         Assert.Contains(probe, o.Line[failing], StringComparison.Ordinal);
     }
@@ -288,7 +293,7 @@ public class ServerAffectedSelectionTableChangeTests
         Write(bundle, "Tab.Table.al", Table(nameField: NameInitValue));
         AssertNarrowedToHolders(await Send(server, bundle), "ReadsInit", "PROBE-INIT");
         Write(bundle, "Tab.Table.al", Table());
-        Assert.Equal(Holders, (await Send(server, bundle)).Ran);
+        Assert.Equal(Selected, (await Send(server, bundle)).Ran);
 
         // A new tableextension: the current registry names its base table.
         Write(bundle, "Ext.TableExt.al", Extension(ExtensionInsertProbe));
@@ -298,12 +303,12 @@ public class ServerAffectedSelectionTableChangeTests
         Write(bundle, "Ext.TableExt.al", Extension(""));
         var emptied = await Send(server, bundle);
         Assert.False(emptied.ForcedFull, emptied.Raw);
-        Assert.Equal(Holders, emptied.Ran);
+        Assert.Equal(Selected, emptied.Ran);
         Assert.All(emptied.Status.Values, s => Assert.Equal("pass", s));
         File.Delete(Path.Combine(bundle, "Ext.TableExt.al"));
         var removed = await Send(server, bundle);
         Assert.False(removed.ForcedFull, removed.Raw);
-        Assert.Equal(Holders, removed.Ran);
+        Assert.Equal(Selected, removed.Ran);
 
         // A table no test holds a record of selects nothing.
         Write(bundle, "Untouched.Table.al", UntouchedChanged);
@@ -358,14 +363,14 @@ public class ServerAffectedSelectionTableChangeTests
         Write(bundle, "Tab.Table.al", Table(nameField: NameOnValidateProbe, triggers: OnInsertProbe));
         var edited = await SendFresh(cache, bundle);
         Assert.False(edited.ForcedFull, edited.Raw);
-        Assert.Equal(Holders, edited.Ran);
+        Assert.Equal(Selected, edited.Ran);
         Assert.Contains("PROBE-INSERT", edited.Line["InsertsRow"], StringComparison.Ordinal);
         Assert.Contains("PROBE-VALIDATE", edited.Line["ValidatesName"], StringComparison.Ordinal);
         Assert.Equal("pass", edited.Status["ReadsInit"]);
 
         Write(bundle, "Tab.Table.al", Table());
         var reverted = await SendFresh(cache, bundle);
-        Assert.Equal(Holders, reverted.Ran);
+        Assert.Equal(Selected, reverted.Ran);
         Assert.All(reverted.Status.Values, s => Assert.Equal("pass", s));
 
         // The extension alone, so only its own mapping to the table can select.

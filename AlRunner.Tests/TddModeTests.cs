@@ -284,7 +284,7 @@ public sealed class TddModeTests : IDisposable
         Assert.Equal(1, exit);
         using var doc = JsonDocument.Parse(stdout.Trim());
         var tests = doc.RootElement.GetProperty("tests").EnumerateArray().ToList();
-        Assert.Equal(6, doc.RootElement.GetProperty("total").GetInt32());
+        Assert.Equal(8, doc.RootElement.GetProperty("total").GetInt32());
 
         void AssertGenerated(string testName, string signature, string procName)
         {
@@ -314,7 +314,55 @@ public sealed class TddModeTests : IDisposable
         Assert.DoesNotContain("underlying result", fieldMsg);
         Assert.Contains("Tdd Loyalty Member: field \"Tier\": Enum \"Loyalty Tier\"", stderr);
 
-        Assert.Contains("--tdd: generated 5 member(s) this run:", stderr);
+        Assert.Contains("--tdd: generated 7 member(s) this run:", stderr);
+    }
+
+    private (List<JsonElement> Tests, string Stderr) RunEnumArgsFixture(string cacheName)
+    {
+        var alCache = Path.Combine(_scratch, cacheName);
+        var (stdout, stderr, exit) = RunRunner(
+            "--tdd", $"--cache \"{alCache}\"", "--output-json", $"\"{EnumArgsFixturePath}\"");
+        Assert.Equal(1, exit);
+        using var doc = JsonDocument.Parse(stdout.Trim());
+        Assert.Equal(8, doc.RootElement.GetProperty("total").GetInt32());
+        return (doc.RootElement.GetProperty("tests").EnumerateArray().Select(e => e.Clone()).ToList(), stderr);
+    }
+
+    private static void AssertGeneratedStub(List<JsonElement> tests, string stderr,
+        string testName, string signature, string procName)
+    {
+        var t = FindTest(tests, testName);
+        Assert.Equal("fail", t.GetProperty("status").GetString());
+        var msg = t.GetProperty("message").GetString()!;
+        Assert.DoesNotContain("did not compile", msg);
+        Assert.Contains($"{procName} is a generated stub", msg);
+        Assert.Contains($"Tdd Loyalty Cu: procedure {signature}", stderr);
+    }
+
+    /// <summary>
+    /// #5044: a value an enumextension adds (<c>"Loyalty Tier"::Platinum</c>) is a value of the
+    /// base enum, so the parameter is <c>Enum "Loyalty Tier"</c>, not a refusal.
+    /// </summary>
+    [SkippableFact]
+    public void EnumExtensionValueArgument_GeneratesBaseEnumParameter()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (tests, stderr) = RunEnumArgsFixture("al-cache-enumext-arg");
+        AssertGeneratedStub(tests, stderr, "EnumExtValueArg_GeneratesBaseEnumParameter",
+            "\"CalcBonus\"(Arg1: Enum \"Loyalty Tier\"): Integer", "CalcBonus");
+    }
+
+    /// <summary>
+    /// #5044: a namespace-qualified enum value at the call site
+    /// (<c>TddEnumArgs.Membership."Member Status"::Lapsed</c>) generates the qualified parameter.
+    /// </summary>
+    [SkippableFact]
+    public void QualifiedEnumValueArgument_GeneratesQualifiedEnumParameter()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (tests, stderr) = RunEnumArgsFixture("al-cache-qualified-enum-arg");
+        AssertGeneratedStub(tests, stderr, "QualifiedEnumValueArg_GeneratesQualifiedEnumParameter",
+            "\"CalcRenewal\"(Arg1: Enum TddEnumArgs.Membership.\"Member Status\"): Integer", "CalcRenewal");
     }
 
     /// <summary>

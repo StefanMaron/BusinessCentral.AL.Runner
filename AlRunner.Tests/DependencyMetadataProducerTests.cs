@@ -140,8 +140,11 @@ public sealed class DependencyMetadataProducerTests
     private const string ContentA = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     private const string ContentB = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
 
+    private const string RunnerA = "aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000";
+    private const string RunnerB = "bbbb0000bbbb0000bbbb0000bbbb0000bbbb0000bbbb0000bbbb0000bbbb0000";
+
     private static string Key(AppManifest m, string content = ContentA, params string[] defines)
-        => DependencyMetadataProducer.CacheKeyCore(m, content, defines)!;
+        => DependencyMetadataProducer.CacheKeyCore(m, content, defines, RunnerA)!;
 
     /// <summary>
     /// #5039: a rebuilt package at an unchanged id and version is a different key.
@@ -183,9 +186,60 @@ public sealed class DependencyMetadataProducerTests
         var m = Manifest("Business Foundation");
         var p1 = WritePackage("key-a", ("src/A.Table.al", "table 50000 A { fields { field(1; X; Integer) { } } }"));
         var p2 = WritePackage("key-b", ("src/A.Table.al", "table 50000 A { fields { field(2; Y; Integer) { } } }"));
-        var k1 = DependencyMetadataProducer.CacheKey(m, p1);
+        var k1 = DependencyMetadataProducer.CacheKey(m, p1, Array.Empty<string>());
         Assert.NotNull(k1);
-        Assert.NotEqual(k1, DependencyMetadataProducer.CacheKey(m, p2));
+        Assert.NotEqual(k1, DependencyMetadataProducer.CacheKey(m, p2, Array.Empty<string>()));
+    }
+
+    /// <summary>
+    /// #5049: a runner build that changes the emitted document set for an unchanged package
+    /// must not replay an entry an earlier build wrote (#3875 moved Business Foundation from 55
+    /// to 70 documents). Same package, same symbols, same BC build; only the runner differs.
+    /// </summary>
+    [Fact]
+    public void CacheKey_SeparatesRunnerBuilds()
+    {
+        var m = Manifest("Business Foundation");
+        var a = DependencyMetadataProducer.CacheKeyCore(m, ContentA, Array.Empty<string>(), RunnerA);
+        var b = DependencyMetadataProducer.CacheKeyCore(m, ContentA, Array.Empty<string>(), RunnerB);
+        Assert.NotNull(a);
+        Assert.NotNull(b);
+        Assert.NotEqual(a, b);
+        Assert.Equal(a, DependencyMetadataProducer.CacheKeyCore(m, ContentA, Array.Empty<string>(), RunnerA));
+    }
+
+    /// <summary>
+    /// #5049: the production key reads the RUNNING runner's fingerprint — it equals the core
+    /// key built from <see cref="AlRunner.Infrastructure.RunnerFingerprint.ContentHash"/>, and
+    /// differs from one built from any other runner hash.
+    /// </summary>
+    [Fact]
+    public void CacheKey_FromPackageFile_CarriesTheRunningRunnersFingerprint()
+    {
+        var m = Manifest("Business Foundation");
+        var p = WritePackage("key-runner", ("src/A.Table.al", "table 50000 A { fields { field(1; X; Integer) { } } }"));
+        var running = AlRunner.Infrastructure.RunnerFingerprint.ContentHash;
+        Assert.NotEqual(AlRunner.Infrastructure.RunnerFingerprint.UnknownContentHash, running);
+        var content = AlRunner.Infrastructure.RunnerFingerprint.ComputeFileContentHashMemoized(p);
+
+        var key = DependencyMetadataProducer.CacheKey(m, p, Array.Empty<string>());
+        Assert.Equal(DependencyMetadataProducer.CacheKeyCore(m, content, Array.Empty<string>(), running), key);
+        Assert.NotEqual(DependencyMetadataProducer.CacheKeyCore(m, content, Array.Empty<string>(), RunnerA), key);
+    }
+
+    /// <summary>
+    /// #5049: a runner that cannot identify itself has no key, as a package whose bytes cannot
+    /// be read has none — one shared <c>runner:unknown</c> line would serve one build's entry to
+    /// every other build in that state.
+    /// </summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData("unknown")]
+    public void CacheKey_UnknownRunner_IsNull(string runner)
+    {
+        if (runner == "unknown") runner = AlRunner.Infrastructure.RunnerFingerprint.UnknownContentHash;
+        Assert.Null(DependencyMetadataProducer.CacheKeyCore(
+            Manifest("Business Foundation"), ContentA, Array.Empty<string>(), runner));
     }
 
     /// <summary>
@@ -200,7 +254,7 @@ public sealed class DependencyMetadataProducerTests
     {
         if (content == "unknown") content = AlRunner.Infrastructure.RunnerFingerprint.UnknownContentHash;
         Assert.Null(DependencyMetadataProducer.CacheKeyCore(
-            Manifest("Business Foundation"), content!, Array.Empty<string>()));
+            Manifest("Business Foundation"), content!, Array.Empty<string>(), RunnerA));
     }
 
     // ---- availability vs failure ---------------------------------------------------

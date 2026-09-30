@@ -502,7 +502,11 @@ public static class TddGeneration
             NavCA.IParameterSymbol p => p.ParameterType,
             // `"Loyalty Tier"::Gold` (#5038). An Option member (IOptionSymbol) is deliberately
             // not here: an Option parameter needs a member list one call site does not fix.
-            NavCA.IEnumValueSymbol ev => ev.ContainingType,
+            // A value an enumextension adds is contained by the extension, whose Target is the
+            // base enum — the type a parameter is declared with (#5044).
+            NavCA.IEnumValueSymbol ev => ev.ContainingType is NavCA.IApplicationObjectExtensionTypeSymbol ext
+                ? ext.Target as NavCA.ITypeSymbol
+                : ev.ContainingType,
             NavCA.ITypeSymbol t => t,
             _ => null,
         };

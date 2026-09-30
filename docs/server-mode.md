@@ -582,7 +582,10 @@ server processes"). The runner:
 6. widens the selection to the tests that share state with a selected one: under the
    default `TestIsolation = Codeunit` every test of a selected test's codeunit, under
    `test` the same for a codeunit that declares AL globals or an OnRun, under `disabled`
-   every test of the bundle (see "affectedOnly and test isolation").
+   every test of the bundle (see "affectedOnly and test isolation");
+7. widens it again by session state (WorkDate, number sequences, SingleInstance
+   codeunits), which no isolation resets (see "affectedOnly and session state"); under
+   `test`, a test this adds brings its codeunit by step 6 when that codeunit carries state.
 
 When the runner cannot prove a safe object delta, it **forces a full run**
 (`selection.forcedFull:true`) and sets `selection.reason`. Forced-full causes
@@ -622,7 +625,7 @@ So selection widens by what the isolation shares:
 |---|---|
 | `codeunit` (default) | every test of its codeunit |
 | `disabled` | every test of the bundle, since nothing is reset between codeunits |
-| `test` (`method`) | every test of its codeunit when the codeunit declares AL globals or an `OnRun`, otherwise nothing: the database resets per test, but the tests share one codeunit instance, so globals such as an `isInitialized` flag and what `OnRun` left carry across them (#4826) |
+| `test` (`method`) | every test of its codeunit when the codeunit declares AL globals or an `OnRun`, otherwise nothing by isolation: the database resets per test, but the tests share one codeunit instance, so globals such as an `isInitialized` flag and what `OnRun` left carry across them (#4826). Session state carries over as well; see "affectedOnly and session state" |
 
 Why the whole codeunit and not only the tests after the first selected one: the test
 order is fixed (source declaration order, not the run seed), so the tests before it ran no
@@ -632,11 +635,61 @@ The earlier tests have to run too, which is the whole codeunit. That also remove
 difference: a single selected test used to run without the tests before it.
 
 The isolation is part of the environment key, so coverage recorded under one isolation
-is never used to select under another; switching it forces one full run. SingleInstance
-codeunits keep their state across codeunits under every isolation; a whole-object change to
-one forces a full run (see "affectedOnly and entered scopes").
+is never used to select under another; switching it forces one full run. What no isolation
+resets (WorkDate, number sequences, SingleInstance codeunits) is covered in "affectedOnly and
+session state"; a whole-object change to a SingleInstance codeunit also forces a full run (see
+"affectedOnly and entered scopes").
 
 The cost, on the al-language corpus: see the pull request that introduced this (#5035).
+
+#### affectedOnly and session state
+
+Some state lives in the session, not the database, so no test isolation rolls it back: a
+test can read what an earlier test left in it, in the same codeunit or another one (#5050).
+Measured under `test` isolation (A sets `WorkDate(20200101D)` and draws one number from a
+sequence; B and C read them) and across codeunits under the default isolation (a
+SingleInstance store written by one test codeunit and read by the next).
+
+Recorded per test, as keys in the test's events entry:
+
+| state | written by | read by |
+|---|---|---|
+| `WorkDate` | `WorkDate(<date>)` (Ncl `NavSession.set_WorkDate`) | `WorkDate()`, and the `'w'` token of `Evaluate` and date filters (`NavSession.get_WorkDate`, where every one of them reads it) |
+| a number sequence, by name and company scope | `Insert`, `Next`, `Range`, `Restart`, `Delete` | `Exists`, `Current`, `Next`, `Range`, `Restart`, `Insert` (whether it exists decides the error) |
+| a SingleInstance codeunit, by id | any use of it: resolving a variable to it, or entering one of its procedures or triggers | the same: its globals cannot be told apart by read or write |
+
+A read counts only when the test had not written that state itself first, so a test that
+sets WorkDate and then reads it is not a reader. That is a property of the test's own code,
+so a record taken in a narrowed run means the same as one taken in a full run.
+
+When the request changed code or subscriber bindings in the bundle (or in a bundle that ran
+before it) and anything is selected, the selection gains:
+
+- every test **after the first selected one** that read session state an earlier test
+  left, and
+- every test **before the last selected one** that wrote session state.
+
+When nothing changed and tests are selected anyway (unknown tests, `includeFailing`), every
+test does what its record says, so a selected test brings only the earlier tests that wrote
+what it read, and their writers in turn.
+
+Why every reader and every writer, not only those of the state a selected test recorded:
+the recording is of the old code. A changed test can start writing WorkDate, or start
+reading a sequence it never read, and nothing recorded says so. A later reader can then
+fail where it passed, and a changed test can fail for want of state another test used to
+give it (a reader run alone finds no sequence). A test with no record counts as both.
+
+Across bundles of one request: WorkDate and number sequences carry from one bundle to the
+next (SingleInstance codeunits are reset per bundle), so a change in an earlier bundle (or a
+full run of it) selects every reader of a later one, and a bundle followed by another runs its WorkDate and
+sequence writers whatever changed.
+
+Not recorded, so not linked (#5057): static .NET state reached through DotNet interop,
+`Randomize` seeds, and the last error text. `GlobalLanguage` is not session state here: the
+runner answers 1033 whatever a test sets. The persisted baseline is schema 4 from this
+change, so a baseline without these keys is not used.
+
+The cost, on the al-language corpus: see the pull request that introduced this (#5050).
 
 #### affectedOnly and previously failing tests
 

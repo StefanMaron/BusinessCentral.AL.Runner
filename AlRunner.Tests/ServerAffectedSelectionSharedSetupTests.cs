@@ -253,6 +253,139 @@ public class ServerAffectedSelectionSharedSetupTests
         Assert.Equal(5, switched.Tests.Count);
     }
 
+    // #4826 + #5050 together, under Test isolation: a SingleInstance store written in one codeunit and
+    // read in two others, one of which also carries an AL global set by an earlier test of its own.
+    // One object per file (#5003).
+    private static string SiStore(string put) => """
+        codeunit 61834 "SI Store SX"
+        {
+            SingleInstance = true;
+
+            var
+                Stored: Integer;
+
+            procedure Put(V: Integer)
+            begin
+        """ + "        " + put + """
+
+            end;
+
+            procedure Get(): Integer
+            begin
+                exit(Stored);
+            end;
+        }
+        """;
+
+    private const string SiWriter = """
+        codeunit 61835 "SI Writer SX"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure W_Writes()
+            var
+                S: Codeunit "SI Store SX";
+            begin
+                S.Put(42);
+            end;
+        }
+        """;
+
+    // Stateful: Factor is an AL global, set by B1 and read by B2 on the same instance.
+    private const string SiStatefulReaders = """
+        codeunit 61836 "SI Stateful Readers SX"
+        {
+            Subtype = Test;
+
+            var
+                Factor: Integer;
+
+            [Test]
+            procedure B1_SetsFactor()
+            begin
+                Factor := 2;
+            end;
+
+            [Test]
+            procedure B2_ReadsStoreTimesFactor()
+            var
+                S: Codeunit "SI Store SX";
+            begin
+                if S.Get() * Factor <> 84 then
+                    Error('B2-%1', S.Get() * Factor);
+            end;
+        }
+        """;
+
+    // Stateless: no globals, no OnRun, so Test isolation keeps per-test selection here.
+    private const string SiStatelessReaders = """
+        codeunit 61837 "SI Stateless Readers SX"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure R_ReadsStore()
+            var
+                S: Codeunit "SI Store SX";
+            begin
+                if S.Get() <> 42 then
+                    Error('R-%1', S.Get());
+            end;
+
+            [Test]
+            procedure N_ReadsNothing()
+            begin
+                if 5 + 5 <> 10 then
+                    Error('N failed');
+            end;
+        }
+        """;
+
+    /// <summary>
+    /// The union of both widenings under Test isolation. Editing the store's Put selects its writer
+    /// by coverage; the session-state rule (#5050) adds both SingleInstance readers; the isolation
+    /// rule (#4826) then adds B1, whose global B2 reads, because B2's codeunit carries state. R's
+    /// codeunit carries none, so N stays skipped. Without the isolation pass that follows the
+    /// session-state one, B1 would be missing and B2 would fail with B2-0 where a full run fails
+    /// with B2-86.
+    /// </summary>
+    [SkippableFact]
+    public async Task TestIsolation_SingleInstanceReaders_AreSelected_AndAStatefulReaderBringsItsCodeunit()
+    {
+        TestArtifacts.SkipIfMissing();
+        var dir = TestScratch.Dir("al-runner-server-affected-shared-setup-si-union");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "app.json"), """
+        {
+          "id": "c5035000-0000-4a11-9111-000000000005",
+          "name": "Shared Setup SX 000000000005",
+          "publisher": "AL Runner",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": 61830, "to": 61849 } ],
+          "runtime": "14.0"
+        }
+        """);
+        File.WriteAllText(Path.Combine(dir, "Store.Codeunit.al"), SiStore("Stored := V;"));
+        File.WriteAllText(Path.Combine(dir, "Writer.Codeunit.al"), SiWriter);
+        File.WriteAllText(Path.Combine(dir, "Stateful.Codeunit.al"), SiStatefulReaders);
+        File.WriteAllText(Path.Combine(dir, "Stateless.Codeunit.al"), SiStatelessReaders);
+        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+
+        var baseline = await Send(server, dir, "test");
+        Assert.True(baseline.ForcedFull, baseline.Raw);
+        Assert.True(baseline.Tests.Values.All(t => t.Status == "pass"), baseline.Raw);
+
+        File.WriteAllText(Path.Combine(dir, "Store.Codeunit.al"), SiStore("Stored := V + 1;"));
+        var edited = await Send(server, dir, "test");
+        Assert.False(edited.ForcedFull, edited.Raw);
+        AssertRan(edited, "si union", "B1_SetsFactor", "B2_ReadsStoreTimesFactor", "R_ReadsStore", "W_Writes");
+        Assert.Contains("B2-86", edited.Tests["B2_ReadsStoreTimesFactor"].Line, StringComparison.Ordinal);
+        Assert.Contains("R-43", edited.Tests["R_ReadsStore"].Line, StringComparison.Ordinal);
+    }
+
     /// <summary>Under Disabled isolation nothing is reset between codeunits, so any selection is the whole bundle.</summary>
     [SkippableFact]
     public async Task DisabledIsolation_AnySelectionSelectsTheWholeBundle()
