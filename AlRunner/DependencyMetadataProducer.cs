@@ -82,7 +82,7 @@ namespace AlRunner;
 /// <summary>
 /// Compiles a source-shipping dependency's AL with BC's own compiler so BC's metadata
 /// documents reach <see cref="AlObjectMetadataRegistry"/>, and persists them per
-/// (package content, --define symbols, BC version) — see <see cref="CacheKeyCore"/>.
+/// (runner build, package content, --define symbols, BC version) — see <see cref="CacheKeyCore"/>.
 /// </summary>
 internal static class DependencyMetadataProducer
 {
