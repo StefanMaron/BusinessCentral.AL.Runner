@@ -7413,6 +7413,7 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
         AlRunner.Infrastructure.AlCoverageTracker.ResetPerTest();
         AlRunner.Infrastructure.AlEventRaiseTracker.ResetPerTest();
         AlRunner.Infrastructure.AlObjectUseTracker.ResetPerTest();
+        AlRunner.Infrastructure.AlSessionStateTracker.ResetPerTest();
     }
 
     try
@@ -7435,6 +7436,9 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
         List<string> activeChangedObjectDisplay = new();
         bool activeForcedFull = false;
         string? activeForcedReason = null;
+        // #5050: session state crosses bundle boundaries within one request.
+        var requestSelectedAnyTest = false;
+        var bundlesStarted = 0;
 
         // Same derivation RunBundleForServer uses for its module name.
         var requestModuleNames = sourcePaths
@@ -7526,6 +7530,14 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                     if (widened > 0)
                         Console.Error.WriteLine(
                             $"  [{affected.LogTag}] affectedOnly: selected {widened} more test(s) that share state with a selected one (TestIsolation={executor.Isolation})");
+                    // #5050: session state (WorkDate, number sequences, SingleInstance) outlives every isolation.
+                    var stateWidened = AlRunner.Infrastructure.AffectedSessionStateSelection.Widen(
+                        discovered, exactSelection, activePreviousEvents,
+                        earlierBundleSelected: requestSelectedAnyTest,
+                        laterBundleFollows: bundlesStarted < requestModuleNames.Count);
+                    if (stateWidened > 0)
+                        Console.Error.WriteLine(
+                            $"  [{affected.LogTag}] affectedOnly: selected {stateWidened} more test(s) linked to a selected one through session state");
                     plannedSkippedFailing = discovered.Count(t => !exactSelection.Contains(t) && (activePreviousFailing?.Contains(t) ?? false));
                     plannedRan = exactSelection.Count;
                     plannedSkipped = Math.Max(0, discovered.Count - plannedRan);
@@ -7544,6 +7556,7 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 }
 
                 requestSelectedTestsByBundle[activeBundleKey] = exactSelection;
+                if (exactSelection == null ? discovered.Count > 0 : exactSelection.Count > 0) requestSelectedAnyTest = true;
                 var previousExact = executor.ExactTestFilter;
                 executor.ExactTestFilter = exactSelection;
                 try { return executor.Run(asm, onTestComplete, token); }
@@ -7556,6 +7569,7 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 selectionEnvironmentKey = AlRunner.Infrastructure.AffectedIsolationWidening.EnvironmentKey(
                     selectionEnvironmentKey, executor.Isolation);
                 activeBundleKey = bundlePath;
+                bundlesStarted++;
                 requestModuleByBundle[bundlePath] = moduleName;
                 requestEnvironmentByBundle[bundlePath] = selectionEnvironmentKey;
                 activeChangedObjectKeys = BuildAffectedChangedKeys(changedObjects, ownChangedScopes);
@@ -7754,6 +7768,7 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
             // #5011: objects built and scopes entered, which an empty body or a page without
             // triggers leaves out of statement coverage.
             var useByTest = AlRunner.Infrastructure.AlObjectUseTracker.CollectPerTest();
+            var stateByTest = AlRunner.Infrastructure.AlSessionStateTracker.CollectPerTest();
             var longLivedObjectKeys = new HashSet<string>(StringComparer.Ordinal);
             foreach (var type in AlRunner.Infrastructure.AlObjectUseTracker.LongLivedObjects())
                 if (UsedObjectOf(type) is { } o)
@@ -7933,8 +7948,10 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                         continue;
                     }
                     nextCoverage[testKey] = coveredObjects;
-                    nextEvents[testKey] = eventsByTest.TryGetValue(testKey, out var raised)
-                        ? raised : new HashSet<string>(StringComparer.Ordinal);
+                    var recordedKeys = eventsByTest.TryGetValue(testKey, out var raised)
+                        ? new HashSet<string>(raised, StringComparer.Ordinal) : new HashSet<string>(StringComparer.Ordinal);
+                    if (stateByTest.TryGetValue(testKey, out var state)) recordedKeys.UnionWith(state);
+                    nextEvents[testKey] = recordedKeys;
                     if (failed) nextFailing.Add(testKey);
                 }
 

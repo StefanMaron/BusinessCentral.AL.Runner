@@ -77,6 +77,8 @@ public static class NumberSequencePatches
         if (increment == 0)
             throw AlError($"Number sequence '{name}' cannot be created with an increment of zero.");
 
+        // #5050: whether it already exists decides the error, so an insert reads the sequence too.
+        NoteState(name, companySpecific, read: true, write: true);
         lock (_sync)
         {
             var key = (name, companySpecific);
@@ -89,6 +91,7 @@ public static class NumberSequencePatches
     public static bool ALExists(string name, bool companySpecific)
     {
         ArgumentNullException.ThrowIfNull(name);
+        NoteState(name, companySpecific, read: true, write: false);
         lock (_sync)
             return _sequences.ContainsKey((name, companySpecific));
     }
@@ -97,6 +100,7 @@ public static class NumberSequencePatches
     public static long ALCurrent(string name, bool companySpecific)
     {
         ArgumentNullException.ThrowIfNull(name);
+        NoteState(name, companySpecific, read: true, write: false);
         lock (_sync)
             return GetExisting(name, companySpecific).Current;
     }
@@ -105,6 +109,7 @@ public static class NumberSequencePatches
     public static long ALNext(string name, bool companySpecific)
     {
         ArgumentNullException.ThrowIfNull(name);
+        NoteState(name, companySpecific, read: true, write: true);
         lock (_sync)
         {
             var state = GetExisting(name, companySpecific);
@@ -121,6 +126,7 @@ public static class NumberSequencePatches
     public static void ALRestart(string name, long seed, bool companySpecific)
     {
         ArgumentNullException.ThrowIfNull(name);
+        NoteState(name, companySpecific, read: true, write: true);
         lock (_sync)
         {
             var state = GetExisting(name, companySpecific);
@@ -140,6 +146,7 @@ public static class NumberSequencePatches
     public static void ALDelete(string name, bool companySpecific)
     {
         ArgumentNullException.ThrowIfNull(name);
+        NoteState(name, companySpecific, read: false, write: true);
         lock (_sync)
             _sequences.Remove((name, companySpecific));
     }
@@ -223,6 +230,7 @@ public static class NumberSequencePatches
         if (count <= 0)
             throw AlError($"Number sequence '{name}' cannot reserve a range of {count} value(s).");
 
+        NoteState(name, companySpecific, read: true, write: true);
         lock (_sync)
         {
             var state = GetExisting(name, companySpecific);
@@ -240,6 +248,16 @@ public static class NumberSequencePatches
             state.HasAllocated = true;
             return first;
         }
+    }
+
+    // Sequences survive every test boundary of an execution, so affectedOnly links a test that
+    // reads one to the tests that wrote it (#5050).
+    private static void NoteState(string name, bool companySpecific, bool read, bool write)
+    {
+        if (!AlRunner.Infrastructure.AlCoverageTracker.PerTestEnabled) return;
+        var kind = AlRunner.Infrastructure.AlSessionStateTracker.NumberSequenceKind(name, companySpecific);
+        if (read) AlRunner.Infrastructure.AlSessionStateTracker.NoteRead(kind);
+        if (write) AlRunner.Infrastructure.AlSessionStateTracker.NoteWrite(kind);
     }
 
     private static SequenceState GetExisting(string name, bool companySpecific)

@@ -511,6 +511,7 @@ public static partial class BcRuntime
         {
             // `self` is about to store this in its own tree (see TrackSingleInstanceBinding).
             TrackSingleInstanceBinding(self);
+            AlRunner.Infrastructure.AlSessionStateTracker.NoteSingleInstanceUse(id); // #5050
             return cachedInstance;
         }
 
@@ -567,6 +568,7 @@ public static partial class BcRuntime
             _singleInstanceCache[id] = instance;
             KeepSingleInstanceAlive(id, instance);
             TrackSingleInstanceBinding(self);
+            AlRunner.Infrastructure.AlSessionStateTracker.NoteSingleInstanceUse(id); // #5050
         }
 
         return instance;

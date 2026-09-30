@@ -86,6 +86,9 @@ public static class AlObjectUseTracker
         if (!AlCoverageTracker.PerTestEnabled) return;
         if (scope is not ALMethodScope al || al.ApplicationObject is not { } owner) return;
         lock (_lock) CurrentBucket()?.InlineScopes.Add((owner.GetType(), al.MethodId));
+        // #5050: a variable resolved before the test (a global) reaches the instance without CreateTarget.
+        if (owner is NavCodeunit { IsSingleInstance: true } si)
+            AlSessionStateTracker.NoteSingleInstanceUse(si.ObjectId.ObjectNumber);
     }
 
     /// <summary>What each test used since the last <see cref="ResetPerTest"/>.</summary>
