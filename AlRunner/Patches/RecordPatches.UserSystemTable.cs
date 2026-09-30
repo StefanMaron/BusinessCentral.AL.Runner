@@ -424,11 +424,6 @@ public static partial class RecordPatches
         return outcome;
     }
 
-    /// <summary>
-    /// The user identity BcRuntime already seeded onto the skeleton session's NavUser. Read
-    /// back rather than recomputed, so the row and the session are the same user by
-    /// construction — the same reasoning as ReadSkeletonCompanyIdentity next door.
-    /// </summary>
     /// <summary>The session user and company the install seed writes its rows for, as one
     /// string, or null when either cannot be read. #5060 keys a reused install baseline on it; an
     /// adoption (#2983) moves the user id, so a seed that adopted is visible as a changed value.</summary>
@@ -442,6 +437,11 @@ public static partial class RecordPatches
         return $"{userName}|{fullName}|{userSid}|{companyName}|{companyId}";
     }
 
+    /// <summary>
+    /// The user identity BcRuntime already seeded onto the skeleton session's NavUser. Read
+    /// back rather than recomputed, so the row and the session are the same user by
+    /// construction — the same reasoning as ReadSkeletonCompanyIdentity next door.
+    /// </summary>
     private static (string? Name, string? FullName, NavGuid? Sid) ReadSkeletonUserIdentity(object session)
     {
         const BindingFlags F = BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public;

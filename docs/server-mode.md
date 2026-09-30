@@ -972,6 +972,44 @@ The server writes this response, then exits. EOF on stdin also exits.
 Any request-level problem returns `{"error":"<message>"}` and the server keeps
 running.
 
+## The install baseline across requests
+
+Before a bundle's first test the runner builds its install baseline: the dependency Install
+triggers and Company-Initialize (cached per dependency set since #1867), then the runner's own
+User / Company / Published Application / Access Control / Active Session rows, then the
+bundle's own Install triggers, and finally a capture that every test codeunit restores.
+
+Since #5060 a later run of the **same** bundle in the same process (a warm `runTests`, a
+`--watch` cycle) reuses that whole captured baseline and skips everything after the dependency
+step. The first test codeunit's boundary restore puts it in place, so every test still starts
+from the rows a cold run would give it. The cache is in memory only.
+
+The key holds everything the baseline's rows depend on. When any part of it changes, the seed
+runs again:
+
+| key part | covers |
+|---|---|
+| the dependency+company key | dependency assembly MVIDs, the registered BC symbol apps, and the `--test-data` backup and company |
+| the bundle's assembly MVID | any edit to the bundle's own AL |
+| the event-subscriber scope | the MVIDs of every assembly the subscriber scan reads, because an Install trigger's events can reach any of them |
+| the bundle identity | the `app.json` id, name, publisher and version the Published Application row is written from |
+| the session identity | the session user and company the rows are written for |
+
+Runs that are never reused, and seed fresh every time:
+
+- **`testIsolation` other than `codeunit`.** Only Codeunit isolation restores (and so clears every
+  non-table leftover of the Install triggers) before any test code runs.
+- **A seed that used a `NumberSequence`.** Sequences live outside the store and are reset per
+  request, so a reuse would leave the tests without them.
+- **A seed that changed the session identity** (the #2983 adoption of a `--test-data` user), a
+  change no snapshot carries.
+- **`AL_RUNNER_NO_DEP_COMPANY_CACHE=1`**, the kill switch for both install-baseline caches.
+
+Under `AL_RUNNER_PERF=1` each run logs `InstallBaseline.BundleCache HIT`, `MISS … stored`,
+`MISS … not-stored: <why>` or `NOKEY <why>`. A bundle's first warm run can still miss once
+when the previous run loaded more assemblies while seeding, which widens the subscriber scope;
+the run after it hits.
+
 ## The reload contract (same-bundle, in-process)
 
 The server's value is staying warm across **edits**. .NET cannot unload an
