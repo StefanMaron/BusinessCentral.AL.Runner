@@ -66,7 +66,8 @@ internal partial class LiveNavTestPage
             if (!_fields.TryGetValue(id, out var field))
                 _fields[id] = field =
                     new LiveNavTestField(_record!, tableFieldNo, _page, id,
-                        MarkEdited, PromoteNewRowLineForWrite, ActivateControl, FieldLedger(id));
+                        MarkEdited, PromoteNewRowLineForWrite, ActivateControl, FieldLedger(id))
+                    { OpenModeEditable = () => OpenModeEditable };
             return field;
         }
 
@@ -78,7 +79,7 @@ internal partial class LiveNavTestPage
             if (!_pageVariableFields.TryGetValue(id, out var pageField))
                 _pageVariableFields[id] = pageField =
                     new PageVariableTestField(_page!, expression, id, _validationErrors)
-                    { BeforeWrite = CatchUpPartWithParentRowForWrite };
+                    { BeforeWrite = CatchUpPartWithParentRowForWrite, OpenModeEditable = () => OpenModeEditable };
             return pageField;
         }
 
