@@ -1,3 +1,5 @@
+// Runs under --isolation test: these assert per-test narrowing inside one codeunit, which the
+// default Codeunit isolation widens to the whole codeunit (#5035, ServerAffectedSelectionSharedSetupTests).
 using System.Text.Json;
 using Xunit;
 
@@ -82,7 +84,7 @@ public class ServerAffectedSelectionTests
             end;
         }
         """);
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
 
         await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true));
 
@@ -126,7 +128,7 @@ public class ServerAffectedSelectionTests
             end;
         }
         """);
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
 
         await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true));
         var appJsonPath = Path.Combine(bundle, "app.json");
@@ -153,7 +155,7 @@ public class ServerAffectedSelectionTests
             end;
         }
         """);
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache", "--test", "OnlyA" });
+        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache", "--test", "OnlyA" });
 
         await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true));
         File.WriteAllText(Path.Combine(bundle, "HelperA.Codeunit.al"), """
@@ -249,7 +251,7 @@ public class ServerAffectedSelectionTests
     {
         TestArtifacts.SkipIfMissing();
         var bundle = MakeMultiProcBundle();
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
 
         await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true));
 
@@ -295,7 +297,7 @@ public class ServerAffectedSelectionTests
     {
         TestArtifacts.SkipIfMissing();
         var bundle = MakeMultiProcBundle();
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
 
         await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true));
 
@@ -339,7 +341,7 @@ public class ServerAffectedSelectionTests
     {
         TestArtifacts.SkipIfMissing();
         var bundle = MakeBundle(HelperABody(0));
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
 
         await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true));
 
@@ -371,7 +373,7 @@ public class ServerAffectedSelectionTests
     {
         TestArtifacts.SkipIfMissing();
         var bundle = MakeBundle(HelperABody(0));
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
 
         await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true));
 
@@ -418,7 +420,7 @@ public class ServerAffectedSelectionTests
     {
         TestArtifacts.SkipIfMissing();
         var bundle = MakeBundle(HelperABody(0));
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
 
         await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true));
 

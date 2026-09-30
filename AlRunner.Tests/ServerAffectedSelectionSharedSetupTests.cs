@@ -21,7 +21,7 @@ public class ServerAffectedSelectionSharedSetupTests
         }
         """;
 
-    private static string Helper(string probe = "") => """
+    internal static string Helper(string probe = "") => """
         codeunit 61831 "Shared Setup Helper SX"
         {
             procedure CreateSetup()
@@ -37,7 +37,7 @@ public class ServerAffectedSelectionSharedSetupTests
         }
         """;
 
-    private const string Probe = "        Error('PROBE-INIT');";
+    internal const string Probe = "        Error('PROBE-INIT');";
 
     // Only the first test to call Initialize() runs the helper; the others read what it wrote.
     private const string Tests = """
@@ -117,7 +117,7 @@ public class ServerAffectedSelectionSharedSetupTests
     private static readonly string[] Readers = { "ReadsSetupOne", "ReadsSetupThree", "ReadsSetupTwo" };
     private static readonly string[] WholeTestCodeunit = { "NeverInitializes", "ReadsSetupOne", "ReadsSetupThree", "ReadsSetupTwo" };
 
-    private static string Bundle(string prefix, string appIdSuffix)
+    internal static string Bundle(string prefix, string appIdSuffix)
     {
         var dir = TestScratch.Dir(prefix);
         Directory.CreateDirectory(dir);

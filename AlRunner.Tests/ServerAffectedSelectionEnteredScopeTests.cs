@@ -1,6 +1,8 @@
 // ServerAffectedSelectionEnteredScopeTests — #5011: under affectedOnly, a test that used an object
 // or entered a procedure without executing any statement of it is selected when that object or
 // procedure changes. Mechanism: docs/server-mode.md#affectedonly-and-entered-scopes.
+// Runs under --isolation test: these assert per-test narrowing inside one codeunit, which the
+// default Codeunit isolation widens to the whole codeunit (#5035, ServerAffectedSelectionSharedSetupTests).
 using System.Text.Json;
 using Xunit;
 
@@ -229,7 +231,7 @@ public class ServerAffectedSelectionEnteredScopeTests
 
     private static async Task<Observed> SendFresh(string cache, string bundle)
     {
-        await using var server = await CliServer.StartAsync(new[] { "--cache", cache });
+        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--cache", cache });
         return await Send(server, bundle);
     }
 
@@ -254,7 +256,7 @@ public class ServerAffectedSelectionEnteredScopeTests
     {
         TestArtifacts.SkipIfMissing();
         var bundle = Bundle("al-runner-server-affected-entersel", "000000000001");
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
 
         var baseline = await Send(server, bundle);
         Assert.True(baseline.ForcedFull, baseline.Raw);

@@ -1,6 +1,8 @@
 // ServerAffectedSelectionPersistedBaselineTests — #4979 part 1: the affectedOnly baseline one server
 // recorded is used by the next server started on the same cache, so its first request narrows.
 // Mechanism: docs/server-mode.md#affectedonly-across-server-processes.
+// Runs under --isolation test: these assert per-test narrowing inside one codeunit, which the
+// default Codeunit isolation widens to the whole codeunit (#5035, ServerAffectedSelectionSharedSetupTests).
 using System.Text.Json;
 using Xunit;
 
@@ -162,7 +164,7 @@ public class ServerAffectedSelectionPersistedBaselineTests
 
     private static async Task<Observed> Send(string cache, string bundle)
     {
-        await using var server = await CliServer.StartAsync(new[] { "--cache", cache });
+        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--cache", cache });
         var request = JsonSerializer.Serialize(new
         {
             command = "runTests",

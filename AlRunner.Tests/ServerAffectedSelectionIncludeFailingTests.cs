@@ -1,6 +1,8 @@
 // ServerAffectedSelectionIncludeFailingTests — #4978: under affectedOnly, a test that failed in the
 // recording run is selected by the coverage it recorded up to the failure, unless the request sets
 // includeFailing:true. Mechanism: docs/server-mode.md#affectedonly-and-previously-failing-tests.
+// Runs under --isolation test: these assert per-test narrowing inside one codeunit, which the
+// default Codeunit isolation widens to the whole codeunit (#5035, ServerAffectedSelectionSharedSetupTests).
 using System.Text.Json;
 using Xunit;
 
@@ -148,7 +150,7 @@ public class ServerAffectedSelectionIncludeFailingTests
     {
         TestArtifacts.SkipIfMissing();
         var bundle = Bundle(Tests);
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
 
         var baseline = await Send(server, bundle, includeFailing: null);
         Assert.True(baseline.ForcedFull, baseline.Raw);
@@ -178,7 +180,7 @@ public class ServerAffectedSelectionIncludeFailingTests
     {
         TestArtifacts.SkipIfMissing();
         var bundle = Bundle(Tests);
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
 
         var baseline = await Send(server, bundle, includeFailing: null);
         Assert.Equal("fail", baseline.Status["Codeunit60460.FailsAfterA"]);
@@ -200,7 +202,7 @@ public class ServerAffectedSelectionIncludeFailingTests
     {
         TestArtifacts.SkipIfMissing();
         var bundle = Bundle(SlowTests);
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" },
+        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" },
             extraEnv: new Dictionary<string, string> { ["AL_RUNNER_TEST_TIMEOUT_SEC"] = "1" });
 
         var baseline = await Send(server, bundle, includeFailing: null);
