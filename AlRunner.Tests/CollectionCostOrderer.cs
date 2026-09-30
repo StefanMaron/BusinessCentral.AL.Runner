@@ -424,6 +424,9 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // #5011: added by its PR, one server with ten requests plus three more server starts; 32s
             // locally. An estimate until a CI leg measures it: replace with the observed maximum.
             ["ServerAffectedSelectionEnteredScopeTests"] = 85,
+            // #5027: added by its PR, five --watch processes, one of them through nine cycles; 51s
+            // locally. An estimate until a CI leg measures it: replace with the observed maximum.
+            ["WatchAffectedSelectionTests"] = 120,
             // #2223: added by PR #4478, which introduces this collection. 4 tests, each
             // spawning a real runner subprocess against a bundle declaring an `application`
             // floor, and one of them spawning a second: the warm-skip path runs the bundle
