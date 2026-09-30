@@ -235,7 +235,10 @@ public static class Reporter
     /// What the summary needs beyond the buckets (#4562). <see cref="Seed"/> null prints no seed
     /// line; <see cref="ReplayTarget"/> is the bundle argument(s) the replay command names.
     /// </summary>
-    public sealed record SummaryOptions(bool Verbose = false, int? Seed = null, string? ReplayTarget = null);
+    /// <param name="StillFailingNotRerun">#5027: tests a --watch --affected cycle skipped whose last result
+    /// was not a pass; shown beside the failed count so a narrowed cycle never reads `failed 0` alone.</param>
+    public sealed record SummaryOptions(bool Verbose = false, int? Seed = null, string? ReplayTarget = null,
+        int StillFailingNotRerun = 0);
 
     public static void PrintSummary(IReadOnlyList<BucketResult> buckets, TextWriter w)
         => PrintSummary(buckets, w, default, new SummaryOptions(Verbose: Log.Verbose));
@@ -302,7 +305,11 @@ public static class Reporter
         // AlRunner.Tests). Every count is followed by at least one space, so `passed 1 ` never
         // matches `passed 10`. Reshape it only together with those readers.
         // Invariant($): #2968 — ambient-culture formatting printed `7,5 s` on a comma-decimal LANG.
-        w.WriteLine(Invariant($"Tests: {totalTests}   passed {pass}   failed {fail}   errors {err}")
+        w.WriteLine(Invariant($"Tests: {totalTests}   passed {pass}   failed {fail}")
+            + (options.StillFailingNotRerun > 0
+                ? Invariant($" (+{options.StillFailingNotRerun} still failing, not re-run)")
+                : "")
+            + Invariant($"   errors {err}")
             + (skipped > 0 ? Invariant($"   skipped {skipped}") : "")
             + Invariant($"        Time: {(emit + comp + run).TotalSeconds:F1} s (wall {wall.TotalSeconds:F1} s)"));
         // Manifest reclassifications (docs/expectations.md) are surfaced DISTINCTLY so

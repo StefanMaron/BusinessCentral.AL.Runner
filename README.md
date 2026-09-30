@@ -146,6 +146,8 @@ al-runner <bundle-dir> --watch [--package-cache PATH ...] [--cache DIR]
 
 Stays resident with dependencies + BC patches loaded once, and re-runs the bundle **in-process** on every `.al` save (~seconds/save after a one-time cold first cycle).
 
+Add `--affected` to rerun only the tests an edit can affect, with the same selection `--server` uses for `affectedOnly`; `--include-failing` also reruns every test that is still failing. See [docs/watch-affected.md](docs/watch-affected.md).
+
 On an interactive terminal `--watch` renders a **live, non-scrolling dashboard** that repaints in place on each cycle (like vitest / cargo-watch):
 
 ```text
@@ -215,6 +217,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md#dev-loop) for provisioning them as a separ
 | `--cache PATH` | Cache compiled AL output keyed on source + dep set + runner mtime. |
 | `--isolation codeunit\|test\|disabled` | Test isolation mode. Default `codeunit`. See docs/limitations.md's "Test isolation modes" section for the AL `TestIsolation` value each one matches. |
 | `--watch` | Stay resident with warm dependencies; on every `.al` change reset + re-emit + run **in-process** (~seconds/save). Debounces on quiescence (default 250ms of no further `.al` event, capped at 10s) so a bulk multi-file rewrite — a branch switch, a rebase, a formatter run — settles before a cycle starts, instead of firing mid-checkout. Tune with `AL_RUNNER_WATCH_QUIET_MS` / `AL_RUNNER_WATCH_MAX_WAIT_MS`. |
+| `--affected` | With `--watch`: each cycle runs only the tests the edit can affect (the server's `affectedOnly` selection) and prints what it ran, skipped and why. `--include-failing` also reruns tests whose last result was not a pass. See [docs/watch-affected.md](docs/watch-affected.md). |
 | `--server` | Long-running JSON-RPC daemon over stdin/stdout (warm deps → ~19s→~4s/run). See [docs/server-mode.md](docs/server-mode.md). |
 | `--dap [PORT]` | Debug Adapter Protocol server (default port 4711): set AL breakpoints, pause execution, inspect locals. Requires exactly one bundle path. See [docs/dap-mode.md](docs/dap-mode.md). |
 | `--per-suite` | Legacy per-suite compile mode (diagnostic). Default is bundled-per-bucket. |
