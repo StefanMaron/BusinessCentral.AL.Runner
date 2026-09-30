@@ -7961,17 +7961,18 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 var useByTest = AlRunner.Infrastructure.AlObjectUseTracker.CollectPerTest();
                 var longLivedObjectKeys = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var type in AlRunner.Infrastructure.AlObjectUseTracker.LongLivedObjects())
-                {
-                    if (ObjectFileOf(type) is not { } path) continue;
-                    longLivedObjectKeys.Add(AlRunner.Infrastructure.AffectedEventSelection.LongLivedObjectKey(
-                        requestWideTrackedObjectsByPath.TryGetValue(path, out var identity) ? ToAffectedObjectKey(identity) : null));
-                }
+                    if (UsedObjectOf(type) is { } o)
+                        longLivedObjectKeys.Add(AlRunner.Infrastructure.AffectedEventSelection.LongLivedObjectKey(o.Key));
 
-                // The file of a mapped AL object class, or null for one outside this request's sources.
-                string? ObjectFileOf(Type objectType)
+                // The key and file of an AL object class from this request's sources; null outside them.
+                // The class names its object, so a file declaring several objects (#5003) still keys.
+                (string Key, string Path)? UsedObjectOf(Type objectType)
                 {
                     var (label, id) = AlRunner.Infrastructure.AlCallStackCapture.ParseObjectTypeAndId(objectType);
-                    return id != 0 && selectionSourceMap.TryGetValue((label, id), out var path) ? path : null;
+                    if (id == 0 || !selectionSourceMap.TryGetValue((label, id), out var path)) return null;
+                    return (requestWideTrackedObjectsByPath.TryGetValue(path, out var identity)
+                        ? ToAffectedObjectKey(identity)
+                        : ToAffectedObjectKey(new AffectedObjectId(label == "CodeUnit" ? "Codeunit" : label, id, "")), path);
                 }
                 // #4988: the event side of the baseline, stored whenever the coverage is.
                 var recordedThisRequest = new List<string>();
@@ -8088,31 +8089,47 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                         {
                             if (!requestWideTrackedObjectsByPath.TryGetValue(filePath, out var identity))
                                 return AlRunner.Infrastructure.DependencyPackageFingerprint.IsUnderAny(filePath, packagedSourceRoots);
-                            var objKey = ToAffectedObjectKey(identity);
+                            AddKeys(ToAffectedObjectKey(identity), scopeName);
+                            return true;
+                        }
+                        void AddKeys(string objKey, string? scopeName)
+                        {
                             coveredObjects.Add(objKey);
                             // #2539: ALSO the procedure-level compound key, so a change narrowed to one
                             // procedure selects only the tests that ran it. The plain object-level key
                             // stays too — it is what a WIDENED (whole-object) change matches.
                             if (!string.IsNullOrEmpty(scopeName))
                                 coveredObjects.Add(ToAffectedScopeKey(objKey, scopeName));
-                            return true;
                         }
                         foreach (var s in statements ?? Enumerable.Empty<AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord>())
                             if (!Cover(s.FilePath, s.ScopeName)) { unmappable = true; break; }
                         if (used != null && !unmappable)
                         {
+                            // Outside this request's sources, or packaged: skipped, as a statement there is.
+                            bool Keyed(Type objectType, out string key)
+                            {
+                                key = "";
+                                if (UsedObjectOf(objectType) is not { } o
+                                    || AlRunner.Infrastructure.DependencyPackageFingerprint.IsUnderAny(o.Path, packagedSourceRoots))
+                                    return false;
+                                key = o.Key;
+                                return true;
+                            }
                             foreach (var scope in used.Scopes)
                             {
-                                if (AlRunner.Infrastructure.AlCoverageTracker.TryResolveScope(scope, selectionSourceMap) is not { } resolved)
-                                    continue; // outside this request's sources, as a statement there is
-                                if (!Cover(resolved.FilePath, resolved.ScopeName)) { unmappable = true; break; }
-                            }
-                            foreach (var type in used.Objects.Concat(used.UnresolvedScopeOwners))
-                            {
-                                if (unmappable || ObjectFileOf(type) is not { } path) continue;
+                                if (!Keyed(AlRunner.Infrastructure.AlScopeKey.ObjectTypeOf(scope), out var objKey)) continue;
                                 // An entered method that cannot be named cannot carry its scope key.
-                                if (used.UnresolvedScopeOwners.Contains(type) || !Cover(path, null)) unmappable = true;
+                                if (AlRunner.Infrastructure.AlCoverageTracker.TryResolveScope(scope, selectionSourceMap) is not { } resolved)
+                                {
+                                    unmappable = true;
+                                    break;
+                                }
+                                AddKeys(objKey, resolved.ScopeName);
                             }
+                            foreach (var type in used.UnresolvedScopeOwners)
+                                if (Keyed(type, out _)) unmappable = true;
+                            foreach (var type in used.Objects)
+                                if (Keyed(type, out var objKey)) AddKeys(objKey, null);
                         }
 
                         if (unmappable || coveredObjects.Count == 0)

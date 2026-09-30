@@ -135,9 +135,8 @@ internal static class AffectedEventSelection
 
     /// <summary>In the <see cref="AlEventRaiseTracker.BundleWideKey"/> entry (#5011): an instance of
     /// the object (<c>Kind|id:N</c>) was built outside any one test, or held where another test can
-    /// use it without building one or entering its code. <paramref name="objectKey"/> null: its file
-    /// maps to no single object.</summary>
-    internal static string LongLivedObjectKey(string? objectKey) => "obj|" + (objectKey ?? "?");
+    /// use it without building one or entering its code.</summary>
+    internal static string LongLivedObjectKey(string objectKey) => "obj|" + objectKey;
 
     /// <summary>Why a whole-object change must run everything (#5011): a test can use a long-lived
     /// instance without building it, so which tests did is not recorded. Null when none applies.</summary>
@@ -149,7 +148,7 @@ internal static class AffectedEventSelection
         foreach (var key in changedObjectKeys.OrderBy(k => k, StringComparer.Ordinal))
         {
             if (key.Contains("::proc:", StringComparison.Ordinal)) continue;
-            if (recordedBundleWide.Contains(LongLivedObjectKey(key)) || recordedBundleWide.Contains(LongLivedObjectKey(null)))
+            if (recordedBundleWide.Contains(LongLivedObjectKey(key)))
                 return $"an instance of {key.Replace('|', ' ')} was built outside any one test (a test codeunit's global, "
                     + "a SingleInstance codeunit, or before the test ran), so the tests using it are not recorded";
         }

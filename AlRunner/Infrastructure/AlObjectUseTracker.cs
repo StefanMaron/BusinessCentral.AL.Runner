@@ -57,14 +57,14 @@ public static class AlObjectUseTracker
         return b;
     }
 
-    /// <summary>An AL object instance was built. Records are #5008's
+    /// <summary>An AL object instance was built. Records and tableextensions are #5008's
     /// (<see cref="AlEventRaiseTracker.NoteRecordConstructed"/>) and a test codeunit is the test
-    /// itself; neither is recorded here. An instance built outside any test, or held where another
+    /// itself; none is recorded here. An instance built outside any test, or held where another
     /// test can reach it without building one, goes to the long-lived set.</summary>
     public static void NoteObjectConstructed(object? self, object? parent)
     {
         if (!AlCoverageTracker.PerTestEnabled || self == null) return;
-        if (self is NavRecord || self is NavTestCodeunit) return;
+        if (self is NavRecord || self is NavTestCodeunit || IsTableExtension(self.GetType())) return;
         var longLived = AlEventRaiseTracker.OutlivesTheTest(parent);
         lock (_lock)
         {
@@ -73,6 +73,9 @@ public static class AlObjectUseTracker
             else _longLivedObjects.Add(self.GetType());
         }
     }
+
+    // A tableextension instance is built with a record of its base table, which #5008 keys.
+    private static bool IsTableExtension(Type t) => AlCallStackCapture.ParseObjectTypeAndId(t).Item1 == "TableExtension";
 
     /// <summary>An inline-emitted AL method started (<c>ALMethodScope.ALStart</c>).</summary>
     public static void NoteInlineScopeEntered(object? scope)

@@ -161,10 +161,6 @@ public class AffectedEventSelectionTests
         Assert.Null(AffectedEventSelection.LongLivedObjectChange(new[] { "Codeunit|id:50100::proc:P" }, bundleWide));
         Assert.Null(AffectedEventSelection.LongLivedObjectChange(new[] { "Codeunit|id:50101" }, bundleWide));
         Assert.Null(AffectedEventSelection.LongLivedObjectChange(new[] { "Codeunit|id:50100" }, null));
-
-        // One whose file maps to no single object stands for any object.
-        var unmapped = new HashSet<string>(StringComparer.Ordinal) { AffectedEventSelection.LongLivedObjectKey(null) };
-        Assert.NotNull(AffectedEventSelection.LongLivedObjectChange(new[] { "Page|id:50103" }, unmapped));
     }
 
     [Fact]
