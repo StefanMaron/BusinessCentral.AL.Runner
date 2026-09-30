@@ -153,12 +153,43 @@ public class ServerAffectedSelectionPackagedDependencyTests
         {
             await using var s = await CliServer.StartAsync(new[] { "--cache", cache });
             var first = await Send(s, testApp);
-            Assert.True(first.Status.GetValueOrDefault("CallsApp") == "pass", first.Raw);
+            if (server == 1)
+                Assert.True(first.Status.GetValueOrDefault("CallsApp") == "pass", first.Raw);
+            else
+            {
+                // #4979: the second process starts from the first one's persisted baseline, so the
+                // environment key (package fingerprint included) has to be the same in both.
+                Assert.False(first.ForcedFull, first.Raw);
+                Assert.Equal(0, first.Ran);
+            }
             var unchanged = await Send(s, testApp);
             Assert.False(unchanged.ForcedFull, $"server {server}: {unchanged.Raw}");
             Assert.Equal(0, unchanged.Ran);
             Assert.Equal(2, unchanged.Skipped);
         }
+    }
+
+    // #4979: the package replaced while no server runs. The next server finds the persisted baseline
+    // under a different environment key and runs everything, saying why.
+    [SkippableFact]
+    public async Task RebuiltPackage_BetweenServerProcesses_ForcesAFullRunNamingTheEnvironment()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (app, testApp) = Layout();
+        var cache = TestScratch.Dir("al-runner-server-affected-pkgdep-persist-cache");
+        await using (var first = await CliServer.StartAsync(new[] { "--cache", cache }))
+            Assert.True((await Send(first, testApp)).Status.GetValueOrDefault("CallsApp") == "pass");
+
+        File.WriteAllText(Path.Combine(app, "src", "Helper.Codeunit.al"), HelperSource(3));
+        Package(app, testApp);
+
+        await using var second = await CliServer.StartAsync(new[] { "--cache", cache });
+        var afterRebuild = await Send(second, testApp);
+        Assert.True(afterRebuild.ForcedFull, afterRebuild.Raw);
+        Assert.Contains("environment changed", afterRebuild.Raw, StringComparison.Ordinal);
+        Assert.Equal(2, afterRebuild.Ran);
+        Assert.True(afterRebuild.Status.GetValueOrDefault("CallsApp") == "fail", afterRebuild.Raw);
+        Assert.Contains("the app returned 63", afterRebuild.Raw, StringComparison.Ordinal);
     }
 
     // Review of #4986: once a request has compiled App/ as its own bundle, a later [App.Test] request
