@@ -10,13 +10,13 @@
 // precompiled-dll-respect.md both apply: a copy would desync --watch's watched tree from the
 // tree actually compiled, and would make a --tdd diagnostic's path unclickable in the editor).
 //
-// Scope, and why nothing here needs a separate "revert a bad guess" step: this only ever
-// generates into a tree BcCompiler.Emit ALREADY has in memory as one of its own `trees[]` —
-// i.e. a SOURCE-COMPILED object belonging to the app being compiled. A symbol whose declaring
-// object has no such tree (a precompiled dependency's type, or a symbol BC couldn't resolve at
-// all) has no reachable Location.SourceTree, so it is refused for a structural reason, not a
-// policy one — this is what keeps precompiled .app dependencies out of scope (#1997/#2001 say
-// so explicitly) without any special-casing. And because generation runs strictly BEFORE the
+// Scope, and why nothing here needs a separate "revert a bad guess" step: this generates into a
+// tree BcCompiler.Emit ALREADY has in memory as one of its own `trees[]`, or (#5037) into the
+// source of another bundle of the same run that is compiled from source — as overlay text
+// (TddCrossBundle.cs), recompiled by re-running the cycle. A symbol declared by neither (a
+// precompiled dependency's type, or a symbol BC couldn't resolve at all) is refused for a
+// structural reason — this is what keeps precompiled .app dependencies out of scope (#1997/#2001,
+// and #5037's own precompiled half) without any special-casing. And because generation runs strictly BEFORE the
 // pre-existing exclude-and-retry loop, a wrong guess is caught for free: if a generated member
 // still doesn't make its referencing object compile (a bad inferred type, a shape this file
 // doesn't recognize, anything), that object is excluded and its [Test] procedures reported
@@ -49,6 +49,11 @@ namespace AlRunner;
 public sealed record TddGeneratedMember(string ObjectDisplayName, string MemberKind, string Signature)
 {
     public IReadOnlyList<string> DependentTests { get; init; } = Array.Empty<string>();
+
+    /// <summary>Set when the member was generated into ANOTHER source bundle of the run (#5037):
+    /// the file it went into, as in-memory overlay text. The current compile cannot see it until
+    /// that bundle is recompiled.</summary>
+    public string? GeneratedIntoFile { get; init; }
 }
 
 public static class TddGeneration
@@ -80,7 +85,8 @@ public static class TddGeneration
         NavCA.Compilation compilation,
         NavSyntax.SyntaxTree[] trees,
         NavCA.ParseOptions parseOptions,
-        NavEmit.EmitResult emitResult)
+        NavEmit.EmitResult emitResult,
+        string? moduleName = null)
     {
         // Snapshot BEFORE any mutation: once a tree in `trees` is replaced (a second missing
         // member found on an object already patched earlier in this same pass), the ORIGINAL
@@ -94,13 +100,13 @@ public static class TddGeneration
         // same not-yet-declared field). Generated once; a null value means this key was
         // ATTEMPTED and REFUSED (do not retry it on the next diagnostic naming it, and do not
         // attribute any dependent test to it — nothing was actually generated).
-        var generatedByKey = new Dictionary<(int, string, string), TddGeneratedMember?>();
+        var generatedByKey = new Dictionary<string, TddGeneratedMember?>(StringComparer.Ordinal);
         // key -> every "ObjectDisplayName.MethodName" this run's compile identified as
         // depending on it — EVERY diagnostic naming the same missing member, not just whichever
         // one happened to trigger the actual generation. Resolved statically from each
         // diagnostic's own Location, never from what actually executed — see
         // TddGeneratedMember.DependentTests' doc comment for why that matters.
-        var dependentsByKey = new Dictionary<(int, string, string), List<string>>();
+        var dependentsByKey = new Dictionary<string, List<string>>(StringComparer.Ordinal);
 
         foreach (var diag in emitResult.Diagnostics)
         {
@@ -113,10 +119,14 @@ public static class TddGeneration
                 var target = ResolveTarget(compilation, originalTrees, diag);
                 if (target == null) continue; // unrecognized shape / unresolvable qualifier — refuse
 
-                var key = (target.Value.TargetTreeIdx, target.Value.Kind, target.Value.MemberName);
+                var key = target.Value.CrossFile != null
+                    ? CrossKey(target.Value.CrossFile, target.Value.Kind, target.Value.MemberName)
+                    : $"{target.Value.TargetTreeIdx}|{target.Value.Kind}|{target.Value.MemberName}";
                 if (!generatedByKey.TryGetValue(key, out var member))
                 {
-                    member = TryGenerate(compilation, trees, parseOptions, target.Value);
+                    member = target.Value.CrossFile != null
+                        ? TryGenerateCrossBundle(compilation, target.Value, key)
+                        : TryGenerate(compilation, trees, parseOptions, target.Value);
                     generatedByKey[key] = member;
                 }
                 if (member == null) continue; // this key was attempted (now or earlier) and refused
@@ -142,7 +152,10 @@ public static class TddGeneration
             var deps = dependentsByKey.TryGetValue(key, out var l)
                 ? (IReadOnlyList<string>)l
                 : Array.Empty<string>();
-            generated.Add(member with { DependentTests = deps });
+            var withDeps = member with { DependentTests = deps };
+            if (withDeps.GeneratedIntoFile != null)
+                TddCrossBundle.RecordGenerated(moduleName ?? "", withDeps);
+            generated.Add(withDeps);
         }
         return generated;
     }
@@ -159,7 +172,7 @@ public static class TddGeneration
     /// compile's own trees (a precompiled dependency, out of scope).
     /// </summary>
     private static (string Kind, int TargetTreeIdx, string TargetObjectName, string MemberName,
-        NavSyntax.MemberAccessExpressionSyntax? Mae)? ResolveTarget(
+        NavSyntax.MemberAccessExpressionSyntax? Mae, string? CrossFile)? ResolveTarget(
         NavCA.Compilation compilation, NavSyntax.SyntaxTree[] originalTrees, NavDiag.Diagnostic diag)
     {
         var tree = diag.Location.SourceTree!;
@@ -216,17 +229,88 @@ public static class TddGeneration
         // Precompiled-dependency / genuinely-unresolvable guard: only a symbol declared in ONE
         // OF THIS COMPILE'S OWN TREES can be generated into — see this file's header comment.
         var declLoc = qualType.Location;
-        if (declLoc?.SourceTree == null) return null;
+        if (declLoc?.SourceTree == null)
+        {
+            // Declared outside this compile: generatable only when another SOURCE bundle of the
+            // run declares it (#5037). A precompiled dependency matches no registered source.
+            var cross = TddCrossBundle.FindObject(SyntaxTypeFor(kind), qualType.Name);
+            if (cross == null) return null;
+            return (kind, -1, qualType.Name, memberName, mae, cross.Value.FilePath);
+        }
         var targetTreeIdx = Array.IndexOf(originalTrees, declLoc.SourceTree);
         if (targetTreeIdx < 0) return null;
 
-        return (kind, targetTreeIdx, qualType.Name, memberName, mae);
+        return (kind, targetTreeIdx, qualType.Name, memberName, mae, null);
+    }
+
+    private static Type SyntaxTypeFor(string kind) => kind switch
+    {
+        "procedure" => typeof(NavSyntax.CodeunitSyntax),
+        "field" => typeof(NavSyntax.TableSyntax),
+        _ => typeof(NavSyntax.EnumTypeSyntax),
+    };
+
+    private static string CrossKey(string file, string kind, string member)
+        => $"{Path.GetFullPath(file)}|{kind}|{member.ToLowerInvariant()}";
+
+    /// <summary>
+    /// #5037: generates into another source bundle's file, as overlay text. The current compile
+    /// is not recompiled here — its references come from that bundle's symbols, so the caller
+    /// re-runs the cycle to recompile it first. An enum type is accepted only when that same
+    /// bundle declares it, because the generated-into bundle cannot reference the dependent's
+    /// objects; anything else refuses.
+    /// </summary>
+    private static TddGeneratedMember? TryGenerateCrossBundle(
+        NavCA.Compilation compilation,
+        (string Kind, int TargetTreeIdx, string TargetObjectName, string MemberName,
+            NavSyntax.MemberAccessExpressionSyntax? Mae, string? CrossFile) target,
+        string key)
+    {
+        if (!TddCrossBundle.TryBeginAttempt(key)) return null;
+        var found = TddCrossBundle.FindObject(SyntaxTypeFor(target.Kind), target.TargetObjectName);
+        if (found == null || !string.Equals(found.Value.FilePath, target.CrossFile, StringComparison.Ordinal))
+            return null;
+        var implDir = TddCrossBundle.SourceImpls()
+            .Select(i => i.Dir)
+            .FirstOrDefault(d => found.Value.FilePath.StartsWith(d + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+        if (implDir == null) return null;
+        bool TypeAllowed(NavCA.ITypeSymbol t)
+        {
+            if (t.NavTypeKind != NavCA.NavTypeKind.Enum) return true;
+            var enumDecl = TddCrossBundle.FindObject(typeof(NavSyntax.EnumTypeSyntax), t.Name);
+            return t.Location?.SourceTree == null && enumDecl != null
+                && enumDecl.Value.FilePath.StartsWith(implDir + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        }
+
+        var parseOptions = BcCompiler.BuildParseOptions(BcCompiler.ReadManifestCompilerInputs(found.Value.AppJson));
+        var root = (NavSyntax.CompilationUnitSyntax)found.Value.Tree.GetRoot();
+        var objects = root.Objects;
+        var objIdx = objects.IndexOf(o => ObjectNameOf(o).Equals(target.TargetObjectName, StringComparison.OrdinalIgnoreCase));
+        if (objIdx < 0) return null;
+        var targetObj = objects[objIdx];
+
+        (NavSyntax.ObjectSyntax NewObj, TddGeneratedMember Member)? result = target.Kind switch
+        {
+            "field" => TryGenerateField(compilation, parseOptions, targetObj, target.MemberName, target.Mae!, TypeAllowed),
+            "procedure" => TryGenerateProcedure(compilation, parseOptions, targetObj, target.MemberName, target.Mae!, TypeAllowed),
+            "enum-value" => TryGenerateEnumValue(parseOptions, targetObj, target.MemberName),
+            _ => null,
+        };
+        if (result == null)
+        {
+            TddCrossBundle.Refuse(key);
+            return null;
+        }
+
+        var newRoot = root.WithObjects(objects.Replace(targetObj, result.Value.NewObj));
+        TddSourceOverlay.Set(found.Value.FilePath, newRoot.ToFullString());
+        return result.Value.Member with { GeneratedIntoFile = found.Value.FilePath };
     }
 
     private static TddGeneratedMember? TryGenerate(
         NavCA.Compilation compilation, NavSyntax.SyntaxTree[] trees, NavCA.ParseOptions parseOptions,
         (string Kind, int TargetTreeIdx, string TargetObjectName, string MemberName,
-            NavSyntax.MemberAccessExpressionSyntax? Mae) target)
+            NavSyntax.MemberAccessExpressionSyntax? Mae, string? CrossFile) target)
     {
         var currentRoot = (NavSyntax.CompilationUnitSyntax)trees[target.TargetTreeIdx].GetRoot();
         var objects = currentRoot.Objects;
@@ -289,14 +373,15 @@ public static class TddGeneration
 
     private static (NavSyntax.ObjectSyntax, TddGeneratedMember)? TryGenerateField(
         NavCA.Compilation compilation, NavCA.ParseOptions parseOptions,
-        NavSyntax.ObjectSyntax targetObj, string fieldName, NavSyntax.MemberAccessExpressionSyntax mae)
+        NavSyntax.ObjectSyntax targetObj, string fieldName, NavSyntax.MemberAccessExpressionSyntax mae,
+        Func<NavCA.ITypeSymbol, bool>? typeAllowed = null)
     {
         if (targetObj is not NavSyntax.TableSyntax tableSyntax) return null;
         // Only infer from "Rec.\"Field\" := <expr>;" — the assignment's RHS is the one place a
         // field's type is unambiguously anchored by this diagnostic's own call site (see this
         // file's header: everything else falls through to the refuse path on purpose).
         if (mae.Parent is not NavSyntax.AssignmentStatementSyntax asn || !SpanEq(asn.Target, mae)) return null;
-        var typeText = InferAlTypeText(compilation, asn.Source);
+        var typeText = InferAlTypeText(compilation, asn.Source, typeAllowed);
         if (typeText == null) return null;
 
         var nextId = 1;
@@ -326,7 +411,8 @@ public static class TddGeneration
 
     private static (NavSyntax.ObjectSyntax, TddGeneratedMember)? TryGenerateProcedure(
         NavCA.Compilation compilation, NavCA.ParseOptions parseOptions,
-        NavSyntax.ObjectSyntax targetObj, string procName, NavSyntax.MemberAccessExpressionSyntax mae)
+        NavSyntax.ObjectSyntax targetObj, string procName, NavSyntax.MemberAccessExpressionSyntax mae,
+        Func<NavCA.ITypeSymbol, bool>? typeAllowed = null)
     {
         if (targetObj is not NavSyntax.CodeunitSyntax codeunitSyntax) return null;
         if (mae.Parent is not NavSyntax.InvocationExpressionSyntax inv) return null;
@@ -334,12 +420,12 @@ public static class TddGeneration
         var paramTypes = new List<string>();
         foreach (var arg in inv.ArgumentList.Arguments)
         {
-            var t = InferAlTypeText(compilation, arg);
+            var t = InferAlTypeText(compilation, arg, typeAllowed);
             if (t == null) return null; // any un-inferable argument refuses the WHOLE procedure
             paramTypes.Add(t);
         }
 
-        var returnType = InferReturnTypeText(compilation, inv);
+        var returnType = InferReturnTypeText(compilation, inv, typeAllowed);
         if (returnType == null) return null; // includes the "bare statement" refuse case
 
         var quotedName = Quote(procName);
@@ -383,7 +469,8 @@ public static class TddGeneration
     /// length this call site cannot possibly anchor) or otherwise not in
     /// <see cref="SimpleBuiltinTypes"/>/Enum.
     /// </summary>
-    private static string? InferAlTypeText(NavCA.Compilation compilation, NavSyntax.CodeExpressionSyntax expr)
+    private static string? InferAlTypeText(NavCA.Compilation compilation, NavSyntax.CodeExpressionSyntax expr,
+        Func<NavCA.ITypeSymbol, bool>? typeAllowed = null)
     {
         if (expr is NavSyntax.LiteralExpressionSyntax lit)
         {
@@ -401,6 +488,7 @@ public static class TddGeneration
 
         var model = compilation.GetSemanticModel(expr.SyntaxTree);
         var type = ResolveExpressionType(model, expr);
+        if (type != null && typeAllowed != null && !typeAllowed(type)) return null;
         return TypeSymbolToAlText(type);
     }
 
@@ -442,13 +530,14 @@ public static class TddGeneration
     /// explicit refuse example: there is no way to tell a void procedure from a discarded
     /// return value from that shape alone, so it refuses rather than guessing "void".
     /// </summary>
-    private static string? InferReturnTypeText(NavCA.Compilation compilation, NavSyntax.InvocationExpressionSyntax inv)
+    private static string? InferReturnTypeText(NavCA.Compilation compilation, NavSyntax.InvocationExpressionSyntax inv,
+        Func<NavCA.ITypeSymbol, bool>? typeAllowed = null)
     {
         var parent = inv.Parent;
         if (parent is NavSyntax.ExpressionStatementSyntax) return null;
 
         if (parent is NavSyntax.AssignmentStatementSyntax asn && SpanEq(asn.Source, inv))
-            return InferAlTypeText(compilation, asn.Target);
+            return InferAlTypeText(compilation, asn.Target, typeAllowed);
 
         if (parent is NavSyntax.IfStatementSyntax ifs && SpanEq(ifs.Condition, inv))
             return "Boolean";
@@ -473,7 +562,9 @@ public static class TddGeneration
                 ?? SingleCandidate(symInfo1) as NavCA.IMethodSymbol
                 ?? SingleCandidate(symInfo2) as NavCA.IMethodSymbol;
             if (outerSymbol == null || ordinal >= outerSymbol.Parameters.Length) return null;
-            return TypeSymbolToAlText(outerSymbol.Parameters[ordinal].ParameterType);
+            var paramType = outerSymbol.Parameters[ordinal].ParameterType;
+            if (paramType != null && typeAllowed != null && !typeAllowed(paramType)) return null;
+            return TypeSymbolToAlText(paramType);
         }
 
         return null;
@@ -494,4 +585,6 @@ public static class TddGeneration
         => id == null ? "" : (id.Identifier.ValueText ?? id.Identifier.Text ?? "");
 
     private static string qualTypeNameOf(NavSyntax.ObjectSyntax obj) => Unquote(IdentTextOf(obj.Name));
+
+    internal static string ObjectNameOf(NavSyntax.ObjectSyntax obj) => qualTypeNameOf(obj);
 }

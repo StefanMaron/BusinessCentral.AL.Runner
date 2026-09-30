@@ -2338,6 +2338,13 @@ var results = new List<BucketResult>();
 // --tdd (issue #2001) acceptance criterion 8: every member generated across the WHOLE run
 // (every bundle's Emit call), printed as one list at the end — see the print site below.
 var allTddGeneratedMembers = new List<TddGeneratedMember>();
+// --tdd: [Test] procedures reported FAILED for a missing symbol this run (TDD-EXCLUDED), so the
+// closing line says what was reported rather than assuming it (#5037).
+int tddSyntheticFailedCount = 0;
+// --tdd (#5037): set when this pass generated members into ANOTHER source bundle of the run;
+// the loop then runs the same cycle again so that bundle is recompiled before its dependents.
+bool tddRecompileRerun = false;
+int tddRecompileReruns = 0;
 
 // #1905 (defect 4): the reason a --watch cycle fell back to a full rebuild (instead
 // of the proportional-cost incremental path), one entry per module that fell back
@@ -2747,8 +2754,9 @@ AlRunner.Patches.NumberSequencePatches.ResetForNewExecution();
 // bundle can be told from an earlier one without destroying what the earlier one registered.
 // The expensive dependency symbol loader is keyed on the dep set, not the bundle source, so it
 // stays warm across cycles — that is what makes a watch re-run fast.
-// Under --affected the selecting run resets per run itself (RunAllBundlesForServer).
-if (watchMode && !watchAffected)
+// Under --affected the selecting run resets per run itself (RunAllBundlesForServer). A --tdd
+// re-run (#5037) resets too; --affected refuses --tdd, so the two never meet.
+if ((watchMode && !watchAffected) || tddRecompileRerun)
     BcRuntime.ResetForNewBundleReload();
 
 // #2218: a user can add an .alpackages between cycles, so each cycle after the first walks afresh.
@@ -2760,6 +2768,13 @@ if (watchMode && watchCycleIndex > 0)
 
 results.Clear();
 watchFullRebuildReasons.Clear();
+// #5037: a new cycle generates from the files on disk again; a re-run keeps what this cycle
+// generated, since that is what it re-runs for.
+if (tddMode && !tddRecompileRerun)
+{
+    TddCrossBundle.ResetForNewCycle();
+    tddRecompileReruns = 0;
+}
 
 // #2683: re-synthesise the dependency workspace before re-running. The pre-passes above
 // ran against the sources as they were when the process started; a --watch edit to a
@@ -2778,8 +2793,26 @@ watchFullRebuildReasons.Clear();
 // failure is printed and the cycle continues with the base caches and NO workspace dirs, so
 // the dependent bundle fails its own compile naming the dependency it cannot resolve —
 // loud and true — rather than quietly resolving the previous cycle's copy.
+if (tddRecompileRerun)
+{
+    // #5037: recompile the bundle(s) --tdd generated into. If a generated member breaks that
+    // compile, drop the batch and never retry it this cycle: the dependent's tests then fall
+    // through to the refuse path and report FAILED naming the missing symbol.
+    tddRecompileRerun = false;
+    allTddGeneratedMembers.Clear();
+    tddSyntheticFailedCount = 0;
+    if (RunDependencyPrePasses() != null)
+    {
+        Console.Error.WriteLine(
+            "--tdd: the bundle a member was generated into did not compile with it (see the " +
+            "diagnostic above); the generated member(s) are dropped and the tests that need them " +
+            "report FAILED instead.");
+        TddCrossBundle.RollBackPending(TddCrossBundle.AttemptedKeys());
+        RunDependencyPrePasses();
+    }
+}
 // Under --affected the selecting run re-runs both pre-passes itself (RunAllBundlesForServer).
-if (watchMode && watchCycleIndex > 0 && !watchAffected)
+else if (watchMode && watchCycleIndex > 0 && !watchAffected)
 {
     var prePassExit = RunDependencyPrePasses();
     if (prePassExit != null)
@@ -3687,13 +3720,21 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
                     // --tdd (issue #2001): collect regardless of whether anything ended up
                     // excluded afterward — generation can fully resolve an object with NO
                     // exclusion remaining, and that case still belongs in criterion 8's list.
-                    if (emitOutput.TddGeneratedMembers != null)
+                    // #5037: members generated into another bundle for this module on an earlier
+                    // pass of this cycle — this compile resolved them, so it reports none itself.
+                    var crossBundleMembers = tddMode
+                        ? TddCrossBundle.GeneratedFor(moduleName)
+                            .Where(m => emitOutput.TddGeneratedMembers?.Contains(m) != true).ToList()
+                        : new List<TddGeneratedMember>();
+                    if (emitOutput.TddGeneratedMembers != null || crossBundleMembers.Count > 0)
                     {
-                        allTddGeneratedMembers.AddRange(emitOutput.TddGeneratedMembers);
+                        var bundleGenerated = (emitOutput.TddGeneratedMembers ?? Array.Empty<TddGeneratedMember>())
+                            .Concat(crossBundleMembers).ToList();
+                        allTddGeneratedMembers.AddRange(bundleGenerated);
                         // Invert DependentTests (member -> tests) into (test -> members), so
                         // OverrideTddDependentResults can look a REAL TestResult up by its own
                         // (CodeunitDisplayName ?? Codeunit, Method) in O(1).
-                        foreach (var m in emitOutput.TddGeneratedMembers)
+                        foreach (var m in bundleGenerated)
                             foreach (var testLabel in m.DependentTests)
                             {
                                 if (!bundleTddDependents.TryGetValue(testLabel, out var list))
@@ -3752,6 +3793,7 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
                                     Console.Error.WriteLine($"  {d}");
                             }
                             bundleTests.AddRange(synthetic);
+                            tddSyntheticFailedCount += synthetic.Count;
                             tddExcludedCount = emitOutput.ExcludedObjects.Count;
                             // sources stays as BcCompiler returned it (the recovered set) — do
                             // NOT clear it, unlike the non-tdd branch below.
@@ -3988,7 +4030,9 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
                     sources = Array.Empty<EmittedSource>(); // do not compile a partial, silently-wrong module
                 }
             }
-            if (sources.Count == 0 && alDiagnostics.Count > 0)
+            // --tdd (#5037): every object was excluded and each one's [Test] procedures are
+            // already reported FAILED above — an empty module, not an unexplained EMIT-ZERO.
+            if (sources.Count == 0 && alDiagnostics.Count > 0 && !(tddMode && tddExcludedCount > 0))
             {
                 // Emit produced zero sources — BC's compiler swallowed exceptions internally.
                 // Surface AL diagnostics (parse/declaration errors) so the failure is visible.
@@ -4495,6 +4539,24 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
     // (dep resolution, symbol/module registration) #1825 is hunting.
     AlRunner.Infrastructure.PhaseLog.EndBundle(bundleEmit, bundleComp, bundleRun);
     }
+}
+// #5037: this pass generated members into another source bundle of the run. Run the cycle
+// again before any test runs, so that bundle is recompiled with them. Bounded: a batch is
+// never generated twice in one cycle, so a later pass has nothing new to generate.
+if (tddMode && TddCrossBundle.TakePendingRecompile() && tddRecompileReruns < 3)
+{
+    tddRecompileReruns++;
+    if (stdoutSilenced)
+    {
+        Console.SetOut(savedOut);
+        Console.SetError(savedErr);
+        stdoutSilenced = false;
+    }
+    Console.Error.WriteLine(
+        "--tdd: generated member(s) into another bundle of this run — recompiling it and " +
+        "compiling the bundles that depend on it again.");
+    tddRecompileRerun = true;
+    continue;
 }
 foreach (var deferredRun in deferredBundleRuns)
     deferredRun();
@@ -5116,12 +5178,20 @@ if (tddMode)
     // this list is only what was actually inferred, generated, and recompiled clean.
     var tddOut = outputJson ? Console.Error : Console.Out;
     tddOut.WriteLine();
-    if (allTddGeneratedMembers.Count == 0)
+    if (allTddGeneratedMembers.Count == 0 && tddSyntheticFailedCount > 0)
     {
         tddOut.WriteLine(
             "--tdd: no members were generated this run — every missing symbol was reported " +
             "as a failed test instead (see the FAILED test messages above for each missing " +
             "symbol).");
+    }
+    else if (allTddGeneratedMembers.Count == 0)
+    {
+        // #5037: never claim failures were reported when none were.
+        tddOut.WriteLine(results.Any(r => r.CompileErrors.Count > 0 || r.ProcessError != null)
+            ? "--tdd: no members were generated this run, and no test was reported failed for a " +
+              "missing symbol — the error(s) reported above stopped the run first."
+            : "--tdd: no members were generated this run — no test referenced a missing symbol.");
     }
     else
     {

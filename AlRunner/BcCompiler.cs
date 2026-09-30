@@ -1834,7 +1834,7 @@ public sealed partial class BcCompiler
         var trees = new NavSyntax.SyntaxTree[alFiles.Count];
         Parallel.For(0, alFiles.Count, i =>
         {
-            var src = File.ReadAllText(alFiles[i]);
+            var src = TddSourceOverlay.ReadAllText(alFiles[i]);
             trees[i] = NavSyntax.SyntaxTree.ParseObjectText(
                 src, path: alFiles[i], encoding: null!, parseOpts, default);
         });
@@ -1986,7 +1986,12 @@ public sealed partial class BcCompiler
         var tddGeneratedMembers = new List<TddGeneratedMember>();
         if (_tddMode && caught == null && emitResult != null && !emitResult.Success)
         {
-            var newlyGenerated = TddGeneration.Generate(compilation, trees, parseOpts, emitResult);
+            var newlyGenerated = TddGeneration.Generate(compilation, trees, parseOpts, emitResult, moduleName);
+            // A member generated into another bundle (#5037) is invisible to this compile until
+            // that bundle is recompiled — Program.cs re-runs the cycle for it, so only a member
+            // generated into this module's own trees is worth a recompile here.
+            tddGeneratedMembers.AddRange(newlyGenerated.Where(g => g.GeneratedIntoFile != null));
+            newlyGenerated = newlyGenerated.Where(g => g.GeneratedIntoFile == null).ToList();
             if (newlyGenerated.Count > 0)
             {
                 tddGeneratedMembers.AddRange(newlyGenerated);
@@ -2121,7 +2126,7 @@ public sealed partial class BcCompiler
                     foreach (var i in keepIdx)
                     {
                         string src;
-                        try { src = File.ReadAllText(alFiles[i]); }
+                        try { src = TddSourceOverlay.ReadAllText(alFiles[i]); }
                         catch { nextKeepIdx.Add(i); continue; }
                         var hit = failing.FirstOrDefault(f => DeclaresObject(src, f.Type, f.Namespace, f.Name));
                         if (hit.Name != null)
@@ -2192,6 +2197,15 @@ public sealed partial class BcCompiler
                 }
                 else break; // no exception and no failed EmitResult to learn from — nothing to exclude
 
+                // --tdd (#5037): when EVERY object is broken, still record the exclusion, so the
+                // caller reports each [Test] procedure FAILED naming its missing symbol instead
+                // of the bundle ending in EMIT-ZERO with no test reported at all.
+                if (_tddMode && roundExcluded.Count > 0 && nextKeepIdx.Count == 0)
+                {
+                    round++;
+                    allExcluded.AddRange(roundExcluded);
+                    break;
+                }
                 if (roundExcluded.Count == 0 || nextKeepIdx.Count == 0) break; // nothing new identified, or nothing left
 
                 round++;
@@ -2685,7 +2699,7 @@ public sealed partial class BcCompiler
         var trees = new NavSyntax.SyntaxTree[alFiles.Count];
         Parallel.For(0, alFiles.Count, i =>
         {
-            var src = File.ReadAllText(alFiles[i]);
+            var src = TddSourceOverlay.ReadAllText(alFiles[i]);
             trees[i] = NavSyntax.SyntaxTree.ParseObjectText(src, path: alFiles[i], encoding: null!, parseOpts, default);
         });
         var compOpts = new NavCA.CompilationOptions(
