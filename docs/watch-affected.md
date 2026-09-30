@@ -30,7 +30,9 @@ source; otherwise it runs everything and says why.
 ## What a cycle prints
 
 The per-test lines and the `Tests:` summary line cover only the tests that ran. A skipped test
-is never printed and never counted as passed. Under the summary:
+is never printed and never counted as passed. When skipped tests are still failing from an earlier
+cycle, the summary's failed figure says so: `failed 0 (+1 still failing, not re-run)`. Under the
+summary:
 
 ```
 [watch] affected: ran 2 of 5   skipped-unaffected 2   skipped-failing 1
@@ -50,6 +52,10 @@ The interactive dashboard shows the same lines above the test tree.
 `--affected` is rejected with exit 2 without `--watch` (a `--server` client sets `affectedOnly`
 per request), and together with `--tdd`, `--per-suite` or `--test`/`--filter`: the selecting
 run applies none of them, so accepting them would drop them silently.
+
+Under `--affected` an EMIT-EXCLUDED object fails the whole bundle's compile, as it does for a
+`--server` request: the cycle reports `COMPILE FAIL` and runs no test of that bundle. Plain `--watch`
+is more lenient: it reports the bundle as partial and still runs its healthy tests.
 
 Under `--affected` a cycle runs through the server's run path, which resets the bundle caches
 and re-runs the dependency pre-passes itself, so the watch loop's own reset and pre-pass are

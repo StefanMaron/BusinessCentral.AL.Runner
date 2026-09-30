@@ -2617,6 +2617,8 @@ int watchScroll = 0;
 var watchAffectedState = watchAffected ? new AlRunner.Infrastructure.AffectedSelectionState("watch") : null;
 // What the last --affected cycle's selection did; printed under its summary and on the dashboard.
 List<string>? watchAffectedLines = null;
+// Skipped tests whose last result was not a pass, counted on the summary's failed figure.
+var watchAffectedStillFailing = 0;
 
 // Render the dashboard to a flat list of (already-ANSI-markup) lines at the current
 // console width, so the idle branch can window it into the visible viewport.
@@ -2828,8 +2830,9 @@ if (watchAffected)
         includeFailing: watchIncludeFailing, onTestComplete: _ => { }, token: default);
     results.AddRange(WatchAffectedReport.ToBuckets(bundles, affectedOutcome, affectedSw.Elapsed,
         Reporter.FinalizeCompanyInitFailures(CompanyInitializer.DrainFailures(), expectations)));
-    watchAffectedLines = WatchAffectedReport.Describe(affectedOutcome.Selection,
-        WatchAffectedReport.SkippedFailing(affectedOutcome, watchAffectedState!));
+    var stillFailing = WatchAffectedReport.SkippedFailing(affectedOutcome, watchAffectedState!);
+    watchAffectedStillFailing = stillFailing.Count;
+    watchAffectedLines = WatchAffectedReport.Describe(affectedOutcome.Selection, stillFailing);
 }
 int i2 = 0;
 foreach (var bundle in watchAffected ? new List<string>() : bundles)
@@ -4593,7 +4596,11 @@ else
     // Non-interactive fallback: the existing plain line output. The WatchTests
     // integration test asserts on these exact markers — do not change them.
     Reporter.PrintPerTest(results, Console.Out, showPassChoice ?? AlRunner.Log.Verbose);
-    Reporter.PrintSummary(results, Console.Out);
+    if (watchAffected)
+        Reporter.PrintSummary(results, Console.Out, default,
+            new Reporter.SummaryOptions(Verbose: AlRunner.Log.Verbose, StillFailingNotRerun: watchAffectedStillFailing));
+    else
+        Reporter.PrintSummary(results, Console.Out);
     foreach (var line in watchAffectedLines ?? new List<string>())
         Console.WriteLine(line);
     // #4561: the one-shot flush is never reached from --watch; once per cycle.

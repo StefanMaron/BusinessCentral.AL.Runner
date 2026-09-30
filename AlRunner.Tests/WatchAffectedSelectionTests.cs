@@ -108,6 +108,22 @@ public class WatchAffectedSelectionTests
 
     private const string ProbeHelper = "        Error('PROBE-EDIT');\n";
     private const string ProbeEmpty = "        Error('PROBE-EMPTY');\n";
+    // A test codeunit naming a codeunit that does not exist: AL0185, so the compile cannot succeed.
+    private const string BrokenTests = """
+        codeunit 61776 "WAff Broken Tests SX"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure UsesMissing()
+            var
+                M: Codeunit "WAff Missing SX";
+            begin
+                M.Run();
+            end;
+        }
+        """;
+
     private const string ProbeInsert = "    trigger OnInsert() begin Error('PROBE-INSERT'); end;\n";
 
     private static readonly string[] All =
@@ -141,7 +157,7 @@ public class WatchAffectedSelectionTests
 
     /// <summary>One watch cycle as its stdout printed it.</summary>
     private sealed record Cycle(Dictionary<string, string> Status, Dictionary<string, string> Message,
-        List<string> AffectedLines, string Raw)
+        List<string> AffectedLines, string? CountsLine, string Raw)
     {
         public string[] Ran => Status.Keys.OrderBy(k => k, StringComparer.Ordinal).ToArray();
     }
@@ -154,6 +170,7 @@ public class WatchAffectedSelectionTests
         var status = new Dictionary<string, string>(StringComparer.Ordinal);
         var message = new Dictionary<string, string>(StringComparer.Ordinal);
         var affected = new List<string>();
+        string? counts = null;
         string? last = null;
         foreach (var line in stdout)
         {
@@ -168,8 +185,9 @@ public class WatchAffectedSelectionTests
             if (last != null && line.StartsWith("      ", StringComparison.Ordinal)) { message[last] += line.Trim() + "\n"; continue; }
             last = null;
             if (line.StartsWith("[watch] affected:", StringComparison.Ordinal)) affected.Add(line);
+            if (line.StartsWith("Tests: ", StringComparison.Ordinal)) counts = line;
         }
-        return new Cycle(status, message, affected, string.Join("\n", stdout));
+        return new Cycle(status, message, affected, counts, string.Join("\n", stdout));
     }
 
     /// <summary>A live `--watch` process, read one cycle at a time off its stdout.</summary>
@@ -295,6 +313,7 @@ public class WatchAffectedSelectionTests
         foreach (var t in HelperTests) AssertFailsWith(edit, "edit", t, "PROBE-EDIT");
         AssertCounts(edit, "edit", 2, 6, 4, 0);
         AssertNarrowed(edit, "edit");
+        Assert.True(edit.CountsLine?.Contains("failed 2   errors 0") == true, $"edit: counts line:\n{edit.Raw}");
 
         WatchEdit.Replace(helper, Helper());
         var revert = await watch.NextCycle(WarmCycle);
@@ -334,6 +353,17 @@ public class WatchAffectedSelectionTests
         AssertCounts(trigger, "added table trigger", 1, 6, 4, 1);
         Assert.Contains(trigger.AffectedLines,
             l => l == "[watch] affected: not re-run, still failing from an earlier cycle: Codeunit61775.RaisesWork");
+        // The summary's own failed figure carries the skipped failing test, so it never reads as clean.
+        Assert.True(trigger.CountsLine?.Contains("failed 1 (+1 still failing, not re-run)   errors 0") == true,
+            $"added table trigger: counts line:\n{trigger.Raw}");
+
+        // A file that cannot compile: the cycle reports the compile failure, never an empty green run.
+        WatchEdit.Replace(Path.Combine(bundle, "Broken.Codeunit.al"), BrokenTests);
+        var broken = await watch.NextCycle(WarmCycle);
+        Assert.Empty(broken.Status);
+        Assert.Contains("COMPILE FAIL", broken.Raw, StringComparison.Ordinal);
+        Assert.Contains("AL0185", broken.Raw, StringComparison.Ordinal);
+        Assert.Contains("compile-fail:1", broken.Raw, StringComparison.Ordinal);
     }
 
     /// <summary>

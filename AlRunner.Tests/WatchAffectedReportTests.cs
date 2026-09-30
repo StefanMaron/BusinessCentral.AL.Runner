@@ -44,6 +44,22 @@ public class WatchAffectedReportTests
         => Assert.Equal(new[] { "[watch] affected: no selection was made (no bundle reached test execution)" },
             WatchAffectedReport.Describe(null, Array.Empty<string>()));
 
+    [Fact]
+    public void Summary_CarriesSkippedStillFailingTestsOnTheFailedFigure()
+    {
+        var bucket = new BucketResult("/b", BucketStage.Ran, Array.Empty<string>(), null,
+            new[] { new TestResult("Codeunit1", "Passes", TestOutcome.Pass, null, null, TimeSpan.Zero) },
+            TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero, RanGroupCount: 1);
+
+        var narrowed = new StringWriter();
+        Reporter.PrintSummary(new[] { bucket }, narrowed, default, new Reporter.SummaryOptions(StillFailingNotRerun: 2));
+        Assert.Contains("Tests: 1   passed 1   failed 0 (+2 still failing, not re-run)   errors 0", narrowed.ToString());
+
+        var plain = new StringWriter();
+        Reporter.PrintSummary(new[] { bucket }, plain, default, new Reporter.SummaryOptions());
+        Assert.Contains("Tests: 1   passed 1   failed 0   errors 0", plain.ToString());
+    }
+
     private static readonly string RepoRoot = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
 
