@@ -75,6 +75,59 @@ internal static class AffectedEventSelection
         return new(keys, null);
     }
 
+    /// <summary>
+    /// The keys a changed table or tableextension selects on (#5008). A table with no triggers
+    /// contributes no statement to any coverage, yet an added trigger, a field property or a key
+    /// changes what every test holding a record of it observes. Rules:
+    /// docs/server-mode.md#affectedonly-and-changed-tables.
+    /// </summary>
+    /// <param name="changed">This request's changed objects.</param>
+    /// <param name="currentExtensionBases">Each tableextension id to its base table ids now.</param>
+    /// <param name="recordedBundleWide">The recording run's <see cref="AlEventRaiseTracker.BundleWideKey"/>
+    /// entry; null when it has none.</param>
+    internal static Result ChangedTableKeys(
+        IEnumerable<(string Kind, int? Id)> changed,
+        IReadOnlyDictionary<int, List<int>> currentExtensionBases,
+        HashSet<string>? recordedBundleWide)
+    {
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (kind, id) in changed)
+        {
+            if (kind != "Table" && kind != "TableExtension") continue;
+            if (id is not int n)
+                return new(keys, $"a changed {kind} has no object id, so the tests holding its records cannot be looked up");
+            if (recordedBundleWide == null)
+                return new(keys, $"{kind} {n} changed and the coverage baseline has no record of which tests held records of each table");
+
+            keys.Add(AlEventRaiseTracker.UnresolvedTriggerKey);
+            if (kind == "Table")
+            {
+                AddTable(n);
+                continue;
+            }
+            keys.Add(AlEventRaiseTracker.TableKey("TableExtension", n));
+            var bases = currentExtensionBases.TryGetValue(n, out var b) ? b : new List<int>();
+            foreach (var t in bases) AddTable(t);
+            // Removed or edited: the recording run knew its base, and tests holding it carry its key.
+            // Added: only the current registry can name the base.
+            if (bases.Count == 0 && !recordedBundleWide.Contains(AlEventRaiseTracker.KnownExtensionKey(n)))
+                return new(keys, $"the base table of tableextension {n} could not be resolved");
+        }
+
+        var held = keys.Where(k => k.StartsWith("tbl|", StringComparison.Ordinal) && recordedBundleWide!.Contains(k))
+            .OrderBy(k => k, StringComparer.Ordinal).FirstOrDefault();
+        if (held != null)
+            return new(keys, $"a record of {held.Substring(4).Replace('|', ' ')} was held outside any one test "
+                + "(built before the test ran, or by a SingleInstance codeunit), so the tests reading it are not recorded");
+        return new(keys, null);
+
+        void AddTable(int table)
+        {
+            keys.Add(AlEventRaiseTracker.TableKey("Table", table));
+            keys.Add(AlEventRaiseTracker.TriggerKey("Table", table));
+        }
+    }
+
     // "ev|Kind|id|Event" -> "Kind|id"
     private static string PublisherOf(string eventKey)
     {

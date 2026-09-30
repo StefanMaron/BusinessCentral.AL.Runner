@@ -126,4 +126,52 @@ public class AffectedEventSelectionTests
         Assert.Equal("trig|Page|50103", EventSubscriberPatches.BindingEventKey(8, 50103, "OnOpenPageEvent"));
         Assert.Equal("ev|Table|50101|OnCustom", AlEventRaiseTracker.EventKey(AlEventRaiseTracker.NormalizeDispatchKind("Record"), 50101, "OnCustom"));
     }
+
+    // #5008 — ChangedTableKeys. The server-level proof is ServerAffectedSelectionTableChangeTests.
+    private static AffectedEventSelection.Result Tables(
+        (string, int?)[] changed, Dictionary<int, List<int>>? bases = null, params string[] bundleWide)
+        => AffectedEventSelection.ChangedTableKeys(changed, bases ?? new Dictionary<int, List<int>>(),
+            bundleWide.Length == 1 && bundleWide[0] == "<none>" ? null : bundleWide.ToHashSet(StringComparer.Ordinal));
+
+    [Fact]
+    public void ChangedTable_KeysItsRecordsAndTriggerConsults_OtherKindsKeyNothing()
+    {
+        var r = Tables(new (string, int?)[] { ("Table", 50101), ("Codeunit", 50100), ("Page", 50103) });
+        Assert.Null(r.ForceFullReason);
+        Assert.Equal(new[] { "tbl|Table|50101", "trig|?", "trig|Table|50101" }, r.Keys.OrderBy(k => k, StringComparer.Ordinal));
+        Assert.Empty(Tables(new (string, int?)[] { ("Codeunit", 50100) }, null, "<none>").Keys);
+    }
+
+    [Fact]
+    public void ChangedTableExtension_KeysItselfAndItsCurrentBase_OrItsRecordedBase()
+    {
+        var bases = new Dictionary<int, List<int>> { [50120] = new() { 50101 } };
+        var added = Tables(new (string, int?)[] { ("TableExtension", 50120) }, bases);
+        Assert.Null(added.ForceFullReason);
+        Assert.Equal(new[] { "tbl|TableExtension|50120", "tbl|Table|50101", "trig|?", "trig|Table|50101" },
+            added.Keys.OrderBy(k => k, StringComparer.Ordinal));
+
+        // Removed: gone from the registry, but the recording run resolved its base.
+        var removed = Tables(new (string, int?)[] { ("TableExtension", 50121) }, bases, "ext|50121");
+        Assert.Null(removed.ForceFullReason);
+        Assert.Contains("tbl|TableExtension|50121", removed.Keys);
+
+        var unresolved = Tables(new (string, int?)[] { ("TableExtension", 50122) }, bases);
+        Assert.Contains("base table of tableextension 50122 could not be resolved", unresolved.ForceFullReason);
+    }
+
+    [Fact]
+    public void ChangedTable_ForcesFull_WhenARecordOfItOutlivedOneTest_OrNothingWasRecorded()
+    {
+        var held = Tables(new (string, int?)[] { ("Table", 50101) }, null, "tbl|Table|50101");
+        Assert.Contains("a record of Table 50101 was held outside any one test", held.ForceFullReason);
+
+        var heldViaExtension = Tables(new (string, int?)[] { ("TableExtension", 50120) },
+            new Dictionary<int, List<int>> { [50120] = new() { 50101 } }, "tbl|Table|50101");
+        Assert.NotNull(heldViaExtension.ForceFullReason);
+
+        Assert.Contains("no record of which tests held records",
+            Tables(new (string, int?)[] { ("Table", 50101) }, null, "<none>").ForceFullReason);
+        Assert.Contains("has no object id", Tables(new (string, int?)[] { ("Table", null) }).ForceFullReason);
+    }
 }

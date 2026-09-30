@@ -306,6 +306,28 @@ public static partial class RecordPatches
         return table.Fields.Concat(extFieldsNew);
     }
 
+    /// <summary>
+    /// #5008: each registered tableextension id to the table ids its base table name resolves to
+    /// among the parsed tables — empty when it resolves to none (a base table not parsed yet).
+    /// Read from the same registry the extension instances are created from.
+    /// </summary>
+    internal static Dictionary<int, List<int>> TableExtensionBaseTableIds()
+    {
+        var result = new Dictionary<int, List<int>>();
+        foreach (var (baseName, extIds) in _extensionIdsByBaseTable)
+        {
+            var baseIds = _parsedTables.Values
+                .Where(t => string.Equals(t.TableName, baseName, StringComparison.OrdinalIgnoreCase))
+                .Select(t => t.TableId).Distinct().ToList();
+            foreach (var e in extIds)
+            {
+                if (!result.TryGetValue(e, out var list)) result[e] = list = new List<int>();
+                foreach (var b in baseIds) if (!list.Contains(b)) list.Add(b);
+            }
+        }
+        return result;
+    }
+
     // Set to true once Register() has been called.
     private static bool _registered;
 

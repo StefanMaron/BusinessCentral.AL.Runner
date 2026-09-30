@@ -264,8 +264,9 @@ public class ServerAffectedSelectionPersistedBaselineTests
 
         // The run above rewrote the store; bump its schema.
         var text = File.ReadAllText(store);
-        Assert.Contains("\"Schema\":1,", text, StringComparison.Ordinal);
-        File.WriteAllText(store, text.Replace("\"Schema\":1,", "\"Schema\":999,", StringComparison.Ordinal));
+        var schema = $"\"Schema\":{AlRunner.Infrastructure.AffectedBaselineStore.SchemaVersion},";
+        Assert.Contains(schema, text, StringComparison.Ordinal);
+        File.WriteAllText(store, text.Replace(schema, "\"Schema\":999,", StringComparison.Ordinal));
 
         var otherSchema = await Send(cache, bundle);
         Assert.True(otherSchema.ForcedFull, otherSchema.Raw);
