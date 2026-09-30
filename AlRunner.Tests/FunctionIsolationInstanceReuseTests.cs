@@ -32,6 +32,8 @@ public class FunctionIsolationInstanceReuseTests
         "T5_RowInsertedByT1IsRolledBack",
         "T6_RowInsertedByOnRunIsStillThere",
         "T7_OnRunRanOnceOnThisInstance",
+        "LeakA_DoesNotSeeLeakB",
+        "LeakB_DoesNotSeeLeakA",
     };
 
     private static (string output, int exit) RunRunner(string bundle, params string[] extra)
@@ -181,6 +183,45 @@ public class FunctionIsolationInstanceReuseTests
             begin
                 if Actual <> Expected then
                     Error('%1: expected %2, observed %3', What, Expected, Actual);
+            end;
+        }
+
+        // Two codeunits with an OnRun whose tests each leave a row behind. Whichever runs second
+        // must not see the other's row: under Test isolation the store is reset BEFORE OnRun, so
+        // the post-OnRun snapshot cannot carry the previous codeunit's last test into this one.
+        codeunit 64823 "FIR Leak A"
+        {
+            Subtype = Test;
+            TestPermissions = Disabled;
+            trigger OnRun() begin end;
+
+            [Test]
+            procedure LeakA_DoesNotSeeLeakB()
+            var
+                ProbeRow: Record "FIR Probe Row";
+            begin
+                if ProbeRow.Get('LEAK-B') then
+                    Error('FIRL codeunit B''s row reached codeunit A');
+                ProbeRow."Key" := 'LEAK-A';
+                ProbeRow.Insert();
+            end;
+        }
+
+        codeunit 64824 "FIR Leak B"
+        {
+            Subtype = Test;
+            TestPermissions = Disabled;
+            trigger OnRun() begin end;
+
+            [Test]
+            procedure LeakB_DoesNotSeeLeakA()
+            var
+                ProbeRow: Record "FIR Probe Row";
+            begin
+                if ProbeRow.Get('LEAK-A') then
+                    Error('FIRL codeunit A''s row reached codeunit B');
+                ProbeRow."Key" := 'LEAK-B';
+                ProbeRow.Insert();
             end;
         }
         """);

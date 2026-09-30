@@ -834,6 +834,39 @@ jobs:
               --test "Codeunit6020" \
               --strict
 
+      - name: Run al-language isolation probes under their own isolation
+        # #4826. A corpus app in scripts/corpus-app-dirs.py's ISOLATION_PROBES measures one
+        # TestIsolation mode with a custom test runner only the corpus's Windows nightly runs,
+        # and fails by design under the default isolation, so the corpus step above leaves it
+        # out. Here it runs under the isolation it measures, and --strict makes every test
+        # carry the Windows verdict on every leg. The count check catches a test that never ran.
+        # No probe in the resolved corpus is legitimate (a ref that predates them) and passes.
+        if: ${{ always() }}
+        run: |
+          mapfile -t PROBES < <(python3 scripts/corpus-app-dirs.py --isolation-probes tests/al-language)
+          rc=0
+          for line in "${PROBES[@]}"; do
+            iso="${line%%$'\t'*}"; dir="${line#*$'\t'}"
+            echo "[probe] $dir under --isolation $iso"
+            prc=0
+            dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
+                "$dir" \
+                --package-cache "$HOME/.al-runner/platform-apps" \
+                --package-cache "$HOME/.al-runner/test-apps" \
+                --isolation "$iso" \
+                --strict \
+                --count-out isolation-probe-count.json || prc=$?
+            if [ "$prc" -eq 0 ]; then
+              python3 scripts/check-isolation-probe-count.py \
+                  --counts isolation-probe-count.json --probe-dir "$dir" || prc=$?
+            fi
+            if [ "$prc" -ne 0 ]; then
+              echo "::error::isolation probe $dir failed under --isolation $iso (exit $prc)"
+              rc=$prc
+            fi
+          done
+          exit "$rc"
+
       - name: Phase-log report (al-language corpus)
         if: always()
         continue-on-error: true
