@@ -4,12 +4,13 @@ using System;
 namespace AlRunner;
 
 /// <summary>
-/// A control's <c>Editable()</c> is its own property, narrowed by the page's editability, AND
-/// by the mode the test put the page in. <c>RunnerPageInstance.ControlEditable</c> covers the
-/// first two; the open mode lives on the TestPage (<c>LiveNavTestPage.OpenModeEditable</c>), so
-/// a card opened with <c>OpenView()</c> answered <c>Editable() = No</c> for the page and Yes for
-/// its fields. Measured on a service tier by corpus codeunit 68015 "RSV Tests" (issue #5002):
-/// OpenView, and the built-in View action on an OpenEdit card, make the controls read-only too.
+/// A Rec-bound control's <c>Editable()</c> is its own property, narrowed by the page's
+/// editability, AND by the mode the test put the page in. <c>RunnerPageInstance.ControlEditable</c>
+/// covers the first two; the open mode lives on the TestPage
+/// (<c>LiveNavTestPage.OpenModeEditable</c>). Corpus codeunit 68015 "RSV Tests" (issue #5002):
+/// OpenView, and the built-in View action on an OpenEdit card, make Rec-bound controls read-only,
+/// while a PAGE-VARIABLE control on the same OpenView card stays editable — so only
+/// <c>LiveNavTestField</c> is wired to this.
 /// </summary>
 internal static class TestPageControlEditable
 {
