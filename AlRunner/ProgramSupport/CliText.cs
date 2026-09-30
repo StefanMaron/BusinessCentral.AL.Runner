@@ -430,6 +430,7 @@ internal static partial class ProgramSupport
         w.WriteLine("  al-runner [OPTIONS] <bundle-dir>...");
         w.WriteLine("  al-runner provision [<bundle-dir>]");
         w.WriteLine("  al-runner --server [--package-cache PATH ...] [--cache DIR]");
+        w.WriteLine("             [--define SYM ...] [--preprocessor-symbols A,B,...]");
         w.WriteLine("  al-runner --dap [PORT|stdio] <bundle-dir>");
         w.WriteLine("  al-runner --precompile <input.app> --out <output.dll> [--package-cache PATH ...]");
         w.WriteLine("  al-runner --emit-app <bundleDir> <outPath>");
@@ -715,6 +716,8 @@ internal static partial class ProgramSupport
         w.WriteLine("  --preprocessor-symbols A,B,...");
         w.WriteLine("                          Define multiple AL preprocessor symbols (comma-separated).");
         w.WriteLine("                          Each entry is validated identically to --define.");
+        w.WriteLine("                          Under --server both are daemon-wide: set at start, and a");
+        w.WriteLine("                          request cannot change them.");
         w.WriteLine();
         w.WriteLine("OUTPUT");
         w.WriteLine("  --out PATH              Write the failure-classification JSON to PATH and");

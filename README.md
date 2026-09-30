@@ -170,7 +170,7 @@ When stdout is **not** an interactive terminal (CI, a pipe, VS Code, a test harn
 ### Server mode (warm daemon for editor integrations)
 
 ```bash
-al-runner --server [--package-cache PATH ...] [--cache DIR]
+al-runner --server [--package-cache PATH ...] [--cache DIR] [--define SYM ...] [--preprocessor-symbols A,B,...]
 ```
 
 A long-running JSON-RPC daemon over stdin/stdout. Dependencies and BC patches load once; each `runTests` request re-emits the bundle warm and runs it in-process (~19s→~4s). stdout carries only the newline-delimited JSON protocol; logs go to stderr. The VS Code extension uses this. Full protocol + the same-bundle reload contract: [docs/server-mode.md](docs/server-mode.md).

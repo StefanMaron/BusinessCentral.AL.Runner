@@ -10,6 +10,8 @@ namespace AlRunner;
 /// One JSON object per line. stdin = requests, stdout = responses.
 ///   request : {command, sourcePaths[], packagePaths[], stubPaths[], code, captureValues,
 ///              coverage, perTestCoverage, affectedOnly, iterationTracking, testIsolation}
+///             runTests/execute refuse any other field and warn on one they do not read
+///             (#4952, docs/server-mode.md#request-fields).
 ///   runTests: STREAMING (protocol-v2.schema.json — see #1641) — zero or more
 ///             {"type":"test", name, status, durationMs, message, errorKind,
 ///             stackFrames, stackTrace} lines, one per completed test as it
