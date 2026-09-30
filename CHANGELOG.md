@@ -11,6 +11,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **cache:** key the dependency symbol workspace and compiled-deps entries on the --define symbols
 - **testpage:** control Editable() on parts, lookup-mode pages, RunPageMode=View handlers, and CurrPage.Editable in OnOpenPage
 - **events:** dispatch events declared in extension objects
 - **ncl-shadow:** stop replacing an identical Ncl.dll on every cache hit, and reap Windows ReplaceFile backups
