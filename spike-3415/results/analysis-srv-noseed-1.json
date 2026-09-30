@@ -1,1 +1,62 @@
-{}
+{
+ "1": {
+  "keys": [
+   "ev|Codeunit|80|OnBeforePostSalesDoc"
+  ],
+  "selected": 47,
+  "truth_probe_failures": 36,
+  "misses": [
+   "Codeunit139126.AmountsAreCalculatedWhenLastModifiedIsSetTo0",
+   "Codeunit139126.AmountsAreRefreshedWhenActivitiesPageIsOpened",
+   "Codeunit139126.AmountsAreRefreshedWhenDataIsStale",
+   "Codeunit139126.CalcAverageCollectionDays",
+   "Codeunit139126.CalcOverduePurchaseAmount",
+   "Codeunit139126.CalcSalesThisMonthAmount",
+   "Codeunit139126.CalcSalesYTD",
+   "Codeunit139126.CalcTop10CustomerSalesRatioYTD",
+   "Codeunit139126.CalcTop10CustomerSalesYTD",
+   "Codeunit139126.DrillDownCalcOverdueSalesInvoiceAmount",
+   "Codeunit139126.DrillDownOverduePurchaseInvoiceAmount",
+   "Codeunit139126.DrillDownSalesThisMonth",
+   "Codeunit139126.OverduePurchInvoiceRemainingAmountLCYSortingTest",
+   "Codeunit139126.OverdueSalesInvoiceRemainingAmountLCYSortingTest"
+  ],
+  "over_selected": 25,
+  "over_selected_failing_in_baseline": 0,
+  "selected_failing_in_baseline": 9,
+  "truth_failing_in_baseline": 19,
+  "outcome_changed_without_probe_text": [
+   "Codeunit138000.PostSalesInvoiceFromCard",
+   "Codeunit138000.PostSalesInvoiceFromList",
+   "Codeunit138000.SalesInvoiceLinesControlsItem",
+   "Codeunit138000.SalesInvoiceLinesControlsService",
+   "Codeunit138004.CreditMemoChangingSellToCustomerSetsDiscountToZeroForInvoiceDiscountTypeAmount",
+   "Codeunit138004.CreditMemoPostSalesInvoiceOpensDialogAndPostedInvoice",
+   "Codeunit138004.InvoicePostSalesInvoiceOpensDialogAndPostedInvoice",
+   "Codeunit138007.PostSalesInvoiceForCustomerWithShippingAgentService",
+   "Codeunit138007.PostSalesInvoiceWithShippingAgent",
+   "Codeunit138007.PostSalesInvoiceWithShippingAgentSAAS",
+   "Codeunit138007.PostSalesInvoiceWithShippingAgentService",
+   "Codeunit138009.AmountOnUnpostedCrMemos",
+   "Codeunit138016.PostFromCard",
+   "Codeunit138016.PostFromList",
+   "Codeunit138016.SalesCreditMemoLinesControlsItem",
+   "Codeunit138016.SalesCreditMemoLinesControlsService",
+   "Codeunit138033.TestFindByContact",
+   "Codeunit138033.TestFindByDocument",
+   "Codeunit138033.TestFindByExternalDocumentSales",
+   "Codeunit138033.TestNavigatePageOpensPage",
+   "Codeunit138047.S475203_TestPostSalesInvoiceWithNavigate_EqualNoSeries",
+   "Codeunit138047.TestPostSalesCreditMemoNoWarning",
+   "Codeunit138047.TestPostSalesCreditMemoWithNavigate",
+   "Codeunit138047.TestPostSalesInvoiceWithNavigate",
+   "Codeunit138047.TestPostSalesInvoiceWithoutNavigate",
+   "Codeunit138047.TestPostSalesReturnOrderWithNavigate",
+   "Codeunit138047.TestPostSalesReturnOrderWithoutNavigate"
+  ],
+  "probe_run_totals": {
+   "tests": 1028,
+   "fail": 339
+  }
+ }
+}
