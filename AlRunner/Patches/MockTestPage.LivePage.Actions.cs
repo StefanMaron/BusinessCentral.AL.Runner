@@ -339,11 +339,18 @@ internal partial class LiveNavTestPage
     internal bool StaticEditableNow => _staticEditable;
 
     /// <summary>
-    /// The mode the TEST put this page in — <c>OpenView</c>/<c>OpenEdit</c>, or the built-in
-    /// View/Edit action switching it in place. True for a page no such mode was set on (a
-    /// handler's page, a part), which the open mode does not narrow.
+    /// The mode this page is in, as it narrows a Rec-bound control: <c>OpenView</c>/<c>OpenEdit</c>
+    /// or the built-in View/Edit action when the test set one; otherwise a part follows its
+    /// host, and a page run with <c>LookupMode(true)</c> is read-only. Corpus codeunits 68015
+    /// "RSV Tests" and 68024 "CER Tests" (#5002, #5012).
     /// </summary>
-    internal bool OpenModeEditable => _staticEditableOverride ?? true;
+    internal bool OpenModeEditable
+        => TestPageControlEditable.OpenMode(
+            _staticEditableOverride, _editabilityHost?.OpenModeEditable, LookupReadOnly);
+
+    /// <summary>Whether lookup mode makes this page read-only — see <see cref="TestPageControlEditable.LookupReadOnly"/>.</summary>
+    internal bool LookupReadOnly
+        => TestPageControlEditable.LookupReadOnly(_page?.LookupMode == true, RecordPatches.TryGetAnyPageType(_pageId));
 
     /// <summary>
     /// The in-place half of a built-in page-mode action: the page already open changes mode,

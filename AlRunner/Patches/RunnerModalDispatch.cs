@@ -218,7 +218,11 @@ public static class RunnerModalDispatch
     {
         if (form is not NavForm navForm) return;
         if (!RunnerPendingPageOpenMode.TryConsume(PageIdOf(form), out var readOnly, out var create)) return;
-        if (readOnly) navForm.Editable = false;
+        if (readOnly)
+        {
+            navForm.Editable = false;
+            RunnerPendingPageOpenMode.MarkOpenedReadOnly(navForm);
+        }
         // Create: the page shown to the handler starts on a new record (RunnerTestClientSession.GetPage).
         if (create) RunnerPendingPageOpenMode.MarkOpensOnNewRecord(navForm);
     }

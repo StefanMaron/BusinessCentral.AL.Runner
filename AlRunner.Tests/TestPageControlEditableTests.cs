@@ -2,6 +2,7 @@
 // mode (#5002). The AL-observable claim is corpus codeunit 68015 "RSV Tests"; these pin the
 // runner's own combination and that a Rec-bound field actually consults it.
 using System;
+using AlRunner.Patches;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -44,4 +45,58 @@ public sealed class TestPageControlEditableTests
     [Fact]
     public void RecBoundField_WithoutAnOpenMode_StaysEditable()
         => Assert.True(new LiveNavTestField(null!, 1).Editable);
+
+    // #5012: the open mode of a page the test did not open itself.
+    [Theory]
+    [InlineData(null, true)]    // a handler's page, not a part, not a lookup
+    [InlineData(true, true)]    // a part whose host is editable
+    [InlineData(false, false)]  // a part whose host was opened with OpenView, or switched by View
+    public void OpenMode_NoTestMode_FollowsTheHost(bool? hostOpenMode, bool expected)
+        => Assert.Equal(expected, TestPageControlEditable.OpenMode(null, hostOpenMode, lookupMode: false));
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(true)]
+    public void OpenMode_NoTestMode_LookupModeIsReadOnly(bool? hostOpenMode)
+        => Assert.False(TestPageControlEditable.OpenMode(null, hostOpenMode, lookupMode: true));
+
+    [Theory]
+    [InlineData(true, false, true, true)]
+    [InlineData(false, true, false, false)]
+    public void OpenMode_TheTestsModeWins(bool testOpenMode, bool hostOpenMode, bool lookupMode, bool expected)
+        => Assert.Equal(expected, TestPageControlEditable.OpenMode(testOpenMode, hostOpenMode, lookupMode));
+
+    // #5012: lookup mode makes a List read-only, and leaves a Card, a Document, a ListPlus and a
+    // Worksheet page editable (corpus 68024).
+    [Theory]
+    [InlineData("List", true)]
+    [InlineData("list", true)]
+    [InlineData("Worksheet", false)]
+    [InlineData("Card", false)]
+    [InlineData("card", false)]
+    [InlineData("Document", false)]
+    [InlineData("ListPlus", false)]
+    [InlineData(null, true)]
+    public void LookupReadOnly_DependsOnThePageType(string? pageType, bool expected)
+        => Assert.Equal(expected, TestPageControlEditable.LookupReadOnly(lookupMode: true, pageType));
+
+    [Theory]
+    [InlineData("List")]
+    [InlineData("Card")]
+    [InlineData(null)]
+    public void LookupReadOnly_NotInLookupMode_IsNeverReadOnly(string? pageType)
+        => Assert.False(TestPageControlEditable.LookupReadOnly(lookupMode: false, pageType));
+
+    // #5012: a form a RunPageMode = View action made read-only is remembered for its page-variable
+    // controls, and only that form.
+    [Fact]
+    public void OpenedReadOnly_IsRememberedPerForm()
+    {
+        var viewed = new object();
+        var other = new object();
+        RunnerPendingPageOpenMode.MarkOpenedReadOnly(viewed);
+        Assert.True(RunnerPendingPageOpenMode.OpenedReadOnly(viewed));
+        Assert.True(RunnerPendingPageOpenMode.OpenedReadOnly(viewed));
+        Assert.False(RunnerPendingPageOpenMode.OpenedReadOnly(other));
+    }
 }

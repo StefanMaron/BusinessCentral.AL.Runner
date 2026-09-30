@@ -79,7 +79,7 @@ internal partial class LiveNavTestPage
             if (!_pageVariableFields.TryGetValue(id, out var pageField))
                 _pageVariableFields[id] = pageField =
                     new PageVariableTestField(_page!, expression, id, _validationErrors)
-                    { BeforeWrite = CatchUpPartWithParentRowForWrite };
+                    { BeforeWrite = CatchUpPartWithParentRowForWrite, LookupEditable = () => !LookupReadOnly };
             return pageField;
         }
 

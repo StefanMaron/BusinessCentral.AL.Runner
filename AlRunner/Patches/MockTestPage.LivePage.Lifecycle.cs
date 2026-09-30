@@ -189,7 +189,7 @@ internal partial class LiveNavTestPage
     private bool _staticEditable
         => TestPageNewRowLineRule.ResolveStaticEditable(
             _staticEditableOverride, _editabilityHost?._staticEditable,
-            (_page?.PageEditable ?? true) && (_page?.DeclaredPageEditable ?? true), _page?.LookupMode == true);
+            (_page?.PageEditable ?? true) && (_page?.DeclaredPageEditable ?? true), LookupReadOnly);
 
     /// <summary>
     /// Bind a subpage part to its host for editability. Deliberately does NOT touch _opened:
@@ -199,7 +199,14 @@ internal partial class LiveNavTestPage
 
     /// <summary>Run the page's OnOpenPage — see RunnerTestPageState.MarkOpened.</summary>
     internal void RaiseOnOpenPage(Action<NavRecord>? beforeSourceTableView = null)
-        => _page?.RaiseOnOpenPage(beforeSourceTableView);
+    {
+        _page?.RaiseOnOpenPage(beforeSourceTableView);
+        // CurrPage.Editable(false) in OnOpenPage makes an OpenEdit page read-only for
+        // TestPage.Editable() too, while (true) cannot widen an OpenView one (corpus 68024
+        // CurrPageEditable*). Read once, here: a later toggle is not seen (corpus 60687).
+        if (_staticEditableOverride == true && _page?.PageEditable == false)
+            _staticEditableOverride = false;
+    }
 
     /// <summary>
     /// Reach every subpage PART this page declares, the way <see cref="RunnerTestPageState.MarkOpened"/>
