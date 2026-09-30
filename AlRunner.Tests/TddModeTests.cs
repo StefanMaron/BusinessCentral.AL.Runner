@@ -284,7 +284,7 @@ public sealed class TddModeTests : IDisposable
         Assert.Equal(1, exit);
         using var doc = JsonDocument.Parse(stdout.Trim());
         var tests = doc.RootElement.GetProperty("tests").EnumerateArray().ToList();
-        Assert.Equal(5, doc.RootElement.GetProperty("total").GetInt32());
+        Assert.Equal(6, doc.RootElement.GetProperty("total").GetInt32());
 
         void AssertGenerated(string testName, string signature, string procName)
         {
@@ -305,7 +305,16 @@ public sealed class TddModeTests : IDisposable
         AssertGenerated("NamespacedEnumValueArg_GeneratesQualifiedEnumParameter",
             "\"CalcStatus\"(Arg1: Enum TddEnumArgs.Membership.\"Member Status\"): Integer", "CalcStatus");
 
-        Assert.Contains("--tdd: generated 4 member(s) this run:", stderr);
+        // Field sibling: same resolver on an assignment's right-hand side. No "underlying
+        // result" means the test's own read-back of the enum value did not raise.
+        var field = FindTest(tests, "EnumValueAssignment_GeneratesEnumField");
+        Assert.Equal("fail", field.GetProperty("status").GetString());
+        var fieldMsg = field.GetProperty("message").GetString()!;
+        Assert.Contains("\"Tier\": Enum \"Loyalty Tier\"", fieldMsg);
+        Assert.DoesNotContain("underlying result", fieldMsg);
+        Assert.Contains("Tdd Loyalty Member: field \"Tier\": Enum \"Loyalty Tier\"", stderr);
+
+        Assert.Contains("--tdd: generated 5 member(s) this run:", stderr);
     }
 
     /// <summary>
