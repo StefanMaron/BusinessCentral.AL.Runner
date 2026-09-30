@@ -28,9 +28,11 @@ public static partial class EventSubscriberPatches
     /// <summary>
     /// Seed <c>γeventScope</c> on every event scope of the request's modules, so each raise of
     /// one of their events reaches <c>DispatchCore</c> (and <see cref="AlEventRaiseTracker"/>)
-    /// even with no subscriber. The dispatcher returns on an empty subscriber list, which is what
-    /// an unseeded publisher does too, so nothing an AL caller observes changes. Idempotent per
-    /// assembly; never overwrites a non-null field.
+    /// even with no subscriber. Observably equivalent: an unseeded publisher returns from
+    /// <c>if (γeventScope == null &amp;&amp; !IsEventSessionRecorderEnabled) return</c> (every emitted
+    /// publisher, <c>--dump-csharp</c>), and a seeded one reaches <c>DispatchCore</c>, which
+    /// returns on an empty subscriber list — the path every subscribed event already takes (#4988).
+    /// Idempotent per assembly; never overwrites a non-null field.
     /// </summary>
     internal static EventObservability SeedAllEventScopesForRecording()
     {
