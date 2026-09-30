@@ -448,9 +448,9 @@ internal sealed partial class RunnerPageInstance
             // already opened, then throws NavTestPageInvokedWithoutHandlerException — a
             // NavTestBaseException, which NavOpenTaskPageAction.ShowForm rethrows into AL. So
             // the target opens and AL gets that exception, not "Unhandled UI". Corpus codeunit
-            // 60285 arms 7-9 (issue #3223) put this in front of a service tier. Whether a Create
-            // mark starts a new record before that refusal is unmeasured (#5014), so it does not.
-            OpenTargetUnattended(session, form, startNewRecord: false);
+            // 60285 arms 7-9 (issue #3223). A Create mark still starts the new record before the
+            // refusal: corpus 67036 DialogCreate_NoHandler_* (#5014).
+            OpenTargetUnattended(session, form);
             throw NavTestPageInvokedWithoutHandlerException.Create(
                 System.Globalization.CultureInfo.CurrentCulture, pageId);
         }
@@ -466,7 +466,7 @@ internal sealed partial class RunnerPageInstance
             return;
         }
 
-        OpenTargetUnattended(session, form, startNewRecord: true);
+        OpenTargetUnattended(session, form);
     }
 
     /// <summary>
@@ -493,7 +493,7 @@ internal sealed partial class RunnerPageInstance
     /// no <c>Commit()</c>: the target's OnOpenPage ran and its row was gone. Real BC never raises
     /// on this route at all, so neither does this.</para>
     /// </summary>
-    private static void OpenTargetUnattended(NavSession session, NavForm form, bool startNewRecord)
+    private static void OpenTargetUnattended(NavSession session, NavForm form)
     {
         session.Company.RegisterForm(form);
         try
@@ -506,7 +506,7 @@ internal sealed partial class RunnerPageInstance
             RunnerModalDispatch.ApplyPendingPageOpenMode(form);
             var opensOnNewRecord = RunnerPendingPageOpenMode.TryConsumeOpensOnNewRecord(form);
             form.OpenForm();
-            if (opensOnNewRecord && startNewRecord) form.NewRecord(belowXRec: false);
+            if (opensOnNewRecord) form.NewRecord(belowXRec: CalculateXRecPosition(lastPositionedRowIndex: null));
         }
         finally
         {
@@ -514,6 +514,17 @@ internal sealed partial class RunnerPageInstance
             else session.Company.UnregisterForm(form);
         }
     }
+
+    /// <summary>
+    /// OnNewRecord's <c>BelowxRec</c>, as BC's client computes it:
+    /// <c>NavBindingManager.CalculateXRecPosition</c> (Client.UI 28.1) answers true unless a row
+    /// was positioned before the new one and still is loaded, and then whether the current row
+    /// sits below it. With true, <c>NavForm.NewRecordAsync</c> puts xRec on the table's last row.
+    /// A page opening on a new record has positioned no row: pass null. Corpus codeunit 67036,
+    /// every Create-mode route, seeded and empty table (#5015).
+    /// </summary>
+    internal static bool CalculateXRecPosition(int? lastPositionedRowIndex, int currentRowIndex = -1)
+        => lastPositionedRowIndex is not { } last || currentRowIndex > last;
 
     /// <summary>
     /// Whether the test has an outstanding <c>TestPage.Trap()</c> for this form's page, asked
