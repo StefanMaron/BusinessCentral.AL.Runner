@@ -2303,6 +2303,10 @@ AlRunner.PerfTrace.Log($"BcRuntime.EnsureApplied {t0.ElapsedMilliseconds}ms");
 var emitter = new BcCompiler();
 var assembler = new BcAssembler();
 var executor = new TestExecutor { Isolation = isolation, TestFilter = testFilter, TimeoutSeconds = testTimeoutSeconds, Expectations = expectations };
+// #3415 SPIKE (not for merge): run exactly the tests named one per line in this file.
+if (Environment.GetEnvironmentVariable("AL_RUNNER_EXACT_TESTS") is { Length: > 0 } exactTestsFile)
+    executor.ExactTestFilter = new HashSet<string>(
+        File.ReadAllLines(exactTestsFile).Select(l => l.Trim()).Where(l => l.Length > 0), StringComparer.Ordinal);
 // --exclude-test: the only way to reach tests a watchdog abort abandoned. TestExecutor stops
 // the whole suite when a test hangs — correctly, since the hung thread is never killed and
 // keeps mutating shared BC state — so those tests are reachable only from a fresh process that
