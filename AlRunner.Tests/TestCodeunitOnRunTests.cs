@@ -255,12 +255,10 @@ public class TestCodeunitOnRunTests
 
         Has(output, "PASS  Codeunit62691.A_GlobalSetByOnRunIsVisible");
         Has(output, "PASS  Codeunit62691.B_RowInsertedByOnRunIsVisible");
-        // A fresh instance and a fresh database per test, each starting after its own OnRun: C_'s
-        // own check pins one OnRun on its instance, and B_'s row 8 is gone. The SingleInstance
-        // counter is NOT reset between tests: a SingleInstance instance lives for the session on
-        // BC, whatever the isolation (#4781; corpus #213), so it has counted A_'s, B_'s and C_'s
-        // OnRun.
-        Has(output, "TOR3 REPORT: counter=3 row8=No");
+        // One instance and one OnRun, as under Codeunit isolation, but the database rolls back to
+        // the post-OnRun state before every test, so B_'s row 8 is gone and OnRun's row 7 is not
+        // (#4826: corpus PR #517's probe, T6/T7 green on BC 28.4, Windows run 36727084058).
+        Has(output, "TOR3 REPORT: counter=1 row8=No");
         Lacks(output, "TOR3 FAIL");
         AssertFailingOnRunReported(output);
     }

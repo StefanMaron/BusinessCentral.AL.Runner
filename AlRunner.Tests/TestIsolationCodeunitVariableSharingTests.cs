@@ -1,28 +1,17 @@
-// TestIsolationCodeunitVariableSharingTests — proves that `--isolation codeunit` and
-// `--isolation test` are genuinely different modes, on the half that is about the
-// codeunit INSTANCE rather than the database.
-//
-// Under `codeunit` every [Test] in one codeunit runs on the SAME codeunit instance, so
-// an AL global variable one test sets is visible to the next. Under `test` every [Test]
-// gets a brand new instance, so it is not.
+// TestIsolationCodeunitVariableSharingTests — the codeunit INSTANCE half of the isolation modes:
+// under both `--isolation codeunit` and `--isolation test`, every [Test] in one codeunit runs on
+// the SAME codeunit instance, so an AL global variable one test sets is visible to the next.
 //
 // The fixture has two [Test] procedures declared in this order:
 //   Step1_IncrementsCounter increments a global Integer from its default (0) to 1.
 //   Step2_ExpectsFreshCounter asserts the counter is UNCONDITIONALLY 0.
-// So under `codeunit` Step2 sees 1 and FAILS; under `test`/`method` it sees 0 and
-// passes. That asymmetry is the whole proof, and it is built on a plain Integer that
-// never touches a Record, so the database reset cannot be what makes it pass or fail.
+// So Step2 sees 1 and FAILS in both modes. It is built on a plain Integer that never touches a
+// Record, so the database reset cannot be what makes it pass or fail.
 //
-// On what this file claims: it asserts what the RUNNER's two modes do, which is a
-// runner-specific claim and belongs here. The matching claim about BC is proved where
-// it has to be, against a real service tier — corpus codeunit 60898
-// "Test Isolation Global Var" raises a global in one [Test] and reads it in the next,
-// and is green on BC 27.5 and 28.3. So sharing the instance under `codeunit` is
-// faithful to BC, and this file's asymmetry is the runner-side proof of it.
-//
-// #2144 asserted the same thing from a BC codeunit 130452 that does not exist, and its
-// sibling claim about the database turned out backwards when a service tier was finally
-// asked (#2160). The conclusion happened to survive; the way it was reached did not.
+// BC settles both halves on a real service tier: corpus codeunit 60898 "Test Isolation Global
+// Var" for Codeunit isolation (green on 27.5 and 28.3), and corpus PR #517's Function-isolation
+// probe for `test` (#4826; T2/T3 green on 28.4.53241.55454, Windows nightly run 36727084058).
+// Until #4826 the runner gave every [Test] a fresh instance under `test`, which BC does not.
 using System.Diagnostics;
 using System.Text;
 using Xunit;
@@ -125,12 +114,9 @@ public sealed class TestIsolationCodeunitVariableSharingTests : IDisposable
     }
 
     /// <summary>
-    /// Positive/contrast: `--isolation codeunit` must still share the AL global
-    /// variable across both tests in the codeunit — that is precisely what continues
-    /// to distinguish it from `test`/`method` now that the database resets the same
-    /// way under all three. Step2's unconditional "Counter must be 0" assertion is
-    /// FALSE here (Counter is 1, carried over from Step1), so the run fails with a
-    /// concrete, checkable message.
+    /// `--isolation codeunit` shares the AL global variable across both tests in the
+    /// codeunit. Step2's unconditional "Counter must be 0" assertion is FALSE here
+    /// (Counter is 1, carried over from Step1), so the run fails with a concrete message.
     /// </summary>
     [SkippableFact]
     public void IsolationCodeunit_SharesGlobalVariableAcrossTestMethods()
@@ -145,20 +131,18 @@ public sealed class TestIsolationCodeunitVariableSharingTests : IDisposable
     }
 
     /// <summary>
-    /// Negative direction of the same claim: `--isolation test` gives every [Test] a
-    /// fresh codeunit instance, so Step2 never sees Step1's increment and both tests
-    /// pass. Proves the fixture is not vacuously failing regardless of mode.
+    /// `--isolation test` shares the instance too (#4826): BC's TestIsolation = Function runs
+    /// every [Test] on one instance and only rolls the database back between them.
     /// </summary>
     [SkippableFact]
-    public void IsolationTest_DoesNotShareGlobalVariableAcrossTestMethods()
+    public void IsolationTest_SharesGlobalVariableAcrossTestMethods()
     {
         TestArtifacts.SkipIfMissing();
 
         var (output, exit) = RunRunner("--isolation test");
 
-        Assert.Equal(0, exit);
-        Assert.Empty(RunnerFailureLines.All(output));
-        Assert.Contains("Step1_IncrementsCounter", output);
+        Assert.NotEqual(0, exit);
         Assert.Contains("Step2_ExpectsFreshCounter", output);
+        Assert.Contains("Expected:<0> Actual:<1>", output);
     }
 }
