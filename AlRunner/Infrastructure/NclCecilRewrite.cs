@@ -1196,78 +1196,10 @@ public static partial class NclCecilRewrite
         return true;
     }
 
-    /// <summary>
-    /// Publishes <paramref name="contents"/> to <paramref name="destPath"/> by writing a
-    /// sibling temp file and renaming it over the destination.
-    ///
-    /// Never truncate-and-rewrite a DLL in place. Every loaded assembly is memory-mapped, so
-    /// overwriting the file's existing inode invalidates the mappings any live process holds
-    /// and that process takes SIGBUS on its next page touch — the crash class behind the
-    /// exit-135 (128+7) integration-test flakes and the al-runner SIGBUS coredumps.
-    ///
-    /// It also wedges the machine: a task that dies this way can leave its mmap_lock held, and
-    /// every subsequent ps/pgrep/pkill blocks in __access_remote_vm reading its /proc entry.
-    /// Those readers are unkillable and each new one blocks on the previous, so process listing
-    /// stays broken until reboot even though CPU, memory and I/O are idle.
-    ///
-    /// rename(2) is atomic and only swaps the directory entry: existing mappings keep the OLD
-    /// inode and stay valid, new opens see the new file. Same pattern already used for the
-    /// cache entry itself.
-    /// </summary>
-    private static void AtomicReplace(string destPath, byte[] contents)
-    {
-        var dir = Path.GetDirectoryName(Path.GetFullPath(destPath))!;
-        var tempPath = Path.Combine(dir, Path.GetFileName(destPath) + ".tmp." + Guid.NewGuid().ToString("N"));
-        try
-        {
-            File.WriteAllBytes(tempPath, contents);
-
-            // On Windows, a real-time antivirus scanner (confirmed: Defender) opens a
-            // freshly-written file for scanning and holds it long enough that a plain
-            // File.Move(overwrite:true) — MoveFileEx(MOVEFILE_REPLACE_EXISTING) under the
-            // hood — fails with ERROR_ACCESS_DENIED. Reproduced on real Windows 11 (#1650
-            // investigation): al-runner died here on every run without a manual Defender
-            // exclusion. POSIX rename(2) (what this call becomes on Linux/macOS) has no
-            // equivalent lock, so none of this fires there — File.Move succeeds first try.
-            //
-            // File.Replace (the ReplaceFile Win32 API — designed to swap a file that may
-            // have open handles) clears the lock that defeats File.Move; try it first when
-            // destPath already exists, then fall back to a bounded, backed-off File.Move
-            // retry for the create case (ReplaceFile requires an existing destination) and
-            // as a safety net if Replace itself is ever refused.
-            const int maxAttempts = 60;
-            for (int attempt = 1; attempt <= maxAttempts; attempt++)
-            {
-                try
-                {
-                    if (attempt == 1 && File.Exists(destPath))
-                    {
-                        try { File.Replace(tempPath, destPath, destinationBackupFileName: null); break; }
-                        catch { /* fall through to the File.Move retry loop below */ }
-                    }
-                    File.Move(tempPath, destPath, overwrite: true);
-                    break;
-                }
-                catch (IOException) when (attempt < maxAttempts)
-                {
-                    System.Threading.Thread.Sleep(500);
-                }
-                catch (UnauthorizedAccessException) when (attempt < maxAttempts)
-                {
-                    System.Threading.Thread.Sleep(500);
-                }
-            }
-        }
-        catch
-        {
-            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
-            throw;
-        }
-    }
-
-    /// <inheritdoc cref="AtomicReplace(string, byte[])"/>
-    private static void AtomicReplaceFrom(string sourcePath, string destPath)
-        => AtomicReplace(destPath, ReadAllBytesWithRetry(sourcePath));
+    /// <summary>#5018/#5019: no write at all when <paramref name="destPath"/> already holds
+    /// <paramref name="contents"/>. See docs/ncl-shadow-runtime.md#publishing-ncldll-5018-5019.</summary>
+    private static NclFilePublisher.Outcome PublishIfChanged(string destPath, byte[] contents)
+        => NclFilePublisher.PublishIfChanged(destPath, contents, NclFileOps.Real);
 
     /// <summary>
     /// #2489: <paramref name="path"/> here is always the shared <c>ncl-cecil</c> cache
@@ -1277,7 +1209,7 @@ public static partial class NclCecilRewrite
     /// sibling MISS-writer is <c>AtomicReplace</c>-ing it (temp-write + rename). On
     /// Windows a reader can catch that rename mid-flight and get
     /// <c>ERROR_SHARING_VIOLATION</c>. Same bounded retry/backoff shape as
-    /// <see cref="AtomicReplace(string, byte[])"/>'s own writer-side retry, just for a
+    /// <see cref="NclFilePublisher.AtomicReplace"/>'s own writer-side retry, just for a
     /// reader instead.
     /// </summary>
     private static byte[] ReadAllBytesWithRetry(string path)
@@ -1329,8 +1261,9 @@ public static partial class NclCecilRewrite
         {
             Console.Error.WriteLine("[Cecil] Cecil cache DISABLED via AL_RUNNER_NCL_CACHE=0");
             var bytes = RewriteNcl(nclSrc);
-            AtomicReplace(binNclPath, bytes);
+            PublishIfChanged(binNclPath, bytes);
             Console.Error.WriteLine($"[Cecil] Wrote rewritten Ncl to {binNclPath} ({bytes.Length} bytes)");
+            ReapReplaceBackups(binNclPath);
             return true;
         }
 
@@ -1348,21 +1281,15 @@ public static partial class NclCecilRewrite
         {
             Console.Error.WriteLine($"[Cecil] Cecil cache HIT (key={shortKey})");
 
-            // #2489: an earlier version of this method skipped this AtomicReplaceFrom
-            // call entirely when the destination already held these exact bytes (a
-            // shadow-re-exec CHILD's own Ncl.dll, already populated by the PARENT
-            // process's EnsureShadowDir call before publishing). That optimization was
-            // withdrawn — it could not be distinguished from a residual, hard-to-pin
-            // regression measured under CI's real concurrent-subprocess load
-            // (AlRunner.Tests classes racing this exact shared-key path), and
-            // AtomicReplaceFrom's rename-based replace is ALREADY safe for concurrent
-            // readers on its own (an open handle/mmap to the old inode keeps working
-            // through a rename; nothing here truncates a file in place). The
-            // BcArtifacts.VerifyEngineConsistency read this comment used to cite as the
-            // race motivating the skip is hardened directly instead — see its own retry
-            // wrapper — so removing the skip does not reopen that hole.
-            AtomicReplaceFrom(cachePath, binNclPath);
-            Console.Error.WriteLine($"[Cecil] Copied cached Ncl to {binNclPath}");
+            // #5018/#5019: a destination already holding the cached bytes is left alone — the
+            // steady state for every process sharing a shadow dir. #2489 had withdrawn this
+            // skip over an unpinned CI regression; the measurement that re-admits it is in
+            // docs/ncl-shadow-runtime.md#publishing-ncldll-5018-5019.
+            var outcome = PublishIfChanged(binNclPath, ReadAllBytesWithRetry(cachePath));
+            Console.Error.WriteLine(outcome == NclFilePublisher.Outcome.Written
+                ? $"[Cecil] Copied cached Ncl to {binNclPath}"
+                : $"[Cecil] Cached Ncl already in place at {binNclPath}");
+            ReapReplaceBackups(binNclPath);
             PruneCacheFiles(cacheDir, cachePath, keepNewest: 8);
             return false;
         }
@@ -1370,23 +1297,23 @@ public static partial class NclCecilRewrite
         Console.Error.WriteLine($"[Cecil] Cecil cache MISS — rewrote and cached (key={shortKey})");
         var modifiedBytes = RewriteNcl(nclSrc);
 
-        // Write to cache atomically via temp-file-then-rename so concurrent runners
-        // never read a partially-written cache entry. Routed through AtomicReplace for
-        // the same Windows AV-lock retry it applies to binNclPath below.
-        AtomicReplace(cachePath, modifiedBytes);
+        // Temp-file-then-rename so concurrent runners never read a partially-written entry.
+        PublishIfChanged(cachePath, modifiedBytes);
         Console.Error.WriteLine($"[Cecil] Saved to cache ({modifiedBytes.Length} bytes)");
 
-        // Produce binNclPath via File.Copy from the freshly-written cache entry,
-        // mirroring the cache-HIT path above. (Note: this alone does NOT prevent the
-        // cold-run load crash — a process that ran the Cecil rewrite then loads the
-        // byte-identical Ncl in-process still intermittently fails with
-        // BadImageFormatException 0x80131124. The caller re-execs on the `true` return
-        // below so the actual load always happens in a fresh process via cache HIT.)
-        AtomicReplaceFrom(cachePath, binNclPath);
+        // Published from the cache entry, as on HIT. This alone does NOT prevent the cold-run
+        // load crash (BadImageFormatException 0x80131124 in a process that ran the rewrite);
+        // the caller re-execs on the `true` return so the load happens in a fresh process.
+        PublishIfChanged(binNclPath, ReadAllBytesWithRetry(cachePath));
         Console.Error.WriteLine($"[Cecil] Copied rewritten Ncl to {binNclPath} ({modifiedBytes.Length} bytes)");
+        ReapReplaceBackups(binNclPath);
         PruneCacheFiles(cacheDir, cachePath, keepNewest: 8);
         return true;
     }
+
+    private static void ReapReplaceBackups(string binNclPath)
+        => NclFilePublisher.ReapReplaceBackups(
+            Path.GetDirectoryName(Path.GetFullPath(binNclPath))!, Path.GetFileName(binNclPath), NclFileOps.Real);
 
     /// <summary>
     /// #1871: the runner-identity component of this key used to be
