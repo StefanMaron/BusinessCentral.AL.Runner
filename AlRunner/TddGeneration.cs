@@ -412,6 +412,9 @@ public static class TddGeneration
             NavCA.IFieldSymbol f => f.Type,
             NavCA.IVariableSymbol v => v.Type,
             NavCA.IParameterSymbol p => p.ParameterType,
+            // `"Loyalty Tier"::Gold` (#5038). An Option member (IOptionSymbol) is deliberately
+            // not here: an Option parameter needs a member list one call site does not fix.
+            NavCA.IEnumValueSymbol ev => ev.ContainingType,
             NavCA.ITypeSymbol t => t,
             _ => null,
         };
@@ -421,7 +424,15 @@ public static class TddGeneration
     {
         if (type == null) return null;
         if (SimpleBuiltinTypes.Contains(type.NavTypeKind)) return type.NavTypeKind.ToString();
-        if (type.NavTypeKind == NavCA.NavTypeKind.Enum) return $"Enum {Quote(type.Name)}";
+        if (type.NavTypeKind == NavCA.NavTypeKind.Enum)
+        {
+            // Qualified, because the generated member lands in an object that need not import
+            // the enum's namespace.
+            var ns = type.ContainingNamespace;
+            return ns == null || ns.IsGlobalNamespace || string.IsNullOrEmpty(ns.QualifiedName)
+                ? $"Enum {Quote(type.Name)}"
+                : $"Enum {ns.QualifiedName}.{Quote(type.Name)}";
+        }
         return null; // Text/Code (length), Record/Codeunit/Page/... (too broad) — refuse
     }
 
