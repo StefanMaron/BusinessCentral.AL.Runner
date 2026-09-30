@@ -7520,9 +7520,13 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                                 activePreviousEvents != null && activePreviousEvents.TryGetValue(testKey, out var raised) ? raised : null,
                                 changedEventKeys))
                             exactSelection.Add(testKey);
-                        else if (previouslyFailing)
-                            plannedSkippedFailing++;
                     }
+                    // #5035: a test's recording holds only what it ran, not the state earlier tests left it.
+                    var widened = AlRunner.Infrastructure.AffectedIsolationWidening.Widen(discovered, exactSelection, executor.Isolation);
+                    if (widened > 0)
+                        Console.Error.WriteLine(
+                            $"  [{affected.LogTag}] affectedOnly: selected {widened} more test(s) that share state with a selected one (TestIsolation={executor.Isolation})");
+                    plannedSkippedFailing = discovered.Count(t => !exactSelection.Contains(t) && (activePreviousFailing?.Contains(t) ?? false));
                     plannedRan = exactSelection.Count;
                     plannedSkipped = Math.Max(0, discovered.Count - plannedRan);
                 }
@@ -7549,6 +7553,8 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
             affectedOnly,
             (bundlePath, moduleName, selectionEnvironmentKey, changedObjects, changeModelFallbackReason, ownChangedScopes) =>
             {
+                selectionEnvironmentKey = AlRunner.Infrastructure.AffectedIsolationWidening.EnvironmentKey(
+                    selectionEnvironmentKey, executor.Isolation);
                 activeBundleKey = bundlePath;
                 requestModuleByBundle[bundlePath] = moduleName;
                 requestEnvironmentByBundle[bundlePath] = selectionEnvironmentKey;
@@ -7588,7 +7594,7 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                     {
                         activeForcedFull = true;
                         activeForcedReason =
-                            "coverage baseline environment changed (BC version/artifact/package cache/dependency package content)";
+                            "coverage baseline environment changed (BC version/artifact/package cache/dependency package content/test isolation)";
                         return;
                     }
                     var persistedDiff = AlRunner.Infrastructure.AffectedBaselineStore.ChangedSince(
@@ -7630,7 +7636,7 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 {
                     activeForcedFull = true;
                     activeForcedReason =
-                        "coverage baseline environment changed (BC version/artifact/package cache/dependency package content)";
+                        "coverage baseline environment changed (BC version/artifact/package cache/dependency package content/test isolation)";
                     return;
                 }
                 // #4971: changedObjects is relative to each module's baseline as this request found
