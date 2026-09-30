@@ -328,11 +328,17 @@ public class ServerAffectedSelectionTableChangeTests
             Assert.Contains("PROBE-SI", singleInstance.Line[t], StringComparison.Ordinal);
         }
 
-        // A page: which tests open one is not recorded yet (#5011), so it runs everything.
+        // A new page: no test built it (#5011), so it selects nothing.
         Write(bundle, "Page.Page.al", "page 60677 \"TabSel Page SX\"\n{\n    SourceTable = \"TabSel Tab SX\";\n}\n");
         var page = await Send(server, bundle);
-        Assert.True(page.ForcedFull, page.Raw);
-        Assert.Contains("Page 60677 changed", page.Reason, StringComparison.Ordinal);
+        Assert.False(page.ForcedFull, page.Raw);
+        Assert.Empty(page.Ran);
+
+        // A pageextension: its base page is not recorded, so it runs everything.
+        Write(bundle, "PageExt.PageExt.al", "pageextension 60681 \"TabSel PageExt SX\" extends \"TabSel Page SX\"\n{\n}\n");
+        var pageExt = await Send(server, bundle);
+        Assert.True(pageExt.ForcedFull, pageExt.Raw);
+        Assert.Contains("PageExtension 60681 changed", pageExt.Reason, StringComparison.Ordinal);
     }
 
     // #5007's path: the same changes made while no server runs.

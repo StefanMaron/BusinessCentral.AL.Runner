@@ -33,7 +33,8 @@ internal static class AffectedBaselineStore
 {
     // Bump on any change to the file's shape or to what a key means; a mismatch is "no baseline".
     // 2: #5008's table keys and the per-bundle "<bundle>" events entry.
-    internal const int SchemaVersion = 2;
+    // 3: #5011's entered-scope and constructed-object coverage keys, and "obj|" bundle-wide keys.
+    internal const int SchemaVersion = 3;
     internal const string CacheName = "affected-baseline";
 
     /// <summary>The file for one request's bundle set. Order and duplicates do not change the key.</summary>

@@ -138,7 +138,7 @@ public static class AlEventRaiseTracker
     /// SingleInstance codeunit first means a global another test can read without building one.
     /// Anything unreadable counts as outliving the test — the direction that forces a full run.
     /// </summary>
-    private static bool OutlivesTheTest(object? node)
+    internal static bool OutlivesTheTest(object? node)
     {
         try
         {

@@ -307,6 +307,8 @@ public static partial class BcRuntime
             // 7. NavSession.CurrentMethodScope backing field = self  (mirrors real ctor's session.CurrentMethodScope = this)
             if (_fSessCurrentScope != null && _skeletonSession != null)
                 FieldPoke.SetInstance(_fSessCurrentScope, _skeletonSession, self);
+            // #5011: a scope-class frame (event publishers) has entered its method.
+            AlRunner.Infrastructure.AlObjectUseTracker.NoteScopeClassEntered(self);
             // cancellationToken, sqlStatisticsAvailable, globalSql*AtStart all left at default
             // (zero-value structs / false) — safe for the test harness since no SQL paths run.
         }
@@ -713,5 +715,6 @@ public static partial class BcRuntime
     /// `ScopeId` getter tolerates that (`value.HasValue ? value.Value : 0`).
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void ALMethodScope_AssignScopeId(object? self) { }
+    public static void ALMethodScope_AssignScopeId(object? self)
+        => AlRunner.Infrastructure.AlObjectUseTracker.NoteInlineScopeEntered(self); // #5011
 }

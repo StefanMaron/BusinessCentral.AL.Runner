@@ -76,8 +76,8 @@ internal static class AffectedEventSelection
     }
 
     /// <summary>
-    /// The keys a changed table or tableextension selects on (#5008), or why a changed page forces
-    /// a full run (#5011). A table with no triggers
+    /// The keys a changed table or tableextension selects on (#5008), or why a changed
+    /// pageextension forces a full run (#5011). A table with no triggers
     /// contributes no statement to any coverage, yet an added trigger, a field property or a key
     /// changes what every test holding a record of it observes. Rules:
     /// docs/server-mode.md#affectedonly-and-changed-tables.
@@ -94,10 +94,10 @@ internal static class AffectedEventSelection
         var keys = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (kind, id) in changed)
         {
-            // Which tests open a page is not recorded, and a page that ran no statement is in no
-            // coverage — an added OnOpenPage would select nothing (#5011).
-            if (kind == "Page" || kind == "PageExtension")
-                return new(keys, $"{kind} {id} changed, and the tests that open a page are not recorded (#5011)");
+            // A page is keyed by the tests that built it (#5011); an extension's base page is not
+            // recorded, so which tests open it is not known.
+            if (kind == "PageExtension")
+                return new(keys, $"{kind} {id} changed, and the base page of a pageextension is not recorded (#5011)");
             if (kind != "Table" && kind != "TableExtension") continue;
             if (id is not int n)
                 return new(keys, $"a changed {kind} has no object id, so the tests holding its records cannot be looked up");
@@ -131,6 +131,29 @@ internal static class AffectedEventSelection
             keys.Add(AlEventRaiseTracker.TableKey("Table", table));
             keys.Add(AlEventRaiseTracker.TriggerKey("Table", table));
         }
+    }
+
+    /// <summary>In the <see cref="AlEventRaiseTracker.BundleWideKey"/> entry (#5011): an instance of
+    /// the object (<c>Kind|id:N</c>) was built outside any one test, or held where another test can
+    /// use it without building one or entering its code. <paramref name="objectKey"/> null: its file
+    /// maps to no single object.</summary>
+    internal static string LongLivedObjectKey(string? objectKey) => "obj|" + (objectKey ?? "?");
+
+    /// <summary>Why a whole-object change must run everything (#5011): a test can use a long-lived
+    /// instance without building it, so which tests did is not recorded. Null when none applies.</summary>
+    /// <param name="changedObjectKeys">This request's changed keys; scope keys (<c>::proc:</c>) are
+    /// narrowed changes, which the entering tests carry whichever instance they ran on.</param>
+    internal static string? LongLivedObjectChange(IEnumerable<string> changedObjectKeys, HashSet<string>? recordedBundleWide)
+    {
+        if (recordedBundleWide == null) return null;
+        foreach (var key in changedObjectKeys.OrderBy(k => k, StringComparer.Ordinal))
+        {
+            if (key.Contains("::proc:", StringComparison.Ordinal)) continue;
+            if (recordedBundleWide.Contains(LongLivedObjectKey(key)) || recordedBundleWide.Contains(LongLivedObjectKey(null)))
+                return $"an instance of {key.Replace('|', ' ')} was built outside any one test (a test codeunit's global, "
+                    + "a SingleInstance codeunit, or before the test ran), so the tests using it are not recorded";
+        }
+        return null;
     }
 
     // "ev|Kind|id|Event" -> "Kind|id"

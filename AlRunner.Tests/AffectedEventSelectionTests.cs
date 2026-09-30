@@ -143,10 +143,28 @@ public class AffectedEventSelectionTests
     }
 
     [Fact]
-    public void ChangedPageOrPageExtension_ForcesFull_UntilPageOpensAreRecorded()
+    public void ChangedPageExtension_ForcesFull_ChangedPageIsLeftToTheTestsThatBuiltIt()
     {
-        Assert.Contains("Page 50103 changed", Tables(new (string, int?)[] { ("Page", 50103) }).ForceFullReason);
+        var page = Tables(new (string, int?)[] { ("Page", 50103) });
+        Assert.Null(page.ForceFullReason);
+        Assert.Empty(page.Keys);
         Assert.Contains("PageExtension 50105 changed", Tables(new (string, int?)[] { ("PageExtension", 50105) }).ForceFullReason);
+    }
+
+    // #5011 — a whole-object change to an instance no one test built.
+    [Fact]
+    public void LongLivedObject_ForcesFullOnWholeObjectChange_NotOnANarrowedOne()
+    {
+        var bundleWide = new HashSet<string>(StringComparer.Ordinal) { AffectedEventSelection.LongLivedObjectKey("Codeunit|id:50100") };
+        Assert.Contains("an instance of Codeunit id:50100 was built outside any one test",
+            AffectedEventSelection.LongLivedObjectChange(new[] { "Codeunit|id:50100" }, bundleWide));
+        Assert.Null(AffectedEventSelection.LongLivedObjectChange(new[] { "Codeunit|id:50100::proc:P" }, bundleWide));
+        Assert.Null(AffectedEventSelection.LongLivedObjectChange(new[] { "Codeunit|id:50101" }, bundleWide));
+        Assert.Null(AffectedEventSelection.LongLivedObjectChange(new[] { "Codeunit|id:50100" }, null));
+
+        // One whose file maps to no single object stands for any object.
+        var unmapped = new HashSet<string>(StringComparer.Ordinal) { AffectedEventSelection.LongLivedObjectKey(null) };
+        Assert.NotNull(AffectedEventSelection.LongLivedObjectChange(new[] { "Page|id:50103" }, unmapped));
     }
 
     [Fact]
