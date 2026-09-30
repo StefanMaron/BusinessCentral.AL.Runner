@@ -2,6 +2,8 @@
 // subscriber selects the tests that raised its event in the recording run. A subscriber is reached
 // through the event, not a call, so statement coverage alone cannot select those tests.
 // Mechanism: docs/server-mode.md#affectedonly-and-event-subscribers.
+// Runs under --isolation test: these assert per-test narrowing inside one codeunit, which the
+// default Codeunit isolation widens to the whole codeunit (#5035, ServerAffectedSelectionSharedSetupTests).
 using System.Text.Json;
 using Xunit;
 
@@ -169,7 +171,7 @@ public class ServerAffectedSelectionEventSubscriberTests
         TestArtifacts.SkipIfMissing();
         var bundle = Bundle();
         WriteSubscriber(bundle, Subscriber("", "", ""));
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
 
         var baseline = await Send(server, bundle);
         Assert.True(baseline.ForcedFull, baseline.Raw);
@@ -221,7 +223,7 @@ public class ServerAffectedSelectionEventSubscriberTests
         TestArtifacts.SkipIfMissing();
         var bundle = Bundle();
         WriteSubscriber(bundle, Subscriber(OnWork, "", ""));
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
 
         var baseline = await Send(server, bundle);
         Assert.True(baseline.ForcedFull, baseline.Raw);

@@ -4,6 +4,8 @@
 //
 // The invariant under test: the change model reports what changed relative to the code the
 // stored per-test coverage was measured on. Mechanism: docs/server-mode.md#affectedonly-and-the-al-output-cache.
+// Runs under --isolation test: these assert per-test narrowing inside one codeunit, which the
+// default Codeunit isolation widens to the whole codeunit (#5035, ServerAffectedSelectionSharedSetupTests).
 using System.Text.Json;
 using Xunit;
 
@@ -210,7 +212,7 @@ public class ServerAffectedSelectionCacheHitTests
         var root = TestScratch.Dir("al-runner-server-affected-cachehit");
         var bundle = SingleBundle(root, "000000000001");
         var cache = TestScratch.Dir("al-runner-server-affected-cachehit-cache");
-        await using var server = await CliServer.StartAsync(new[] { "--cache", cache });
+        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--cache", cache });
         await EditRevertReEdit(server, new[] { bundle }, Path.Combine(bundle, "Helper.al"), rounds: 2);
     }
 
@@ -222,7 +224,7 @@ public class ServerAffectedSelectionCacheHitTests
         var root = TestScratch.Dir("al-runner-server-affected-cachehit-multi");
         var (app, testApp) = AppAndTestApp(root, "000000000002");
         var cache = TestScratch.Dir("al-runner-server-affected-cachehit-multi-cache");
-        await using var server = await CliServer.StartAsync(new[] { "--cache", cache });
+        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--cache", cache });
         await EditRevertReEdit(server, new[] { app, testApp }, Path.Combine(app, "Helper.al"), rounds: 2);
     }
 
@@ -237,7 +239,7 @@ public class ServerAffectedSelectionCacheHitTests
         TestArtifacts.SkipIfMissing();
         var root = TestScratch.Dir("al-runner-server-affected-plain-between");
         var bundle = SingleBundle(root, "000000000003");
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
         var paths = new[] { bundle };
 
         AssertAllPass(await Send(server, paths), "initial");
@@ -262,13 +264,13 @@ public class ServerAffectedSelectionCacheHitTests
         var paths = new[] { app, testApp };
         var cache = TestScratch.Dir("al-runner-server-affected-warmcache-cache");
 
-        await using (var warmer = await CliServer.StartAsync(new[] { "--cache", cache }))
+        await using (var warmer = await CliServer.StartAsync(new[] { "--isolation", "test", "--cache", cache }))
             AssertAllPass(await Send(warmer, paths), "warm-up process");
         // The subject is a warm AL-output cache with no selection baseline; without this the persisted
         // one (#4979) lets the first request narrow.
         Directory.Delete(Path.Combine(cache, "affected-baseline"), recursive: true);
 
-        await using var server = await CliServer.StartAsync(new[] { "--cache", cache });
+        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--cache", cache });
         var first = await Send(server, paths);
         Assert.Equal(3, first.Tests.Count);
         AssertAllPass(first, "first request on the warm cache");

@@ -3,6 +3,8 @@
 // driven through a real --watch process here, and every step asserts the exact set of tests the
 // cycle ran and that the tests the probed edit breaks fail with the probe.
 // Mechanism: docs/watch-affected.md.
+// Runs under --isolation test: these assert per-test narrowing inside one codeunit, which the
+// default Codeunit isolation widens to the whole codeunit (#5035, ServerAffectedSelectionSharedSetupTests).
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Xunit;
@@ -298,7 +300,7 @@ public class WatchAffectedSelectionTests
         TestArtifacts.SkipIfMissing();
         var bundle = Bundle("al-runner-watch-affected", "000000000001");
         var cache = TestScratch.Dir("al-runner-watch-affected-cache");
-        using var watch = new WatchProcess(new[] { bundle, "--watch", "--affected", "--show-pass", "--cache", cache });
+        using var watch = new WatchProcess(new[] { bundle, "--watch", "--affected", "--isolation", "test", "--show-pass", "--cache", cache });
 
         var first = await watch.NextCycle(ColdCycle);
         AssertRan(first, "cycle 1", All);
@@ -377,7 +379,7 @@ public class WatchAffectedSelectionTests
         var bundle = Bundle("al-runner-watch-affected-restart", "000000000002");
         var cache = TestScratch.Dir("al-runner-watch-affected-restart-cache");
         string[] Args(params string[] extra)
-            => new[] { bundle, "--watch", "--affected", "--show-pass", "--cache", cache }.Concat(extra).ToArray();
+            => new[] { bundle, "--watch", "--affected", "--isolation", "test", "--show-pass", "--cache", cache }.Concat(extra).ToArray();
 
         using (var recorder = new WatchProcess(Args()))
         {
@@ -404,6 +406,47 @@ public class WatchAffectedSelectionTests
             foreach (var t in HelperTests) AssertFailsWith(first, "--include-failing first cycle", t, "PROBE-EDIT");
             AssertCounts(first, "--include-failing first cycle", 3, 6, 3, 0);
             AssertNarrowed(first, "--include-failing first cycle");
+        }
+    }
+
+    /// <summary>
+    /// #5035 through watch, under the default Codeunit isolation: an edit to setup only the first
+    /// test ran selects its whole codeunit, and so does the restarted process's first cycle from the
+    /// persisted baseline. The codeunit the edit cannot reach stays skipped.
+    /// </summary>
+    [SkippableFact]
+    public async Task WatchAffected_SharedSetupEdit_SelectsTheWholeCodeunit_AlsoAfterARestart()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = ServerAffectedSelectionSharedSetupTests.Bundle("al-runner-watch-affected-shared-setup", "000000000011");
+        var cache = TestScratch.Dir("al-runner-watch-affected-shared-setup-cache");
+        var helper = Path.Combine(bundle, "Helper.Codeunit.al");
+        string[] args = { bundle, "--watch", "--affected", "--show-pass", "--cache", cache };
+        string[] wholeCodeunit = { "NeverInitializes", "ReadsSetupOne", "ReadsSetupThree", "ReadsSetupTwo" };
+
+        using (var watch = new WatchProcess(args))
+        {
+            var first = await watch.NextCycle(ColdCycle);
+            AssertRan(first, "cycle 1", wholeCodeunit.Append("Independent").ToArray());
+            AssertAllPass(first, "cycle 1");
+
+            WatchEdit.Replace(helper, ServerAffectedSelectionSharedSetupTests.Helper(ServerAffectedSelectionSharedSetupTests.Probe));
+            var edit = await watch.NextCycle(WarmCycle);
+            AssertRan(edit, "setup edit", wholeCodeunit);
+            foreach (var t in new[] { "ReadsSetupOne", "ReadsSetupTwo", "ReadsSetupThree" })
+                AssertFailsWith(edit, "setup edit", t, "PROBE-INIT");
+            AssertCounts(edit, "setup edit", 4, 5, 1, 0);
+            AssertNarrowed(edit, "setup edit");
+        }
+
+        File.WriteAllText(helper, ServerAffectedSelectionSharedSetupTests.Helper());
+        using (var restarted = new WatchProcess(args))
+        {
+            var first = await restarted.NextCycle(ColdCycle);
+            AssertRan(first, "restarted first cycle", wholeCodeunit);
+            AssertAllPass(first, "restarted first cycle");
+            AssertCounts(first, "restarted first cycle", 4, 5, 1, 0);
+            AssertNarrowed(first, "restarted first cycle");
         }
     }
 
