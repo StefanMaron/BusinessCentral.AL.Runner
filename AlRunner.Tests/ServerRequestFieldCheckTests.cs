@@ -31,7 +31,7 @@ public class ServerRequestFieldCheckTests
         Assert.NotNull(r.Error);
         Assert.StartsWith("runTests: unknown request fields 'cobertura', 'testFilter' ", r.Error);
         Assert.DoesNotContain("--define", r.Error);
-        Assert.Contains("Fields runTests reads: affectedOnly, coverage, includeFailing, packagePaths, perTestCoverage, sourcePaths, testIsolation.", r.Error);
+        Assert.Contains("Fields runTests reads: affectedOnly, coverage, includeFailing, packagePaths, perTestCoverage, sourcePaths, strictEnvironment, testIsolation.", r.Error);
     }
 
     [Fact]
@@ -61,6 +61,7 @@ public class ServerRequestFieldCheckTests
     // ALchemist serverExecutionEngine.ts executeScratch
     [InlineData("""{"command":"execute","captureValues":true,"code":"x","iterationTracking":true}""")]
     [InlineData("""{"command":"runTests","sourcePaths":["/a"],"affectedOnly":true,"includeFailing":true}""")]
+    [InlineData("""{"command":"runTests","sourcePaths":["/a"],"affectedOnly":true,"strictEnvironment":true}""")]
     // A field that asks for nothing is exact to ignore.
     [InlineData("""{"command":"runTests","sourcePaths":["/a"],"captureValues":false,"stubPaths":[],"code":""}""")]
     [InlineData("""{"command":"runTests","sourcePaths":["/a"],"code":null}""")]
@@ -103,6 +104,14 @@ public class ServerRequestFieldCheckTests
         var r = Check("""{"command":"execute","sourcePaths":["/a"],"includeFailing":true}""");
         Assert.Null(r.Error);
         Assert.Equal(new[] { "'includeFailing' has no effect on execute; only runTests reads it — ignored." }, r.Warnings);
+    }
+
+    [Fact]
+    public void Execute_StrictEnvironment_WarnsOnlyRunTestsReadsIt()
+    {
+        var r = Check("""{"command":"execute","sourcePaths":["/a"],"strictEnvironment":true}""");
+        Assert.Null(r.Error);
+        Assert.Equal(new[] { "'strictEnvironment' has no effect on execute; only runTests reads it — ignored." }, r.Warnings);
     }
 
     // Every declared request field is either read by some command or is the one v1 field no

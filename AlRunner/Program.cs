@@ -377,6 +377,8 @@ bool watchMode = false;
 // (RunTestsWithSelection); --include-failing is its includeFailing. docs/watch-affected.md.
 bool watchAffected = false;
 bool watchIncludeFailing = false;
+// #5028: --strict-environment is runTests' strictEnvironment: a baseline from another environment runs everything.
+bool watchStrictEnvironment = false;
 // --tdd (issue #1997): local-development-only flag, off by default. Normally a test
 // referencing a not-yet-implemented table field / procedure / enum value is a
 // method-body compile ERROR, which drops the WHOLE app group (BC's ContinueBuildOnError
@@ -584,6 +586,7 @@ for (int i = 0; i < args.Length; i++)
     if (args[i] == "--watch") { watchMode = true; continue; }
     if (args[i] == "--affected") { watchAffected = true; continue; }
     if (args[i] == "--include-failing") { watchIncludeFailing = true; continue; }
+    if (args[i] == "--strict-environment") { watchStrictEnvironment = true; continue; }
     if (args[i] == "--tdd") { tddMode = true; continue; }
     if (args[i] == "--server") { continue; }  // handled above (serverMode); consume so it isn't "unknown"
     if (args[i] == "--dap")  // handled above (dapMode/dapPort/dapStdioMode); consume the flag and its optional value (numeric port, or "stdio")
@@ -680,10 +683,11 @@ if (serverMode && watchMode)
 // #5027: --affected changes how --watch runs a cycle and means nothing elsewhere; the server's
 // per-request form is runTests' affectedOnly. The refused combinations are options the selecting
 // run does not apply, so accepting them would drop them without a word.
-if (watchAffected || watchIncludeFailing)
+if (watchAffected || watchIncludeFailing || watchStrictEnvironment)
 {
     string? affectedProblem =
         watchIncludeFailing && !watchAffected ? "--include-failing is only valid with --watch --affected."
+        : watchStrictEnvironment && !watchAffected ? "--strict-environment is only valid with --watch --affected."
         : !watchMode ? "--affected is only valid with --watch (a --server client sets runTests' affectedOnly instead)."
         : tddMode ? "--affected cannot be combined with --tdd."
         : !bundledMode ? "--affected cannot be combined with --per-suite."
@@ -2860,7 +2864,8 @@ if (watchAffected)
     var affectedSw = System.Diagnostics.Stopwatch.StartNew();
     var affectedOutcome = RunTestsWithSelection(watchAffectedState!, bundles.ToArray(), null,
         requestCoverage: false, requestPerTestCoverage: false, affectedOnly: true,
-        includeFailing: watchIncludeFailing, onTestComplete: _ => { }, token: default);
+        includeFailing: watchIncludeFailing, onTestComplete: _ => { }, token: default,
+        strictEnvironment: watchStrictEnvironment);
     results.AddRange(WatchAffectedReport.ToBuckets(bundles, affectedOutcome, affectedSw.Elapsed,
         Reporter.FinalizeCompanyInitFailures(CompanyInitializer.DrainFailures(), expectations)));
     var stillFailing = WatchAffectedReport.SkippedFailing(affectedOutcome, watchAffectedState!);
@@ -6001,6 +6006,7 @@ return strictExitCode ? computedExitCode : 0;
             + string.Join("|", envKeyPkgDirs
                 .Select(d => Path.GetFullPath(d))
                 .OrderBy(d => d, StringComparer.Ordinal));
+        AlRunner.Infrastructure.AffectedEnvironmentDrift.ForgetClosure(bundleAbs);
 
         IReadOnlyList<(AlRunner.AppManifest Manifest, string AppPath)> ordered =
             Array.Empty<(AlRunner.AppManifest, string)>();
@@ -6045,10 +6051,17 @@ return strictExitCode ? computedExitCode : 0;
                 // Workspace-deps packages are request bundles or sibling sources, which the change
                 // model or the unmappable rule covers.
                 if (pinLoadToChangeModel)
+                {
                     selectionEnvironmentKey += AlRunner.Infrastructure.DependencyPackageFingerprint.KeySegment(
                         ordered, p => IsUnderDirectory(Path.GetFullPath(p), workspaceDepsRoot),
                         (appId, appPath) => string.Equals(
                             DependencyLoader.LoadedSourcePath(appId), appPath, StringComparison.OrdinalIgnoreCase));
+                    // #5028: the apps a later run in another environment diffs this one against.
+                    AlRunner.Infrastructure.AffectedEnvironmentDrift.RecordClosure(bundleAbs,
+                        ordered, p => IsUnderDirectory(Path.GetFullPath(p), workspaceDepsRoot),
+                        (appId, appPath) => string.Equals(
+                            DependencyLoader.LoadedSourcePath(appId), appPath, StringComparison.OrdinalIgnoreCase));
+                }
                 // New bundle in the server session: replace (not inherit) the
                 // install-trigger registrations, then register this bundle's deps.
                 AlRunner.InstallTriggerRunner.ResetForNewBundle();
@@ -7387,6 +7400,7 @@ string? LoadPersistedAffectedBaseline(AlRunner.Infrastructure.AffectedSelectionS
         affectedUnknownTestsByBundle[bundle] = b.Unknown;
         affectedFailingTestsByBundle[bundle] = b.Failing;
         affectedEnvironmentKeyByBundle[bundle] = b.EnvironmentKey;
+        affected.EnvironmentByBundle[bundle] = b.Environment;
         affectedBaselineGenerationsByBundle.Remove(bundle);
         affectedEventsByBundle[bundle] = b.Events;
         if (b.Bindings != null) affectedBindingsByBundle[bundle] = b.Bindings;
@@ -7434,7 +7448,8 @@ void PersistAffectedBaseline(AlRunner.Infrastructure.AffectedSelectionState affe
                 affectedFailingTestsByBundle[bundle],
                 affectedEventsByBundle[bundle],
                 affectedBindingsByBundle.TryGetValue(bundle, out var bindings) ? bindings : null,
-                affectedObservabilityByBundle.TryGetValue(bundle, out var observability) ? observability : null);
+                affectedObservabilityByBundle.TryGetValue(bundle, out var observability) ? observability : null,
+                affected.EnvironmentByBundle.TryGetValue(bundle, out var environment) ? environment : null);
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var path = AlRunner.Infrastructure.AffectedBaselineStore.PathFor(
             AlRunner.Infrastructure.CacheRoots.Resolve(AlRunner.Infrastructure.AffectedBaselineStore.CacheName), sourcePaths);
@@ -7454,7 +7469,7 @@ void PersistAffectedBaseline(AlRunner.Infrastructure.AffectedSelectionState affe
 AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infrastructure.AffectedSelectionState affected,
     string[] sourcePaths, string[]? packagePaths, bool requestCoverage, bool requestPerTestCoverage,
     bool affectedOnly, bool includeFailing, Action<TestResult> onTestComplete,
-    System.Threading.CancellationToken token, Action? afterRuns = null)
+    System.Threading.CancellationToken token, Action? afterRuns = null, bool strictEnvironment = false)
 {
     var affectedCoverageByBundle = affected.CoverageByBundle;
     var affectedUnknownTestsByBundle = affected.UnknownTestsByBundle;
@@ -7506,6 +7521,12 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
         List<string> activeChangedObjectDisplay = new();
         bool activeForcedFull = false;
         string? activeForcedReason = null;
+        // #5028: what an environment diff selects on, for the bundle about to run.
+        HashSet<string> activeEnvCoverageKeys = new(StringComparer.Ordinal);
+        HashSet<string> activeEnvEventKeys = new(StringComparer.Ordinal);
+        EnvironmentDriftInfo? activeDrift = null;
+        var requestDriftByBundle = new Dictionary<string, EnvironmentDriftInfo>(StringComparer.Ordinal);
+        var requestEnvironmentSnapshotByBundle = new Dictionary<string, AlRunner.Infrastructure.EnvironmentSnapshot?>(StringComparer.Ordinal);
         // #5050: session state crosses bundle boundaries within one request.
         var requestChangedAnyBundle = false;
         var bundlesStarted = 0;
@@ -7522,6 +7543,44 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
             && sourcePaths.Any(p => !affectedCoverageByBundle.ContainsKey(Path.GetFullPath(p)))
             ? LoadPersistedAffectedBaseline(affected, sourcePaths)
             : null;
+
+        const string EnvironmentChangedReason =
+            "coverage baseline environment changed (BC version/artifact/package cache/dependency package content/test isolation)";
+        // #5028: docs/server-mode.md#affectedonly-across-environments. A baseline recorded in another
+        // environment is used, narrowed by a per-object diff of the two environments' apps, unless the
+        // request is strict or the test isolation differs. Returns false when it forced a full run.
+        bool UseBaselineFromAnotherEnvironment(string bundlePath, string recordedKey, string currentKey)
+        {
+            var isolationChanged = !string.Equals(AlRunner.Infrastructure.AffectedEnvironmentDrift.IsolationOf(recordedKey),
+                AlRunner.Infrastructure.AffectedEnvironmentDrift.IsolationOf(currentKey), StringComparison.Ordinal);
+            if (strictEnvironment || isolationChanged)
+            {
+                activeForcedFull = true;
+                activeForcedReason = EnvironmentChangedReason + (strictEnvironment && !isolationChanged ? "; strictEnvironment is set" : "");
+                return false;
+            }
+            var diff = AlRunner.Infrastructure.AffectedEnvironmentDrift.Diff(
+                affected.EnvironmentByBundle.TryGetValue(bundlePath, out var recorded) ? recorded : null,
+                requestEnvironmentSnapshotByBundle.TryGetValue(bundlePath, out var current) ? current : null);
+            var keys = AlRunner.Infrastructure.AffectedEnvironmentDrift.SelectionKeys(diff.Changed,
+                AlRunner.Patches.RecordPatches.TableExtensionBaseTableIds(),
+                activePreviousEvents != null
+                && activePreviousEvents.TryGetValue(AlRunner.Infrastructure.AlEventRaiseTracker.BundleWideKey, out var bundleWide)
+                    ? bundleWide : null);
+            activeEnvCoverageKeys = keys.CoverageKeys;
+            activeEnvEventKeys = keys.EventKeys;
+            var why = diff.Approximate.Concat(keys.Unattributed).Distinct(StringComparer.Ordinal).ToList();
+            activeDrift = new EnvironmentDriftInfo(
+                AlRunner.Infrastructure.AffectedEnvironmentDrift.BuildOf(recordedKey),
+                AlRunner.Infrastructure.AffectedEnvironmentDrift.BuildOf(currentKey),
+                diff.Changed.Count,
+                why.Count == 0 ? EnvironmentDriftInfo.Diffed : EnvironmentDriftInfo.Approximate,
+                diff.Changed.Select(AlRunner.Infrastructure.AffectedEnvironmentDrift.Display)
+                    .Take(AlRunner.Infrastructure.AffectedEnvironmentDrift.NamedObjectLimit).ToList(),
+                why.Count == 0 ? null
+                    : string.Join("; ", why.Take(5)) + (why.Count > 5 ? $"; and {why.Count - 5} more" : ""));
+            return true;
+        }
 
         var runs = RunAllBundlesForServer(sourcePaths, packagePaths,
             asm =>
@@ -7576,6 +7635,7 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 var plannedSkippedFailing = 0;
                 if (affectedOnly && !activeForcedFull)
                 {
+                    changedEventKeys.UnionWith(activeEnvEventKeys);
                     exactSelection = new HashSet<string>(StringComparer.Ordinal);
                     foreach (var testKey in discovered)
                     {
@@ -7590,6 +7650,7 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                         var previouslyFailing = activePreviousFailing?.Contains(testKey) ?? false;
                         if ((includeFailing && previouslyFailing)
                             || (activeChangedObjectKeys != null && coveredObjects.Overlaps(activeChangedObjectKeys))
+                            || coveredObjects.Overlaps(activeEnvCoverageKeys)
                             || AlRunner.Infrastructure.AffectedEventSelection.Overlaps(
                                 activePreviousEvents != null && activePreviousEvents.TryGetValue(testKey, out var raised) ? raised : null,
                                 changedEventKeys))
@@ -7601,7 +7662,8 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                         Console.Error.WriteLine(
                             $"  [{affected.LogTag}] affectedOnly: selected {widened} more test(s) that share state with a selected one (TestIsolation={executor.Isolation})");
                     // #5050: session state (WorkDate, number sequences, SingleInstance) outlives every isolation.
-                    var bundleChanged = (activeChangedObjectKeys?.Count ?? 0) > 0 || changedEventKeys.Count > 0;
+                    var bundleChanged = (activeChangedObjectKeys?.Count ?? 0) > 0 || changedEventKeys.Count > 0
+                        || activeEnvCoverageKeys.Count > 0;
                     var stateWidened = AlRunner.Infrastructure.AffectedSessionStateSelection.Widen(
                         discovered, exactSelection, activePreviousEvents,
                         changed: bundleChanged,
@@ -7625,7 +7687,14 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                         activeChangedObjectDisplay,
                         activeForcedFull,
                         activeForcedReason,
-                        plannedSkippedFailing);
+                        plannedSkippedFailing,
+                        activeForcedFull ? null : activeDrift);
+                    if (!activeForcedFull && activeDrift != null)
+                    {
+                        requestDriftByBundle[activeBundleKey] = activeDrift;
+                        Console.Error.WriteLine($"  [{affected.LogTag}] affectedOnly: "
+                            + AlRunner.Infrastructure.AffectedEnvironmentDrift.Warning(activeDrift));
+                    }
                 }
 
                 requestSelectedTestsByBundle[activeBundleKey] = exactSelection;
@@ -7664,6 +7733,11 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
 
                 activeForcedFull = false;
                 activeForcedReason = null;
+                activeEnvCoverageKeys = new HashSet<string>(StringComparer.Ordinal);
+                activeEnvEventKeys = new HashSet<string>(StringComparer.Ordinal);
+                activeDrift = null;
+                requestEnvironmentSnapshotByBundle[bundlePath] =
+                    AlRunner.Infrastructure.AffectedEnvironmentDrift.CurrentFor(bundlePath);
                 if (!affectedOnly) return;
 
                 if (activePreviousCoverage == null && persistedBaselineUnusable != null)
@@ -7677,16 +7751,18 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 if (affectedPersistedModulesByBundle.TryGetValue(bundlePath, out var persistedModules))
                 {
                     if (activePreviousCoverage == null || activePreviousUnknown == null
-                        || !affectedEnvironmentKeyByBundle.TryGetValue(bundlePath, out var persistedEnv)
-                        || !string.Equals(persistedEnv, selectionEnvironmentKey, StringComparison.Ordinal))
+                        || !affectedEnvironmentKeyByBundle.TryGetValue(bundlePath, out var persistedEnv))
                     {
                         activeForcedFull = true;
-                        activeForcedReason =
-                            "coverage baseline environment changed (BC version/artifact/package cache/dependency package content/test isolation)";
+                        activeForcedReason = EnvironmentChangedReason;
                         return;
                     }
+                    if (!string.Equals(persistedEnv, selectionEnvironmentKey, StringComparison.Ordinal)
+                        && !UseBaselineFromAnotherEnvironment(bundlePath, persistedEnv, selectionEnvironmentKey))
+                        return;
                     var persistedDiff = AlRunner.Infrastructure.AffectedBaselineStore.ChangedSince(
-                        persistedModules, requestModuleNames, emitter.TryGetAffectedModuleSnapshot);
+                        persistedModules, requestModuleNames, emitter.TryGetAffectedModuleSnapshot,
+                        environmentDiffed: activeDrift != null);
                     if (persistedDiff.ForceFullReason != null)
                     {
                         activeForcedFull = true;
@@ -7719,14 +7795,15 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                     activeForcedReason = "no previous per-test coverage baseline for this bundle";
                     return;
                 }
-                if (!affectedEnvironmentKeyByBundle.TryGetValue(bundlePath, out var previousEnv)
-                    || !string.Equals(previousEnv, selectionEnvironmentKey, StringComparison.Ordinal))
+                if (!affectedEnvironmentKeyByBundle.TryGetValue(bundlePath, out var previousEnv))
                 {
                     activeForcedFull = true;
-                    activeForcedReason =
-                        "coverage baseline environment changed (BC version/artifact/package cache/dependency package content/test isolation)";
+                    activeForcedReason = EnvironmentChangedReason;
                     return;
                 }
+                if (!string.Equals(previousEnv, selectionEnvironmentKey, StringComparison.Ordinal)
+                    && !UseBaselineFromAnotherEnvironment(bundlePath, previousEnv, selectionEnvironmentKey))
+                    return;
                 // #4971: changedObjects is relative to each module's baseline as this request found
                 // it; that has to be the baseline the stored coverage was measured against.
                 affectedBaselineGenerationsByBundle.TryGetValue(bundlePath, out var coverageGenerations);
@@ -7844,7 +7921,8 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
             var useByTest = AlRunner.Infrastructure.AlObjectUseTracker.CollectPerTest();
             var stateByTest = AlRunner.Infrastructure.AlSessionStateTracker.CollectPerTest();
             var longLivedObjectKeys = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var type in AlRunner.Infrastructure.AlObjectUseTracker.LongLivedObjects())
+            var longLivedTypes = AlRunner.Infrastructure.AlObjectUseTracker.LongLivedObjects();
+            foreach (var type in longLivedTypes)
                 if (UsedObjectOf(type) is { } o)
                     longLivedObjectKeys.Add(AlRunner.Infrastructure.AffectedEventSelection.LongLivedObjectKey(o.Key));
 
@@ -7860,6 +7938,8 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
             }
             // #4988: the event side of the baseline, stored whenever the coverage is.
             var recordedThisRequest = new List<string>();
+            AlRunner.Infrastructure.EnvironmentSnapshot? CurrentEnvironmentOf(string bundlePath)
+                => requestEnvironmentSnapshotByBundle.TryGetValue(bundlePath, out var snapshot) ? snapshot : null;
             void StoreEventBaseline(string bundlePath, Dictionary<string, HashSet<string>> nextEvents)
             {
                 affectedPersistedModulesByBundle.Remove(bundlePath);
@@ -7915,6 +7995,7 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                     affectedUnknownTestsByBundle[bundlePath] = nextUnknown;
                     affectedFailingTestsByBundle[bundlePath] = nextFailing;
                     affectedEnvironmentKeyByBundle[bundlePath] = envKey;
+                    affected.EnvironmentByBundle[bundlePath] = CurrentEnvironmentOf(bundlePath);
                     affectedBaselineGenerationsByBundle[bundlePath] = CurrentBaselineGenerations();
                     StoreEventBaseline(bundlePath, nextEvents);
                     recordedThisRequest.Add(bundlePath);
@@ -7997,11 +8078,18 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                         if (!string.IsNullOrEmpty(scopeName))
                             coveredObjects.Add(ToAffectedScopeKey(objKey, scopeName));
                     }
+                    // #5028: objects outside this request's sources, or packaged, keyed for an environment diff.
+                    var dependencyKeys = new HashSet<string>(StringComparer.Ordinal);
+                    void AddDependency(Type objectType)
+                    {
+                        if (AlRunner.Infrastructure.AffectedEnvironmentDrift.DependencyKeyOf(objectType) is { } k)
+                            dependencyKeys.Add(k);
+                    }
                     foreach (var s in statements ?? Enumerable.Empty<AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord>())
                         if (!Cover(s.FilePath, s.ScopeName)) { unmappable = true; break; }
                     if (used != null && !unmappable)
                     {
-                        // Outside this request's sources, or packaged: skipped, as a statement there is.
+                        // Outside this request's sources, or packaged: no source key, as a statement there has none.
                         bool Keyed(Type objectType, out string key)
                         {
                             key = "";
@@ -8013,7 +8101,8 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                         }
                         foreach (var scope in used.Scopes)
                         {
-                            if (!Keyed(AlRunner.Infrastructure.AlScopeKey.ObjectTypeOf(scope), out var objKey)) continue;
+                            var owner = AlRunner.Infrastructure.AlScopeKey.ObjectTypeOf(scope);
+                            if (!Keyed(owner, out var objKey)) { AddDependency(owner); continue; }
                             // An entered method that cannot be named cannot carry its scope key.
                             if (AlRunner.Infrastructure.AlCoverageTracker.TryResolveScope(scope, selectionSourceMap) is not { } resolved)
                             {
@@ -8024,8 +8113,10 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                         }
                         foreach (var type in used.UnresolvedScopeOwners)
                             if (Keyed(type, out _)) unmappable = true;
+                            else AddDependency(type);
                         foreach (var type in used.Objects)
                             if (Keyed(type, out var objKey)) AddKeys(objKey, null);
+                            else AddDependency(type);
                     }
 
                     if (unmappable || coveredObjects.Count == 0)
@@ -8034,6 +8125,7 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                         if (unmappable) nextEvents[testKey] = RecordedKeys();
                         continue;
                     }
+                    coveredObjects.UnionWith(dependencyKeys);
                     nextCoverage[testKey] = coveredObjects;
                     nextEvents[testKey] = RecordedKeys();
                     if (failed) nextFailing.Add(testKey);
@@ -8043,6 +8135,11 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 // tests' long-lived records, so the previous entry's are kept as well.
                 var bundleWide = new HashSet<string>(eventsByTest[bundleWideKey], StringComparer.Ordinal);
                 bundleWide.UnionWith(longLivedObjectKeys);
+                foreach (var type in longLivedTypes)
+                    if ((UsedObjectOf(type) is not { } lo
+                            || AlRunner.Infrastructure.DependencyPackageFingerprint.IsUnderAny(lo.Path, packagedSourceRoots))
+                        && AlRunner.Infrastructure.AffectedEnvironmentDrift.DependencyKeyOf(type) is { } depKey)
+                        bundleWide.Add(AlRunner.Infrastructure.AffectedEventSelection.LongLivedObjectKey(depKey));
                 if (selectedThisRequest != null && previousEvents != null
                     && previousEvents.TryGetValue(bundleWideKey, out var previousBundleWide))
                     bundleWide.UnionWith(previousBundleWide);
@@ -8052,6 +8149,14 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 affectedUnknownTestsByBundle[bundlePath] = nextUnknown;
                 affectedFailingTestsByBundle[bundlePath] = nextFailing;
                 affectedEnvironmentKeyByBundle[bundlePath] = envKey;
+                // #5028: a skipped test keeps its record, which vouches for this environment only if
+                // the one it was recorded in was known and this run's diff of the two was exact.
+                affected.EnvironmentByBundle[bundlePath] =
+                    selectedThisRequest == null
+                    || (!(requestDriftByBundle.TryGetValue(bundlePath, out var drift) && drift.Mode == EnvironmentDriftInfo.Approximate)
+                        && affected.EnvironmentByBundle.TryGetValue(bundlePath, out var recordedIn) && recordedIn != null)
+                        ? CurrentEnvironmentOf(bundlePath)
+                        : null;
                 affectedBaselineGenerationsByBundle[bundlePath] = CurrentBaselineGenerations();
                 StoreEventBaseline(bundlePath, nextEvents);
                 recordedThisRequest.Add(bundlePath);
@@ -8081,7 +8186,8 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 changedObjects,
                 forcedReasons.Count > 0,
                 forcedReasons.Count > 0 ? string.Join(" | ", forcedReasons) : null,
-                selectionByBundle.Values.Sum(s => s.SkippedFailing ?? 0));
+                selectionByBundle.Values.Sum(s => s.SkippedFailing ?? 0),
+                AlRunner.Infrastructure.AffectedEnvironmentDrift.Combine(selectionByBundle.Values.Select(s => s.EnvironmentDrift).OfType<EnvironmentDriftInfo>().ToList()));
         }
 
         return new AlRunner.Infrastructure.AffectedRunOutcome(runs, allTests, allCompileErrors, exitCode, cached, cancelled,
@@ -8360,7 +8466,8 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             var outcome = RunTestsWithSelection(affected, req.SourcePaths, req.PackagePaths,
                 req.Coverage == true, req.PerTestCoverage == true, req.AffectedOnly == true, req.IncludeFailing == true,
                 OnTestComplete, cts.Token,
-                afterRuns: () => System.Threading.Interlocked.CompareExchange(ref activeRunCts, null, cts));
+                afterRuns: () => System.Threading.Interlocked.CompareExchange(ref activeRunCts, null, cts),
+                strictEnvironment: req.StrictEnvironment == true);
             var runs = outcome.Runs;
             var allTests = outcome.AllTests;
             var allCompileErrors = outcome.CompileErrors;

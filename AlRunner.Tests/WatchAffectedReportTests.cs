@@ -39,6 +39,24 @@ public class WatchAffectedReportTests
         }, lines);
     }
 
+    // #5028: a cycle that used a baseline from another environment says so on its own line, which
+    // the dashboard renders in its warning style.
+    [Fact]
+    public void Describe_DriftedCycle_WarnsNamingBothBuildsAndTheChangedObject()
+    {
+        var drift = new EnvironmentDriftInfo("27.5.1.0", "28.4.2.0", 1, EnvironmentDriftInfo.Diffed,
+            new[] { "Codeunit 80 Sales-Post" }, null);
+        var lines = WatchAffectedReport.Describe(
+            new ServerSelection("affected", 1, 6, Array.Empty<string>(), false, null, 0, drift),
+            Array.Empty<string>());
+
+        Assert.Equal(2, lines.Count);
+        Assert.True(WatchAffectedReport.IsWarning(lines[1]), lines[1]);
+        Assert.False(WatchAffectedReport.IsWarning(lines[0]), lines[0]);
+        Assert.Contains("BC 27.5.1.0, now BC 28.4.2.0", lines[1]);
+        Assert.Contains("1 object(s) differ: Codeunit 80 Sales-Post", lines[1]);
+    }
+
     [Fact]
     public void Describe_NoSelection_SaysNoBundleReachedTests()
         => Assert.Equal(new[] { "[watch] affected: no selection was made (no bundle reached test execution)" },
@@ -90,6 +108,7 @@ public class WatchAffectedReportTests
     [Theory]
     [InlineData("--affected", "--affected is only valid with --watch")]
     [InlineData("--watch --include-failing", "--include-failing is only valid with --watch --affected")]
+    [InlineData("--watch --strict-environment", "--strict-environment is only valid with --watch --affected")]
     [InlineData("--watch --affected --tdd", "--affected cannot be combined with --tdd")]
     [InlineData("--watch --affected --per-suite", "--affected cannot be combined with --per-suite")]
     [InlineData("--watch --affected --test Foo", "--affected cannot be combined with --test/--filter")]

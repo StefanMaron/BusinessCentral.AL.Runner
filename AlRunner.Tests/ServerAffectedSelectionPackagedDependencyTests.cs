@@ -170,9 +170,10 @@ public class ServerAffectedSelectionPackagedDependencyTests
     }
 
     // #4979: the package replaced while no server runs. The next server finds the persisted baseline
-    // under a different environment key and runs everything, saying why.
+    // under a different environment key; since #5028 it diffs the two packages per object and runs
+    // the tests that reached the changed one (here the whole codeunit, by its isolation), with a warning.
     [SkippableFact]
-    public async Task RebuiltPackage_BetweenServerProcesses_ForcesAFullRunNamingTheEnvironment()
+    public async Task RebuiltPackage_BetweenServerProcesses_RunsTheCallerNamingTheEnvironmentDrift()
     {
         TestArtifacts.SkipIfMissing();
         var (app, testApp) = Layout();
@@ -185,8 +186,10 @@ public class ServerAffectedSelectionPackagedDependencyTests
 
         await using var second = await CliServer.StartAsync(new[] { "--cache", cache });
         var afterRebuild = await Send(second, testApp);
-        Assert.True(afterRebuild.ForcedFull, afterRebuild.Raw);
-        Assert.Contains("environment changed", afterRebuild.Raw, StringComparison.Ordinal);
+        Assert.False(afterRebuild.ForcedFull, afterRebuild.Raw);
+        Assert.Contains("\"environmentDrift\":{", afterRebuild.Raw, StringComparison.Ordinal);
+        Assert.Contains("\"mode\":\"diffed\"", afterRebuild.Raw, StringComparison.Ordinal);
+        Assert.Contains("Codeunit 60471 PkgDep Helper SX", afterRebuild.Raw, StringComparison.Ordinal);
         Assert.Equal(2, afterRebuild.Ran);
         Assert.True(afterRebuild.Status.GetValueOrDefault("CallsApp") == "fail", afterRebuild.Raw);
         Assert.Contains("the app returned 63", afterRebuild.Raw, StringComparison.Ordinal);
@@ -235,10 +238,11 @@ public class ServerAffectedSelectionPackagedDependencyTests
         File.WriteAllText(Path.Combine(app, "src", "Helper.Codeunit.al"), HelperSource(3));
         Package(app, testApp);
 
-        // Same AppId and version, so only the package's content can tell the two apart.
+        // Same AppId and version, so only the package's content can tell the two apart. #5028: the
+        // two builds are diffed per object, and the caller of the changed codeunit is selected.
         var afterRebuild = await Send(server, testApp);
-        Assert.True(afterRebuild.ForcedFull, afterRebuild.Raw);
-        Assert.Contains("environment changed", afterRebuild.Raw, StringComparison.Ordinal);
+        Assert.False(afterRebuild.ForcedFull, afterRebuild.Raw);
+        Assert.Contains("\"mode\":\"diffed\"", afterRebuild.Raw, StringComparison.Ordinal);
         Assert.True(afterRebuild.Status.TryGetValue("CallsApp", out var status), afterRebuild.Raw);
         Assert.True(status == "fail", afterRebuild.Raw);
         Assert.Contains("the app returned 63", afterRebuild.Raw, StringComparison.Ordinal);

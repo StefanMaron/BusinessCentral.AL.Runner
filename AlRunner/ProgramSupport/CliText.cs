@@ -390,7 +390,10 @@ internal static partial class ProgramSupport
         w.WriteLine("  unaffected, and how many were skipped while still failing from an earlier cycle");
         w.WriteLine("  (named on the next line); a cycle that had to run everything says why. The");
         w.WriteLine("  Tests: line counts only what ran. --include-failing also reruns every test whose");
-        w.WriteLine("  last result was not a pass. --affected is rejected (exit 2) without --watch and");
+        w.WriteLine("  last result was not a pass. A baseline recorded in another environment (another BC");
+        w.WriteLine("  build or package set) is used, narrowed by a per-object diff of the two, under a");
+        w.WriteLine("  WARNING line; --strict-environment runs everything instead.");
+        w.WriteLine("  --affected is rejected (exit 2) without --watch and");
         w.WriteLine("  with --tdd, --per-suite or --test. Details: docs/watch-affected.md.");
         w.WriteLine();
 
@@ -705,6 +708,12 @@ internal static partial class ProgramSupport
         w.WriteLine("  --include-failing       With --watch --affected: also rerun every test whose last");
         w.WriteLine("                          result was not a pass, whatever changed (runTests'");
         w.WriteLine("                          includeFailing).");
+        w.WriteLine("  --strict-environment    With --watch --affected: run everything when the baseline");
+        w.WriteLine("                          was recorded in another environment (another BC build,");
+        w.WriteLine("                          package set or package content). Without it that baseline");
+        w.WriteLine("                          is used, narrowed by a per-object diff of the two");
+        w.WriteLine("                          environments, under a WARNING line (runTests'");
+        w.WriteLine("                          strictEnvironment).");
         w.WriteLine("  --server                Long-running JSON-RPC daemon over stdin/stdout (warm");
         w.WriteLine("                          deps + BC patches loaded once; ~19s->~4s per run). One");
         w.WriteLine("                          JSON request/response per line. stdout carries ONLY the");

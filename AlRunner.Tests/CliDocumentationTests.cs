@@ -307,6 +307,8 @@ public sealed class CliDocumentationTests
         "--seed",
         // #5027: --affected decides which tests a --watch cycle runs; --include-failing adds to them.
         "--affected", "--include-failing",
+        // #5028: --strict-environment makes a baseline from another environment run everything.
+        "--strict-environment",
     };
 
     /// <summary>Negative: an unknown documentation flag must not be silently accepted.</summary>
