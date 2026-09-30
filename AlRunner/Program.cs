@@ -7944,6 +7944,13 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                         exts.Add(ext);
                     }
                 var eventsByTest = AlRunner.Infrastructure.AlEventRaiseTracker.CollectPerTest(extensionsOfTable);
+                // #3415 SPIKE (not for merge): dump the per-test recorded keys for offline selection.
+                if (Environment.GetEnvironmentVariable("AL_RUNNER_EVENT_DUMP") is { Length: > 0 } eventDumpPath)
+                {
+                    var dump = eventsByTest.ToDictionary(kv => kv.Key, kv => kv.Value.OrderBy(k => k, StringComparer.Ordinal).ToList());
+                    System.IO.File.WriteAllText(eventDumpPath, System.Text.Json.JsonSerializer.Serialize(dump));
+                    Console.Error.WriteLine($"[spike-3415] wrote per-test event keys for {dump.Count} entries to {eventDumpPath}");
+                }
                 var bundleWideKey = AlRunner.Infrastructure.AlEventRaiseTracker.BundleWideKey;
                 // #4988: the event side of the baseline, stored whenever the coverage is.
                 var recordedThisRequest = new List<string>();

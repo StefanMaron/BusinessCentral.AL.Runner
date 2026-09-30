@@ -40,7 +40,24 @@ public static partial class EventSubscriberPatches
         var publishers = new Dictionary<string, bool>(StringComparer.Ordinal);
         lock (_lock)
         {
-            foreach (var asm in BcRuntime.StampedModuleAssemblies())
+            var seedAssemblies = BcRuntime.StampedModuleAssemblies();
+            // #3415 SPIKE (not for merge): AL_RUNNER_RECORD_ALL_APP_EVENTS=1 also seeds every
+            // UNSTAMPED AL app assembly (Base/System Application, Business Foundation, test
+            // libraries), so a raise of a Microsoft publisher with no subscriber is recorded too.
+            if (Environment.GetEnvironmentVariable("AL_RUNNER_RECORD_ALL_APP_EVENTS") == "1")
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                int before = _seededScopeTypes.Count;
+                var extra = UnstampedAlAppAssemblies(seedAssemblies);
+                foreach (var asm in extra)
+                    if (!_recordingSeedByAssembly.ContainsKey(asm))
+                        _recordingSeedByAssembly[asm] = SeedAssembly(asm, sentinel);
+                Console.Error.WriteLine(
+                    $"[spike-3415] seeded {_seededScopeTypes.Count - before} more event scopes in "
+                    + $"{extra.Count} Microsoft/unstamped app assemblies ({string.Join(", ", extra.Select(a => a.GetName().Name))}) "
+                    + $"in {sw.ElapsedMilliseconds} ms");
+            }
+            foreach (var asm in seedAssemblies)
             {
                 if (!_recordingSeedByAssembly.TryGetValue(asm, out var state)
                     || (!state.Seeded && sentinel != null))
@@ -57,6 +74,29 @@ public static partial class EventSubscriberPatches
             }
             return new EventObservability(observable, publishers);
         }
+    }
+
+    // #3415 SPIKE: every loaded, non-stale assembly that references Ncl and is not a request
+    // module — the precompiled Microsoft apps the runner loaded from .app packages.
+    private static List<Assembly> UnstampedAlAppAssemblies(List<Assembly> stamped)
+    {
+        var stampedSet = new HashSet<Assembly>(stamped, ReferenceEqualityComparer.Instance);
+        var result = new List<Assembly>();
+        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            if (asm.IsDynamic || stampedSet.Contains(asm) || BcRuntime.IsStaleBundleAssembly(asm)) continue;
+            var n = asm.GetName().Name ?? "";
+            if (n.StartsWith("System.") || n.StartsWith("Microsoft.Extensions.") || n == "netstandard"
+                || n == "mscorlib" || n == "AlRunner" || n == "Runner" || n.StartsWith("Microsoft.CodeAnalysis")
+                || n.StartsWith("Microsoft.Dynamics.Nav.Ncl") || n.StartsWith("Microsoft.Dynamics.Nav.Types")) continue;
+            try
+            {
+                if (!asm.GetReferencedAssemblies().Any(r => r.Name == "Microsoft.Dynamics.Nav.Ncl")) continue;
+            }
+            catch { continue; }
+            result.Add(asm);
+        }
+        return result;
     }
 
     // Caller holds _lock.
