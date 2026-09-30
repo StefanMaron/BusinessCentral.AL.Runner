@@ -1034,10 +1034,10 @@ full run.
 - **Strict mode**: `strictEnvironment: true` (`--strict-environment` under
   `--watch --affected`) keeps the behaviour from before #5028: any change of
   environment forces a full run.
-- **Within one process**: a dependency whose version changes makes the change model
-  recompile the module in full, which forces a full run for that reason, as before. A
-  rebuilt package of the same version, and every change between two processes, is
-  diffed.
+- **Within one process**: a rebuilt package of the same version is diffed, as is every
+  change between two processes. A dependency whose version changes inside one process
+  is expected to make the change model recompile the module in full and force a full
+  run for that reason; that case is not yet measured or diffed (#5074).
 
 ### `shutdown`
 
