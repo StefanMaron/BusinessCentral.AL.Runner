@@ -138,6 +138,53 @@ public class ServerAffectedSelectionTableChangeTests
         }
         """;
 
+    // A SingleInstance codeunit's global record: built by the first test that calls it, read by the second.
+    private static string SiTable(string nameField = "field(2; Name; Text[30]) { }")
+        => "table 60678 \"TabSel Si Tab SX\"\n{\n"
+           + $"    fields {{ field(1; PK; Integer) {{ }} {nameField} }}\n"
+           + "    keys { key(PK; PK) { Clustered = true; } }\n}\n";
+
+    private const string SiCodeunit = """
+        codeunit 60679 "TabSel Si SX"
+        {
+            SingleInstance = true;
+
+            var
+                G: Record "TabSel Si Tab SX";
+
+            procedure NameAfterInit(): Text
+            begin
+                G.Init();
+                exit(G.Name);
+            end;
+        }
+        """;
+
+    private const string SiTests = """
+        codeunit 60680 "TabSel Si Tests SX"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure ViaSingleInstance()
+            var
+                S: Codeunit "TabSel Si SX";
+            begin
+                if S.NameAfterInit() <> '' then
+                    Error('PROBE-SI %1', S.NameAfterInit());
+            end;
+
+            [Test]
+            procedure ViaSingleInstance2()
+            var
+                S: Codeunit "TabSel Si SX";
+            begin
+                if S.NameAfterInit() <> '' then
+                    Error('PROBE-SI %1', S.NameAfterInit());
+            end;
+        }
+        """;
+
     private static string Bundle(string prefix, string appIdSuffix)
     {
         var dir = TestScratch.Dir(prefix);
@@ -150,7 +197,7 @@ public class ServerAffectedSelectionTableChangeTests
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "1.0.0.0",
-          "idRanges": [ { "from": 60670, "to": 60679 } ],
+          "idRanges": [ { "from": 60670, "to": 60689 } ],
           "runtime": "14.0"
         }
         """);
@@ -160,6 +207,9 @@ public class ServerAffectedSelectionTableChangeTests
         File.WriteAllText(Path.Combine(dir, "Unrelated.Codeunit.al"), UnrelatedCodeunit);
         File.WriteAllText(Path.Combine(dir, "Tests.Codeunit.al"), Tests);
         File.WriteAllText(Path.Combine(dir, "GlobalTests.Codeunit.al"), GlobalTests);
+        File.WriteAllText(Path.Combine(dir, "SiTab.Table.al"), SiTable());
+        File.WriteAllText(Path.Combine(dir, "Si.Codeunit.al"), SiCodeunit);
+        File.WriteAllText(Path.Combine(dir, "SiTests.Codeunit.al"), SiTests);
         return dir;
     }
 
@@ -219,7 +269,7 @@ public class ServerAffectedSelectionTableChangeTests
 
         var baseline = await Send(server, bundle);
         Assert.True(baseline.ForcedFull, baseline.Raw);
-        Assert.Equal(6, baseline.Ran.Length);
+        Assert.Equal(8, baseline.Ran.Length);
         Assert.All(baseline.Status.Values, s => Assert.Equal("pass", s));
 
         var unchanged = await Send(server, bundle);
@@ -264,7 +314,19 @@ public class ServerAffectedSelectionTableChangeTests
         var held = await Send(server, bundle);
         Assert.True(held.ForcedFull, held.Raw);
         Assert.Contains("Table 60672 was held outside any one test", held.Reason, StringComparison.Ordinal);
-        Assert.Equal(6, held.Ran.Length);
+        Assert.Equal(8, held.Ran.Length);
+
+        // The same through a SingleInstance global: only ViaSingleInstance built the record, and
+        // both read it, so narrowing would run one of the two that now fail.
+        Write(bundle, "SiTab.Table.al", SiTable("field(2; Name; Text[30]) { InitValue = 'X'; }"));
+        var singleInstance = await Send(server, bundle);
+        Assert.True(singleInstance.ForcedFull, singleInstance.Raw);
+        Assert.Contains("Table 60678 was held outside any one test", singleInstance.Reason, StringComparison.Ordinal);
+        foreach (var t in new[] { "ViaSingleInstance", "ViaSingleInstance2" })
+        {
+            Assert.True(singleInstance.Status[t] == "fail", $"{t}: {singleInstance.Raw}");
+            Assert.Contains("PROBE-SI", singleInstance.Line[t], StringComparison.Ordinal);
+        }
 
         // A page: which tests open one is not recorded yet (#5011), so it runs everything.
         Write(bundle, "Page.Page.al", "page 60677 \"TabSel Page SX\"\n{\n    SourceTable = \"TabSel Tab SX\";\n}\n");
@@ -283,7 +345,7 @@ public class ServerAffectedSelectionTableChangeTests
 
         var baseline = await SendFresh(cache, bundle);
         Assert.True(baseline.ForcedFull, baseline.Raw);
-        Assert.Equal(6, baseline.Ran.Length);
+        Assert.Equal(8, baseline.Ran.Length);
 
         Write(bundle, "Tab.Table.al", Table(nameField: NameOnValidateProbe, triggers: OnInsertProbe));
         var edited = await SendFresh(cache, bundle);
