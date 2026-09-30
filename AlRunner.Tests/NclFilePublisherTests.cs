@@ -53,7 +53,8 @@ public sealed class NclFilePublisherTests
         public override void Sleep(int milliseconds) => Calls.Add("sleep");
     }
 
-    private static string NewDir(string name) => TestScratch.Dir("ncl-publisher-" + name);
+    private static string NewDir(string name) =>
+        Directory.CreateDirectory(TestScratch.Dir("ncl-publisher-" + name)).FullName;
 
     private static readonly byte[] Rewritten = { 0x4D, 0x5A, 1, 2, 3, 4, 5 };
 
