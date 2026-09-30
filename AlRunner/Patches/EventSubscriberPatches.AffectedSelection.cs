@@ -88,10 +88,14 @@ public static partial class EventSubscriberPatches
             var n = asm.GetName().Name ?? "";
             if (n.StartsWith("System.") || n.StartsWith("Microsoft.Extensions.") || n == "netstandard"
                 || n == "mscorlib" || n == "AlRunner" || n == "Runner" || n.StartsWith("Microsoft.CodeAnalysis")
+                || n == "al-runner" || n.StartsWith("Microsoft.AspNetCore")
                 || n.StartsWith("Microsoft.Dynamics.Nav.Ncl") || n.StartsWith("Microsoft.Dynamics.Nav.Types")) continue;
             try
             {
-                if (!asm.GetReferencedAssemblies().Any(r => r.Name == "Microsoft.Dynamics.Nav.Ncl")) continue;
+                // An AL app assembly declares Codeunit<N>/Record<N>/Page<N> classes.
+                var idx = AssemblyTypeIndex.For(asm);
+                bool AlClass(string p) => idx.TypeNamesWithPrefix(p).Any(s => s.Length > p.Length && char.IsDigit(s[p.Length]));
+                if (!AlClass("Codeunit") && !AlClass("Record") && !AlClass("Page")) continue;
             }
             catch { continue; }
             result.Add(asm);
@@ -124,7 +128,15 @@ public static partial class EventSubscriberPatches
             }
             if (sentinel == null || !t.Name.EndsWith("_Scope", StringComparison.Ordinal)) continue;
             if (_seededScopeTypes.Contains(t)) continue;
-            var fld = EventScopeField(t);
+            FieldInfo? fld;
+            try { fld = EventScopeField(t); }
+            catch (Exception ex)
+            {
+                // #3415 SPIKE: a non-AL assembly's nested *_Scope type whose field types do not load.
+                complete = false;
+                Console.Error.WriteLine($"[spike-3415] skip {t.FullName} in {asm.GetName().Name}: {ex.GetType().Name}");
+                continue;
+            }
             if (fld == null) continue; // an ordinary procedure scope
             try
             {

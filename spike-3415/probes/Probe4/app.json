@@ -1,0 +1,16 @@
+{
+  "id": "1705740b-9ad7-5441-b4d1-fd85b2e5dd56",
+  "name": "Probe3415-4",
+  "publisher": "Spike",
+  "version": "1.0.0.0",
+  "platform": "28.0.0.0",
+  "application": "28.0.0.0",
+  "idRanges": [
+    {
+      "from": 50100,
+      "to": 50149
+    }
+  ],
+  "runtime": "16.0",
+  "target": "OnPrem"
+}
