@@ -2,6 +2,8 @@
 // tableextension selects the tests that held a record of the table. A table with no triggers runs no
 // statement, so statement coverage alone cannot select them.
 // Mechanism: docs/server-mode.md#affectedonly-and-changed-tables.
+// Runs under --isolation test: these assert per-test narrowing inside one codeunit, which the
+// default Codeunit isolation widens to the whole codeunit (#5035, ServerAffectedSelectionSharedSetupTests).
 using System.Text.Json;
 using Xunit;
 
@@ -245,7 +247,7 @@ public class ServerAffectedSelectionTableChangeTests
 
     private static async Task<Observed> SendFresh(string cache, string bundle)
     {
-        await using var server = await CliServer.StartAsync(new[] { "--cache", cache });
+        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--cache", cache });
         return await Send(server, bundle);
     }
 
@@ -265,7 +267,7 @@ public class ServerAffectedSelectionTableChangeTests
     {
         TestArtifacts.SkipIfMissing();
         var bundle = Bundle("al-runner-server-affected-tabsel", "000000000001");
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
 
         var baseline = await Send(server, bundle);
         Assert.True(baseline.ForcedFull, baseline.Raw);

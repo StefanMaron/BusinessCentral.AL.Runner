@@ -551,6 +551,8 @@ public sealed partial class BcCompiler
 
     private static string HashFile(string path)
     {
+        if (TddSourceOverlay.TryGet(path, out _))
+            return Convert.ToHexString(SHA256.HashData(TddSourceOverlay.ReadAllBytes(path)));
         using var stream = File.OpenRead(path);
         return Convert.ToHexString(SHA256.HashData(stream));
     }
@@ -562,7 +564,7 @@ public sealed partial class BcCompiler
     // as "can't diff"), never a silent test loss.
     private static string? ReadFileTextSafe(string path)
     {
-        try { return File.ReadAllText(path); }
+        try { return TddSourceOverlay.ReadAllText(path); }
         catch (IOException) { return null; }
         catch (UnauthorizedAccessException) { return null; }
     }
@@ -767,7 +769,7 @@ public sealed partial class BcCompiler
             NavSyntax.SyntaxTree tree;
             try
             {
-                var src = File.ReadAllText(path);
+                var src = TddSourceOverlay.ReadAllText(path);
                 tree = NavSyntax.SyntaxTree.ParseObjectText(src, path: path, encoding: null!, parseOpts, default);
             }
             catch (Exception ex)
@@ -876,7 +878,7 @@ public sealed partial class BcCompiler
         {
             if (identity.Kind != NavCA.SymbolKind.Entitlement || touchedPaths.Contains(path)) continue;
             if (!File.Exists(path)) continue; // defensive — would already be in removedPaths otherwise
-            var src = File.ReadAllText(path);
+            var src = TddSourceOverlay.ReadAllText(path);
             var tree = NavSyntax.SyntaxTree.ParseObjectText(src, path: path, encoding: null!, parseOpts, default);
             alwaysIncluded.Add((identity, tree));
         }
@@ -1203,7 +1205,7 @@ public sealed partial class BcCompiler
             NavSyntax.SyntaxTree tree;
             try
             {
-                var src = File.ReadAllText(path);
+                var src = TddSourceOverlay.ReadAllText(path);
                 tree = NavSyntax.SyntaxTree.ParseObjectText(src, path: path, encoding: null!, parseOpts, default);
             }
             catch { return null; }
@@ -1315,7 +1317,7 @@ public sealed partial class BcCompiler
             NavSyntax.SyntaxTree tree;
             try
             {
-                var src = File.ReadAllText(path);
+                var src = TddSourceOverlay.ReadAllText(path);
                 tree = NavSyntax.SyntaxTree.ParseObjectText(src, path: path, encoding: null!, parseOpts, default);
             }
             catch { return null; }
@@ -1330,7 +1332,7 @@ public sealed partial class BcCompiler
             string newSrc;
             try
             {
-                newSrc = File.ReadAllText(path);
+                newSrc = TddSourceOverlay.ReadAllText(path);
                 tree = NavSyntax.SyntaxTree.ParseObjectText(newSrc, path: path, encoding: null!, parseOpts, default);
             }
             catch { return null; }

@@ -694,7 +694,7 @@ public static partial class RecordPatches
     {
         foreach (var dir in _sourceDirs)
             foreach (var file in AlRunner.Infrastructure.SafeDirectoryScan.Files(dir, "*.al"))
-                ParseSourceFileIntoAllExtractors(File.ReadAllText(file), file, dir);
+                ParseSourceFileIntoAllExtractors(AlRunner.TddSourceOverlay.ReadAllText(file), file, dir);
     }
 
     /// <summary>
@@ -763,7 +763,7 @@ public static partial class RecordPatches
                 foreach (var file in AlRunner.Infrastructure.SafeDirectoryScan.Files(dir, "*.al"))
                 {
                     _diagFiles++;
-                    ParseSourceFileIntoAllExtractors(File.ReadAllText(file), file, dir);
+                    ParseSourceFileIntoAllExtractors(AlRunner.TddSourceOverlay.ReadAllText(file), file, dir);
                 }
                 if (Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PARSE_COUNTS") == "1")
                     Console.Error.WriteLine(

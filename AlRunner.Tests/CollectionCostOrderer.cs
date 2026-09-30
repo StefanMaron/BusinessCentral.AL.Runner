@@ -162,6 +162,8 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             ["NoCacheLastWinsIntegrationTests"] = 66,
             // #4990: nine runner spawns on one cache root; 39-43s locally, not yet on CI.
             ["DefineSymbolsDependencyCacheTests"] = 43,
+            // #5039: nine runner spawns on one cache root; 36-43s locally, not yet on CI.
+            ["DependencyMetadataCacheKeyTests"] = 43,
             // #4204: five collections absent from this table on run 35017043142's BC 28.4
             // leg. FloorOnlyBundleEnumFieldTests at 76.4s crossed the >= 75s band and failed
             // the leg; the other four sat in the >= 60s advisory band, and
@@ -427,8 +429,12 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // locally. An estimate until a CI leg measures it: replace with the observed maximum.
             ["ServerAffectedSelectionEnteredScopeTests"] = 85,
             // #5027: added by its PR, five --watch processes, one of them through nine cycles; 51s
-            // locally. An estimate until a CI leg measures it: replace with the observed maximum.
-            ["WatchAffectedSelectionTests"] = 120,
+            // locally. #5035 added two more processes (60s locally). An estimate until a CI leg
+            // measures it: replace with the observed maximum.
+            ["WatchAffectedSelectionTests"] = 140,
+            // #5035: added by its PR, five server starts and nine requests; 41s locally. An
+            // estimate until a CI leg measures it: replace with the observed maximum.
+            ["ServerAffectedSelectionSharedSetupTests"] = 100,
             // #2223: added by PR #4478, which introduces this collection. 4 tests, each
             // spawning a real runner subprocess against a bundle declaring an `application`
             // floor, and one of them spawning a second: the warm-skip path runs the bundle

@@ -24,6 +24,8 @@
 //
 // This is the multi-sourcePaths sibling of ServerAffectedSelectionTests.cs, which only ever
 // sends a single sourcePaths entry and therefore never exercises RunLayeredPrePass at all.
+// Runs under --isolation test: these assert per-test narrowing inside one codeunit, which the
+// default Codeunit isolation widens to the whole codeunit (#5035, ServerAffectedSelectionSharedSetupTests).
 using System.Text.Json;
 using Xunit;
 
@@ -116,7 +118,7 @@ public class ServerAffectedSelectionMultiSourcePathsTests
         """);
         var testAppDir = MakeTestAppBundle(root);
 
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
 
         // Request 1: first cycle, necessarily a full run (no baseline yet).
         var lines1 = await server.SendRequestStreamingAsync(RunTestsRequest(appDir, testAppDir));
@@ -284,7 +286,7 @@ public class ServerAffectedSelectionMultiSourcePathsTests
         var appDir = MakeAppBundleTwoHelpers(root);
         var testAppDir = MakeTestApp2Bundle(root);
 
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
 
         // Request 1: first cycle (no baseline yet) — necessarily runs both tests and
         // records their per-test coverage, which for EACH test crosses into the
@@ -370,7 +372,7 @@ public class ServerAffectedSelectionMultiSourcePathsTests
         var testAppDir = MakeTestApp2Bundle(root);
 
         await using var server = await CliServer.StartAsync(
-            new[] { "--no-cache" },
+            new[] { "--isolation", "test", "--no-cache" },
             extraEnv: new Dictionary<string, string>
             {
                 ["AL_RUNNER_TEST_FORCE_SCAN_FAILURE_ONCE"] = Path.Combine(appDir, "HelperA.al"),

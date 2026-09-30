@@ -497,6 +497,11 @@ internal static partial class ProgramSupport
             // app.json resourceFolders files when the impl loads as a dependency via the
             // synthesized workspace .app (which carries no /resources/ part).
             AlRunner.Patches.NavAppResourcePatches.RegisterSourceDirForApp(implId.AppId, implPath);
+            // #5037: a source impl another bundle depends on — --tdd may generate into it.
+            AlRunner.TddCrossBundle.RegisterSourceImpl(implPath,
+                File.Exists(Path.Combine(implPath, "app.json")) ? Path.Combine(implPath, "app.json")
+                    : (FindBucketRoot(implPath) is { } implRoot && File.Exists(Path.Combine(implRoot, "app.json"))
+                        ? Path.Combine(implRoot, "app.json") : null));
             // #4455: this impl becomes a dependency .app for the bundles that declare it, and
             // its AL source is what the inventory tables end up reading (the package carries
             // no SymbolReference.json, so the symbol walk yields none of its objects). Declare
@@ -1190,6 +1195,12 @@ internal static partial class ProgramSupport
                 .OrderBy(f => f, StringComparer.OrdinalIgnoreCase);
             foreach (var file in files)
             {
+                // --tdd (#5037): generated members change the package, so they change its key.
+                if (AlRunner.TddSourceOverlay.TryGet(file, out _))
+                {
+                    WriteLine($"file:{Path.GetRelativePath(dir, file)}:{Convert.ToHexString(sha.ComputeHash(AlRunner.TddSourceOverlay.ReadAllBytes(file)))}");
+                    continue;
+                }
                 using var fs = File.OpenRead(file);
                 WriteLine($"file:{Path.GetRelativePath(dir, file)}:{Convert.ToHexString(sha.ComputeHash(fs))}");
             }

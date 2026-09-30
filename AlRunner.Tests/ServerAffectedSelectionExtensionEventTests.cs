@@ -3,6 +3,8 @@
 // it. The recorded key has to name the base table the way the subscriber's attribute does, or the
 // selection reads the event as "never raised by a fully seeded publisher" and skips its raisers.
 // Mechanism: docs/server-mode.md#affectedonly-and-event-subscribers.
+// Runs under --isolation test: these assert per-test narrowing inside one codeunit, which the
+// default Codeunit isolation widens to the whole codeunit (#5035, ServerAffectedSelectionSharedSetupTests).
 using System.Text.Json;
 using Xunit;
 
@@ -219,7 +221,7 @@ public class ServerAffectedSelectionExtensionEventTests
         var bundle = Bundle();
         var subscriberFile = Path.Combine(bundle, "Sub.Codeunit.al");
         File.WriteAllText(subscriberFile, Subscriber(bound: false));
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
 
         var baseline = await Send(server, bundle);
         Assert.True(baseline.ForcedFull, baseline.Raw);
@@ -248,7 +250,7 @@ public class ServerAffectedSelectionExtensionEventTests
         var (x, y) = DuplicateBaseNameBundles();
         var subscriberFile = Path.Combine(x, "Sub.Codeunit.al");
         File.WriteAllText(subscriberFile, DupSubscriber(bound: false));
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
 
         var baseline = await Send(server, x, y);
         Assert.True(baseline.ForcedFull, baseline.Raw);

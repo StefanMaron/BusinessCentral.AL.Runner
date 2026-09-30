@@ -578,7 +578,10 @@ server processes"). The runner:
 4. always includes unknown tests (new/renamed tests, tests with no recorded
    coverage, tests that timed out or were skipped in the recording run);
 5. selects a test that failed in the recording run by its recorded coverage, like
-   any other test, unless the request sets `includeFailing: true` — see below.
+   any other test, unless the request sets `includeFailing: true` — see below;
+6. widens the selection to the tests that share state with a selected one: under the
+   default `TestIsolation = Codeunit` every test of a selected test's codeunit, under
+   `disabled` every test of the bundle (see "affectedOnly and test isolation").
 
 When the runner cannot prove a safe object delta, it **forces a full run**
 (`selection.forcedFull:true`) and sets `selection.reason`. Forced-full causes
@@ -591,8 +594,9 @@ include:
 - incremental change model fallback (for example `app.json` changes, dependency
   set changes, removed/unclassifiable files, duplicate declaration ambiguity);
 - coverage recorded under a different environment (BC version/artifact,
-  package-cache closure, or the content of a non-Microsoft dependency package —
-  see "affectedOnly and packaged dependencies");
+  package-cache closure, the content of a non-Microsoft dependency package —
+  see "affectedOnly and packaged dependencies" — or the test isolation, see
+  "affectedOnly and test isolation");
 - the change model's baseline for a module in the request is not the code the
   coverage was recorded on (see below);
 - compile/dependency failures before test execution;
@@ -600,6 +604,38 @@ include:
   "affectedOnly and event subscribers");
 - a whole-object change to an object with an instance no one test built, or a changed
   `PageExtension` (see "affectedOnly and entered scopes").
+
+#### affectedOnly and test isolation
+
+A test's recording holds what that test ran. Under `TestIsolation = Codeunit` (the
+default) the tests of one codeunit share one codeunit instance and one database state,
+so a test can depend on setup an earlier test ran: the `isInitialized` pattern, where
+the first test to call `Initialize()` creates the data and the others only read it. The
+setup is in the first test's recording only, so a change to it selected that test and
+skipped the others, which failed just the same (#5035; measured on Tests-SMB in the
+#3415 spike).
+
+So selection widens by what the isolation shares:
+
+| isolation | a selected test also selects |
+|---|---|
+| `codeunit` (default) | every test of its codeunit |
+| `disabled` | every test of the bundle, since nothing is reset between codeunits |
+| `test` (`method`) | nothing: each test gets a fresh codeunit instance and a fresh database |
+
+Why the whole codeunit and not only the tests after the first selected one: the test
+order is fixed (source declaration order, not the run seed), so the tests before it ran no
+changed code and keep their outcome. But the tests after it read the state those earlier
+tests left, and running them without that state can make them pass where a full run fails.
+The earlier tests have to run too, which is the whole codeunit. That also removes an older
+difference: a single selected test used to run without the tests before it.
+
+The isolation is part of the environment key, so coverage recorded under one isolation
+is never used to select under another; switching it forces one full run. SingleInstance
+codeunits keep their state across codeunits under every isolation; a whole-object change to
+one forces a full run (see "affectedOnly and entered scopes").
+
+The cost, on the al-language corpus: see the pull request that introduced this (#5035).
 
 #### affectedOnly and previously failing tests
 
@@ -611,8 +647,9 @@ keeps that coverage and is selected by it (#4978). It shares the gaps passing
 tests have. A failing test's result depends on code it never ran more
 often than a passing test's does: an
 object added and reached by id (`Codeunit.Run(<id>)`, `RecordRef.Open`),
-install/setup code that runs outside the test, and state left by earlier tests in
-the same codeunit. None of those is in its coverage, so a change there skips it;
+and install/setup code that runs outside the test. (State left by earlier tests in the
+same codeunit is covered by the widening in "affectedOnly and test isolation".) Neither
+is in its coverage, so a change there skips it;
 `skippedFailing` says so, and `includeFailing: true` runs it.
 
 It stays **unknown**, and always runs, when the record is not complete:

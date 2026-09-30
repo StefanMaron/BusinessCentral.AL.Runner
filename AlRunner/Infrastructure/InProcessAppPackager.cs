@@ -311,6 +311,13 @@ public static class InProcessAppPackager
                     var entryName = "src/" + Path.GetFileName(alPath);
                     var entry = zip.CreateEntry(entryName, CompressionLevel.Optimal);
                     using var ew = entry.Open();
+                    // --tdd (#5037): a member generated into this app lives only in memory.
+                    if (AlRunner.TddSourceOverlay.TryGet(alPath, out _))
+                    {
+                        var overlay = AlRunner.TddSourceOverlay.ReadAllBytes(alPath);
+                        ew.Write(overlay, 0, overlay.Length);
+                        continue;
+                    }
                     using var fr = File.OpenRead(alPath);
                     fr.CopyTo(ew);
                 }

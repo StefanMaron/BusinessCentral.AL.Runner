@@ -127,14 +127,80 @@ public sealed class DependencyMetadataProducerTests
     [Fact]
     public void CacheKey_SeparatesAppAndVersion()
     {
-        var a = DependencyMetadataProducer.CacheKey(Manifest("Business Foundation", "28.1.49838.54308"));
-        var b = DependencyMetadataProducer.CacheKey(Manifest("Business Foundation", "28.2.0.0"));
+        var a = Key(Manifest("Business Foundation", "28.1.49838.54308"));
+        var b = Key(Manifest("Business Foundation", "28.2.0.0"));
         Assert.NotEqual(a, b);
         Assert.Contains("28.1.49838.54308", a);
         // The selected BC build is part of every key, so two runs against different artifacts
         // never share an entry.
         Assert.Contains(AlRunner.Infrastructure.BcArtifacts.SelectedVersion.ToString(), a);
-        Assert.Equal(a, DependencyMetadataProducer.CacheKey(Manifest("Business Foundation", "28.1.49838.54308")));
+        Assert.Equal(a, Key(Manifest("Business Foundation", "28.1.49838.54308")));
+    }
+
+    private const string ContentA = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    private const string ContentB = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+
+    private static string Key(AppManifest m, string content = ContentA, params string[] defines)
+        => DependencyMetadataProducer.CacheKeyCore(m, content, defines)!;
+
+    /// <summary>
+    /// #5039: a rebuilt package at an unchanged id and version is a different key.
+    /// </summary>
+    [Fact]
+    public void CacheKey_SeparatesPackageContent()
+    {
+        var m = Manifest("Business Foundation");
+        Assert.NotEqual(Key(m, ContentA), Key(m, ContentB));
+        Assert.Equal(Key(m, ContentA), Key(m, ContentA));
+    }
+
+    /// <summary>
+    /// #5039: the --define symbols the compile applies. Covers none vs one, one symbol vs a
+    /// different one (same count), and one vs two — and that order and repeats do not move the
+    /// key, as <see cref="BcCompiler.GetExtraPreprocessorSymbols"/> normalises them.
+    /// </summary>
+    [Fact]
+    public void CacheKey_SeparatesDefineSymbolSets_AndIgnoresTheirOrder()
+    {
+        var m = Manifest("Business Foundation");
+        var none = Key(m);
+        var flag = Key(m, ContentA, "FLAG");
+        var other = Key(m, ContentA, "OTHER");
+        var both = Key(m, ContentA, "FLAG", "OTHER");
+
+        Assert.Equal(4, new[] { none, flag, other, both }.Distinct().Count());
+        Assert.Equal(both, Key(m, ContentA, "OTHER", "FLAG"));
+        Assert.Equal(both, Key(m, ContentA, "OTHER", "FLAG", "OTHER"));
+        Assert.Equal(flag, Key(m, ContentA, "FLAG"));
+        // Ordinal: symbols are case-sensitive in AL's preprocessor.
+        Assert.NotEqual(flag, Key(m, ContentA, "flag"));
+    }
+
+    /// <summary>The production key reads the package file's bytes, not just its manifest.</summary>
+    [Fact]
+    public void CacheKey_FromPackageFile_MovesWithItsBytes()
+    {
+        var m = Manifest("Business Foundation");
+        var p1 = WritePackage("key-a", ("src/A.Table.al", "table 50000 A { fields { field(1; X; Integer) { } } }"));
+        var p2 = WritePackage("key-b", ("src/A.Table.al", "table 50000 A { fields { field(2; Y; Integer) { } } }"));
+        var k1 = DependencyMetadataProducer.CacheKey(m, p1);
+        Assert.NotNull(k1);
+        Assert.NotEqual(k1, DependencyMetadataProducer.CacheKey(m, p2));
+    }
+
+    /// <summary>
+    /// A package whose bytes could not be read has no key, rather than one shared with every
+    /// other unreadable package.
+    /// </summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData(null)]
+    [InlineData("unknown")]
+    public void CacheKey_UnreadableContent_IsNull(string? content)
+    {
+        if (content == "unknown") content = AlRunner.Infrastructure.RunnerFingerprint.UnknownContentHash;
+        Assert.Null(DependencyMetadataProducer.CacheKeyCore(
+            Manifest("Business Foundation"), content!, Array.Empty<string>()));
     }
 
     // ---- availability vs failure ---------------------------------------------------

@@ -364,15 +364,16 @@ internal static partial class ProgramSupport
         w.WriteLine("  synthetic results are derived fresh from source every time; a cache HIT would");
         w.WriteLine("  silently skip generation and serve stale or missing results).");
         w.WriteLine();
-        w.WriteLine("  --tdd + --watch is REJECTED (exit 2), not silently combined. --watch's whole");
-        w.WriteLine("  premise is a stable, unchanging source tree it can diff between cycles — a");
-        w.WriteLine("  --tdd run mutates the app's own in-memory source every cycle by design, so");
-        w.WriteLine("  the two are fundamentally incompatible rather than merely untested together.");
-        w.WriteLine("  --tdd + --server is rejected the same way.");
+        w.WriteLine("  --tdd + --watch works: every cycle generates again from the files on disk, so");
+        w.WriteLine("  a member you have since written is used instead of its stub. --tdd + --server");
+        w.WriteLine("  is rejected (exit 2).");
         w.WriteLine();
-        w.WriteLine("  Scope: source-compiled implementing apps only. A precompiled .app dependency's");
-        w.WriteLine("  missing member is not generated — precompiled-dll-respect.md forbids rewriting");
-        w.WriteLine("  compiled bodies, and that diagnostic falls through to the same refuse path.");
+        w.WriteLine("  Scope: source-compiled implementing apps only — in the test's own folder, or in");
+        w.WriteLine("  another folder passed on the same command line (al-runner --tdd MyApp MyApp.Test):");
+        w.WriteLine("  the member is added to that app's source in memory, never on disk, and the app is");
+        w.WriteLine("  recompiled before the tests that need it. A precompiled .app dependency's missing");
+        w.WriteLine("  member is not generated — precompiled-dll-respect.md forbids rewriting compiled");
+        w.WriteLine("  bodies, and that diagnostic falls through to the same refuse path.");
         w.WriteLine();
 
         w.WriteLine("WATCH: RERUN ONLY WHAT AN EDIT AFFECTS (--watch --affected)");
@@ -380,7 +381,9 @@ internal static partial class ProgramSupport
         w.WriteLine("  Each cycle runs the tests the change can affect and skips the rest, with the");
         w.WriteLine("  same selection --server's runTests uses for affectedOnly. The first cycle runs");
         w.WriteLine("  everything, unless an earlier --watch --affected or --server run on the same");
-        w.WriteLine("  cache root left a baseline for these bundles. After each cycle's summary, a");
+        w.WriteLine("  cache root left a baseline for these bundles. Under the default Codeunit");
+        w.WriteLine("  isolation a selected test runs with its whole codeunit, whose tests share setup");
+        w.WriteLine("  state; --isolation test selects single tests. After each cycle's summary, a");
         w.WriteLine("  \"[watch] affected:\" line gives how many tests ran, how many were skipped as");
         w.WriteLine("  unaffected, and how many were skipped while still failing from an earlier cycle");
         w.WriteLine("  (named on the next line); a cycle that had to run everything says why. The");
