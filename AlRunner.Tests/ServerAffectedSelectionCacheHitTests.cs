@@ -264,6 +264,9 @@ public class ServerAffectedSelectionCacheHitTests
 
         await using (var warmer = await CliServer.StartAsync(new[] { "--cache", cache }))
             AssertAllPass(await Send(warmer, paths), "warm-up process");
+        // The subject is a warm AL-output cache with no selection baseline; without this the persisted
+        // one (#4979) lets the first request narrow.
+        Directory.Delete(Path.Combine(cache, "affected-baseline"), recursive: true);
 
         await using var server = await CliServer.StartAsync(new[] { "--cache", cache });
         var first = await Send(server, paths);

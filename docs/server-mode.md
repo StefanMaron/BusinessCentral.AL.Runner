@@ -540,8 +540,9 @@ view by filtering the flat series on `loop` and `iteration`.
   flat series whether or not `iterationTracking` is on.
 
 `affectedOnly: true` (runTests) narrows execution to tests affected by AL object
-changes since the previous successful run of the same bundle in this server
-process. The runner:
+changes since the previous successful run of the same bundle, in this server
+process or, through the persisted baseline, in an earlier one (see "affectedOnly across
+server processes"). The runner:
 
 1. keeps the previous run's per-test coverage grouped by test
    (`"{Codeunit}.{Method}"`);
@@ -559,7 +560,10 @@ When the runner cannot prove a safe object delta, it **forces a full run**
 (`selection.forcedFull:true`) and sets `selection.reason`. Forced-full causes
 include:
 
-- no previous per-test coverage baseline for that bundle;
+- no previous per-test coverage baseline for that bundle, in this process or on disk;
+- a persisted baseline that cannot be used: unreadable, truncated, written by another
+  schema version, or unable to vouch for the current source (see "affectedOnly across
+  server processes");
 - incremental change model fallback (for example `app.json` changes, dependency
   set changes, removed/unclassifiable files, duplicate declaration ambiguity);
 - coverage recorded under a different environment (BC version/artifact,
@@ -693,11 +697,11 @@ coverage was measured on. Two things can break that, and both are handled:
   (`affectedOnly` or `perTestCoverage`) therefore takes a HIT only when the
   module's current baseline was itself compiled from the source under that cache
   key; otherwise it compiles, which moves the baseline to the loaded source. A
-  server started on a warm cache has no baseline, so its first request compiles
-  (and reports `forcedFull` with the change model's "no incremental baseline"
-  reason); from the second request on, unchanged bundles are HITs again and
-  selection narrows (#4972). A request that records nothing keeps taking HITs
-  freely.
+  server started on a warm cache has no baseline, so its first request compiles;
+  without a persisted selection baseline it also reports `forcedFull` with the
+  change model's "no incremental baseline" reason. From the second request on,
+  unchanged bundles are HITs again and selection narrows (#4972). A request that
+  records nothing keeps taking HITs freely.
 - **Another request can move the baseline without recording coverage** — a
   `runTests` without `affectedOnly`, an `execute`, or a module reused from an
   earlier load. Each baseline carries a generation number; coverage remembers the
@@ -705,7 +709,54 @@ coverage was measured on. Two things can break that, and both are handled:
   `affectedOnly` request compares those with the generations it found at its
   start. Any difference forces a full run with a reason naming the module.
 
-The baseline lives in the server process only; nothing here is persisted.
+The generation check applies to coverage this process recorded. Coverage loaded from
+disk is checked by file content instead, as the next section describes.
+
+#### affectedOnly across server processes
+
+Every request that records per-test coverage (`affectedOnly` or `perTestCoverage`)
+also writes it to disk, so the next server started on the same cache root does not
+begin with a full run (#4979). An `affectedOnly` request for a bundle this process
+holds no coverage for loads it.
+
+- **Where**: `<cache root>/affected-baseline/<hash>.json`, one file per request bundle
+  set (the `sourcePaths`, resolved to full paths; order and duplicates do not matter).
+  The cache root is the `--cache` directory, the default cache root without one, and a
+  throwaway directory under `--no-cache`, so `--no-cache` never persists anything.
+  Each write goes to a temporary file that is then renamed, so a server reading the
+  file sees the previous version or the new one. Two servers on one cache root
+  replace each other's file (last writer wins); each version is a complete baseline.
+- **What**: per bundle, what the process keeps in memory (per-test covered object and
+  procedure keys, the unknown and failing tests, per-test raised events, the
+  subscriber bindings and event observability, the environment key), and per request
+  module, the change model's baseline at the moment the coverage was recorded: the
+  SHA-256 of every `.al` file, the one object each file declares, and the fingerprints
+  of `app.json`/preprocessor symbols and of the resolved dependency set. Statement
+  tables are not stored. Object and scope keys are stored once and referenced by
+  index. A `Schema` field is compared with the runner's; any other value is no
+  baseline.
+- **How it selects**: the environment key must be equal, as for coverage recorded in
+  the process. Then the stored module snapshots are compared with the change model's
+  baselines for the request, which the request's own compile has just recorded (a
+  request that selects always compiles when the change model has no baseline; see the
+  previous section). A file whose hash differs, that was added, or that was removed
+  changes the object it declared and the one it declares now. That is an object-level
+  key, so every test that touched the object is selected, not just the tests of the
+  changed procedure. Subscriber bindings are compared with the stored ones, the same
+  as in the process.
+- **When it runs everything instead**: the file cannot be read or parsed, carries
+  another schema version, or has no entry for a module of the request; a module has no
+  change-model baseline in this process (for example a module reused from another
+  directory); `app.json`, the preprocessor symbols or the dependency set changed; a
+  changed file does not declare exactly one object the change model tracks. Each of
+  these is a `forcedFull` with a `reason`.
+- **After the first request**: the request records coverage for the code it ran and
+  the process continues with the generation check above. A baseline that could not be
+  written (a module without a change-model baseline) leaves the previous file in
+  place, which still describes the source its own hashes name.
+
+Measured on the al-language corpus: see the pull request that introduced this (#5007)
+for the file size and load time.
 
 ### `shutdown`
 

@@ -7171,6 +7171,11 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     var affectedEventsByBundle = new Dictionary<string, Dictionary<string, HashSet<string>>>(StringComparer.Ordinal);
     var affectedBindingsByBundle = new Dictionary<string, List<AlRunner.Patches.SubscriberBinding>>(StringComparer.Ordinal);
     var affectedObservabilityByBundle = new Dictionary<string, AlRunner.Patches.EventObservability>(StringComparer.Ordinal);
+    // #4979: bundles whose state above was loaded from the persisted baseline and not re-recorded in
+    // this process, with the module snapshots it was recorded on. Selection compares those with the
+    // change model's baselines by file content in place of the generation check.
+    var affectedPersistedModulesByBundle =
+        new Dictionary<string, Dictionary<string, AlRunner.Infrastructure.AffectedModuleSnapshot>>(StringComparer.Ordinal);
 
     // Guards every write to `output`: the reader thread's cancel-ack and this
     // method's normal command responses / streaming runtests output are now genuine
@@ -7394,6 +7399,84 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         return keys;
     }
 
+    // #4979: docs/server-mode.md#affectedonly-across-server-processes. Fills the selection state of
+    // every stored bundle this process holds none for; returns why the file could not be used, or null.
+    string? LoadPersistedAffectedBaseline(string[] sourcePaths)
+    {
+        AlRunner.Infrastructure.AffectedBaselineStore.LoadResult loaded;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        string path;
+        try
+        {
+            path = AlRunner.Infrastructure.AffectedBaselineStore.PathFor(
+                AlRunner.Infrastructure.CacheRoots.Resolve(AlRunner.Infrastructure.AffectedBaselineStore.CacheName), sourcePaths);
+            loaded = AlRunner.Infrastructure.AffectedBaselineStore.Load(path);
+        }
+        catch (Exception ex)
+        {
+            return $"the store could not be located: {ex.GetType().Name}: {ex.Message.Split('\n')[0]}";
+        }
+        if (loaded.Baseline is not { } persisted) return loaded.Unusable;
+        Console.Error.WriteLine(
+            $"  [server] affectedOnly: loaded the persisted baseline {path} ({new FileInfo(path).Length} bytes) in {sw.ElapsedMilliseconds} ms");
+        foreach (var (bundle, b) in persisted.Bundles)
+        {
+            if (affectedCoverageByBundle.ContainsKey(bundle)) continue;
+            affectedCoverageByBundle[bundle] = b.Coverage;
+            affectedUnknownTestsByBundle[bundle] = b.Unknown;
+            affectedFailingTestsByBundle[bundle] = b.Failing;
+            affectedEnvironmentKeyByBundle[bundle] = b.EnvironmentKey;
+            affectedBaselineGenerationsByBundle.Remove(bundle);
+            affectedEventsByBundle[bundle] = b.Events;
+            if (b.Bindings != null) affectedBindingsByBundle[bundle] = b.Bindings;
+            else affectedBindingsByBundle.Remove(bundle);
+            if (b.Observability != null) affectedObservabilityByBundle[bundle] = b.Observability;
+            else affectedObservabilityByBundle.Remove(bundle);
+            affectedPersistedModulesByBundle[bundle] = persisted.Modules;
+        }
+        return null;
+    }
+
+    // Writes the bundles this request recorded, with the change-model snapshots their coverage was
+    // measured on. Skipped when a snapshot is missing: an older file stays, and is still consistent.
+    void PersistAffectedBaseline(string[] sourcePaths, IReadOnlyList<string> moduleNames, IReadOnlyCollection<string> recorded)
+    {
+        if (recorded.Count == 0) return;
+        try
+        {
+            var modules = new Dictionary<string, AlRunner.Infrastructure.AffectedModuleSnapshot>(StringComparer.Ordinal);
+            foreach (var m in moduleNames)
+            {
+                if (emitter.TryGetAffectedModuleSnapshot(m) is not { } snapshot)
+                {
+                    Console.Error.WriteLine($"  [server] affectedOnly baseline not persisted: {m} has no change-model baseline");
+                    return;
+                }
+                modules[m] = snapshot;
+            }
+            var bundles = new Dictionary<string, AlRunner.Infrastructure.AffectedBundleBaseline>(StringComparer.Ordinal);
+            foreach (var bundle in recorded)
+                bundles[bundle] = new AlRunner.Infrastructure.AffectedBundleBaseline(
+                    affectedEnvironmentKeyByBundle[bundle],
+                    affectedCoverageByBundle[bundle],
+                    affectedUnknownTestsByBundle[bundle],
+                    affectedFailingTestsByBundle[bundle],
+                    affectedEventsByBundle[bundle],
+                    affectedBindingsByBundle.TryGetValue(bundle, out var bindings) ? bindings : null,
+                    affectedObservabilityByBundle.TryGetValue(bundle, out var observability) ? observability : null);
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var path = AlRunner.Infrastructure.AffectedBaselineStore.PathFor(
+                AlRunner.Infrastructure.CacheRoots.Resolve(AlRunner.Infrastructure.AffectedBaselineStore.CacheName), sourcePaths);
+            AlRunner.Infrastructure.AffectedBaselineStore.Write(path, new AlRunner.Infrastructure.AffectedBaseline(modules, bundles));
+            Console.Error.WriteLine(
+                $"  [server] affectedOnly: persisted the baseline to {path} ({new FileInfo(path).Length} bytes) in {sw.ElapsedMilliseconds} ms");
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"  [server] affectedOnly baseline not persisted: {ex.GetType().Name}: {ex.Message.Split('\n')[0]}");
+        }
+    }
+
     // Sets executor.Isolation from req.TestIsolation (see #1616), falling back to
     // defaultServerIsolation when the request doesn't specify one. Returns an
     // error response string on an unrecognised mode, else null.
@@ -7539,6 +7622,11 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 .ToList();
             var baselineGenerationAtRequestStart = requestModuleNames
                 .ToDictionary(m => m, m => emitter.RadBaselineGeneration(m), StringComparer.Ordinal);
+            // #4979: a bundle this process holds no selection state for starts from the persisted one.
+            var persistedBaselineUnusable = affectedOnly
+                && req.SourcePaths.Any(p => !affectedCoverageByBundle.ContainsKey(Path.GetFullPath(p)))
+                ? LoadPersistedAffectedBaseline(req.SourcePaths)
+                : null;
 
             var runs = RunAllBundlesForServer(req.SourcePaths, req.PackagePaths,
                 asm =>
@@ -7648,6 +7736,40 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     activeForcedFull = false;
                     activeForcedReason = null;
                     if (!affectedOnly) return;
+
+                    if (activePreviousCoverage == null && persistedBaselineUnusable != null)
+                    {
+                        activeForcedFull = true;
+                        activeForcedReason = $"the persisted per-test coverage baseline is unusable: {persistedBaselineUnusable}";
+                        return;
+                    }
+                    // #4979: state loaded from disk was recorded in another process, so no generation can
+                    // vouch for it; the file hashes it was recorded on decide what changed instead.
+                    if (affectedPersistedModulesByBundle.TryGetValue(bundlePath, out var persistedModules))
+                    {
+                        if (activePreviousCoverage == null || activePreviousUnknown == null
+                            || !affectedEnvironmentKeyByBundle.TryGetValue(bundlePath, out var persistedEnv)
+                            || !string.Equals(persistedEnv, selectionEnvironmentKey, StringComparison.Ordinal))
+                        {
+                            activeForcedFull = true;
+                            activeForcedReason =
+                                "coverage baseline environment changed (BC version/artifact/package cache/dependency package content)";
+                            return;
+                        }
+                        var persistedDiff = AlRunner.Infrastructure.AffectedBaselineStore.ChangedSince(
+                            persistedModules, requestModuleNames, emitter.TryGetAffectedModuleSnapshot);
+                        if (persistedDiff.ForceFullReason != null)
+                        {
+                            activeForcedFull = true;
+                            activeForcedReason =
+                                $"the persisted per-test coverage baseline cannot vouch for this source: {persistedDiff.ForceFullReason}";
+                            return;
+                        }
+                        activeChangedObjectKeys = persistedDiff.Changed.Select(ToAffectedObjectKey).ToHashSet(StringComparer.Ordinal);
+                        activeChangedObjectDisplay = persistedDiff.Changed.Select(ToAffectedObjectDisplay)
+                            .Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal).ToList();
+                        return;
+                    }
 
                     if (changeModelFallbackReason != null)
                     {
@@ -7806,8 +7928,10 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
 
                 var eventsByTest = AlRunner.Infrastructure.AlEventRaiseTracker.CollectPerTest();
                 // #4988: the event side of the baseline, stored whenever the coverage is.
+                var recordedThisRequest = new List<string>();
                 void StoreEventBaseline(string bundlePath, Dictionary<string, HashSet<string>> nextEvents)
                 {
+                    affectedPersistedModulesByBundle.Remove(bundlePath);
                     affectedEventsByBundle[bundlePath] = nextEvents;
                     if (requestBindingsByBundle.TryGetValue(bundlePath, out var bindings) && bindings != null)
                         affectedBindingsByBundle[bundlePath] = bindings;
@@ -7862,6 +7986,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                         affectedEnvironmentKeyByBundle[bundlePath] = envKey;
                         affectedBaselineGenerationsByBundle[bundlePath] = CurrentBaselineGenerations();
                         StoreEventBaseline(bundlePath, nextEvents);
+                        recordedThisRequest.Add(bundlePath);
                         continue;
                     }
 
@@ -7949,7 +8074,9 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     affectedEnvironmentKeyByBundle[bundlePath] = envKey;
                     affectedBaselineGenerationsByBundle[bundlePath] = CurrentBaselineGenerations();
                     StoreEventBaseline(bundlePath, nextEvents);
+                    recordedThisRequest.Add(bundlePath);
                 }
+                PersistAffectedBaseline(req.SourcePaths, requestModuleNames, recordedThisRequest);
             }
 
             ServerSelection? requestSelection = null;

@@ -1110,6 +1110,15 @@ public sealed partial class BcCompiler
     internal bool RadBaselineDescribesCacheKey(string moduleName, string cacheKey)
         => _radBaselines.TryGetValue(moduleName, out var b) && string.Equals(b.CacheKey, cacheKey, StringComparison.Ordinal);
 
+    /// <summary>#4979: what the current baseline says about its source, for the persisted affectedOnly baseline.</summary>
+    internal AlRunner.Infrastructure.AffectedModuleSnapshot? TryGetAffectedModuleSnapshot(string moduleName)
+        => _radBaselines.TryGetValue(moduleName, out var b)
+            ? new AlRunner.Infrastructure.AffectedModuleSnapshot(
+                b.ManifestFingerprint, b.SharedRefsFingerprint,
+                new Dictionary<string, string>(b.FileHashByPath, StringComparer.Ordinal),
+                b.ObjectByPath.ToDictionary(kv => kv.Key, kv => ToAffectedObjectId(kv.Value), StringComparer.Ordinal))
+            : null;
+
     internal IReadOnlyDictionary<string, AffectedObjectId>? TryGetTrackedObjectsByPath(string moduleName)
         => _radBaselines.TryGetValue(moduleName, out var baseline)
             ? baseline.ObjectByPath.ToDictionary(kv => kv.Key, kv => ToAffectedObjectId(kv.Value), StringComparer.Ordinal)
