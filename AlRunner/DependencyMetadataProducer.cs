@@ -102,9 +102,9 @@ internal static class DependencyMetadataProducer
     /// package's content cannot be read — such a package is compiled without the cache rather
     /// than sharing one key with every other unreadable package.
     /// </summary>
-    internal static string? CacheKey(AppManifest m, string appPath)
-        => CacheKeyCore(m, RunnerFingerprint.ComputeFileContentHashMemoized(appPath),
-            BcCompiler.GetExtraPreprocessorSymbols());
+    internal static string? CacheKey(AppManifest m, string appPath, IEnumerable<string> defines)
+        => CacheKeyCore(m, RunnerFingerprint.ComputeFileContentHashMemoized(appPath), defines,
+            RunnerFingerprint.ContentHash);
 
     /// <summary>
     /// App id, version and BC build stay readable at the front. The hash carries what else
@@ -113,7 +113,8 @@ internal static class DependencyMetadataProducer
     /// normalised as in <see cref="BcCompiler.GetExtraPreprocessorSymbols"/>. The package's own
     /// <c>PreprocessorSymbols</c> are inside its bytes.
     /// </summary>
-    internal static string? CacheKeyCore(AppManifest m, string contentHash, IEnumerable<string> defines)
+    internal static string? CacheKeyCore(
+        AppManifest m, string contentHash, IEnumerable<string> defines, string runnerContentHash)
     {
         if (string.IsNullOrEmpty(contentHash) || contentHash == RunnerFingerprint.UnknownContentHash)
             return null;
@@ -170,7 +171,7 @@ internal static class DependencyMetadataProducer
     {
         if (IsExcluded(m)) return 0;
 
-        var key = CacheKey(m, appPath);
+        var key = CacheKey(m, appPath, BcCompiler.GetExtraPreprocessorSymbols());
         var sidecar = key is null ? null : SidecarPath(key);
         if (sidecar != null && File.Exists(sidecar))
         {
