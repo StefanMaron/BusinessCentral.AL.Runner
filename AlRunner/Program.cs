@@ -5424,6 +5424,8 @@ return strictExitCode ? computedExitCode : 0;
         // #5034: runTests' `tdd`. Null runs exactly as before.
         TddServerRequest? tdd = null)
     {
+        // #5079: a module an earlier request compiled is reused only for its own source.
+        DependencyLoader.BeginReuseEpoch();
         if (tdd == null)
             return RunAllBundlesForServerPass(sourcePaths, requestPackagePaths, runStep, cancellationToken,
                 useIncrementalChangeModel, beforeRun, pinLoadToChangeModel, null, false, false, out _);
@@ -6177,13 +6179,15 @@ return strictExitCode ? computedExitCode : 0;
         // module's Type paired with a subscriberInstance BC's dispatcher
         // materialized from the OTHER module's Type.
         Assembly? reusedAsm = null;
+        var sourceFingerprint = BundleSourceFingerprint(bucketRoot, allPaths, fileHashes,
+            ordered.Select(o => $"{o.Manifest.AppId}|{o.Manifest.Version}|{Path.GetFullPath(o.AppPath)}"));
         if (bundleId != null)
         {
             try
             {
                 reusedAsm = DependencyLoader.TryGetByAppId(
                     bundleId.AppId, bundleId.Name, bundleId.Publisher,
-                    bundleId.Version.ToString(), bundleAbs);
+                    bundleId.Version.ToString(), bundleAbs, sourceFingerprint);
             }
             catch (AlRunner.Infrastructure.AppIdCollisionException ex)
             {
@@ -6541,7 +6545,7 @@ return strictExitCode ? computedExitCode : 0;
                     {
                         DependencyLoader.RegisterLoaded(
                             bundleId.AppId, asm, bundleId.Name, bundleId.Publisher,
-                            bundleId.Version.ToString(), bundleAbs);
+                            bundleId.Version.ToString(), bundleAbs, sourceFingerprint);
                     }
                     catch (AlRunner.Infrastructure.AppIdCollisionException ex)
                     {

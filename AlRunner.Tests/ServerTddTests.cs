@@ -285,6 +285,120 @@ public sealed class ServerTddTests
         }
     }
 
+    /// <summary>
+    /// #5079 through tdd: a module a tdd request compiled holds generated members, so a later
+    /// plain request for another directory with the same app id must compile its own source —
+    /// exit 3 with no test lines, as a fresh server answers — not run the stubbed module.
+    /// </summary>
+    [SkippableFact]
+    public async Task TddRequestThenPlainRequest_OtherDirectorySameId_CompilesItsOwnSource()
+    {
+        TestArtifacts.SkipIfMissing();
+        var x = Bundle("al-runner-server-tdd-reuse-x", withRefused: false);
+        var y = Bundle("al-runner-server-tdd-reuse-y", withRefused: false);
+        try
+        {
+            await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+            var red = await Send(server, new[] { x }, tdd: true);
+            Assert.True(red.ExitCode == 1, red.Raw);
+
+            var plain = await Send(server, new[] { y }, tdd: false);
+            Assert.True(plain.ExitCode == 3, plain.Raw);
+            Assert.Empty(plain.Tests);
+        }
+        finally
+        {
+            try { Directory.Delete(x, recursive: true); } catch { }
+            try { Directory.Delete(y, recursive: true); } catch { }
+        }
+    }
+
+    // OnRun calls a procedure the app lacks: without tdd, execute refuses to compile it.
+    private const string ExecMissing = """
+        codeunit 65304 "SrvTdd Exec"
+        {
+            trigger OnRun()
+            var
+                Calc: Codeunit "SrvTdd Calc";
+                Result: Integer;
+            begin
+                Result := Calc.DoubleIt(5);
+            end;
+        }
+        """;
+
+    private static string ExecBundle(string prefix, string appIdSuffix)
+    {
+        var dir = TestScratch.Dir(prefix);
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
+        {
+          "id": "c5034000-0000-4a11-9111-{{appIdSuffix}}",
+          "name": "Server Tdd Exec SX {{appIdSuffix}}",
+          "publisher": "AL Runner",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": 65300, "to": 65319 } ],
+          "runtime": "14.0"
+        }
+        """);
+        File.WriteAllText(Path.Combine(dir, "Calc.Codeunit.al"), EmptyCalc);
+        File.WriteAllText(Path.Combine(dir, "Exec.Codeunit.al"), ExecMissing);
+        return dir;
+    }
+
+    private static async Task<int> ExecuteExit(CliServer server, string dir)
+    {
+        var line = await server.SendAsync(JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["command"] = "execute", ["sourcePaths"] = new[] { dir },
+        }), TimeSpan.FromSeconds(240));
+        using var doc = JsonDocument.Parse(line);
+        return doc.RootElement.GetProperty("exitCode").GetInt32();
+    }
+
+    /// <summary>`execute` does not read `tdd`, and a --tdd startup flag is not its default: it
+    /// compiles the code as written (exit 3), never a generated stub.</summary>
+    [SkippableFact]
+    public async Task Execute_UnderStartupTdd_CompilesWithoutTdd()
+    {
+        TestArtifacts.SkipIfMissing();
+        var dir = ExecBundle("al-runner-server-tdd-exec-startup", "000000000011");
+        try
+        {
+            await using var server = await CliServer.StartAsync(new[] { "--tdd", "--no-cache" });
+            var exit = await ExecuteExit(server, dir);
+            Assert.True(exit == 3, $"exit {exit}\n{server.StdErr}");
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { }
+        }
+    }
+
+    /// <summary>A tdd runTests request's mode ends with it: the next execute compiles without it.</summary>
+    [SkippableFact]
+    public async Task Execute_AfterTddRunTests_CompilesWithoutTdd()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = Bundle("al-runner-server-tdd-exec-after", withRefused: false);
+        var dir = ExecBundle("al-runner-server-tdd-exec-after-x", "000000000012");
+        try
+        {
+            await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+            var red = await Send(server, new[] { bundle }, tdd: true);
+            Assert.True(red.ExitCode == 1, red.Raw);
+            var exit = await ExecuteExit(server, dir);
+            Assert.True(exit == 3, $"exit {exit}\n{server.StdErr}");
+        }
+        finally
+        {
+            try { Directory.Delete(bundle, recursive: true); } catch { }
+            try { Directory.Delete(dir, recursive: true); } catch { }
+        }
+    }
+
     private static string HashDir(string dir) => string.Join("\n",
         Directory.GetFiles(dir).OrderBy(f => f, StringComparer.Ordinal)
             .Select(f => $"{Path.GetFileName(f)}:{Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(f)))}"));
