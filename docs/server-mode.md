@@ -48,6 +48,7 @@ select the build every request compiles, and a request cannot change them (#4952
   "perTestCoverage": false,     // runTests + execute — per-test statement attribution, see #2135
   "affectedOnly": false,        // runTests: select only tests affected by object changes since the previous run (#2441)
   "includeFailing": false,      // with affectedOnly: rerun every test that did not pass last time, whatever changed (#4978)
+  "strictEnvironment": false,   // with affectedOnly: run everything when the baseline was recorded in another environment (#5028)
   "testIsolation": "codeunit"   // optional: "codeunit" (default) | "test"/"method" | "disabled"
                                  // — see #1616. Applies to this request only; a later
                                  // request that omits the field falls back to the
@@ -67,7 +68,7 @@ Field names are case-sensitive. What happens to a field depends on the command (
 | not declared above (`preprocessorSymbols`, `testFilter`, `SourcePaths`, …) | **refused** with one `{"error": …}` line naming the field; nothing runs | ignored |
 
 `runTests` reads `sourcePaths`, `packagePaths`, `coverage`, `perTestCoverage`, `affectedOnly`,
-`includeFailing` and `testIsolation`. `execute` reads `sourcePaths`, `code`, `packagePaths`,
+`includeFailing`, `strictEnvironment` and `testIsolation`. `execute` reads `sourcePaths`, `code`, `packagePaths`,
 `captureValues`, `iterationTracking`, `coverage`, `perTestCoverage`, `affectedOnly` and
 `testIsolation`.
 
@@ -154,7 +155,14 @@ answer an event in a request that omits it. A single-bundle request is unchanged
   `coverage: true` — see "Per-statement hit counts (`coverage`)" below.
 - `selection` (#2441) is present on the summary when the request set
   `affectedOnly: true`: `{mode:"affected", ran, skipped, skippedFailing,
-  changedObjects[], forcedFull, reason|null}`.
+  changedObjects[], forcedFull, reason|null, environmentDrift|omitted}`.
+  - `environmentDrift` (#5028) is present only when the baseline was recorded in
+    another environment and was used anyway: `{recorded, current, changedObjects,
+    mode:"diffed"|"approximate", objects[], reason|omitted}`. `recorded` and
+    `current` are the two BC builds, `changedObjects` how many objects of the two
+    environments' apps differ, `objects` names at most 50 of them. `approximate`
+    means the diff could not account for every difference and `reason` says why. See
+    "affectedOnly across environments".
   - `skippedFailing` counts the skipped tests whose last recorded result was not a
     pass (#4978). A client that keeps each test's previous result should keep
     showing those as failed; `0` on a forced-full run and with `includeFailing: true`.
@@ -595,10 +603,11 @@ include:
   server processes");
 - incremental change model fallback (for example `app.json` changes, dependency
   set changes, removed/unclassifiable files, duplicate declaration ambiguity);
-- coverage recorded under a different environment (BC version/artifact,
-  package-cache closure, the content of a non-Microsoft dependency package —
-  see "affectedOnly and packaged dependencies" — or the test isolation, see
-  "affectedOnly and test isolation");
+- coverage recorded under a different test isolation (see "affectedOnly and test
+  isolation"), or in a different environment when the request sets
+  `strictEnvironment: true`. Without it, a baseline from another BC build or package
+  set is used and narrowed by a diff of the two (see "affectedOnly across
+  environments");
 - the change model's baseline for a module in the request is not the code the
   coverage was recorded on (see below);
 - compile/dependency failures before test execution;
@@ -881,11 +890,14 @@ The environment key (see the forced-full causes above) now carries a SHA-256 of
 each resolved dependency package that is not published by Microsoft, was not
 synthesized by the runner from a sibling source (`workspace-deps`), and **is the
 module that actually runs** for its AppId. Replacing such a package, even with a
-rebuild of the same version, changes the key and forces a full run. That is what
-makes it safe for selection to ignore a statement attributed to the source folder
-of a package the key covers: the code that statement came from can only change by
-changing the key. Statements under any other untracked file still make the test
-unknown.
+rebuild of the same version, changes the key. That is what makes it safe for
+selection to ignore a statement attributed to the source folder of a package the
+key covers: the code that statement came from can only change by changing the key.
+A changed key used to force a full run; since #5028 the two packages are diffed per
+object and the tests that built, entered or held records of a changed object run
+(see "affectedOnly across environments"), unless the request sets
+`strictEnvironment: true`. Statements under any other untracked file still make the
+test unknown.
 
 The "actually runs" condition matters: once a request has compiled `App/` as its
 own bundle, a later request that resolves `App.app` reuses that source-compiled
@@ -947,12 +959,15 @@ holds no coverage for loads it.
   subscriber bindings and event observability, the environment key), and per request
   module, the change model's baseline at the moment the coverage was recorded: the
   SHA-256 of every `.al` file, the one object each file declares, and the fingerprints
-  of `app.json`/preprocessor symbols and of the resolved dependency set. Statement
-  tables are not stored. Object and scope keys are stored once and referenced by
-  index. A `Schema` field is compared with the runner's; any other value is no
-  baseline.
-- **How it selects**: the environment key must be equal, as for coverage recorded in
-  the process. Then the stored module snapshots are compared with the change model's
+  of `app.json`/preprocessor symbols and of the resolved dependency set. Since
+  schema 5, also each bundle's environment: per resolved package, its content hash
+  and a hash per object, each package stored once however many bundles resolved it
+  (see the next section). Statement tables are not stored. Object and scope keys are
+  stored once and referenced by index. A `Schema` field is compared with the
+  runner's: schema 4 (before #5028) is still read, without an environment; any other
+  value is no baseline.
+- **How it selects**: when the environment key differs, the next section applies.
+  Then the stored module snapshots are compared with the change model's
   baselines for the request, which the request's own compile has just recorded (a
   request that selects always compiles when the change model has no baseline; see the
   previous section). A file whose hash differs, that was added, or that was removed
@@ -973,6 +988,56 @@ holds no coverage for loads it.
 
 Measured on the al-language corpus: see the pull request that introduced this (#5007)
 for the file size and load time.
+
+#### affectedOnly across environments
+
+A baseline over a large suite can take hours to record, and a new BC build used to
+force all of it again. Since #5028 a baseline recorded in another environment (another
+BC build or artifact, another package cache, or other package content) is used, with a
+warning, and never discarded or widened to a full run for that reason alone. The test
+isolation is not part of this: coverage recorded under another isolation still forces a
+full run.
+
+- **What is diffed**: every run that records coverage also records the apps its bundle
+  resolved (request bundles and sibling sources excluded, as in the package key above).
+  Per app it keeps the package's content hash and a hash per object: the hash of the
+  `src/*.al` file that declares the object, or, for a package with no compiled code and
+  no source (the platform's `System` app), the hash of the object's entry in its
+  `SymbolReference.json`. The next run in another environment compares the two record
+  by record. A package whose bytes are equal contributes nothing. Otherwise every object
+  whose hash differs, or that exists on one side only, is a changed object.
+- **How it selects**: a changed codeunit, page, report, query or xmlport selects the
+  tests that built an instance of it or entered one of its procedures or triggers, and
+  a changed table or tableextension the tests that held a record of it. Since #5028 each
+  test's recording keeps those objects for code outside the request's own sources too
+  (`dep|` keys). An interface has no code of its own and selects nothing. The run then
+  applies every other rule as usual, including a changed dependency set, which is part
+  of the diff rather than a reason to run everything.
+- **The warning**: `selection.environmentDrift` on the response, a `WARNING:` line on
+  stderr, and under `--watch --affected` a highlighted line in the cycle's report. It
+  names the build the baseline was recorded on, the current build, how many objects
+  differ, and the first of them.
+- **When the result is approximate**: the baseline is still used as is, and
+  `environmentDrift.mode` is `approximate` with a `reason`, when the baseline has no
+  record of its environment (written by a runner before #5028), the current closure
+  could not be read, a changed package has no AL source and does carry compiled code, a
+  changed file declares no object, a changed object is of a kind no recording holds
+  (an enum, a permission set, a report or page extension, …), or a changed object's
+  instance or record was held outside any one test. Tests that reached what could not
+  be attributed may be skipped; the account holder chose that over a full run (#5028).
+- **What is never diffed**: the platform itself (the service tier and the runtime the
+  runner loads), which is not made of AL objects.
+- **After the run**: the run records coverage in the current environment. A test the
+  run skipped keeps its old record, so the recorded environment is kept only when the
+  diff was exact; after an approximate run it is recorded as unknown, and the next
+  change of environment is approximate again until a full run records everything.
+- **Strict mode**: `strictEnvironment: true` (`--strict-environment` under
+  `--watch --affected`) keeps the behaviour from before #5028: any change of
+  environment forces a full run.
+- **Within one process**: a dependency whose version changes makes the change model
+  recompile the module in full, which forces a full run for that reason, as before. A
+  rebuilt package of the same version, and every change between two processes, is
+  diffed.
 
 ### `shutdown`
 

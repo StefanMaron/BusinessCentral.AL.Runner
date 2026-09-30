@@ -1,7 +1,7 @@
 # `--watch --affected`: rerun only the tests an edit can affect
 
 ```
-al-runner MyApp MyApp.Test --watch --affected [--include-failing] [--cache DIR]
+al-runner MyApp MyApp.Test --watch --affected [--include-failing] [--strict-environment] [--cache DIR]
 ```
 
 Without `--affected`, every `--watch` cycle reruns every test in the bundles. With it, each
@@ -23,6 +23,12 @@ a cycle is forced to run everything.
 
 `--include-failing` is the request's `includeFailing: true`: every test whose last result was
 not a pass runs again, whatever changed.
+
+A baseline recorded in another environment (another BC build, package set or package
+content) is used, narrowed by a per-object diff of the two environments, under a warning
+line ([server-mode.md](server-mode.md#affectedonly-across-environments)).
+`--strict-environment` is the request's `strictEnvironment: true`: such a baseline runs
+everything instead.
 
 The watch process keeps one selection state for its lifetime, as one server process does, and
 reads and writes the same persisted baseline (`<cache root>/affected-baseline/`, keyed on the
@@ -47,13 +53,18 @@ summary:
   tests whose last recorded result was not a pass; the third line names them.
 - A cycle that ran everything prints `[watch] affected: full run — <reason>` in place of the
   `changed:` line, with the same reason text a server response carries in `selection.reason`.
+- A cycle that used a baseline from another environment prints
+  `[watch] affected: WARNING: the affectedOnly baseline was recorded in another environment
+  (BC <recorded>, now BC <current>); <n> object(s) differ: …`, ending with whether the
+  selection was narrowed by that diff or is approximate and why. The dashboard shows it in
+  bold yellow.
 
 The interactive dashboard shows the same lines above the test tree.
 
 ## What it does not combine with
 
 `--affected` is rejected with exit 2 without `--watch` (a `--server` client sets `affectedOnly`
-per request), and together with `--tdd`, `--per-suite` or `--test`/`--filter`: the selecting
+per request), `--include-failing` and `--strict-environment` without `--affected`, and together with `--tdd`, `--per-suite` or `--test`/`--filter`: the selecting
 run applies none of them, so accepting them would drop them silently.
 
 Under `--affected` an EMIT-EXCLUDED object fails the whole bundle's compile, as it does for a
