@@ -5443,12 +5443,6 @@ return strictExitCode ? computedExitCode : 0;
                     tddAllowRerun: pass < 3, tddRerunPass: pass > 0, out var rerun);
                 if (!rerun)
                 {
-                    // A module compiled with a generated member describes source that is not on
-                    // disk, and one generated INTO holds overlay text; neither may seed the change
-                    // model or the affectedOnly record, so the next request compiles them in full.
-                    if (tdd.Generated.Any(m => m.GeneratedIntoFile != null))
-                        foreach (var p in sourcePaths)
-                            emitter.ClearIncrementalBaseline($"V2_{Path.GetFileName(Path.GetFullPath(p))}");
                     WriteTddSummary(tdd);
                     return results;
                 }
@@ -5818,9 +5812,9 @@ return strictExitCode ? computedExitCode : 0;
             loadedBundles.Add((result, deferred, phaseRow, emitElapsed, compileElapsed));
         }
 
-        // #5037: no test has run yet (a multi-bundle request defers every run), so a re-run
-        // streams nothing twice.
-        if (tdd != null && tddAllowRerun && TddCrossBundle.TakePendingRecompile())
+        // #5037: only a multi-bundle request registers a bundle to generate into, and it defers
+        // every run, so no test has streamed yet and a re-run reports nothing twice.
+        if (tdd != null && deferRuns && tddAllowRerun && TddCrossBundle.TakePendingRecompile())
         {
             foreach (var (_, _, phaseRow, emit, compile) in loadedBundles)
                 if (phaseRow != null)

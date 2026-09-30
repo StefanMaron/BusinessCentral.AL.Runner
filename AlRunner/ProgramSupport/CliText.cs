@@ -365,8 +365,11 @@ internal static partial class ProgramSupport
         w.WriteLine("  silently skip generation and serve stale or missing results).");
         w.WriteLine();
         w.WriteLine("  --tdd + --watch works: every cycle generates again from the files on disk, so");
-        w.WriteLine("  a member you have since written is used instead of its stub. --tdd + --server");
-        w.WriteLine("  is rejected (exit 2).");
+        w.WriteLine("  a member you have since written is used instead of its stub. Under --server,");
+        w.WriteLine("  runTests takes a `tdd` field per request (--tdd sets its default); each request");
+        w.WriteLine("  generates afresh, skips the AL-output cache, and reports what it could not");
+        w.WriteLine("  generate as failed test lines with errorKind \"compile\" (docs/server-mode.md).");
+        w.WriteLine("  --tdd + --dap is rejected (exit 2).");
         w.WriteLine();
         w.WriteLine("  Scope: source-compiled implementing apps only — in the test's own folder, or in");
         w.WriteLine("  another folder passed on the same command line (al-runner --tdd MyApp MyApp.Test):");
@@ -747,8 +750,9 @@ internal static partial class ProgramSupport
         w.WriteLine("                          cycle can start with an honestly red test (exit 1). Works");
         w.WriteLine("                          together with --watch (a cycle with a missing symbol falls");
         w.WriteLine("                          back to a full rebuild instead of the fast incremental");
-        w.WriteLine("                          path — the console names the reason). Not yet supported");
-        w.WriteLine("                          together with --server.");
+        w.WriteLine("                          path — the console names the reason). Under --server it is");
+        w.WriteLine("                          runTests' per-request `tdd` field, and this flag is the");
+        w.WriteLine("                          default for requests that omit it. Refused with --dap.");
         w.WriteLine("  --per-suite             Legacy per-Compilation path. Default is bundled mode");
         w.WriteLine("                          (5-7x faster, parity-verified).");
         w.WriteLine("  --bundled               No-op alias for the default bundled mode (deprecated).");

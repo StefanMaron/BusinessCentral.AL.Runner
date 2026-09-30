@@ -155,9 +155,12 @@ public sealed class ServerTddTests
     {
         TestArtifacts.SkipIfMissing();
         var bundle = Bundle("al-runner-server-tdd", withRefused: true);
+        // With the AL-output cache on: a tdd request must neither write the module it compiled
+        // with a stub nor be served one, or the next plain request would run it.
+        var cache = TestScratch.Dir("al-runner-server-tdd-cache");
         try
         {
-            await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+            await using var server = await CliServer.StartAsync(new[] { "--cache", cache });
 
             var plain = await Send(server, new[] { bundle }, tdd: null);
             Assert.True(plain.ExitCode == 3, plain.Raw);
@@ -180,6 +183,13 @@ public sealed class ServerTddTests
             Assert.True(plainAgain.ExitCode == 3, plainAgain.Raw);
             Assert.Empty(plainAgain.Tests);
 
+            // Unchanged source, tdd again: generated and reported afresh, not served from a cache
+            // entry that holds neither the refused object's test nor the dependents' rewrite.
+            var redAgain = await Send(server, new[] { bundle }, tdd: true);
+            Assert.True(redAgain.ExitCode == 1, redAgain.Raw);
+            AssertCompileFailure(redAgain, "DoubleIt_ReturnsTwice", "\"DoubleIt\"(Arg1: Integer): Integer");
+            AssertCompileFailure(redAgain, "NameLength_CountsCharacters", "NameLength");
+
             File.WriteAllText(Path.Combine(bundle, "Calc.Codeunit.al"), RealCalc);
             var green = await Send(server, new[] { bundle }, tdd: true);
             Assert.True(green.ExitCode == 0, green.Raw);
@@ -189,6 +199,7 @@ public sealed class ServerTddTests
         finally
         {
             try { Directory.Delete(bundle, recursive: true); } catch { }
+            try { Directory.Delete(cache, recursive: true); } catch { }
         }
     }
 
