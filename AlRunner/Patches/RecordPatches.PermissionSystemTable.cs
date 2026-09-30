@@ -22,7 +22,8 @@
 // that at its transaction ends, including a transaction world that ends without committing
 // (NotePermissionSetupTableWrite / EndPermissionSetupTransaction, #4983, #5022; corpus 67947).
 // BC also bumps mid-transaction, from SystemTableTriggers.OnWriteToCompanyTable on a Company
-// insert, rename or delete; the runner mirrors that at its data-layer prepends (#5020).
+// insert, rename or delete; the runner mirrors insert and delete at its data-layer prepends
+// (#5020). Rename is not mirrored: the runner refuses a Company rename before it gets there (#5071).
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -145,22 +146,6 @@ public static partial class RecordPatches
     {
         if (!IsCompanyRow(record, out var company)) return;
         if (!CompanyRowExists(company, company.GetFieldValue(CompanyNameFieldNo))) return;
-        ResetPermissionSetupForCompanyWrite();
-    }
-
-    /// <summary>
-    /// Prepended to RecordImplementation.RenameRecordAsync(DataError, NavRecord), on its
-    /// parentRecord (the old name) and the renamed record (the new one): BC's
-    /// OnBeforeModifyCompanyAsync ends in OnWriteToCompanyTable when the name changes.
-    /// </summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void OnCompanyRenameRecord(object? record, object? renamedRecord)
-    {
-        if (!IsCompanyRow(record, out var company)) return;
-        if (renamedRecord is not NavRecord renamed) return;
-        var oldName = company.GetFieldValue(CompanyNameFieldNo);
-        if (Equals(oldName?.ToString(), renamed.GetFieldValue(CompanyNameFieldNo)?.ToString())) return;
-        if (!CompanyRowExists(company, oldName)) return;
         ResetPermissionSetupForCompanyWrite();
     }
 

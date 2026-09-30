@@ -4,11 +4,11 @@
 // recomposed by the next read after a Company insert or delete, inside the same transaction) is
 // measured upstream by corpus codeunit 67947, ExpandedPermission_Company*.
 //
-// What this pins is the runner's wiring: that the three RecordPatches Company helpers are
-// prepended to RecordImplementation.InsertRecordAsync / DeleteRecordAsync / RenameRecordAsync on
-// their parentRecord (and, for a rename, the renamed record), ahead of the original body — the
-// point below NavRecord's trigger dispatch where BC's SystemTableTriggers arms run — and to no
-// NavRecord entry point, where they would run before the OnInsert/OnDelete triggers.
+// What this pins is the runner's wiring: that the two RecordPatches Company helpers are
+// prepended to RecordImplementation.InsertRecordAsync / DeleteRecordAsync on their parentRecord,
+// ahead of the original body — the point below NavRecord's trigger dispatch where BC's
+// SystemTableTriggers arms run — and to no NavRecord entry point, where they would run before
+// the OnInsert/OnDelete triggers. Rename is #5071.
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 using Xunit;
@@ -21,8 +21,6 @@ public sealed class CompanyWritePermissionSetupBindingTests
         "System.Void AlRunner.Patches.RecordPatches::OnCompanyInsertRecord(System.Object)";
     private const string DeleteArm =
         "System.Void AlRunner.Patches.RecordPatches::OnCompanyDeleteRecord(System.Object)";
-    private const string RenameArm =
-        "System.Void AlRunner.Patches.RecordPatches::OnCompanyRenameRecord(System.Object,System.Object)";
 
     private static string RewrittenNclPath => Path.Combine(
         Path.GetDirectoryName(typeof(CompanyWritePermissionSetupBindingTests).Assembly.Location)
@@ -76,23 +74,6 @@ public sealed class CompanyWritePermissionSetupBindingTests
     }
 
     [SkippableFact]
-    public void RenameRecord_CarriesTheCompanyArm_OnTheOldAndTheRenamedRecord()
-    {
-        using var module = OpenNcl();
-        var rename = RecordImplementationMethod(module, "RenameRecordAsync", "DataError", "NavRecord");
-        var instructions = rename.Body.Instructions.ToList();
-        var index = instructions.FindIndex(i =>
-            i.OpCode == OpCodes.Call && (i.Operand as MethodReference)?.FullName == RenameArm);
-
-        Assert.True(index >= 3, "RecordImplementation.RenameRecordAsync does not call OnCompanyRenameRecord (#5020).");
-        Assert.Equal(OpCodes.Ldarg_0, instructions[index - 3].OpCode);
-        Assert.Equal("parentRecord", (instructions[index - 2].Operand as FieldReference)?.Name);
-        Assert.Equal(OpCodes.Ldarg_2, instructions[index - 1].OpCode); // the renamed NavRecord
-        AssertOnlyPrependsBefore(instructions, index, "RenameRecordAsync");
-        Assert.Single(CalledMethods(rename), n => n == RenameArm);
-    }
-
-    [SkippableFact]
     public void NavRecordWriteEntryPoints_DoNotCarryTheCompanyArms()
     {
         using var module = OpenNcl();
@@ -102,7 +83,6 @@ public sealed class CompanyWritePermissionSetupBindingTests
             var called = CalledMethods(method);
             Assert.DoesNotContain(InsertArm, called);
             Assert.DoesNotContain(DeleteArm, called);
-            Assert.DoesNotContain(RenameArm, called);
         }
     }
 
@@ -110,8 +90,7 @@ public sealed class CompanyWritePermissionSetupBindingTests
     {
         for (var i = 0; i < index; i++)
             Assert.True(
-                instructions[i].OpCode == OpCodes.Ldarg_0 || instructions[i].OpCode == OpCodes.Ldarg_2
-                || instructions[i].OpCode == OpCodes.Ldfld || instructions[i].OpCode == OpCodes.Call,
+                instructions[i].OpCode == OpCodes.Ldarg_0 || instructions[i].OpCode == OpCodes.Ldfld || instructions[i].OpCode == OpCodes.Call,
                 $"instruction {i} of {method} is {instructions[i].OpCode}: the Company arm would run after "
                 + "part of the original body instead of before the write.");
     }

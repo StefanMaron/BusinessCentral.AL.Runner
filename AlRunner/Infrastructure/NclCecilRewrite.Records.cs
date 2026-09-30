@@ -1488,12 +1488,12 @@ public static partial class NclCecilRewrite
             Console.Error.WriteLine("[Cecil] Prepended OnBeforeUserModify → RecordImplementation.ModifyRecordAsync(DataError)");
         }
 
-        // ── RecordImplementation.{Insert,Delete,Rename}RecordAsync — Company permission-setup bump ──
+        // ── RecordImplementation.{Insert,Delete}RecordAsync — Company permission-setup bump ──
         // BC's SystemTableTriggers.OnWriteToCompanyTable advances PermissionSetupMonitor.SetupVersion
-        // mid-transaction on a Company insert, delete or rename (#5020). The runner's data layer
-        // is not BC's, so these prepend at the nearest point above it, as the User arms do.
-        // Emits `ldarg.0; ldfld parentRecord; [ldarg.2;] call helper`: parentRecord is a
-        // FieldDefinition of this module, so the ldfld adds no typeRef/memberRef to Ncl.
+        // mid-transaction on a Company insert or delete (#5020; rename: #5071). The runner's data
+        // layer is not BC's, so these prepend at the nearest point above it, as the User arms do.
+        // Emits `ldarg.0; ldfld parentRecord; call helper`: parentRecord is a FieldDefinition of
+        // this module, so the ldfld adds no typeRef/memberRef to Ncl (no token shift).
         {
             var recImpl = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.RecordImplementation")
                 ?? throw new InvalidOperationException("RecordImplementation type not found in Ncl");
@@ -1502,19 +1502,17 @@ public static partial class NclCecilRewrite
                 ?? throw new InvalidOperationException(
                     "RecordImplementation.parentRecord (NavRecord) not found — the Company "
                     + "permission-setup bump could not be bound.");
-            foreach (var (method, arity, helper) in new[]
+            foreach (var (method, helper) in new[]
                      {
-                         ("InsertRecordAsync", 1, nameof(AlRunner.Patches.RecordPatches.OnCompanyInsertRecord)),
-                         ("DeleteRecordAsync", 1, nameof(AlRunner.Patches.RecordPatches.OnCompanyDeleteRecord)),
-                         ("RenameRecordAsync", 2, nameof(AlRunner.Patches.RecordPatches.OnCompanyRenameRecord)),
+                         ("InsertRecordAsync", nameof(AlRunner.Patches.RecordPatches.OnCompanyInsertRecord)),
+                         ("DeleteRecordAsync", nameof(AlRunner.Patches.RecordPatches.OnCompanyDeleteRecord)),
                      })
             {
                 var target = recImpl.Methods.FirstOrDefault(m =>
                     m.Name == method
-                    && m.Parameters.Count == arity
-                    && m.Parameters[0].ParameterType.Name == "DataError"
-                    && (arity == 1 || m.Parameters[1].ParameterType.FullName == "Microsoft.Dynamics.Nav.Runtime.NavRecord"))
-                    ?? throw new InvalidOperationException($"RecordImplementation.{method} ({arity} parameter(s)) not found");
+                    && m.Parameters.Count == 1
+                    && m.Parameters[0].ParameterType.Name == "DataError")
+                    ?? throw new InvalidOperationException($"RecordImplementation.{method}(DataError) not found");
                 var helperMi = typeof(AlRunner.Patches.RecordPatches).GetMethod(
                     helper, BindingFlags.Public | BindingFlags.Static)
                     ?? throw new InvalidOperationException($"RecordPatches.{helper} not found");
@@ -1525,9 +1523,8 @@ public static partial class NclCecilRewrite
                 var firstOriginal = body.Instructions[0];
                 il.InsertBefore(firstOriginal, il.Create(OpCodes.Ldarg_0));
                 il.InsertBefore(firstOriginal, il.Create(OpCodes.Ldfld, parentRecord));
-                if (arity == 2) il.InsertBefore(firstOriginal, il.Create(OpCodes.Ldarg_2));
                 il.InsertBefore(firstOriginal, il.Create(OpCodes.Call, helperRef));
-                if (body.MaxStackSize < arity) body.MaxStackSize = arity;
+                if (body.MaxStackSize < 1) body.MaxStackSize = 1;
                 Console.Error.WriteLine($"[Cecil] Prepended {helper} → RecordImplementation.{method}");
             }
         }
