@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **selection:** use a baseline from another environment, diffed per object, with a prominent warning
 - **watch:** --affected selection reusing the server affectedOnly
 - **server:** keep the affectedOnly baseline across server processes
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
