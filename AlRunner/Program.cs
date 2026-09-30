@@ -7957,6 +7957,18 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                         continue;
                     }
                     var failed = result.Outcome != TestOutcome.Pass;
+                    // #5059: event, table and session-state keys name objects by id, not by file,
+                    // so a test that ran to completion has a complete record even when its
+                    // statements cannot be attributed. It stays unknown (selected on every
+                    // request); the record narrows only the earlier writers it brings.
+                    HashSet<string> RecordedKeys()
+                    {
+                        var keys = eventsByTest.TryGetValue(testKey, out var raised)
+                            ? new HashSet<string>(raised, StringComparer.Ordinal) : new HashSet<string>(StringComparer.Ordinal);
+                        if (stateByTest.TryGetValue(testKey, out var state)) keys.UnionWith(state);
+                        return AlRunner.Infrastructure.AffectedSessionStateSelection.WithPreviousState(
+                            keys, previousEvents != null && previousEvents.TryGetValue(testKey, out var prior) ? prior : null);
+                    }
 
                     perTestStatementTable.TryGetValue(testKey, out var statements);
                     useByTest.TryGetValue(testKey, out var used);
@@ -8019,13 +8031,11 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                     if (unmappable || coveredObjects.Count == 0)
                     {
                         nextUnknown.Add(testKey);
+                        if (unmappable) nextEvents[testKey] = RecordedKeys();
                         continue;
                     }
                     nextCoverage[testKey] = coveredObjects;
-                    var recordedKeys = eventsByTest.TryGetValue(testKey, out var raised)
-                        ? new HashSet<string>(raised, StringComparer.Ordinal) : new HashSet<string>(StringComparer.Ordinal);
-                    if (stateByTest.TryGetValue(testKey, out var state)) recordedKeys.UnionWith(state);
-                    nextEvents[testKey] = recordedKeys;
+                    nextEvents[testKey] = RecordedKeys();
                     if (failed) nextFailing.Add(testKey);
                 }
 

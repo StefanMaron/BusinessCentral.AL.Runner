@@ -677,6 +677,21 @@ reading a sequence it never read, and nothing recorded says so. A later reader c
 fail where it passed, and a changed test can fail for want of state another test used to
 give it (a reader run alone finds no sequence). A test with no record counts as both.
 
+A test that ran to completion but is unknown because its statements could not be attributed
+to an object (for example statements in a file declaring several objects, #5003) still keeps
+its record (#5059): session-state, event and table keys name objects by id, not by file, so
+the record is complete. It is still selected on every request; the record only narrows which
+earlier writers it brings when nothing changed. A test that timed out, was skipped or has no
+result keeps no record, and brings every earlier writer.
+
+A use can land only on the test that first reaches a per-session cache: BC asks the Global
+Triggers subscribers for a table's trigger mask once per session, and those subscribers reach
+SingleInstance codeunits (#5069). Two things keep a record from shrinking because of that. Each
+bundle starts with an empty mask cache, at the same point its SingleInstance codeunits are
+dropped, so the first test to touch a table in each request computes the mask again. And a test
+recorded again keeps the session-state keys of its previous record, so a narrowed run that
+reaches some other cache in an earlier test can only add keys, never remove them.
+
 Across bundles of one request: WorkDate and number sequences carry from one bundle to the
 next (SingleInstance codeunits are reset per bundle), so a change in an earlier bundle (or a
 full run of it) selects every reader of a later one, and a bundle followed by another runs its WorkDate and
