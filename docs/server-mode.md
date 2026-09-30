@@ -547,7 +547,9 @@ process. The runner:
    (`"{Codeunit}.{Method}"`);
 2. computes changed AL objects from the incremental compiler change model
    (Added/Modified/Removed/rename-attributed object identities);
-3. runs tests whose previous coverage intersects those changed objects;
+3. runs tests whose previous coverage intersects those changed objects, or that
+   raised an event whose subscribers changed (see "affectedOnly and event
+   subscribers");
 4. always includes unknown tests (new/renamed tests, tests with no recorded
    coverage, tests that timed out or were skipped in the recording run);
 5. selects a test that failed in the recording run by its recorded coverage, like
@@ -565,7 +567,9 @@ include:
   see "affectedOnly and packaged dependencies");
 - the change model's baseline for a module in the request is not the code the
   coverage was recorded on (see below);
-- compile/dependency failures before test execution.
+- compile/dependency failures before test execution;
+- a changed subscriber whose event's raises the recording run could not see (see
+  "affectedOnly and event subscribers").
 
 #### affectedOnly and previously failing tests
 
@@ -574,10 +578,8 @@ failed, and that part decides its outcome: a change that can make it pass must
 touch code it already executed, because code after the failure point runs only
 once something before it changes. So a test that failed in the recording run
 keeps that coverage and is selected by it (#4978). It shares the gaps passing
-tests have: an object added since the recording run, such as a new event
-subscriber, is in no test's coverage, so a test that raises its event is not
-selected for it (#4988). A failing test's result depends on code it never ran more
-often than a passing test's does: a subscriber that does not exist yet (#4988), an
+tests have. A failing test's result depends on code it never ran more
+often than a passing test's does: an
 object added and reached by id (`Codeunit.Run(<id>)`, `RecordRef.Open`),
 install/setup code that runs outside the test, and state left by earlier tests in
 the same codeunit. None of those is in its coverage, so a change there skips it;
@@ -596,6 +598,56 @@ It stays **unknown**, and always runs, when the record is not complete:
 recorded result was not a pass runs again, whatever changed. Either way a failed
 test that selection skips keeps its failing status until it runs again, and the
 summary counts it in `selection.skippedFailing`.
+
+#### affectedOnly and event subscribers
+
+A subscriber is reached through the event it binds to, not through a call, so
+statement coverage cannot say which tests a subscriber change affects (#4988). The
+recording run therefore also records, per test, the events the test raised:
+
+- `ev|<Kind>|<id>|<Event>` for an event a publisher declares
+  (`[IntegrationEvent]`/`[BusinessEvent]` on a codeunit, table, page, report, query or
+  xmlport), recorded by the event dispatcher before it looks for subscribers. A
+  publisher skips its event entirely while nothing subscribes, so a recording run
+  seeds every event scope of the request's modules (bundle and dependency modules the
+  runner compiled or loaded, not Microsoft's Base or System Application) to make each
+  raise reach the dispatcher. With no subscriber the dispatcher returns at once,
+  which is what an unseeded publisher does.
+- `trig|Table|<id>` when the test inserted, modified, deleted, renamed or validated a
+  record of that table, in any app: BC asks the table's metadata (or the field's, for
+  validate) whether a trigger event is subscribed on each of those operations,
+  subscribed or not, and the runner observes that question. It is recorded per table,
+  not per trigger event.
+
+It also stores the `[EventSubscriber]` bindings of the request's modules as the tests
+ran with them. The next request compares them with the current ones. A binding that
+was added or removed, a binding whose attribute or codeunit binding mode changed (its
+old and its new event both count), and every binding of a subscriber whose code
+changed (the whole object, or the procedure the change was narrowed to) adds its
+event to the changed keys. A test is selected when its recorded events meet them. An
+empty subscriber body records no statement, so a body filled in later is found this
+way and not through coverage.
+
+A full run is forced, with a `reason` naming the subscriber, when a changed binding's
+event could have been raised without being recorded:
+
+- the publisher is outside the request's modules and none of that event's raises were
+  seen (for example a new subscriber on a Base Application codeunit event nothing
+  subscribed to before);
+- the publisher is in the request's modules but not all of its event scopes could be
+  seeded;
+- it is a page trigger event (`OnOpenPageEvent` and the others), or an object type the
+  dispatcher does not handle;
+- the bindings could not be read, or the baseline holds none.
+
+A changed binding to an event that did not exist in the recording run, on a publisher
+that did (or on a publisher that is itself new), adds nothing: raising that event needs
+code that changed, and coverage selects the tests reaching it.
+
+Recording cost, measured for #4988 on the al-language corpus at a9b4430e (one server process):
+a steady-state `perTestCoverage` run took 38.0 s with the event recording and 38.3 s
+with it stubbed out, against 37.5 s for a run recording nothing; the difference is
+inside run-to-run noise.
 
 #### affectedOnly and packaged dependencies
 
