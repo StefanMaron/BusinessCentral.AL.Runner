@@ -2,8 +2,8 @@
 //
 // BcArtifacts.GetAssemblyNameWithRetry exists because the file it reads is being REPLACED
 // while it reads: NclCecilRewrite.RewriteInPlace does a temp-write + rename over
-// AppContext.BaseDirectory/Microsoft.Dynamics.Nav.Ncl.dll at every process's own startup, so
-// a concurrent al-runner reading the same path lands inside that rename —
+// AppContext.BaseDirectory/Microsoft.Dynamics.Nav.Ncl.dll whenever the bytes there differ (at
+// every start before #5019), so a concurrent al-runner reading the same path lands inside that rename —
 // ERROR_SHARING_VIOLATION on Windows, a transient not-found on either platform (#2489).
 //
 // #2512 added the helper WITH a caller: VerifyEngineConsistency(binDir), which read that file.

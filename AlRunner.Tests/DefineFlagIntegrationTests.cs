@@ -48,7 +48,7 @@ namespace AlRunner.Tests;
 // rewritten Ncl.dll with a plain truncate-in-place write; every loaded assembly is
 // memory-mapped, so a second process's page fault against the half-written file
 // raised SIGBUS. That was fixed with an atomic temp-file+rename publish (see
-// NclCecilRewrite.AtomicReplace) well before this comment, and the AL-output cache
+// NclFilePublisher.AtomicReplace) well before this comment, and the AL-output cache
 // got the same atomic-publish treatment in #1810. #1808 additionally stopped these
 // tests from going through `dotnet run` at all — TestBuildConfig.RunArgs invokes the
 // built al-runner.dll directly. #1809 removed the serialization now that its actual

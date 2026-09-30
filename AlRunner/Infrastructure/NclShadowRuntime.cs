@@ -574,7 +574,7 @@ public static class NclShadowRuntime
     ///    <c>when (Directory.Exists(shadowDir))</c> filter could not match, so it escaped
     ///    all the way out of <c>Main</c> and killed the process before any test ran. The
     ///    lock is transient, so this retries with backoff, exactly as
-    ///    <c>NclCecilRewrite.AtomicReplace</c> already does for the file-level rename of
+    ///    <c>NclFilePublisher.AtomicReplace</c> already does for the file-level rename of
     ///    the same bytes one layer down.
     /// </summary>
     /// <returns>The directory the caller should exec from, and it always exists and is
