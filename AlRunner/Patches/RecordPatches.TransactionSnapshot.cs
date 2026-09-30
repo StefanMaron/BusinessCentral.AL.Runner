@@ -102,7 +102,11 @@ public static partial class RecordPatches
     /// Deliberately does NOT touch the open transaction-world scopes — see
     /// <see cref="MarkExplicitCommitPoint"/> for the one caller that must.
     /// </summary>
-    public static void MarkCommitPoint() => _txCommitPoint.Clear();
+    public static void MarkCommitPoint()
+    {
+        EndPermissionSetupTransaction();
+        _txCommitPoint.Clear();
+    }
 
     /// <summary>
     /// AL's <c>Commit()</c> STATEMENT: a commit point in the top-level tracker AND in every
@@ -222,6 +226,7 @@ public static partial class RecordPatches
     internal static void NoteTransactionWriteForTable(int tableId)
     {
         NoteObjectInventoryWrite(tableId);
+        NotePermissionSetupTableWrite(tableId);
         foreach (var (source, perTable) in _dataAccessByTable)
         {
             if (!perTable.TryGetValue(tableId, out var dataAccess)) continue;
@@ -340,6 +345,7 @@ public static partial class RecordPatches
     /// </summary>
     public static void RollbackToCommitPoint(object? session)
     {
+        EndPermissionSetupTransaction();
         if (_txCommitPoint.Count == 0) return;
         foreach (var ((source, tableId), saved) in _txCommitPoint.ToList())
         {

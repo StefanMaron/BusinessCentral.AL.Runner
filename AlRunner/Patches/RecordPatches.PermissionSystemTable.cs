@@ -16,12 +16,15 @@
 //   - a real PermissionSetupMonitor on the skeleton NavDatabase, built by BC's own constructor
 //     (PlantPermissionSetupMonitor), which GetPermissions dereferences for its memo key.
 //
-// TRAP — SetupVersion. On a service tier it is bumped by PermissionSetupMonitor.ResetSetup, which
-// TableChangeMonitorCollection runs off CacheSynchronization.TableDataChanged (committed changes
-// to the permission tables, delivered by cache synchronisation), and by company-table writes
-// (SystemTableTriggers.OnWriteToCompanyTable). The runner has neither channel, so its version
-// stays 0 and only a different set's computation evicts the slot. Tracked in #4983.
+// SetupVersion. BC bumps it from SystemTableTriggers.OnTransactionEnded (commit AND rollback):
+// every system table written in the transaction goes to TableChangeMonitors.NotifyTableChanges,
+// which runs PermissionSetupMonitor.ResetSetup for the ones in its TableIds. The runner mirrors
+// that at its transaction ends (NotePermissionSetupTableWrite / EndPermissionSetupTransaction,
+// #4983; corpus 67947). Not mirrored: the immediate, mid-transaction bump
+// SystemTableTriggers.OnWriteToCompanyTable makes on a Company insert, rename or delete.
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using AlRunner.Infrastructure;
 using Microsoft.Dynamics.Nav.Runtime;
@@ -70,6 +73,48 @@ public static partial class RecordPatches
 
         return GetBcVirtualDataAccess(dataAccessSource, table,
             "every read of " + PermissionFamilyApi(table.TableId) + " would answer from an empty store");
+    }
+
+    /// <summary>Monitored tables written since the last transaction end — BC's
+    /// SystemTableTriggers.changedTables, narrowed to the one monitor the runner plants.</summary>
+    private static readonly HashSet<int> _changedPermissionSetupTables = new();
+
+    /// <summary>A non-temporary write to <paramref name="tableId"/>, from the runner's per-table
+    /// write note. Remembered only when the planted monitor watches that table.</summary>
+    internal static void NotePermissionSetupTableWrite(int tableId)
+        => NotePermissionSetupTableWrite(_plantedPermissionSetupMonitor as TableChangeMonitor,
+            _changedPermissionSetupTables, tableId);
+
+    internal static void NotePermissionSetupTableWrite(TableChangeMonitor? monitor, ISet<int> changed, int tableId)
+    {
+        if (monitor != null && monitor.TableIds.Contains(tableId))
+            changed.Add(tableId);
+    }
+
+    /// <summary>
+    /// A transaction ended, committed or rolled back: BC's SystemTableTriggers.OnTransactionEnded
+    /// notifies the monitors of the tables written in it, and PermissionSetupMonitor.ResetSetup
+    /// then advances SetupVersion, so PermissionDataProviderBase.GetPermissions recomposes.
+    ///
+    /// Observably equivalent: ResetSetup is IncrementSetupVersion plus
+    /// Database.SecurityAndLicense.ClearPermissions(false), which clears the role cache of a
+    /// NavDatabaseSecurityAndLicense the skeleton database does not have (null) — so the bump is
+    /// the whole AL-visible effect. Its 2000000004/2000000005 branch resets every tenant's
+    /// monitor; the runner has one. Corpus 67947 pins Commit, asserterror and test-boundary reads.
+    /// TRAP: calling ResetSetup itself NREs on that null SecurityAndLicense.
+    /// </summary>
+    internal static void EndPermissionSetupTransaction()
+        => EndPermissionSetupTransaction(_plantedPermissionSetupMonitor as TableChangeMonitor,
+            _changedPermissionSetupTables);
+
+    /// <summary>Returns whether the version was advanced.</summary>
+    internal static bool EndPermissionSetupTransaction(TableChangeMonitor? monitor, ISet<int> changed)
+    {
+        if (changed.Count == 0) return false;
+        changed.Clear();
+        if (monitor == null) return false;
+        monitor.IncrementSetupVersion();
+        return true;
     }
 
     /// <summary>
