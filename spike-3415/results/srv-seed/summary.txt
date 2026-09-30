@@ -1,0 +1,4 @@
+req 0 record: 366.5s total=1028 passed=728 failed=300 sel=None peakRSS=4719MB
+req 1 plain: 235.3s total=1028 passed=728 failed=300 sel=None peakRSS=5671MB
+req 2 record: 252.7s total=1028 passed=728 failed=300 sel=None peakRSS=6474MB
+peakRSS=6474MB

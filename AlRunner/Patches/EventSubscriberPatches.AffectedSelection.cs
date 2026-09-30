@@ -53,10 +53,14 @@ public static partial class EventSubscriberPatches
                     if (!_recordingSeedByAssembly.ContainsKey(asm))
                         _recordingSeedByAssembly[asm] = SeedAssembly(asm, sentinel);
                 Console.Error.WriteLine(
+                    $"[spike-3415] stamped request modules ({seedAssemblies.Count}): "
+                    + string.Join(", ", seedAssemblies.Select(a => a.GetName().Name)));
+                Console.Error.WriteLine(
                     $"[spike-3415] seeded {_seededScopeTypes.Count - before} more event scopes in "
                     + $"{extra.Count} Microsoft/unstamped app assemblies ({string.Join(", ", extra.Select(a => a.GetName().Name))}) "
                     + $"in {sw.ElapsedMilliseconds} ms");
             }
+            var swStamped = System.Diagnostics.Stopwatch.StartNew();
             foreach (var asm in seedAssemblies)
             {
                 if (!_recordingSeedByAssembly.TryGetValue(asm, out var state)
@@ -65,6 +69,8 @@ public static partial class EventSubscriberPatches
                 foreach (var o in state.Objects)
                     publishers[o] = (publishers.TryGetValue(o, out var s) ? s : true) && state.Seeded;
             }
+            Console.Error.WriteLine($"[spike-3415] recording seed over stamped modules: {_seededScopeTypes.Count} scopes seeded in total, "
+                + $"{publishers.Count} publisher objects, {swStamped.ElapsedMilliseconds} ms");
 
             var observable = new HashSet<string>(StringComparer.Ordinal);
             foreach (var scope in _seededScopeTypes)
