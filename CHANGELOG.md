@@ -10,6 +10,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **server:** affectedOnly selects the tests that raised an event whose subscribers changed
 - **testpage:** a page drops a per-field SetAscending from OnOpenPage, as BC's view round trip does
 - **pages:** an action's RunPageView filters and sorts the page it runs
 - **testpage-parts:** a part page's own view and OnOpenPage override its control's SubPageView sorting
