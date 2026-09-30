@@ -78,6 +78,13 @@ REVIEWED: dict[tuple[str, str], dict[str, str | None]] = {
         "why": "The corpus run itself. Nothing may narrow it; the job-level switch is "
                "pinned because it is the one thing that could stop its failures gating.",
     },
+    ("bc-tests.yml", "Run al-language isolation probes under their own isolation"): {
+        "step_if": "${{ always() }}",
+        "job_if": None, "step_coe": None, "job_coe": TEST_JOB_COE,
+        "why": "#4826. always() only, so an earlier red step cannot skip it; nothing narrows "
+               "it. The probes it runs are left out of the corpus step, so skipping this "
+               "one would drop them from the leg entirely.",
+    },
     ("bc-tests.yml", "Run runner-extras (if present)"): {
         "step_if": "${{ always() && hashFiles('tests/runner-extras/**/*.al') != '' }}",
         "job_if": None, "step_coe": None, "job_coe": TEST_JOB_COE,
