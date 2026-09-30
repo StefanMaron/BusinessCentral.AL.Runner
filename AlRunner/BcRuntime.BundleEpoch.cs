@@ -97,6 +97,17 @@ public static partial class BcRuntime
             return !_bundleEpochByAssembly.TryGetValue(asm, out var epoch) || epoch == _bundleEpoch;
     }
 
+    /// <summary>Every bundle or dependency module stamped since the last reset, minus superseded
+    /// generations: the AL code a request compiled or loaded as a module, never Microsoft's
+    /// unstamped Base/System Application (#4988).</summary>
+    internal static List<Assembly> StampedModuleAssemblies()
+    {
+        List<Assembly> all;
+        lock (_bundleEpochByAssembly) all = new List<Assembly>(_bundleEpochByAssembly.Keys);
+        all.RemoveAll(IsStaleBundleAssembly);
+        return all;
+    }
+
     /// <summary>Drop every stamp — <see cref="ResetForNewBundleReload"/> already forgets the
     /// assemblies these describe, and a stamp outliving its assembly list would let a stale
     /// generation read as current.</summary>

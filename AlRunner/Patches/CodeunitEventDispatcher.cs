@@ -165,6 +165,8 @@ public static partial class BcRuntime
     {
         if (publisherScope == null) return;
         var scopeType = publisherScope.GetType();
+        // #4988: before the subscriber lookup, so a raise with no subscriber is recorded too.
+        AlEventRaiseTracker.NoteEventScope(scopeType);
         Interlocked.Increment(ref _dispatchCount);
         if (!_firstDispatchLogged) { _firstDispatchLogged = true; Console.Error.WriteLine($"[Dispatch] first call: scope={scopeType.FullName}"); }
 

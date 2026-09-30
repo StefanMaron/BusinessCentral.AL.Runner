@@ -996,6 +996,23 @@ public static partial class NclCecilRewrite
                     argSlots: 4); // `this`, mutableRecordBuffer, workTableBuffer, storedTableBuffer
             }
 
+            // ── Trigger-event consults, recorded per test for affectedOnly (#4988) ──
+            // NavRecord insert/modify/delete/rename ask NCLMetaApplicationObject.IsEventSubscribed,
+            // and validate asks NCLMetaField.IsEventSubscribed, whether or not anything subscribes.
+            // Observer only: the original bodies run unchanged. Imports only our helper memberRef.
+            {
+                var raise = typeof(AlRunner.Infrastructure.AlEventRaiseTracker);
+                PrependStaticCall(nclMod,
+                    ByParams(Rt + "NCLMetaApplicationObject", "IsEventSubscribed", "NavTriggerEventType", "NavAppGroup"),
+                    H(raise, "NoteTriggerConsult"), argSlots: 1);
+                PrependStaticCall(nclMod,
+                    ByParams(Rt + "NCLMetaApplicationObject", "IsEventSubscribed", "NavTriggerEventIdentity", "NavAppGroup"),
+                    H(raise, "NoteTriggerConsult"), argSlots: 1);
+                PrependStaticCall(nclMod,
+                    ByParams(Rt + "NCLMetaField", "IsEventSubscribed", "NavTriggerEventType", "NavAppGroup"),
+                    H(raise, "NoteTriggerConsult"), argSlots: 1);
+            }
+
             // ── TempTableDataProvider.Find / FindFromPosition (query column projection) ──
             // Single-dataitem query reads route through GetDataAccessForQuery → the same
             // in-memory TempTableDataProvider that holds the inserted rows. The provider is
