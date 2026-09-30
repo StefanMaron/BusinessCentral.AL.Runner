@@ -117,4 +117,30 @@ public class DispatchEventPublisherDeclTypeTests
         Assert.Equal("", kind);
         Assert.Equal(0, id);
     }
+
+    // #5004: an extension's own class decodes to the kind its events are published under, and
+    // stays outside the plain-object decode so DispatchCore reaches the extension branch.
+    [Theory]
+    [InlineData("TableExtension68501", "TableExtension", BcRuntime.PublisherKindTable, 68501)]
+    [InlineData("PageExtension68503", "PageExtension", BcRuntime.PublisherKindPage, 68503)]
+    [InlineData("ReportExtension68505", "ReportExtension", BcRuntime.PublisherKindReport, 68505)]
+    public void ExtensionDeclType_DecodesToItsBaseKind(string declTypeName, string extensionKind, string baseKind, int extensionId)
+    {
+        Assert.False(BcRuntime.TryDecodeEventPublisherDeclType(declTypeName, out _, out _));
+
+        var ok = BcRuntime.TryDecodeExtensionEventPublisherDeclType(declTypeName, out var ek, out var bk, out var id);
+
+        Assert.True(ok);
+        Assert.Equal(extensionKind, ek);
+        Assert.Equal(baseKind, bk);
+        Assert.Equal(extensionId, id);
+    }
+
+    [Theory]
+    [InlineData("Record68500")]
+    [InlineData("Page68502")]
+    [InlineData("EnumExtension5")]
+    [InlineData("TableExtensionNotANumber")]
+    public void NonExtensionDeclType_IsNotAnExtensionPublisher(string declTypeName)
+        => Assert.False(BcRuntime.TryDecodeExtensionEventPublisherDeclType(declTypeName, out _, out _, out _));
 }

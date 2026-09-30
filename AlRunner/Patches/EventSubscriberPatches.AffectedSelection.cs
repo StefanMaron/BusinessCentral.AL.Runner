@@ -83,9 +83,15 @@ public static partial class EventSubscriberPatches
                 continue;
             }
             if (sentinel == null || !t.Name.EndsWith("_Scope", StringComparison.Ordinal)) continue;
-            if (_seededScopeTypes.Contains(t)) continue;
             var fld = EventScopeField(t);
             if (fld == null) continue; // an ordinary procedure scope
+            // #5004: an extension's event is keyed by its base object; one whose base cannot be
+            // named cannot be keyed, so no publisher of this module counts as fully recorded.
+            if (t.DeclaringType is { } decl
+                && BcRuntime.TryDecodeExtensionEventPublisherDeclType(decl.Name, out _, out _, out _)
+                && AlEventRaiseTracker.EventScopeKey(t) == null)
+                complete = false;
+            if (_seededScopeTypes.Contains(t)) continue;
             try
             {
                 if (fld.GetValue(null) == null) fld.SetValue(null, sentinel);

@@ -160,6 +160,7 @@ public static partial class BcRuntime
 
     private static bool _firstDispatchLogged;
     private static bool _firstFireLogged;
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, byte> _unresolvedExtensionPublishers = new();
 
     private static void DispatchCore(object publisherScope)
     {
@@ -192,7 +193,26 @@ public static partial class BcRuntime
         if (us < 0) return;
         string eventMethodName = scopeName.Substring(0, us);
 
-        if (!TryDecodeEventPublisherDeclType(declName, out var publisherKind, out int publisherId)) return;
+        var navMethodScopeType = NavMethodScopeType;
+        object? pubObj = null;
+        if (!TryDecodeEventPublisherDeclType(declName, out var publisherKind, out int publisherId))
+        {
+            if (!TryDecodeExtensionEventPublisherDeclType(declName, out var extensionKind, out publisherKind, out var extensionId))
+                return;
+            // #5004: an extension's event is published under its base object.
+            var extensionInstance = navMethodScopeType.GetProperty("ApplicationObject", BindingFlags.Public | BindingFlags.Instance)?
+                .GetValue(publisherScope);
+            if (ResolveExtensionPublisher(extensionKind, extensionId, extensionInstance) is not { } resolved)
+            {
+                if (_unresolvedExtensionPublishers.TryAdd(scopeType, 0))
+                    Console.Error.WriteLine(
+                        $"[warn] {extensionKind} {extensionId} raised {eventMethodName}, but the object it extends could not "
+                        + "be resolved, so no subscriber of that event is called");
+                return;
+            }
+            publisherId = resolved.BaseId;
+            pubObj = resolved.BaseInstance;
+        }
         IReadOnlyList<MethodInfo>? subs = publisherKind switch
         {
             PublisherKindCodeunit => EventSubscriberPatches.GetCodeunitSubscribers(publisherId, eventMethodName),
@@ -208,8 +228,8 @@ public static partial class BcRuntime
             Console.Error.WriteLine($"[Dispatch] FIRE {declName}.{eventMethodName} → {subs.Count} subs");
 
         // Publisher application object (NavCodeunit) — for NavCodeunitHandle.Target lookup of subscriber instances.
-        var navMethodScopeType = NavMethodScopeType;
-        var pubObj = navMethodScopeType.GetProperty("ApplicationObject", BindingFlags.Public | BindingFlags.Instance)?
+        // For an extension's event, the base object: the Sender an IncludeSender subscriber receives.
+        pubObj ??= navMethodScopeType.GetProperty("ApplicationObject", BindingFlags.Public | BindingFlags.Instance)?
             .GetValue(publisherScope);
         if (pubObj == null) return;
 

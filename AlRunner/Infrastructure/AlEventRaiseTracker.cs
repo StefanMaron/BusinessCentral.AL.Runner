@@ -180,12 +180,28 @@ public static class AlEventRaiseTracker
     {
         var decl = scopeType.DeclaringType;
         if (decl == null) return null;
-        if (!BcRuntime.TryDecodeEventPublisherDeclType(decl.Name, out var kind, out var id)) return null;
+        if (!BcRuntime.TryDecodeEventPublisherDeclType(decl.Name, out var kind, out var id)
+            && !TryExtensionBase(decl.Name, out kind, out id))
+            return null;
         var name = scopeType.Name;
         const string suffix = "_Scope";
         var cut = name.LastIndexOf(suffix, StringComparison.Ordinal);
         if (cut <= 0) return null;
         return EventKey(NormalizeDispatchKind(kind), id, name.Substring(0, cut));
+    }
+
+    /// <summary>An extension class (<c>TableExtension&lt;N&gt;</c>, …) as the base object its events are
+    /// published under (#5004): the dispatcher's kind and the base id, when the source registry names
+    /// exactly one base.</summary>
+    internal static bool TryExtensionBase(string declTypeName, out string dispatchKind, out int baseId)
+    {
+        baseId = 0;
+        if (!BcRuntime.TryDecodeExtensionEventPublisherDeclType(declTypeName, out var extensionKind, out dispatchKind, out var extensionId))
+            return false;
+        var bases = AlRunner.Patches.RecordPatches.ExtensionBaseObjectIds(extensionKind, extensionId);
+        if (bases.Count != 1) return false;
+        baseId = bases[0];
+        return true;
     }
 
     internal static string EventKey(string kind, int id, string eventName) => $"ev|{kind}|{id}|{eventName}";

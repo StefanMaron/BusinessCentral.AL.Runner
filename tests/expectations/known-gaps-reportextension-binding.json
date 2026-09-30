@@ -1,0 +1,10 @@
+[
+  {
+    "codeunitId": 68508,
+    "CodeunitName": "Test Extension Declared Events",
+    "Method": "ReportExtEvent_SubscriberBoundToBaseReport_FiresOnceWithArgument",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4918",
+    "Note": "The test calls a procedure the reportextension declares through a Report variable of the base report. BC's NavReport.InvokeAsync looks the extension up in the report's reportExtensions list, which the runner does not fill (#4918: only the request-page half of RegisterReportExtension is run), so the call fails with 'A report extension object with ID 68505 was not found for the report object with ID 68504' before the event is raised. The event dispatch itself (#5004) is the same code path the table and page arms of this codeunit prove green. Added by agent stma-auto-1 with the #5004 fix; the fix for #4918 removes this file."
+  }
+]
