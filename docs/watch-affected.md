@@ -17,7 +17,8 @@ per-test data the next cycle selects from. Everything
 `affectedOnly` applies unchanged: per-test coverage, entered scopes and built objects, raised
 events and subscriber bindings, table keys, the packaged-dependency rule, the AL-output cache and
 generation rules, the widening to the tests that share state under the `--isolation` in effect
-(a selected test selects its whole codeunit under the default Codeunit isolation), and every reason
+(a selected test selects its whole codeunit under the default Codeunit isolation), the widening by
+[session state](server-mode.md#affectedonly-and-session-state) no isolation resets, and every reason
 a cycle is forced to run everything.
 
 `--include-failing` is the request's `includeFailing: true`: every test whose last result was
