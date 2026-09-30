@@ -1,0 +1,30 @@
+{
+  "id": "0d7e4b92-1f3a-4c65-a8b9-5e2c6f0d3a47",
+  "name": "Runner Tests Fixture - Tdd Two Folder Test",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "The test app of the #5037 two-folder --tdd reproducer.",
+  "description": "Depends on the sibling app folder and calls procedures its codeunit does not declare yet.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "6a2f9d31-4c8e-4b07-9e15-8d3c7a1b5f20",
+      "name": "Runner Tests Fixture - Tdd Two Folder App",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    }
+  ],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 65220,
+      "to": 65239
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

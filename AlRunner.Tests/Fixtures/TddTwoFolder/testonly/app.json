@@ -1,0 +1,30 @@
+{
+  "id": "a3c85e17-9b24-4f6d-8e01-7d2b4c9f6e58",
+  "name": "Runner Tests Fixture - Tdd Two Folder Test Only",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "The #5037 shape where the test app's only object is a test codeunit whose missing member --tdd cannot generate.",
+  "description": "Depends on the sibling app folder. Its one codeunit calls a procedure with a Text argument, which --tdd refuses to generate, so excluding the codeunit leaves nothing to emit; each test must still be reported FAILED naming the missing symbol.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "6a2f9d31-4c8e-4b07-9e15-8d3c7a1b5f20",
+      "name": "Runner Tests Fixture - Tdd Two Folder App",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    }
+  ],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 65240,
+      "to": 65259
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
