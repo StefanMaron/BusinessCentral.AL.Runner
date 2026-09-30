@@ -640,7 +640,7 @@ internal sealed class PageVariableTestField : ITestField
     public bool Enabled  => _page.ControlEnabled(_controlId);
     // NOT narrowed by the open mode, unlike LiveNavTestField: on an OpenView page, or a
     // RunPageMode = View one, BC answers Editable() = Yes for a page-variable control. Lookup
-    // mode on a list does narrow it (corpus 68015 and 68024, see TestPageControlEditable).
+    // mode on a List does narrow it (corpus 68015 and 68024, see TestPageControlEditable).
     public bool Editable
         => TestPageControlEditable.Combine(LookupEditable, _page.PageVariableControlEditable(_controlId));
 

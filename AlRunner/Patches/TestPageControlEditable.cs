@@ -34,13 +34,10 @@ internal static class TestPageControlEditable
 
     /// <summary>
     /// Whether <c>LookupMode(true)</c> makes the page read-only, every control included. It does
-    /// on a List and a Worksheet, and not on a Card, a Document or a ListPlus (corpus 68024
+    /// on a List, and not on a Card, a Document, a ListPlus or a Worksheet (corpus 68024
     /// "CER Tests", #5012; the List half also corpus 60309). A page whose type is unknown keeps
     /// the read-only answer the runner gave every lookup page before the type was measured.
     /// </summary>
     internal static bool LookupReadOnly(bool lookupMode, string? pageType)
-        => lookupMode && !EditableInLookup.Contains(pageType ?? "");
-
-    private static readonly System.Collections.Generic.HashSet<string> EditableInLookup =
-        new(StringComparer.OrdinalIgnoreCase) { "Card", "Document", "ListPlus" };
+        => lookupMode && (pageType == null || string.Equals(pageType, "List", StringComparison.OrdinalIgnoreCase));
 }

@@ -66,11 +66,12 @@ public sealed class TestPageControlEditableTests
     public void OpenMode_TheTestsModeWins(bool testOpenMode, bool hostOpenMode, bool lookupMode, bool expected)
         => Assert.Equal(expected, TestPageControlEditable.OpenMode(testOpenMode, hostOpenMode, lookupMode));
 
-    // #5012: lookup mode makes a List or a Worksheet read-only, and leaves a Card, a Document and
-    // a ListPlus page editable (corpus 68024).
+    // #5012: lookup mode makes a List read-only, and leaves a Card, a Document, a ListPlus and a
+    // Worksheet page editable (corpus 68024).
     [Theory]
     [InlineData("List", true)]
-    [InlineData("Worksheet", true)]
+    [InlineData("list", true)]
+    [InlineData("Worksheet", false)]
     [InlineData("Card", false)]
     [InlineData("card", false)]
     [InlineData("Document", false)]
