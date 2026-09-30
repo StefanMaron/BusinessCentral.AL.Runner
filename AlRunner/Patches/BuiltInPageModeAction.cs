@@ -73,6 +73,16 @@ internal static class RunnerPendingPageOpenMode
         _create = true;
     }
 
+    // A form made read-only by an action's RunPageMode = View, for the life of the form. Not
+    // consumed: a page-variable control asks it on every Editable() read.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, object> OpenedReadOnlyForms = new();
+
+    /// <summary>Record that <paramref name="form"/> was opened read-only by its open mode.</summary>
+    internal static void MarkOpenedReadOnly(object form) => OpenedReadOnlyForms.AddOrUpdate(form, form);
+
+    /// <summary>Whether <paramref name="form"/> was opened read-only by its open mode.</summary>
+    internal static bool OpenedReadOnly(object form) => OpenedReadOnlyForms.TryGetValue(form, out _);
+
     /// <summary>Record that <paramref name="form"/> was opened in Create mode.</summary>
     internal static void MarkOpensOnNewRecord(object form) => OpensOnNewRecordForms.AddOrUpdate(form, form);
 

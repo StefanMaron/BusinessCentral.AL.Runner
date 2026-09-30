@@ -21,4 +21,26 @@ internal static class TestPageControlEditable
     /// </summary>
     internal static bool Combine(Func<bool>? openModeEditable, bool controlEditable)
         => controlEditable && (openModeEditable?.Invoke() ?? true);
+
+    /// <summary>
+    /// The open mode a page's Rec-bound controls follow. The mode the test set wins; a page with
+    /// none follows its host when it is a part, and is read-only when run with
+    /// <c>LookupMode(true)</c>. Corpus codeunit 68024 "CER Tests" (#5012): an <c>OpenView</c>
+    /// host, or the host's View action, makes a part's Rec-bound control read-only, and so does
+    /// lookup mode on a list or a card handed to a <c>[ModalPageHandler]</c>.
+    /// </summary>
+    internal static bool OpenMode(bool? testOpenMode, bool? hostOpenMode, bool lookupMode)
+        => testOpenMode ?? ((hostOpenMode ?? true) && !lookupMode);
+
+    /// <summary>
+    /// Whether <c>LookupMode(true)</c> makes the page read-only, every control included. It does
+    /// on a List and a Worksheet, and not on a Card, a Document or a ListPlus (corpus 68024
+    /// "CER Tests", #5012; the List half also corpus 60309). A page whose type is unknown keeps
+    /// the read-only answer the runner gave every lookup page before the type was measured.
+    /// </summary>
+    internal static bool LookupReadOnly(bool lookupMode, string? pageType)
+        => lookupMode && !EditableInLookup.Contains(pageType ?? "");
+
+    private static readonly System.Collections.Generic.HashSet<string> EditableInLookup =
+        new(StringComparer.OrdinalIgnoreCase) { "Card", "Document", "ListPlus" };
 }

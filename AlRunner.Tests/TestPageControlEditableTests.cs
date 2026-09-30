@@ -44,4 +44,24 @@ public sealed class TestPageControlEditableTests
     [Fact]
     public void RecBoundField_WithoutAnOpenMode_StaysEditable()
         => Assert.True(new LiveNavTestField(null!, 1).Editable);
+
+    // #5012: the open mode of a page the test did not open itself.
+    [Theory]
+    [InlineData(null, true)]    // a handler's page, not a part, not a lookup
+    [InlineData(true, true)]    // a part whose host is editable
+    [InlineData(false, false)]  // a part whose host was opened with OpenView, or switched by View
+    public void OpenMode_NoTestMode_FollowsTheHost(bool? hostOpenMode, bool expected)
+        => Assert.Equal(expected, TestPageControlEditable.OpenMode(null, hostOpenMode, lookupMode: false));
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(true)]
+    public void OpenMode_NoTestMode_LookupModeIsReadOnly(bool? hostOpenMode)
+        => Assert.False(TestPageControlEditable.OpenMode(null, hostOpenMode, lookupMode: true));
+
+    [Theory]
+    [InlineData(true, false, true, true)]
+    [InlineData(false, true, false, false)]
+    public void OpenMode_TheTestsModeWins(bool testOpenMode, bool hostOpenMode, bool lookupMode, bool expected)
+        => Assert.Equal(expected, TestPageControlEditable.OpenMode(testOpenMode, hostOpenMode, lookupMode));
 }

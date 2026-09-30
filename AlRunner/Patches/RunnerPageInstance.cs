@@ -1001,6 +1001,17 @@ internal sealed partial class RunnerPageInstance
     internal bool ControlEditable(int controlId)
         => PageEditable && EvaluateProperty(DeclaredControlProperty(controlId, "Editable"), "Editable", controlId, PageElementKind.Control, atOpen: false);
 
+    /// <summary>
+    /// Editable for a control bound to a page VARIABLE. <c>CurrPage.Editable(false)</c> narrows it
+    /// as it narrows a Rec-bound control; the read-only an action's <c>RunPageMode = View</c> puts
+    /// on the form does not (corpus 68024 "CER Tests", #5012). Trap: the mode is remembered per
+    /// form, so a View-mode page whose AL then sets <c>CurrPage.Editable(false)</c> itself still
+    /// answers Yes here; no service tier has measured that combination.
+    /// </summary>
+    internal bool PageVariableControlEditable(int controlId)
+        => (PageEditable || RunnerPendingPageOpenMode.OpenedReadOnly(_form))
+           && EvaluateProperty(DeclaredControlProperty(controlId, "Editable"), "Editable", controlId, PageElementKind.Control, atOpen: false);
+
     internal bool ControlEnabled(int controlId)
         => EvaluateProperty(DeclaredControlProperty(controlId, "Enabled"), "Enabled", controlId, PageElementKind.Control, atOpen: false);
 

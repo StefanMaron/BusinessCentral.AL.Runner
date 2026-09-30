@@ -345,8 +345,12 @@ internal partial class LiveNavTestPage
     /// "RSV Tests" and 68024 "CER Tests" (#5002, #5012).
     /// </summary>
     internal bool OpenModeEditable
-        => _staticEditableOverride
-           ?? ((_editabilityHost?.OpenModeEditable ?? true) && _page?.LookupMode != true);
+        => TestPageControlEditable.OpenMode(
+            _staticEditableOverride, _editabilityHost?.OpenModeEditable, LookupReadOnly);
+
+    /// <summary>Whether lookup mode makes this page read-only — see <see cref="TestPageControlEditable.LookupReadOnly"/>.</summary>
+    internal bool LookupReadOnly
+        => TestPageControlEditable.LookupReadOnly(_page?.LookupMode == true, RecordPatches.TryGetAnyPageType(_pageId));
 
     /// <summary>
     /// The in-place half of a built-in page-mode action: the page already open changes mode,
