@@ -62,11 +62,11 @@ public static class AlSessionStateTracker
         NoteWrite(kind);
     }
 
-    /// <summary>Prepended to <c>ALSystemDate.ALWorkDate(NavSession)</c>, the getter every AL
-    /// <c>WorkDate()</c> reaches.</summary>
+    /// <summary>Prepended to <c>NavSession.get_WorkDate</c>: AL's <c>WorkDate()</c> and the
+    /// <c>'w'</c> token of Evaluate and date filters all read it.</summary>
     public static void NoteWorkDateRead() => NoteRead(WorkDateKind);
 
-    /// <summary>Prepended to <c>ALSystemDate.ALWorkDate(NavSession, NavDate)</c>, the setter.</summary>
+    /// <summary>Prepended to <c>NavSession.set_WorkDate</c>.</summary>
     public static void NoteWorkDateWrite() => NoteWrite(WorkDateKind);
 
     internal static string NumberSequenceKind(string name, bool companySpecific)

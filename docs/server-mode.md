@@ -652,7 +652,7 @@ Recorded per test, as keys in the test's events entry:
 
 | state | written by | read by |
 |---|---|---|
-| `WorkDate` | `WorkDate(<date>)` (Ncl `ALSystemDate.ALWorkDate(NavSession, NavDate)`) | `WorkDate()` (`ALSystemDate.ALWorkDate(NavSession)`) |
+| `WorkDate` | `WorkDate(<date>)` (Ncl `NavSession.set_WorkDate`) | `WorkDate()`, and the `'w'` token of `Evaluate` and date filters (`NavSession.get_WorkDate`, where every one of them reads it) |
 | a number sequence, by name and company scope | `Insert`, `Next`, `Range`, `Restart`, `Delete` | `Exists`, `Current`, `Next`, `Range`, `Restart`, `Insert` (whether it exists decides the error) |
 | a SingleInstance codeunit, by id | any use of it: resolving a variable to it, or entering one of its procedures or triggers | the same: its globals cannot be told apart by read or write |
 
