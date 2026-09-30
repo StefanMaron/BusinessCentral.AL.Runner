@@ -259,6 +259,91 @@ public sealed class TddModeTests : IDisposable
         Assert.Contains("MissingProcedure_ReportsFailedNotVanished", stdout);
     }
 
+    private static readonly string EnumArgsFixturePath = Path.Combine(
+        RepoRoot, "AlRunner.Tests", "Fixtures", "TddEnumArgs");
+
+    private static JsonElement FindTest(List<JsonElement> tests, string nameContains) =>
+        tests.Single(t => t.GetProperty("name").GetString()!.Contains(nameContains));
+
+    /// <summary>
+    /// #5038: an enum-value argument (<c>"Loyalty Tier"::Gold</c>) anchors an
+    /// <c>Enum "Loyalty Tier"</c> parameter, alone or next to a literal, and an enum declared
+    /// in a namespace the implementing codeunit does not import is written namespace-qualified.
+    /// "generated stub" in each message is the stub's own Error(): the test compiled and ran
+    /// as far as the call.
+    /// </summary>
+    [SkippableFact]
+    public void EnumValueArguments_GenerateEnumParameters()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var alCache = Path.Combine(_scratch, "al-cache-enum-args");
+        var (stdout, stderr, exit) = RunRunner(
+            "--tdd", $"--cache \"{alCache}\"", "--output-json", $"\"{EnumArgsFixturePath}\"");
+
+        Assert.Equal(1, exit);
+        using var doc = JsonDocument.Parse(stdout.Trim());
+        var tests = doc.RootElement.GetProperty("tests").EnumerateArray().ToList();
+        Assert.Equal(6, doc.RootElement.GetProperty("total").GetInt32());
+
+        void AssertGenerated(string testName, string signature, string procName)
+        {
+            var t = FindTest(tests, testName);
+            Assert.Equal("fail", t.GetProperty("status").GetString());
+            var msg = t.GetProperty("message").GetString()!;
+            Assert.Contains(signature, msg);
+            Assert.Contains($"{procName} is a generated stub", msg);
+            Assert.Contains($"Tdd Loyalty Cu: procedure {signature}", stderr);
+        }
+
+        AssertGenerated("EnumValueArg_GeneratesEnumParameter",
+            "\"CalcTier\"(Arg1: Enum \"Loyalty Tier\"): Integer", "CalcTier");
+        AssertGenerated("LiteralAndEnumValueArgs_GenerateBothParameters",
+            "\"CalcPoints\"(Arg1: Integer; Arg2: Enum \"Loyalty Tier\"): Integer", "CalcPoints");
+        AssertGenerated("EnumVariableArg_GeneratesEnumParameter",
+            "\"CalcByTier\"(Arg1: Enum \"Loyalty Tier\"): Integer", "CalcByTier");
+        AssertGenerated("NamespacedEnumValueArg_GeneratesQualifiedEnumParameter",
+            "\"CalcStatus\"(Arg1: Enum TddEnumArgs.Membership.\"Member Status\"): Integer", "CalcStatus");
+
+        // Field sibling: same resolver on an assignment's right-hand side. No "underlying
+        // result" means the test's own read-back of the enum value did not raise.
+        var field = FindTest(tests, "EnumValueAssignment_GeneratesEnumField");
+        Assert.Equal("fail", field.GetProperty("status").GetString());
+        var fieldMsg = field.GetProperty("message").GetString()!;
+        Assert.Contains("\"Tier\": Enum \"Loyalty Tier\"", fieldMsg);
+        Assert.DoesNotContain("underlying result", fieldMsg);
+        Assert.Contains("Tdd Loyalty Member: field \"Tier\": Enum \"Loyalty Tier\"", stderr);
+
+        Assert.Contains("--tdd: generated 5 member(s) this run:", stderr);
+    }
+
+    /// <summary>
+    /// #5038: an Option-member argument (<c>Choice::Beta</c>) still refuses — an Option
+    /// parameter needs a member list the call site does not fix.
+    /// </summary>
+    [SkippableFact]
+    public void OptionMemberArgument_RefusesRatherThanInvent()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var alCache = Path.Combine(_scratch, "al-cache-option-arg");
+        var (stdout, stderr, exit) = RunRunner(
+            "--tdd", $"--cache \"{alCache}\"", "--output-json", $"\"{EnumArgsFixturePath}\"");
+
+        Assert.Equal(1, exit);
+        using var doc = JsonDocument.Parse(stdout.Trim());
+        var tests = doc.RootElement.GetProperty("tests").EnumerateArray().ToList();
+
+        var option = FindTest(tests, "OptionMemberArg_RefusesNotGuesses");
+        Assert.Equal("fail", option.GetProperty("status").GetString());
+        Assert.Contains("did not compile", option.GetProperty("message").GetString());
+        Assert.Contains("CalcChoice", option.GetProperty("message").GetString());
+
+        var summaryIdx = stderr.IndexOf("--tdd: generated", StringComparison.Ordinal);
+        Assert.True(summaryIdx >= 0, "expected the --tdd generated-members summary line in stderr");
+        Assert.DoesNotContain("CalcChoice", stderr[summaryIdx..]);
+    }
+
     /// <summary>Criterion 12 — --tdd + --server is rejected, not silently ignored.</summary>
     [SkippableFact]
     public void Tdd_RejectedTogetherWithServer()

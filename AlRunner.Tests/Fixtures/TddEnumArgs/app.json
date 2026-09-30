@@ -1,0 +1,23 @@
+{
+  "id": "4e1b8c2a-7d3f-4a96-b5e0-2c9d1f6a8e73",
+  "name": "Runner Tests Fixture - Tdd Enum Args",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves --tdd (issue #5038) infers an Enum parameter type from an enum-value argument when generating a missing procedure, and still refuses an Option-member argument.",
+  "description": "One test codeunit per call shape: an enum-value argument, an integer literal next to an enum value, an enum-typed variable, and an enum declared in a namespace the implementing codeunit does not import. A fifth codeunit assigns an enum value to a missing table field. A sixth passes an Option member, which --tdd must still refuse.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 65100,
+      "to": 65199
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
