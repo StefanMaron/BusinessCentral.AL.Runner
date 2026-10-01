@@ -449,6 +449,7 @@ public class TestPagePartConstFilterLinkTests
         result.AssertPassed("Codeunit62544.ConstOnlyLink_FiltersWithoutFieldLink");
         result.AssertPassed("Codeunit62544.ConstTextLink_PinsCodeField");
         result.AssertNoFailures();
+        result.AssertOutputDoesNotContain("FAIL");
         result.AssertOutputDoesNotContain("testpage-part-link");
     }
 
@@ -473,5 +474,6 @@ public class TestPagePartConstFilterLinkTests
         result.AssertPassed("Codeunit62544.ConstLink_NewStampsAKeyConstantOntoTheNewRow");
         result.AssertPassed("Codeunit62544.FilterLink_NewDoesNotStampMultiValueExpression");
         result.AssertNoFailures();
+        result.AssertOutputDoesNotContain("FAIL");
     }
 }

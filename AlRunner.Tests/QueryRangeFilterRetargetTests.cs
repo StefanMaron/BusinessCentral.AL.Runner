@@ -298,7 +298,7 @@ public class QueryRangeFilterRetargetTests
 
         // Never silently pass a run that failed to get the test codeunit compiled or run.
         result.AssertOutputDoesNotContain("EMIT-EXCLUDED");
-        result.AssertOutputDoesNotContain("COMPILE FAIL");
+        Assert.Empty(result.CompilationErrors);
         // The #3508 / #2299 signature itself: if this string is present, the retargeting let an
         // expression through still keyed by the NCLMetaQueryColumn.
         //

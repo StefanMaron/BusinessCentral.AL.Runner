@@ -139,7 +139,7 @@ public class QueryJoinFilterElementGroupByTests
 
         var result = await SuiteServer.RunViaServer(WriteBundle());
 
-        result.AssertOutputDoesNotContain("COMPILE FAIL");
+        Assert.Empty(result.CompilationErrors);
         Assert.True(result.ExitCode == 0, $"runner exit {result.ExitCode}:\n{result}");
         result.AssertCounts(passed: 2, failed: 0, errors: 0);
     }

@@ -271,7 +271,7 @@ public class QueryHavingAndJoinAggregationProjectionTests
 
         // Never silently pass a run that failed to even get the test codeunit compiled/run.
         result.AssertOutputDoesNotContain("EMIT-EXCLUDED");
-        result.AssertOutputDoesNotContain("COMPILE FAIL");
+        Assert.Empty(result.CompilationErrors);
         // Neither surface may still throw the OOS reasons #2146 tracks turning into real
         // implementations — a regression back to "throw" would otherwise still show 3P/0F/0E
         // as long as every test asserterror'd correctly, so check the reason strings directly.

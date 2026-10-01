@@ -149,6 +149,7 @@ public sealed class TextSplitVariadicSeparatorsTests : IDisposable
         // the zero-separator Split(): two expanded-form candidates, nothing to prefer.
         result.AssertOutputDoesNotContain("CS0121");
         result.AssertOutputDoesNotContain("COMPILE-FAIL");
+        Assert.Empty(result.CompilationErrors);
         Assert.Equal(7, result.Total);
         foreach (var name in new[]
         {

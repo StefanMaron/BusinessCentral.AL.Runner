@@ -170,7 +170,7 @@ public class QueryWildcardFilterProjectionTests
 
         // Never silently pass a run that failed to even get the test codeunit compiled/run.
         result.AssertOutputDoesNotContain("EMIT-EXCLUDED");
-        result.AssertOutputDoesNotContain("COMPILE FAIL");
+        Assert.Empty(result.CompilationErrors);
         result.AssertOutputDoesNotContain("InvalidCastException");
         // All three tests must have run and passed — 3P/0F/0E is TestExecutor's own
         // per-bundle summary line (see CrossBundleModuleIdentityDedupTests for the same

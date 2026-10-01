@@ -323,7 +323,7 @@ public class QueryJoinFlowFieldColumnOosTests
         var result = await SuiteServer.RunViaServer(bundle);
 
         result.AssertOutputDoesNotContain("EMIT-EXCLUDED");
-        result.AssertOutputDoesNotContain("COMPILE FAIL");
+        Assert.Empty(result.CompilationErrors);
         result.AssertCounts(passed: 1, failed: 0, errors: 0);
     }
 
@@ -336,7 +336,7 @@ public class QueryJoinFlowFieldColumnOosTests
         var result = await SuiteServer.RunViaServer(bundle);
 
         result.AssertOutputDoesNotContain("EMIT-EXCLUDED");
-        result.AssertOutputDoesNotContain("COMPILE FAIL");
+        Assert.Empty(result.CompilationErrors);
         result.AssertCounts(passed: 1, failed: 0, errors: 0);
     }
 
@@ -349,7 +349,7 @@ public class QueryJoinFlowFieldColumnOosTests
         var result = await SuiteServer.RunViaServer(bundle);
 
         result.AssertOutputDoesNotContain("EMIT-EXCLUDED");
-        result.AssertOutputDoesNotContain("COMPILE FAIL");
+        Assert.Empty(result.CompilationErrors);
         result.AssertOutputDoesNotContain("query-join-flowfield-column-with-groupby-not-implemented");
         result.AssertCounts(passed: 1, failed: 0, errors: 0);
     }

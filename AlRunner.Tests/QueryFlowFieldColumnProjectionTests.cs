@@ -175,7 +175,7 @@ public class QueryFlowFieldColumnProjectionTests
 
         // Never silently pass a run that failed to even get the test codeunit compiled/run.
         result.AssertOutputDoesNotContain("EMIT-EXCLUDED");
-        result.AssertOutputDoesNotContain("COMPILE FAIL");
+        Assert.Empty(result.CompilationErrors);
         // The two crashes this issue reports, both must be gone.
         result.AssertOutputDoesNotContain("NavSqlStatementHelper.ConvertToSqlIdentifier");
         result.AssertOutputDoesNotContain("NavNCLConversionException");

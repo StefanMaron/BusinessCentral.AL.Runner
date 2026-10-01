@@ -105,9 +105,10 @@ means the request never wrote it. Three things follow:
   assertion. An empty slice that was read up to the marker is an answer, not a missing one: a
   clean request writes nothing to stderr, so the assertion also reads the protocol lines, which
   always carry at least the summary.
-- `"FAIL"` and `"ERROR"` are CLI line prefixes. The protocol spells a failure `"status":"fail"`,
-  so a fact that meant "no failure" calls `AssertNoFailures()`, and the absence call is an
-  addition for the other text.
+- `"FAIL"`, `"ERROR"` and `"COMPILE FAIL"` are CLI line texts (`COMPILE FAIL` is only in the CLI's reporter). The protocol spells a failure `"status":"fail"`,
+  so a fact that meant "no failure" calls `AssertNoFailures()` and, for a compile error,
+  `Assert.Empty(result.CompilationErrors)`. An absence call on the CLI text stays only as an
+  addition that also covers stderr.
 - A request in which a test timed out (`errorKind: "timeout"`, `ServerRunResult.TimedOut`) gets
   no stderr slice: the runner abandons that test's thread and it may write after the marker
   (#5171). `StdErr` and the two output assertions throw, and the pool discards that server

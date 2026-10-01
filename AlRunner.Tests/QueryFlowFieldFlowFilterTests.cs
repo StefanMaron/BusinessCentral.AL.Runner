@@ -304,7 +304,7 @@ public class QueryFlowFieldFlowFilterTests
 
         // Never silently pass a run that never got the test codeunit compiled and executed.
         result.AssertOutputDoesNotContain("EMIT-EXCLUDED");
-        result.AssertOutputDoesNotContain("COMPILE FAIL");
+        Assert.Empty(result.CompilationErrors);
         // The crash this issue reports, by the BC frame it appeared in.
         result.AssertOutputDoesNotContain("GetFilterFromMetaFilterCollection");
         result.AssertOutputDoesNotContain("NullReferenceException");

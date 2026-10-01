@@ -223,7 +223,6 @@ public class SourceTableViewApplicationTests
 
         // Never silently pass a run that failed to get the test codeunit compiled/run.
         result.AssertOutputDoesNotContain("EMIT-EXCLUDED");
-        result.AssertOutputDoesNotContain("COMPILE FAIL");
         Assert.Empty(result.CompilationErrors);
         // Both tests must have run and passed.
         result.AssertCounts(passed: 2, failed: 0, errors: 0);

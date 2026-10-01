@@ -222,7 +222,7 @@ public class SuiteServerTests
     public async Task ATimedOutRequest_RefusesItsStderr_AndTheServerIsNotHandedOutAgain()
     {
         TestArtifacts.SkipIfMissing();
-        var pool = new ServerPool(capacity: 1, requestsPerServer: 40,
+        await using var pool = new ServerPool(capacity: 1, requestsPerServer: 40,
             serverEnv: new Dictionary<string, string> { ["AL_RUNNER_TEST_TIMEOUT_SEC"] = "1" });
         var slow = WriteBundle("sst-timeout", passBody: "Sleep(5000);", failBody: "");
         var fast = WriteBundle("sst-after-timeout", passBody: "", failBody: "");
@@ -254,7 +254,7 @@ public class SuiteServerTests
     {
         TestArtifacts.SkipIfMissing();
         var bundle = WriteBundle("sst-slice", passBody: "", failBody: "");
-        var pool = new ServerPool(capacity: 1, requestsPerServer: 40, serverEnv: null);
+        await using var pool = new ServerPool(capacity: 1, requestsPerServer: 40, serverEnv: null);
 
         var first = await pool.RunAsync(RunTestsRequest(bundle), null, SharedServerCanary.RunAsync);
         var second = await pool.RunAsync(RunTestsRequest(bundle), null, SharedServerCanary.RunAsync);
@@ -265,6 +265,36 @@ public class SuiteServerTests
             Assert.DoesNotContain("[server] request", r.StdErr);
             r.AssertOutputDoesNotContain("[server] request");
         }
+    }
+
+    /// <summary>
+    /// The positive control for the slice (the other tests of it only show what must NOT be in one).
+    /// A pool whose servers run with <c>AL_RUNNER_VERBOSE=1</c> writes diagnostics to stderr on every
+    /// request; each request's slice must hold its own lines. A slice that were always empty would let
+    /// every absence assertion pass, and a slice that were the whole capture would hold more lines
+    /// for the second request than for the first.
+    /// </summary>
+    [SkippableFact]
+    public async Task TheStderrSlice_HoldsTheLinesTheRequestWrote_AndOnlyThose()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = WriteBundle("sst-verbose", passBody: "", failBody: "");
+        await using var pool = new ServerPool(capacity: 1, requestsPerServer: 40,
+            serverEnv: new Dictionary<string, string> { ["AL_RUNNER_VERBOSE"] = "1" });
+        const string Line = "[Subscribers] registered";
+
+        var first = await pool.RunAsync(RunTestsRequest(bundle), null, SharedServerCanary.RunAsync);
+        var second = await pool.RunAsync(RunTestsRequest(bundle), null, SharedServerCanary.RunAsync);
+
+        Assert.Equal(1, pool.SpawnCount);
+        first.AssertOutputContains(Line);
+        second.AssertOutputContains(Line);
+        Assert.ThrowsAny<Xunit.Sdk.XunitException>(() => first.AssertOutputDoesNotContain(Line));
+        var firstCount = System.Text.RegularExpressions.Regex.Matches(first.StdErr, System.Text.RegularExpressions.Regex.Escape(Line)).Count;
+        var secondCount = System.Text.RegularExpressions.Regex.Matches(second.StdErr, System.Text.RegularExpressions.Regex.Escape(Line)).Count;
+        Assert.True(secondCount < 2 * firstCount, $"second request's slice holds {secondCount} lines, the first's {firstCount}: it carries the first's");
+        Assert.DoesNotContain("[server] request", first.StdErr);
+        Assert.DoesNotContain("[server] request", second.StdErr);
     }
 
     private static string RunTestsRequest(string bundle) => System.Text.Json.JsonSerializer.Serialize(new

@@ -70,7 +70,7 @@ public static class SuiteServer
 /// instance is <see cref="SuiteServer"/>'s; a test of the pool's own rules makes another, which can
 /// start its servers with environment (a short test timeout) the shared one must never carry.
 /// </summary>
-internal sealed class ServerPool
+internal sealed class ServerPool : IAsyncDisposable
 {
     private readonly int _requestsPerServer;
     private readonly IReadOnlyDictionary<string, string>? _serverEnv;
@@ -90,6 +90,17 @@ internal sealed class ServerPool
             foreach (var p in _live.Keys)
                 try { p.Server.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(10)); } catch { }
         };
+    }
+
+    /// <summary>Stops every server this pool started and has not discarded. For a pool a test made itself.</summary>
+    public async ValueTask DisposeAsync()
+    {
+        foreach (var p in _live.Keys)
+        {
+            _live.TryRemove(p, out _);
+            await p.Server.DisposeAsync();
+            try { Directory.Delete(p.CanaryBundle, recursive: true); } catch { }
+        }
     }
 
     /// <summary>Server processes this pool has started.</summary>
