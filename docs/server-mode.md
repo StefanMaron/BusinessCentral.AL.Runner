@@ -1480,3 +1480,4 @@ error · `3` compilation error. In server mode the code rides on each `runTests`
 response's `exitCode`; the process itself exits `0` on `shutdown`/EOF. A request whose company
 initialization did not complete reports `2` on that response — the same escalation the CLI
 makes, and for the same reason: a client reading only `exitCode` must not read the run as clean.
+A request whose `test` pattern selected no test reports `6`, as the CLI does ([`test` and `excludeTests`](#test-and-excludetests)).
