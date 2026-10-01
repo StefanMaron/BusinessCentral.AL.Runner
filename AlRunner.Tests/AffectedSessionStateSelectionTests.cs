@@ -99,6 +99,75 @@ public class AffectedSessionStateSelectionTests
         Assert.Equal(new[] { "C.Reader", "C.SeqWriter", "C.WorkDateWriterReadingSeq" }, Sorted(selected));
     }
 
+    // #5057: the last error is replaced whole by every write, so a reader sees only the nearest
+    // earlier writer. Raising any error writes it, so every-earlier-writer would select most tests.
+    private static readonly string LeW = AlSessionStateTracker.WriteKey(AlSessionStateTracker.LastErrorKind);
+    private static readonly string LeR = AlSessionStateTracker.ReadKey(AlSessionStateTracker.LastErrorKind);
+
+    [Fact]
+    public void Changed_LastError_BringsOnlyTheNearestEarlierWriter()
+    {
+        var order = new[] { "C.LeW1", "C.LeW2", "C.Changed", "C.LeReader" };
+        var recorded = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal)
+        {
+            ["C.LeW1"] = Keys(LeW),
+            ["C.LeW2"] = Keys(LeW),
+            ["C.Changed"] = Keys(),
+            ["C.LeReader"] = Keys(LeR),
+        };
+        var selected = Keys("C.Changed");
+        AffectedSessionStateSelection.Widen(order, selected, recorded, true, false, false);
+        Assert.Equal(new[] { "C.Changed", "C.LeReader", "C.LeW2" }, Sorted(selected));
+    }
+
+    /// <summary>A changed test recorded as writing the last error may have stopped writing it, so the
+    /// walk does not stop there; a test with no record does not stop it either.</summary>
+    [Fact]
+    public void Changed_TheWalkPassesTheChangedTestAndUnrecordedTests()
+    {
+        var order = new[] { "C.LeW1", "C.NoRecord", "C.Changed", "C.LeReader" };
+        var recorded = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal)
+        {
+            ["C.LeW1"] = Keys(LeW),
+            ["C.Changed"] = Keys(LeW),
+            ["C.LeReader"] = Keys(LeR),
+        };
+        var selected = Keys("C.Changed");
+        AffectedSessionStateSelection.Widen(order, selected, recorded, true, false, false);
+        Assert.Equal(new[] { "C.Changed", "C.LeReader", "C.LeW1", "C.NoRecord" }, Sorted(selected));
+    }
+
+    [Fact]
+    public void NoChange_ALastErrorReader_BringsOnlyTheNearestEarlierWriter()
+    {
+        var order = new[] { "C.LeW1", "C.LeW2", "C.Plain", "C.LeReader" };
+        var recorded = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal)
+        {
+            ["C.LeW1"] = Keys(LeW),
+            ["C.LeW2"] = Keys(LeW),
+            ["C.Plain"] = Keys(),
+            ["C.LeReader"] = Keys(LeR),
+        };
+        var selected = Keys("C.LeReader");
+        AffectedSessionStateSelection.Widen(order, selected, recorded, false, false, false);
+        Assert.Equal(new[] { "C.LeReader", "C.LeW2" }, Sorted(selected));
+    }
+
+    [Fact]
+    public void ALaterBundle_PullsOnlyTheBundlesLastLastErrorWriter()
+    {
+        var order = new[] { "C.LeW1", "C.LeW2", "C.Plain" };
+        var recorded = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal)
+        {
+            ["C.LeW1"] = Keys(LeW),
+            ["C.LeW2"] = Keys(LeW),
+            ["C.Plain"] = Keys(),
+        };
+        var selected = Keys();
+        AffectedSessionStateSelection.Widen(order, selected, recorded, false, false, laterBundleFollows: true);
+        Assert.Equal(new[] { "C.LeW2" }, Sorted(selected));
+    }
+
     // #5069: a re-recording keeps the session-state keys the previous record had, and only those.
     [Fact]
     public void WithPreviousState_KeepsPreviousStateKeys_AndDropsPreviousOtherKeys()

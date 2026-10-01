@@ -1,18 +1,28 @@
 // AffectedSessionStateSelection — #5050: widens an affectedOnly selection to the tests linked to a
 // selected one through session state (WorkDate, number sequences, SingleInstance codeunits, the
-// last error, static .NET state), which
-// survives every test isolation. Rules and why they are this wide:
-// docs/server-mode.md#affectedonly-and-session-state.
+// last error, static .NET state), which survives every test isolation. Rules and why they are
+// this wide: docs/server-mode.md#affectedonly-and-session-state.
 namespace AlRunner.Infrastructure;
 
 internal static class AffectedSessionStateSelection
 {
     /// <summary>
+    /// Kinds whose every write replaces the whole value without reading the old one (#5057), so a
+    /// reader sees only the nearest earlier writer's value and only that writer is linked. Every
+    /// NavSession member storing the last-error fields assigns them outright (bc284).
+    /// </summary>
+    internal static readonly string[] OverwriteKinds = { AlSessionStateTracker.LastErrorKind };
+
+    private static bool IsOverwriteWrite(string key)
+        => OverwriteKinds.Any(k => string.Equals(key, AlSessionStateTracker.WriteKey(k), StringComparison.Ordinal));
+
+    /// <summary>
     /// Adds to <paramref name="selected"/> the tests linked to it through session state. With a
     /// change in this bundle or an earlier one: every test after the first selected one that read
-    /// session state an earlier test left, and every test before the last selected one that wrote
-    /// session state. Without one: the writers of what each selected test read, before it.
-    /// Returns how many tests it added.
+    /// session state an earlier test left, every test before the last selected one that wrote
+    /// session state other than an overwrite kind, and the nearest earlier writer of each overwrite
+    /// kind before every selected test. Without one: the writers of what each selected test read,
+    /// before it (for an overwrite kind, the nearest). Returns how many tests it added.
     /// </summary>
     /// <param name="discovered">Test keys in execution order (TestExecutor.DiscoverTests).</param>
     /// <param name="recorded">Each test's recorded keys from the baseline; a missing entry is
@@ -29,6 +39,13 @@ internal static class AffectedSessionStateSelection
         var before = selected.Count;
         HashSet<string>? Record(string t) => recorded != null && recorded.TryGetValue(t, out var r) ? r : null;
         bool Any(string t, string prefix) => Record(t) is not { } r || r.Any(k => k.StartsWith(prefix, StringComparison.Ordinal));
+        // For a nearest-writer walk, a test selected before widening counts as unrecorded when the
+        // request changed code: it may be the changed one, and may have stopped writing.
+        var changedTests = changed || earlierBundleChanged
+            ? new HashSet<string>(selected, StringComparer.Ordinal) : new HashSet<string>(StringComparer.Ordinal);
+        HashSet<string>? WalkRecord(string t) => changedTests.Contains(t) ? null : Record(t);
+        bool WritesAccumulating(string t) => Record(t) is not { } r
+            || r.Any(k => k.StartsWith(AlSessionStateTracker.WritePrefix, StringComparison.Ordinal) && !IsOverwriteWrite(k));
 
         if (earlierBundleChanged || (changed && selected.Count > 0))
         {
@@ -39,7 +56,11 @@ internal static class AffectedSessionStateSelection
                 if (Any(discovered[i], AlSessionStateTracker.ReadPrefix)) selected.Add(discovered[i]);
             var last = LastIndex(discovered, selected);
             for (var i = 0; i < last; i++)
-                if (Any(discovered[i], AlSessionStateTracker.WritePrefix)) selected.Add(discovered[i]);
+                if (WritesAccumulating(discovered[i])) selected.Add(discovered[i]);
+            // A changed or unrecorded test may read any overwrite kind; any other, what it read.
+            AddNearestOverwriters(discovered, selected, WalkRecord, i => WalkRecord(discovered[i]) is { } r
+                ? OverwriteKinds.Where(k => r.Contains(AlSessionStateTracker.ReadKey(k)))
+                : OverwriteKinds);
         }
         else if (selected.Count > 0)
         {
@@ -59,15 +80,58 @@ internal static class AffectedSessionStateSelection
                     selected.Add(w);
                     pending.Enqueue(j);
                 }
+                foreach (var j in NearestOverwriters(discovered, i, Record,
+                             OverwriteKinds.Where(k => reads == null || reads.Contains(AlSessionStateTracker.ReadKey(k)))))
+                    if (selected.Add(discovered[j])) pending.Enqueue(j);
             }
         }
-        // SingleInstance codeunits are reset per bundle; every other kind is not.
+        // SingleInstance codeunits are reset per bundle; every other kind is not. Of an overwrite
+        // kind, only the bundle's last writer reaches the next bundle.
         if (laterBundleFollows)
+        {
             foreach (var t in discovered)
                 if (Record(t) is not { } r || r.Any(k => k.StartsWith(AlSessionStateTracker.WritePrefix, StringComparison.Ordinal)
+                        && !IsOverwriteWrite(k)
                         && !k.StartsWith(AlSessionStateTracker.WriteKey("SingleInstance|"), StringComparison.Ordinal)))
                     selected.Add(t);
+            foreach (var j in NearestOverwriters(discovered, discovered.Count, WalkRecord, OverwriteKinds))
+                selected.Add(discovered[j]);
+        }
         return selected.Count - before;
+    }
+
+    // Before every selected test (and every one this adds), the nearest earlier writer of each kind
+    // `kindsFor` names for it.
+    private static void AddNearestOverwriters(IReadOnlyList<string> discovered, HashSet<string> selected,
+        Func<string, HashSet<string>?> record, Func<int, IEnumerable<string>> kindsFor)
+    {
+        var pending = new Queue<int>();
+        for (var i = 0; i < discovered.Count; i++)
+            if (selected.Contains(discovered[i])) pending.Enqueue(i);
+        while (pending.Count > 0)
+        {
+            var i = pending.Dequeue();
+            foreach (var j in NearestOverwriters(discovered, i, record, kindsFor(i)))
+                if (selected.Add(discovered[j])) pending.Enqueue(j);
+        }
+    }
+
+    // For each kind, walking back from `before`: every test with no record (it may or may not write
+    // it) up to and including the nearest one whose record writes it.
+    private static IEnumerable<int> NearestOverwriters(IReadOnlyList<string> discovered, int before,
+        Func<string, HashSet<string>?> record, IEnumerable<string> kinds)
+    {
+        foreach (var kind in kinds)
+        {
+            var write = AlSessionStateTracker.WriteKey(kind);
+            for (var j = before - 1; j >= 0; j--)
+            {
+                var r = record(discovered[j]);
+                if (r != null && !r.Contains(write)) continue;
+                yield return j;
+                if (r != null) break;
+            }
+        }
     }
 
     /// <summary>
@@ -88,14 +152,17 @@ internal static class AffectedSessionStateSelection
 
     // Whether a test with record `writer` wrote a kind a test with record `reader` read inherited.
     // A missing record on either side answers yes.
+    // Overwrite kinds are left to NearestOverwriters.
     private static bool WritesAnyOf(HashSet<string>? writer, HashSet<string>? reader)
     {
         if (writer == null) return true;
-        if (reader == null) return writer.Any(k => k.StartsWith(AlSessionStateTracker.WritePrefix, StringComparison.Ordinal));
+        if (reader == null) return writer.Any(k => k.StartsWith(AlSessionStateTracker.WritePrefix, StringComparison.Ordinal) && !IsOverwriteWrite(k));
         foreach (var k in reader)
-            if (k.StartsWith(AlSessionStateTracker.ReadPrefix, StringComparison.Ordinal)
-                && writer.Contains(AlSessionStateTracker.WritePrefix + k.Substring(AlSessionStateTracker.ReadPrefix.Length)))
-                return true;
+        {
+            if (!k.StartsWith(AlSessionStateTracker.ReadPrefix, StringComparison.Ordinal)) continue;
+            var w = AlSessionStateTracker.WritePrefix + k.Substring(AlSessionStateTracker.ReadPrefix.Length);
+            if (!IsOverwriteWrite(w) && writer.Contains(w)) return true;
+        }
         return false;
     }
 
