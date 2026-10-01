@@ -88,12 +88,12 @@ instead of waiting for the whole bundle — followed by exactly one terminal
 `summary` line. A request naming multiple `sourcePaths` runs all of them and
 streams `test` lines across all of them before the one final `summary`.
 
-A `sourcePaths` entry that only **contains** apps (no `app.json` of its own, an `app.json` in
+A `sourcePaths` entry that only **contains** apps (no `app.json` of its own, a readable `app.json` in
 every suite below it) is served as one bundle per app, so each app compiles under its own
 `app.json` — its dependencies, `propagateDependencies`, `internalsVisibleTo` and
 `preprocessorSymbols` — as the CLI's per-app compile does (#5107). Loose `.al` files at such a
 container's root, next to the apps, are not compiled, which is what the CLI does with them too.
-A container holding a suite without an `app.json` is still compiled as one module (#5119).
+A container holding a suite without an `app.json`, or with one that cannot be read, is still compiled as one module (#5119).
 `--dap` does not do this: a debug session serves one module, so a container stays one bundle
 there (#5121).
 
