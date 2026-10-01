@@ -948,6 +948,12 @@ internal sealed partial class RunnerPageInstance
     /// </summary>
     private string? DeclaredControlProperty(int controlId, string propertyName)
     {
+        // A source pageextension's modify() replaces the base declaration, on a source-compiled
+        // and a precompiled base page alike: the MasterPage carries no extension delta (#5139).
+        // Not on a request page, whose id is a REPORT id the page-extension index does not key.
+        if (!IsRequestPage && RecordPatches.SourcePageExtensionModifiedProperty(_pageId, controlId, propertyName, isAction: false) is { } modified)
+            return modified;
+
         if (ControlDefinition(controlId) is { } definition)
             return propertyName switch
             {
@@ -1207,6 +1213,9 @@ internal sealed partial class RunnerPageInstance
     /// </summary>
     private string? DeclaredActionProperty(int actionId, string propertyName)
     {
+        if (!IsRequestPage && RecordPatches.SourcePageExtensionModifiedProperty(_pageId, actionId, propertyName, isAction: true) is { } modified)
+            return modified;
+
         if (ActionDefinition(actionId) is { } definition)
             return propertyName switch
             {
