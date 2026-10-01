@@ -197,6 +197,32 @@ public class AffectedEventSelectionTests
                     AffectedEventSelection.LongLivedObjectKey(held)).ForceFullReason);
     }
 
+    // #5083 — UnkeyedKindChange. The server-level proof is ServerAffectedSelectionObjectKindTests.
+    [Fact]
+    public void UnkeyedKind_ForcesFull_NamingTheObjectAndItsKind_KeyedAndNoEffectKindsDoNot()
+    {
+        static string? Reason(params AffectedObjectId[] changed) => AffectedEventSelection.UnkeyedKindChange(changed);
+        static AffectedObjectId O(string kind, int? id, string name) => new(kind, id, name);
+
+        Assert.Null(Reason());
+        Assert.Null(Reason(
+            O("Codeunit", 1, "C"), O("Page", 2, "P"), O("Report", 3, "R"), O("Query", 4, "Q"),
+            O("XmlPort", 5, "X"), O("Table", 6, "T"), O("TableExtension", 7, "TE"), O("PageExtension", 8, "PE"),
+            O("Interface", null, "I")));
+
+        Assert.Equal("Enum 60741 changed, and which tests read an enum's values, captions or implementations is not recorded",
+            Reason(O("Codeunit", 1, "C"), O("Enum", 60741, "E")));
+        Assert.StartsWith("EnumExtension 9 changed, and which tests read an enum's",
+            Reason(O("EnumExtension", 9, "EE")));
+        Assert.Equal("ReportExtension 10 changed, and no test recording holds the use of this kind of object (ReportExtension)",
+            Reason(O("ReportExtension", 10, "RE")));
+        // A kind nothing here knows, and one declared by name only: never "changed but selects nothing".
+        Assert.Equal("SomeFutureKind 11 changed, and no test recording holds the use of this kind of object (SomeFutureKind)",
+            Reason(O("SomeFutureKind", 11, "F")));
+        Assert.Equal("Profile Kind Profile changed, and no test recording holds the use of this kind of object (Profile)",
+            Reason(O("Profile", null, "Kind Profile")));
+    }
+
     // #5011 — a whole-object change to an instance no one test built.
     [Fact]
     public void LongLivedObject_ForcesFullOnWholeObjectChange_NotOnANarrowedOne()

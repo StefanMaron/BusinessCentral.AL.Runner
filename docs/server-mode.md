@@ -913,6 +913,28 @@ An event an extension declares, and the subscribers it contains, are selected as
 recorded before #5025 has no `pext|` keys, so a pageextension removed since then
 forces a full run.
 
+#### affectedOnly and object kinds no test records
+
+A changed object selects tests only through something a recording run kept: an
+instance built or a procedure entered (codeunits, pages, reports, queries, xmlports),
+a record held (tables and tableextensions), or a base page opened (pageextensions).
+Every other kind changed in the request's own sources forces a full run, with a
+`reason` naming the object and its kind (#5083), so a change is never one that
+selects nothing while a full run would fail a test. This covers:
+
+- an `Enum` or `EnumExtension`: no test records reading an enum's values, captions or
+  implementations. A caption, a value's name, an added value or an `Implementation`
+  change keeps every ordinal and changes no other object, yet changes what
+  `Format`, `Ordinals()` or an interface call on the enum answers;
+- a `ReportExtension`, a `PermissionSet` or `PermissionSetExtension`, a `Profile`,
+  `PageCustomization`, `ControlAddIn`, `Entitlement`, and any kind not listed above.
+
+An `Interface` is the exception: it has no code of its own, and a change to it that
+matters changes its implementers or callers too, which are keyed (or no longer
+compile). The same two lists decide what a dependency's changed object does under
+"affectedOnly across environments", where an unkeyed kind makes the diff approximate
+instead.
+
 #### affectedOnly and packaged dependencies
 
 A common layout is `App/` (source), `App.Test/` (source) and
@@ -1060,7 +1082,8 @@ full run.
   record of its environment (written by a runner before #5028), the current closure
   could not be read, a changed package has no AL source and does carry compiled code, a
   changed file declares no object, a changed object is of a kind no recording holds
-  (an enum, a permission set, a report extension, …), a changed object's
+  (an enum, a permission set, a report extension, …; see "affectedOnly and object
+  kinds no test records"), a changed object's
   instance or record was held outside any one test, or the BC build changed. What the
   diff did resolve still selects its tests. Tests that reached only what could not be
   attributed may be skipped; the account holder chose that over a full run (#5028).
