@@ -19,6 +19,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **server:** a floor-bundle request leaves the next request unable to read its own AL table
 - **runtime:** raising an external business event completes and delivers nothing
 - **testpage:** resolve a part FIELD SubPageLink through its Provider
 - **session:** ServiceInstanceId() and SessionId() answer positive ids, as a service tier does
