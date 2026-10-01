@@ -163,32 +163,69 @@ public static partial class RecordPatches
     // given extension delta documents; where two state different texts, the one BC applies last.
     internal static string? ModifiedControlText(IEnumerable<(int ExtensionId, string Xml)> documents,
         int controlId, string property, string api, string objectKind)
+        => ModifiedTargetAttribute(documents, "ControlChange", controlId, property + "ML",
+            raw => EnuMultiLanguageText.ReadEnu(raw, firstIfNoEnu: false), api, objectKind);
+
+    /// <summary>
+    /// The raw <c>Editable</c>, <c>Visible</c> or <c>Enabled</c> a source-compiled pageextension's
+    /// <c>modify()</c> gives control <paramref name="controlId"/> of page <paramref name="pageId"/>
+    /// (a <c>ControlChange</c>), or action <paramref name="controlId"/> (an <c>ActionChange</c>,
+    /// <paramref name="isAction"/>), or null when none does (#5139). The value is the emitted
+    /// expression spelling (<c>not px&lt;ext&gt;px&lt;ext&gt;Var</c>), resolved like a declared one.
+    /// It replaces whatever the base control declares, whether the base page is source-compiled or
+    /// precompiled: corpus 68620 "PXME Tests".
+    /// </summary>
+    internal static string? SourcePageExtensionModifiedProperty(int pageId, int controlId, string property, bool isAction)
     {
-        var attribute = property + "ML";
+        var extensionIds = GetPageExtensionIdsForPage(pageId).Where(_parsedPageExtensions.ContainsKey).ToList();
+        if (extensionIds.Count == 0) return null;
+        var api = $"TestPage {property} on page {pageId} {(isAction ? "action" : "control")} {controlId}";
+        return ModifiedTargetAttribute(SourcePageExtensionDeltaDocuments(pageId, extensionIds, api),
+            isAction ? "ActionChange" : "ControlChange", controlId, property, raw => raw, api, "pageextension");
+    }
+
+    private static string? ModifiedTargetAttribute(IEnumerable<(int ExtensionId, string Xml)> documents,
+        string changeElement, int targetId, string attribute, Func<string, string?> read, string api, string objectKind)
+    {
         string? value = null;
         int? from = null;
         foreach (var (extId, xml) in documents)
         {
-            var doc = new XmlDocument();
-            doc.LoadXml(xml);
-            foreach (XmlNode node in doc.DocumentElement!.ChildNodes)
+            if (!_changesByDeltaDocument.GetValue(xml, IndexChanges)
+                    .TryGetValue((changeElement, targetId, attribute), out var raw)) continue;
+            var stated = read(raw);
+            if (from is { } earlier && !string.Equals(value, stated, StringComparison.Ordinal))
             {
-                if (node is not XmlElement e || e.Name != "ControlChange" || !e.HasAttribute(attribute)
-                    || ReadBcAttrInt(e, "TargetID") != controlId) continue;
-                var stated = EnuMultiLanguageText.ReadEnu(e.GetAttribute(attribute), firstIfNoEnu: false);
-                if (from is { } earlier && !string.Equals(value, stated, StringComparison.Ordinal))
-                {
-                    var later = LaterAppliedExtension(objectKind, earlier, extId)
-                        ?? throw TestPageShapeGap.ControlProperty(api,
-                            $"{objectKind}s {earlier} and {extId} both modify it, to '{value}' and '{stated}', and neither's "
-                            + "app is known to depend on the other's, so which one BC applies cannot be told (#4928)");
-                    if (later == earlier) continue;
-                }
-                value = stated;
-                from = extId;
+                var later = LaterAppliedExtension(objectKind, earlier, extId)
+                    ?? throw TestPageShapeGap.ControlProperty(api,
+                        $"{objectKind}s {earlier} and {extId} both modify it, to '{value}' and '{stated}', and neither's "
+                        + "app is known to depend on the other's, so which one BC applies cannot be told (#4928)");
+                if (later == earlier) continue;
             }
+            value = stated;
+            from = extId;
         }
         return value;
+    }
+
+    // Keyed on the registry's own string, as _partsByDeltaDocument: a property read happens on
+    // every TestPage Editable/Visible/Enabled check, so the document is parsed once, not per read.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<string,
+        Dictionary<(string Element, int TargetId, string Attribute), string>> _changesByDeltaDocument = new();
+
+    private static Dictionary<(string Element, int TargetId, string Attribute), string> IndexChanges(string deltaXml)
+    {
+        var index = new Dictionary<(string, int, string), string>();
+        var doc = new XmlDocument();
+        doc.LoadXml(deltaXml);
+        foreach (XmlNode node in doc.DocumentElement!.ChildNodes)
+        {
+            if (node is not XmlElement e || e.Name is not ("ControlChange" or "ActionChange")) continue;
+            var target = ReadBcAttrInt(e, "TargetID");
+            foreach (XmlAttribute a in e.Attributes)
+                index[(e.Name, target, a.Name)] = a.Value;
+        }
+        return index;
     }
 
     // Of two source extensions modifying one property, the one BC applies last: the dependent
