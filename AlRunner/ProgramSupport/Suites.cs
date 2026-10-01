@@ -307,7 +307,8 @@ internal static partial class ProgramSupport
     /// compiles a source path as one module; given a container it merged every app into a module
     /// with no identity, where nothing is narrowed and earlier requests' modules collide.
     /// Left as given: a path that is itself an app, one inside an app, and any container holding a
-    /// suite with no app.json (the CLI merges those into one fallback module; see #5119).
+    /// suite with no app.json or an unreadable one (the CLI merges those into one fallback module;
+    /// see #5119).
     /// </summary>
     internal static string[] ExpandAppContainerRoots(string[] sourcePaths)
     {
@@ -320,7 +321,10 @@ internal static partial class ProgramSupport
                 continue;
             }
             var suites = EnumerateSuitesBelow(path).ToList();
-            if (suites.Count == 0 || !suites.All(s => File.Exists(Path.Combine(s, "app.json"))))
+            // An app.json with no readable identity is an orphan suite to BuildAppGroups, which
+            // merges it into the fallback module; such a container stays as given (#5119).
+            if (suites.Count == 0 || !suites.All(s => File.Exists(Path.Combine(s, "app.json"))
+                    && AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(Path.Combine(s, "app.json")) != null))
                 expanded.Add(path);
             else
                 expanded.AddRange(suites);

@@ -78,6 +78,20 @@ public sealed class ExpandAppContainerRootsTests : IDisposable
         Assert.Equal(new[] { mixed }, ProgramSupport.ExpandAppContainerRoots(new[] { mixed }));
     }
 
+    /// <summary>The CLI's BuildAppGroups reads a suite whose app.json yields no identity as an
+    /// orphan and compiles it in the fallback module; splitting it into its own server bundle made
+    /// its dependency read throw, and the request ran nothing (AlOutputCacheDoNotCacheTests).</summary>
+    [Fact]
+    public void ContainerWithAnUnreadableAppJson_IsLeftAsGiven()
+    {
+        App("broken", "good-app");
+        Touch(Path.Combine(_root, "broken", "bad-app", "app.json"), """{ "id": "not valid json """);
+        Touch(Path.Combine(_root, "broken", "bad-app", "B.Codeunit.al"), "codeunit 50103 B { }");
+        var broken = Path.Combine(_root, "broken");
+
+        Assert.Equal(new[] { broken }, ProgramSupport.ExpandAppContainerRoots(new[] { broken }));
+    }
+
     [Fact]
     public void FlatFolderOfAlFiles_IsLeftAsGiven()
     {
