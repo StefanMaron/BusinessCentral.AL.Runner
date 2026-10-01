@@ -333,7 +333,12 @@ public sealed class BcInternalsNullForgivingGuardTests
         // 119 -> 120 for NavReport.Metadata in NavReportSync.BindReportExtensions (#4918), a
         // BcShape.Property: it decides whether a reportextension's merged data items let it be
         // bound whole, and a silent null would demote every extension to the request-page step.
-        Assert.Equal(120, converted);
+        //
+        // 120 -> 123 for the request's FiltersAndMarks, FiltersAndMarks.Filters and
+        // FilterFieldDictionary.Items in RecordPatches.QueryJoinWhereFilters.cs (#5145), each a
+        // BcShape.Property: a silent null there would drop a join query's WHERE filters before
+        // grouping, and the post-projection pass would then test them against one row per group.
+        Assert.Equal(123, converted);
     }
 
     /// <summary>
