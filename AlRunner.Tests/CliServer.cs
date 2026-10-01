@@ -116,6 +116,87 @@ public sealed class CliServer : IAsyncDisposable
             return mark >= _stderr.Length ? string.Empty : _stderr.ToString(mark, _stderr.Length - mark);
     }
 
+    /// <summary>
+    /// How many requests this handle has sent that the server numbers: every request line
+    /// except a <c>cancel</c>, which the server answers on its side channel (#5168). The
+    /// number of the request just sent, for <see cref="StdErrOfRequestAsync"/>.
+    /// </summary>
+    public int RequestsSent => Volatile.Read(ref _requestsSent);
+    private int _requestsSent;
+
+    private void CountRequest(string jsonRequest)
+    {
+        if (IsNumberedRequest(jsonRequest)) Interlocked.Increment(ref _requestsSent);
+    }
+
+    /// <summary>Mirrors RunServerLoop's reader thread, with the same parser: an empty line is
+    /// skipped, a line <see cref="AlRunner.ServerProtocol.Parse"/> reads as <c>cancel</c> goes to
+    /// the side channel, and everything else, unparseable lines included, is a numbered request.</summary>
+    internal static bool IsNumberedRequest(string line)
+    {
+        if (line.Length == 0) return false;
+        AlRunner.ServerRequest? parsed = null;
+        try { parsed = AlRunner.ServerProtocol.Parse(line); }
+        catch { /* the server's reader thread catches everything here too */ }
+        return !string.Equals(parsed?.Command, "cancel", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Request <paramref name="requestNumber"/>'s stderr: the lines after the marker that ends
+    /// the request before it (or from the start of the capture, for request 1) up to its own
+    /// <c>[server] request &lt;n&gt; done</c> line, which is excluded. Waits for that marker, or
+    /// throws a <see cref="TimeoutException"/> naming it.
+    ///
+    /// The server writes the marker after everything else the request writes to stderr
+    /// (docs/server-mode.md#stderr-request-marker), so a <c>DoesNotContain</c> on the slice
+    /// means the request never wrote the line — not that the drain had not caught up yet.
+    /// </summary>
+    public async Task<string> StdErrOfRequestAsync(int requestNumber, TimeSpan? timeout = null)
+    {
+        if (requestNumber < 1) throw new ArgumentOutOfRangeException(nameof(requestNumber));
+        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(30));
+        while (true)
+        {
+            var all = StdErr;
+            var end = FindMarkerLine(all, requestNumber, 0);
+            if (end.Start >= 0)
+            {
+                var start = requestNumber == 1 ? 0 : FindMarkerLine(all, requestNumber - 1, 0).End;
+                if (start < 0)
+                    throw new InvalidOperationException(
+                        $"request {requestNumber}'s marker arrived without request {requestNumber - 1}'s.\n--- stderr ---\n{all}");
+                return all.Substring(start, end.Start - start);
+            }
+            if (DateTime.UtcNow >= deadline)
+                throw new TimeoutException(
+                    $"'{AlRunner.ServerProtocol.RequestDoneMarker(requestNumber)}' never appeared on stderr.\n--- stderr ---\n{all}");
+            await Task.Delay(25);
+        }
+    }
+
+    /// <summary><see cref="StdErrOfRequestAsync"/> for the request this handle sent last.</summary>
+    public Task<string> StdErrOfLastRequestAsync(TimeSpan? timeout = null) =>
+        StdErrOfRequestAsync(RequestsSent, timeout);
+
+    // Whole lines only: a line that quotes the marker mid-line, such as a test's own output, is
+    // not the marker.
+    internal static (int Start, int End) FindMarkerLine(string text, int requestNumber, int from)
+    {
+        var marker = AlRunner.ServerProtocol.RequestDoneMarker(requestNumber);
+        for (var i = text.IndexOf(marker, from, StringComparison.Ordinal); i >= 0;
+             i = text.IndexOf(marker, i + 1, StringComparison.Ordinal))
+        {
+            var lineStart = i == 0 || text[i - 1] == '\n';
+            var after = i + marker.Length;
+            var lineEnd = after == text.Length || text[after] == '\r' || text[after] == '\n';
+            if (!lineStart || !lineEnd) continue;
+            if (after < text.Length && text[after] == '\r') after++;
+            if (after < text.Length && text[after] == '\n') after++;
+            return (i, after);
+        }
+        return (-1, -1);
+    }
+
     private static string CurrentFramework()
     {
         var v = Environment.Version;
@@ -192,6 +273,7 @@ public sealed class CliServer : IAsyncDisposable
     /// <summary>Send a JSON request line and read the JSON response line.</summary>
     public async Task<string> SendAsync(string jsonRequest, TimeSpan? timeout = null)
     {
+        CountRequest(jsonRequest);
         await _process.StandardInput.WriteLineAsync(jsonRequest);
         await _process.StandardInput.FlushAsync();
 
@@ -214,6 +296,7 @@ public sealed class CliServer : IAsyncDisposable
     /// </summary>
     public async Task<List<string>> SendRequestStreamingAsync(string jsonRequest, TimeSpan? timeout = null)
     {
+        CountRequest(jsonRequest);
         await _process.StandardInput.WriteLineAsync(jsonRequest);
         await _process.StandardInput.FlushAsync();
 
@@ -271,6 +354,7 @@ public sealed class CliServer : IAsyncDisposable
     public async Task<(List<string> Lines, string? AckLine)> SendRequestAndCancelAfterFirstTestAsync(
         string jsonRequest, TimeSpan? timeout = null, Action? onAckReceived = null)
     {
+        CountRequest(jsonRequest);
         await _process.StandardInput.WriteLineAsync(jsonRequest);
         await _process.StandardInput.FlushAsync();
 
