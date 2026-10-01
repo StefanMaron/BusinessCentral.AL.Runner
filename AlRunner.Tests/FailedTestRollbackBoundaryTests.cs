@@ -48,8 +48,6 @@
 // a `FAIL  Codeunit70302.ExpectedToFail_...` line in CI output reads as intended at a glance —
 // see #2739, where an unrelated notice worded as a problem on a GREEN leg cost real
 // investigation time; this fixture must never add a second source of that same confusion.
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -69,97 +67,52 @@ public sealed class FailedTestRollbackBoundaryTests
     private static readonly string FixtureDir =
         Path.Combine(RepoRoot, "AlRunner.Tests", "Fixtures", "FailedTestRollbackBoundary");
 
-    private static (int ExitCode, string StdOut, string StdErr) Run(string cacheDir)
-    {
-        var sb = new StringBuilder(TestBuildConfig.RunArgs(Path.Combine(RepoRoot, "AlRunner")));
-        sb.Append(' ').Append($"\"{FixtureDir}\"");
-        sb.Append(' ').Append($"--cache \"{cacheDir}\"");
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet",
-            Arguments = sb.ToString(),
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WorkingDirectory = RepoRoot,
-        };
-
-        var outSb = new StringBuilder();
-        var errSb = new StringBuilder();
-        using var proc = Process.Start(psi)!;
-        proc.OutputDataReceived += (_, e) => { if (e.Data != null) lock (outSb) outSb.AppendLine(e.Data); };
-        proc.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (errSb) errSb.AppendLine(e.Data); };
-        proc.BeginOutputReadLine();
-        proc.BeginErrorReadLine();
-        if (!proc.WaitForExit(SpawnTimeoutMs))
-        {
-            try { proc.Kill(entireProcessTree: true); } catch { }
-            throw new TimeoutException($"al-runner did not exit within {SpawnTimeoutMs / 1000}s.");
-        }
-        // WaitForExit(int) returns as soon as the process exits and does NOT wait for the
-        // async output callbacks to drain — only the parameterless overload does. See #2496.
-        proc.WaitForExit();
-        return (proc.ExitCode, outSb.ToString(), errSb.ToString());
-    }
-
     [Fact]
-    public void FailedTest_WritesAreRolledBack_PassingTestWritesAreNot()
+    public async Task FailedTest_WritesAreRolledBack_PassingTestWritesAreNot()
     {
-        var cacheDir = TestScratch.Dir("al-runner-ftr-tests");
-        try
-        {
-            var (exit, stdout, stderr) = Run(cacheDir);
+        var r = await SuiteServer.RunViaServer(FixtureDir);
+        bool Failed(string method) => r.StatusOf("Codeunit70302." + method) is "fail" or "error";
+        string? Message(string method) => r.Tests.FirstOrDefault(t => t.Name == "Codeunit70302." + method).Message;
 
-            // The two deliberate failures must still be failing, by their EXPECTED-TO-FAIL
-            // name, and for their own reason. If the fixture ever stops raising these, the two
-            // reporters below would pass vacuously — there would be no failed test whose writes
-            // could leak.
-            Assert.True(
-                RunnerFailureLines.Failed(stdout, 70302, "ExpectedToFail_01_WriterInsertsARowThenFails"),
-                $"the fixture's first EXPECTED failure must still fail.\nstdout:\n{stdout}\nstderr:\n{stderr}");
-            Assert.Contains("FTR-EXPECTED-TO-FAIL-01", stdout);
-            Assert.True(
-                RunnerFailureLines.Failed(
-                    stdout, 70302, "ExpectedToFail_03_WriterInsertsARowThenFailsForAnUnrelatedReason"),
-                $"the fixture's second EXPECTED failure must still fail.\nstdout:\n{stdout}\nstderr:\n{stderr}");
-            Assert.Contains("FTR-EXPECTED-TO-FAIL-03", stdout);
+        // The two deliberate failures must still be failing, by their EXPECTED-TO-FAIL
+        // name, and for their own reason. If the fixture ever stops raising these, the two
+        // reporters below would pass vacuously — there would be no failed test whose writes
+        // could leak.
+        Assert.True(Failed("ExpectedToFail_01_WriterInsertsARowThenFails"),
+            $"the fixture's first EXPECTED failure must still fail.\n{r}");
+        Assert.Contains("FTR-EXPECTED-TO-FAIL-01", Message("ExpectedToFail_01_WriterInsertsARowThenFails"));
+        Assert.True(Failed("ExpectedToFail_03_WriterInsertsARowThenFailsForAnUnrelatedReason"),
+            $"the fixture's second EXPECTED failure must still fail.\n{r}");
+        Assert.Contains("FTR-EXPECTED-TO-FAIL-03", Message("ExpectedToFail_03_WriterInsertsARowThenFailsForAnUnrelatedReason"));
 
-            // The claim. Both reporters must PASS: the failing writers' rows are gone, and a
-            // committed row is readable. Before the fix these both failed, because the failing
-            // tests' uncommitted Inserts survived into them.
-            Assert.True(
-                stdout.Contains("PASS  Codeunit70302.Reporter_02_TheFailingWritersRowMustNotSurvive"),
-                "a FAILING test's uncommitted write must be rolled back before the next test in "
-                + $"the same codeunit runs.\nstdout:\n{stdout}\nstderr:\n{stderr}");
-            Assert.True(
-                stdout.Contains(
-                    "PASS  Codeunit70302.Reporter_04_RolledBackRowIsGoneAndACommittedRowSurvivesInTheSameTest"),
-                "the rollback boundary is the failing test's own commit point, and a committed "
-                + $"row inside the same test must still be readable.\nstdout:\n{stdout}\nstderr:\n{stderr}");
+        // The claim. Both reporters must PASS: the failing writers' rows are gone, and a
+        // committed row is readable. Before the fix these both failed, because the failing
+        // tests' uncommitted Inserts survived into them.
+        Assert.True(r.StatusOf("Codeunit70302.Reporter_02_TheFailingWritersRowMustNotSurvive") == "pass",
+            "a FAILING test's uncommitted write must be rolled back before the next test in "
+            + $"the same codeunit runs.\n{r}");
+        Assert.True(
+            r.StatusOf("Codeunit70302.Reporter_04_RolledBackRowIsGoneAndACommittedRowSurvivesInTheSameTest") == "pass",
+            "the rollback boundary is the failing test's own commit point, and a committed "
+            + $"row inside the same test must still be readable.\n{r}");
 
-            // Exactly two failures, both by the EXPECTED-TO-FAIL name. Guards against a fix
-            // that unwinds too much and takes the reporters down with it, or a fixture edit
-            // that adds an unexpected failure under a name this test does not recognize.
-            var fixtureFailures = RunnerFailureLines.All(stdout)
-                .Where(l => l.Contains("Codeunit70302", StringComparison.Ordinal)).ToList();
-            var failCount = fixtureFailures.Count;
-            Assert.True(failCount == 2,
-                $"expected exactly the 2 EXPECTED failures, saw {failCount}.\nstdout:\n{stdout}");
-            var expectedFailCount = fixtureFailures.Count(l => l.Contains(".ExpectedToFail_", StringComparison.Ordinal));
-            Assert.True(expectedFailCount == 2,
-                "every FAIL in this fixture must carry the ExpectedToFail_ name, so CI output "
-                + $"never shows an unmarked failure here. saw {expectedFailCount} marked of "
-                + $"{failCount} total.\nstdout:\n{stdout}");
+        // Exactly two failures, both by the EXPECTED-TO-FAIL name. Guards against a fix
+        // that unwinds too much and takes the reporters down with it, or a fixture edit
+        // that adds an unexpected failure under a name this test does not recognize.
+        var fixtureFailures = r.Tests
+            .Where(t => t.Status is "fail" or "error" && t.Name.StartsWith("Codeunit70302.", StringComparison.Ordinal))
+            .Select(t => t.Name).ToList();
+        var failCount = fixtureFailures.Count;
+        Assert.True(failCount == 2,
+            $"expected exactly the 2 EXPECTED failures, saw {failCount}.\n{r}");
+        var expectedFailCount = fixtureFailures.Count(n => n.Contains(".ExpectedToFail_", StringComparison.Ordinal));
+        Assert.True(expectedFailCount == 2,
+            "every FAIL in this fixture must carry the ExpectedToFail_ name, so CI output "
+            + $"never shows an unmarked failure here. saw {expectedFailCount} marked of "
+            + $"{failCount} total.\n{r}");
 
-            // A run with failing tests exits non-zero; that is the fixture working, not a
-            // problem. Asserted so the expectation is explicit rather than unstated.
-            Assert.True(exit != 0, $"expected a non-zero exit from a bundle with deliberate failures, got {exit}");
-        }
-        finally
-        {
-            try { Directory.Delete(cacheDir, recursive: true); } catch { /* best-effort cleanup */ }
-        }
+        // A run with failing tests exits non-zero; that is the fixture working, not a
+        // problem. Asserted so the expectation is explicit rather than unstated.
+        Assert.True(r.ExitCode != 0, $"expected a non-zero exit from a bundle with deliberate failures, got {r.ExitCode}");
     }
 }

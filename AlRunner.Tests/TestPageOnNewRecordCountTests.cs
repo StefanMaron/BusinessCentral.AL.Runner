@@ -6,8 +6,6 @@
 // measures itself: the absolute cost of opening over an empty part is tier-dependent and the
 // runner does not reproduce it (#3481). The history of the five-firing defect this pinned
 // first is in PR #3414's body; the New() delta is #3029's last arm.
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -27,76 +25,33 @@ public sealed class TestPageOnNewRecordCountTests
     private static readonly string FixtureDir =
         Path.Combine(RepoRoot, "AlRunner.Tests", "Fixtures", "TestPageOnNewRecordCount");
 
-    private static (int ExitCode, string StdOut, string StdErr) Run(string cacheDir)
-    {
-        var sb = new StringBuilder(TestBuildConfig.RunArgs(Path.Combine(RepoRoot, "AlRunner")));
-        sb.Append(' ').Append($"\"{FixtureDir}\"");
-        sb.Append(' ').Append($"--cache \"{cacheDir}\"");
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet",
-            Arguments = sb.ToString(),
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WorkingDirectory = RepoRoot,
-        };
-
-        var outSb = new StringBuilder();
-        var errSb = new StringBuilder();
-        using var proc = Process.Start(psi)!;
-        proc.OutputDataReceived += (_, e) => { if (e.Data != null) lock (outSb) outSb.AppendLine(e.Data); };
-        proc.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (errSb) errSb.AppendLine(e.Data); };
-        proc.BeginOutputReadLine();
-        proc.BeginErrorReadLine();
-        if (!proc.WaitForExit(SpawnTimeoutMs))
-        {
-            try { proc.Kill(entireProcessTree: true); } catch { }
-            throw new TimeoutException($"al-runner did not exit within {SpawnTimeoutMs / 1000}s.");
-        }
-        // WaitForExit(int) does not drain the async output callbacks; the parameterless
-        // overload does. See #2496.
-        proc.WaitForExit();
-        return (proc.ExitCode, outSb.ToString(), errSb.ToString());
-    }
-
     [Fact]
-    public void OnNewRecordFirings_MatchTheDeltasRealBcMeasures()
+    public async Task OnNewRecordFirings_MatchTheDeltasRealBcMeasures()
     {
-        var cacheDir = TestScratch.Dir("al-runner-onc-tests");
-        try
-        {
-            var (exit, stdout, stderr) = Run(cacheDir);
+        var r = await SuiteServer.RunViaServer(FixtureDir);
 
-            Assert.True(exit == 0,
-                $"every fixture test must pass. exit={exit}\nstdout:\n{stdout}\nstderr:\n{stderr}");
+        Assert.True(r.ExitCode == 0,
+            $"every fixture test must pass. exit={r.ExitCode}\n{r}");
 
-            // #3029: New() on a part already parked on its started draft line is a NEW
-            // new-record step (+1), not a commit of the draft line's row (+0).
-            Assert.Contains("PASS  Codeunit70646.New_OnEmptyLinkedPart_RaisesOnNewRecordOnceMoreThanTheOpen", stdout);
+        // #3029: New() on a part already parked on its started draft line is a NEW
+        // new-record step (+1), not a commit of the draft line's row (+0).
+        r.AssertPassed("Codeunit70646.New_OnEmptyLinkedPart_RaisesOnNewRecordOnceMoreThanTheOpen");
 
-            // First() on an already-open empty part: +0.
-            Assert.Contains("PASS  Codeunit70646.DraftLine_ShownAndUntouched_FirstAddsNothingToTheOpen", stdout);
+        // First() on an already-open empty part: +0.
+        r.AssertPassed("Codeunit70646.DraftLine_ShownAndUntouched_FirstAddsNothingToTheOpen");
 
-            // A write into a started draft line: +0 — the promotion must not re-run the step.
-            Assert.Contains("PASS  Codeunit70646.DraftLine_ShownThenWritten_WriteAddsNothing", stdout);
+        // A write into a started draft line: +0 — the promotion must not re-run the step.
+        r.AssertPassed("Codeunit70646.DraftLine_ShownThenWritten_WriteAddsNothing");
 
-            // A part WITH rows: 0 on the data row, +1 onto the draft line, +0 for the write.
-            Assert.Contains("PASS  Codeunit70646.DraftLine_ReachedByNextThenWritten_RaisesOnNewRecordOnce", stdout);
-            Assert.Contains("PASS  Codeunit70646.ExistingDataRows_WalkedAcross_RaiseOnNewRecordNotAtAll", stdout);
+        // A part WITH rows: 0 on the data row, +1 onto the draft line, +0 for the write.
+        r.AssertPassed("Codeunit70646.DraftLine_ReachedByNextThenWritten_RaisesOnNewRecordOnce");
+        r.AssertPassed("Codeunit70646.ExistingDataRows_WalkedAcross_RaiseOnNewRecordNotAtAll");
 
-            // The negative direction: a second row costs +1, so the +0s above are not a latch
-            // that never resets.
-            Assert.Contains("PASS  Codeunit70646.TwoRowsThroughTheDraftLine_SecondRowRaisesOnNewRecordOnceMore", stdout);
-            Assert.Contains("PASS  Codeunit70646.DraftLineAbandonedByAParentMove_MakesTheNextRowOweItsOwnFiring", stdout);
+        // The negative direction: a second row costs +1, so the +0s above are not a latch
+        // that never resets.
+        r.AssertPassed("Codeunit70646.TwoRowsThroughTheDraftLine_SecondRowRaisesOnNewRecordOnceMore");
+        r.AssertPassed("Codeunit70646.DraftLineAbandonedByAParentMove_MakesTheNextRowOweItsOwnFiring");
 
-            Assert.DoesNotContain("FAIL", stdout);
-        }
-        finally
-        {
-            try { Directory.Delete(cacheDir, recursive: true); } catch { /* best-effort cleanup */ }
-        }
+        r.AssertNoFailures();
     }
 }

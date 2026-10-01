@@ -164,21 +164,21 @@ public sealed class TestCodeunitExecutionOrderTests : IDisposable
     /// of id order, so leaving `assembly.GetTypes()` alone yields 62295, 62290, 62285.
     /// </summary>
     [SkippableFact]
-    public void TestCodeunits_RunInAscendingObjectIdOrder_NotFileOrder()
+    public async Task TestCodeunits_RunInAscendingObjectIdOrder_NotFileOrder()
     {
         TestArtifacts.SkipIfMissing();
 
-        var (output, exit) = RunRunner(_root);
-        Assert.Equal(0, exit);
+        var r = await SuiteServer.RunViaServer(_root);
+        Assert.Equal(0, r.ExitCode);
 
-        var ids = CodeunitIdsInExecutionOrder(output);
+        var ids = CodeunitIdsInExecutionOrder(RanInExecutionOrder(r));
         Assert.Equal(new[] { 62285, 62290, 62295 }, ids);
         Assert.True(ids.SequenceEqual(ids.OrderBy(x => x)),
             "test codeunits must execute in ascending AL object ID (BC's own suite order — see "
             + "TestSuiteMgt.Codeunit.al). Got: [" + string.Join(", ", ids) + "]. The fixture's FILE "
             + "order is the reverse of its id order, so a descending result means nothing reordered "
             + "the types and the runner is still executing in Assembly.GetTypes() order."
-            + "\n--- runner output ---\n" + output);
+            + "\n--- runner output ---\n" + r);
     }
 
     /// <summary>
@@ -187,14 +187,14 @@ public sealed class TestCodeunitExecutionOrderTests : IDisposable
     /// Six tests, three codeunits, two per codeunit, every one of them passing.
     /// </summary>
     [SkippableFact]
-    public void Ordering_DoesNotChangeWhichTestsRun()
+    public async Task Ordering_DoesNotChangeWhichTestsRun()
     {
         TestArtifacts.SkipIfMissing();
 
-        var (output, exit) = RunRunner(_root);
-        Assert.Equal(0, exit);
+        var r = await SuiteServer.RunViaServer(_root);
+        Assert.Equal(0, r.ExitCode);
 
-        var ran = RanInExecutionOrder(output);
+        var ran = RanInExecutionOrder(r);
         Assert.Equal(6, ran.Count);
         Assert.Equal(6, ran.Distinct().Count());
         Assert.Equal(
@@ -205,7 +205,7 @@ public sealed class TestCodeunitExecutionOrderTests : IDisposable
                 "62295.AlphaDeclaredSecond", "62295.ZetaDeclaredFirst",
             },
             ran.OrderBy(x => x, StringComparer.Ordinal).ToArray());
-        Assert.Contains("passed 6 ", output);
+        Assert.Equal(6, r.Passed);
     }
 
     /// <summary>
@@ -216,14 +216,14 @@ public sealed class TestCodeunitExecutionOrderTests : IDisposable
     /// method level would invert every pair here and fail.
     /// </summary>
     [SkippableFact]
-    public void MethodsWithinACodeunit_KeepSourceDeclarationOrder()
+    public async Task MethodsWithinACodeunit_KeepSourceDeclarationOrder()
     {
         TestArtifacts.SkipIfMissing();
 
-        var (output, exit) = RunRunner(_root);
-        Assert.Equal(0, exit);
+        var r = await SuiteServer.RunViaServer(_root);
+        Assert.Equal(0, r.ExitCode);
 
-        var ran = RanInExecutionOrder(output);
+        var ran = RanInExecutionOrder(r);
         Assert.Equal(
             new[]
             {
@@ -259,12 +259,13 @@ public sealed class TestCodeunitExecutionOrderTests : IDisposable
         Assert.StartsWith("62285.", sequences[0], StringComparison.Ordinal);
     }
 
-    private static List<int> CodeunitIdsInExecutionOrder(string output)
+    /// <summary>`62290.MidDeclaredFirst` -> 62290, one entry per run of consecutive tests of one codeunit.</summary>
+    private static List<int> CodeunitIdsInExecutionOrder(IEnumerable<string> ran)
     {
         var ids = new List<int>();
-        foreach (Match m in RanLine.Matches(output))
+        foreach (var t in ran)
         {
-            var id = int.Parse(m.Groups["id"].Value);
+            var id = int.Parse(t[..t.IndexOf('.')]);
             if (ids.Count == 0 || ids[^1] != id) ids.Add(id);
         }
         return ids;
@@ -273,6 +274,12 @@ public sealed class TestCodeunitExecutionOrderTests : IDisposable
     private static List<string> RanInExecutionOrder(string output) =>
         RanLine.Matches(output)
             .Select(m => $"{m.Groups["id"].Value}.{m.Groups["method"].Value}")
+            .ToList();
+
+    /// <summary>The passing tests in the order the server streamed them, as `62290.MidDeclaredFirst`.</summary>
+    private static List<string> RanInExecutionOrder(ServerRunResult r) =>
+        r.Tests.Where(t => t.Status == "pass" && t.Name.StartsWith("Codeunit", StringComparison.Ordinal))
+            .Select(t => t.Name["Codeunit".Length..])
             .ToList();
 
     private (string output, int exit) RunRunner(string bundle, params string[] extraArgs)

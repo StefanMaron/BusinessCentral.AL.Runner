@@ -24,8 +24,6 @@
 // (60931) / "ALT Agg Perm Set" (60930), per .claude/rules/bc-behavior-tests-go-upstream.md.
 // This test exists so a regression in OUR OWN population pipeline fails loudly here,
 // without needing the submodule pin bumped first.
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -45,79 +43,27 @@ public sealed class AggregatePermissionSetVirtualTableTests
     private static readonly string FixtureDir =
         Path.Combine(RepoRoot, "AlRunner.Tests", "Fixtures", "AggregatePermissionSet");
 
-    private static (int ExitCode, string StdOut, string StdErr) Run(string cacheDir)
-    {
-        var sb = new StringBuilder(TestBuildConfig.RunArgs(Path.Combine(RepoRoot, "AlRunner")));
-        sb.Append(' ').Append($"\"{FixtureDir}\"");
-        sb.Append(' ').Append($"--cache \"{cacheDir}\"");
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet",
-            Arguments = sb.ToString(),
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WorkingDirectory = RepoRoot,
-        };
-
-        var outSb = new StringBuilder();
-        var errSb = new StringBuilder();
-        using var proc = Process.Start(psi)!;
-        proc.OutputDataReceived += (_, e) => { if (e.Data != null) lock (outSb) outSb.AppendLine(e.Data); };
-        proc.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (errSb) errSb.AppendLine(e.Data); };
-        proc.BeginOutputReadLine();
-        proc.BeginErrorReadLine();
-        if (!proc.WaitForExit(SpawnTimeoutMs))
-        {
-            try { proc.Kill(entireProcessTree: true); } catch { }
-            throw new TimeoutException($"al-runner did not exit within {SpawnTimeoutMs / 1000}s.");
-        }
-        // WaitForExit(int) returns as soon as the process exits and does NOT wait for the
-        // async BeginOutputReadLine/BeginErrorReadLine callbacks to drain -- only the
-        // parameterless overload does. Without this the last stdout lines can still be in
-        // flight when we read outSb, so an Assert.Contains on a line the runner definitely
-        // printed fails intermittently, and more often the more loaded the machine is.
-        // That made main red on a DIFFERENT pre-28.0 leg on three consecutive merges.
-        // 65 of the 67 subprocess-spawning test files here already do this; these two did not.
-        proc.WaitForExit();
-        return (proc.ExitCode, outSb.ToString(), errSb.ToString());
-    }
-
     [Fact]
-    public void AggregatePermissionSet_SourceDeclaredPermissionSet_BothTestsPass()
+    public async Task AggregatePermissionSet_SourceDeclaredPermissionSet_BothTestsPass()
     {
-        var cacheDir = TestScratch.Dir("al-runner-aps-tests");
-        try
-        {
-            var (exit, stdout, stderr) = Run(cacheDir);
+        var r = await SuiteServer.RunViaServer(FixtureDir);
 
-            Assert.True(exit == 0,
-                $"expected a clean run (both fixture tests must pass). exit={exit}\nstdout:\n{stdout}\nstderr:\n{stderr}");
+        Assert.True(r.ExitCode == 0,
+            $"expected a clean run (both fixture tests must pass). exit={r.ExitCode}\n{r}");
 
-            // Positive: the fresh-source-compiled permission set is found, with its
-            // declared Caption round-tripping as the row's Name.
-            Assert.Contains(
-                "PASS  Codeunit60702.AggregatePermissionSet_ThisBundlesDeclaredPermissionSet_IsFound", stdout);
-            // Negative: an undeclared role id still fails, not a silent success.
-            Assert.Contains(
-                "PASS  Codeunit60702.AggregatePermissionSet_GetOnUndeclaredRoleId_Fails", stdout);
-            // #2473: the table must NOT snapshot at first touch -- a Tenant Permission Set
-            // row inserted after an earlier touch must be visible on a later one, and a
-            // subsequently deleted row must not remain a ghost.
-            Assert.Contains(
-                "PASS  Codeunit60702.AggregatePermissionSet_TenantRowInsertedAfterEarlierTouch_IsVisible", stdout);
-            // #2504: redriving on DISPATCH alone is not enough -- a record variable REUSED
-            // for a second Get() after an intervening write must see the fresh row too, not
-            // just a freshly-declared variable's own first touch.
-            Assert.Contains(
-                "PASS  Codeunit60702.AggregatePermissionSet_SameRecordVariableReusedAcrossWrite_SeesFreshRow", stdout);
-            Assert.DoesNotContain("FAIL", stdout);
-        }
-        finally
-        {
-            try { Directory.Delete(cacheDir, recursive: true); } catch { /* best-effort cleanup */ }
-        }
+        // Positive: the fresh-source-compiled permission set is found, with its
+        // declared Caption round-tripping as the row's Name.
+        r.AssertPassed("Codeunit60702.AggregatePermissionSet_ThisBundlesDeclaredPermissionSet_IsFound");
+        // Negative: an undeclared role id still fails, not a silent success.
+        r.AssertPassed("Codeunit60702.AggregatePermissionSet_GetOnUndeclaredRoleId_Fails");
+        // #2473: the table must NOT snapshot at first touch -- a Tenant Permission Set
+        // row inserted after an earlier touch must be visible on a later one, and a
+        // subsequently deleted row must not remain a ghost.
+        r.AssertPassed("Codeunit60702.AggregatePermissionSet_TenantRowInsertedAfterEarlierTouch_IsVisible");
+        // #2504: redriving on DISPATCH alone is not enough -- a record variable REUSED
+        // for a second Get() after an intervening write must see the fresh row too, not
+        // just a freshly-declared variable's own first touch.
+        r.AssertPassed("Codeunit60702.AggregatePermissionSet_SameRecordVariableReusedAcrossWrite_SeesFreshRow");
+        r.AssertNoFailures();
     }
 }

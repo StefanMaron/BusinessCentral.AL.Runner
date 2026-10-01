@@ -4,17 +4,12 @@
 // adds New() as a row-leave: InsertEmptyRow's FlushRow reds both *WhenNewLeavesIt arms. The BC
 // behaviour is adjudicated upstream by corpus codeunit 60412 "PSR Page Saved Row Tests"; see
 // docs/testpage-write-buffer.md#a-row-the-page-saved-itself.
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
 
 public sealed class TestPagePageSavedRowTests : IDisposable
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
 
     private readonly string _root;
 
@@ -27,14 +22,6 @@ public sealed class TestPagePageSavedRowTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch { /* best-effort cleanup */ }
-    }
-
-    private static string[] ExtraPackageCacheArgs()
-    {
-        var platformApps = TestArtifacts.PlatformAppsDir();
-        return Directory.Exists(platformApps)
-            ? new[] { "--package-cache", platformApps }
-            : Array.Empty<string>();
     }
 
     private void WriteBundle()
@@ -275,37 +262,15 @@ public sealed class TestPagePageSavedRowTests : IDisposable
         """);
     }
 
-    private (string output, int exit) RunBundled()
-    {
-        var args = new StringBuilder(
-            TestBuildConfig.RunArgs(ProjectPath) + TestBuildConfig.BcVersionArg + $" \"{_root}\"");
-        foreach (var a in ExtraPackageCacheArgs()) args.Append($" \"{a}\"");
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(600_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
-
     [SkippableFact]
-    public void ARowThePageSavedItself_IsModifiedNotReinserted()
+    public async Task ARowThePageSavedItself_IsModifiedNotReinserted()
     {
         TestArtifacts.SkipIfMissing();
 
         WriteBundle();
-        var (output, exit) = RunBundled();
+        var r = await SuiteServer.RunViaServer(_root);
 
-        Assert.True(exit == 0, $"Expected the bundle to pass; exit={exit}\n{output}");
+        Assert.True(r.ExitCode == 0, $"Expected the bundle to pass; exit={r.ExitCode}\n{r}");
         foreach (var name in new[]
                  {
                      "PartRowSavedByItsOwnTrigger_KeepsTheValueTypedAfterIt",
@@ -314,7 +279,7 @@ public sealed class TestPagePageSavedRowTests : IDisposable
                      "ExistingPartRowEdit_IsSavedWhenNewLeavesIt",
                      "PartRowSavedByItsOwnTrigger_KeepsTheLaterValueWhenNewLeavesIt",
                  })
-            Assert.Contains("PASS  Codeunit66814." + name, output);
-        Assert.DoesNotContain("FAIL", output);
+            r.AssertPassed("Codeunit66814." + name);
+        r.AssertNoFailures();
     }
 }

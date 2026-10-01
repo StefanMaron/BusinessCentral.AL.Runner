@@ -4,17 +4,12 @@
 // one page), and leaves the page itself alone. The
 // BC behaviour is adjudicated upstream by corpus codeunit 67150 "Test Page Trap Scope Tests";
 // this pins the runner's own mechanism, including the two boundaries it must not cross.
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
 
 public sealed class LocalTestPageTrapScopeTests : IDisposable
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
 
     private readonly string _root;
 
@@ -231,38 +226,15 @@ public sealed class LocalTestPageTrapScopeTests : IDisposable
         """);
     }
 
-    private (string output, int exit) RunBundled()
-    {
-        var args = new StringBuilder(
-            TestBuildConfig.RunArgs(ProjectPath) + TestBuildConfig.BcVersionArg + $" \"{_root}\"");
-        var platformApps = TestArtifacts.PlatformAppsDir();
-        if (Directory.Exists(platformApps)) args.Append($" \"--package-cache\" \"{platformApps}\"");
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(600_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
-
     [SkippableFact]
-    public void AnUnconsumedTrap_EndsWithTheLastVariableHoldingItsPage()
+    public async Task AnUnconsumedTrap_EndsWithTheLastVariableHoldingItsPage()
     {
         TestArtifacts.SkipIfMissing();
 
         WriteBundle();
-        var (output, exit) = RunBundled();
+        var r = await SuiteServer.RunViaServer(_root);
 
-        Assert.True(exit == 0, $"Expected the bundle to pass; exit={exit}\n{output}");
+        Assert.True(r.ExitCode == 0, $"Expected the bundle to pass; exit={r.ExitCode}\n{r}");
         foreach (var name in new[]
                  {
                      "TrapOnALocal_EndsWithItsProcedure",
@@ -272,9 +244,9 @@ public sealed class LocalTestPageTrapScopeTests : IDisposable
                      "ThreeLocalsShareThePage_TrapEnds",
                      "TwoLocalsShareThePageAndOneEscapes_TrapSurvives",
                  })
-            Assert.Contains("PASS  Codeunit64732." + name, output);
+            r.AssertPassed("Codeunit64732." + name);
         foreach (var name in new[] { "A_LeavesATrapInItsOwnLocal", "B_ALaterTestReachesItsHandler" })
-            Assert.Contains("PASS  Codeunit64733." + name, output);
-        Assert.DoesNotContain("FAIL", output);
+            r.AssertPassed("Codeunit64733." + name);
+        r.AssertNoFailures();
     }
 }

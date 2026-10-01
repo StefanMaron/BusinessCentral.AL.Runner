@@ -6,17 +6,12 @@
 // whatever the table; and a Rename reaches RecordLinkStore_Move (#4961), which moves only the
 // rows that filter selects. What BC does is measured upstream by corpus codeunit 67681
 // "Test Record Link Columns"; this pins that the runner's own store answers the same.
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
 
 public sealed class RecordLinkCompanyFilterEndToEndTests : IDisposable
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
 
     private readonly string _root;
 
@@ -29,30 +24,6 @@ public sealed class RecordLinkCompanyFilterEndToEndTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch { /* best-effort cleanup */ }
-    }
-
-    private static (string output, int exit) RunRunner(string bundle)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        var platformApps = TestArtifacts.PlatformAppsDir();
-        if (Directory.Exists(platformApps)) args.Append($" \"--package-cache\" \"{platformApps}\"");
-        args.Append(" \"").Append(bundle).Append('"');
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(180_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
     }
 
     private void WriteFixture()
@@ -223,14 +194,13 @@ public sealed class RecordLinkCompanyFilterEndToEndTests : IDisposable
     }
 
     [SkippableFact]
-    public void RecordLinkReaders_FilterCompanyLikeBc_AndRenameMovesTheLinks()
+    public async Task RecordLinkReaders_FilterCompanyLikeBc_AndRenameMovesTheLinks()
     {
+        TestArtifacts.SkipIfMissing();
         WriteFixture();
-        var (output, exit) = RunRunner(_root);
-        TestArtifacts.SkipIf(output.Contains("no BC artifact") || output.Contains("[bc] no engines"),
-            "no BC engine artifact provisioned in this environment");
+        var r = await SuiteServer.RunViaServer(_root);
 
-        Assert.True(exit == 0, $"expected all six AL tests to pass; exit={exit}\n{output}");
-        Assert.Contains("   passed 6 ", output);
+        Assert.True(r.ExitCode == 0, $"expected all six AL tests to pass; exit={r.ExitCode}\n{r}");
+        Assert.True(r.Passed == 6, $"expected 6 passed\n{r}");
     }
 }

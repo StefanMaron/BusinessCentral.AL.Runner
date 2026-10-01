@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -13,34 +11,9 @@ namespace AlRunner.Tests;
 /// </summary>
 public class GetAutoCalcFieldsTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
-    private static (string output, int exit) RunRunner(string bundle)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        args.Append(" \"").Append(bundle).Append('"');
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(180_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
 
     [SkippableFact]
-    public void PrimaryKeyLookups_HonorSetAutoCalcFields()
+    public async Task PrimaryKeyLookups_HonorSetAutoCalcFields()
     {
         TestArtifacts.SkipIfMissing();
 
@@ -175,11 +148,11 @@ public class GetAutoCalcFieldsTests
         }
         """);
 
-        var (output, exitCode) = RunRunner(root);
+        var r = await SuiteServer.RunViaServer(root);
 
-        Assert.True(exitCode == 0, $"runner exited {exitCode}:\n{output}");
-        Assert.DoesNotContain("FAIL", output);
+        Assert.True(r.ExitCode == 0, $"runner exited {r.ExitCode}:\n{r}");
+        r.AssertNoFailures();
         foreach (var name in new[] { "GetByKey", "GetByKeyWithoutAutoCalc", "GetByRecordId", "GetBySystemId", "RecordRefGet" })
-            Assert.Contains($"PASS  Codeunit63578.{name} ", output);
+            r.AssertPassed($"Codeunit63578.{name}");
     }
 }

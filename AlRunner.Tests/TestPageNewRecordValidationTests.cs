@@ -34,8 +34,6 @@
 // at 0 — unlike ValueControl.SetValue's page-originated write, #2705), and no corpus test pins
 // it in either direction on any BC leg. Recording it means a future measurement that
 // contradicts it fails loudly here instead of drifting silently.
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -55,70 +53,27 @@ public sealed class TestPageNewRecordValidationTests
     private static readonly string FixtureDir =
         Path.Combine(RepoRoot, "AlRunner.Tests", "Fixtures", "TestPageNewRecordValidation");
 
-    private static (int ExitCode, string StdOut, string StdErr) Run(string cacheDir)
-    {
-        var sb = new StringBuilder(TestBuildConfig.RunArgs(Path.Combine(RepoRoot, "AlRunner")));
-        sb.Append(' ').Append($"\"{FixtureDir}\"");
-        sb.Append(' ').Append($"--cache \"{cacheDir}\"");
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet",
-            Arguments = sb.ToString(),
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WorkingDirectory = RepoRoot,
-        };
-
-        var outSb = new StringBuilder();
-        var errSb = new StringBuilder();
-        using var proc = Process.Start(psi)!;
-        proc.OutputDataReceived += (_, e) => { if (e.Data != null) lock (outSb) outSb.AppendLine(e.Data); };
-        proc.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (errSb) errSb.AppendLine(e.Data); };
-        proc.BeginOutputReadLine();
-        proc.BeginErrorReadLine();
-        if (!proc.WaitForExit(SpawnTimeoutMs))
-        {
-            try { proc.Kill(entireProcessTree: true); } catch { }
-            throw new TimeoutException($"al-runner did not exit within {SpawnTimeoutMs / 1000}s.");
-        }
-        // WaitForExit(int) does not drain the async output callbacks; the parameterless
-        // overload does. See #2496.
-        proc.WaitForExit();
-        return (proc.ExitCode, outSb.ToString(), errSb.ToString());
-    }
-
     [Fact]
-    public void New_ValidatesTheStampedSet_AndOnlyTheStampedSet()
+    public async Task New_ValidatesTheStampedSet_AndOnlyTheStampedSet()
     {
-        var cacheDir = TestScratch.Dir("al-runner-tnv-tests");
-        try
-        {
-            var (exit, stdout, stderr) = Run(cacheDir);
+        var r = await SuiteServer.RunViaServer(FixtureDir);
 
-            Assert.True(exit == 0,
-                $"every fixture test must pass. exit={exit}\nstdout:\n{stdout}\nstderr:\n{stderr}");
+        Assert.True(r.ExitCode == 0,
+            $"every fixture test must pass. exit={r.ExitCode}\n{r}");
 
-            // Positive: both link kinds are stamped AND validated. The const(...) one is the
-            // arm no corpus test reaches.
-            Assert.Contains("PASS  Codeunit70405.New_FieldLinkedPrimaryKeyField_IsStampedAndValidated", stdout);
-            Assert.Contains("PASS  Codeunit70405.New_ConstLinkedPrimaryKeyField_IsStampedAndValidated", stdout);
+        // Positive: both link kinds are stamped AND validated. The const(...) one is the
+        // arm no corpus test reaches.
+        r.AssertPassed("Codeunit70405.New_FieldLinkedPrimaryKeyField_IsStampedAndValidated");
+        r.AssertPassed("Codeunit70405.New_ConstLinkedPrimaryKeyField_IsStampedAndValidated");
 
-            // Negative: a primary-key field no link names, and a field outside the key entirely.
-            // These are what make the claim "the stamped set" rather than "everything".
-            Assert.Contains("PASS  Codeunit70405.New_PrimaryKeyFieldNoLinkNames_IsNotValidated", stdout);
-            Assert.Contains("PASS  Codeunit70405.New_FieldOutsideThePrimaryKeyAndOutsideTheLink_IsNotValidated", stdout);
+        // Negative: a primary-key field no link names, and a field outside the key entirely.
+        // These are what make the claim "the stamped set" rather than "everything".
+        r.AssertPassed("Codeunit70405.New_PrimaryKeyFieldNoLinkNames_IsNotValidated");
+        r.AssertPassed("Codeunit70405.New_FieldOutsideThePrimaryKeyAndOutsideTheLink_IsNotValidated");
 
-            // The unpinned choice, recorded so it cannot drift silently.
-            Assert.Contains("PASS  Codeunit70405.New_ValidatesWithCurrFieldNoZero_NotAsAPageWrite", stdout);
+        // The unpinned choice, recorded so it cannot drift silently.
+        r.AssertPassed("Codeunit70405.New_ValidatesWithCurrFieldNoZero_NotAsAPageWrite");
 
-            Assert.DoesNotContain("FAIL", stdout);
-        }
-        finally
-        {
-            try { Directory.Delete(cacheDir, recursive: true); } catch { /* best-effort cleanup */ }
-        }
+        r.AssertNoFailures();
     }
 }

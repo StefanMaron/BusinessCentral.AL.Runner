@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -22,34 +20,9 @@ namespace AlRunner.Tests;
 /// </summary>
 public class WriteTransactionTestBoundaryTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
-    private static (string output, int exit) RunRunner(params string[] bundles)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        foreach (var b in bundles) args.Append(" \"").Append(b).Append('"');
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(180_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
 
     [SkippableFact]
-    public void UncommittedWriteInAnEarlierTest_DoesNotLeaveTheNextTestInAWriteTransaction()
+    public async Task UncommittedWriteInAnEarlierTest_DoesNotLeaveTheNextTestInAWriteTransaction()
     {
         TestArtifacts.SkipIfMissing();
 
@@ -196,16 +169,16 @@ public class WriteTransactionTestBoundaryTests
         }
         """);
 
-        var (output, exitCode) = RunRunner(root);
+        var r = await SuiteServer.RunViaServer(root);
 
-        Assert.True(exitCode == 0,
-            $"Expected all five tests to pass (exit 0); got exit {exitCode}.\n{output}");
-        Assert.DoesNotContain("FAIL", output);
-        Assert.Contains("PASS  Codeunit62470.A_AutoRollbackTestWritesWithoutCommitting", output);
-        Assert.Contains("PASS  Codeunit62470.B_WritesNothingAtAll", output);
-        Assert.Contains("PASS  Codeunit62470.C_GuardedCodeunitRunIsAllowed", output);
-        Assert.Contains("PASS  Codeunit62470.D_DefaultModelTestWritesWithoutCommitting", output);
-        Assert.Contains("PASS  Codeunit62470.E_GuardedCodeunitRunIsStillAllowed", output);
+        Assert.True(r.ExitCode == 0,
+            $"Expected all five tests to pass (exit 0); got exit {r.ExitCode}.\n{r}");
+        r.AssertNoFailures();
+        r.AssertPassed("Codeunit62470.A_AutoRollbackTestWritesWithoutCommitting");
+        r.AssertPassed("Codeunit62470.B_WritesNothingAtAll");
+        r.AssertPassed("Codeunit62470.C_GuardedCodeunitRunIsAllowed");
+        r.AssertPassed("Codeunit62470.D_DefaultModelTestWritesWithoutCommitting");
+        r.AssertPassed("Codeunit62470.E_GuardedCodeunitRunIsStillAllowed");
     }
 
     /// <summary>
@@ -222,7 +195,7 @@ public class WriteTransactionTestBoundaryTests
     /// <c>Corpus-PR:</c> line). This pins the runner's own mechanism.
     /// </summary>
     [SkippableFact]
-    public void UnderTransactionModelNone_ATestBodyHasNoTransactionAndCannotWrite()
+    public async Task UnderTransactionModelNone_ATestBodyHasNoTransactionAndCannotWrite()
     {
         TestArtifacts.SkipIfMissing();
 
@@ -373,16 +346,16 @@ public class WriteTransactionTestBoundaryTests
         }
         """);
 
-        var (output, exitCode) = RunRunner(root);
+        var r = await SuiteServer.RunViaServer(root);
 
-        Assert.True(exitCode == 0,
-            $"Expected all five tests to pass (exit 0); got exit {exitCode}.\n{output}");
-        Assert.DoesNotContain("FAIL", output);
-        Assert.Contains("PASS  Codeunit62481.F_DefaultModelTestWritesWithoutCommitting", output);
-        Assert.Contains("PASS  Codeunit62481.G_NoneTestStartsWithNoTransaction", output);
-        Assert.Contains("PASS  Codeunit62481.H_NoneTestCannotWriteFromItsOwnBody", output);
-        Assert.Contains("PASS  Codeunit62481.I_ARunCodeunitMayWriteUnderNone", output);
-        Assert.Contains("PASS  Codeunit62481.J_ADefaultModelTestAfterANoneTestCanStillWrite", output);
+        Assert.True(r.ExitCode == 0,
+            $"Expected all five tests to pass (exit 0); got exit {r.ExitCode}.\n{r}");
+        r.AssertNoFailures();
+        r.AssertPassed("Codeunit62481.F_DefaultModelTestWritesWithoutCommitting");
+        r.AssertPassed("Codeunit62481.G_NoneTestStartsWithNoTransaction");
+        r.AssertPassed("Codeunit62481.H_NoneTestCannotWriteFromItsOwnBody");
+        r.AssertPassed("Codeunit62481.I_ARunCodeunitMayWriteUnderNone");
+        r.AssertPassed("Codeunit62481.J_ADefaultModelTestAfterANoneTestCanStillWrite");
     }
     /// <summary>
     /// Issue #3543, the sibling surfaces. <c>Codeunit.Run</c> is not the only AL construct
@@ -404,7 +377,7 @@ public class WriteTransactionTestBoundaryTests
     /// simply disabled the no-transaction scope outright.
     /// </summary>
     [SkippableFact]
-    public void UnderTransactionModelNone_AReportAndAPageFieldValidateMayWrite()
+    public async Task UnderTransactionModelNone_AReportAndAPageFieldValidateMayWrite()
     {
         TestArtifacts.SkipIfMissing();
 
@@ -599,16 +572,16 @@ public class WriteTransactionTestBoundaryTests
         }
         """);
 
-        var (output, exitCode) = RunRunner(root);
+        var r = await SuiteServer.RunViaServer(root);
 
-        Assert.True(exitCode == 0,
-            $"Expected all five tests to pass (exit 0); got exit {exitCode}.\n{output}");
-        Assert.DoesNotContain("FAIL", output);
-        Assert.Contains("PASS  Codeunit62544.A_ReportMayWriteUnderNone", output);
-        Assert.Contains("PASS  Codeunit62544.B_SeedsTheRowThePageOpensOn", output);
-        Assert.Contains("PASS  Codeunit62544.C_PageFieldValidateMayWriteUnderNone", output);
-        Assert.Contains("PASS  Codeunit62544.D_TheTestBodyItselfIsStillRefused", output);
-        Assert.Contains("PASS  Codeunit62544.E_ADefaultModelTestAfterwardsCanStillWrite", output);
+        Assert.True(r.ExitCode == 0,
+            $"Expected all five tests to pass (exit 0); got exit {r.ExitCode}.\n{r}");
+        r.AssertNoFailures();
+        r.AssertPassed("Codeunit62544.A_ReportMayWriteUnderNone");
+        r.AssertPassed("Codeunit62544.B_SeedsTheRowThePageOpensOn");
+        r.AssertPassed("Codeunit62544.C_PageFieldValidateMayWriteUnderNone");
+        r.AssertPassed("Codeunit62544.D_TheTestBodyItselfIsStillRefused");
+        r.AssertPassed("Codeunit62544.E_ADefaultModelTestAfterwardsCanStillWrite");
     }
 
     /// <summary>
@@ -642,7 +615,7 @@ public class WriteTransactionTestBoundaryTests
     /// <c>I_</c> alone.</para>
     /// </summary>
     [SkippableFact]
-    public void UnderTransactionModelNone_APageDrivenRowInsertAndModifyMayWrite()
+    public async Task UnderTransactionModelNone_APageDrivenRowInsertAndModifyMayWrite()
     {
         TestArtifacts.SkipIfMissing();
 
@@ -938,18 +911,18 @@ public class WriteTransactionTestBoundaryTests
         }
         """);
 
-        var (output, exitCode) = RunRunner(root);
+        var r = await SuiteServer.RunViaServer(root);
 
-        Assert.True(exitCode == 0,
-            $"Expected all eight tests to pass (exit 0); got exit {exitCode}.\n{output}");
-        Assert.DoesNotContain("FAIL", output);
-        Assert.Contains("PASS  Codeunit62554.A_APageRowInsertMayWriteUnderNone", output);
-        Assert.Contains("PASS  Codeunit62554.B_SeedsTheRowTheModifyArmOpensOn", output);
-        Assert.Contains("PASS  Codeunit62554.C_APageRowModifyMayWriteUnderNone", output);
-        Assert.Contains("PASS  Codeunit62554.D_TheTestBodyItselfIsStillRefused", output);
-        Assert.Contains("PASS  Codeunit62554.E_ADefaultModelTestAfterwardsCanStillWrite", output);
-        Assert.Contains("PASS  Codeunit62554.F_APageRowModifyOpensTheWriteTransaction", output);
-        Assert.Contains("PASS  Codeunit62554.H_SeedsTheRowTheRollbackArmOpensOn", output);
-        Assert.Contains("PASS  Codeunit62554.I_APageRowModifyIsRolledBackByAnUnrelatedError", output);
+        Assert.True(r.ExitCode == 0,
+            $"Expected all eight tests to pass (exit 0); got exit {r.ExitCode}.\n{r}");
+        r.AssertNoFailures();
+        r.AssertPassed("Codeunit62554.A_APageRowInsertMayWriteUnderNone");
+        r.AssertPassed("Codeunit62554.B_SeedsTheRowTheModifyArmOpensOn");
+        r.AssertPassed("Codeunit62554.C_APageRowModifyMayWriteUnderNone");
+        r.AssertPassed("Codeunit62554.D_TheTestBodyItselfIsStillRefused");
+        r.AssertPassed("Codeunit62554.E_ADefaultModelTestAfterwardsCanStillWrite");
+        r.AssertPassed("Codeunit62554.F_APageRowModifyOpensTheWriteTransaction");
+        r.AssertPassed("Codeunit62554.H_SeedsTheRowTheRollbackArmOpensOn");
+        r.AssertPassed("Codeunit62554.I_APageRowModifyIsRolledBackByAnUnrelatedError");
     }
 }

@@ -18,17 +18,12 @@
 // "An error was expected inside an ASSERTERROR statement." (SetValue let -1 through silently),
 // while the negative tests (Validate/assignment) already passed.
 
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
 
 public sealed class TestPageMinMaxValueDispatchTests : IDisposable
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
 
     private readonly string _root;
 
@@ -41,14 +36,6 @@ public sealed class TestPageMinMaxValueDispatchTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch { /* best-effort cleanup */ }
-    }
-
-    private static string[] ExtraPackageCacheArgs()
-    {
-        var platformApps = TestArtifacts.PlatformAppsDir();
-        return Directory.Exists(platformApps)
-            ? new[] { "--package-cache", platformApps }
-            : Array.Empty<string>();
     }
 
     private void WriteBundle()
@@ -211,28 +198,6 @@ public sealed class TestPageMinMaxValueDispatchTests : IDisposable
         """);
     }
 
-    private (string output, int exit) RunBundled()
-    {
-        var args = new StringBuilder(
-            TestBuildConfig.RunArgs(ProjectPath) + TestBuildConfig.BcVersionArg + $" \"{_root}\"");
-        foreach (var a in ExtraPackageCacheArgs()) args.Append($" \"{a}\"");
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(600_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
-
     /// <summary>
     /// Positive (SetValue enforces, on both the below-min and above-max sides, and lets an
     /// in-range write through) and negative (Rec.Validate and plain assignment both stay
@@ -240,19 +205,19 @@ public sealed class TestPageMinMaxValueDispatchTests : IDisposable
     /// right simultaneously, since the fix must not "leak" enforcement into Validate.
     /// </summary>
     [SkippableFact]
-    public void MinMaxValue_EnforcedOnlyOnTestPageSetValue()
+    public async Task MinMaxValue_EnforcedOnlyOnTestPageSetValue()
     {
         TestArtifacts.SkipIfMissing();
 
         WriteBundle();
-        var (output, exit) = RunBundled();
+        var r = await SuiteServer.RunViaServer(_root);
 
-        Assert.True(exit == 0, $"Expected the bundle to pass; exit={exit}\n{output}");
-        Assert.Contains("PASS  Codeunit62402.SetValue_BelowMin_Decimal_RaisesFromTestPageOnly", output);
-        Assert.Contains("PASS  Codeunit62402.SetValue_AboveMax_Decimal_Raises", output);
-        Assert.Contains("PASS  Codeunit62402.SetValue_WithinBounds_Succeeds", output);
-        Assert.Contains("PASS  Codeunit62402.Validate_BelowMin_DoesNotRaise", output);
-        Assert.Contains("PASS  Codeunit62402.DirectAssignment_BelowMin_DoesNotRaise", output);
-        Assert.DoesNotContain("FAIL", output);
+        Assert.True(r.ExitCode == 0, $"Expected the bundle to pass; exit={r.ExitCode}\n{r}");
+        r.AssertPassed("Codeunit62402.SetValue_BelowMin_Decimal_RaisesFromTestPageOnly");
+        r.AssertPassed("Codeunit62402.SetValue_AboveMax_Decimal_Raises");
+        r.AssertPassed("Codeunit62402.SetValue_WithinBounds_Succeeds");
+        r.AssertPassed("Codeunit62402.Validate_BelowMin_DoesNotRaise");
+        r.AssertPassed("Codeunit62402.DirectAssignment_BelowMin_DoesNotRaise");
+        r.AssertNoFailures();
     }
 }

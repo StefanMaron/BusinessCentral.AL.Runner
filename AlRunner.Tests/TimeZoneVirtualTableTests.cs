@@ -22,8 +22,6 @@
 // "Test Time Zone Virtual Table" in StefanMaron/BusinessCentral.AL.Language.Tests, per
 // .claude/rules/bc-behavior-tests-go-upstream.md — asserting the same shape, for the same
 // reason: no host-specific id can be asserted in a corpus that runs on more than one host.
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -43,75 +41,29 @@ public sealed class TimeZoneVirtualTableTests
     private static readonly string FixtureDir =
         Path.Combine(RepoRoot, "AlRunner.Tests", "Fixtures", "TimeZoneVirtualTable");
 
-    private static (int ExitCode, string StdOut, string StdErr) Run(string cacheDir)
-    {
-        var sb = new StringBuilder(TestBuildConfig.RunArgs(Path.Combine(RepoRoot, "AlRunner")));
-        sb.Append(' ').Append($"\"{FixtureDir}\"");
-        sb.Append(' ').Append($"--cache \"{cacheDir}\"");
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet",
-            Arguments = sb.ToString(),
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WorkingDirectory = RepoRoot,
-        };
-
-        var outSb = new StringBuilder();
-        var errSb = new StringBuilder();
-        using var proc = Process.Start(psi)!;
-        proc.OutputDataReceived += (_, e) => { if (e.Data != null) lock (outSb) outSb.AppendLine(e.Data); };
-        proc.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (errSb) errSb.AppendLine(e.Data); };
-        proc.BeginOutputReadLine();
-        proc.BeginErrorReadLine();
-        if (!proc.WaitForExit(SpawnTimeoutMs))
-        {
-            try { proc.Kill(entireProcessTree: true); } catch { }
-            throw new TimeoutException($"al-runner did not exit within {SpawnTimeoutMs / 1000}s.");
-        }
-        // WaitForExit(int) returns as soon as the process exits and does NOT wait for the
-        // async BeginOutputReadLine/BeginErrorReadLine callbacks to drain — only the
-        // parameterless overload does. Without this the last stdout lines can still be in
-        // flight when we read outSb, and an Assert.Contains on a line the runner definitely
-        // printed fails intermittently, the more so the more loaded the machine is (#2496).
-        proc.WaitForExit();
-        return (proc.ExitCode, outSb.ToString(), errSb.ToString());
-    }
-
     [Fact]
-    public void TimeZone_HostZones_AllFixtureTestsPass()
+    public async Task TimeZone_HostZones_AllFixtureTestsPass()
     {
-        var cacheDir = TestScratch.Dir("al-runner-tzv-tests");
-        try
-        {
-            var (exit, stdout, stderr) = Run(cacheDir);
+        var r = await SuiteServer.RunViaServer(FixtureDir);
 
-            Assert.True(exit == 0,
-                $"expected a clean run (every fixture test must pass). exit={exit}\nstdout:\n{stdout}\nstderr:\n{stderr}");
+        Assert.True(r.ExitCode == 0,
+            $"expected a clean run (every fixture test must pass). exit={r.ExitCode}\n{r}");
 
-            // The table answers rows at all — this is the direct RED this fixes.
-            Assert.Contains("PASS  Codeunit60781.TimeZone_IsNotEmpty", stdout);
-            // "No." is a sequence over the host's list, so a provider that inserted rows
-            // without numbering them, or numbered from 0, fails here.
-            Assert.Contains("PASS  Codeunit60781.TimeZone_NumbersStartAtOneAndIncrementWithNoGaps", stdout);
-            // The one that rules out N blank rows, which would satisfy both assertions above.
-            Assert.Contains("PASS  Codeunit60781.TimeZone_EveryRowHasANonBlankId", stdout);
-            // Get and FindSet must agree, so the row Get returns is a real row and not a
-            // separately-built one.
-            Assert.Contains("PASS  Codeunit60781.TimeZone_GetOne_AgreesWithTheFirstRowOfFindSet", stdout);
-            // Negative: a number past the end still answers false. Passes against an EMPTY
-            // table too, which is exactly why it is not sufficient on its own.
-            Assert.Contains("PASS  Codeunit60781.TimeZone_GetOnANumberPastTheEnd_ReturnsFalse", stdout);
-            // Negative: filtering discriminates.
-            Assert.Contains("PASS  Codeunit60781.TimeZone_FilterOnNumber_DiscriminatesBetweenRows", stdout);
-            Assert.DoesNotContain("FAIL", stdout);
-        }
-        finally
-        {
-            try { Directory.Delete(cacheDir, recursive: true); } catch { /* best-effort cleanup */ }
-        }
+        // The table answers rows at all — this is the direct RED this fixes.
+        r.AssertPassed("Codeunit60781.TimeZone_IsNotEmpty");
+        // "No." is a sequence over the host's list, so a provider that inserted rows
+        // without numbering them, or numbered from 0, fails here.
+        r.AssertPassed("Codeunit60781.TimeZone_NumbersStartAtOneAndIncrementWithNoGaps");
+        // The one that rules out N blank rows, which would satisfy both assertions above.
+        r.AssertPassed("Codeunit60781.TimeZone_EveryRowHasANonBlankId");
+        // Get and FindSet must agree, so the row Get returns is a real row and not a
+        // separately-built one.
+        r.AssertPassed("Codeunit60781.TimeZone_GetOne_AgreesWithTheFirstRowOfFindSet");
+        // Negative: a number past the end still answers false. Passes against an EMPTY
+        // table too, which is exactly why it is not sufficient on its own.
+        r.AssertPassed("Codeunit60781.TimeZone_GetOnANumberPastTheEnd_ReturnsFalse");
+        // Negative: filtering discriminates.
+        r.AssertPassed("Codeunit60781.TimeZone_FilterOnNumber_DiscriminatesBetweenRows");
+        r.AssertNoFailures();
     }
 }

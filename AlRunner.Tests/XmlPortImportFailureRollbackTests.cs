@@ -1,6 +1,3 @@
-using System.Diagnostics;
-using System.Text;
-using System.Text.RegularExpressions;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -18,34 +15,9 @@ namespace AlRunner.Tests;
 /// </summary>
 public class XmlPortImportFailureRollbackTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
-    private static (string output, int exit) RunRunner(string bundle)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        args.Append(" \"").Append(bundle).Append('"');
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(180_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
 
     [SkippableFact]
-    public void GuardedImport_FailureRollsBackItsRows_SuccessKeepsThem()
+    public async Task GuardedImport_FailureRollsBackItsRows_SuccessKeepsThem()
     {
         TestArtifacts.SkipIfMissing();
 
@@ -204,10 +176,10 @@ public class XmlPortImportFailureRollbackTests
         }
         """);
 
-        var (output, exitCode) = RunRunner(root);
+        var r = await SuiteServer.RunViaServer(root);
 
-        Assert.True(exitCode == 0, $"Expected all three import tests to pass (exit 0); got exit {exitCode}.\n{output}");
+        Assert.True(r.ExitCode == 0, $"Expected all three import tests to pass (exit 0); got exit {r.ExitCode}.\n{r}");
         // Exit 0 alone would also read a run that executed nothing; pin the count.
-        Assert.Matches(new Regex(@"Tests:\s+3\s+passed 3\s+failed 0\s+errors 0"), output);
+        Assert.True(r.Total == 3 && r.Passed == 3 && r.Failed == 0 && r.Errors == 0, $"expected Tests: 3 passed 3 failed 0 errors 0\n{r}");
     }
 }

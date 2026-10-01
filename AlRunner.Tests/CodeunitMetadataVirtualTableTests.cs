@@ -23,8 +23,6 @@
 // StefanMaron/BusinessCentral.AL.Language.Tests, per
 // .claude/rules/bc-behavior-tests-go-upstream.md. This test exists so a regression in OUR
 // OWN population pipeline fails loudly here, without needing the submodule pin bumped first.
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -44,87 +42,34 @@ public sealed class CodeunitMetadataVirtualTableTests
     private static readonly string FixtureDir =
         Path.Combine(RepoRoot, "AlRunner.Tests", "Fixtures", "CodeunitMetadataVirtualTable");
 
-    private static (int ExitCode, string StdOut, string StdErr) Run(string cacheDir)
-    {
-        var sb = new StringBuilder(TestBuildConfig.RunArgs(Path.Combine(RepoRoot, "AlRunner")));
-        sb.Append(' ').Append($"\"{FixtureDir}\"");
-        sb.Append(' ').Append($"--cache \"{cacheDir}\"");
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet",
-            Arguments = sb.ToString(),
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WorkingDirectory = RepoRoot,
-        };
-
-        var outSb = new StringBuilder();
-        var errSb = new StringBuilder();
-        using var proc = Process.Start(psi)!;
-        proc.OutputDataReceived += (_, e) => { if (e.Data != null) lock (outSb) outSb.AppendLine(e.Data); };
-        proc.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (errSb) errSb.AppendLine(e.Data); };
-        proc.BeginOutputReadLine();
-        proc.BeginErrorReadLine();
-        if (!proc.WaitForExit(SpawnTimeoutMs))
-        {
-            try { proc.Kill(entireProcessTree: true); } catch { }
-            throw new TimeoutException($"al-runner did not exit within {SpawnTimeoutMs / 1000}s.");
-        }
-        // WaitForExit(int) returns as soon as the process exits and does NOT wait for the
-        // async BeginOutputReadLine/BeginErrorReadLine callbacks to drain — only the
-        // parameterless overload does. Without this the last stdout lines can still be in
-        // flight when we read outSb, and an Assert.Contains on a line the runner definitely
-        // printed fails intermittently, the more so the more loaded the machine is (#2496).
-        proc.WaitForExit();
-        return (proc.ExitCode, outSb.ToString(), errSb.ToString());
-    }
-
     [Fact]
-    public void CodeunitMetadata_SourceCompiledCodeunits_AllFixtureTestsPass()
+    public async Task CodeunitMetadata_SourceCompiledCodeunits_AllFixtureTestsPass()
     {
-        var cacheDir = TestScratch.Dir("al-runner-cmv-tests");
-        try
-        {
-            var (exit, stdout, stderr) = Run(cacheDir);
+        var r = await SuiteServer.RunViaServer(FixtureDir);
 
-            Assert.True(exit == 0,
-                $"expected a clean run (every fixture test must pass). exit={exit}\nstdout:\n{stdout}\nstderr:\n{stderr}");
+        Assert.True(r.ExitCode == 0,
+            $"expected a clean run (every fixture test must pass). exit={r.ExitCode}\n{r}");
 
-            // Positive: a fresh-source-compiled codeunit is found, and TableNo /
-            // SingleInstance / Subtype are read off ITS OWN declaration.
-            Assert.Contains(
-                "PASS  Codeunit60764.CodeunitMetadata_SourceCompiledCodeunit_ColumnsComeFromItsDeclaration", stdout);
-            // The mirror declaration: SingleInstance true, TableNo absent. Together with the
-            // one above, this is what rules out a fixed row satisfying both.
-            Assert.Contains(
-                "PASS  Codeunit60764.CodeunitMetadata_SingleInstanceCodeunit_ReportsTrueAndNoTableNo", stdout);
-            // Subtype is an OPTION column resolved against the live metatable's own option
-            // string, not a hardcoded ordinal table.
-            Assert.Contains(
-                "PASS  Codeunit60764.CodeunitMetadata_TestCodeunit_ReportsSubtypeTest", stdout);
-            // #3536: a quoted Subtype identifier is the same declaration as the bare one...
-            Assert.Contains(
-                "PASS  Codeunit60764.CodeunitMetadata_QuotedSubtype_IsReadAsTheIdentifierItIs", stdout);
-            // ...and a row the resolver cannot answer may not take the rest of the table with
-            // it. This one asserts the containment through the runner's real populate path,
-            // which is where the whole-table abort lived.
-            Assert.Contains(
-                "PASS  Codeunit60764.CodeunitMetadata_QuotedSubtypeCodeunit_DoesNotSuppressTheOtherRows", stdout);
-            // Negative: an id no codeunit uses still answers false, not a silent success.
-            Assert.Contains(
-                "PASS  Codeunit60764.CodeunitMetadata_UnknownCodeunitId_ReturnsFalse", stdout);
-            // Negative: filtering discriminates — one row for a real id, none for an unused
-            // one. A provider inserting one blank row would pass Get() and fail this.
-            Assert.Contains(
-                "PASS  Codeunit60764.CodeunitMetadata_FilterOnId_DiscriminatesBetweenRows", stdout);
-            Assert.DoesNotContain("FAIL", stdout);
-        }
-        finally
-        {
-            try { Directory.Delete(cacheDir, recursive: true); } catch { /* best-effort cleanup */ }
-        }
+        // Positive: a fresh-source-compiled codeunit is found, and TableNo /
+        // SingleInstance / Subtype are read off ITS OWN declaration.
+        r.AssertPassed("Codeunit60764.CodeunitMetadata_SourceCompiledCodeunit_ColumnsComeFromItsDeclaration");
+        // The mirror declaration: SingleInstance true, TableNo absent. Together with the
+        // one above, this is what rules out a fixed row satisfying both.
+        r.AssertPassed("Codeunit60764.CodeunitMetadata_SingleInstanceCodeunit_ReportsTrueAndNoTableNo");
+        // Subtype is an OPTION column resolved against the live metatable's own option
+        // string, not a hardcoded ordinal table.
+        r.AssertPassed("Codeunit60764.CodeunitMetadata_TestCodeunit_ReportsSubtypeTest");
+        // #3536: a quoted Subtype identifier is the same declaration as the bare one...
+        r.AssertPassed("Codeunit60764.CodeunitMetadata_QuotedSubtype_IsReadAsTheIdentifierItIs");
+        // ...and a row the resolver cannot answer may not take the rest of the table with
+        // it. This one asserts the containment through the runner's real populate path,
+        // which is where the whole-table abort lived.
+        r.AssertPassed("Codeunit60764.CodeunitMetadata_QuotedSubtypeCodeunit_DoesNotSuppressTheOtherRows");
+        // Negative: an id no codeunit uses still answers false, not a silent success.
+        r.AssertPassed("Codeunit60764.CodeunitMetadata_UnknownCodeunitId_ReturnsFalse");
+        // Negative: filtering discriminates — one row for a real id, none for an unused
+        // one. A provider inserting one blank row would pass Get() and fail this.
+        r.AssertPassed("Codeunit60764.CodeunitMetadata_FilterOnId_DiscriminatesBetweenRows");
+        r.AssertNoFailures();
     }
 }

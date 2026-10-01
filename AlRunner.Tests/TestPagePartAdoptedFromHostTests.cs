@@ -36,17 +36,12 @@
 //     HostWriteBeforeTestPageTouch_TestPageSeesTheHostWrite fail: TestPage.Info.Tag.Value()
 //     reads 'Hello' (the part's own OnOpenPage, run LATE once the TestPage side finally asks)
 //     instead of 'FROM-HOST' (what the host already wrote).
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
 
 public sealed class TestPagePartAdoptedFromHostTests : IDisposable
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
 
     private readonly string _root;
 
@@ -59,14 +54,6 @@ public sealed class TestPagePartAdoptedFromHostTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch { /* best-effort cleanup */ }
-    }
-
-    private static string[] ExtraPackageCacheArgs()
-    {
-        var platformApps = TestArtifacts.PlatformAppsDir();
-        return Directory.Exists(platformApps)
-            ? new[] { "--package-cache", platformApps }
-            : Array.Empty<string>();
     }
 
     /// <summary>
@@ -310,43 +297,21 @@ public sealed class TestPagePartAdoptedFromHostTests : IDisposable
         """);
     }
 
-    private (string output, int exit) RunBundled()
-    {
-        var args = new StringBuilder(
-            TestBuildConfig.RunArgs(ProjectPath) + TestBuildConfig.BcVersionArg + $" \"{_root}\"");
-        foreach (var a in ExtraPackageCacheArgs()) args.Append($" \"{a}\"");
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(600_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
-
     /// <summary>
     /// Positive: the TestPage's own read must see the row through the SAME part page instance
     /// the host's OnOpenPage wrote through, not a disconnected second one seeded from nothing.
     /// </summary>
     [SkippableFact]
-    public void HostSeededTemporaryPart_TestPageSeesTheSameRow()
+    public async Task HostSeededTemporaryPart_TestPageSeesTheSameRow()
     {
         TestArtifacts.SkipIfMissing();
 
         WriteBundle();
-        var (output, exit) = RunBundled();
+        var r = await SuiteServer.RunViaServer(_root);
 
-        Assert.True(exit == 0, $"Expected the bundle to pass; exit={exit}\n{output}");
-        Assert.Contains("PASS  Codeunit62413.HostSeededTemporaryPart_TestPageSeesTheSameRow", output);
-        Assert.DoesNotContain("FAIL", output);
+        Assert.True(r.ExitCode == 0, $"Expected the bundle to pass; exit={r.ExitCode}\n{r}");
+        r.AssertPassed("Codeunit62413.HostSeededTemporaryPart_TestPageSeesTheSameRow");
+        r.AssertNoFailures();
     }
 
     /// <summary>
@@ -363,15 +328,15 @@ public sealed class TestPagePartAdoptedFromHostTests : IDisposable
     /// host already wrote).
     /// </summary>
     [SkippableFact]
-    public void HostWriteBeforeTestPageTouch_TestPageSeesTheHostWrite()
+    public async Task HostWriteBeforeTestPageTouch_TestPageSeesTheHostWrite()
     {
         TestArtifacts.SkipIfMissing();
 
         WriteGlobalsRaceBundle();
-        var (output, exit) = RunBundled();
+        var r = await SuiteServer.RunViaServer(_root);
 
-        Assert.True(exit == 0, $"Expected the bundle to pass; exit={exit}\n{output}");
-        Assert.Contains("PASS  Codeunit62422.HostWriteBeforeTestPageTouch_TestPageSeesTheHostWrite", output);
-        Assert.DoesNotContain("FAIL", output);
+        Assert.True(r.ExitCode == 0, $"Expected the bundle to pass; exit={r.ExitCode}\n{r}");
+        r.AssertPassed("Codeunit62422.HostWriteBeforeTestPageTouch_TestPageSeesTheHostWrite");
+        r.AssertNoFailures();
     }
 }

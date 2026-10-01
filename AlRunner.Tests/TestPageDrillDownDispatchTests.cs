@@ -25,23 +25,13 @@
 // trigger did not run"), and the negative test's asserterror never fires (Error "expected
 // DrillDown() on a trigger-less control to fail").
 
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
 
-// Spawns the runner as a subprocess, same convention as BatchAppIdentityTests. Used to be
-// [Collection("server-serial")] to avoid concurrent `dotnet run`s and no longer is — #1809.
-// This test's own flake under box contention (seen while developing #1808) was traced to
-// generic shared-box starvation, not a timing assumption in the test itself: RunBundled()
-// already waits up to 600s for the subprocess and the fixture uses a per-instance Guid temp
-// dir, so there is no fixed-timeout or shared-path race here to fix.
+// Runs through the suite's shared server (#5111); the fixture uses a per-instance Guid temp dir.
 public sealed class TestPageDrillDownDispatchTests : IDisposable
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
 
     private readonly string _root;
 
@@ -54,14 +44,6 @@ public sealed class TestPageDrillDownDispatchTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch { /* best-effort cleanup */ }
-    }
-
-    private static string[] ExtraPackageCacheArgs()
-    {
-        var platformApps = TestArtifacts.PlatformAppsDir();
-        return Directory.Exists(platformApps)
-            ? new[] { "--package-cache", platformApps }
-            : Array.Empty<string>();
     }
 
     /// <summary>
@@ -206,28 +188,6 @@ public sealed class TestPageDrillDownDispatchTests : IDisposable
         """);
     }
 
-    private (string output, int exit) RunBundled()
-    {
-        var args = new StringBuilder(
-            TestBuildConfig.RunArgs(ProjectPath) + TestBuildConfig.BcVersionArg + $" \"{_root}\"");
-        foreach (var a in ExtraPackageCacheArgs()) args.Append($" \"{a}\"");
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(600_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
-
     /// <summary>
     /// Positive + negative in one run: the trigger-bearing control's DrillDown() must run
     /// its OnDrillDown against the page's current row (a concrete value, not merely "did
@@ -235,16 +195,16 @@ public sealed class TestPageDrillDownDispatchTests : IDisposable
     /// platform error rather than silently doing nothing.
     /// </summary>
     [SkippableFact]
-    public void DrillDown_DispatchesTriggerAndRefusesWhenAbsent()
+    public async Task DrillDown_DispatchesTriggerAndRefusesWhenAbsent()
     {
         TestArtifacts.SkipIfMissing();
 
         WriteBundle();
-        var (output, exit) = RunBundled();
+        var r = await SuiteServer.RunViaServer(_root);
 
-        Assert.True(exit == 0, $"Expected the bundle to pass; exit={exit}\n{output}");
-        Assert.Contains("PASS  Codeunit62382.DrillDownRunsOnDrillDownTriggerAgainstCurrentRow", output);
-        Assert.Contains("PASS  Codeunit62382.DrillDownWithNoTriggerRaisesTheFixedPlatformError", output);
-        Assert.DoesNotContain("FAIL", output);
+        Assert.True(r.ExitCode == 0, $"Expected the bundle to pass; exit={r.ExitCode}\n{r}");
+        r.AssertPassed("Codeunit62382.DrillDownRunsOnDrillDownTriggerAgainstCurrentRow");
+        r.AssertPassed("Codeunit62382.DrillDownWithNoTriggerRaisesTheFixedPlatformError");
+        r.AssertNoFailures();
     }
 }

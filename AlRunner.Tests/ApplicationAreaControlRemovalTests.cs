@@ -5,17 +5,12 @@
 // TestPage lookups that consult it (LiveNavTestPage.GetField/GetAction/GetPart,
 // RequestPageTestPage.GetField), end to end through a real bundle run. The BC-behaviour claims
 // are measured upstream, by corpus codeunits 67530-67533 (pageapplicationarea/).
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
 
 public sealed class ApplicationAreaControlRemovalTests : IDisposable
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
 
     private readonly string _root;
 
@@ -28,30 +23,6 @@ public sealed class ApplicationAreaControlRemovalTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch { /* best-effort cleanup */ }
-    }
-
-    private static (string output, int exit) RunRunner(string bundle)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        var platformApps = TestArtifacts.PlatformAppsDir();
-        if (Directory.Exists(platformApps)) args.Append($" \"--package-cache\" \"{platformApps}\"");
-        args.Append(" \"").Append(bundle).Append('"');
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(180_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
     }
 
     private void WriteFixture()
@@ -444,15 +415,14 @@ public sealed class ApplicationAreaControlRemovalTests : IDisposable
     }
 
     [SkippableFact]
-    public void TestPage_ControlActionPartOrRequestPageControlWhoseAreaIsNotEnabled_IsNotFound_OthersAre()
+    public async Task TestPage_ControlActionPartOrRequestPageControlWhoseAreaIsNotEnabled_IsNotFound_OthersAre()
     {
+        TestArtifacts.SkipIfMissing();
         WriteFixture();
-        var (output, exit) = RunRunner(_root);
-        TestArtifacts.SkipIf(output.Contains("no BC artifact") || output.Contains("[bc] no engines"),
-            "no BC engine artifact provisioned in this environment");
+        var r = await SuiteServer.RunViaServer(_root);
 
-        Assert.True(exit == 0, $"expected all eleven AL tests to pass; exit={exit}\n{output}");
-        Assert.Contains("   passed 11 ", output);
-        Assert.DoesNotContain("FAIL", output);
+        Assert.True(r.ExitCode == 0, $"expected all eleven AL tests to pass; exit={r.ExitCode}\n{r}");
+        Assert.True(r.Passed == 11, $"expected 11 passed\n{r}");
+        r.AssertNoFailures();
     }
 }

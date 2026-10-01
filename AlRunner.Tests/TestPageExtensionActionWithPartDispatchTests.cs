@@ -36,17 +36,12 @@
 // Invoke() raises RunnerOutOfScopeException naming "testpage-action — the page declares no
 // OnAction trigger for this action" for an action that plainly declares one, exactly the
 // issue's own repro.
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
 
 public sealed class TestPageExtensionActionWithPartDispatchTests : IDisposable
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
 
     private readonly string _root;
 
@@ -59,14 +54,6 @@ public sealed class TestPageExtensionActionWithPartDispatchTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch { /* best-effort cleanup */ }
-    }
-
-    private static string[] ExtraPackageCacheArgs()
-    {
-        var platformApps = TestArtifacts.PlatformAppsDir();
-        return Directory.Exists(platformApps)
-            ? new[] { "--package-cache", platformApps }
-            : Array.Empty<string>();
     }
 
     /// <summary>
@@ -290,28 +277,6 @@ public sealed class TestPageExtensionActionWithPartDispatchTests : IDisposable
         """);
     }
 
-    private (string output, int exit) RunBundled()
-    {
-        var args = new StringBuilder(
-            TestBuildConfig.RunArgs(ProjectPath) + TestBuildConfig.BcVersionArg + $" \"{_root}\"");
-        foreach (var a in ExtraPackageCacheArgs()) args.Append($" \"{a}\"");
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(600_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
-
     /// <summary>
     /// Positive, all three arms in one run: the part()-adding pageextension's unspaced
     /// action, its spaced-name action, and the base page's OWN action must all still
@@ -320,17 +285,17 @@ public sealed class TestPageExtensionActionWithPartDispatchTests : IDisposable
     /// concrete effect of each, not merely "did not throw".
     /// </summary>
     [SkippableFact]
-    public void ActionOnPageExtensionWithPart_StillDispatches()
+    public async Task ActionOnPageExtensionWithPart_StillDispatches()
     {
         TestArtifacts.SkipIfMissing();
 
         WriteBundle();
-        var (output, exit) = RunBundled();
+        var r = await SuiteServer.RunViaServer(_root);
 
-        Assert.True(exit == 0, $"Expected the bundle to pass; exit={exit}\n{output}");
-        Assert.Contains("PASS  Codeunit62404.ActionOnPageExtensionWithPart_StillDispatches", output);
-        Assert.Contains("PASS  Codeunit62404.SpacedActionOnPageExtensionWithPart_StillDispatches", output);
-        Assert.Contains("PASS  Codeunit62404.DirectActionOnTheBasePage_StillDispatches", output);
-        Assert.DoesNotContain("FAIL", output);
+        Assert.True(r.ExitCode == 0, $"Expected the bundle to pass; exit={r.ExitCode}\n{r}");
+        r.AssertPassed("Codeunit62404.ActionOnPageExtensionWithPart_StillDispatches");
+        r.AssertPassed("Codeunit62404.SpacedActionOnPageExtensionWithPart_StillDispatches");
+        r.AssertPassed("Codeunit62404.DirectActionOnTheBasePage_StillDispatches");
+        r.AssertNoFailures();
     }
 }
