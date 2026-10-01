@@ -86,12 +86,34 @@ Keep a fact on the CLI when it needs any of these:
 
 - a CLI-only flag (`--strict`, `--test`, `--coverage`, `--watch`, an output file, ...) or an
   environment-variable hook;
-- an assertion on a diagnostic line the runner writes to stderr. The server's stderr is a
-  separate pipe with no marker after a request, so a negative assertion on it proves nothing;
+- an assertion on what the CLI prints, rather than on a protocol field: a rendered failure line
+  or diagnosis, the `Tests:` summary, a `[cache]` HIT or MISS line;
 - a cold or warm run against a cache directory it owns, or several runner processes;
 - the CLI's own bundle discovery or exit-code path, which is what the fact is about.
 
 Every code path the conversions touch keeps at least one process-per-fact CLI test.
+
+### Absence assertions and stderr
+
+The CLI test asserted `DoesNotContain` on stdout and stderr together. The helper's equivalent
+is `result.AssertOutputDoesNotContain(text)`, which looks in the protocol lines and in the
+request's own stderr slice. The slice is read up to the request's `[server] request <n> done`
+marker (docs/server-mode.md#stderr-request-marker) or the request throws, so "not in the slice"
+means the request never wrote it. Three things follow:
+
+- A slice that was not read never passes: `ServerRunResult.StdErr` throws, and so does the
+  assertion. An empty slice that was read up to the marker is an answer, not a missing one: a
+  clean request writes nothing to stderr, so the assertion also reads the protocol lines, which
+  always carry at least the summary.
+- `"FAIL"`, `"ERROR"` and `"COMPILE FAIL"` are CLI line texts (`COMPILE FAIL` is only in the CLI's reporter). The protocol spells a failure `"status":"fail"`,
+  so a fact that meant "no failure" calls `AssertNoFailures()` and, for a compile error,
+  `Assert.Empty(result.CompilationErrors)`. An absence call on the CLI text stays only as an
+  addition that also covers stderr.
+- A request in which a test timed out (`errorKind: "timeout"`, `ServerRunResult.TimedOut`) gets
+  no stderr slice: the runner abandons that test's thread and it may write after the marker
+  (#5171). `StdErr` and the two output assertions throw, and the pool discards that server
+  instead of handing it to the next fact, so no later slice can carry the abandoned thread's
+  lines either. The counts and test results of that request stay readable.
 
 The pool starts at most `SuiteServer.Capacity` servers, each with `--package-cache` set to the
 platform apps when they are present, and replaces a server after

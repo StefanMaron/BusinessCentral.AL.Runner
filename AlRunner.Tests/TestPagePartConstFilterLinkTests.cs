@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -20,7 +18,7 @@ namespace AlRunner.Tests;
 /// StefanMaron/BusinessCentral.AL.Language.Tests codeunit 60324 "TSPL Tests"
 /// (TestPageSubpagePartConstFilter.al), per .claude/rules/bc-behavior-tests-go-upstream.md.
 /// This test exists so a regression in OUR OWN link-application mechanism fails loudly here,
-/// spawning the real runner against a synthetic bundle, without depending on the submodule
+/// running the real runner (through the shared suite server, docs/shared-cli-server.md#suite-server) against a synthetic bundle, without depending on the submodule
 /// pin having moved yet.
 ///
 /// No Library Assert dependency (no "application" in the fixture's app.json — see
@@ -29,32 +27,6 @@ namespace AlRunner.Tests;
 /// </summary>
 public class TestPagePartConstFilterLinkTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
-    private static (string output, int exit) RunRunner(string bundle)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        args.Append(" \"").Append(bundle).Append('"');
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(180_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
-
     private static string WriteBundle()
     {
         var root = TestScratch.Dir("al-runner-testpage-part-const-filter-link-2469");
@@ -464,20 +436,21 @@ public class TestPagePartConstFilterLinkTests
     }
 
     [SkippableFact]
-    public void ConstAndFilterLinks_FilterThePart()
+    public async Task ConstAndFilterLinks_FilterThePart()
     {
         TestArtifacts.SkipIfMissing();
 
-        var (output, exit) = RunRunner(WriteBundle());
+        var result = await SuiteServer.RunViaServer(WriteBundle());
 
-        Assert.True(exit == 0, $"Expected the bundle to pass; exit={exit}\n{output}");
-        Assert.Contains("PASS  Codeunit62544.ConstLink_ShowsOnlyMatchingRows", output);
-        Assert.Contains("PASS  Codeunit62544.FilterLink_ShowsOnlyRowsInsideExpression", output);
-        Assert.Contains("PASS  Codeunit62544.ConstDatabaseLink_PinsTableId", output);
-        Assert.Contains("PASS  Codeunit62544.ConstOnlyLink_FiltersWithoutFieldLink", output);
-        Assert.Contains("PASS  Codeunit62544.ConstTextLink_PinsCodeField", output);
-        Assert.DoesNotContain("FAIL", output);
-        Assert.DoesNotContain("testpage-part-link", output);
+        Assert.True(result.ExitCode == 0, $"Expected the bundle to pass; exit={result.ExitCode}\n{result}");
+        result.AssertPassed("Codeunit62544.ConstLink_ShowsOnlyMatchingRows");
+        result.AssertPassed("Codeunit62544.FilterLink_ShowsOnlyRowsInsideExpression");
+        result.AssertPassed("Codeunit62544.ConstDatabaseLink_PinsTableId");
+        result.AssertPassed("Codeunit62544.ConstOnlyLink_FiltersWithoutFieldLink");
+        result.AssertPassed("Codeunit62544.ConstTextLink_PinsCodeField");
+        result.AssertNoFailures();
+        result.AssertOutputDoesNotContain("FAIL");
+        result.AssertOutputDoesNotContain("testpage-part-link");
     }
 
     /// <summary>
@@ -490,16 +463,17 @@ public class TestPagePartConstFilterLinkTests
     /// "TSPL Tests" runs the same shape on 8 real service tiers.
     /// </summary>
     [SkippableFact]
-    public void ConstLink_NewStampsALinkOnlyOntoPrimaryKeyFields()
+    public async Task ConstLink_NewStampsALinkOnlyOntoPrimaryKeyFields()
     {
         TestArtifacts.SkipIfMissing();
 
-        var (output, exit) = RunRunner(WriteBundle());
+        var result = await SuiteServer.RunViaServer(WriteBundle());
 
-        Assert.True(exit == 0, $"Expected the bundle to pass; exit={exit}\n{output}");
-        Assert.Contains("PASS  Codeunit62544.ConstLink_NewStampsTheFieldLinkButNotANonKeyConstant", output);
-        Assert.Contains("PASS  Codeunit62544.ConstLink_NewStampsAKeyConstantOntoTheNewRow", output);
-        Assert.Contains("PASS  Codeunit62544.FilterLink_NewDoesNotStampMultiValueExpression", output);
-        Assert.DoesNotContain("FAIL", output);
+        Assert.True(result.ExitCode == 0, $"Expected the bundle to pass; exit={result.ExitCode}\n{result}");
+        result.AssertPassed("Codeunit62544.ConstLink_NewStampsTheFieldLinkButNotANonKeyConstant");
+        result.AssertPassed("Codeunit62544.ConstLink_NewStampsAKeyConstantOntoTheNewRow");
+        result.AssertPassed("Codeunit62544.FilterLink_NewDoesNotStampMultiValueExpression");
+        result.AssertNoFailures();
+        result.AssertOutputDoesNotContain("FAIL");
     }
 }

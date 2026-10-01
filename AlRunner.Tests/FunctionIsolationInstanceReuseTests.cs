@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -17,10 +15,6 @@ namespace AlRunner.Tests;
 /// </summary>
 public class FunctionIsolationInstanceReuseTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
     private const int FixtureId = 64822;
 
     private static readonly string[] Tests =
@@ -35,29 +29,6 @@ public class FunctionIsolationInstanceReuseTests
         "LeakA_DoesNotSeeLeakB",
         "LeakB_DoesNotSeeLeakA",
     };
-
-    private static (string output, int exit) RunRunner(string bundle, params string[] extra)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        foreach (var e in extra) args.Append(" \"").Append(e).Append('"');
-        args.Append(" \"").Append(bundle).Append('"');
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(180_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
 
     private static string WriteBundle(string name)
     {
@@ -228,36 +199,36 @@ public class FunctionIsolationInstanceReuseTests
         return root;
     }
 
-    private static void AssertRan(string output)
+    private static void AssertRan(ServerRunResult result)
     {
         foreach (var t in Tests)
-            Assert.True(output.Contains($".{t}", StringComparison.Ordinal), $"{t} did not run:\n{output}");
+            Assert.True(result.Tests.Any(r => r.Name.EndsWith("." + t, StringComparison.Ordinal)), $"{t} did not run:\n{result}");
     }
 
     [SkippableFact]
-    public void TestIsolation_RunsEveryTestOnOneInstance_AndRollsBackToThePostOnRunState()
+    public async Task TestIsolation_RunsEveryTestOnOneInstance_AndRollsBackToThePostOnRunState()
     {
         TestArtifacts.SkipIfMissing();
-        var (output, exit) = RunRunner(WriteBundle("al-runner-function-isolation-4826-test"),
-            "--isolation", "test");
+        var result = await SuiteServer.RunViaServer(
+            new[] { WriteBundle("al-runner-function-isolation-4826-test") }, Array.Empty<string>(), testIsolation: "test");
 
-        AssertRan(output);
-        Assert.True(RunnerFailureLines.All(output).Count == 0,
-            $"every probe test passed on BC under TestIsolation = Function (run 36727084058):\n{output}");
-        Assert.Equal(0, exit);
+        AssertRan(result);
+        Assert.True(result.Tests.All(t => t.Status == "pass") && result.CompilationErrors.Count == 0,
+            $"every probe test passed on BC under TestIsolation = Function (run 36727084058):\n{result}");
+        Assert.Equal(0, result.ExitCode);
     }
 
     [SkippableFact]
-    public void CodeunitIsolation_FailsOnlyT5_TheRowIsNotRolledBackBetweenTests()
+    public async Task CodeunitIsolation_FailsOnlyT5_TheRowIsNotRolledBackBetweenTests()
     {
         TestArtifacts.SkipIfMissing();
-        var (output, _) = RunRunner(WriteBundle("al-runner-function-isolation-4826-codeunit"),
-            "--isolation", "codeunit");
+        var result = await SuiteServer.RunViaServer(
+            new[] { WriteBundle("al-runner-function-isolation-4826-codeunit") }, Array.Empty<string>(), testIsolation: "codeunit");
 
-        AssertRan(output);
-        var failures = RunnerFailureLines.All(output);
-        Assert.True(failures.Count == 1 && RunnerFailureLines.Failed(output, FixtureId, "T5_RowInsertedByT1IsRolledBack"),
-            $"expected exactly T5 to fail under Codeunit isolation, as on BC:\n{output}");
-        Assert.Contains("FIR5 the row T1 inserted is still there", output);
+        AssertRan(result);
+        var failures = result.Tests.Where(t => t.Status != "pass").ToList();
+        Assert.True(failures.Count == 1 && failures[0].Name == $"Codeunit{FixtureId}.T5_RowInsertedByT1IsRolledBack",
+            $"expected exactly T5 to fail under Codeunit isolation, as on BC:\n{result}");
+        Assert.Contains("FIR5 the row T1 inserted is still there", failures[0].Message);
     }
 }

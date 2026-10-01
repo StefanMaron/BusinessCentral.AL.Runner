@@ -4,18 +4,12 @@
 // swallowed. Only a [RunOnClient] DotNet callback refusal (#2772) is absorbed, which needs
 // Base App to reach and is pinned by tests/runner-extras/testpage-trigger-inject-timing. An
 // unhandled Confirm in a part's OnOpenPage is left to #4915: BC 27.x and 28.x disagree on it.
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
 
 public sealed class HostOpenPartErrorTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
     private static string Part(int id, string name, string onOpen) => $$"""
         page {{id}} "{{name}}"
         {
@@ -42,7 +36,7 @@ public sealed class HostOpenPartErrorTests
         """;
 
     [SkippableFact]
-    public void PartErrorFailsTheHostsOpen_AndAPartsOutOfScopeCallIsReported()
+    public async Task PartErrorFailsTheHostsOpen_AndAPartsOutOfScopeCallIsReported()
     {
         TestArtifacts.SkipIfMissing();
         var root = TestScratch.Dir("al-runner-host-open-part-error");
@@ -112,13 +106,14 @@ public sealed class HostOpenPartErrorTests
             }
             """);
 
-        var (output, exitCode) = RunCli($" --no-cache \"{root}\"");
+        var result = await SuiteServer.RunViaServer(root);
         // RefusingPart_IsReportedOutOfScope fails by design: the refusal is the assertion.
-        Assert.True(output.Contains("Tests: 3   passed 2   failed 1"), output);
-        Assert.Contains("FAIL  \"Hope Tests\".RefusingPart_IsReportedOutOfScope", output);
-        Assert.Contains("Unexpected out-of-scope: HttpClient.Get (reason: external-http)", output);
-        Assert.DoesNotContain("WRONG:", output);
-        Assert.Equal(1, exitCode);
+        result.AssertCounts(passed: 2, failed: 1, errors: 0);
+        var refusing = result.Tests.Single(t => t.Name == "Codeunit62818.RefusingPart_IsReportedOutOfScope");
+        Assert.Equal("fail", refusing.Status);
+        Assert.Contains("Unexpected out-of-scope: HttpClient.Get (reason: external-http)", refusing.Message);
+        result.AssertOutputDoesNotContain("WRONG:");
+        Assert.Equal(1, result.ExitCode);
     }
 
     /// <summary>
@@ -157,24 +152,4 @@ public sealed class HostOpenPartErrorTests
 
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static void RaiseCallbackRefusal() => throw new Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLCallbackNotAllowedException();
-
-    private static (string Output, int ExitCode) RunCli(string args)
-    {
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet",
-            Arguments = TestBuildConfig.RunArgs(ProjectPath) + TestBuildConfig.BcVersionArg + args,
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        using var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(240_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
 }

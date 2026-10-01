@@ -35,6 +35,9 @@
 // correctly the whole time — it was written to an Exception.Data key that nothing read, and any
 // unit test of the diagnosis in isolation would have passed against that. So the assertion has
 // to be made on what a developer actually reads out of a real run.
+//
+// STAYS ON THE CLI (#5111): what is read out of the run is the CLI's rendered failure text (the
+// diagnosis line beside the failure), not a protocol field.
 using System.Diagnostics;
 using System.Text;
 using Xunit;

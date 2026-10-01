@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -55,31 +53,6 @@ namespace AlRunner.Tests;
 /// </summary>
 public class QueryFlowFieldColumnProjectionTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
-    private static (string output, int exit) RunRunner(string bundle)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        args.Append(" \"").Append(bundle).Append('"');
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(180_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
 
     private static string WriteBundle()
     {
@@ -193,21 +166,21 @@ public class QueryFlowFieldColumnProjectionTests
     }
 
     [SkippableFact]
-    public void QueryFlowFieldColumn_ReadsCalculatedValue_InsteadOfCrashingOrCorruptingTheValue()
+    public async Task QueryFlowFieldColumn_ReadsCalculatedValue_InsteadOfCrashingOrCorruptingTheValue()
     {
         TestArtifacts.SkipIfMissing();
 
         var bundle = WriteBundle();
-        var (output, exitCode) = RunRunner(bundle);
+        var result = await SuiteServer.RunViaServer(bundle);
 
         // Never silently pass a run that failed to even get the test codeunit compiled/run.
-        Assert.DoesNotContain("EMIT-EXCLUDED", output);
-        Assert.DoesNotContain("COMPILE FAIL", output);
+        result.AssertOutputDoesNotContain("EMIT-EXCLUDED");
+        Assert.Empty(result.CompilationErrors);
         // The two crashes this issue reports, both must be gone.
-        Assert.DoesNotContain("NavSqlStatementHelper.ConvertToSqlIdentifier", output);
-        Assert.DoesNotContain("NavNCLConversionException", output);
+        result.AssertOutputDoesNotContain("NavSqlStatementHelper.ConvertToSqlIdentifier");
+        result.AssertOutputDoesNotContain("NavNCLConversionException");
         // Both tests must have run and passed — 2P/0F/0E is TestExecutor's own per-bundle
         // summary line (see CrossBundleModuleIdentityDedupTests for the same convention).
-        Assert.Contains("2P/0F/0E", output);
+        result.AssertCounts(passed: 2, failed: 0, errors: 0);
     }
 }

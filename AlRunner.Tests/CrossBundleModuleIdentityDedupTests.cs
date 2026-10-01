@@ -26,6 +26,8 @@ namespace AlRunner.Tests;
 /// fires the real (single, matched) subscriber cleanly and the test app's test passes.
 ///
 /// Spawns the real runner; needs the BC artifact cache. Skips (no-op) when absent.
+/// STAYS ON THE CLI (#5111): this is the CLI's multi-bundle path, and its --server counterpart is
+/// ServerCrossBundleModuleIdentityDedupTests.
 /// See DefineFlagIntegrationTests for why this used to be
 /// [Collection("server-serial")] and no longer is — #1809.
 /// </summary>

@@ -36,7 +36,6 @@
 // `application`. `target` is OnPrem because `Record "Published Application"` has scope OnPrem
 // and reports AL0296 in a Cloud-target app — the same reason
 // tests/runner-extras/published-application-system-table targets OnPrem.
-using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using AlRunner.Infrastructure;
@@ -46,17 +45,13 @@ namespace AlRunner.Tests;
 
 public class StaleBundleSymbolAppOwnershipTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
     private const int ListedTableId = 68101;    // in source AND in the stale symbol reference
     private const int UnlistedTableId = 68102;  // in source ONLY — the regression case
     private const int TestCodeunitId = 68103;
     private const int GhostTableId = 68105;     // in the stale symbol reference ONLY
 
     [SkippableFact]
-    public void SourceObjectMissingFromABundleRootApp_IsStillOwnedByThatApp()
+    public async Task SourceObjectMissingFromABundleRootApp_IsStillOwnedByThatApp()
     {
         TestArtifacts.SkipIfMissing();
 
@@ -64,18 +59,19 @@ public class StaleBundleSymbolAppOwnershipTests
         var appId = Guid.NewGuid();
         WriteFixture(bundleDir, appId);
 
-        var (output, exit) = RunRunner(bundleDir);
+        var result = await SuiteServer.RunViaServer(bundleDir);
 
         // Every assertion below is written as an AL `Error`, so a FAIL line carries the reason.
-        Assert.DoesNotContain("FAIL", output);
-        Assert.DoesNotContain("ERROR", output);
+        result.AssertNoFailures();
+        result.AssertOutputDoesNotContain("FAIL");
+        result.AssertOutputDoesNotContain("ERROR");
 
         // The fixture guard first: without it the three ownership tests would be vacuous.
-        Assert.Contains("PASS  Codeunit68103.GhostTableFromTheStaleAppIsVisibleAndOwned", output);
-        Assert.Contains("PASS  Codeunit68103.SourceOnlyTableIsOwnedByThisApp", output);
-        Assert.Contains("PASS  Codeunit68103.TableInBothSourceAndTheStaleAppIsOwnedByThisApp", output);
-        Assert.Contains("PASS  Codeunit68103.APlatformTableIsNotOwnedByThisApp", output);
-        Assert.Equal(0, exit);
+        result.AssertPassed("Codeunit68103.GhostTableFromTheStaleAppIsVisibleAndOwned");
+        result.AssertPassed("Codeunit68103.SourceOnlyTableIsOwnedByThisApp");
+        result.AssertPassed("Codeunit68103.TableInBothSourceAndTheStaleAppIsOwnedByThisApp");
+        result.AssertPassed("Codeunit68103.APlatformTableIsNotOwnedByThisApp");
+        Assert.Equal(0, result.ExitCode);
     }
 
     /// <summary>
@@ -250,27 +246,5 @@ public class StaleBundleSymbolAppOwnershipTests
             Queries = Array.Empty<object>(),
         };
         return Encoding.UTF8.GetBytes(JsonSerializer.Serialize(doc));
-    }
-
-    private static (string output, int exit) RunRunner(string bundle)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        args.Append(" \"").Append(bundle).Append('"');
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(300_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
     }
 }
