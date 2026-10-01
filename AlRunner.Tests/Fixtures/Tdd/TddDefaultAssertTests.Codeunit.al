@@ -1,7 +1,7 @@
 /// <summary>
 /// References CountOpen, a procedure "Tdd Target Cu" does not declare yet, and asserts the
 /// value an EMPTY generated stub returns (0). With --tdd (#5147) this test passes, and its
-/// result names the generated member it ran against.
+/// result names the generated member it reaches.
 /// </summary>
 codeunit 65016 "Tdd Default Assert Tests"
 {

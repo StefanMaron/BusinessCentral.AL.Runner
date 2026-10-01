@@ -3274,7 +3274,7 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
     int sP = 0, sF = 0, sE = 0;
     // --tdd: the tests whose compile referenced a generated member, populated wherever this
     // bundle's emitOutput.TddGeneratedMembers is collected. Each such result keeps its own
-    // outcome and is annotated with the members it ran against (#5147, TddDependents).
+    // outcome and is annotated with the generated members it reaches (#5147, TddDependents).
     var bundleTddDependents = new TddDependents();
     List<TestResult> AnnotateTddDependentResults(IReadOnlyList<TestResult> raw) => bundleTddDependents.Apply(raw);
     // #1880: counts app groups (bundled mode) / suites (--per-suite) that actually
@@ -7870,7 +7870,7 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 try
                 {
                     if (tddRequest == null) return executor.Run(asm, onTestComplete, token);
-                    // A test that ran against a generated member streams, and is returned, naming it (#5147).
+                    // A test that reaches a generated member streams, and is returned, naming it (#5147).
                     return executor.Run(asm, t => onTestComplete(tddRequest.Apply(t)), token)
                         .Select(tddRequest.Apply).ToList();
                 }

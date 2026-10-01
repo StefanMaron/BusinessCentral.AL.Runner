@@ -165,8 +165,8 @@ public class TddWatchTests
             Assert.Contains("FAIL ", cycle1);
             Assert.Contains("MissingProcedure_ReportsFailedThenPasses", cycle1);
             Assert.Contains("expected DoubleIt(5) = 10, got 0", cycle1); // the test's own Error()
-            Assert.Contains("ran against generated stub(s): Tdd Watch Target Cu: procedure \"DoubleIt\"(Arg1: Integer): Integer", cycle1);
-            Assert.Contains("--tdd: 1 test(s) ran against generated stubs this run:", cycle1);
+            Assert.Contains("reaches generated stub(s): Tdd Watch Target Cu: procedure \"DoubleIt\"(Arg1: Integer): Integer", cycle1);
+            Assert.Contains("--tdd: 1 test(s) reach generated stubs this run:", cycle1);
             Assert.DoesNotContain("depends on", cycle1); // the pre-#5147 blanket rewrite
             Assert.Contains("BareStatementCall_RefusesNotGuesses", cycle1);
             Assert.Contains("DoThing", cycle1);
@@ -196,7 +196,7 @@ public class TddWatchTests
             var cycle2 = Segment(m1 + 1, m2);
             Assert.Contains("PASS", cycle2);
             Assert.Contains("MissingProcedure_ReportsFailedThenPasses", cycle2);
-            Assert.DoesNotContain("ran against generated stub", cycle2);
+            Assert.DoesNotContain("reaches generated stub", cycle2);
             // Each cycle's closing block lists that cycle's generated members only (#5147):
             // DoubleIt is written now, so nothing was generated in cycle 2.
             Assert.Contains("--tdd: no members were generated this run", cycle2);

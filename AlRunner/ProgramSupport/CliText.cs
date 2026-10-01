@@ -352,8 +352,9 @@ internal static partial class ProgramSupport
         w.WriteLine();
         w.WriteLine("  Every test that reaches a generated member, passed or failed, gets a line naming");
         w.WriteLine("  those members — reached in its own body or through procedures it calls in the");
-        w.WriteLine("  same app (helpers, library codeunits), read from the code, not from what ran:");
-        w.WriteLine("    ran against generated stub(s): Calc: procedure \"DoubleIt\"(Arg1: Integer): Integer");
+        w.WriteLine("  same app (helpers, library codeunits, [HandlerFunctions] handlers), read from");
+        w.WriteLine("  the code, not from what ran (event subscribers are not followed):");
+        w.WriteLine("    reaches generated stub(s): Calc: procedure \"DoubleIt\"(Arg1: Integer): Integer");
         w.WriteLine("  (--output-json and --server test lines: a generatedStubs array), and the end of");
         w.WriteLine("  the run lists those tests with their results. Its status is still the test's own.");
         w.WriteLine();
@@ -759,7 +760,7 @@ internal static partial class ProgramSupport
         w.WriteLine("                          member where the call site fixes its type (a procedure");
         w.WriteLine("                          with an empty body returning the default value), and");
         w.WriteLine("                          lets each test report its own result, naming the");
-        w.WriteLine("                          generated members it ran against. A [Test] procedure in");
+        w.WriteLine("                          generated members it reaches. A [Test] procedure in");
         w.WriteLine("                          an object that could NOT be recovered is a FAILED test");
         w.WriteLine("                          naming the missing symbol. See --guide, TDD MODE. Works");
         w.WriteLine("                          together with --watch (a cycle with a missing symbol falls");

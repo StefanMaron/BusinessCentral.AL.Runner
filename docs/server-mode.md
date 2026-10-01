@@ -1192,10 +1192,12 @@ It runs the same generation as the CLI and `--watch --tdd` (`--guide`, "TDD MODE
   `"Calc: procedure \"DoubleIt\"(Arg1: Integer): Integer"`. It is present whatever the
   `status`, and is omitted for every other test. "Reaches" is read from the code, not observed
   at run time: the member is named by an AL0132 in the test's own body, or in a procedure the
-  test calls directly or transitively — a helper in the test codeunit or a procedure of another
-  codeunit in the same app. A branch that never ran still counts. A procedure in another
-  `sourcePaths` bundle (a test library app compiled separately) is not followed: its member is
-  still generated and listed on stderr, but the tests calling it carry no `generatedStubs`.
+  test calls directly or transitively — a helper in the test codeunit, a procedure of another
+  codeunit in the same app, or a handler the test names in `[HandlerFunctions(...)]`. A branch
+  that never ran still counts. Event subscribers and procedures in another `sourcePaths` bundle
+  (a test library app compiled separately) are not followed (#5161): their members are still
+  generated and listed on stderr, but a test reaching them only that way carries no
+  `generatedStubs`.
   The CLI's `--output-json` carries the same field.
 - With the app and its tests as two `sourcePaths`, the member is generated into the app bundle
   and the app is recompiled within the same request before the test bundle compiles again.
@@ -1206,13 +1208,13 @@ It runs the same generation as the CLI and `--watch --tdd` (`--guide`, "TDD MODE
 - The summary's `exitCode` follows the tests' own results, as without tdd: `1` when a test
   failed, `0` when every test passed, never `3` for a member that could be generated. On
   stderr the request lists the members it generated, then, when there are any, every test that
-  ran against one, with its result:
+  reaches one, with its result:
 
   ```
   --tdd: generated 2 member(s) this request:
     Calc: procedure "DoubleIt"(Arg1: Integer): Integer
     Calc: procedure "TripleIt"(Arg1: Integer): Integer
-  --tdd: 2 test(s) ran against generated stubs this request:
+  --tdd: 2 test(s) reach generated stubs this request:
     Calc Tests.DoubleIt_ReturnsTwice (fail): Calc: procedure "DoubleIt"(Arg1: Integer): Integer
     Calc Tests.TripleIt_OfZero_IsZero (pass): Calc: procedure "TripleIt"(Arg1: Integer): Integer
   ```
@@ -1226,7 +1228,7 @@ next request compiles it in full and runs all of its tests (`forcedFull`). Witho
 unchanged next request would reuse the module compiled with the stub and select tests against
 coverage measured on code that is not on disk. A test excluded by the refuse path never ran, so
 it has no coverage record, and a test with no record is always selected. When the real member
-replaces the stub, the next `affectedOnly` request runs every test that ran against the stub —
+replaces the stub, the next `affectedOnly` request runs every test that reached the stub —
 the ones that passed there as well as the ones that failed.
 
 ### `shutdown`

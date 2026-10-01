@@ -228,7 +228,7 @@ public sealed class ServerTddTests
             // Stderr is read asynchronously, so wait for the line rather than read StdErr (#5096).
             await server.StdErrSinceAsync(redMark, "SrvTdd Calc: procedure \"DoubleIt\"(Arg1: Integer): Integer");
             // #5147: the summary lists every test that ran against a stub, with its own result.
-            await server.StdErrSinceAsync(redMark, "--tdd: 2 test(s) ran against generated stubs this request:");
+            await server.StdErrSinceAsync(redMark, "--tdd: 2 test(s) reach generated stubs this request:");
             await server.StdErrSinceAsync(redMark, $"SrvTdd Calc Tests.TripleIt_OfZero_IsZero (pass): {TripleItStub}");
             await server.StdErrSinceAsync(redMark, $"SrvTdd Calc Tests.DoubleIt_ReturnsTwice (fail): {DoubleItStub}");
 

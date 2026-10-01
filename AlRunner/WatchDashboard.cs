@@ -53,7 +53,7 @@ public static class WatchDashboard
     /// selection did (WatchAffectedReport.Describe). Rendered above the tree, so a narrowed cycle
     /// never reads as a full run; null renders nothing.</param>
     /// <param name="tddLines">#5147: under <c>--watch --tdd</c>, the cycle's closing --tdd block
-    /// (generated members, then the tests that ran against them), unstyled, below the tree.</param>
+    /// (generated members, then the tests that reach them), unstyled, below the tree.</param>
     public static IRenderable Build(
         IReadOnlyList<BucketResult> results,
         string bundleName,

@@ -49,7 +49,7 @@
         "generatedStubs": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "runTests with tdd only (#5147): the members tdd generated that this test reaches, in its own body or through procedures it calls in the same app (read from the code, not observed at run time), each as 'Object: kind signature'. Present whatever the status; the status is the test's own result. Omitted when the test reaches no generated member."
+          "description": "runTests with tdd only (#5147): the members tdd generated that this test reaches, in its own body or through procedures and [HandlerFunctions] handlers it calls in the same app (read from the code, not observed at run time; event subscribers and other sourcePaths bundles are not followed), each as 'Object: kind signature'. Present whatever the status; the status is the test's own result. Omitted when the test reaches no generated member."
         },
         "messages": {
           "type": "array",

@@ -159,7 +159,7 @@ public sealed class TddModeTests : IDisposable
 
         // #5147: then every test that ran against a generated member, with its result — and
         // only those: the unrelated test and the refused (never-run) tests are not listed.
-        var listIdx = stderr.IndexOf("--tdd: 6 test(s) ran against generated stubs this run:", StringComparison.Ordinal);
+        var listIdx = stderr.IndexOf("--tdd: 6 test(s) reach generated stubs this run:", StringComparison.Ordinal);
         Assert.True(listIdx >= 0, $"expected the ran-against-stubs list in stderr:\n{stderr}");
         var list = stderr[listIdx..];
         Assert.Contains("Tdd Default Assert Tests.DefaultReturn_PassesAgainstEmptyStub (pass): Tdd Target Cu: procedure \"CountOpen\"(Arg1: Integer): Integer", list);
@@ -189,19 +189,19 @@ public sealed class TddModeTests : IDisposable
         var nested = IndexOf("MissingProcedureNestedArg_FailsOnItsOwnAssertion");
         Assert.True(nested >= 0 && lines[nested].TrimStart().StartsWith("FAIL", StringComparison.Ordinal), stdout);
         Assert.Contains("Expected:<100>. Actual:<0>", lines[nested + 1]);
-        Assert.Equal("ran against generated stub(s): Tdd Target Cu: procedure \"CalcSubtotal\"(Arg1: Integer): Integer",
+        Assert.Equal("reaches generated stub(s): Tdd Target Cu: procedure \"CalcSubtotal\"(Arg1: Integer): Integer",
             lines[nested + 2].Trim());
 
         var deflt = IndexOf("DefaultReturn_PassesAgainstEmptyStub");
         Assert.True(deflt >= 0 && lines[deflt].TrimStart().StartsWith("PASS", StringComparison.Ordinal), stdout);
-        Assert.Equal("ran against generated stub(s): Tdd Target Cu: procedure \"CountOpen\"(Arg1: Integer): Integer",
+        Assert.Equal("reaches generated stub(s): Tdd Target Cu: procedure \"CountOpen\"(Arg1: Integer): Integer",
             lines[deflt + 1].Trim());
 
         var healthy = IndexOf("UnrelatedTest_StillPasses");
         Assert.True(healthy >= 0, stdout);
-        Assert.DoesNotContain("ran against", lines[healthy + 1]);
+        Assert.DoesNotContain("reaches generated", lines[healthy + 1]);
 
-        var listIdx = IndexOf("--tdd: 6 test(s) ran against generated stubs this run:");
+        var listIdx = IndexOf("--tdd: 6 test(s) reach generated stubs this run:");
         Assert.True(listIdx > IndexOf("Tests: "), $"the list must follow the results summary:\n{stdout}");
     }
 
@@ -210,9 +210,9 @@ public sealed class TddModeTests : IDisposable
 
     /// <summary>
     /// #5147 review: the AL0132 sits in a procedure the test calls, not in the [Test] body — a
-    /// local helper in the test codeunit, and a procedure of a library codeunit. Each test
-    /// reaches the stub all the same, so it is annotated all the same; a test whose helper
-    /// reaches no generated member is not.
+    /// local helper, a library codeunit's procedure, two helpers deep, a mutually recursive pair,
+    /// and a [HandlerFunctions] handler. Each test reaches the stub all the same, so it is
+    /// annotated all the same; a test whose helper reaches no generated member is not.
     /// </summary>
     [SkippableFact]
     public void GeneratedMemberReachedThroughCalledProcedures_IsAnnotated()
@@ -226,7 +226,7 @@ public sealed class TddModeTests : IDisposable
         Assert.True(exit == 0, $"exit {exit}\n{stderr}");
         using var doc = JsonDocument.Parse(stdout.Trim());
         var tests = doc.RootElement.GetProperty("tests").EnumerateArray().ToList();
-        Assert.Equal(3, tests.Count);
+        Assert.Equal(6, tests.Count);
 
         var viaHelper = FindIn(tests, "ViaLocalHelper_RunsAgainstGeneratedStub");
         Assert.Equal("pass", viaHelper.GetProperty("status").GetString());
@@ -240,7 +240,20 @@ public sealed class TddModeTests : IDisposable
         Assert.Equal("pass", unrelated.GetProperty("status").GetString());
         Assert.Empty(StubsOf(unrelated));
 
-        Assert.Contains("--tdd: 2 test(s) ran against generated stubs this run:", stderr);
+        // Beyond the first call: two helpers deep, a mutually recursive pair (the walk must end),
+        // and a handler the test names in [HandlerFunctions] (the platform calls it, not the test).
+        void AssertReaches(string testName, string member)
+        {
+            var t = FindIn(tests, testName);
+            Assert.Equal("pass", t.GetProperty("status").GetString());
+            Assert.True(StubsOf(t).SequenceEqual(new[] { $"Tdd Helper Target Cu: procedure \"{member}\"(Arg1: Integer): Integer" }),
+                $"{testName}: expected the {member} stub, got [{string.Join(", ", StubsOf(t))}]");
+        }
+        AssertReaches("TwoHelpersDeep_ReachesGeneratedStub", "CountDeep");
+        AssertReaches("MutualRecursion_ReachesGeneratedStub", "CountCycle");
+        AssertReaches("ViaHandlerFunction_ReachesGeneratedStub", "CountHandled");
+
+        Assert.Contains("--tdd: 5 test(s) reach generated stubs this run:", stderr);
     }
 
     /// <summary>

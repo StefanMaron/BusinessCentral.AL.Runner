@@ -691,7 +691,7 @@ public static class Reporter
                 w.WriteLine(t.Outcome is TestOutcome.Fail or TestOutcome.Error
                     ? $"{label} {FailureHeading(t, ms)}{suspectSuffix}"
                     : $"{label} {t.Codeunit}.{t.Method} ({ms}ms){suspectSuffix}");
-                // #5147: --tdd only; a fact about what the test ran against, after its own message.
+                // #5147: --tdd only; a fact about the generated members the test reaches, after its own message.
                 var stubLine = t.GeneratedStubs is { Count: > 0 } ? $"      {TddReport.PerTestLine(t)}" : null;
                 if (stubLine != null && t.Outcome == TestOutcome.Pass)
                     w.WriteLine(stubLine);

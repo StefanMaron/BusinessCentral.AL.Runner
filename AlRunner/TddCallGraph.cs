@@ -9,7 +9,8 @@ namespace AlRunner;
 
 /// <summary>
 /// The static call graph of one compile's procedures, built from BC's own semantic model:
-/// an edge per invocation that binds to a procedure declared in the same compile. Calls that
+/// an edge per invocation that binds to a procedure declared in the same compile, and from a
+/// [Test] to each handler its [HandlerFunctions] names. Event subscribers are not followed. Calls that
 /// do not bind (the missing member itself, a precompiled dependency, a codeunit run by id) add
 /// no edge. Over-approximates execution — a branch that never runs still counts — which keeps
 /// the annotation a statement about what the test's code references.
@@ -22,30 +23,68 @@ internal sealed class TddCallGraph
 
     public static TddCallGraph Build(NavCA.Compilation compilation, IReadOnlyList<NavSyntax.SyntaxTree> trees)
     {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         var g = new TddCallGraph();
+        int invocations = 0, edges = 0, handlerEdges = 0, failed = 0;
         foreach (var tree in trees)
         {
             NavCA.SemanticModel model;
             try { model = compilation.GetSemanticModel(tree); }
-            catch { continue; }
-            foreach (var inv in tree.GetRoot().DescendantNodes().OfType<NavSyntax.InvocationExpressionSyntax>())
+            catch { failed++; continue; }
+            var root = tree.GetRoot();
+            foreach (var inv in root.DescendantNodes().OfType<NavSyntax.InvocationExpressionSyntax>())
             {
+                invocations++;
                 try
                 {
                     var caller = EnclosingMethod(inv);
                     if (caller == null) continue;
-                    var callee = Declaration(BoundMethod(model, inv));
-                    if (callee == null || ReferenceEquals(callee, caller)) continue;
-                    if (!g._callers.TryGetValue(callee, out var list)) g._callers[callee] = list = new();
-                    if (!list.Contains(caller)) list.Add(caller);
+                    if (g.AddEdge(caller, Declaration(BoundMethod(model, inv)))) edges++;
                 }
                 catch
                 {
-                    // An invocation the model cannot bind adds no edge; the rest of the graph stands.
+                    failed++;
                 }
             }
+            // [HandlerFunctions('A,B')] on a [Test]: the platform calls those procedures of the same
+            // codeunit while the test runs, so they are callees of the test.
+            foreach (var method in root.DescendantNodes().OfType<NavSyntax.MethodDeclarationSyntax>())
+                foreach (var handler in HandlerMethods(method))
+                    if (g.AddEdge(method, handler)) handlerEdges++;
         }
+        sw.Stop();
+        PerfTrace.Log($"tdd call graph: {trees.Count} tree(s), {invocations} invocation(s), {edges} call edge(s), " +
+            $"{handlerEdges} handler edge(s), {failed} bind failure(s), {sw.ElapsedMilliseconds} ms");
+        if (failed > 0)
+            Console.Error.WriteLine($"--tdd: {failed} call(s) could not be bound while finding the tests that reach " +
+                "generated members; a test reaching one only through such a call carries no generatedStubs.");
         return g;
+    }
+
+    private bool AddEdge(NavSyntax.MethodDeclarationSyntax caller, NavSyntax.MethodDeclarationSyntax? callee)
+    {
+        if (callee == null || ReferenceEquals(callee, caller)) return false;
+        if (!_callers.TryGetValue(callee, out var list)) _callers[callee] = list = new();
+        if (list.Contains(caller)) return false;
+        list.Add(caller);
+        return true;
+    }
+
+    private static IEnumerable<NavSyntax.MethodDeclarationSyntax> HandlerMethods(NavSyntax.MethodDeclarationSyntax test)
+    {
+        var attr = test.Attributes.FirstOrDefault(a =>
+            string.Equals(Name(a.Name), "HandlerFunctions", StringComparison.OrdinalIgnoreCase));
+        if (attr == null) yield break;
+        var text = attr.ToString();
+        int open = text.IndexOf('\''), close = text.LastIndexOf('\'');
+        if (open < 0 || close <= open) yield break;
+        var names = text[(open + 1)..close].Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        NavCA.SyntaxNode? obj = test.Parent;
+        while (obj != null && obj is not NavSyntax.ObjectSyntax) obj = obj.Parent;
+        if (obj == null) yield break;
+        foreach (var m in obj.DescendantNodes().OfType<NavSyntax.MethodDeclarationSyntax>())
+            if (names.Any(n => string.Equals(n, Name(m.Name), StringComparison.OrdinalIgnoreCase)))
+                yield return m;
     }
 
     /// <summary>"ObjectName.MethodName" of every [Test] procedure that is, or transitively calls,

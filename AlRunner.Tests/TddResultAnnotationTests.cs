@@ -67,7 +67,7 @@ public sealed class TddResultAnnotationTests
 
         Assert.Equal(new[]
         {
-            "--tdd: 2 test(s) ran against generated stubs this run:",
+            "--tdd: 2 test(s) reach generated stubs this run:",
             "  Calc Tests.DoubleIt_ReturnsTwice (fail): Calc: procedure \"DoubleIt\"(Arg1: Integer): Integer",
             "  Calc Tests.DoubleIt_OfZero (pass): Calc: procedure \"DoubleIt\"(Arg1: Integer): Integer; Member: field \"Points\": Integer",
         }, TddReport.SummaryLines(tests, "run"));
@@ -138,14 +138,14 @@ public sealed class TddResultAnnotationTests
 
         var fail = lines.FindIndex(l => l.Contains("DoubleIt_ReturnsTwice"));
         Assert.Equal("DoubleIt returned 0", lines[fail + 1]);
-        Assert.Equal("ran against generated stub(s): Calc: procedure \"DoubleIt\"(Arg1: Integer): Integer", lines[fail + 2]);
+        Assert.Equal("reaches generated stub(s): Calc: procedure \"DoubleIt\"(Arg1: Integer): Integer", lines[fail + 2]);
 
         var pass = lines.FindIndex(l => l.Contains("DoubleIt_OfZero"));
         Assert.StartsWith("PASS", lines[pass]);
-        Assert.StartsWith("ran against generated stub(s): Calc: procedure", lines[pass + 1]);
+        Assert.StartsWith("reaches generated stub(s): Calc: procedure", lines[pass + 1]);
 
         var unrelated = lines.FindIndex(l => l.Contains("Unrelated_Passes"));
-        Assert.DoesNotContain(lines.Skip(unrelated + 1), l => l.StartsWith("ran against", StringComparison.Ordinal));
+        Assert.DoesNotContain(lines.Skip(unrelated + 1), l => l.StartsWith("reaches generated", StringComparison.Ordinal));
     }
 
     private static readonly string RepoRoot = Path.GetFullPath(
@@ -164,7 +164,8 @@ public sealed class TddResultAnnotationTests
         Assert.Contains("EMPTY body", tddSection);
         Assert.Contains(TddReport.PerTestPrefix.TrimEnd(), tddSection);
         Assert.Contains("generatedStubs", tddSection);
-        Assert.Contains("helpers, library codeunits", tddSection); // the flag follows calls, not just the [Test] body
+        Assert.Contains("helpers, library codeunits, [HandlerFunctions] handlers", tddSection); // follows calls, not just the [Test] body
+        Assert.DoesNotContain("ran against generated", tddSection); // "reaches": read from the code, not observed
         Assert.DoesNotContain("raises a distinctive error", tddSection);
 
         var help = new StringWriter();
@@ -176,6 +177,7 @@ public sealed class TddResultAnnotationTests
         Assert.Contains("`generatedStubs` (#5147)", serverDoc);
         Assert.DoesNotContain("a test that ran against a stub is not a pass", serverDoc);
         Assert.Contains("a procedure the\n  test calls directly or transitively", serverDoc.Replace("\r\n", "\n"));
+        Assert.Contains("Event subscribers and procedures in another `sourcePaths` bundle", serverDoc);
 
         using var schema = JsonDocument.Parse(File.ReadAllText(Path.Combine(RepoRoot, "protocol-v2.schema.json")));
         Assert.True(schema.RootElement.GetProperty("definitions").GetProperty("TestEvent")

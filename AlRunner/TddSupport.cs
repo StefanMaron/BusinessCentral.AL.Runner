@@ -172,7 +172,7 @@ public sealed class TddDependents
 /// </summary>
 public static class TddReport
 {
-    public const string PerTestPrefix = "ran against generated stub(s): ";
+    public const string PerTestPrefix = "reaches generated stub(s): ";
 
     public static string Describe(TddGeneratedMember m) => $"{m.ObjectDisplayName}: {m.MemberKind} {m.Signature}";
 
@@ -184,7 +184,7 @@ public static class TddReport
         var flagged = tests.Where(t => t.GeneratedStubs is { Count: > 0 }).ToList();
         var lines = new List<string>();
         if (flagged.Count == 0) return lines;
-        lines.Add($"--tdd: {flagged.Count} test(s) ran against generated stubs this {scope}:");
+        lines.Add($"--tdd: {flagged.Count} test(s) reach generated stubs this {scope}:");
         foreach (var t in flagged)
         {
             var name = string.IsNullOrEmpty(t.CodeunitDisplayName) ? t.Codeunit : t.CodeunitDisplayName!;
@@ -211,7 +211,7 @@ public sealed class TddServerRequest
     /// <summary>Every member generated in this request, for the stderr summary.</summary>
     public List<TddGeneratedMember> Generated { get; } = new();
 
-    /// <summary>Every result of this request that ran against a generated member, for the stderr summary.</summary>
+    /// <summary>Every result of this request that reaches a generated member, for the stderr summary.</summary>
     public List<TestResult> RanAgainstStubs { get; } = new();
 
     /// <summary>The annotation for a test of the bundle running now; records it for the summary.</summary>

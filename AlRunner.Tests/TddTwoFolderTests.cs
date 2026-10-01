@@ -102,7 +102,7 @@ public sealed class TddTwoFolderTests : IDisposable
         Assert.Equal("pass", unrelated.GetProperty("status").GetString());
         Assert.False(unrelated.TryGetProperty("generatedStubs", out _));
         Assert.Contains("--tdd: generated 3 member(s) this run:", stderr);
-        Assert.Contains("--tdd: 3 test(s) ran against generated stubs this run:", stderr);
+        Assert.Contains("--tdd: 3 test(s) reach generated stubs this run:", stderr);
 
         // In memory only: the app's files on disk are what they were.
         Assert.Equal(before, HashDir(AppDir));
@@ -218,14 +218,14 @@ public sealed class TddTwoFolderTests : IDisposable
 
         try
         {
-            const string calcLitStub = "ran against generated stub(s): Loyalty Points: procedure \"CalcLit\"(Arg1: Integer): Integer";
-            const string calcBaseStub = "ran against generated stub(s): Loyalty Points: procedure \"CalcBasePoints\"(Arg1: Decimal): Integer";
+            const string calcLitStub = "reaches generated stub(s): Loyalty Points: procedure \"CalcLit\"(Arg1: Integer): Integer";
+            const string calcBaseStub = "reaches generated stub(s): Loyalty Points: procedure \"CalcBasePoints\"(Arg1: Decimal): Integer";
             int m1 = await WaitForMarkerAfter(0, TimeSpan.FromSeconds(180));
             var cycle1 = Segment(0, m1);
             Assert.StartsWith("PASS", Line(cycle1, "LiteralArg_GeneratesIntegerParameter").TrimStart());
             Assert.Contains(calcLitStub, cycle1);
             Assert.Contains(calcBaseStub, cycle1);
-            Assert.Contains("--tdd: 3 test(s) ran against generated stubs this run:", cycle1);
+            Assert.Contains("--tdd: 3 test(s) reach generated stubs this run:", cycle1);
 
             var original = await File.ReadAllTextAsync(cuPath);
             var lastBrace = original.LastIndexOf('}');
@@ -239,7 +239,7 @@ public sealed class TddTwoFolderTests : IDisposable
             Assert.StartsWith("PASS", Line(cycle2, "LiteralArg_GeneratesIntegerParameter").TrimStart());
             Assert.DoesNotContain(calcLitStub, cycle2);
             Assert.Contains(calcBaseStub, cycle2);
-            Assert.Contains("--tdd: 2 test(s) ran against generated stubs this run:", cycle2);
+            Assert.Contains("--tdd: 2 test(s) reach generated stubs this run:", cycle2);
             // Each cycle lists only its own generated members: CalcLit is written now.
             Assert.Contains("--tdd: generated 2 member(s) this run:", cycle2);
             Assert.DoesNotContain("Loyalty Points: procedure \"CalcLit\"", cycle2);
