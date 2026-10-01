@@ -239,6 +239,31 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// BC's emitted delta document of every source-compiled reportextension of
+    /// <paramref name="reportId"/>, in id order: what <c>NCLMetaReport.ApplyReportExtensions</c>
+    /// applies to the report's metadata (#4918). One whose document is missing refuses.
+    /// </summary>
+    internal static IReadOnlyList<(int ExtensionId, string Xml)> SourceReportExtensionDeltasFor(int reportId)
+    {
+        var reportName = _parsedReports.TryGetValue(reportId, out var parsed) ? parsed.Name
+            : FindDependencyReportSymbol(reportId)?.Report.Name;
+        if (reportName == null) return Array.Empty<(int, string)>();
+        var result = new List<(int ExtensionId, string Xml)>();
+        foreach (var ext in InAppGroupScope("reportextension", _parsedReportExtensions))
+        {
+            if (ext.BaseObjectName == null || !NamesEqual(ext.BaseObjectName, reportName)) continue;
+            if (!AlObjectMetadataRegistry.TryGet("ReportExtension", ext.Id, out var xml) || string.IsNullOrEmpty(xml))
+                throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                    $"metadata of report {reportId} with reportextension {ext.Id}",
+                    "not-yet-implemented — the reportextension was compiled from source, but BC's emitted delta "
+                    + "document for it is not in the metadata registry, so its data items and columns cannot be merged");
+            result.Add((ext.Id, xml));
+        }
+        result.Sort((a, b) => a.ExtensionId.CompareTo(b.ExtensionId));
+        return result;
+    }
+
+    /// <summary>
     /// Ids of every reportextension of <paramref name="reportId"/>, precompiled ones first (they
     /// sit in dependency apps), then those compiled from source; a source one wins over a
     /// precompiled one of the same number (the project's own .app at the bundle root). Empty
