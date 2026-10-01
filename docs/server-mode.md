@@ -140,6 +140,9 @@ answer an event in a request that omits it. A single-bundle request is unchanged
   supplied one. Omitted when no AL call stack was captured (a runner-internal
   failure); never emitted as an empty array, and `source`/`column` are omitted
   rather than invented, since BC's call-stack format carries no file path.
+- `generatedStubs` (#5147) is present only on a `tdd` request, on a test whose compile
+  referenced a member tdd generated: the generated members, as strings — see
+  [`tdd`](#tdd). It states a fact and changes nothing else; `status` is the test's own.
 - `exitCode`: `0` ok · `1` test fail · `2` exec · `3` compile (same ladder as
   normal mode).
 - `changedFiles` is only present on a cache miss (a hit means nothing changed);
@@ -1180,16 +1183,35 @@ It runs the same generation as the CLI and `--watch --tdd` (`--guide`, "TDD MODE
 
 - A missing member the call site anchors (a procedure's argument and return types, a field's
   type, an enum or enumextension value) is generated in memory, never on disk, and the test
-  runs. It is still reported `"status": "fail"`, `"errorKind": "compile"`, with a message
-  naming the generated signature — a test that ran against a stub is not a pass.
+  runs. A generated procedure has an empty body, so it returns its type's default value (0,
+  `false`, a blank date, an empty Guid, the enum's first value); a generated field or enum value
+  simply exists. Each test reports its own result: `Assert.AreEqual(42, Calc.DoubleIt(21), ...)`
+  fails with its own assertion message, and a test that only checks the default passes (#5147).
+- Every `test` line of a test whose compile referenced a generated member carries
+  `"generatedStubs"`: one string per member, `"<Object>: <kind> <signature>"`, for example
+  `"Calc: procedure \"DoubleIt\"(Arg1: Integer): Integer"`. It is present whatever the
+  `status`, says only which generated members the test referenced (resolved from the compile's
+  AL0132 diagnostics, not observed at run time), and is omitted for every other test. The CLI's
+  `--output-json` carries the same field.
 - With the app and its tests as two `sourcePaths`, the member is generated into the app bundle
   and the app is recompiled within the same request before the test bundle compiles again.
 - A member that cannot be generated (no anchor, a `Text` argument, a precompiled dependency's
   object) excludes the object that calls it; each of its `[Test]` procedures is a `test` line
   with `"status": "fail"`, `"errorKind": "compile"` and a message naming the missing symbol
   and its AL diagnostic. Every other object still runs.
-- The summary's `exitCode` is `1` (a test failed), not `3`. The members generated are listed
-  on stderr.
+- The summary's `exitCode` follows the tests' own results, as without tdd: `1` when a test
+  failed, `0` when every test passed, never `3` for a member that could be generated. On
+  stderr the request lists the members it generated, then, when there are any, every test that
+  ran against one, with its result:
+
+  ```
+  --tdd: generated 2 member(s) this request:
+    Calc: procedure "DoubleIt"(Arg1: Integer): Integer
+    Calc: procedure "TripleIt"(Arg1: Integer): Integer
+  --tdd: 2 test(s) ran against generated stubs this request:
+    Calc Tests.DoubleIt_ReturnsTwice (fail): Calc: procedure "DoubleIt"(Arg1: Integer): Integer
+    Calc Tests.TripleIt_OfZero_IsZero (pass): Calc: procedure "TripleIt"(Arg1: Integer): Integer
+  ```
 
 Nothing a tdd request generated outlives it: the next request compiles the files on disk. A tdd
 request neither reads nor writes the AL-output cache, and other requests keep using it.
@@ -1200,7 +1222,8 @@ next request compiles it in full and runs all of its tests (`forcedFull`). Witho
 unchanged next request would reuse the module compiled with the stub and select tests against
 coverage measured on code that is not on disk. A test excluded by the refuse path never ran, so
 it has no coverage record, and a test with no record is always selected. When the real member
-replaces the stub, the next `affectedOnly` request runs that test against it.
+replaces the stub, the next `affectedOnly` request runs every test that ran against the stub —
+the ones that passed there as well as the ones that failed.
 
 ### `shutdown`
 

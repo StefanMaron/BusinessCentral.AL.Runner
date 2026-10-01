@@ -147,4 +147,36 @@ public sealed class TddResultAnnotationTests
         var unrelated = lines.FindIndex(l => l.Contains("Unrelated_Passes"));
         Assert.DoesNotContain(lines.Skip(unrelated + 1), l => l.StartsWith("ran against", StringComparison.Ordinal));
     }
+
+    private static readonly string RepoRoot = Path.GetFullPath(
+        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+
+    /// <summary>The behaviour the docs describe: --guide's TDD MODE, --help's --tdd entry, the
+    /// server docs and the protocol schema all name the empty stub and the annotation, and none
+    /// still describes the stub that raised an error.</summary>
+    [Fact]
+    public void Docs_DescribeEmptyStubsAndTheAnnotation()
+    {
+        var guide = new StringWriter();
+        ProgramSupport.PrintGuide(guide);
+        var tddSection = guide.ToString();
+        tddSection = tddSection[tddSection.IndexOf("TDD MODE (--tdd)", StringComparison.Ordinal)..];
+        Assert.Contains("EMPTY body", tddSection);
+        Assert.Contains(TddReport.PerTestPrefix.TrimEnd(), tddSection);
+        Assert.Contains("generatedStubs", tddSection);
+        Assert.DoesNotContain("raises a distinctive error", tddSection);
+
+        var help = new StringWriter();
+        ProgramSupport.PrintHelp(help);
+        Assert.Contains("empty body returning the default value",
+            System.Text.RegularExpressions.Regex.Replace(help.ToString(), @"\s+", " "));
+
+        var serverDoc = File.ReadAllText(Path.Combine(RepoRoot, "docs", "server-mode.md"));
+        Assert.Contains("`generatedStubs` (#5147)", serverDoc);
+        Assert.DoesNotContain("a test that ran against a stub is not a pass", serverDoc);
+
+        using var schema = JsonDocument.Parse(File.ReadAllText(Path.Combine(RepoRoot, "protocol-v2.schema.json")));
+        Assert.True(schema.RootElement.GetProperty("definitions").GetProperty("TestEvent")
+            .GetProperty("properties").TryGetProperty("generatedStubs", out _));
+    }
 }
