@@ -756,6 +756,10 @@ internal static partial class ProgramSupport
         //    itself reads from (BcCompiler.ReadManifestCompilerInputs) — so an edit to any of
         //    these three properties changes this line and forces a MISS.
         WriteLine($"manifest:{AlRunner.BcCompiler.ReadManifestCacheKeyFragment(appRootDir)}");
+        // #5150: the references the compile may see — its own declarations and what its
+        // dependencies propagate. The `dep:` closure below is the same with or without them.
+        if (AlRunner.BcCompiler.DeclaredVisibilityCacheTerm(appRootDir) is { } visibility)
+            WriteLine(visibility);
 
         foreach (var d in ordered) WriteLine($"dep:{d}");
 

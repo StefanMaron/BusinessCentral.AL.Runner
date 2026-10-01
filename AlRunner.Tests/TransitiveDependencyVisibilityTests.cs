@@ -11,13 +11,20 @@ namespace AlRunner.Tests;
 /// layered pre-pass, and one bundle holding all three apps. Spawns the real runner; skips
 /// visibly without the BC artifact cache.
 /// </summary>
-public class TransitiveDependencyVisibilityTests
+public class TransitiveDependencyVisibilityTests : IClassFixture<SharedCliServer>
 {
+    private readonly SharedCliServer _shared;
+
+    public TransitiveDependencyVisibilityTests(SharedCliServer shared) => _shared = shared;
+
     private static readonly string RepoRoot = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
     private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
 
     private const string BaseCodeunit = "TDV Base Api";
+
+    private static readonly string SharedServerCache =
+        Path.Combine(TestScratch.Dir("tdv-server-shared"), "al-out");
 
     private sealed record Chain(string Root, string BaseDir, string MiddleDir, string TestDir);
 
@@ -196,6 +203,36 @@ public class TransitiveDependencyVisibilityTests
         AssertPassed(warmOutput, warmExit);
     }
 
+    /// <summary>
+    /// #5150: the declared reference set is a compile input, so it must be in the AL-output
+    /// cache key. Declaring the base app directly compiles; removing that declaration over the
+    /// same cache root must refuse, though every .al file and every dependency package is
+    /// byte-identical between the two runs.
+    /// </summary>
+    [SkippableFact]
+    public void Sibling_DirectDeclarationRemoved_RefusedOverTheSameCache()
+    {
+        TestArtifacts.SkipIfMissing();
+        var scratch = TestScratch.Dir("tdv-sibling-declaration-removed");
+        var ids = ChainIds.New();
+        var chain = WriteChain(scratch, middlePropagates: false, testReferencesBase: true, ids);
+        var cache = Path.Combine(scratch, "al-out");
+        var appJson = Path.Combine(chain.TestDir, "app.json");
+        var declaresMiddleOnly = File.ReadAllText(appJson);
+        File.WriteAllText(appJson, declaresMiddleOnly.Replace(
+            "\"dependencies\": [ ",
+            $$"""
+            "dependencies": [ { "id": "{{ids.Base}}", "name": "TDV Base", "publisher": "AL Runner", "version": "1.0.0.0" },
+            """));
+
+        var (declaredOutput, declaredExit) = RunRunner(cache, chain.TestDir);
+        AssertPassed(declaredOutput, declaredExit);
+
+        File.WriteAllText(appJson, declaresMiddleOnly);
+        var (output, exit) = RunRunner(cache, chain.TestDir);
+        AssertRefused(output, exit);
+    }
+
     // ── Layered pre-pass: all three apps are bundle arguments ─────────────────
 
     [SkippableFact]
@@ -252,6 +289,31 @@ public class TransitiveDependencyVisibilityTests
 
     // ── --server: two workspaces sharing app ids, differing only in propagation ─
 
+    private static string WriteCanary(string scratch)
+    {
+        var dir = Path.Combine(scratch, "canary");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
+        { "id": "{{Guid.NewGuid()}}", "name": "TDV Canary", "publisher": "AL Runner", "version": "1.0.0.0",
+          "dependencies": [], "platform": "1.0.0.0",
+          "idRanges": [ { "from": 60080, "to": 60089 } ], "runtime": "14.0" }
+        """);
+        File.WriteAllText(Path.Combine(dir, "Canary.Codeunit.al"), """
+        codeunit 60080 "TDV Canary"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure Canary()
+            begin
+                if 2 + 2 <> 4 then
+                    Error('arithmetic');
+            end;
+        }
+        """);
+        return dir;
+    }
+
     private static string ServerReq(string[] sourcePaths) => System.Text.Json.JsonSerializer.Serialize(new
     {
         command = "runTests",
@@ -278,9 +340,10 @@ public class TransitiveDependencyVisibilityTests
     /// <summary>
     /// One server serves workspace A, then workspace B, then A again. Both hold the same three
     /// app ids and the same AL; only the middle app's <c>propagateDependencies</c> differs. Each
-    /// request must be decided by its own workspace's app.json, never by the previous request's.
+    /// request must be decided by its own workspace's app.json, never by the previous request's —
+    /// on a server shared with the class's other facts, after an unrelated request (#5150).
     /// </summary>
-    private static async Task AssertEachRequestUsesItsOwnDeclarations(bool firstPropagates)
+    private async Task AssertEachRequestUsesItsOwnDeclarations(bool firstPropagates)
     {
         TestArtifacts.SkipIfMissing();
         var scratch = TestScratch.Dir("tdv-server-" + (firstPropagates ? "w1-first" : "w2-first"));
@@ -288,7 +351,13 @@ public class TransitiveDependencyVisibilityTests
         var first = WriteChain(scratch, firstPropagates, testReferencesBase: true, ids, "ws-first");
         var second = WriteChain(scratch, !firstPropagates, testReferencesBase: true, ids, "ws-second");
 
-        await using var server = await CliServer.StartAsync(new[] { "--cache", Path.Combine(scratch, "al-out") });
+        // One fixed --cache for the whole class: the AL-output cache is where #5150 lived.
+        var server = await _shared.GetAsync(ServerArgs(SharedServerCache));
+
+        // #5150: an unrelated request first, so the chain never meets a server that has served
+        // nothing — whichever fact the shared server runs first.
+        var (canaryPassed, canaryText) = await ServeAsync(server, WriteCanary(scratch));
+        Assert.True(canaryPassed, $"the unrelated first request must pass:\n{canaryText}");
 
         foreach (var (chain, propagates, step) in new[]
                  { (first, firstPropagates, "first"), (second, !firstPropagates, "second"), (first, firstPropagates, "first again") })
@@ -314,13 +383,16 @@ public class TransitiveDependencyVisibilityTests
 
     // ── --server: one source path holding all three apps (#5107) ──────────────
 
-    private static Task<CliServer> StartServerAsync(string scratch)
+    private static List<string> ServerArgs(string cache)
     {
-        var args = new List<string> { "--cache", Path.Combine(scratch, "al-out") };
+        var args = new List<string> { "--cache", cache };
         var platformApps = TestArtifacts.PlatformAppsDir();
         if (Directory.Exists(platformApps)) { args.Add("--package-cache"); args.Add(platformApps); }
-        return CliServer.StartAsync(args);
+        return args;
     }
+
+    private static Task<CliServer> StartServerAsync(string scratch)
+        => CliServer.StartAsync(ServerArgs(Path.Combine(scratch, "al-out")));
 
     private static void AssertServedRefused((bool Passed, string Text) r, string step)
     {

@@ -52,6 +52,26 @@ public sealed partial class BcCompiler
             .OrderBy(x => x, StringComparer.Ordinal));
     }
 
+    /// <summary>
+    /// #5150: the cache-key line for what a narrowed compile of <paramref name="appId"/> may
+    /// see. Every cache over a narrowed compile writes it, so a result compiled under other
+    /// declarations cannot answer for this one; null (no line) when nothing is narrowed.
+    /// </summary>
+    internal static string? DeclaredVisibilityCacheTerm(Guid appId)
+        => DeclaredVisibilitySignature(appId) is { } signature ? $"visibility:{signature}" : null;
+
+    /// <summary>
+    /// <see cref="DeclaredVisibilityCacheTerm(Guid)"/> for the app whose app.json sits in
+    /// <paramref name="appRootDir"/>. Reads (and so records) that app.json itself: the key is
+    /// computed before the compile that would otherwise record it.
+    /// </summary>
+    internal static string? DeclaredVisibilityCacheTerm(string? appRootDir)
+    {
+        if (appRootDir == null) return null;
+        var identity = InProcessAppPackager.ReadIdentity(Path.Combine(appRootDir, "app.json"));
+        return identity == null ? null : DeclaredVisibilityCacheTerm(identity.AppId);
+    }
+
     private static List<DependencyRef> AllowedReferences(BundleIdentity self)
     {
         var allowed = new List<DependencyRef>(self.Dependencies);
