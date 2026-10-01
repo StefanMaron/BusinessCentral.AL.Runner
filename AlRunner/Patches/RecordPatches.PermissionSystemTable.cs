@@ -20,14 +20,18 @@
 // every system table written in the transaction goes to TableChangeMonitors.NotifyTableChanges,
 // which runs PermissionSetupMonitor.ResetSetup for the ones in its TableIds. The runner mirrors
 // that at its transaction ends, including a transaction world that ends without committing
-// (NotePermissionSetupTableWrite / EndPermissionSetupTransaction, #4983, #5022; corpus 67947). Not mirrored: the immediate, mid-transaction bump
-// SystemTableTriggers.OnWriteToCompanyTable makes on a Company insert, rename or delete.
+// (NotePermissionSetupTableWrite / EndPermissionSetupTransaction, #4983, #5022; corpus 67947).
+// BC also bumps mid-transaction, from SystemTableTriggers.OnWriteToCompanyTable on a Company
+// insert, rename or delete; the runner mirrors insert and delete at its data-layer prepends
+// (#5020). Rename is not mirrored: the runner refuses a Company rename before it gets there (#5071).
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using AlRunner.Infrastructure;
 using Microsoft.Dynamics.Nav.Runtime;
+using Microsoft.Dynamics.Nav.Types;
 
 namespace AlRunner.Patches;
 
@@ -116,6 +120,67 @@ public static partial class RecordPatches
         monitor.IncrementSetupVersion();
         return true;
     }
+
+    /// <summary>
+    /// Prepended to RecordImplementation.InsertRecordAsync(DataError), on its parentRecord.
+    /// BC's OnAfterInsertCompany ends in OnWriteToCompanyTable, which advances SetupVersion at
+    /// once, inside the transaction (#5020). Only an insert that lands reaches it, so a row
+    /// already under this name — the `if Company.Insert()` duplicate that answers false —
+    /// does not advance it.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void OnCompanyInsertRecord(object? record)
+    {
+        if (!IsCompanyRow(record, out var company)) return;
+        if (CompanyRowExists(company, company.GetFieldValue(CompanyNameFieldNo))) return;
+        ResetPermissionSetupForCompanyWrite();
+    }
+
+    /// <summary>
+    /// Prepended to RecordImplementation.DeleteRecordAsync(DataError), on its parentRecord: the
+    /// `2000000006` arm of BC's OnBeforeDeleteAsync ends in OnWriteToCompanyTable, and it runs
+    /// before the provider looks the row up — so a Delete() that finds no row bumps too
+    /// (corpus 67947 ExpandedPermission_CompanyDeleteThatDoesNotLand_*). Unlike insert, no
+    /// existence guard.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void OnCompanyDeleteRecord(object? record)
+    {
+        if (!IsCompanyRow(record, out _)) return;
+        ResetPermissionSetupForCompanyWrite();
+    }
+
+    /// <summary>Company's primary key, "Name" — the field BC's Company arms read by number.</summary>
+    private const int CompanyNameFieldNo = 1;
+
+    private static bool IsCompanyRow(object? record, out NavRecord company)
+    {
+        company = null!;
+        if (record is not NavRecord { IsTemporary: false } rec) return false;
+        if (rec.MetaTable?.TableId != CompanySystemTableId) return false;
+        company = rec;
+        return true;
+    }
+
+    private static bool CompanyRowExists(NavRecord company, NavValue? name)
+    {
+        if (name == null) return false;
+        var session = company.ParentSession;
+        if (session == null) return false;
+        using var probe = new NavRecord(session, CompanySystemTableId, SecurityFiltering.Ignored);
+        // CS0618: sync-over-async; a Cecil prepend is a void method with no await point.
+#pragma warning disable CS0618
+        return probe.ALGet(DataError.TrapError, name);
+#pragma warning restore CS0618
+    }
+
+    /// <summary>
+    /// BC's OnWriteToCompanyTable: PermissionSetupMonitor.ResetPermissionSetup(false), which is
+    /// IncrementSetupVersion plus SecurityAndLicense.ClearPermissions — the second a no-op the
+    /// skeleton cannot run (null SecurityAndLicense), as for EndPermissionSetupTransaction.
+    /// </summary>
+    private static void ResetPermissionSetupForCompanyWrite()
+        => (_plantedPermissionSetupMonitor as TableChangeMonitor)?.IncrementSetupVersion();
 
     /// <summary>
     /// Build a real PermissionSetupMonitor through BC's own constructor and store it on the

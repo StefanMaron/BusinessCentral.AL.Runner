@@ -1,0 +1,10 @@
+[
+  {
+    "codeunitId": 67952,
+    "CodeunitName": "Test PermVer Company Rename",
+    "Method": "ExpandedPermission_CompanyRename_SameTransactionSeesTheLaterGrant",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/5071",
+    "Note": "Company.Rename is refused with 'Access is denied to company': BC's rename cascade (NavRecord.UpdateReferencingTableOnRenameAsync) opens every company, and CompanyAccessPatches grants only the session's own. Green on the Windows nightly, BC 28.4.53241.55485, run 36760713357 (corpus PR 519). The insert and delete arms (67951, 67953) pass since #5020; the rename's mid-transaction SetupVersion bump is part of #5071. Added by agent stma-auto-5."
+  }
+]
