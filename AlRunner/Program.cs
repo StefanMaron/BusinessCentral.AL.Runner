@@ -6343,6 +6343,10 @@ return strictExitCode ? computedExitCode : 0;
                 // as the CLI loop.
                 if (alCacheDir != null && cacheKey != null)
                     AlRunner.Infrastructure.PhaseLog.NoteCacheMiss();
+                // The CLI bundle loop's scope, so a declared dependency whose .app carries no
+                // SymbolReference.json is not handed to BC's package scanner, which answers AL1022
+                // for it and turns a module the CLI runs into AL-DIAGNOSTIC-FAIL here (#5107).
+                using var serverDepScope = BcCompiler.ScopeSymbolBearingDepsOnly();
                 IReadOnlyList<EmittedSource> sources;
                 IReadOnlyList<string> alDiagnostics;
                 IReadOnlyList<string> excludedObjects;

@@ -450,6 +450,24 @@ public sealed class AlOutputCacheDoNotCacheTests : IDisposable
             $"expected both per-app bundles served from the cache, got {warm.CacheHits} hit(s), {warm.CacheMisses} miss(es)\n{warm.Diagnostics}");
     }
 
+    /// <summary>
+    /// Suite A alone through --server. It declares Fabrikam Dep Z, whose .app carries no
+    /// SymbolReference.json; the CLI compiles and passes it, and the server must too rather than
+    /// failing the module on BC's AL1022 for a package its scanner cannot read (#5107).
+    /// </summary>
+    [SkippableFact]
+    public async Task ServerMode_AppDeclaringASymbolLessPackage_CompilesAndPassesLikeTheCli()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (bundle, pkg, cache) = Arrange("server-symbol-less-dep", siblingManifestValid: true);
+
+        var run = await RunServerBundleAsync(Path.Combine(bundle, "suiteA"), pkg, cache, "server-symbol-less-dep");
+
+        Assert.True(run.Summary.GetProperty("exitCode").GetInt32() == 0
+            && run.Summary.GetProperty("passed").GetInt32() == 1, run.Summary + "\n" + run.Diagnostics);
+        Assert.DoesNotContain("AL1022", run.Summary.ToString());
+    }
+
     // ── fixture ───────────────────────────────────────────────────────────────────────────
 
     /// <summary>
