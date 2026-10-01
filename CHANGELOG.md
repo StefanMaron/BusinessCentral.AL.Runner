@@ -18,6 +18,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **dotnet:** System.Drawing statics and instance calls fail with a named platform refusal
 - **query:** Read() after a write to the query's table re-reads from the last row instead of casting NCLMetaQuery to NCLMetaTable
 - **record:** duplicate SystemId error names the field by its caption
 - **metadata:** tableextension keys on SystemRowVersion are registered, and Removed ones are not enumerable
