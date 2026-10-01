@@ -21,6 +21,7 @@
         "depapp-dictionary-dep": { "tests": 0 },
         "depapp-dictionary-main": { "tests": 4 },
         "document-service-session-seed": { "tests": 2 },
+        "dotnet-platform-refusal": { "tests": 4 },
         "encryption-key-mgmt-3329": { "tests": 10 },
         "environment-type-default": { "tests": 4 },
         "esm-xapp": { "tests": 1 },

@@ -37,6 +37,7 @@
 //   fails, but the failure names the type, the .NET library that refused, and the reason,
 //   rather than "The type initializer for 'Gdip' threw an exception".
 using System.Globalization;
+using AlRunner.Infrastructure;
 
 namespace AlRunner.Patches;
 
@@ -135,24 +136,87 @@ public static class DotNetInteropShims
     /// </summary>
     internal static AlRunner.Infrastructure.RunnerOutOfScopeException? TryClassifyPlatformRefusal(
         string? typeName, Exception? thrown)
+        => TryClassifyPlatformRefusalAt(
+            string.IsNullOrEmpty(typeName) ? "NavDotNet.CreateDotNet" : $"NavDotNet.CreateDotNet({typeName})",
+            thrown);
+
+    /// <summary>
+    /// Prologue of BC's <c>NavDotNet.CreateNavNCLDotNetInvokeException</c>, the wrapper every
+    /// failed instance or static member call (<c>NavDotNet.Invoke&lt;T&gt;</c>'s two catch blocks)
+    /// builds its error from (#3222). Throws the named refusal for a platform refusal; returns
+    /// for anything else, so BC's own wrapper is built exactly as before.
+    ///
+    /// <para>FAITHFULNESS: substitutes no value — it only fires where BC was already about to
+    /// throw, keyed on the exception .NET raised, so a Windows host never reaches it. Same
+    /// reason token, and same non-"not-yet-implemented" classification, as the construction
+    /// seam above. <paramref name="serverHandle"/> is BC's internal <c>NavServerHandle</c>,
+    /// typed <c>object</c> here because the type is not public; its <c>ObjectType</c> is what
+    /// BC's own message names.</para>
+    /// </summary>
+    public static void ThrowIfPlatformRefusalOnInvoke(
+        string? methodName, Type? interfaceType, object? serverHandle, Exception? thrown)
+    {
+        // Cheap test first: this sits on every failed DotNet member call, and nearly all of
+        // them are not platform refusals.
+        if (FindPlatformRefusal(thrown) == null) return;
+        var type = ReadObjectType(serverHandle) ?? interfaceType;
+        var member = type == null ? methodName : $"{type.FullName}.{methodName}";
+        var refusal = TryClassifyPlatformRefusalAt(
+            string.IsNullOrEmpty(member) ? "NavDotNet.Invoke" : $"NavDotNet.Invoke({member})", thrown);
+        if (refusal != null) throw refusal;
+    }
+
+    /// <summary>
+    /// Replaces the <c>FieldInfo.GetValue</c> call inside BC's <c>NavDotNet.InvokeStaticField</c>
+    /// (#3222). BC does not wrap that call at all, so a static field whose declaring type's class
+    /// initializer refuses this OS reaches AL as a bare <c>TypeInitializationException</c>.
+    /// Same stack shape as the call it replaces; every other outcome is BC's, unchanged.
+    /// </summary>
+    public static object? GetStaticFieldValue(System.Reflection.FieldInfo field, object? instance)
+    {
+        try
+        {
+            return field.GetValue(instance);
+        }
+        catch (Exception ex) when (FindPlatformRefusal(ex) != null)
+        {
+            var member = field.DeclaringType == null ? field.Name : $"{field.DeclaringType.FullName}.{field.Name}";
+            throw TryClassifyPlatformRefusalAt($"NavDotNet.InvokeStaticField({member})", ex)!;
+        }
+    }
+
+    private static Type? ReadObjectType(object? serverHandle)
+    {
+        if (serverHandle == null) return null;
+        // NavServerHandle.ObjectType is internal. A required bind: if BC renames it, the refusal
+        // must not quietly degrade to naming the interface instead of the type (#3222 review).
+        return BcShape.Property(serverHandle.GetType(), "ObjectType", BcShape.AnyInstance,
+                "DotNet member-call platform refusal (#3222)")
+            .GetValue(serverHandle) as Type;
+    }
+
+    private static PlatformNotSupportedException? FindPlatformRefusal(Exception? thrown)
     {
         // Walk the whole chain rather than peeking at a fixed depth: BC wraps the platform's
         // exception twice today (NavNCLDotNetInvokeException → TypeInitializationException →
         // PlatformNotSupportedException), and that nesting is Types.dll's business, not a
         // contract. A chain is acyclic by construction — InnerException is fixed at
         // construction time — so this terminates.
-        PlatformNotSupportedException? refused = null;
-        for (var e = thrown; e != null && refused == null; e = e.InnerException)
-            refused = e as PlatformNotSupportedException;
+        for (var e = thrown; e != null; e = e.InnerException)
+            if (e is PlatformNotSupportedException p) return p;
+        return null;
+    }
+
+    private static AlRunner.Infrastructure.RunnerOutOfScopeException? TryClassifyPlatformRefusalAt(
+        string api, Exception? thrown)
+    {
+        var refused = FindPlatformRefusal(thrown);
         if (refused == null) return null;
 
         // Exception.Source defaults to the assembly of the throwing method, which is the .NET
         // library that refused — "System.Drawing.Common" for the #3212 case. Reported when
         // present because it, not the AL-visible type name, is what a reader has to look up.
         var lib = string.IsNullOrEmpty(refused.Source) ? null : refused.Source;
-        var api = string.IsNullOrEmpty(typeName)
-            ? "NavDotNet.CreateDotNet"
-            : $"NavDotNet.CreateDotNet({typeName})";
 
         return new AlRunner.Infrastructure.RunnerOutOfScopeException(
             api,

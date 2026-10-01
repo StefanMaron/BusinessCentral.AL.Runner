@@ -530,6 +530,14 @@ System.Drawing.Common refuses every entry point on this operating system (Linux 
 .NET reported: System.Drawing.Common is not supported on non-Windows platforms. …
 ```
 
+The same refusal covers a call on a type that constructed without trouble but reaches
+`System.Drawing` later, and a static member call that constructs nothing
+([#3222](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3222)). The System
+Application's 2D barcode provider is the common case: `Enum::"Barcode Image Provider 2D"::Dynamics2D`
+encoding a QR code fails with `out-of-scope: NavDotNet.Invoke(Microsoft.Dynamics.Nav.MX.BarcodeProviders.QRCodeProvider.GetBarcodeStream)
+— dotnet-platform-unsupported — …`, and `System.Drawing.Image.FromStream` with
+`out-of-scope: NavDotNet.Invoke(System.Drawing.Image.FromStream) — …`.
+
 **There is no workaround on the host side.** `System.Drawing.Common` 8.0 — the copy BC itself
 ships — throws `PlatformNotSupportedException` from its `Gdip` class initializer whenever
 `OperatingSystem.IsWindows()` is false, before any native library is consulted; it carries no
