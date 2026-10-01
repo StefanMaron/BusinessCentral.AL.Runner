@@ -1523,8 +1523,8 @@ public static partial class BcRuntime
             // the StartSession counter so a started session can never reuse it.
             var sessionIdField = sessType.GetField("<Id>k__BackingField",
                 BindingFlags.NonPublic | BindingFlags.Instance)
-                ?? throw new InvalidOperationException(
-                    "NavSession.<Id>k__BackingField not found, so SessionId() would answer 0 — Ncl shape changed");
+                ?? throw new BcShapeGapException("skeleton session id seed (#5144)", "NavSession.<Id>k__BackingField",
+                    "field not found, so SessionId() would answer 0");
             FieldPoke.SetInstance(sessionIdField, _skeletonSession!,
                 System.Threading.Interlocked.Increment(ref _alRunnerSessionCounter));
 

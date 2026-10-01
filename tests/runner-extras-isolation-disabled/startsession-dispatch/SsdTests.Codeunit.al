@@ -54,6 +54,8 @@ codeunit 61104 "Ssd StartSession Tests"
         Assert.IsTrue(Started, 'StartSession must report that it started the session.');
         Assert.IsTrue(SessionId > 0,
             StrSubstNo('BC guarantees a non-zero session id after StartSession; got %1.', SessionId));
+        Assert.IsTrue(SessionId <> Database.SessionId(),
+            StrSubstNo('the started session must not reuse the caller''s session id %1.', SessionId));
 
         PriceCalculationSetup.SetRange(
             Implementation, PriceCalculationSetup.Implementation::"Business Central (Version 16.0)");
