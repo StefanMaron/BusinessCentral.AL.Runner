@@ -338,6 +338,11 @@ public class ServerCancelTests : IClassFixture<SharedCliServer>
                 RunTestsReq(bundle),
                 onAckReceived: () => File.WriteAllText(releaseFile, ""));
 
+            // #5168: the helper counts the runTests and not the cancel it pushes mid-run, as the
+            // server numbers them; a count of 2 would wait for a marker that never comes.
+            Assert.Equal(1, server.RequestsSent);
+            Assert.DoesNotContain("[server] request", await server.StdErrOfLastRequestAsync());
+
             // (a) the cancel was acknowledged during streaming — not silently swallowed.
             Assert.True(ackLine != null, "cancel was never acked before the run's summary arrived.");
             var ack = JsonDocument.Parse(ackLine!).RootElement;

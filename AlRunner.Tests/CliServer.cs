@@ -129,20 +129,16 @@ public sealed class CliServer : IAsyncDisposable
         if (IsNumberedRequest(jsonRequest)) Interlocked.Increment(ref _requestsSent);
     }
 
-    /// <summary>Mirrors RunServerLoop: an empty line is skipped, a <c>cancel</c> goes to the side
-    /// channel, and everything else, malformed JSON included, is a numbered request.</summary>
+    /// <summary>Mirrors RunServerLoop's reader thread, with the same parser: an empty line is
+    /// skipped, a line <see cref="AlRunner.ServerProtocol.Parse"/> reads as <c>cancel</c> goes to
+    /// the side channel, and everything else, unparseable lines included, is a numbered request.</summary>
     internal static bool IsNumberedRequest(string line)
     {
         if (line.Length == 0) return false;
-        try
-        {
-            using var doc = System.Text.Json.JsonDocument.Parse(line);
-            return !(doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object
-                && doc.RootElement.TryGetProperty("command", out var c)
-                && c.ValueKind == System.Text.Json.JsonValueKind.String
-                && string.Equals(c.GetString(), "cancel", StringComparison.OrdinalIgnoreCase));
-        }
-        catch (System.Text.Json.JsonException) { return true; }
+        AlRunner.ServerRequest? parsed = null;
+        try { parsed = AlRunner.ServerProtocol.Parse(line); }
+        catch { /* the server's reader thread catches everything here too */ }
+        return !string.Equals(parsed?.Command, "cancel", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -182,9 +178,9 @@ public sealed class CliServer : IAsyncDisposable
     public Task<string> StdErrOfLastRequestAsync(TimeSpan? timeout = null) =>
         StdErrOfRequestAsync(RequestsSent, timeout);
 
-    // A whole line equal to the marker: `request 1 done` must not match inside `request 11 done`'s
-    // line or a test's own output quoting it mid-line.
-    private static (int Start, int End) FindMarkerLine(string text, int requestNumber, int from)
+    // Whole lines only: a line that quotes the marker mid-line, such as a test's own output, is
+    // not the marker.
+    internal static (int Start, int End) FindMarkerLine(string text, int requestNumber, int from)
     {
         var marker = AlRunner.ServerProtocol.RequestDoneMarker(requestNumber);
         for (var i = text.IndexOf(marker, from, StringComparison.Ordinal); i >= 0;

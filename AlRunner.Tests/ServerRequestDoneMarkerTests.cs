@@ -87,10 +87,13 @@ public sealed class ServerRequestDoneMarkerTests
             Assert.DoesNotContain("[server] request 1 done", second);
 
             // A refused request and shutdown end with a marker too.
+            Assert.Equal(2, server.RequestsSent);
             Assert.Contains("\"error\"", await server.SendAsync("{\"command\":\"noSuchCommand\"}"));
-            Assert.DoesNotContain(RandomizeWarning, await server.StdErrOfRequestAsync(3));
+            Assert.Equal(3, server.RequestsSent);
+            Assert.DoesNotContain(RandomizeWarning, await server.StdErrOfLastRequestAsync());
             Assert.Contains("shutting down", await server.SendAsync("{\"command\":\"shutdown\"}"));
-            await server.StdErrOfRequestAsync(4);
+            Assert.Equal(4, server.RequestsSent);
+            await server.StdErrOfLastRequestAsync();
             Assert.True(await server.WaitForExitAsync(TimeSpan.FromSeconds(30)));
 
             // The documented spelling, written out rather than read from RequestDoneMarker.
@@ -113,8 +116,24 @@ public sealed class ServerRequestDoneMarkerTests
     [InlineData("{\"command\":\"CANCEL\"}", false)]
     [InlineData("not json", true)]
     [InlineData("", false)]
+    // ServerProtocol.Parse refuses it, so the reader thread does not see a cancel.
+    [InlineData("{\"command\":\"cancel\",\"sourcePaths\":5}", true)]
     public void ClientNumbersRequests_AsTheServerDoes(string line, bool numbered)
     {
         Assert.Equal(numbered, CliServer.IsNumberedRequest(line));
+    }
+
+    [Theory]
+    [InlineData("a\n[server] request 2 done\nb\n", 2, 2)]
+    [InlineData("[server] request 2 done\n", 2, 0)]
+    [InlineData("a\n[server] request 2 done", 2, 2)]
+    [InlineData("a\r\n[server] request 2 done\r\nb\r\n", 2, 3)]
+    // Quoted mid-line, or with text after it on the line: not the marker.
+    [InlineData("FAIL expected '[server] request 2 done'\n", 2, -1)]
+    [InlineData("[server] request 2 done twice\n", 2, -1)]
+    [InlineData("x [server] request 2 done\n[server] request 2 done\n", 2, 26)]
+    public void MarkerMatches_OnlyAsAWholeLine(string text, int requestNumber, int expectedStart)
+    {
+        Assert.Equal(expectedStart, CliServer.FindMarkerLine(text, requestNumber, 0).Start);
     }
 }
