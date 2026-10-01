@@ -31,7 +31,8 @@ public class InstallBaselineSubscriberScopeTests
     /// subscriber: a disk HIT. No automatic subscriber: a MISS, and no row the other app's
     /// subscriber wrote. Only a manual-binding subscriber: a HIT on that entry, so the test
     /// assembly's own identity is not a term. The subscriber's body changed: a MISS, and the
-    /// row its current body writes.</summary>
+    /// row its current body writes. An app whose only automatic subscriber is a table trigger
+    /// event: a MISS, and its own row.</summary>
     [SkippableFact]
     public void Baseline_IsKeyedOnTheAutomaticSubscribersArmedWhileItIsComputed()
     {
@@ -43,11 +44,14 @@ public class InstallBaselineSubscriberScopeTests
             var a = fx.WriteBundle("main-a", "A", 63305, Fixture.Subscriber.Automatic, writes: "SUB-A1", expect: "SUB-A1");
             var b = fx.WriteBundle("main-b", "B", 63310, Fixture.Subscriber.None, writes: null, expect: null);
             var c = fx.WriteBundle("main-c", "C", 63315, Fixture.Subscriber.Manual, writes: "SUB-C", expect: null);
+            var t = fx.WriteBundle("main-t", "T", 63320, Fixture.Subscriber.TableTrigger, writes: "SUB-T", expect: "SUB-T");
 
             AssertRun("A cold", Run(a), miss: 1, diskHit: 0);
             AssertRun("A warm, subscriber unchanged", Run(a), miss: 0, diskHit: 1);
             AssertRun("B, no subscriber", Run(b), miss: 1, diskHit: 0);
             AssertRun("C, manual subscriber only", Run(c), miss: 0, diskHit: 1);
+            // A table-trigger subscriber sits in a different registry from a codeunit-event one.
+            AssertRun("T, table-trigger subscriber only", Run(t), miss: 1, diskHit: 0);
 
             // The same app, its subscriber now writing a different value: new MVID, new key.
             fx.WriteBundle("main-a", "A", 63305, Fixture.Subscriber.Automatic, writes: "SUB-A2", expect: "SUB-A2");
@@ -108,7 +112,7 @@ public class InstallBaselineSubscriberScopeTests
     /// assembly, and every key built on it, is unique to the test invocation.</summary>
     private sealed class Fixture
     {
-        internal enum Subscriber { None, Automatic, Manual }
+        internal enum Subscriber { None, Automatic, Manual, TableTrigger }
 
         private readonly string _parent;
         private readonly string _seedId;
@@ -172,7 +176,28 @@ public class InstallBaselineSubscriberScopeTests
                 _appIds[dirName] = appId = Guid.NewGuid().ToString();
             WriteAppJson(dir, appId, "Sub Scope " + tag, dep, baseId);
 
-            var sub = subscriber == Subscriber.None ? "" : $$"""
+            var sub = subscriber switch
+            {
+                Subscriber.None => "",
+                Subscriber.TableTrigger => $$"""
+            codeunit {{baseId + 1}} "Sub Scope {{tag}} Subscriber"
+            {
+                [EventSubscriber(ObjectType::Table, Database::"Sub Scope Seed", 'OnAfterInsertEvent', '', false, false)]
+                local procedure HandleOnAfterInsert(var Rec: Record "Sub Scope Seed"; RunTrigger: Boolean)
+                var
+                    SeedRow: Record "Sub Scope Seed";
+                begin
+                    if Rec.Code <> 'SEED-1' then
+                        exit;
+                    SeedRow.Init();
+                    SeedRow.Code := 'SUB';
+                    SeedRow.Description := '{{writes}}';
+                    SeedRow.Insert(true);
+                end;
+            }
+
+            """,
+                _ => $$"""
             codeunit {{baseId + 1}} "Sub Scope {{tag}} Subscriber"
             {
                 {{(subscriber == Subscriber.Manual ? "EventSubscriberInstance = Manual;" : "")}}
@@ -189,7 +214,8 @@ public class InstallBaselineSubscriberScopeTests
                 end;
             }
 
-            """;
+            """,
+            };
             var check = expect == null
                 ? "if SeedRow.Get('SUB') then Error('SUB is present, written by a subscriber this app does not have: %1', SeedRow.Description);"
                 : $"if not SeedRow.Get('SUB') then Error('SUB is missing'); if SeedRow.Description <> '{expect}' then Error('SUB Description was %1', SeedRow.Description);";
