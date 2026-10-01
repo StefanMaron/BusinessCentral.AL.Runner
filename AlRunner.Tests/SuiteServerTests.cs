@@ -104,6 +104,32 @@ public class SuiteServerTests
     }
 
     /// <summary>
+    /// The request path runs the canary after the request and fails the request when it moved.
+    /// The stand-in canary answers differently from the server's baseline, so a request path that
+    /// skipped the check would return the result instead of throwing.
+    /// </summary>
+    [SkippableFact]
+    public async Task RunAsync_FailsTheRequest_WhenTheCanaryAfterItMoved()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = WriteBundle("sst-canary", passBody: "", failBody: "");
+        var request = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            command = "runTests",
+            sourcePaths = new[] { bundle },
+            packagePaths = Array.Empty<string>(),
+        });
+        var canaryRuns = 0;
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => SuiteServer.RunAsync(request, null,
+            (_, _) => { canaryRuns++; return Task.FromResult("a fingerprint no server produces"); }));
+
+        Assert.Equal(1, canaryRuns);
+        Assert.Contains("SuiteServer canary", ex.Message);
+        Assert.Contains("sst-canary", ex.Message);
+    }
+
+    /// <summary>
     /// End to end on the shared server: a passing and a failing test, then a second bundle with
     /// the same object ids and different outcomes. Each request must report its own bundle.
     /// </summary>

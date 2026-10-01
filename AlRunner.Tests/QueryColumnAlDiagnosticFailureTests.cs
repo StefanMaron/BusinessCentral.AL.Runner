@@ -29,10 +29,8 @@ namespace AlRunner.Tests;
 /// alDiagnostics.Count == 0, EMIT-ZERO requires sources.Count == 0 — so the
 /// module silently ran with a real BC compile error in it.
 ///
-/// This test runs the real runner (SuiteServer, not BcCompiler in-process) because
-/// the fix lives in Program.cs's post-emit gating, not in BcCompiler.Emit
-/// itself — an in-process BcCompiler-level test would prove the diagnostic
-/// exists but not that the CLI actually refuses to run the module.
+/// Runs on SuiteServer, so it pins the --server gate; the CLI gate is pinned by
+/// ReportLayoutFileResolutionTests.LayoutFileTrulyMissing_StillFailsCompileLoudly.
 /// </summary>
 public class QueryColumnAlDiagnosticFailureTests
 {

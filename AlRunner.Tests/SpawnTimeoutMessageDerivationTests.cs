@@ -61,18 +61,12 @@ public sealed class SpawnTimeoutMessageDerivationTests
         // The 180s-cap cohort of #4275. Added as one batch because they share a cap value, so a
         // reviewer checks one figure against thirteen call sites rather than thirteen figures.
         "EventSubscriptionVirtualTableTests.cs",
-        "FailedTestRollbackBoundaryTests.cs",
         "MaskedTriggerErrorDiagnosisTests.cs",
         "OlderBcVersionSelectionWithNewerProvisionedTests.cs",
-        "PageOnInitTriggerTests.cs",
-        "PageRowsetTriggerTests.cs",
         "PageTriggerMetadataTests.cs",
         "ProvisionExplicitModesTests.cs",
         "SessionUserRowRefusalTests.cs",
         "TableTriggerMetadataTests.cs",
-        "TestPageNewRecordValidationTests.cs",
-        "TestPageOnNewRecordCountTests.cs",
-        "TestPageSubscriberRefusalTests.cs",
 
         // The 300s-cap cohort of #4275, batched on the same principle as the two above.
         "BundleInstallTriggerSeedVisibilityTests.cs",
@@ -93,15 +87,11 @@ public sealed class SpawnTimeoutMessageDerivationTests
         "OutputPathPreparationTests.cs",
 
         // The 120s-cap cohort of #4275, batched on the same principle as the 180s one above.
+        // #5111 moved classes of this cohort and of the 180s one to SuiteServer, which has no
+        // spawn site of its own: its timeouts are CliServer's, worded from the TimeSpan it waits on.
         "ActiveSessionTableTests.cs",
-        "AggregatePermissionSetVirtualTableTests.cs",
-        "CodeunitMetadataVirtualTableTests.cs",
         "EngineMajorConsistencyTests.cs",
-        "FeatureKeyVirtualTableTests.cs",
         "PermissionMetadataPopulationTests.cs",
-        "SessionVirtualTableTests.cs",
-        "TimeZoneVirtualTableTests.cs",
-        "WindowsLanguageVirtualTableTests.cs",
     };
 
     [Fact]

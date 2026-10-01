@@ -62,8 +62,16 @@ public static class SuiteServer
             ["packagePaths"] = packagePaths,
         };
         if (testIsolation != null) fields["testIsolation"] = testIsolation;
-        var request = JsonSerializer.Serialize(fields);
+        return await RunAsync(JsonSerializer.Serialize(fields), timeout, SharedServerCanary.RunAsync);
+    }
 
+    /// <summary>
+    /// The pool's one request path. <paramref name="runCanary"/> is the canary run after the
+    /// request; only a test of the canary check passes anything but <see cref="SharedServerCanary.RunAsync"/>.
+    /// </summary>
+    internal static async Task<ServerRunResult> RunAsync(string request, TimeSpan? timeout,
+        Func<CliServer, string, Task<string>> runCanary)
+    {
         await Slots.WaitAsync();
         Pooled? pooled = null;
         var keep = false;
@@ -76,8 +84,7 @@ public static class SuiteServer
             pooled.Requests++;
 
             // The canary after every request names the request that left state behind.
-            CheckCanary(request, pooled.CanaryBaseline,
-                await SharedServerCanary.RunAsync(pooled.Server, pooled.CanaryBundle));
+            CheckCanary(request, pooled.CanaryBaseline, await runCanary(pooled.Server, pooled.CanaryBundle));
 
             keep = pooled.Requests < RequestsPerServer;
             return result;
