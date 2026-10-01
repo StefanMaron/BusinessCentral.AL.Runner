@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **tdd:** generated stubs return defaults and tests report their own result
 - **benchmark:** a failsafe script to benchmark the full Microsoft test surface on a volunteer's Windows PC
 - **provision:** install the pinned backup reader that --test-data needs
 - **server:** per-request tdd field on runTests
