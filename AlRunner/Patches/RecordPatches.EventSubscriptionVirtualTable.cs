@@ -21,7 +21,7 @@
 //   separate issue; its fix is the registry, not a row projection.
 //
 // WHAT MAKES THE ROWS APPEAR
-//   EventSubscriberPatches.SeedSubscriptionMetadata constructs BC's own
+//   EventSubscriberPatches.SeedSubscriptionMetadata (on the first read, #5099) constructs BC's own
 //   NavEventSubscriptionMetadata, writes it to NavSystemTenant.eventSubscriptionMetadata (null
 //   on the skeleton tenant, which is made with GetUninitializedObject), and appends the very
 //   NavEventSubscription objects the dispatch path already builds. One scanned
@@ -56,8 +56,9 @@ public static partial class RecordPatches
     internal static object GetEventSubscriptionVirtualDataAccess(
         object dataAccessSource, NCLMetaTable table)
     {
-        // #4845: the registry is process-wide, so rows are scoped to the executing app group here.
-        EventSubscriberPatches.ScopeSubscriptionMetadataToExecutingAppGroup();
+        // #5099: the registry is seeded here, on first read after an injection pass; #4845: it is
+        // process-wide, so rows are scoped to the executing app group here too.
+        EventSubscriberPatches.PrepareSubscriptionMetadataForRead();
         return GetBcVirtualDataAccess(dataAccessSource, table,
             "every Record \"Event Subscription\" read would answer from an empty store");
     }
