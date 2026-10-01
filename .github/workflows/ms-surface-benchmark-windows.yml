@@ -1,0 +1,202 @@
+name: MS surface benchmark script (Windows)
+
+# Proves tools/benchmark/ms-surface-benchmark.ps1 on a real Windows machine, started the way
+# a volunteer starts it: Windows PowerShell 5.1, `-ExecutionPolicy Bypass -File`, a working
+# folder whose path contains a space. Issue #5127.
+#
+# A MEASUREMENT of the script, not a gate: not in any ruleset. It runs on a pull request only
+# when that pull request touches the script or this file, because a hosted Windows runner
+# spends an hour of the account-wide Actions queue.
+#
+# Three jobs:
+#   * failure-paths — every preflight stop exits 2 with its message, before any download
+#     that matters; a reader that cannot read the backup stops at the smoke bucket with 3.
+#   * reduced-surface — the smoke bucket plus three more buckets with more than one worker,
+#     to a result zip; then the same command again, which must resume (run nothing) and
+#     give the same verdict. Also records what, if anything, was written outside the
+#     working folder.
+#   * largest-bucket — Tests-ERM alone, for the per-worker memory the sizing rule assumes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      buckets:
+        description: Buckets for the reduced-surface job, comma-separated (Tests-SMB always runs first as the smoke check).
+        type: string
+        default: 'Tests-Bank,Tests-Cash Flow,Tests-Graph'
+  pull_request:
+    paths:
+      - 'tools/benchmark/**'
+      - '.github/workflows/ms-surface-benchmark-windows.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ms-surface-benchmark-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  failure-paths:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+      - name: Preflight stops (low memory, low disk, unreachable artifact host)
+        shell: pwsh
+        run: |
+          $script = Join-Path $env:GITHUB_WORKSPACE 'tools\benchmark\ms-surface-benchmark.ps1'
+          $work = Join-Path $env:RUNNER_TEMP 'bench fail'
+          $cases = @(
+            @{ Name = 'low memory'; Args = @('-AssumeFreeMemoryGB', '2');  Expect = 'STOPPED: Not enough memory' },
+            @{ Name = 'low disk';   Args = @('-AssumeFreeDiskGB', '5');    Expect = 'STOPPED: Not enough free disk space' },
+            @{ Name = 'no network'; Args = @('-ArtifactHostOverride', 'https://no-such-host.invalid'); Expect = 'STOPPED: Cannot reach BC artifacts' }
+          )
+          $bad = 0
+          foreach ($c in $cases) {
+            $log = Join-Path $env:RUNNER_TEMP ("case-" + ($c.Name -replace ' ', '-') + '.log')
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -WorkDir $work @($c.Args) *> $log
+            $rc = $LASTEXITCODE
+            $text = Get-Content -Raw $log
+            Write-Host "===== $($c.Name): exit $rc"
+            Write-Host $text
+            if ($rc -ne 2) { Write-Host "::error::$($c.Name): exit $rc, expected 2"; $bad++ }
+            if ($text -notmatch [regex]::Escape($c.Expect)) { Write-Host "::error::$($c.Name): message '$($c.Expect)' not printed"; $bad++ }
+          }
+          exit $bad
+      - name: Smoke stop (reader cannot read the backup)
+        shell: pwsh
+        run: |
+          $script = Join-Path $env:GITHUB_WORKSPACE 'tools\benchmark\ms-surface-benchmark.ps1'
+          $work = Join-Path $env:RUNNER_TEMP 'bench fail'
+          $log = Join-Path $env:RUNNER_TEMP 'case-broken-reader.log'
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -WorkDir $work -Buckets 'Tests-Upgrade' -SimulateBrokenReader *> $log
+          $rc = $LASTEXITCODE
+          $text = Get-Content -Raw $log
+          Write-Host $text
+          $bad = 0
+          if ($rc -ne 3) { Write-Host "::error::broken reader: exit $rc, expected 3"; $bad++ }
+          if ($text -notmatch 'STOPPED: The smoke bucket is not sane') { Write-Host '::error::smoke stop message not printed'; $bad++ }
+          if ($text -match 'Workers:') { Write-Host '::error::the run went past the smoke check'; $bad++ }
+          exit $bad
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-failure-paths
+          path: |
+            ${{ runner.temp }}/case-*.log
+            ${{ runner.temp }}/bench fail/results
+          if-no-files-found: ignore
+
+  reduced-surface:
+    runs-on: windows-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v6
+      - name: Snapshot the profile before
+        shell: pwsh
+        run: |
+          $roots = @($env:USERPROFILE, $env:LOCALAPPDATA, $env:APPDATA)
+          $snap = foreach ($r in $roots) { Get-ChildItem -LiteralPath $r -Force -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName } }
+          $snap | Set-Content (Join-Path $env:RUNNER_TEMP 'profile-before.txt')
+      - name: Run the benchmark as a volunteer would
+        shell: pwsh
+        env:
+          BUCKETS: ${{ inputs.buckets || 'Tests-Bank,Tests-Cash Flow,Tests-Graph' }}
+        run: |
+          $script = Join-Path $env:GITHUB_WORKSPACE 'tools\benchmark\ms-surface-benchmark.ps1'
+          $work = Join-Path $env:RUNNER_TEMP 'bench work'
+          $buckets = "Tests-SMB,$env:BUCKETS"
+          # -Jobs 2: a 4-vCPU / 16 GB hosted runner may derive 1, and this job exists to prove
+          # more than one worker. The derived value and its reason are still printed.
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -WorkDir $work -Buckets $buckets -Jobs 2
+          $rc = $LASTEXITCODE
+          Write-Host "benchmark exit: $rc"
+          "rc=$rc" | Add-Content $env:GITHUB_OUTPUT
+          exit $rc
+      - name: Read the result
+        shell: pwsh
+        run: |
+          $work = Join-Path $env:RUNNER_TEMP 'bench work'
+          $s = Get-Content -Raw (Join-Path $work 'results\summary.json') | ConvertFrom-Json
+          Get-Content (Join-Path $work 'results\summary.md') | ForEach-Object { Write-Host $_; $_ | Add-Content $env:GITHUB_STEP_SUMMARY }
+          $bad = 0
+          if ($s.verdict -ne 'COMPLETE') { Write-Host "::error::verdict $($s.verdict)"; $bad++ }
+          if ($s.workers -lt 2) { Write-Host "::error::ran with $($s.workers) worker(s); this job exists to prove more than one" ; $bad++ }
+          foreach ($b in $s.perBucket) {
+            if (-not $b.tests -or $b.tests -le 0) { Write-Host "::error::$($b.bucket) reported no tests"; $bad++ }
+            if ($null -ne $b.countDeviationPct -and [math]::Abs($b.countDeviationPct) -gt 10) { Write-Host "::error::$($b.bucket) count $($b.tests) is $($b.countDeviationPct)% from its Linux reference $($b.referenceTests)"; $bad++ }
+            if (-not $b.testDataLoaded) { Write-Host "::error::$($b.bucket): no sign the demo data was loaded"; $bad++ }
+          }
+          $zip = @(Get-ChildItem -LiteralPath $work -Filter 'al-runner-benchmark-*.zip')
+          if ($zip.Count -ne 1) { Write-Host "::error::expected one result zip, found $($zip.Count)"; $bad++ }
+          $size = (Get-ChildItem -LiteralPath $work -Recurse -Force -File | Measure-Object Length -Sum).Sum / 1GB
+          $longest = (Get-ChildItem -LiteralPath $work -Recurse -Force | ForEach-Object { $_.FullName.Length } | Measure-Object -Maximum).Maximum
+          Write-Host ("working folder: {0:N1} GB on disk; longest path {1} characters ({2} below the folder)" -f $size, $longest, ($longest - $work.Length))
+          exit $bad
+      - name: Resume does nothing and agrees
+        shell: pwsh
+        run: |
+          $script = Join-Path $env:GITHUB_WORKSPACE 'tools\benchmark\ms-surface-benchmark.ps1'
+          $work = Join-Path $env:RUNNER_TEMP 'bench work'
+          $before = Get-Content -Raw (Join-Path $work 'results\summary.json') | ConvertFrom-Json
+          $log = Join-Path $env:RUNNER_TEMP 'resume.log'
+          $t = Measure-Command { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -WorkDir $work -Buckets "Tests-SMB,${{ inputs.buckets || 'Tests-Bank,Tests-Cash Flow,Tests-Graph' }}" *> $log }
+          $rc = $LASTEXITCODE
+          Get-Content $log | Write-Host
+          $after = Get-Content -Raw (Join-Path $work 'results\summary.json') | ConvertFrom-Json
+          $bad = 0
+          if ($rc -ne 0) { Write-Host "::error::resume exit $rc"; $bad++ }
+          if ($after.tests -ne $before.tests -or $after.passed -ne $before.passed) { Write-Host "::error::resume changed the totals: $($before.tests)/$($before.passed) -> $($after.tests)/$($after.passed)"; $bad++ }
+          if ((Get-Content -Raw $log) -match '(?m)start  Tests-') { Write-Host '::error::resume re-ran a bucket'; $bad++ }
+          Write-Host "resume took $([int]$t.TotalSeconds) s"
+          exit $bad
+      - name: Nothing written outside the working folder
+        if: always()
+        shell: pwsh
+        run: |
+          $roots = @($env:USERPROFILE, $env:LOCALAPPDATA, $env:APPDATA)
+          $now = foreach ($r in $roots) { Get-ChildItem -LiteralPath $r -Force -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName } }
+          $before = Get-Content (Join-Path $env:RUNNER_TEMP 'profile-before.txt')
+          $new = @($now | Where-Object { $before -notcontains $_ })
+          Write-Host "New entries in the profile: $($new.Count)"
+          $new | ForEach-Object { Write-Host "  $_" }
+          $runnerDefaults = @('.cache\al-runner', '.local\share\al-runner', '.al-runner') | ForEach-Object { Join-Path $env:USERPROFILE $_ } | Where-Object { Test-Path $_ }
+          if ($runnerDefaults) { Write-Host "::error::the runner wrote to its default locations: $($runnerDefaults -join ', ')"; exit 1 }
+      - name: Upload the result zip and logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-reduced-surface
+          path: |
+            ${{ runner.temp }}/bench work/al-runner-benchmark-*.zip
+            ${{ runner.temp }}/bench work/results
+            ${{ runner.temp }}/resume.log
+          if-no-files-found: ignore
+
+  largest-bucket:
+    runs-on: windows-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v6
+      - name: Tests-ERM alone
+        shell: pwsh
+        run: |
+          $script = Join-Path $env:GITHUB_WORKSPACE 'tools\benchmark\ms-surface-benchmark.ps1'
+          $work = Join-Path $env:RUNNER_TEMP 'bench erm'
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -WorkDir $work -Buckets 'Tests-ERM'
+          $rc = $LASTEXITCODE
+          $s = Get-Content -Raw (Join-Path $work 'results\summary.json') | ConvertFrom-Json
+          Get-Content (Join-Path $work 'results\summary.md') | ForEach-Object { Write-Host $_; $_ | Add-Content $env:GITHUB_STEP_SUMMARY }
+          Write-Host ("smoke peak {0} MB; ERM peak {1} MB; per-worker estimate was {2} GB" -f $s.smoke.peakProcessTreeWorkingSetMB, $s.perBucket[0].peakProcessTreeWorkingSetMB, $s.perWorkerGB)
+          exit $rc
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-largest-bucket
+          path: |
+            ${{ runner.temp }}/bench erm/al-runner-benchmark-*.zip
+            ${{ runner.temp }}/bench erm/results
+          if-no-files-found: ignore
