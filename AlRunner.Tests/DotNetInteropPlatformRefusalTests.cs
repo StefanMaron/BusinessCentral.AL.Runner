@@ -238,6 +238,23 @@ public sealed class DotNetInteropMemberCallRefusalTests
         Assert.Equal("NavDotNet.Invoke(System.IDisposable.FromStream)", oos.Api);
     }
 
+    /// <summary>A handle whose layout moved: no ObjectType at all.</summary>
+    private sealed class MovedServerHandle
+    {
+        internal Type TypeOfObject => typeof(System.IO.MemoryStream);
+    }
+
+    [Fact]
+    public void InvokePlatformRefusal_OnAHandleWithoutObjectType_IsAShapeGapNotAWorseName()
+    {
+        // A required bind: a renamed NavServerHandle.ObjectType must fail loudly, never fall
+        // back to naming the interface type (#3222 review, SilentReflectionLookupRatchetTests).
+        var gap = Assert.Throws<BcShapeGapException>(() =>
+            DotNetInteropShims.ThrowIfPlatformRefusalOnInvoke(
+                "GetBarcodeStream", typeof(IDisposable), new MovedServerHandle(), GdipChain()));
+        Assert.Equal("MovedServerHandle.ObjectType", gap.Member);
+    }
+
     [Fact]
     public void InvokeOrdinaryFailure_ReturnsSoBcBuildsItsOwnError()
     {

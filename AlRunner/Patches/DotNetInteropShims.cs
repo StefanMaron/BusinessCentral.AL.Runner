@@ -37,6 +37,7 @@
 //   fails, but the failure names the type, the .NET library that refused, and the reason,
 //   rather than "The type initializer for 'Gdip' threw an exception".
 using System.Globalization;
+using AlRunner.Infrastructure;
 
 namespace AlRunner.Patches;
 
@@ -187,13 +188,11 @@ public static class DotNetInteropShims
     private static Type? ReadObjectType(object? serverHandle)
     {
         if (serverHandle == null) return null;
-        // NavServerHandle.ObjectType is internal. Not cached: this runs only on a refusal, and a
-        // cached PropertyInfo would throw against any other handle type. A failed bind names
-        // nothing rather than hiding the refusal — the type name only decorates it.
-        return serverHandle.GetType().GetProperty("ObjectType",
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic
-                | System.Reflection.BindingFlags.Public)
-            ?.GetValue(serverHandle) as Type;
+        // NavServerHandle.ObjectType is internal. A required bind: if BC renames it, the refusal
+        // must not quietly degrade to naming the interface instead of the type (#3222 review).
+        return BcShape.Property(serverHandle.GetType(), "ObjectType", BcShape.AnyInstance,
+                "DotNet member-call platform refusal (#3222)")
+            .GetValue(serverHandle) as Type;
     }
 
     private static PlatformNotSupportedException? FindPlatformRefusal(Exception? thrown)
