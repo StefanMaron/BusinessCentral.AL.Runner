@@ -431,6 +431,9 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // #5025: added by its PR, one server with nine requests plus two more server starts. An
             // estimate until a CI leg measures it: replace with the observed maximum.
             ["ServerAffectedSelectionPageExtensionTests"] = 85,
+            // #5083: added by its PR, one server with twelve requests plus five more server starts. An
+            // estimate until a CI leg measures it: replace with the observed maximum.
+            ["ServerAffectedSelectionObjectKindTests"] = 90,
             // #5034: added by its PR, eight server starts and seventeen requests; 75s locally. An
             // estimate until a CI leg measures it: replace with the observed maximum.
             ["ServerTddTests"] = 200,

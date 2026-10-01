@@ -7737,12 +7737,14 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                             activePreviousEvents != null
                             && activePreviousEvents.TryGetValue(AlRunner.Infrastructure.AlEventRaiseTracker.BundleWideKey, out var bundleWidePageBases)
                                 ? bundleWidePageBases : null);
-                        if (eventResult.ForceFullReason != null || tableResult.ForceFullReason != null || longLivedReason != null
-                            || pageExtensionResult.ForceFullReason != null)
+                        // #5083: a changed kind no recorded key reaches (an enum, a reportextension, ...).
+                        var unkeyedKindReason = AlRunner.Infrastructure.AffectedEventSelection.UnkeyedKindChange(activeChangedObjectIds);
+                        if (unkeyedKindReason != null || eventResult.ForceFullReason != null || tableResult.ForceFullReason != null
+                            || longLivedReason != null || pageExtensionResult.ForceFullReason != null)
                         {
                             activeForcedFull = true;
-                            activeForcedReason = eventResult.ForceFullReason ?? tableResult.ForceFullReason ?? longLivedReason
-                                ?? pageExtensionResult.ForceFullReason;
+                            activeForcedReason = unkeyedKindReason ?? eventResult.ForceFullReason ?? tableResult.ForceFullReason
+                                ?? longLivedReason ?? pageExtensionResult.ForceFullReason;
                         }
                         else
                         {

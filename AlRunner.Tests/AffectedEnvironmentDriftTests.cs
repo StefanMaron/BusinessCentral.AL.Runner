@@ -92,8 +92,11 @@ public class AffectedEnvironmentDriftTests
             new HashSet<string>(StringComparer.Ordinal), new Dictionary<int, List<int>>());
         Assert.Equal(new[] { "dep|Codeunit|id:80" }, keys.CoverageKeys);
         Assert.Contains("tbl|Table|18", keys.EventKeys);
-        Assert.Equal("Enum 36 Document Type changed, and no test recording holds the use of this kind of object (Enum)",
-            Assert.Single(keys.Unattributed));
+        Assert.Equal(new[]
+            {
+                "Interface IThing changed, and no test recording holds the use of this kind of object (Interface)",
+                "Enum 36 Document Type changed, and no test recording holds the use of this kind of object (Enum)",
+            }, keys.Unattributed);
 
         var longLived = AffectedEnvironmentDrift.SelectionKeys(new[] { new AffectedObjectId("Codeunit", 80, "Sales-Post") },
             new Dictionary<int, List<int>>(),
