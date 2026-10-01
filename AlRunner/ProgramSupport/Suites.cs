@@ -299,4 +299,32 @@ internal static partial class ProgramSupport
         => File.Exists(Path.Combine(dir, "app.json"))
         || Directory.Exists(Path.Combine(dir, "test"))
         || Directory.Exists(Path.Combine(dir, "src"));
+
+    /// <summary>
+    /// A --server source path that only CONTAINS apps becomes one source path per app, so each
+    /// compiles under its own app.json — its dependencies, its identity, and the declared-reference
+    /// narrowing (#4096) — as the CLI's per-app.json AppGroups do (#5107). RunBundleForServer
+    /// compiles a source path as one module; given a container it merged every app into a module
+    /// with no identity, where nothing is narrowed and earlier requests' modules collide.
+    /// Left as given: a path that is itself an app, one inside an app, and any container holding a
+    /// suite with no app.json (the CLI merges those into one fallback module; see #5116).
+    /// </summary>
+    internal static string[] ExpandAppContainerRoots(string[] sourcePaths)
+    {
+        var expanded = new List<string>(sourcePaths.Length);
+        foreach (var path in sourcePaths)
+        {
+            if (!Directory.Exists(path) || LooksLikeSuite(path) || FindBucketRoot(path) != null)
+            {
+                expanded.Add(path);
+                continue;
+            }
+            var suites = EnumerateSuitesBelow(path).ToList();
+            if (suites.Count == 0 || !suites.All(s => File.Exists(Path.Combine(s, "app.json"))))
+                expanded.Add(path);
+            else
+                expanded.AddRange(suites);
+        }
+        return expanded.ToArray();
+    }
 }

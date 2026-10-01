@@ -152,7 +152,9 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // than a settled figure. What the value has to be right about is dispatch order
             // (#2175), not precision -- it needs to sit well above UnmeasuredWeightSeconds
             // (30) so the collection is scheduled early instead of becoming the #1887 tail.
-            ["TransitiveDependencyVisibilityTests"] = 83,
+            // #5107 added three --server facts and one CLI fact: 136s locally (twelve facts),
+            // not yet on CI. Raised to that local measurement until a leg reports one.
+            ["TransitiveDependencyVisibilityTests"] = 136,
             // #4562: added by PR #4574. Run 36148859018 measured 131.3s (BC 27.5) and 77.2s
             // (BC 28.5) with nine runner spawns; the class now shares identical invocations and
             // spawns six. Recorded at 131, the observed maximum rounded down: an overstatement
