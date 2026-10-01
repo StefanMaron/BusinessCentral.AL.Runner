@@ -60,6 +60,41 @@ where a question-4 failure means AL that ran — see
 [the two causes](#the-two-causes-of-a-null-resolution-are-separable-4350). It is a note, not an
 incomplete-coverage exit: the omission is declared in `docs/limitations.md`.
 
+## A sibling source folder next to a package (#4991)
+
+In the layout `App/` (source), `App.Test/` (source) and `App.Test/.alpackages/App.app`, with a run
+naming only `App.Test`, the code that runs is the package's, but `BuildSiblingSourceDeps` still
+registers `App/` as a parsed source folder, and `Build` keeps the last root's mapping of an object.
+Before #4991 every object of `App/` therefore won over the package's own source, and when `App/`
+had been edited without rebuilding the package, `--coverage`, `coverage` and `perTestCoverage`
+named lines of `App/` that held something else — measured: a comment on the line reported as hit.
+
+`RootsWithParsedSourceDependencies` now marks a registered folder that is not an execution root and
+whose `app.json` names a Tier-3 package recorded by `PackagedDependencySources`. `Build` attributes
+such a folder's object only when the package's root mapped the same object and the two texts are
+equal line for line: the file's preamble plus the object's own lines, which is the text a decoded
+`[SourceSpans]` line indexes, so equal texts give equal file lines. Per object, not per file: an
+object whose text matches keeps `App/` even when another object in the same file was edited.
+
+| `App/`'s object | reported against |
+|---|---|
+| equal to the package's | `App/`, as before |
+| different | the package's embedded AL under `compiled-deps/<cacheKey>.src/` — what a package with no sibling folder gets |
+| not in the package's root, or unreadable on either side | the package's mapping if it has one, else nothing; never `App/` unverified |
+
+A package whose AL could not be extracted maps nothing, so its sibling's objects stay unmapped and
+the map carries the package's scan failure: the report is marked incomplete rather than filled
+from text nobody verified. Pinned by `CoveragePackagedSiblingSourceTests` (CLI and `--server`) and
+`CoveragePackagedSiblingSourceMapTests` (the rows, in process).
+
+`affectedOnly` ignores a covered package's statements in either place: `PackagedSourceRoots` lists
+the package's `compiled-deps` root beside its source folder (see
+[server-mode.md](server-mode.md#affectedonly-and-packaged-dependencies)).
+
+Not covered: a **precompiled** package (Tier 1, 2 or 2.5) next to a sibling source folder. No
+embedded text was compiled, so there is nothing to compare against, and the folder is attributed
+as before. Not measured; tracked in #5155.
+
 ## The resolution chain
 
 `AlCoverageTracker.ResolveScopeInfo` asks four questions in order, and any one of them ends the

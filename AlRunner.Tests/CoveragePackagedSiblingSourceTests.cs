@@ -230,6 +230,28 @@ public sealed class CoveragePackagedSiblingSourceTests : IDisposable
         var appPrefix = Path.GetFullPath(app).Replace('\\', '/') + "/";
         Assert.DoesNotContain(appPrefix + "src/Helper.Codeunit.al", string.Join("\n", lines), StringComparison.Ordinal);
     }
+
+    // #4973's selection must not be paid for by #4991: with App/ edited and not repackaged, the
+    // package still decides what runs, so an unchanged second affectedOnly request skips the test.
+    [SkippableFact]
+    public async Task Server_AffectedOnly_SiblingEditedAfterPackaging_UnchangedRequestStillSkips()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (_, testApp) = Layout(EditedHelper);
+        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        var request = JsonSerializer.Serialize(new
+        {
+            command = "runTests", sourcePaths = new[] { testApp }, packagePaths = Array.Empty<string>(), affectedOnly = true,
+        });
+        var first = await server.SendRequestStreamingAsync(request, TimeSpan.FromSeconds(240));
+        Assert.Contains(first, l => l.Contains("\"name\":\"Codeunit79892.CallsApp\",\"status\":\"pass\"", StringComparison.Ordinal));
+
+        var lines = await server.SendRequestStreamingAsync(request, TimeSpan.FromSeconds(240));
+        var raw = string.Join("\n", lines) + "\n--- stderr ---\n" + server.StdErr;
+        var (_, summary) = ProtocolV2Streaming.Split(lines);
+        var selection = summary.GetProperty("selection");
+        Assert.True(selection.GetProperty("ran").GetInt32() == 0 && selection.GetProperty("skipped").GetInt32() == 1, raw);
+    }
 }
 
 /// <summary>#4991, in-process: what <see cref="AlCoverageSourceMap.Build"/> does with a sibling root
@@ -303,5 +325,28 @@ public sealed class CoveragePackagedSiblingSourceMapTests : IDisposable
             $"the package's text is unknown, yet the object was attributed to {(map.TryGetValue(("CodeUnit", 79893), out var p) ? p : "")}");
         Assert.True(map.IsIncomplete);
         Assert.Equal(packaged, Assert.Single(map.ScanFailures).Path);
+    }
+}
+
+/// <summary>#4991: affectedOnly ignores a covered package's statements wherever coverage puts them,
+/// including the package's own embedded AL, and nothing of a package the key does not cover.</summary>
+public sealed class PackagedSourceRootsMaterializedTests
+{
+    [Fact]
+    public void ACoveredPackagesEmbeddedSourceRoot_IsPackaged_AnUncoveredOneIsNot()
+    {
+        var root = TestScratch.Dir("al-runner-packaged-materialized-roots");
+        var covered = Guid.NewGuid();
+        var uncovered = Guid.NewGuid();
+        var coveredRoot = Path.Combine(root, "compiled-deps", "a.src");
+        var uncoveredRoot = Path.Combine(root, "compiled-deps", "b.src");
+
+        var roots = DependencyPackageFingerprint.PackagedSourceRoots(
+            Array.Empty<string>(), new[] { Path.Combine(root, "App.Test") }, new HashSet<Guid> { covered },
+            new[] { (covered, coveredRoot), (uncovered, uncoveredRoot) });
+
+        Assert.Equal(new[] { Path.GetFullPath(coveredRoot) }, roots);
+        Assert.True(DependencyPackageFingerprint.IsUnderAny(Path.Combine(coveredRoot, "src", "Helper.Codeunit.al"), roots));
+        Assert.False(DependencyPackageFingerprint.IsUnderAny(Path.Combine(uncoveredRoot, "src", "Helper.Codeunit.al"), roots));
     }
 }

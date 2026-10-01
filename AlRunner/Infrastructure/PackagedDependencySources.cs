@@ -53,14 +53,17 @@ internal static class PackagedDependencySources
 
     internal static IReadOnlyList<string> Roots(string cacheDir) => RootsByApp(cacheDir).Select(r => r.Root).ToList();
 
-    /// <summary><see cref="Roots()"/>, each with the AppId whose package it holds (#4991).</summary>
-    public static IReadOnlyList<(Guid AppId, string Root)> RootsByApp() => RootsByApp(CacheRoots.Resolve("compiled-deps"));
+    /// <summary><see cref="Roots()"/>, each with the AppId whose package it holds (#4991); only the
+    /// packages <paramref name="include"/> accepts, when given, so nothing else is extracted.</summary>
+    public static IReadOnlyList<(Guid AppId, string Root)> RootsByApp(Func<Guid, bool>? include = null) =>
+        RootsByApp(CacheRoots.Resolve("compiled-deps"), include);
 
-    internal static IReadOnlyList<(Guid AppId, string Root)> RootsByApp(string cacheDir)
+    internal static IReadOnlyList<(Guid AppId, string Root)> RootsByApp(string cacheDir, Func<Guid, bool>? include = null)
     {
         var roots = new List<(Guid, string)>();
         foreach (var (appId, (appPath, cacheKey)) in _apps.OrderBy(kv => kv.Value.CacheKey, StringComparer.Ordinal))
         {
+            if (include != null && !include(appId)) continue;
             try { roots.Add((appId, Materialize(appPath, cacheKey, cacheDir))); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
             {
