@@ -14,8 +14,8 @@ public sealed class BackupReaderProvisioningTests : IDisposable
     private const string Platform = "linux-x64";
     private const string AssetFile = "bcdb-linux-x64";
 
-    private static readonly byte[] PinnedBytes = "the pinned reader build"u8.ToArray();
-    private static readonly byte[] OtherBytes = "an older reader build"u8.ToArray();
+    internal static readonly byte[] PinnedBytes = "the pinned reader build"u8.ToArray();
+    internal static readonly byte[] OtherBytes = "an older reader build"u8.ToArray();
 
     private readonly string _root;
     private readonly string _release;
@@ -40,7 +40,7 @@ public sealed class BackupReaderProvisioningTests : IDisposable
     private static string Sha(byte[] bytes)
         => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
 
-    private static BackupReaderPin PinFor(byte[] bytes, string? sha = "computed")
+    internal static BackupReaderPin PinFor(byte[] bytes, string? sha = "computed")
         => new(Repo, Tag, new Dictionary<string, BackupReaderAsset>
         {
             [Platform] = new(AssetFile, sha == "computed" ? Sha(bytes) : sha),
@@ -57,9 +57,9 @@ public sealed class BackupReaderProvisioningTests : IDisposable
         return BackupReaderProvisioning.FetchStatus.Ok;
     }
 
-    private void Publish(byte[] bytes) => File.WriteAllBytes(Path.Combine(_release, AssetFile), bytes);
+    internal void Publish(byte[] bytes) => File.WriteAllBytes(Path.Combine(_release, AssetFile), bytes);
 
-    private string Managed => BackupReaderTool.ManagedInstallPath(_cacheRoot)!;
+    internal string Managed => BackupReaderTool.ManagedInstallPath(_cacheRoot)!;
 
     private void PreInstall(byte[] bytes)
     {
@@ -70,8 +70,12 @@ public sealed class BackupReaderProvisioningTests : IDisposable
     private BackupReaderProvisioning.Outcome Ensure(BackupReaderPin pin, bool testData = true,
         bool autoProvision = true, string? env = null, string? onPath = null, string? platform = Platform,
         BackupReaderProvisioning.Fetcher? fetch = null)
-        => BackupReaderProvisioning.EnsureReader(testData, autoProvision, env, _cacheRoot, () => onPath,
-            pin, platform, fetch ?? FakeFetch, _reported.Add);
+        => BackupReaderProvisioning.EnsureReader(testData, autoProvision,
+            Inputs(pin, env, onPath, platform, fetch), _reported.Add);
+
+    internal BackupReaderProvisioning.Inputs Inputs(BackupReaderPin pin, string? env = null, string? onPath = null,
+        string? platform = Platform, BackupReaderProvisioning.Fetcher? fetch = null)
+        => new(pin, env, _cacheRoot, () => onPath, platform, fetch ?? FakeFetch);
 
     // ───────────────────────────────────────────── installs, and leaves alone ──
 

@@ -132,11 +132,20 @@ internal static class BackupReaderProvisioning
         return null;
     }
 
-    internal static Outcome EnsureReader(bool testDataEnabled, bool autoProvision, string? envValue,
-        string? cacheRoot, Func<string?> findOnPath, BackupReaderPin pin, string? platform,
-        Fetcher fetch, Action<string> report)
+    /// <summary>Everything <see cref="EnsureReader"/> reads from the machine, so a test can
+    /// supply a fake release and cache root instead.</summary>
+    internal sealed record Inputs(BackupReaderPin Pin, string? EnvValue, string? CacheRoot,
+        Func<string?> FindOnPath, string? Platform, Fetcher Fetch)
+    {
+        internal static Inputs Live() => new(BackupReaderPin.Embedded,
+            Environment.GetEnvironmentVariable(BackupReaderTool.ExecutableEnvVar),
+            BackupReaderTool.DefaultCacheRoot(), BackupReaderTool.FindOnPath, CurrentPlatform(), HttpFetch);
+    }
+
+    internal static Outcome EnsureReader(bool testDataEnabled, bool autoProvision, Inputs inputs, Action<string> report)
     {
         if (!testDataEnabled || !autoProvision) return Outcome.NotRequested;
+        var (pin, envValue, cacheRoot, findOnPath, platform, fetch) = inputs;
 
         // Walk the slots in BackupReaderTool.Resolve's order, so the reader judged here is the
         // one the run will start.

@@ -9,6 +9,11 @@ internal static partial class ProgramSupport
     // #4923/#4925: 0 when --test-data needs nothing or its backup and reader are in place; 2
     // (execution error, no tests ran) after printing why a download failed. Needs the SELECTED version and country.
     internal static int ProvisionTestDataBackup(string version, bool autoProvision, bool verbose)
+        => ProvisionTestDataBackup(version, autoProvision, verbose,
+            AlRunner.Infrastructure.BackupReaderProvisioning.Inputs.Live(), Console.Error);
+
+    internal static int ProvisionTestDataBackup(string version, bool autoProvision, bool verbose,
+        AlRunner.Infrastructure.BackupReaderProvisioning.Inputs reader, TextWriter err)
     {
         string? home = null;
         try { home = AlRunner.Infrastructure.AlRunnerPaths.UserHome; } catch { /* probed as absent */ }
@@ -17,26 +22,20 @@ internal static partial class ProgramSupport
             // #4925: the reader first — about 10 MB, and a platform it cannot serve refuses before
             // the 1 GB backup download rather than after it.
             AlRunner.Infrastructure.BackupReaderProvisioning.EnsureReader(
-                AlRunner.Infrastructure.TestDataOptions.Enabled, autoProvision,
-                Environment.GetEnvironmentVariable(AlRunner.Infrastructure.BackupReaderTool.ExecutableEnvVar),
-                AlRunner.Infrastructure.BackupReaderTool.DefaultCacheRoot(),
-                AlRunner.Infrastructure.BackupReaderTool.FindOnPath,
-                AlRunner.Infrastructure.BackupReaderPin.Embedded,
-                AlRunner.Infrastructure.BackupReaderProvisioning.CurrentPlatform(),
-                AlRunner.Infrastructure.BackupReaderProvisioning.HttpFetch, Console.Error.WriteLine);
+                AlRunner.Infrastructure.TestDataOptions.Enabled, autoProvision, reader, err.WriteLine);
             AlRunner.Infrastructure.TestDataBackupProvisioning.EnsureBackup(autoProvision, version,
                 AlRunner.Infrastructure.BcArtifacts.SelectedCountry, home,
-                AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, Console.Error.WriteLine, verbose);
+                AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, err.WriteLine, verbose);
             return 0;
         }
         catch (AlRunner.Infrastructure.TestDataUnavailableException ex)
         {
-            Console.Error.WriteLine(ex.Message);
+            err.WriteLine(ex.Message);
             return 2;
         }
         catch (AlRunner.Infrastructure.BackupReaderProvisioningException ex)
         {
-            Console.Error.WriteLine(ex.Message);
+            err.WriteLine(ex.Message);
             return 2;
         }
     }
