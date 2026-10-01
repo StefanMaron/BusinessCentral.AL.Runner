@@ -362,16 +362,19 @@ public static partial class EventSubscriberPatches
 
     /// <summary>
     /// The identity of every assembly an event raised right now can dispatch into: the sorted
-    /// Module Version IDs of the assemblies <see cref="IsSubscriberScanCandidate"/> admits
-    /// (a dynamic one without a readable MVID contributes its full name instead).
+    /// Module Version IDs of the assemblies <see cref="IsSubscriberScanCandidate"/> admits AND
+    /// that declare at least one [EventSubscriber] (a dynamic one without a readable MVID
+    /// contributes its full name instead).
     /// #5060: an install trigger's output depends on this set as much as on its own code.
+    /// Trap: keying on every loaded candidate made the key depend on WHEN a library such as
+    /// Microsoft.Bcl.AsyncInterfaces happened to load, so a warm request missed (#5104).
     /// </summary>
     internal static string SubscriberScopeKey()
     {
         var ids = new SortedSet<string>(StringComparer.Ordinal);
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
-            if (!IsSubscriberScanCandidate(asm)) continue;
+            if (!IsSubscriberScanCandidate(asm) || !CanDispatchInto(asm)) continue;
             string id;
             try { id = asm.ManifestModule.ModuleVersionId.ToString("N"); }
             catch (Exception) when (asm.IsDynamic) { id = "dynamic:" + asm.FullName; }
@@ -379,6 +382,21 @@ public static partial class EventSubscriberPatches
         }
         return string.Join("|", ids);
     }
+
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Assembly, object> _declaresSubscribers = new();
+
+    /// <summary>Whether the discovery scan would register anything from <paramref name="asm"/>:
+    /// the same metadata query <see cref="EnsureRegistryFresh"/> runs. A scan that fails counts
+    /// as true, so an assembly whose subscribers cannot be read still moves the key.</summary>
+    internal static bool CanDispatchInto(Assembly asm)
+        => (bool)_declaresSubscribers.GetValue(asm, static a =>
+        {
+            try
+            {
+                return AssemblyTypeIndex.For(a).FindAttributedMethods("Codeunit", "NavEventSubscriberAttribute").Count > 0;
+            }
+            catch (Exception) { return true; }
+        });
 
     private static readonly HashSet<Type> _seededScopeTypes = new();
     private static readonly Dictionary<int, Type?> _codeunitTypeCache = new();

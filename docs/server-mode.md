@@ -1234,7 +1234,7 @@ runs again:
 |---|---|
 | the dependency+company key | dependency assembly MVIDs, the registered BC symbol apps, and the `--test-data` backup and company |
 | the bundle's assembly MVID | any edit to the bundle's own AL |
-| the event-subscriber scope | the MVIDs of every assembly the subscriber scan reads, because an Install trigger's events can reach any of them |
+| the event-subscriber scope | the MVIDs of every assembly the subscriber scan reads that declares at least one `[EventSubscriber]`, because an Install trigger's events can reach any of them. An assembly with none (a library such as `Newtonsoft.Json`) cannot be reached, so it is left out, and the key does not depend on when it happened to load (#5104) |
 | the bundle identity | the `app.json` id, name, publisher and version the Published Application row is written from |
 | the session identity | the session user and company the rows are written for |
 
@@ -1255,8 +1255,8 @@ a server that crosses midnight can hand a test yesterday's `Today()` stamp.
 
 Under `AL_RUNNER_PERF=1` each run logs `InstallBaseline.BundleCache HIT`, `MISS … stored`,
 `MISS … not-stored: <why>` or `NOKEY <why>`. A bundle's first warm run can still miss once
-when the previous run loaded more assemblies while seeding, which widens the subscriber scope;
-the run after it hits.
+when the previous run loaded an assembly that declares subscribers while seeding, which widens
+the subscriber scope; the run after it hits.
 
 ## The reload contract (same-bundle, in-process)
 
