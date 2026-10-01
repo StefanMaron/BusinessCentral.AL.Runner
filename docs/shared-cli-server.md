@@ -155,7 +155,7 @@ one's flags and `AL_RUNNER_*` variables from its source, and sum its test durati
 | `--no-cache` | cache roots are process-wide, so a fact needing it would need a server per request. Not added |
 | `--define`, `--preprocessor-symbols` | not built, not impossible: a later request can reuse a module compiled for another directory with the same app id, keyed on content, `app.json` and dependencies and not on the symbols. A server started with `--define` needs no protocol change |
 | `--output-json`, `--output-junit`, `--out` | the response already is the JSON document, so these facts assert the CLI writing a file. Not added |
-| `--coverage`, `--coverage-out` | `coverage` exists as a request field; `--coverage-out` cannot be built on the server's table, which omits procedures that never ran (#5186) |
+| `--coverage`, `--coverage-out` | `coverage` exists as a request field and its table lists a never-run procedure at 0 hits, as the CLI's cobertura does (#5186). `--coverage-out` has no request field: the response is the document, and a client writes the file from that table |
 | `--seed`, `--expectations`, `--watch`, `--jobs`, `--affected` | process-wide or CLI-only: the seed line, the expectations manifest, the watch loop, worker processes, and the baseline file |
 | a fact about the CLI's own output | the `Tests:` summary, `FAIL` / `ERROR` heading lines, count-baseline lines, `Shard result:`, and the exit-code path itself: the text is the subject |
 
