@@ -81,18 +81,20 @@ public class ServerAffectedSelectionUnrecordedStateTests
     }
 
     private static string Bundle(string prefix, string suffix, string writer, string checker, string overwriter,
-        bool onPrem = false)
+        bool onPrem = false, AlRunner.AppManifest? testRunner = null)
     {
         var dir = TestScratch.Dir(prefix);
         Directory.CreateDirectory(dir);
+        var dependency = testRunner == null ? "" :
+            $$"""{ "id": "{{testRunner.AppId}}", "name": "{{testRunner.Name}}", "publisher": "{{testRunner.Publisher}}", "version": "{{testRunner.Version}}" }""";
         File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
         {
           "id": "c5057000-0000-4a11-9111-{{suffix}}",
           "name": "Unrecorded State {{suffix}}",
           "publisher": "AL Runner",
           "version": "1.0.0.0",
-          "dependencies": [],
-          "platform": "1.0.0.0",
+          "dependencies": [ {{dependency}} ],
+          "platform": "{{(testRunner == null ? "1.0.0.0" : "27.0.0.0")}}",
           "idRanges": [ { "from": 62480, "to": 62489 } ],
           {{(onPrem ? "\"target\": \"OnPrem\"," : "")}}
           "runtime": "14.0"
@@ -303,6 +305,45 @@ public class ServerAffectedSelectionUnrecordedStateTests
             $"reader edit: ran [{string.Join(", ", edited.Ran)}], expected B_Reads without A_Writes:\n{edited.Raw}");
     }
 
+    /// <summary>
+    /// With Microsoft's Test Runner app loaded, its 130453 "ALTestRunner Reset Environment" clears
+    /// the last error before every test method (corpus PR 520 asks BC the same question), so no
+    /// test can read what another left: an edit to the raising helper does not select the reader,
+    /// which passes in the full run either way.
+    /// </summary>
+    [SkippableFact]
+    public async Task WithTheTestRunnerApp_TheLastErrorIsClearedPerTest_AndLinksNothing()
+    {
+        var dirs = TestRunnerMgtEventsTests.RequireProvisioned();
+        var bundle = Bundle("al-runner-server-affected-unrecorded-lasterror-reset", "00000000000a",
+            TrappedErrorWriter("LE-ONE"), EmptyLastErrorChecker, TrappedErrorWriter("LE-OTHER", "62487 \"US Overwriter\""),
+            testRunner: dirs.TestRunner);
+        await using var server = await CliServer.StartAsync(new[]
+            { "--no-cache", "--package-cache", dirs.TestApps, "--package-cache", dirs.PlatformApps });
+
+        var baseline = await Send(server, bundle);
+        Assert.True(baseline.ForcedFull, baseline.Raw);
+        AssertStatus(baseline, "B_Reads", "pass");
+
+        File.WriteAllText(Path.Combine(bundle, "Writer.Codeunit.al"), TrappedErrorWriter("LE-TWO"));
+        var edited = await Send(server, bundle);
+        Assert.False(edited.ForcedFull, edited.Raw);
+        Assert.True(edited.Tests.ContainsKey("A_Writes") && !edited.Tests.ContainsKey("B_Reads"),
+            $"writer edit: ran [{string.Join(", ", edited.Ran)}], expected A_Writes without B_Reads:\n{edited.Raw}");
+        AssertStatus(await Send(server, bundle, affectedOnly: false), "B_Reads", "pass");
+    }
+
+    private const string EmptyLastErrorChecker = """
+        codeunit 62480 "US Checker"
+        {
+            procedure Check()
+            begin
+                if GetLastErrorText() <> '' then
+                    Error('NOT-CLEARED-%1', GetLastErrorText());
+            end;
+        }
+        """;
+
     // ── Static .NET state through DotNet interop ───────────────────────────────────────────────
 
     private const string EnvDeclaration = """
@@ -483,5 +524,178 @@ public class ServerAffectedSelectionUnrecordedStateTests
         Assert.Equal(
             JsonDocument.Parse(seeded42.Tests["B_Reads"].Line).RootElement.GetProperty("message").GetString(),
             JsonDocument.Parse(seeded43.Tests["B_Reads"].Line).RootElement.GetProperty("message").GetString());
+    }
+
+    // ── The review's two counterexamples (stma-review-2 on PR #5080) ──────────────────────────
+
+    private static string RawBundle(string prefix, string suffix, int from, params (string File, string Content)[] files)
+    {
+        var dir = TestScratch.Dir(prefix);
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
+        { "id": "c5057000-0000-4a11-9111-{{suffix}}", "name": "Unrecorded State {{suffix}}", "publisher": "AL Runner",
+          "version": "1.0.0.0", "dependencies": [], "platform": "1.0.0.0",
+          "idRanges": [ { "from": {{from}}, "to": {{from + 9}} } ], "runtime": "14.0" }
+        """);
+        foreach (var (file, content) in files) File.WriteAllText(Path.Combine(dir, file), content);
+        return dir;
+    }
+
+    private static string TrappingTest(int id, string name, string method, string error, string condition = "") => $$"""
+        codeunit {{id}} "{{name}}"
+        {
+            Subtype = Test;
+            [Test]
+            procedure {{method}}()
+            begin
+                {{(condition.Length > 0 ? condition + " then" : "")}}
+                    if not TryRaise() then;
+            end;
+
+            [TryFunction]
+            local procedure TryRaise()
+            begin
+                Error('{{error}}');
+            end;
+        }
+        """;
+
+    private static string CxSetter(int year) => $$"""
+        codeunit 62491 "CX Setter"
+        {
+            procedure Set()
+            begin
+                WorkDate(DMY2Date(1, 1, {{year}}));
+            end;
+        }
+        """;
+
+    /// <summary>
+    /// B traps its own error only while WorkDate is 2030. Editing the setter to 2031 makes B stop
+    /// writing the last error, so C (reading it) sees W2's error in a full run. B's stale record
+    /// must not end the walk from C before W2.
+    /// </summary>
+    [SkippableFact]
+    public async Task AReaderWhoseInputChanged_DoesNotHideTheRealLastErrorWriter()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = RawBundle("al-runner-server-affected-unrecorded-cx", "00000000000b", 62490,
+            ("Setter.Codeunit.al", CxSetter(2030)),
+            ("XTests.Codeunit.al", """
+            codeunit 62492 "CX X Tests"
+            {
+                Subtype = Test;
+                [Test]
+                procedure X_SetsWorkDate()
+                var
+                    S: Codeunit "CX Setter";
+                begin
+                    S.Set();
+                end;
+            }
+            """),
+            ("W2Tests.Codeunit.al", TrappingTest(62493, "CX W2 Tests", "W2_Traps", "W2-ERR")),
+            ("BTests.Codeunit.al", TrappingTest(62494, "CX B Tests", "B_Conditional", "B-ERR", "if WorkDate() = DMY2Date(1, 1, 2030)")),
+            ("CTests.Codeunit.al", """
+            codeunit 62495 "CX C Tests"
+            {
+                Subtype = Test;
+                [Test]
+                procedure C_Reads()
+                begin
+                    if StrPos(GetLastErrorText(), 'W2') > 0 then
+                        Error('C saw %1', GetLastErrorText());
+                end;
+            }
+            """));
+        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+
+        var baseline = await Send(server, bundle);
+        AssertStatus(baseline, "C_Reads", "pass");
+        File.WriteAllText(Path.Combine(bundle, "Setter.Codeunit.al"), CxSetter(2031));
+        var narrowed = await Send(server, bundle);
+        Assert.False(narrowed.ForcedFull, narrowed.Raw);
+        AssertStatus(narrowed, "W2_Traps", "pass");
+        AssertStatus(narrowed, "C_Reads", "fail", "C saw W2-ERR");
+        AssertStatus(await Send(server, bundle, affectedOnly: false), "C_Reads", "fail", "C saw W2-ERR");
+    }
+
+    private static string CyHelper(bool traps) => $$"""
+        codeunit 62504 "CY B Helper"
+        {
+            procedure DoIt()
+            begin
+                {{(traps ? "if not TryRaise() then;" : "")}}
+            end;
+
+            [TryFunction]
+            local procedure TryRaise()
+            begin
+                Error('B-ERR');
+            end;
+        }
+        """;
+
+    private static string CyChecker(string label) => $$"""
+        codeunit 62505 "CY C Checker"
+        {
+            procedure Check()
+            begin
+                if GetLastErrorText() = 'W2-ERR' then
+                    Error('{{label}} saw W2');
+            end;
+        }
+        """;
+
+    /// <summary>
+    /// B's helper stops trapping, so B stops writing the last error. Its earlier write must not stay
+    /// a definite write through the re-recording union: an edit to C's checker alone must still
+    /// bring W2, which C reads in a full run.
+    /// </summary>
+    [SkippableFact]
+    public async Task AWriteOnlyAnEarlierRecordHad_DoesNotEndTheWalk()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = RawBundle("al-runner-server-affected-unrecorded-cy", "00000000000c", 62500,
+            ("BHelper.Codeunit.al", CyHelper(true)),
+            ("CChecker.Codeunit.al", CyChecker("ONE")),
+            ("W2Tests.Codeunit.al", TrappingTest(62501, "CY W2 Tests", "W2_Traps", "W2-ERR")),
+            ("BTests.Codeunit.al", """
+            codeunit 62502 "CY B Tests"
+            {
+                Subtype = Test;
+                [Test]
+                procedure B_UsesHelper()
+                var
+                    H: Codeunit "CY B Helper";
+                begin
+                    H.DoIt();
+                end;
+            }
+            """),
+            ("CTests.Codeunit.al", """
+            codeunit 62503 "CY C Tests"
+            {
+                Subtype = Test;
+                [Test]
+                procedure C_Reads()
+                var
+                    K: Codeunit "CY C Checker";
+                begin
+                    K.Check();
+                end;
+            }
+            """));
+        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+
+        AssertStatus(await Send(server, bundle), "C_Reads", "pass");
+        File.WriteAllText(Path.Combine(bundle, "BHelper.Codeunit.al"), CyHelper(false));
+        AssertStatus(await Send(server, bundle), "C_Reads", "fail", "ONE saw W2");
+        File.WriteAllText(Path.Combine(bundle, "CChecker.Codeunit.al"), CyChecker("TWO"));
+        var edited = await Send(server, bundle);
+        Assert.False(edited.ForcedFull, edited.Raw);
+        AssertStatus(edited, "W2_Traps", "pass");
+        AssertStatus(edited, "C_Reads", "fail", "TWO saw W2");
+        AssertStatus(await Send(server, bundle, affectedOnly: false), "C_Reads", "fail", "TWO saw W2");
     }
 }

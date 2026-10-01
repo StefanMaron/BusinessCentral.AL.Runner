@@ -1981,6 +1981,8 @@ public sealed class TestExecutor
         // uses on the wire (see AlCoverageTracker.BeginTest's doc comment) — always
         // called, cheap even when perTestCoverage was never requested.
         AlRunner.Infrastructure.AlCoverageTracker.BeginTest($"{codeunit}.{m.Name}");
+        // #5057: what was cleared between the previous test and this one, before this test's code runs.
+        AlRunner.Infrastructure.AlSessionStateTracker.NoteTestStart();
         // #2502: this test's Random() sequence depends only on the run seed and its own identity.
         AlRunner.Infrastructure.RunSeed.BeginTest(codeunit, m.Name);
         // Enter BC's own "in test" scope for the duration of this test (mirrors

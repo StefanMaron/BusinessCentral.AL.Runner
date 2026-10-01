@@ -40,7 +40,19 @@ internal static class AffectedSessionStateSelection
         // stopped writing.
         changedTests = !changed && !earlierBundleChanged ? new HashSet<string>(StringComparer.Ordinal)
             : changedTests ?? new HashSet<string>(selected, StringComparer.Ordinal);
-        HashSet<string>? WalkRecord(string t) => changedTests.Contains(t) ? null : Record(t);
+        var indexOf = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (var i = 0; i < discovered.Count; i++) indexOf.TryAdd(discovered[i], i);
+        var firstChanged = earlierBundleChanged ? -1
+            : changedTests.Count > 0 ? IndexOfFirst(discovered, changedTests) : int.MaxValue;
+        // A test after the first change that reads session state may behave differently now and
+        // stop writing, as may a changed one; the walk does not trust either record to stop it.
+        HashSet<string>? WalkRecord(string t) => changedTests.Contains(t)
+            || (indexOf.TryGetValue(t, out var ti) && ti > firstChanged && Any(t, AlSessionStateTracker.ReadPrefix))
+            ? null : Record(t);
+        // Kinds cleared outside any test just before t started: nothing earlier reaches t through them.
+        IEnumerable<string> Uncleared(int i, IEnumerable<string> kinds) => Record(discovered[i]) is { } cr
+            ? kinds.Where(k => !cr.Contains(AlSessionStateTracker.ClearedAtStartKey(k)))
+            : kinds;
         bool WritesAccumulating(string t) => Record(t) is not { } r
             || r.Any(k => k.StartsWith(AlSessionStateTracker.WritePrefix, StringComparison.Ordinal) && !IsOverwriteWrite(k));
 
@@ -49,16 +61,16 @@ internal static class AffectedSessionStateSelection
             // A changed test can start reading or writing any kind, which its record cannot show,
             // so every reader after the first selected test and every earlier writer is in.
             // From the first CHANGED test: a test brought in as a writer changes no state a full run would not.
-            var first = earlierBundleChanged ? -1 : IndexOfFirst(discovered, changedTests.Count > 0 ? changedTests : selected);
+            var first = changedTests.Count > 0 || earlierBundleChanged ? firstChanged : IndexOfFirst(discovered, selected);
             for (var i = first + 1; i < discovered.Count; i++)
                 if (Any(discovered[i], AlSessionStateTracker.ReadPrefix)) selected.Add(discovered[i]);
             var last = LastIndex(discovered, selected);
             for (var i = 0; i < last; i++)
                 if (WritesAccumulating(discovered[i])) selected.Add(discovered[i]);
             // A changed or unrecorded test may read any overwrite kind; any other, what it read.
-            AddNearestOverwriters(discovered, selected, WalkRecord, i => WalkRecord(discovered[i]) is { } r
+            AddNearestOverwriters(discovered, selected, WalkRecord, i => Uncleared(i, WalkRecord(discovered[i]) is { } r
                 ? OverwriteKinds.Where(k => r.Contains(AlSessionStateTracker.ReadKey(k)))
-                : OverwriteKinds);
+                : OverwriteKinds));
         }
         else if (selected.Count > 0)
         {
@@ -78,8 +90,8 @@ internal static class AffectedSessionStateSelection
                     selected.Add(w);
                     pending.Enqueue(j);
                 }
-                foreach (var j in NearestOverwriters(discovered, i, Record,
-                             OverwriteKinds.Where(k => reads == null || reads.Contains(AlSessionStateTracker.ReadKey(k)))))
+                foreach (var j in NearestOverwriters(discovered, i, Record, Uncleared(i,
+                             OverwriteKinds.Where(k => reads == null || reads.Contains(AlSessionStateTracker.ReadKey(k))))))
                     if (selected.Add(discovered[j])) pending.Enqueue(j);
             }
         }
@@ -92,7 +104,10 @@ internal static class AffectedSessionStateSelection
                         && !IsOverwriteWrite(k)
                         && !k.StartsWith(AlSessionStateTracker.WriteKey("SingleInstance|"), StringComparison.Ordinal)))
                     selected.Add(t);
-            foreach (var j in NearestOverwriters(discovered, discovered.Count, WalkRecord, OverwriteKinds))
+            // Where every test of this bundle started with the kind cleared, so does the next bundle's.
+            var reachNextBundle = OverwriteKinds.Where(k => !discovered.All(t =>
+                Record(t) is { } r && r.Contains(AlSessionStateTracker.ClearedAtStartKey(k))));
+            foreach (var j in NearestOverwriters(discovered, discovered.Count, WalkRecord, reachNextBundle))
                 selected.Add(discovered[j]);
         }
         return selected.Count - before;
@@ -114,8 +129,9 @@ internal static class AffectedSessionStateSelection
         }
     }
 
-    // For each kind, walking back from `before`: every test with no record (it may or may not write
-    // it) up to and including the nearest one whose record writes it.
+    // For each kind, walking back from `before`: every test that may or may not have written it (no
+    // record, or a write only an earlier record had) up to and including the nearest one that did,
+    // or that started with it cleared.
     private static IEnumerable<int> NearestOverwriters(IReadOnlyList<string> discovered, int before,
         Func<string, HashSet<string>?> record, IEnumerable<string> kinds)
     {
@@ -125,9 +141,11 @@ internal static class AffectedSessionStateSelection
             for (var j = before - 1; j >= 0; j--)
             {
                 var r = record(discovered[j]);
-                if (r != null && !r.Contains(write) && !r.Contains(AlSessionStateTracker.FailedWriteKey(kind))) continue;
+                var definite = r == null ? false : r.Contains(write) || r.Contains(AlSessionStateTracker.FailedWriteKey(kind))
+                    || r.Contains(AlSessionStateTracker.ClearedAtStartKey(kind));
+                if (r != null && !definite && !r.Contains(AlSessionStateTracker.MaybeWriteKey(kind))) continue;
                 yield return j;
-                if (r != null) break;
+                if (definite) break;
             }
         }
     }
@@ -143,10 +161,11 @@ internal static class AffectedSessionStateSelection
         bool changed, bool earlierBundleChanged, bool laterBundleFollows)
     {
         var changedTests = new HashSet<string>(selected, StringComparer.Ordinal);
+        var firstChanged = earlierBundleChanged ? -1 : IndexOfFirst(discovered, changedTests);
         int byIsolation = 0, byState = 0;
         while (true)
         {
-            byIsolation += AffectedIsolationWidening.Widen(discovered, selected, isolation);
+            byIsolation += WidenByIsolation(discovered, selected, isolation, changedTests, firstChanged);
             var added = Widen(discovered, selected, recorded, changed, earlierBundleChanged, laterBundleFollows, changedTests);
             byState += added;
             if (added == 0) return (byIsolation, byState);
@@ -154,18 +173,59 @@ internal static class AffectedSessionStateSelection
     }
 
     /// <summary>
+    /// <see cref="AffectedIsolationWidening.Widen"/>, except for a test brought in from before the
+    /// first change: nothing it reads has changed, so it only has to reproduce its recorded run,
+    /// which needs the tests of its codeunit (its bundle, under Disabled) up to it, not after it.
+    /// </summary>
+    internal static int WidenByIsolation(IReadOnlyList<string> discovered, HashSet<string> selected,
+        TestIsolation isolation, IReadOnlySet<string> changedTests, int firstChanged)
+    {
+        if (selected.Count == 0 || isolation == TestIsolation.Test) return 0;
+        var before = selected.Count;
+        string Group(string t) => isolation == TestIsolation.Disabled ? "" : AffectedIsolationWidening.CodeunitOf(t);
+        var whole = new HashSet<string>(StringComparer.Ordinal);
+        var prefixEnd = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (var i = 0; i < discovered.Count; i++)
+        {
+            var t = discovered[i];
+            if (!selected.Contains(t)) continue;
+            if (changedTests.Contains(t) || i >= firstChanged) whole.Add(Group(t));
+            else prefixEnd[Group(t)] = i;
+        }
+        for (var i = 0; i < discovered.Count; i++)
+        {
+            var g = Group(discovered[i]);
+            if (whole.Contains(g) || (prefixEnd.TryGetValue(g, out var end) && i <= end))
+                selected.Add(discovered[i]);
+        }
+        return selected.Count - before;
+    }
+
+    /// <summary>
     /// A re-recorded test's keys plus the session-state keys of its previous record (#5069).
     /// A use can happen only in whichever test first reaches a per-session cache (a table's
     /// trigger mask, a caption lookup), so a narrowed run can record fewer uses than a full run
     /// did; keeping the earlier ones means a re-recording can only widen what it links.
+    /// An earlier overwrite-kind write is kept only as a maybe-write (#5057): a stale write would
+    /// end a nearest-writer walk early, while a maybe-write is selected and walked past. A failed
+    /// run's write (<c>st|f|</c>) and a clear before the test (<c>st|c|</c>) are not kept.
     /// </summary>
     internal static HashSet<string> WithPreviousState(HashSet<string> recorded, HashSet<string>? previous)
     {
         if (previous == null) return recorded;
         foreach (var k in previous)
-            if (k.StartsWith(AlSessionStateTracker.ReadPrefix, StringComparison.Ordinal)
-                || k.StartsWith(AlSessionStateTracker.WritePrefix, StringComparison.Ordinal))
+        {
+            if (k.StartsWith(AlSessionStateTracker.ReadPrefix, StringComparison.Ordinal))
                 recorded.Add(k);
+            else if (OverwriteKinds.FirstOrDefault(o => k == AlSessionStateTracker.WriteKey(o)
+                         || k == AlSessionStateTracker.MaybeWriteKey(o)) is { } kind)
+            {
+                if (!recorded.Contains(AlSessionStateTracker.WriteKey(kind)))
+                    recorded.Add(AlSessionStateTracker.MaybeWriteKey(kind));
+            }
+            else if (k.StartsWith(AlSessionStateTracker.WritePrefix, StringComparison.Ordinal))
+                recorded.Add(k);
+        }
         return recorded;
     }
 

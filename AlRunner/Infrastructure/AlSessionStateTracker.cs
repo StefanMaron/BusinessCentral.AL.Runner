@@ -20,11 +20,17 @@ public static class AlSessionStateTracker
     {
         public readonly HashSet<string> Written = new(StringComparer.Ordinal);
         public readonly HashSet<string> ReadInherited = new(StringComparer.Ordinal);
+        // Overwrite kinds cleared between the previous test and this one (see NoteTestStart).
+        public readonly HashSet<string> ClearedAtStart = new(StringComparer.Ordinal);
         public bool Threw;
     }
 
     private static readonly object _lock = new();
     private static readonly Dictionary<string, Bucket> _perTest = new(StringComparer.Ordinal);
+
+    // Per overwrite kind, the last write made outside any test since the last test started: true
+    // when it was a clear, false for any other write.
+    private static readonly Dictionary<string, bool> _boundaryWrite = new(StringComparer.Ordinal);
 
     public static void ResetPerTest()
     {
@@ -46,15 +52,41 @@ public static class AlSessionStateTracker
         lock (_lock)
         {
             var b = CurrentBucket();
-            if (b != null && !b.Written.Contains(kind)) b.ReadInherited.Add(kind);
+            if (b != null && !b.Written.Contains(kind) && !b.ClearedAtStart.Contains(kind)) b.ReadInherited.Add(kind);
         }
     }
 
     /// <summary>The open test wrote <paramref name="kind"/>.</summary>
-    public static void NoteWrite(string kind)
+    public static void NoteWrite(string kind) => NoteWrite(kind, clear: false);
+
+    private static void NoteWrite(string kind, bool clear)
     {
         if (!AlCoverageTracker.PerTestEnabled) return;
-        lock (_lock) CurrentBucket()?.Written.Add(kind);
+        lock (_lock)
+        {
+            var b = CurrentBucket();
+            if (b != null) b.Written.Add(kind);
+            else if (OverwriteKinds.Contains(kind)) _boundaryWrite[kind] = clear;
+        }
+    }
+
+    /// <summary>
+    /// Called as a test's window opens. An overwrite kind whose last write since the previous test
+    /// was a clear made outside any test (130453 "ALTestRunner Reset Environment" clearing the last
+    /// error in OnBeforeTestMethodRun) starts empty whatever earlier tests left, so this test
+    /// inherits nothing of it (#5057).
+    /// </summary>
+    public static void NoteTestStart()
+    {
+        if (!AlCoverageTracker.PerTestEnabled) return;
+        lock (_lock)
+        {
+            var b = CurrentBucket();
+            if (b != null)
+                foreach (var (kind, clear) in _boundaryWrite)
+                    if (clear) b.ClearedAtStart.Add(kind);
+            _boundaryWrite.Clear();
+        }
     }
 
     /// <summary>A read followed by a write, as <c>NumberSequence.Next</c> does.</summary>
@@ -107,6 +139,9 @@ public static class AlSessionStateTracker
     /// <summary>Prepended to every NavSession member that writes its last-error fields.</summary>
     public static void NoteLastErrorWrite() => NoteWrite(LastErrorKind);
 
+    /// <summary>Prepended to <c>NavSession.ClearLastError</c>: a write that leaves nothing behind.</summary>
+    public static void NoteLastErrorClear() => NoteWrite(LastErrorKind, clear: true);
+
     /// <summary>
     /// Kinds whose every write replaces the whole value without reading the old one, so a reader
     /// sees only the nearest earlier writer (AffectedSessionStateSelection). Every NavSession member
@@ -152,6 +187,14 @@ public static class AlSessionStateTracker
     /// run where it threw. A write all the same, but not kept by AffectedSessionStateSelection.WithPreviousState.</summary>
     internal static string FailedWriteKey(string kind) => "st|f|" + kind;
 
+    /// <summary>A key in a test's recorded set: overwrite kind <paramref name="kind"/> was cleared
+    /// outside any test just before it started, so nothing an earlier test left reaches it.</summary>
+    internal static string ClearedAtStartKey(string kind) => "st|c|" + kind;
+
+    /// <summary>A key in a test's recorded set: an earlier record of this test wrote overwrite kind
+    /// <paramref name="kind"/>, and this one may or may not have (AffectedSessionStateSelection.WithPreviousState).</summary>
+    internal static string MaybeWriteKey(string kind) => "st|m|" + kind;
+
     internal const string WritePrefix = "st|w|";
     internal const string ReadPrefix = "st|r|";
 
@@ -167,6 +210,7 @@ public static class AlSessionStateTracker
                 foreach (var k in b.Written)
                     keys.Add(b.Threw && OverwriteKinds.Contains(k) ? FailedWriteKey(k) : WriteKey(k));
                 foreach (var k in b.ReadInherited) keys.Add(ReadKey(k));
+                foreach (var k in b.ClearedAtStart) keys.Add(ClearedAtStartKey(k));
                 result[testKey] = keys;
             }
         }

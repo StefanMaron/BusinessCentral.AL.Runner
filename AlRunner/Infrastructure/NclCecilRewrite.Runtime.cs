@@ -1034,7 +1034,8 @@ public static partial class NclCecilRewrite
                 foreach (var (m, writes) in LastErrorAccessors(nclMod.GetType(Rt + "NavSession")
                         ?? throw new InvalidOperationException("[Cecil] NavSession not found — do not commit")))
                     PrependStaticCall(nclMod, m,
-                        H(state, writes ? "NoteLastErrorWrite" : "NoteLastErrorRead"), argSlots: 0);
+                        H(state, !writes ? "NoteLastErrorRead"
+                            : m.Name == "ClearLastError" ? "NoteLastErrorClear" : "NoteLastErrorWrite"), argSlots: 0);
 
                 // #5057: static .NET state behind DotNet interop. Every method/property call funnels
                 // through Invoke<T>, constructors through CreateDotNet (bc284). Not InvokeStaticField:

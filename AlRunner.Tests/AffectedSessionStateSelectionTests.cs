@@ -185,9 +185,110 @@ public class AffectedSessionStateSelectionTests
         AffectedSessionStateSelection.Widen(order, selected, recorded, false, false, false);
         Assert.Equal(new[] { "C.Failing", "C.LeReader" }, Sorted(selected));
 
-        // A trapped write from an earlier passing record is still carried; the failed run's is not.
+        // A trapped write from an earlier record is carried only as a maybe-write; the failed run's
+        // is not carried at all. A stale definite write would end a later walk early (review of #5080).
         var merged = AffectedSessionStateSelection.WithPreviousState(Keys(R), Keys(leF, LeW));
-        Assert.Equal(new[] { R, LeW }.OrderBy(x => x, StringComparer.Ordinal).ToArray(), Sorted(merged));
+        Assert.Equal(new[] { R, LeM }.OrderBy(x => x, StringComparer.Ordinal).ToArray(), Sorted(merged));
+        // A write this record made itself stays definite.
+        Assert.Equal(new[] { LeW }, Sorted(AffectedSessionStateSelection.WithPreviousState(Keys(LeW), Keys(LeW))));
+    }
+
+    private static readonly string LeM = AlSessionStateTracker.MaybeWriteKey(AlSessionStateTracker.LastErrorKind);
+    private static readonly string LeC = AlSessionStateTracker.ClearedAtStartKey(AlSessionStateTracker.LastErrorKind);
+
+    /// <summary>A maybe-write is selected but does not end the walk: the definite writer before it
+    /// comes too.</summary>
+    [Fact]
+    public void AMaybeWriter_IsWalkedPast()
+    {
+        var order = new[] { "C.LeW1", "C.Maybe", "C.LeReader" };
+        var recorded = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal)
+        {
+            ["C.LeW1"] = Keys(LeW),
+            ["C.Maybe"] = Keys(LeM),
+            ["C.LeReader"] = Keys(LeR),
+        };
+        var selected = Keys("C.LeReader");
+        AffectedSessionStateSelection.Widen(order, selected, recorded, false, false, false);
+        Assert.Equal(new[] { "C.LeReader", "C.LeW1", "C.Maybe" }, Sorted(selected));
+    }
+
+    /// <summary>The review's first counterexample, as a unit: B reads WorkDate after the change, so
+    /// its last-error write may be gone, and the walk from C passes it to reach W2.</summary>
+    [Fact]
+    public void Changed_AReaderAfterTheChange_DoesNotEndTheWalk()
+    {
+        var order = new[] { "C.X", "C.W2", "C.B", "C.C" };
+        var recorded = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal)
+        {
+            ["C.X"] = Keys(W),
+            ["C.W2"] = Keys(LeW),
+            ["C.B"] = Keys(R, LeW),
+            ["C.C"] = Keys(LeR),
+        };
+        var selected = Keys("C.X");
+        AffectedSessionStateSelection.Widen(order, selected, recorded, true, false, false);
+        Assert.Equal(new[] { "C.B", "C.C", "C.W2", "C.X" }, Sorted(selected));
+    }
+
+    /// <summary>A test whose last error was cleared just before it started (the Test Runner app's
+    /// reset) inherits nothing: neither it nor a changed test like it walks back.</summary>
+    [Fact]
+    public void ClearedAtStart_NoWalk_ChangedOrNot()
+    {
+        var order = new[] { "C.LeW1", "C.Changed", "C.LeReader" };
+        var recorded = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal)
+        {
+            ["C.LeW1"] = Keys(LeW, LeC),
+            ["C.Changed"] = Keys(LeC),
+            ["C.LeReader"] = Keys(LeC),
+        };
+        var selected = Keys("C.Changed");
+        AffectedSessionStateSelection.Widen(order, selected, recorded, true, false, true);
+        Assert.Equal(new[] { "C.Changed" }, Sorted(selected));
+
+        selected = Keys("C.LeReader");
+        AffectedSessionStateSelection.Widen(order, selected, recorded, false, false, false);
+        Assert.Equal(new[] { "C.LeReader" }, Sorted(selected));
+    }
+
+    /// <summary>A test that started cleared ends a walk from a later test that did not: what that
+    /// later test sees came after the clear.</summary>
+    [Fact]
+    public void ClearedAtStart_EndsAWalkFromATestThatWasNotCleared()
+    {
+        var order = new[] { "C.LeW1", "C.Cleared", "C.LeReader" };
+        var recorded = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal)
+        {
+            ["C.LeW1"] = Keys(LeW),
+            ["C.Cleared"] = Keys(LeC),
+            ["C.LeReader"] = Keys(LeR),
+        };
+        var selected = Keys("C.LeReader");
+        AffectedSessionStateSelection.Widen(order, selected, recorded, false, false, false);
+        Assert.Equal(new[] { "C.Cleared", "C.LeReader" }, Sorted(selected));
+    }
+
+    /// <summary>A writer brought in from before the first change only has to reproduce its recorded
+    /// run: it brings the tests of its codeunit up to it, not after it.</summary>
+    [Fact]
+    public void WidenWithIsolation_AnEarlyWriter_BringsOnlyItsCodeunitsPrefix()
+    {
+        var order = new[] { "Codeunit50100.A1", "Codeunit50100.A2", "Codeunit50100.A3", "Codeunit50101.B1", "Codeunit50102.C1", "Codeunit50102.C2" };
+        var recorded = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal)
+        {
+            ["Codeunit50100.A1"] = Keys(),
+            ["Codeunit50100.A2"] = Keys(LeW),
+            ["Codeunit50100.A3"] = Keys(),
+            ["Codeunit50101.B1"] = Keys(),
+            ["Codeunit50102.C1"] = Keys(R),
+            ["Codeunit50102.C2"] = Keys(),
+        };
+        var selected = Keys("Codeunit50101.B1");
+        AffectedSessionStateSelection.WidenWithIsolation(order, selected, recorded, TestIsolation.Codeunit, true, false, false);
+        // C1 reads after the change, so its whole codeunit runs; A2 is a writer from before it.
+        Assert.Equal(new[] { "Codeunit50100.A1", "Codeunit50100.A2", "Codeunit50101.B1", "Codeunit50102.C1", "Codeunit50102.C2" },
+            Sorted(selected));
     }
 
     /// <summary>A test brought in through session state runs with its whole codeunit under Codeunit
