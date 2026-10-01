@@ -114,12 +114,13 @@ public sealed class ServerModuleReuseSourceTests : IClassFixture<SharedCliServer
             var first = await RunTests(server, x);
             Assert.True(first.Exit == 0, first.Raw);
 
+            var mark = server.StdErrMark;
             var line = await server.SendAsync(JsonSerializer.Serialize(new Dictionary<string, object?>
             {
                 ["command"] = "execute", ["sourcePaths"] = new[] { y },
             }), TimeSpan.FromSeconds(240));
             using var doc = JsonDocument.Parse(line);
-            Assert.True(doc.RootElement.GetProperty("exitCode").GetInt32() == 3, line + "\n" + server.StdErr);
+            Assert.True(doc.RootElement.GetProperty("exitCode").GetInt32() == 3, line + "\n" + server.StdErrSince(mark));
             Assert.Contains("QuadIt", line, StringComparison.Ordinal);
         }
         finally

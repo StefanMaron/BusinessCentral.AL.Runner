@@ -399,8 +399,9 @@ public sealed class ServerTddTests : IClassFixture<SharedCliServer>
             var server = await _fixture.GetAsync(new[] { "--no-cache" });
             var red = await Send(server, new[] { bundle }, tdd: true);
             Assert.True(red.ExitCode == 1, red.Raw);
+            var mark = server.StdErrMark;
             var exit = await ExecuteExit(server, dir);
-            Assert.True(exit == 3, $"exit {exit}\n{server.StdErr}");
+            Assert.True(exit == 3, $"exit {exit}\n{server.StdErrSince(mark)}");
         }
         finally
         {
