@@ -2038,7 +2038,7 @@ public sealed partial class BcCompiler
                 .Select(a => a.Name + "(" + string.Join(",", (a.Arguments ?? Array.Empty<NavSymRef.AttributeArgumentDefinition>())
                     .Select(x => x.Value ?? "")) + ")")
                 .OrderBy(a => a, StringComparer.Ordinal);
-            lines.Add(m.Name.ToLowerInvariant() + "\t" + m.Id + "|" + m.MethodKind + "|"
+            lines.Add(m.Name + "\t" + m.Id + "|" + m.MethodKind + "|"
                 + (m.ReturnTypeDefinition != null ? RadTypeShape(m.ReturnTypeDefinition) : m.ReturnType ?? "")
                 + "|" + string.Join(",", parameters) + "|" + string.Join(",", attributes));
         }
