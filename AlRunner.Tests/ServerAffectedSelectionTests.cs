@@ -5,15 +5,23 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-public class ServerAffectedSelectionTests
+// #5110: facts share one --server per class (SharedCliServer); each bundle gets its own AppId.
+public class ServerAffectedSelectionTests : IClassFixture<SharedCliServer>
 {
-    private static string MakeBundle(string helperABody)
+    private static readonly string[] ServerArgs = { "--isolation", "test", "--no-cache" };
+    private readonly SharedCliServer _fixture;
+    private static int _variant;
+
+    public ServerAffectedSelectionTests(SharedCliServer fixture) => _fixture = fixture;
+
+    private string MakeBundle(string helperABody)
     {
+        var variant = Interlocked.Increment(ref _variant);
         var dir = TestScratch.Dir("al-runner-server-affected");
         Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, "app.json"), """
+        File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
         {
-          "id": "c357c8d5-5f6a-4f52-9e06-6f42ca7e1b92",
+          "id": "c357c8d5-5f6a-4f52-9e06-6f42ca7e{{variant:x4}}",
           "name": "Server Affected Selection Probe",
           "publisher": "AL Runner",
           "version": "1.0.0.0",
@@ -84,7 +92,7 @@ public class ServerAffectedSelectionTests
             end;
         }
         """);
-        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
+        var server = await _fixture.GetAsync(ServerArgs);
 
         await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true));
 
@@ -128,7 +136,7 @@ public class ServerAffectedSelectionTests
             end;
         }
         """);
-        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
+        var server = await _fixture.GetAsync(ServerArgs);
 
         await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true));
         var appJsonPath = Path.Combine(bundle, "app.json");
@@ -189,13 +197,14 @@ public class ServerAffectedSelectionTests
     // editing EITHER procedure reran BOTH tests (AffectedOnly_ChangedObjectRunsOnlyIntersectingTests
     // above already proves object-level narrowing works across DIFFERENT objects; this proves
     // narrowing works WITHIN one object, across its procedures).
-    private static string MakeMultiProcBundle()
+    private string MakeMultiProcBundle()
     {
+        var variant = Interlocked.Increment(ref _variant);
         var dir = TestScratch.Dir("al-runner-server-affected-scope");
         Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, "app.json"), """
+        File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
         {
-          "id": "c357c8d5-5f6a-4f52-9e06-6f42ca7e9999",
+          "id": "c357c8d5-5f6a-4f52-9e06-6f42ca7f{{variant:x4}}",
           "name": "Server Affected Scope Probe",
           "publisher": "AL Runner",
           "version": "1.0.0.0",
@@ -251,7 +260,7 @@ public class ServerAffectedSelectionTests
     {
         TestArtifacts.SkipIfMissing();
         var bundle = MakeMultiProcBundle();
-        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
+        var server = await _fixture.GetAsync(ServerArgs);
 
         await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true));
 
@@ -297,7 +306,7 @@ public class ServerAffectedSelectionTests
     {
         TestArtifacts.SkipIfMissing();
         var bundle = MakeMultiProcBundle();
-        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
+        var server = await _fixture.GetAsync(ServerArgs);
 
         await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true));
 
@@ -341,7 +350,7 @@ public class ServerAffectedSelectionTests
     {
         TestArtifacts.SkipIfMissing();
         var bundle = MakeBundle(HelperABody(0));
-        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
+        var server = await _fixture.GetAsync(ServerArgs);
 
         await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true));
 
@@ -373,7 +382,7 @@ public class ServerAffectedSelectionTests
     {
         TestArtifacts.SkipIfMissing();
         var bundle = MakeBundle(HelperABody(0));
-        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
+        var server = await _fixture.GetAsync(ServerArgs);
 
         await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true));
 
@@ -420,7 +429,7 @@ public class ServerAffectedSelectionTests
     {
         TestArtifacts.SkipIfMissing();
         var bundle = MakeBundle(HelperABody(0));
-        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
+        var server = await _fixture.GetAsync(ServerArgs);
 
         await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true));
 

@@ -68,11 +68,17 @@ namespace AlRunner.Tests;
 /// server and now share one via this fixture. See ServerCancelTests' own class
 /// doc comment for the per-fact breakdown, and PhaseLogServerKillTests (SIGKILLs
 /// its server) for another class that genuinely cannot share.
+///
+/// #5110: every spawned server runs a small canary bundle right after startup and again
+/// at class end, and the two fingerprints must match — see docs/shared-cli-server.md#the-canary.
+/// The canary uses object ids 69990-69992; keep them out of every fixture sharing a server.
 /// </summary>
 public sealed class SharedCliServer : IAsyncLifetime
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
     private CliServer? _server;
+    private string? _canaryBundle;
+    private string? _canaryBaseline;
 
     /// <summary>
     /// How many times THIS fixture instance has actually spawned a server
@@ -84,6 +90,11 @@ public sealed class SharedCliServer : IAsyncLifetime
     /// </summary>
     public int SpawnCount => _spawnCount;
     private int _spawnCount;
+
+    /// <summary>The canary's first-run fingerprint, or null before the server spawned.</summary>
+    public string? CanaryBaseline => _canaryBaseline;
+
+    internal string? CanaryBundleDir => _canaryBundle;
 
     public Task InitializeAsync() => Task.CompletedTask;
 
@@ -116,8 +127,20 @@ public sealed class SharedCliServer : IAsyncLifetime
         {
             if (_server == null)
             {
-                _server = await CliServer.StartAsync(extraArgs, extraEnv: extraEnv);
+                var server = await CliServer.StartAsync(extraArgs, extraEnv: extraEnv);
                 _spawnCount++;
+                try
+                {
+                    _canaryBundle = SharedServerCanary.WriteBundle();
+                    _canaryBaseline = await SharedServerCanary.RunAsync(server, _canaryBundle);
+                    SharedServerCanary.AssertBaseline(_canaryBaseline);
+                }
+                catch
+                {
+                    await server.DisposeAsync();
+                    throw;
+                }
+                _server = server;
             }
             return _server;
         }
@@ -127,9 +150,31 @@ public sealed class SharedCliServer : IAsyncLifetime
         }
     }
 
+    /// <summary>
+    /// Re-runs the canary and throws when its fingerprint differs from the first run, so a
+    /// fact that leaked server-process state fails the class (reported by xUnit as a class
+    /// cleanup failure) instead of passing on a dirty server. See docs/shared-cli-server.md#the-canary.
+    /// </summary>
     public async Task DisposeAsync()
     {
-        if (_server != null)
+        if (_server == null) return;
+        try
+        {
+            if (_canaryBundle != null && _canaryBaseline != null)
+            {
+                var again = await SharedServerCanary.RunAsync(_server, _canaryBundle);
+                if (again != _canaryBaseline)
+                    throw new InvalidOperationException(
+                        "SharedCliServer canary: the class-end re-run differs from the first run, so a fact " +
+                        "left server-process state behind (docs/shared-cli-server.md#the-canary).\n" +
+                        $"--- first ---\n{_canaryBaseline}\n--- class end ---\n{again}");
+            }
+        }
+        finally
+        {
             await _server.DisposeAsync();
+            if (_canaryBundle != null)
+                try { Directory.Delete(_canaryBundle, recursive: true); } catch { }
+        }
     }
 }
