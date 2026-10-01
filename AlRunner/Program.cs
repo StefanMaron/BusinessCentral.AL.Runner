@@ -8724,8 +8724,8 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             var requestPerTestCoverage = req.PerTestCoverage == true;
 
             // #4055 for a request that carried `test`: a pattern that selects no test is exit 6, not a
-            // clean 0-test run — the CLI's audit, same message and same stand-down when a bundle did
-            // not compile or execute (the zero is then unattributable).
+            // clean 0-test run — the CLI's audit and message. It stands down ("not judged") when the request
+            // ended with a nonzero exit code or a compile error, since the zero is then unattributable.
             var warnings = fieldWarnings;
             if (requestTestFilter != null && !cancelled
                 && executor.FilterSelectedCount - selectedBefore == 0 && allTests.Count == 0)
