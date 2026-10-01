@@ -281,10 +281,11 @@ an added field states its own `ApplicationArea` or none (not the report's), and 
 states `ApplicationArea` is a `ControlChange` replacing the base control's. Two extensions
 disagreeing refuse. Corpus codeunits 67546 (source) and 67547 (report 5803's precompiled
 "Mfg. Reset Cost Is Adjusted"). A handler reads and writes such a field because the runner binds
-each reportextension's request-page extension on the report's request page at construction,
-the last step of BC's own `NavReport.RegisterReportExtension`; its `OnExtensionRegistered` registers
-the source expressions (#4909, `NavReportSync.BindReportExtensions`). The other steps of
-`RegisterReportExtension` (the extension's report triggers and data items) are not run yet (#4918).
+each reportextension through BC's own `NavReport.RegisterReportExtension` at construction, whose
+last step registers the request-page extension; its `OnExtensionRegistered` registers the source
+expressions (#4909, `NavReportSync.BindReportExtensions`). The earlier steps bind the extension's
+report triggers and data items (#4918); a precompiled reportextension that adds data items or
+columns gets only the request-page step, and running its report refuses (#4837).
 
 A precompiled report's request-page **actions** (#4895) are not read: no report in the platform
 apps declares one, and the symbol file's `RequestPage` node states no `Actions` for any of them,

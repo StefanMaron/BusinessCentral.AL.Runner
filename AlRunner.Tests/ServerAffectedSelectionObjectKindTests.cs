@@ -292,8 +292,7 @@ public class ServerAffectedSelectionObjectKindTests
         Write(bundle, "Kind.Enum.al", Enum());
         await SendFresh(cache, bundle);
 
-        // No test here runs the report (#4918: a reportextension's report-level code is not bound),
-        // so this pins the selection, not an outcome.
+        // No test here runs the report, so this pins the selection, not an outcome.
         Write(bundle, "KindExt.ReportExt.al", ReportExtension("            column(Num3; Number) { }\n"));
         AssertForcedFull(await SendFresh(cache, bundle),
             "ReportExtension 60766 changed, and no test recording holds the use of this kind of object (ReportExtension)");

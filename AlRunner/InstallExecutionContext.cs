@@ -58,7 +58,7 @@ internal static class InstallExecutionContext
     /// ALNavApp.ALNavAppLoadPackageData — an install trigger calling NavApp.LoadPackageData
     /// reaches BC's package retriever instead of returning early.
     /// </summary>
-    private static Microsoft.Dynamics.Nav.Apps.Runtime.NavAppRuntimeMetadata CreateRuntimeMetadata(Guid appId, string name, string publisher, string version)
+    internal static Microsoft.Dynamics.Nav.Apps.Runtime.NavAppRuntimeMetadata CreateRuntimeMetadata(Guid appId, string name, string publisher, string version, Guid runtimePackageId = default)
     {
         var ctor = typeof(Microsoft.Dynamics.Nav.Apps.Runtime.NavAppRuntimeMetadata).GetConstructors(BindingFlags.Public | BindingFlags.Instance)
             .OrderBy(c => c.GetParameters().Length)
@@ -72,6 +72,7 @@ internal static class InstallExecutionContext
         var args = ctor.GetParameters().Select(p => p.Name switch
         {
             "appId" => ConvertGuid(p.ParameterType, appId),
+            "runtimePackageId" when runtimePackageId != Guid.Empty => ConvertGuid(p.ParameterType, runtimePackageId),
             "name" => name,
             "publisher" => publisher,
             "version" => System.Version.TryParse(version, out var v) ? v : new System.Version(1, 0, 0, 0),

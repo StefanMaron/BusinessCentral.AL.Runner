@@ -329,7 +329,11 @@ public sealed class BcInternalsNullForgivingGuardTests
         //
         // 118 -> 119 for NCLMetaTable.SystemIdField in RecordPatches.RecordLinkTable.cs (#4944),
         // now BcShape.Property: a miss used to write every link row with an empty SystemId.
-        Assert.Equal(119, converted);
+        //
+        // 119 -> 120 for NavReport.Metadata in NavReportSync.BindReportExtensions (#4918), a
+        // BcShape.Property: it decides whether a reportextension's merged data items let it be
+        // bound whole, and a silent null would demote every extension to the request-page step.
+        Assert.Equal(120, converted);
     }
 
     /// <summary>
