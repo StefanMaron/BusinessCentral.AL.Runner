@@ -295,6 +295,11 @@ public class SuiteServerTests
         Assert.True(secondCount < 2 * firstCount, $"second request's slice holds {secondCount} lines, the first's {firstCount}: it carries the first's");
         Assert.DoesNotContain("[server] request", first.StdErr);
         Assert.DoesNotContain("[server] request", second.StdErr);
+        // Its OWN request's lines, not a neighbour's: the pool runs a canary before and after every
+        // request, and under AL_RUNNER_VERBOSE the canary writes the same lines, so a count cannot tell
+        // them apart. The startup banner is written during the baseline canary, the request before the
+        // first real one, so a slice taken one request early holds it.
+        Assert.DoesNotContain("server mode (JSON-RPC", first.StdErr);
     }
 
     private static string RunTestsRequest(string bundle) => System.Text.Json.JsonSerializer.Serialize(new
