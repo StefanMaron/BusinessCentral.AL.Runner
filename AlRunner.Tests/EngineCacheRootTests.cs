@@ -91,7 +91,9 @@ public sealed class EngineCacheRootTests
         var (cold, coldExit) = Run(bundle, engineRoot, "--cache", $"\"{cacheA}\"");
         Assert.True(coldExit == 0 && cold.Contains("passed 1 "), $"cold run must pass:\n{cold}");
         Assert.Contains("[Cecil] Cecil cache MISS", cold);
-        Assert.NotEmpty(Directory.GetFiles(Path.Combine(engineRoot, "ncl-cecil"), "*.dll"));
+        var engineCecil = Path.Combine(engineRoot, "ncl-cecil");
+        Assert.True(Directory.Exists(engineCecil) && Directory.GetFiles(engineCecil, "*.dll").Length > 0,
+            $"the engine root holds no ncl-cecil entry after a run that was told to use it:\n{cold}");
         Assert.Single(PublishedShadowDirs(engineRoot));
         foreach (var name in CacheRoots.EngineCacheNames)
             Assert.False(Directory.Exists(Path.Combine(cacheA, name)), $"{name} was built under --cache '{cacheA}':\n{cold}");
