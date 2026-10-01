@@ -8499,9 +8499,11 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     // it now consumes from `mainQueue` (fed by the reader thread above) instead of
     // calling input.ReadLine() itself, so a `cancel` sitting ahead of a `runtests`
     // line in the OS pipe buffer never gets stuck behind it.
+    var requestNumber = 0;
     foreach (var line in mainQueue.GetConsumingEnumerable())
     {
         if (line.Length == 0) continue;
+        requestNumber++;
         // Null means "already fully written to output" — currently only the
         // streaming runTests path (see HandleServerRunTests below), which emits
         // its own {"type":"test"}* + {"type":"summary"} lines directly instead of
@@ -8554,6 +8556,13 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 output.Flush();
             }
         }
+        // #5168: last, after the handler and its response. Every stderr write a request makes runs
+        // on this thread or on a thread the handler joins, all through one writer, so nothing the
+        // request wrote can follow this line — except a test thread abandoned at its timeout, which
+        // the doc names. A new background writer must be joined before the handler returns.
+        // Bypasses Log's filter, which drops `[server]`.
+        // docs/server-mode.md#stderr-request-marker
+        AlRunner.Log.WriteLineToStdErrUnfiltered(AlRunner.ServerProtocol.RequestDoneMarker(requestNumber));
         if (shuttingDown) return 0;
     }
     // EOF — client disconnected.

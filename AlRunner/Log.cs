@@ -114,7 +114,26 @@ public static class Log
     {
         // Wrap both stdout and stderr. Bracket-tagged lines drop unless Verbose.
         Console.SetOut(new FilteredWriter(Console.Out));
-        Console.SetError(new FilteredWriter(Console.Error));
+        var rawError = Console.Error;
+        Console.SetError(new FilteredWriter(rawError));
+        _rawError = rawError;
+    }
+
+    // The stderr writer Install wrapped. Not reachable through Console.Error afterwards:
+    // Console.SetError stores a synchronized wrapper around the FilteredWriter.
+    private static TextWriter? _rawError;
+
+    /// <summary>
+    /// Writes <paramref name="line"/> to stderr past the filter, on the writer the filter wraps,
+    /// so it keeps its place among every filtered line. Only for a line a client parses
+    /// (--server's request marker, docs/server-mode.md#stderr-request-marker), never for a
+    /// diagnostic: those take a tag the filter already lets through.
+    /// </summary>
+    public static void WriteLineToStdErrUnfiltered(string line)
+    {
+        var target = _rawError ?? Console.Error;
+        target.WriteLine(line);
+        target.Flush();
     }
 
     private sealed class FilteredWriter : TextWriter
