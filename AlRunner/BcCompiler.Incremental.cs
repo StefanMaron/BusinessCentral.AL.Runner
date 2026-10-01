@@ -1055,8 +1055,18 @@ public sealed partial class BcCompiler
                 + "for this cycle";
             return null;
         }
+        if (ProcedureSignatureChanged(baseline.ModuleDef, deltaModuleDef, allChangedIdentities) is { } resigned)
+        {
+            fallbackReason =
+                $"{resigned} changed its signature (a parameter or return type, a Code/Text length, or var). "
+                + "A caller folds the signature into its OWN generated C# "
+                + "(new NavCode(<length>, …) around an argument or a return value), and a length-only change "
+                + "keeps the member id, so reusing an UNMODIFIED caller's cached C# would leave it converting "
+                + "to the PREVIOUS signature. Falling back to a full compile for this cycle";
+            return null;
+        }
 
-        var mergedModuleDef =MergeModuleDefinition(baseline.ModuleDef, allChangedIdentities, deltaModuleDef);
+        var mergedModuleDef = MergeModuleDefinition(baseline.ModuleDef, allChangedIdentities, deltaModuleDef);
 
         var newFileHashByPath = new Dictionary<string, string>(baseline.FileHashByPath, StringComparer.Ordinal);
         foreach (var path in addedPaths.Concat(modifiedPaths)) newFileHashByPath[path] = currentHashes[path];
@@ -1737,9 +1747,9 @@ public sealed partial class BcCompiler
     /// switch. What moves is the id the CALLER bakes — an Integer argument used to widen to
     /// <c>Which(Decimal)</c> and now binds to <c>Which(Integer)</c>. An un-rebound caller
     /// therefore dispatches a member that still exists and gets the PREVIOUS overload's answer:
-    /// no <c>NavNCLMissingMethodException</c>, no diagnostic, no log line. Every other breaking
-    /// edit retires or moves an existing id and is loud at the call site, exactly as this file's
-    /// header describes.</para>
+    /// no <c>NavNCLMissingMethodException</c>, no diagnostic, no log line. Not every other
+    /// breaking edit is loud: a procedure removed or made local while an unedited caller still
+    /// calls it stays on the fast path too (#5102).</para>
     ///
     /// <para><b>Why a full-compile fallback rather than a rebind.</b> Rebinding needs to know who
     /// the callers ARE, which needs an object-reference graph this fast path does not maintain.
@@ -1972,6 +1982,69 @@ public sealed partial class BcCompiler
         }
         return null;
     }
+
+    /// <summary>
+    /// #5093: names the first procedure of a changed object whose signature differs from last cycle,
+    /// or null. Every procedure name present on both sides is compared as the multiset of its
+    /// overloads' shapes (member id, kind, return type, parameter var-ness and types with
+    /// lengths), so a length-only change — which keeps the member id — is caught with the rest.
+    /// Attributes are not compared: [TryFunction] moves the member id, and an event publisher's
+    /// attribute leaves its callers' C# unchanged (both measured in
+    /// BcCompilerIncrementalSignatureTests). Body edits and parameter renames stay on the fast
+    /// path. A procedure removed or made local while an unedited caller still calls it is not
+    /// caught here and stays on the fast path (#5102).
+    /// Interfaces are <see cref="InterfaceShapeChanged"/>'s. An object that reads twice or not at
+    /// all counts as changed: a wrong "unchanged" is a stale emit.
+    /// </summary>
+    private static string? ProcedureSignatureChanged(
+        NavSymRef.ModuleDefinition before, NavSymRef.ModuleDefinition after, IReadOnlySet<RadObjectIdentity> changed)
+    {
+        var wanted = changed
+            .Where(i => i.Kind != NavCA.SymbolKind.Interface && RadMergeablePropertiesByKind.Any(p => p.Kind == i.Kind))
+            .ToHashSet();
+        if (wanted.Count == 0) return null;
+        var previous = RadShapes(before, wanted, ProcedureSignaturesOf);
+        var current = RadShapes(after, wanted, ProcedureSignaturesOf);
+        foreach (var id in wanted)
+        {
+            if (!previous.TryGetValue(id, out var was)) continue; // added this cycle: nothing was compiled against it
+            if (!current.TryGetValue(id, out var now)) continue;  // removed or renamed: ObjectIdMoved's territory
+            if (was == null || now == null) return $"{id.Kind} '{id.Name}'";
+            var wasByName = ParseSignatures(was);
+            var nowByName = ParseSignatures(now);
+            foreach (var (name, signatures) in wasByName)
+                if (nowByName.TryGetValue(name, out var nowSignatures) && signatures != nowSignatures)
+                    return $"{id.Kind} '{id.Name}' procedure '{name}'";
+        }
+        return null;
+    }
+
+    /// <summary>One <c>name\tsignature</c> line per serialized procedure; "" for a kind with none.</summary>
+    private static string? ProcedureSignaturesOf(object element)
+    {
+        if (element.GetType().GetProperty("Methods")?.GetValue(element) is not Array methods) return "";
+        var lines = new List<string>();
+        foreach (var item in methods)
+        {
+            if (item == null) continue;
+            if (item is not NavSymRef.MethodDefinition m || string.IsNullOrEmpty(m.Name)) return null;
+            var parameters = (m.Parameters ?? Array.Empty<NavSymRef.ParameterDefinition>())
+                .Select(p => (p.IsVar ? "var " : "") + RadTypeShape(p.TypeDefinition));
+            lines.Add(m.Name + "\t" + m.Id + "|" + m.MethodKind + "|"
+                + (m.ReturnTypeDefinition != null ? RadTypeShape(m.ReturnTypeDefinition) : m.ReturnType ?? "")
+                + "|" + string.Join(",", parameters));
+        }
+        return string.Join("\n", lines);
+    }
+
+    /// <summary>Procedure name → its overloads' signatures, sorted and joined.</summary>
+    private static Dictionary<string, string> ParseSignatures(string shape)
+        => shape.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => (Name: line[..line.IndexOf('\t')], Signature: line[(line.IndexOf('\t') + 1)..]))
+            .GroupBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key,
+                g => string.Join("\n", g.Select(x => x.Signature).OrderBy(s => s, StringComparer.Ordinal)),
+                StringComparer.OrdinalIgnoreCase);
 
     private static Dictionary<string, string> ParseFieldTypes(string shape)
     {

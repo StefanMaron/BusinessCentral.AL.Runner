@@ -3660,6 +3660,8 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
                 incrementalOutput = emitter.TryEmitIncremental(
                     allPaths, moduleName, appGroup.SuiteDir,
                     out var incrementalFallbackReason, out _);
+                // #5092: as in RunBundleForServer, only a full compile publishes to the AL-output cache.
+                if (incrementalOutput != null) cachePath = null;
                 // #1905 (defect 4): a full rebuild costs whole MINUTES on a large app
                 // (761-862s measured on NP Retail, #1905's own numbers) against an
                 // incremental cycle's seconds, so which reason forced it is a RESULT
@@ -6362,6 +6364,9 @@ return strictExitCode ? computedExitCode : 0;
                             emitOutput = incrementalOutput;
                             changedObjects = incrementalChangedObjects ?? Array.Empty<AffectedObjectId>();
                             baselineDescribesEmit = true;
+                            // #5092: only a full compile may publish under the source's cache key — a
+                            // fast-path defect stored there is served to every later process as a HIT.
+                            cachePath = null;
                         }
                         else
                         {
