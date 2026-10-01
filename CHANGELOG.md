@@ -15,6 +15,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- fall back to a full compile when a procedure signature changes on the incremental path
 - **incremental:** fall back to a full compile when an interface shape or a field type changes
 - **install-baseline:** key the dependency+company baseline on the event subscribers that can run during it
 - **isolation:** --isolation test runs a codeunit's tests on one instance, as BC's TestIsolation = Function does
