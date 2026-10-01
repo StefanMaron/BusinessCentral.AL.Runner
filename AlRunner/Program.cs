@@ -7784,15 +7784,20 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                             exactSelection.Add(testKey);
                     }
                     // #5035: a test's recording holds only what it ran, not the state earlier tests left it.
+                    var statefulCodeunits = executor.Isolation == TestIsolation.Test
+                        ? TestExecutor.CodeunitsSharingStateAcrossTests(asm)
+                        : null;
                     // #5050: session state (WorkDate, number sequences, SingleInstance, ...) outlives every
-                    // isolation. #5057: repeated together, so a test either brings in gets its codeunit too.
+                    // isolation. #5057: repeated together, so a test either brings in gets its codeunit too;
+                    // under Test isolation only a codeunit that carries state across its tests (#4826).
                     var bundleChanged = (activeChangedObjectKeys?.Count ?? 0) > 0 || changedEventKeys.Count > 0
                         || activeEnvKeysByRecord.Values.Any(k => k.CoverageKeys.Count > 0 || k.EventKeys.Count > 0);
                     var (widened, stateWidened) = AlRunner.Infrastructure.AffectedSessionStateSelection.WidenWithIsolation(
                         discovered, exactSelection, activePreviousEvents, executor.Isolation,
                         changed: bundleChanged,
                         earlierBundleChanged: requestChangedAnyBundle,
-                        laterBundleFollows: bundlesStarted < requestModuleNames.Count);
+                        laterBundleFollows: bundlesStarted < requestModuleNames.Count,
+                        sharesStateAcrossTests: statefulCodeunits == null ? null : statefulCodeunits.Contains);
                     if (widened > 0)
                         Console.Error.WriteLine(
                             $"  [{affected.LogTag}] affectedOnly: selected {widened} more test(s) that share state with a selected one (TestIsolation={executor.Isolation})");

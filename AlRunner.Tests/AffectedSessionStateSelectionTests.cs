@@ -325,8 +325,37 @@ public class AffectedSessionStateSelectionTests
             ["C.ChangedReader"] = Keys(R),
         };
         var selected = Keys("C.ChangedReader");
-        AffectedSessionStateSelection.WidenWithIsolation(order, selected, recorded, TestIsolation.Test, true, false, false);
+        // A stateless codeunit (#4826): Test isolation adds nothing by isolation, so only the state rule acts.
+        AffectedSessionStateSelection.WidenWithIsolation(order, selected, recorded, TestIsolation.Test, true, false, false,
+            sharesStateAcrossTests: _ => false);
         Assert.Equal(new[] { "C.ChangedReader", "C.Writer" }, Sorted(selected));
+    }
+
+    /// <summary>#4826 with #5057 under Test isolation: the nearest last-error writer is brought in
+    /// through session state; when its codeunit carries state across its tests, the tests before it
+    /// come too, and when it does not, they do not.</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void WidenWithIsolation_UnderTest_AStateBroughtWriter_BringsItsCodeunitOnlyWhenStateful(bool stateful)
+    {
+        var order = new[] { "Codeunit50100.A1", "Codeunit50101.S1", "Codeunit50101.S2", "Codeunit50102.B1" };
+        var recorded = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal)
+        {
+            ["Codeunit50100.A1"] = Keys(),
+            ["Codeunit50101.S1"] = Keys(),
+            ["Codeunit50101.S2"] = Keys(LeW),
+            ["Codeunit50102.B1"] = Keys(LeR),
+        };
+        var selected = Keys("Codeunit50102.B1");
+        var (byIsolation, byState) = AffectedSessionStateSelection.WidenWithIsolation(
+            order, selected, recorded, TestIsolation.Test, true, false, false,
+            sharesStateAcrossTests: c => stateful && c == "Codeunit50101");
+        var expected = stateful
+            ? new[] { "Codeunit50101.S1", "Codeunit50101.S2", "Codeunit50102.B1" }
+            : new[] { "Codeunit50101.S2", "Codeunit50102.B1" };
+        Assert.Equal(expected, Sorted(selected));
+        Assert.Equal((stateful ? 1 : 0, 1), (byIsolation, byState));
     }
 
     /// <summary>With nothing changed, a writer an unknown test brings in only reproduces its recorded

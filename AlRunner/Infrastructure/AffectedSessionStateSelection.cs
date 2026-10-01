@@ -156,9 +156,12 @@ internal static class AffectedSessionStateSelection
     /// test, so its codeunit (or bundle) comes too, and those tests can link further ones (#5057).
     /// Returns how many tests each added.
     /// </summary>
+    /// <param name="sharesStateAcrossTests">Under <see cref="TestIsolation.Test"/>, whether a codeunit
+    /// carries state from one test to the next (#4826); see <see cref="AffectedIsolationWidening.Widen"/>.</param>
     internal static (int Isolation, int State) WidenWithIsolation(IReadOnlyList<string> discovered,
         HashSet<string> selected, IReadOnlyDictionary<string, HashSet<string>>? recorded, TestIsolation isolation,
-        bool changed, bool earlierBundleChanged, bool laterBundleFollows)
+        bool changed, bool earlierBundleChanged, bool laterBundleFollows,
+        Func<string, bool>? sharesStateAcrossTests = null)
     {
         var changedTests = new HashSet<string>(selected, StringComparer.Ordinal);
         // With nothing changed, no test brought in reads anything that changed, wherever it runs.
@@ -166,7 +169,8 @@ internal static class AffectedSessionStateSelection
         int byIsolation = 0, byState = 0;
         while (true)
         {
-            byIsolation += WidenByIsolation(discovered, selected, isolation, changedTests, firstChanged);
+            byIsolation += WidenByIsolation(discovered, selected, isolation, changedTests, firstChanged,
+                sharesStateAcrossTests);
             var added = Widen(discovered, selected, recorded, changed, earlierBundleChanged, laterBundleFollows, changedTests);
             byState += added;
             if (added == 0) return (byIsolation, byState);
@@ -179,9 +183,10 @@ internal static class AffectedSessionStateSelection
     /// which needs the tests of its codeunit (its bundle, under Disabled) up to it, not after it.
     /// </summary>
     internal static int WidenByIsolation(IReadOnlyList<string> discovered, HashSet<string> selected,
-        TestIsolation isolation, IReadOnlySet<string> changedTests, int firstChanged)
+        TestIsolation isolation, IReadOnlySet<string> changedTests, int firstChanged,
+        Func<string, bool>? sharesStateAcrossTests = null)
     {
-        if (selected.Count == 0 || isolation == TestIsolation.Test) return 0;
+        if (selected.Count == 0) return 0;
         var before = selected.Count;
         string Group(string t) => isolation == TestIsolation.Disabled ? "" : AffectedIsolationWidening.CodeunitOf(t);
         var whole = new HashSet<string>(StringComparer.Ordinal);
@@ -189,7 +194,8 @@ internal static class AffectedSessionStateSelection
         for (var i = 0; i < discovered.Count; i++)
         {
             var t = discovered[i];
-            if (!selected.Contains(t)) continue;
+            if (!selected.Contains(t)
+                || !AffectedIsolationWidening.SharesState(isolation, Group(t), sharesStateAcrossTests)) continue;
             if (changedTests.Contains(t) || i >= firstChanged) whole.Add(Group(t));
             else prefixEnd[Group(t)] = i;
         }

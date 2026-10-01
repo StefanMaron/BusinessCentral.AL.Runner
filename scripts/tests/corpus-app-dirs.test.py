@@ -151,5 +151,77 @@ class MainExitCodes(unittest.TestCase):
             )
 
 
+class IsolationProbes(unittest.TestCase):
+    """#4826: a named isolation probe fails by design under the default isolation, so the
+    default list leaves it out and --isolation-probes hands it to its own step."""
+
+    PROBE = "tests/al-language-isolation-probe"
+
+    def _run(self, argv):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = cad.main(argv)
+        return rc, out.getvalue().splitlines(), err.getvalue()
+
+    def _corpus(self, tmp):
+        corpus = Path(tmp) / "al-language"
+        make_app(corpus, "tests/al-language")
+        make_app(corpus, "tests/al-language-onprem")
+        make_app(corpus, self.PROBE)
+        return corpus
+
+    def test_the_probe_is_named_in_the_list(self):
+        self.assertEqual("test", cad.ISOLATION_PROBES.get("al-language-isolation-probe"))
+
+    def test_default_list_excludes_the_probe_and_says_so(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            corpus = self._corpus(tmp)
+            rc, lines, err = self._run([str(corpus)])
+            self.assertEqual(0, rc)
+            self.assertEqual([str(corpus / "tests/al-language"),
+                              str(corpus / "tests/al-language-onprem")], lines)
+            self.assertIn("excluded isolation probe", err)
+            self.assertIn(str(corpus / self.PROBE), err)
+
+    def test_an_unlisted_app_with_a_probe_like_name_is_not_excluded(self):
+        # Exclusion is by exact name only: no normal corpus app is hidden by a pattern.
+        with tempfile.TemporaryDirectory() as tmp:
+            corpus = Path(tmp) / "al-language"
+            make_app(corpus, "tests/al-language")
+            make_app(corpus, "tests/al-language-isolation-probe-2")
+            rc, lines, _ = self._run([str(corpus)])
+            self.assertEqual(0, rc)
+            self.assertIn(str(corpus / "tests/al-language-isolation-probe-2"), lines)
+
+    def test_isolation_probes_lists_the_probe_with_its_isolation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            corpus = self._corpus(tmp)
+            rc, lines, _ = self._run(["--isolation-probes", str(corpus)])
+            self.assertEqual(0, rc)
+            self.assertEqual([f"test\t{corpus / self.PROBE}"], lines)
+
+    def test_no_probe_in_the_corpus_is_an_empty_pass(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            corpus = Path(tmp) / "al-language"
+            make_app(corpus, "tests/al-language")
+            rc, lines, err = self._run(["--isolation-probes", str(corpus)])
+            self.assertEqual(0, rc)
+            self.assertEqual([], lines)
+            self.assertIn("no isolation-probe app", err)
+
+
+class WorkflowRunsTheProbeStep(unittest.TestCase):
+    """The exclusion is only safe while bc-tests.yml runs the probes somewhere else."""
+
+    def test_bc_tests_runs_every_probe_under_its_isolation_strictly_and_checks_the_count(self):
+        wf = (Path(__file__).resolve().parents[2] / ".github/workflows/bc-tests.yml").read_text()
+        start = wf.index("- name: Run al-language isolation probes under their own isolation")
+        step = wf[start:wf.index("- name:", start + 10)]
+        for needle in ("corpus-app-dirs.py --isolation-probes tests/al-language",
+                       '--isolation "$iso"', "--strict", "--count-out isolation-probe-count.json",
+                       "scripts/check-isolation-probe-count.py", 'exit "$rc"'):
+            self.assertIn(needle, step)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

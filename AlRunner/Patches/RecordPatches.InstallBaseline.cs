@@ -148,6 +148,17 @@ public static partial class RecordPatches
             _activeDepCompanyBaseline = snapshot;
     }
 
+    /// <summary>Under --isolation test, the store as a test codeunit's OnRun left it: what every
+    /// later test of that codeunit is restored to (#4826). A table lazily loaded after the
+    /// capture is appended here too, or the next test's restore would drop it.</summary>
+    private static InstallBaselineSnapshot? _activePostOnRunBaseline;
+
+    internal static void SetActivePostOnRunBaseline(InstallBaselineSnapshot? snapshot)
+    {
+        lock (_baselineMutationLock)
+            _activePostOnRunBaseline = snapshot;
+    }
+
     /// <summary>Test-only seam over the per-app-group baseline. A test exercising
     /// AppendBaselineTable hands it a synthetic DataAccessSource, and leaving that in a
     /// baseline some later test restores would hand _mCreateTempDataAccess an object that is
@@ -224,6 +235,8 @@ public static partial class RecordPatches
             // group happened to touch it.
             if (_activeDepCompanyBaseline != null)
                 AppendInto(_activeDepCompanyBaseline.Sources, source, tableId, metaTable, rows);
+            if (_activePostOnRunBaseline != null)
+                AppendInto(_activePostOnRunBaseline.Sources, source, tableId, metaTable, rows);
         }
     }
 

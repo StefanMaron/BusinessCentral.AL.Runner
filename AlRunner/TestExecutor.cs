@@ -21,8 +21,9 @@ public enum TestOutcome { Pass, Fail, Error, Skipped }
 ///     the same codeunit. Measured on real BC 27.5 and 28.3 — see
 ///     TestIsolationRollbackScope (60897) in the al-language corpus.
 ///   Test — AL `TestIsolation = Function`: the database rolls back before every
-///     [Test] procedure. No shipped BC test runner codeunit declares Function, so
-///     this mode has no 130xxx counterpart; the AL property is the reference.
+///     [Test] procedure, to the state the codeunit's OnRun left; all its tests run on
+///     one codeunit instance. No shipped BC test runner codeunit declares Function;
+///     corpus PR #517's custom runner measured it on BC 28.4 (#4826).
 ///   Disabled — AL `TestIsolation = Disabled`, which BC's 130451 "Test Runner -
 ///     Isol. Disabled" declares. No reset at all; suite-long sharing.
 ///
@@ -873,19 +874,10 @@ public sealed class TestExecutor
         long scanMs = 0, instMs = 0, dispMs = 0, methodsMs = 0, disposeMs = 0, methodLoopMs = 0;   // PERF attribution accumulators
         long injectMs = 0, resetMs = 0;   // #1861 app-stage accumulators, same shape as the above
         var stageSw = new System.Diagnostics.Stopwatch();
-        // TestIsolation.Test gives every [Test] a brand new codeunit instance, so neither
-        // AL global variables nor database rows survive from one test to the next.
-        // Codeunit/Disabled keep ONE instance for every test in the codeunit, so AL
-        // global variables persist across a codeunit's tests.
-        //
-        // Both halves are now measured against a real service tier, not inferred.
-        // BC runs every [Test] in a codeunit on the SAME codeunit instance, so its AL
-        // global variables persist across them — corpus test 60898
-        // "Test Isolation Global Var", green on BC 27.5 and 28.3. The database half is
-        // in 60897 and resets per codeunit (see the boundary above). Sharing the
-        // instance under Codeunit isolation is therefore faithful, and Test isolation's
-        // fresh instance per test is AL's TestIsolation = Function.
-        var perTestInstance = Isolation == TestIsolation.Test;
+        // Every isolation mode runs all of a codeunit's [Test]s on ONE codeunit instance, so AL
+        // globals persist across them: corpus 60898 for Codeunit (green on 27.5 and 28.3), and
+        // corpus PR #517's Function-isolation probe for Test (#4826; green on 28.4.53241.55454,
+        // Windows nightly run 36727084058). The modes differ only in what the DATABASE resets.
         // #4813: Microsoft's "Test Runner - Mgt" events, when the Test Runner app is loaded.
         _testRunnerEvents = TestRunnerMgtEvents.Resolve();
         var resetEnvironmentInitialized = false;
@@ -958,24 +950,18 @@ public sealed class TestExecutor
             // Resolve the AL object name (e.g. "Test Table Event Dispatch") off the
             // instantiated codeunit — it derives from NavApplicationObjectBase and exposes
             // a public ObjectName property. Falls back to the .NET type name on failure.
-            // Resolved once and reused for every test in this codeunit type (including,
-            // under Test isolation, the later per-test-fresh instances below) — the
-            // AL object name is a compile-time property of the TYPE, not the instance.
+            // Resolved once and reused for every test in this codeunit type.
             stageSw.Restart();
             var displayName = ResolveDisplayName(instance, t.Name);
             dispMs += stageSw.ElapsedMilliseconds;
 
-            // Under Test isolation, `instance` above was never touched by any test body,
-            // so it is already "fresh" — it becomes the FIRST test's instance instead of
-            // being thrown away and re-instantiated immediately. Every test after the
-            // first gets a newly-instantiated one (see inside the loop below).
-            var isFirstMethod = true;
-
-            // #4694: the test codeunit's own OnRun, run before its first executed [Test] — once on
-            // the shared instance, or per test under Test isolation, where every test already gets
-            // a fresh instance and a fresh database. See docs/limitations.md#test-codeunit-onrun.
+            // #4694: the test codeunit's own OnRun, run once on the instance before its first
+            // executed [Test], in every mode. See docs/limitations.md#test-codeunit-onrun.
             var onRunTrigger = ResolveDeclaredTestCodeunitOnRun(t);
             var onRunDone = false;
+            // Test isolation: the store as OnRun left it, which every later test's reset restores
+            // (#4826). Null when the codeunit has no OnRun: the install baseline is that state.
+            AlRunner.Patches.RecordPatches.InstallBaselineSnapshot? postOnRunState = null;
             TestResult? onRunFailure = null;
             var codeunitEventsRaised = false;
             var aborted = false;
@@ -1018,9 +1004,6 @@ public sealed class TestExecutor
                         // skip = "must not be invoked" (docs/expectations.md), so the
                         // decision has to sit HERE, before the body runs — a post-run
                         // classification could only hide the result, not the side effects.
-                        // isFirstMethod is intentionally left untouched: a skipped test
-                        // never runs, so it must not consume the pre-built `instance`
-                        // that the first ACTUALLY-RUN test under Test isolation gets.
                         var skippedResult = new TestResult(t.Name, m.Name, TestOutcome.Skipped,
                             $"skipped — declared in {entry.SourceFile}", null, TimeSpan.Zero,
                             null, displayName, null, Infrastructure.ExpectationResult.Skipped);
@@ -1029,61 +1012,7 @@ public sealed class TestExecutor
                         continue;
                     }
 
-                    object testInstance;
-                    if (!perTestInstance || isFirstMethod)
-                    {
-                        // Codeunit/Disabled: always the one shared instance. Test
-                        // isolation's first test: the untouched instance from above.
-                        testInstance = instance;
-                        isFirstMethod = false;
-                    }
-                    else
-                    {
-                        // Test isolation, second+ test in this codeunit: a genuinely
-                        // fresh instance, so no AL global variable set by an earlier
-                        // [Test] procedure is visible here (#2132).
-                        stageSw.Restart();
-                        object? fresh;
-                        try { fresh = InstantiateCodeunit(t); }
-                        catch (Exception ex)
-                        {
-                            var ctorResult = new TestResult(t.Name, m.Name, TestOutcome.Error,
-                                Unwrap(ex).Message, ex.ToString(), TimeSpan.Zero,
-                                null, displayName, Unwrap(ex), InsideTestProc: false,
-                                Diagnosis: AlRunner.Infrastructure.FailureDiagnosis.Explain(Unwrap(ex)));
-                            results.Add(ctorResult);
-                            onTestComplete?.Invoke(ctorResult);
-                            continue;
-                        }
-                        instMs += stageSw.ElapsedMilliseconds;
-                        if (fresh == null)
-                        {
-                            // Unreachable today, and deliberately loud rather than silent.
-                            //
-                            // InstantiateCodeunit returns null in exactly one case: no
-                            // constructor taking a single ITreeObject. Every other failure
-                            // throws and is caught just above. Reaching here means the FIRST
-                            // instantiation of this same `t` returned non-null (otherwise the
-                            // `instance == null` check further up would have skipped the whole
-                            // codeunit), so a matching constructor exists — and
-                            // Type.GetConstructors() cannot change for a loaded type while the
-                            // process runs. So this branch cannot execute.
-                            //
-                            // It used to `break`, which would have silently dropped every
-                            // remaining [Test] in the codeunit — the exact shape #2415 fixed
-                            // elsewhere in this loop. If InstantiateCodeunit ever gains a second
-                            // reason to return null, that silent truncation would come back with
-                            // nothing reporting it. Throwing means the day it becomes reachable
-                            // is the day it is seen (#2420).
-                            throw new InvalidOperationException(
-                                $"TestExecutor: re-instantiating test codeunit '{t.Name}' returned null "
-                                + $"before '{m.Name}', although its first instantiation succeeded. "
-                                + "InstantiateCodeunit only returns null when no ITreeObject constructor "
-                                + "exists, which cannot change for a loaded type — so this indicates a "
-                                + "change in InstantiateCodeunit, not a fault in the AL under test.");
-                        }
-                        testInstance = fresh;
-                    }
+                    var testInstance = instance;
 
                     stageSw.Restart();
                     if (_testRunnerEvents != null && !codeunitEventsRaised)
@@ -1108,10 +1037,11 @@ public sealed class TestExecutor
                         }
                     }
                     var baselineRestored = false;
-                    if (onRunTrigger != null && (perTestInstance || !onRunDone))
+                    if (onRunTrigger != null && !onRunDone)
                     {
                         // Under Test isolation RunOne would restore the install baseline over
-                        // what OnRun just committed, so the restore happens here, before OnRun.
+                        // what OnRun just committed, so the restore happens here, before OnRun,
+                        // and what OnRun leaves is what every later test's reset restores.
                         if (Isolation == TestIsolation.Test)
                         {
                             AlRunner.Patches.RecordPatches.RestoreInstallBaseline();
@@ -1119,10 +1049,15 @@ public sealed class TestExecutor
                         }
                         onRunDone = true;
                         onRunFailure = RunTestCodeunitOnRun(t.Name, onRunTrigger, testInstance, displayName);
+                        if (Isolation == TestIsolation.Test && onRunFailure == null)
+                        {
+                            postOnRunState = AlRunner.Patches.RecordPatches.CaptureInstallBaselineSnapshot();
+                            AlRunner.Patches.RecordPatches.SetActivePostOnRunBaseline(postOnRunState);
+                        }
                     }
                     var raw = onRunFailure != null
                         ? onRunFailure with { Method = m.Name }
-                        : RunOne(t.Name, m, testInstance, displayName, baselineRestored);
+                        : RunOne(t.Name, m, testInstance, displayName, baselineRestored, postOnRunState);
                     if (onRunFailure == null && !IsTimeout(raw))
                         raw = RaiseAfterTestMethodRun(raw, codeunitObjectId, displayName, m, testInstance);
                     RestoreTestCodeunitApplicationAreas(areasAtCodeunitStart);
@@ -1132,15 +1067,6 @@ public sealed class TestExecutor
                         : raw;
                     results.Add(result);
                     onTestComplete?.Invoke(result);
-
-                    if (perTestInstance && !ReferenceEquals(testInstance, instance))
-                    {
-                        // Dispose every per-test instance created above except the
-                        // shared `instance` (disposed once, in the outer finally below).
-                        stageSw.Restart();
-                        (testInstance as IDisposable)?.Dispose();
-                        disposeMs += stageSw.ElapsedMilliseconds;
-                    }
 
                     // Timeout is judged on the RAW outcome: even if a manifest entry
                     // reclassifies the hung test, its runaway thread still poisons the
@@ -1169,9 +1095,9 @@ public sealed class TestExecutor
                 // amplification — see InstallTriggerRunner.RunAll) base leak. Nothing
                 // needs this instance once its test methods have all run, so dispose it
                 // here to unlink it from RootTreeStub (TreeHandler.Dispose() →
-                // InternalRemoveChild). Under Test isolation this disposes only the
-                // FIRST test's instance — every later one was already disposed above,
-                // right after its own test ran.
+                // InternalRemoveChild).
+                if (postOnRunState != null)
+                    AlRunner.Patches.RecordPatches.SetActivePostOnRunBaseline(null);
                 RestoreTestCodeunitApplicationAreas(areasAtCodeunitStart);
                 if (codeunitEventsRaised && !aborted && _testRunnerEvents != null)
                 {
@@ -1775,6 +1701,22 @@ public sealed class TestExecutor
     }
 
     /// <summary>
+    /// #4826: the test codeunits of <paramref name="assembly"/> that can carry state from one test to
+    /// the next under Test isolation, where the database resets per test but the instance does not:
+    /// those declaring an instance field (every AL global is one) or their own OnRun.
+    /// </summary>
+    internal static HashSet<string> CodeunitsSharingStateAcrossTests(Assembly assembly)
+    {
+        const BindingFlags declared = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic
+                                      | BindingFlags.DeclaredOnly;
+        return assembly.GetTypes()
+            .Where(t => IsTestCodeunit(t)
+                        && (ResolveDeclaredTestCodeunitOnRun(t) != null || t.GetFields(declared).Length > 0))
+            .Select(t => t.Name)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    /// <summary>
     /// The OnRun trigger <paramref name="t"/> itself declares, or null. BC runs a test codeunit's
     /// OnRun only when the codeunit declares one (<c>onRunMethod.DeclaringType == GetType()</c> in
     /// <c>NavTestCodeunit.DoRunAsync</c>); the inherited empty base is never invoked.
@@ -1932,7 +1874,8 @@ public sealed class TestExecutor
     }
 
     private TestResult RunOne(string codeunit, MethodInfo m, object instance, string displayName,
-                              bool baselineAlreadyRestored = false)
+                              bool baselineAlreadyRestored = false,
+                              AlRunner.Patches.RecordPatches.InstallBaselineSnapshot? postOnRunState = null)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var timedOut = false;
@@ -1951,9 +1894,15 @@ public sealed class TestExecutor
         // TestIsolationRollbackScope (60897). The measurement that suggested otherwise
         // was taken through a harness invoking tests one at a time, which cannot tell
         // "the platform rolled back" apart from "the harness opened a new transaction".
+        //
+        // #4826: BC's per-test rollback returns to the state the codeunit's OnRun left, not to
+        // before it (corpus PR #517's T6, green on BC 28.4, Windows nightly run 36727084058).
         if (Isolation == TestIsolation.Test && !baselineAlreadyRestored)
         {
-            AlRunner.Patches.RecordPatches.RestoreInstallBaseline();
+            if (postOnRunState != null)
+                AlRunner.Patches.RecordPatches.RestoreInstallBaselineSnapshot(postOnRunState);
+            else
+                AlRunner.Patches.RecordPatches.RestoreInstallBaseline();
         }
         // #4813: BC raises the test runner's OnBeforeTestRun before EnterTestMethod and commits
         // after it (NavTestExecution.BeforeTestRunAsync); a Skip answer means the method never runs.

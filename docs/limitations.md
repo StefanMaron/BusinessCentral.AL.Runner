@@ -179,7 +179,7 @@ They are AL's own `TestIsolation` values: reading the strings out of
 | `--isolation` value | AL `TestIsolation` | BC test runner codeunit | Database (record store) | AL global variables |
 |---|---|---|---|---|
 | `codeunit` (default) | `Codeunit` | 130450 "Test Runner - Isol. Codeunit" | Rolls back after each test **codeunit**. A row one `[Test]` writes without committing is still visible to the next `[Test]` in the same codeunit. | Shared across every `[Test]` in the same codeunit — one codeunit instance runs them all |
-| `test` (alias `method`) | `Function` | none — no shipped BC runner declares `Function` | Rolls back before every `[Test]` procedure | **Not** shared — every `[Test]` runs on a brand-new codeunit instance |
+| `test` (alias `method`) | `Function` | none — no shipped BC runner declares `Function` | Rolls back before every `[Test]` procedure, to the state the codeunit's `OnRun` left | Shared across every `[Test]` in the same codeunit — one codeunit instance runs them all |
 | `disabled` | `Disabled` | 130451 "Test Runner - Isol. Disabled" | Never rolls back — suite-long sharing | Shared for the whole suite |
 
 Both of the last two columns are measured against a real service tier, not inferred.
@@ -189,6 +189,14 @@ it back in the next `[Test]` of the same codeunit, and `Test Isolation Global Va
 (60898) does the same with a global Integer and a global Text. Both are green on BC 27.5
 and 28.3: the row survives and so do the globals, which is what "rolls back after each
 test codeunit" and "one codeunit instance runs them all" mean in practice.
+
+The `test` row is measured too, by a custom `TestIsolation = Function` test runner that only the
+corpus's Windows nightly runs (`tests/al-language-isolation-probe`, corpus PR #517, #4826). On BC
+28.4.53241.55454 (nightly run 36727084058), an AL global, a call counter and a SingleInstance
+field set by the first test were all still set in later tests, `OnRun` had run once, and a row
+the first test inserted was gone while the row `OnRun` inserted was not. The same fixture under
+an otherwise identical `Codeunit` runner kept the first test's row, which is what shows the run
+measured Function isolation.
 
 <a id="test-codeunit-onrun"></a>
 #### A test codeunit's own `OnRun` (#4694)
@@ -201,8 +209,10 @@ method still runs it; a codeunit none of whose tests is selected does not run it
 
 | `--isolation` | when `OnRun` runs |
 |---|---|
-| `codeunit`, `disabled` | once per codeunit, before the first executed test |
-| `test` | before every test, on that test's fresh instance and after the per-test database reset — each test starts where a codeunit holding only that test would |
+| `codeunit`, `disabled`, `test` | once per codeunit, before the first executed test |
+
+Under `test`, every later test's database reset returns to the state `OnRun` left, not to the
+state before it (#4826).
 
 If `OnRun` fails, BC rolls its writes back and runs none of the codeunit's test methods. The
 runner does the same and reports **every selected test of that codeunit** as an error whose

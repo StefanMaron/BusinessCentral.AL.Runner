@@ -38,12 +38,26 @@ Exits 1, loudly, when it finds nothing: an enumeration that silently produces an
 empty list would put the workflow straight back into "green because it ran
 nothing".
 
+Isolation probes (#4826). A corpus app named in ISOLATION_PROBES measures one
+TestIsolation mode with a custom test runner that only the corpus's Windows nightly
+runs; under the runner's default isolation it fails by design. It is left out of
+the default list (and named on stderr), and `--isolation-probes` lists it with the
+`--isolation` value bc-tests.yml's probe step runs it under.
+
 Usage:
     corpus-app-dirs.py <corpus-root>
+    corpus-app-dirs.py --isolation-probes <corpus-root>
 """
 import argparse
 import os
 import sys
+
+# Corpus app directory name -> the runner --isolation value it must run under. Named
+# explicitly so an exclusion is never inferred: a directory not listed here is a
+# normal corpus app and runs in the default step.
+ISOLATION_PROBES = {
+    "al-language-isolation-probe": "test",   # corpus PR #517; BC verdict: #4826
+}
 
 # Same three markers as ProgramSupport.LooksLikeSuite.
 _SPLIT_DIRS = ("src", "test")
@@ -98,6 +112,8 @@ def enumerate_app_dirs(root):
 def main(argv):
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("root", help="corpus checkout root, e.g. tests/al-language")
+    ap.add_argument("--isolation-probes", action="store_true",
+                    help="print '<isolation>\t<dir>' for each ISOLATION_PROBES app instead")
     args = ap.parse_args(argv)
 
     if not os.path.isdir(args.root):
@@ -121,7 +137,25 @@ def main(argv):
         )
         return 1
 
-    for d in dirs:
+    probes = [d for d in dirs if os.path.basename(d) in ISOLATION_PROBES]
+    if args.isolation_probes:
+        # None present is legitimate: the corpus ref this run resolved may predate them.
+        if not probes:
+            print("corpus-app-dirs: no isolation-probe app in this corpus checkout", file=sys.stderr)
+        for d in probes:
+            print(f"{ISOLATION_PROBES[os.path.basename(d)]}\t{d}")
+        return 0
+
+    for d in probes:
+        print(f"corpus-app-dirs: excluded isolation probe {d} "
+              f"(runs under --isolation {ISOLATION_PROBES[os.path.basename(d)]} in its own step)",
+              file=sys.stderr)
+    default = [d for d in dirs if d not in probes]
+    if not default:
+        print(f"corpus-app-dirs: only isolation probes under '{args.root}'; nothing for the default run.",
+              file=sys.stderr)
+        return 1
+    for d in default:
         print(d)
     return 0
 
