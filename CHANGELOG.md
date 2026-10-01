@@ -54,6 +54,7 @@ All notable changes to this project are documented here. Format based on
 - **testpage:** New() on an empty linked part raises the part's OnNewRecord
 
 ### Changed
+- **server:** wait for the tdd stderr line instead of reading it at once
 - **server:** reuse the test-data install baseline across warm requests
 
 ## [2.12.0] - 2026-09-29
