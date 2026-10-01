@@ -934,8 +934,9 @@ internal sealed partial class RunnerPageInstance
     /// of true. Base Application 28.1 declares them on 18,222 field controls; every one of
     /// those answered true.</para>
     ///
-    /// <para>ORDER IS THE CONTRACT: the runtime tree wins whenever it has a definition, so this
-    /// can only ADD an answer where there was none, never override one. A page the runner
+    /// <para>ORDER IS THE CONTRACT: a source pageextension's <c>modify()</c> wins (#5139); after
+    /// it the runtime tree wins whenever it has a definition, so the symbol file can only ADD an
+    /// answer where there was none, never override one. A page the runner
     /// compiled itself is unaffected — <c>TryGetDependencyControlDeclaredProperty</c> is only
     /// consulted when the definition is missing, and answers null for a page no dependency
     /// declares.</para>
@@ -1207,8 +1208,8 @@ internal sealed partial class RunnerPageInstance
     /// for a page that ships precompiled (issue #2460).
     ///
     /// <para>The action-side twin of <see cref="DeclaredControlProperty"/>, with the same
-    /// contract: the runtime tree wins whenever it has a definition, so this can only ADD an
-    /// answer where there was none. An action has no <c>Editable</c> in AL, which is why only
+    /// contract: after a source pageextension's <c>modify()</c> (#5139) the runtime tree wins
+    /// whenever it has a definition, so the symbol file can only ADD an answer where there was none. An action has no <c>Editable</c> in AL, which is why only
     /// two names appear here and not three.</para>
     /// </summary>
     private string? DeclaredActionProperty(int actionId, string propertyName)
