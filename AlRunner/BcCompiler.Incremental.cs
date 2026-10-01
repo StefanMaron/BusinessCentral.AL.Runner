@@ -1747,9 +1747,9 @@ public sealed partial class BcCompiler
     /// switch. What moves is the id the CALLER bakes — an Integer argument used to widen to
     /// <c>Which(Decimal)</c> and now binds to <c>Which(Integer)</c>. An un-rebound caller
     /// therefore dispatches a member that still exists and gets the PREVIOUS overload's answer:
-    /// no <c>NavNCLMissingMethodException</c>, no diagnostic, no log line. Every other breaking
-    /// edit retires or moves an existing id and is loud at the call site, exactly as this file's
-    /// header describes.</para>
+    /// no <c>NavNCLMissingMethodException</c>, no diagnostic, no log line. Not every other
+    /// breaking edit is loud: a procedure removed or made local while an unedited caller still
+    /// calls it stays on the fast path too (#5102).</para>
     ///
     /// <para><b>Why a full-compile fallback rather than a rebind.</b> Rebinding needs to know who
     /// the callers ARE, which needs an object-reference graph this fast path does not maintain.
@@ -1991,7 +1991,8 @@ public sealed partial class BcCompiler
     /// Attributes are not compared: [TryFunction] moves the member id, and an event publisher's
     /// attribute leaves its callers' C# unchanged (both measured in
     /// BcCompilerIncrementalSignatureTests). Body edits and parameter renames stay on the fast
-    /// path; a removed or renamed procedure retires its id and is loud at the call site.
+    /// path. A procedure removed or made local while an unedited caller still calls it is not
+    /// caught here and stays on the fast path (#5102).
     /// Interfaces are <see cref="InterfaceShapeChanged"/>'s. An object that reads twice or not at
     /// all counts as changed: a wrong "unchanged" is a stale emit.
     /// </summary>
