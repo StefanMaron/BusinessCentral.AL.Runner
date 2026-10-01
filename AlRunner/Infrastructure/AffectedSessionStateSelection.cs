@@ -161,7 +161,8 @@ internal static class AffectedSessionStateSelection
         bool changed, bool earlierBundleChanged, bool laterBundleFollows)
     {
         var changedTests = new HashSet<string>(selected, StringComparer.Ordinal);
-        var firstChanged = earlierBundleChanged ? -1 : IndexOfFirst(discovered, changedTests);
+        // With nothing changed, no test brought in reads anything that changed, wherever it runs.
+        var firstChanged = earlierBundleChanged ? -1 : changed ? IndexOfFirst(discovered, changedTests) : int.MaxValue;
         int byIsolation = 0, byState = 0;
         while (true)
         {

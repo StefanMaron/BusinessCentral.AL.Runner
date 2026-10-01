@@ -329,6 +329,25 @@ public class AffectedSessionStateSelectionTests
         Assert.Equal(new[] { "C.ChangedReader", "C.Writer" }, Sorted(selected));
     }
 
+    /// <summary>With nothing changed, a writer an unknown test brings in only reproduces its recorded
+    /// run wherever it sits, so it brings its codeunit's prefix even after the first selected test.</summary>
+    [Fact]
+    public void WidenWithIsolation_NothingChanged_AWriterAfterTheUnknownTest_BringsOnlyItsPrefix()
+    {
+        var order = new[] { "Codeunit50100.U1", "Codeunit50101.W1", "Codeunit50101.W2", "Codeunit50101.W3", "Codeunit50102.R1" };
+        var recorded = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal)
+        {
+            ["Codeunit50100.U1"] = Keys(),
+            ["Codeunit50101.W1"] = Keys(),
+            ["Codeunit50101.W2"] = Keys(W),
+            ["Codeunit50101.W3"] = Keys(),
+            ["Codeunit50102.R1"] = Keys(R),
+        };
+        var selected = Keys("Codeunit50100.U1", "Codeunit50102.R1");
+        AffectedSessionStateSelection.WidenWithIsolation(order, selected, recorded, TestIsolation.Codeunit, false, false, false);
+        Assert.Equal(new[] { "Codeunit50100.U1", "Codeunit50101.W1", "Codeunit50101.W2", "Codeunit50102.R1" }, Sorted(selected));
+    }
+
     // #5069: a re-recording keeps the session-state keys the previous record had, and only those.
     [Fact]
     public void WithPreviousState_KeepsPreviousStateKeys_AndDropsPreviousOtherKeys()
