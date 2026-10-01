@@ -199,7 +199,7 @@ public class AffectedEventSelectionTests
 
     // #5083 — UnkeyedKindChange. The server-level proof is ServerAffectedSelectionObjectKindTests.
     [Fact]
-    public void UnkeyedKind_ForcesFull_NamingTheObjectAndItsKind_KeyedAndNoEffectKindsDoNot()
+    public void UnkeyedKind_ForcesFull_NamingTheObjectAndItsKind_KeyedKindsDoNot()
     {
         static string? Reason(params AffectedObjectId[] changed) => AffectedEventSelection.UnkeyedKindChange(changed);
         static AffectedObjectId O(string kind, int? id, string name) => new(kind, id, name);
@@ -207,8 +207,7 @@ public class AffectedEventSelectionTests
         Assert.Null(Reason());
         Assert.Null(Reason(
             O("Codeunit", 1, "C"), O("Page", 2, "P"), O("Report", 3, "R"), O("Query", 4, "Q"),
-            O("XmlPort", 5, "X"), O("Table", 6, "T"), O("TableExtension", 7, "TE"), O("PageExtension", 8, "PE"),
-            O("Interface", null, "I")));
+            O("XmlPort", 5, "X"), O("Table", 6, "T"), O("TableExtension", 7, "TE"), O("PageExtension", 8, "PE")));
 
         Assert.Equal("Enum 60741 changed, and which tests read an enum's values, captions or implementations is not recorded",
             Reason(O("Codeunit", 1, "C"), O("Enum", 60741, "E")));
@@ -221,6 +220,9 @@ public class AffectedEventSelectionTests
             Reason(O("SomeFutureKind", 11, "F")));
         Assert.Equal("Profile Kind Profile changed, and no test recording holds the use of this kind of object (Profile)",
             Reason(O("Profile", null, "Kind Profile")));
+        // An interface's extends list decides what `is`/`as` answer for implementers nobody edited.
+        Assert.Equal("Interface Probe I changed, and no test recording holds the use of this kind of object (Interface)",
+            Reason(O("Interface", null, "Probe I")));
     }
 
     // #5011 — a whole-object change to an instance no one test built.

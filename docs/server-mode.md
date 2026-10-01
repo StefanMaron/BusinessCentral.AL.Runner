@@ -929,11 +929,10 @@ selects nothing while a full run would fail a test. This covers:
 - a `ReportExtension`, a `PermissionSet` or `PermissionSetExtension`, a `Profile`,
   `PageCustomization`, `ControlAddIn`, `Entitlement`, and any kind not listed above.
 
-An `Interface` is the exception: it has no code of its own, and a change to it that
-matters changes its implementers or callers too, which are keyed (or no longer
-compile). The same two lists decide what a dependency's changed object does under
-"affectedOnly across environments", where an unkeyed kind makes the diff approximate
-instead.
+An `Interface` is one of them: adding or removing an `extends` changes what `is` and
+`as` answer for every implementer, while no implementer or caller changes. The same
+list decides what a dependency's changed object does under "affectedOnly across
+environments", where an unkeyed kind makes the diff approximate instead.
 
 #### affectedOnly and packaged dependencies
 

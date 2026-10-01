@@ -69,8 +69,7 @@ internal static class AffectedEnvironmentDrift
     private const string FileKeyPrefix = "file|";
 
     // Kinds whose use the recording attributes to a test: an instance built or a scope entered
-    // (AlObjectUseTracker), or a record held (AlEventRaiseTracker's table keys). The kinds with no
-    // effect of their own are AffectedEventSelection.NoEffectKinds, shared with the source path.
+    // (AlObjectUseTracker), or a record held (AlEventRaiseTracker's table keys).
     private static readonly HashSet<string> BuiltKinds = new(StringComparer.Ordinal) { "Codeunit", "Page", "Report", "Query", "XmlPort" };
 
     // Kinds declared by name only.
@@ -328,7 +327,6 @@ internal static class AffectedEnvironmentDrift
         var unattributed = new List<string>();
         foreach (var o in changed)
         {
-            if (AffectedEventSelection.NoEffectKinds.Contains(o.Kind)) continue;
             if (BuiltKinds.Contains(o.Kind) && o.Id.HasValue)
             {
                 var key = DependencyKeyPrefix + ObjectKey(o.Kind, o.Id, "");

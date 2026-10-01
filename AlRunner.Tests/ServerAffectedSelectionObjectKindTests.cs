@@ -1,9 +1,9 @@
 // ServerAffectedSelectionObjectKindTests — #5083: under affectedOnly, a changed object of a kind no
-// recorded key reaches (an enum, an enumextension, a reportextension, a permission set, ...) forces a
+// recorded key reaches (an enum, an enumextension, a reportextension, an interface, ...) forces a
 // full run with a reason, instead of selecting nothing while a full run fails.
 // Rules: docs/server-mode.md#affectedonly-and-object-kinds-no-test-records.
-// Runs under --isolation test, like ServerAffectedSelectionPageExtensionTests: the no-change and
-// interface steps assert a narrowed run, which the default Codeunit isolation would widen.
+// Runs under --isolation test, like ServerAffectedSelectionPageExtensionTests: the no-change step
+// asserts a narrowed run, which the default Codeunit isolation would widen.
 using System.Text.Json;
 using Xunit;
 
@@ -26,9 +26,26 @@ public class ServerAffectedSelectionObjectKindTests
         }
         """;
 
+    // The reviewer's probe on #5086: every implementer of the greeter now also is an "Other",
+    // while no implementer or caller is edited.
+    private const string InterfaceExtendsOther = """
+        interface "Kind Greeter SX" extends "Kind Other SX"
+        {
+            procedure Name(): Text;
+        }
+        """;
+
+    private const string OtherInterface = """
+        interface "Kind Other SX"
+        {
+            procedure Hello(): Text;
+        }
+        """;
+
     private static string Impl(int id, string name, string answer)
         => $"codeunit {id} \"{name}\" implements \"Kind Greeter SX\"\n{{\n"
-           + $"    procedure Name(): Text\n    begin\n        exit('{answer}');\n    end;\n}}\n";
+           + $"    procedure Name(): Text\n    begin\n        exit('{answer}');\n    end;\n\n"
+           + "    procedure Hello(): Text\n    begin\n        exit('Hello');\n    end;\n}\n";
 
     private static string Enum(string captionA = "Alpha", string implA = "Kind Impl A SX")
         => "enum 60761 \"Kind Enum SX\" implements \"Kind Greeter SX\"\n{\n    Extensible = true;\n"
@@ -99,6 +116,17 @@ public class ServerAffectedSelectionObjectKindTests
             end;
 
             [Test]
+            procedure ImplIsNotOther()
+            var
+                Impl: Codeunit "Kind Impl A SX";
+                G: Interface "Kind Greeter SX";
+            begin
+                G := Impl;
+                if G is "Kind Other SX" then
+                    Error('G is Other');
+            end;
+
+            [Test]
             procedure Unrelated()
             begin
                 if 1 + 1 <> 2 then
@@ -107,7 +135,7 @@ public class ServerAffectedSelectionObjectKindTests
         }
         """;
 
-    private static readonly string[] All = { "CaptionIsAlpha", "ExtensionCaptionIsGamma", "ImplementationOfAIsA", "Unrelated" };
+    private static readonly string[] All = { "CaptionIsAlpha", "ExtensionCaptionIsGamma", "ImplIsNotOther", "ImplementationOfAIsA", "Unrelated" };
 
     private static string Bundle(string prefix, string appIdSuffix)
     {
@@ -126,6 +154,7 @@ public class ServerAffectedSelectionObjectKindTests
         }
         """);
         Write(dir, "Greeter.Interface.al", Interface);
+        Write(dir, "Other.Interface.al", OtherInterface);
         Write(dir, "ImplA.Codeunit.al", Impl(60762, "Kind Impl A SX", "A"));
         Write(dir, "ImplB.Codeunit.al", Impl(60763, "Kind Impl B SX", "B"));
         Write(dir, "Kind.Enum.al", Enum());
@@ -234,14 +263,22 @@ public class ServerAffectedSelectionObjectKindTests
         Write(bundle, "Kind.PermissionSet.al", PermissionSet(",\n        codeunit \"Kind Impl B SX\" = X"));
         AssertForcedFull(await Send(server, bundle), "PermissionSet 60767 changed, and no test recording holds the use of this kind of object (PermissionSet)");
 
-        // An interface has no code of its own: a change that matters changes its implementers.
+        // An interface is unkeyed too: even a comment-only edit runs everything.
         Write(bundle, "Greeter.Interface.al", InterfaceCommented);
-        var iface = await Send(server, bundle);
-        Assert.False(iface.ForcedFull, iface.Raw);
-        Assert.Empty(iface.Ran);
+        AssertForcedFull(await Send(server, bundle), "Interface Kind Greeter SX changed");
+
+        // An extends clause changes what `is` answers for an implementer nobody edited. Only the
+        // selection is asserted here: this server's incremental compile keeps the implementer's old
+        // interface list (5089), so NextServer_* asserts the outcome.
+        Write(bundle, "Greeter.Interface.al", InterfaceExtendsOther);
+        var extends = await Send(server, bundle);
+        Assert.True(extends.ForcedFull, extends.Raw);
+        Assert.Contains("Interface Kind Greeter SX changed", extends.Reason, StringComparison.Ordinal);
+        Assert.Equal(All, extends.Ran);
     }
 
-    // #5007's path: changed while no server runs, so the persisted baseline's diff names the object.
+    // #5007's path: changed while no server runs, so the persisted baseline's diff names the object,
+    // and each request compiles cold.
     [SkippableFact]
     public async Task NextServer_ChangedEnumCaptionOrReportExtension_ForcesFull()
     {
@@ -263,5 +300,10 @@ public class ServerAffectedSelectionObjectKindTests
         Write(bundle, "KindExt.ReportExt.al", ReportExtension("            column(Num3; Number) { }\n"));
         AssertForcedFull(await SendFresh(cache, bundle),
             "ReportExtension 60766 changed, and no test recording holds the use of this kind of object (ReportExtension)");
+
+        Write(bundle, "Greeter.Interface.al", InterfaceExtendsOther);
+        AssertForcedFull(await SendFresh(cache, bundle),
+            "Interface Kind Greeter SX changed, and no test recording holds the use of this kind of object (Interface)",
+            "ImplIsNotOther", "G is Other");
     }
 }

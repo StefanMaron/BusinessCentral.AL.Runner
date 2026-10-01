@@ -188,21 +188,17 @@ internal static class AffectedEventSelection
         "Codeunit", "Page", "Report", "Query", "XmlPort", "Table", "TableExtension", "PageExtension",
     };
 
-    /// <summary>Kinds with no runtime effect of their own: an interface has no code, and a change to it
-    /// that matters changes its implementers or callers too, which are keyed (or no longer compile).</summary>
-    internal static readonly IReadOnlySet<string> NoEffectKinds = new HashSet<string>(StringComparer.Ordinal) { "Interface" };
-
     /// <summary>
     /// Why a changed object forces a full run because no recorded key can select the tests that
-    /// reached it (#5083): every kind outside <see cref="KeyedKinds"/> and <see cref="NoEffectKinds"/>,
-    /// an enum or enumextension and a reportextension among them. Null when every changed kind is keyed.
+    /// reached it (#5083): every kind outside <see cref="KeyedKinds"/>,
+    /// an enum, an enumextension, a reportextension and an interface among them. Null when every changed kind is keyed.
     /// Rules: docs/server-mode.md#affectedonly-and-object-kinds-no-test-records.
     /// </summary>
     internal static string? UnkeyedKindChange(IEnumerable<AffectedObjectId> changed)
     {
         foreach (var o in changed.OrderBy(o => o.Kind, StringComparer.Ordinal).ThenBy(o => o.Id ?? int.MaxValue))
         {
-            if (KeyedKinds.Contains(o.Kind) || NoEffectKinds.Contains(o.Kind)) continue;
+            if (KeyedKinds.Contains(o.Kind)) continue;
             var what = o.Id is int id ? $"{o.Kind} {id}" : $"{o.Kind} {o.Name}";
             return o.Kind is "Enum" or "EnumExtension"
                 ? $"{what} changed, and which tests read an enum's values, captions or implementations is not recorded"
