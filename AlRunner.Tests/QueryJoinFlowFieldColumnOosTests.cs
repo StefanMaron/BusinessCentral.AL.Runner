@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -29,40 +27,17 @@ namespace AlRunner.Tests;
 /// </summary>
 public class QueryJoinFlowFieldColumnOosTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
-    private static (string output, int exit) RunRunner(string bundle)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        args.Append(" \"").Append(bundle).Append('"');
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(180_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
 
     private static string WriteBundle(string appJsonName, string idRangeFrom, string idRangeTo, string extraFiles)
     {
         var root = TestScratch.Dir("al-runner-query-join-flowfield-2423");
         Directory.CreateDirectory(root);
+        // A fresh app id per bundle: the facts share one server, which refuses two different apps
+        // declaring one id (docs/shared-cli-server.md#suite-server).
 
         File.WriteAllText(Path.Combine(root, "app.json"), $$"""
         {
-          "id": "c7d1e4f2-2423-4a1b-9c3d-000000002423",
+          "id": "{{Guid.NewGuid()}}",
           "name": "{{appJsonName}}",
           "publisher": "Repro2423",
           "version": "1.0.0.0",
@@ -340,42 +315,42 @@ public class QueryJoinFlowFieldColumnOosTests
     """;
 
     [SkippableFact]
-    public void JoinWithFlowFieldColumn_OnChildDataItem_ReadsCalculatedValue()
+    public async Task JoinWithFlowFieldColumn_OnChildDataItem_ReadsCalculatedValue()
     {
         TestArtifacts.SkipIfMissing();
 
         var bundle = WriteBundle("QJF 2423 Repro", "62470", "62479", ChildSideShape);
-        var (output, exitCode) = RunRunner(bundle);
+        var result = await SuiteServer.RunViaServer(bundle);
 
-        Assert.DoesNotContain("EMIT-EXCLUDED", output);
-        Assert.DoesNotContain("COMPILE FAIL", output);
-        Assert.Contains("1P/0F/0E", output);
+        result.AssertOutputDoesNotContain("EMIT-EXCLUDED");
+        result.AssertOutputDoesNotContain("COMPILE FAIL");
+        result.AssertCounts(passed: 1, failed: 0, errors: 0);
     }
 
     [SkippableFact]
-    public void JoinWithFlowFieldColumn_OnParentDataItem_ReadsCalculatedValue()
+    public async Task JoinWithFlowFieldColumn_OnParentDataItem_ReadsCalculatedValue()
     {
         TestArtifacts.SkipIfMissing();
 
         var bundle = WriteBundle("QJF2 2423 Repro", "62480", "62489", ParentSideShape);
-        var (output, exitCode) = RunRunner(bundle);
+        var result = await SuiteServer.RunViaServer(bundle);
 
-        Assert.DoesNotContain("EMIT-EXCLUDED", output);
-        Assert.DoesNotContain("COMPILE FAIL", output);
-        Assert.Contains("1P/0F/0E", output);
+        result.AssertOutputDoesNotContain("EMIT-EXCLUDED");
+        result.AssertOutputDoesNotContain("COMPILE FAIL");
+        result.AssertCounts(passed: 1, failed: 0, errors: 0);
     }
 
     [SkippableFact]
-    public void JoinWithFlowFieldColumnAndGroupBy_ReadsGroupedFlowFieldValue()
+    public async Task JoinWithFlowFieldColumnAndGroupBy_ReadsGroupedFlowFieldValue()
     {
         TestArtifacts.SkipIfMissing();
 
         var bundle = WriteBundle("QJF3 2455 Repro", "62490", "62499", GroupByShape);
-        var (output, exitCode) = RunRunner(bundle);
+        var result = await SuiteServer.RunViaServer(bundle);
 
-        Assert.DoesNotContain("EMIT-EXCLUDED", output);
-        Assert.DoesNotContain("COMPILE FAIL", output);
-        Assert.DoesNotContain("query-join-flowfield-column-with-groupby-not-implemented", output);
-        Assert.Contains("1P/0F/0E", output);
+        result.AssertOutputDoesNotContain("EMIT-EXCLUDED");
+        result.AssertOutputDoesNotContain("COMPILE FAIL");
+        result.AssertOutputDoesNotContain("query-join-flowfield-column-with-groupby-not-implemented");
+        result.AssertCounts(passed: 1, failed: 0, errors: 0);
     }
 }

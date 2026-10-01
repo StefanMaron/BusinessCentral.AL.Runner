@@ -13,19 +13,12 @@
 // and siblings (corpus PR linked from the runner PR). Per bc-behavior-tests-go-upstream.md the AL
 // here therefore asserts nothing about the parts; the fixture's tests are named *_Compiles.
 
-using System.Diagnostics;
-using System.Text;
-using System.Text.RegularExpressions;
 using Xunit;
 
 namespace AlRunner.Tests;
 
 public sealed class TextSplitVariadicSeparatorsTests : IDisposable
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
     private readonly string _root;
 
     public TextSplitVariadicSeparatorsTests()
@@ -138,63 +131,33 @@ public sealed class TextSplitVariadicSeparatorsTests : IDisposable
         """);
     }
 
-    private (string output, int exit) RunRunner(string target)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        args.Append($" \"{target}\"");
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(600_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
-
-    private static int TestCount(string output)
-    {
-        var m = Regex.Match(output, @"(?m)^Tests: (\d+) ");
-        Assert.True(m.Success, $"run summary had no test count. Output:\n{output}");
-        return int.Parse(m.Groups[1].Value);
-    }
-
     /// <summary>
     /// RED before the fix: <c>COMPILE-FAIL ... error CS1501: No overload for method 'ALSplit'
     /// takes 3 arguments</c> on every multi-separator call, exit 3, <c>Tests: 0 total</c>. After:
     /// all five procedures compile, run, and the run exits 0.
     /// </summary>
     [SkippableFact]
-    public void SplitWithSeveralSeparators_CompilesAndRuns()
+    public async Task SplitWithSeveralSeparators_CompilesAndRuns()
     {
         TestArtifacts.SkipIfMissing();
         WriteBundle(_root);
 
-        var (output, exit) = RunRunner(_root);
+        var result = await SuiteServer.RunViaServer(_root);
 
-        Assert.DoesNotContain("CS1501", output);
+        result.AssertOutputDoesNotContain("CS1501");
         // CS0121 is what a second params overload beside (string, params string[]) produces for
         // the zero-separator Split(): two expanded-form candidates, nothing to prefer.
-        Assert.DoesNotContain("CS0121", output);
-        Assert.DoesNotContain("COMPILE-FAIL", output);
-        Assert.Equal(7, TestCount(output));
+        result.AssertOutputDoesNotContain("CS0121");
+        result.AssertOutputDoesNotContain("COMPILE-FAIL");
+        Assert.Equal(7, result.Total);
         foreach (var name in new[]
         {
             "TwoLiteralSeparators_Compiles", "NoSeparator_Compiles",
             "TwoVariableSeparators_OnAVariable_Compiles", "LiteralReceiver_VariableSeparators_Compiles",
         })
         {
-            Assert.True(Regex.IsMatch(output, $@"PASS\s+\S*\b{name}\b"),
-                $"no PASS line for {name}. Output:\n{output}");
+            result.AssertPassed($"Codeunit63400.{name}");
         }
-        Assert.Equal(0, exit);
+        Assert.Equal(0, result.ExitCode);
     }
 }

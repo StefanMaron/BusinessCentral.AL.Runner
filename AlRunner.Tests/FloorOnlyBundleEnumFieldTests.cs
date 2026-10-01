@@ -21,6 +21,10 @@
 // This is a RUNNER-MECHANISM test. It spawns the runner, because the defect is only observable
 // end to end: the registry contents depend on which packages the bundle resolved, which is a
 // property of the whole load, not of any one call.
+//
+// STAYS ON THE CLI (#5111): a --server request for a bundle declaring an `application` floor leaves
+// the next request on that server unable to read its own AL table (#5182). The suite server's
+// canary discards the server after each such request, so these runs would cost a server start each.
 using System.Diagnostics;
 using System.Text;
 using Xunit;

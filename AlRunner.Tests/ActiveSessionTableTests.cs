@@ -5,6 +5,9 @@
 // Runs the fixture TWICE against one cache root: the seed sits beside the install-baseline
 // snapshot caches, and a seed that fires cold and is skipped on a HIT would stay green in CI,
 // which provisions fresh every leg (.claude/rules/local-test-scope.md).
+//
+// STAYS ON THE CLI (#5111): the claim is a cold run and a warm run on one fresh cache root, which a
+// shared server cannot give (its cache root is not this fact's, and its process stays warm).
 using System.Diagnostics;
 using System.Text;
 using Xunit;

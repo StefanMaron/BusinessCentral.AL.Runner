@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -41,36 +39,11 @@ namespace AlRunner.Tests;
 /// <para>The fixture deliberately declares no <c>application</c> — nothing here needs a Base
 /// Application object (see .claude/rules/no-base-app-in-csharp-tests.md).</para>
 ///
-/// Spawns the real runner; needs the BC artifact cache. Skips (no-op) when absent.
+/// Runs the real runner through the shared suite server (docs/shared-cli-server.md#suite-server);
+/// needs the BC artifact cache. Skips (no-op) when absent.
 /// </summary>
 public class SourceTableViewApplicationTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
-    private static (string output, int exit) RunRunner(string bundle)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        args.Append(" \"").Append(bundle).Append('"');
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(180_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
-
     private static string WriteBundle()
     {
         var root = TestScratch.Dir("al-runner-source-table-view-2820");
@@ -241,17 +214,18 @@ public class SourceTableViewApplicationTests
     }
 
     [SkippableFact]
-    public void PageOpen_AppliesSourceTableView_FilteringSortingAndInFilterGroup2()
+    public async Task PageOpen_AppliesSourceTableView_FilteringSortingAndInFilterGroup2()
     {
         TestArtifacts.SkipIfMissing();
 
         var bundle = WriteBundle();
-        var (output, _) = RunRunner(bundle);
+        var result = await SuiteServer.RunViaServer(bundle);
 
         // Never silently pass a run that failed to get the test codeunit compiled/run.
-        Assert.DoesNotContain("EMIT-EXCLUDED", output);
-        Assert.DoesNotContain("COMPILE FAIL", output);
-        // Both tests must have run and passed — TestExecutor's own per-bundle summary line.
-        Assert.Contains("2P/0F/0E", output);
+        result.AssertOutputDoesNotContain("EMIT-EXCLUDED");
+        result.AssertOutputDoesNotContain("COMPILE FAIL");
+        Assert.Empty(result.CompilationErrors);
+        // Both tests must have run and passed.
+        result.AssertCounts(passed: 2, failed: 0, errors: 0);
     }
 }

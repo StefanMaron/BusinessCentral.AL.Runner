@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -49,35 +47,6 @@ namespace AlRunner.Tests;
 /// </summary>
 public class QueryFlowFieldFlowFilterTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
-    private static (string output, int exit) RunRunner(string bundle)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        args.Append(" \"").Append(bundle).Append('"');
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet",
-            Arguments = args.ToString(),
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(180_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
 
     private static string WriteBundle()
     {
@@ -326,24 +295,24 @@ public class QueryFlowFieldFlowFilterTests
     }
 
     [SkippableFact]
-    public void QueryFlowFieldColumn_WithFlowFilterCondition_CalculatesInsteadOfCrashing()
+    public async Task QueryFlowFieldColumn_WithFlowFilterCondition_CalculatesInsteadOfCrashing()
     {
         TestArtifacts.SkipIfMissing();
 
         var bundle = WriteBundle();
-        var (output, exitCode) = RunRunner(bundle);
+        var result = await SuiteServer.RunViaServer(bundle);
 
         // Never silently pass a run that never got the test codeunit compiled and executed.
-        Assert.DoesNotContain("EMIT-EXCLUDED", output);
-        Assert.DoesNotContain("COMPILE FAIL", output);
+        result.AssertOutputDoesNotContain("EMIT-EXCLUDED");
+        result.AssertOutputDoesNotContain("COMPILE FAIL");
         // The crash this issue reports, by the BC frame it appeared in.
-        Assert.DoesNotContain("GetFilterFromMetaFilterCollection", output);
-        Assert.DoesNotContain("NullReferenceException", output);
+        result.AssertOutputDoesNotContain("GetFilterFromMetaFilterCollection");
+        result.AssertOutputDoesNotContain("NullReferenceException");
         // 6P/0F/0E is TestExecutor's own per-bundle summary line. All six must have run: two
         // Record.CalcFields controls (the path that always worked, so a regression there shows
         // as a failure rather than as a silently-changed expectation), two single-dataitem
         // query cases, and two JOIN cases.
-        Assert.Contains("6P/0F/0E", output);
-        Assert.Equal(0, exitCode);
+        result.AssertCounts(passed: 6, failed: 0, errors: 0);
+        Assert.Equal(0, result.ExitCode);
     }
 }
