@@ -56,6 +56,36 @@ public static partial class EventSubscriberPatches
     private static IList? _subscriptionMetadataList;
     private static readonly HashSet<MethodInfo> _subscriptionMetadataSeeded = new();
 
+    // #5099: set by every injection pass, cleared by the 2000000140 read that seeds after it.
+    private static bool _subscriptionMetadataStale = true;
+
+    internal static void MarkSubscriptionMetadataStale()
+    {
+        lock (_lock) _subscriptionMetadataStale = true;
+    }
+
+    /// <summary>
+    /// Bring BC's registry up to date with the last injection pass and scope it to the executing
+    /// app group — called on entry to every 2000000140 read. The seed runs here rather than at
+    /// injection because it costs one NavEventSubscription ctor per subscriber (#5099), and
+    /// nothing but EventSubscriptionDataProvider reads the registry
+    /// (NavEventSubscriptionMetadata.GetDistinctEventSubscriptions has that one caller in Ncl).
+    /// The flag is cleared only after a seed that returned, so a throwing seed throws again on
+    /// the next read rather than leaving an empty inventory behind.
+    /// </summary>
+    internal static void PrepareSubscriptionMetadataForRead()
+    {
+        lock (_lock)
+        {
+            if (_subscriptionMetadataStale)
+            {
+                SeedSubscriptionMetadata();
+                _subscriptionMetadataStale = false;
+            }
+            ScopeSubscriptionMetadataToExecutingAppGroup();
+        }
+    }
+
     /// <summary>
     /// How many subscriber methods this file has appended to BC's registry, and how many rows
     /// that registry now holds — <c>(-1, -1)</c> before the registry exists.
@@ -84,9 +114,10 @@ public static partial class EventSubscriberPatches
     /// <c>NavEventSubscription</c> per scanned <c>[NavEventSubscriber]</c> method.
     ///
     /// <para>Idempotent: each subscriber method is appended at most once, keyed on its
-    /// <see cref="MethodInfo"/>, so the per-bundle re-entry
-    /// <see cref="InjectAllUsingStoredLookup"/> performs tops the inventory up with newly
-    /// loaded assemblies rather than duplicating it. <see cref="ResetForReload"/> clears that
+    /// <see cref="MethodInfo"/>, so a re-seed after a later
+    /// <see cref="InjectAllUsingStoredLookup"/> pass tops the inventory up with newly
+    /// loaded assemblies rather than duplicating it. Reached only through
+    /// <see cref="PrepareSubscriptionMetadataForRead"/>. <see cref="ResetForReload"/> clears that
     /// record and BC's registry together, which is what makes a --watch or --server reload of
     /// the same bundle identity re-seed from the fresh assembly instead of skipping every
     /// subscriber as "already seeded".</para>
@@ -154,8 +185,9 @@ public static partial class EventSubscriberPatches
     }
 
     // #4845: rows of BC's registry the executing app group must not list. _rowsScoped holds until
-    // the next SeedSubscriptionMetadata, which every app group's run and every test codeunit
-    // reaches first. See docs/virtual-tables-allobj.md#shared-id-declarers.
+    // the next SeedSubscriptionMetadata, which the first 2000000140 read after every injection pass
+    // (each app group's run, each test codeunit) reaches first. See
+    // docs/virtual-tables-allobj.md#shared-id-declarers.
     private static readonly List<object> _rowsHiddenFromExecutingAppGroup = new();
     private static readonly Dictionary<object, (string Kind, int Id)> _publisherByRow =
         new(ReferenceEqualityComparer.Instance);

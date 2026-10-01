@@ -340,9 +340,9 @@ public static partial class EventSubscriberPatches
         SeedCodeunitEventScopeSentinels();
         SeedTableEventScopeSentinels();
         SeedObjectEventScopeSentinels();
-        // The Event Subscription virtual table's inventory (#4198). Same handles, different
-        // registry — see EventSubscriberPatches.SubscriptionMetadata.cs.
-        SeedSubscriptionMetadata();
+        // The Event Subscription virtual table's inventory (#4198) is built on the next read of
+        // 2000000140, not here: one BC ctor per subscriber, seconds with the Base Application (#5099).
+        MarkSubscriptionMetadataStale();
     }
 
     /// <summary>Whether the [EventSubscriber] discovery scan reads <paramref name="asm"/>: not a
@@ -589,6 +589,7 @@ public static partial class EventSubscriberPatches
             _publisherByRow.Clear();
             _rowsHiddenFromExecutingAppGroup.Clear();
             _rowsScoped = false;
+            _subscriptionMetadataStale = true;
             _codeunitTypeCache.Clear();
             _tableTypeCache.Clear();
             _objectEventTypeCache.Clear();
