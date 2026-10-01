@@ -73,8 +73,8 @@ KNOWN_BLOCKERS = (
      "the backup reader cannot open this backup",
      "The pinned backup reader refused this backup. Reader v0.1.1 and earlier could not open a "
      "W1 demo backup for BC 28.2 or newer at all (#2780, now closed); v0.1.2 reads 28.2, 28.3 "
-     "and 28.4, and is what READER_TAG pins in ms-bucket.yml. So this message now means the "
-     "pinned reader has met a backup it still cannot open — check READER_TAG against the "
+     "and 28.4, and is what .github/backup-reader.json pins. So this message now means the "
+     "pinned reader has met a backup it still cannot open — check that pin's tag against the "
      "latest release, and if the newest reader refuses it too, the fix is in "
      "StefanMaron/BusinessCentral.DbReader, not here."),
 )

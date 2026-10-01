@@ -340,7 +340,7 @@ public sealed class MsSurfaceWorkflowTests
         Assert.Contains("uses: ./.github/workflows/ms-bucket.yml", code, StringComparison.Ordinal);
         foreach (var owned in new[]
                  {
-                     "--package-cache", "READER_TAG", "--test-data-company",
+                     "--package-cache", "READER_PIN", "backup-reader.json", "--test-data-company",
                      "CRONUS International Ltd_", "AL_RUNNER_EMIT_TIMEOUT_SEC",
                      "provision-bc", "al-runner", "--test-timeout",
                      "--test-data-normalize-company",

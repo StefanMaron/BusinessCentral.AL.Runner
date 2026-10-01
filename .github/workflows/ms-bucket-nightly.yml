@@ -9,7 +9,7 @@ name: MS bucket (nightly)
 # This workflow was written when the backup reader could not open a 28.2+ W1 backup, so
 # --test-data could not produce a number on 28.4 at all, and the plan was to land it knowingly
 # red against the version that matters rather than pin it back to a version nobody ships. That
-# blocker is now FIXED: #2780 is closed as completed and READER_TAG in ms-bucket.yml pins
+# blocker is now FIXED: #2780 is closed as completed and .github/backup-reader.json pins
 # reader v0.1.2, which reads BC 28.2, 28.3 and 28.4.
 #
 # What has NOT been measured is whether the bucket now produces a number on 28.4. The only

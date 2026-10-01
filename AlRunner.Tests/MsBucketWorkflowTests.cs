@@ -480,7 +480,8 @@ public sealed class MsBucketWorkflowTests
         Assert.Contains("uses: ./.github/workflows/ms-bucket.yml", code, StringComparison.Ordinal);
         // And therefore NOT a second copy of the configuration the shared file owns.
         Assert.DoesNotContain("--package-cache", code, StringComparison.Ordinal);
-        Assert.DoesNotContain("READER_TAG", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("READER_PIN", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("backup-reader.json", code, StringComparison.Ordinal);
         Assert.DoesNotContain("al-runner", code, StringComparison.Ordinal);
     }
 
@@ -535,7 +536,7 @@ public sealed class MsBucketWorkflowTests
         {
             Assert.False(header.Contains(stale, StringComparison.OrdinalIgnoreCase),
                 $"ms-bucket-nightly.yml still says \"{stale}\". #2780 is closed as completed and "
-                + "READER_TAG pins reader v0.1.2, which reads BC 28.2, 28.3 and 28.4 — so this "
+                + ".github/backup-reader.json pins reader v0.1.2, which reads BC 28.2, 28.3 and 28.4 — so this "
                 + "presents finished work as pending. Update the header rather than the test.");
         }
 
@@ -591,7 +592,9 @@ public sealed class MsBucketWorkflowTests
         // not a contract: it lasts at GitHub's discretion and ends if anyone claims the freed
         // old name. The DoesNotContain arm is the point of the pair -- without it, a revert to
         // the redirect name passes again in silence.
-        Assert.Contains("StefanMaron/BusinessCentral.DbReader", code, StringComparison.Ordinal);
+        // #4925: the repository now comes from the pin file, whose name
+        // BackupReaderProvisioningTests asserts is DbReader.
+        Assert.Contains("--repo \"$repo\"", code, StringComparison.Ordinal);
         Assert.DoesNotContain("BusinessCentral.BakReader", code, StringComparison.Ordinal);
         Assert.Contains(".cache/al-runner/bcbak/bcbak", code, StringComparison.Ordinal);
         // The deliverable: a job summary plus the JUnit for clustering.
@@ -601,22 +604,31 @@ public sealed class MsBucketWorkflowTests
 
     /// <summary>
     /// #2779: the backup reader is PINNED to a tag, not resolved to whatever is newest at run
-    /// time. `gh release view … --jq .tagName` made this workflow's result depend on when a
-    /// different repository last published — the measurement could change with no change here,
-    /// and the reader's identity keys the install-baseline cache, so a reader upgrade changes
-    /// decoded values. Both halves are asserted: the pin is present, and the run-time
-    /// resolution is gone.
+    /// time — the reader's identity keys the install-baseline cache, so a reader upgrade changes
+    /// decoded values. #4925: and pinned ONCE. The tag and checksum come from
+    /// .github/backup-reader.json, the file the runner embeds for auto-provision, so a literal
+    /// tag or checksum here is a second copy free to drift (#3433: a box on v0.1.0 while CI
+    /// pinned v0.1.2).
     /// </summary>
     [Fact]
-    public void MsBucketWorkflow_PinsTheBackupReaderRelease_RatherThanResolvingLatest()
+    public void MsBucketWorkflow_ReadsTheBackupReaderPinFromTheFileTheRunnerEmbeds()
     {
         var code = CodeOnly(Read(Path.Combine("workflows", Workflow)));
 
-        Assert.Contains("READER_TAG: v", code, StringComparison.Ordinal);
-        Assert.Contains("tag=\"$READER_TAG\"", code, StringComparison.Ordinal);
-        Assert.DoesNotContain("gh release view", code, StringComparison.Ordinal);
-        // The download still uses the tag, so pinning cannot silently stop pinning.
+        Assert.Contains("READER_PIN: .github/backup-reader.json", code, StringComparison.Ordinal);
+        Assert.Contains("tag=$(jq -er '.tag' \"$pin\")", code, StringComparison.Ordinal);
         Assert.Contains("gh release download \"$tag\"", code, StringComparison.Ordinal);
+        Assert.Contains("echo \"$sha  $asset\" | sha256sum -c -", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("gh release view", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("READER_TAG", code, StringComparison.Ordinal);
+        // No second copy of the pin: no release tag and no SHA-256 literal in the workflow.
+        Assert.DoesNotMatch(new System.Text.RegularExpressions.Regex(@"\bv\d+\.\d+\.\d+\b"), code);
+        Assert.DoesNotMatch(new System.Text.RegularExpressions.Regex(@"\b[0-9a-f]{64}\b"), code);
+
+        // The platform key the workflow reads is one the pin carries.
+        var key = System.Text.RegularExpressions.Regex.Match(code, @"\.assets\[""([^""]+)""\]\.sha256").Groups[1].Value;
+        Assert.Equal("linux-x64", key);
+        Assert.Contains(key, BackupReaderPin.Parse(Read("backup-reader.json")).Assets.Keys);
     }
 
     // ---- the per-test watchdog (#3431) -------------------------------------------------

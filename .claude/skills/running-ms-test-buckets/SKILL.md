@@ -263,10 +263,11 @@ fine.
 `--test-data` additionally needs the demo backup (`BusinessCentral-W1.bak`, from the
 sandbox artifact) at the selected build's artifact path — auto-provision downloads it there when
 missing (#4923) — and the backup reader binary the runner
-looks for at `~/.cache/al-runner/bcbak/bcbak`.
+looks for at `~/.cache/al-runner/bcbak/bcbak`, which auto-provision installs there at the pinned
+release, checksum-verified, when it is missing or is a different build (#4925).
 
-**Check the reader's version before measuring anything on BC 28.2 or newer.** `ms-bucket.yml`
-pins it as `READER_TAG`; a box carrying **v0.1.1** refuses those backups with `block N of MSDA region is
+**Check the reader's version before measuring anything on BC 28.2 or newer.** The pin is
+`.github/backup-reader.json`, read by both the runner and `ms-bucket.yml`; a box carrying **v0.1.1** refuses those backups with `block N of MSDA region is
 neither mapped by the derived extent list nor padding filler`. The trap is what that looks like
 from the outside: the bucket EXEC-FAILs and the run reports **`Tests: 0 total`** with `pass: 0`
 and `fail: 0` — not a hang, not a pass, and a `--test` filter then reports that it selected no
@@ -274,13 +275,13 @@ test, which reads like a wrong filter rather than an unread backup (measured on 
 re-measuring #3495's Tests-SCM entry point, #4486).
 
 ```bash
-~/.cache/al-runner/bcbak/bcbak --version     # want >= ms-bucket.yml's READER_TAG
+~/.cache/al-runner/bcbak/bcbak --version     # want the tag in .github/backup-reader.json
 ```
 
-Install it the way the workflow does — `gh release download <READER_TAG> --repo
-StefanMaron/BusinessCentral.DbReader --pattern bcdb-linux-x64 --pattern SHA256SUMS`, verify the
-checksum, then `install -D -m 0755 bcdb-linux-x64 "$HOME/.cache/al-runner/bcbak/bcbak"`. The
-path is shared across every agent on the box, so back up what is there before overwriting it.
+`al-runner provision --test-data` (or any `--test-data` run under auto-provision) replaces a
+reader in that slot whose SHA-256 is not the pinned one. A reader at `AL_RUNNER_BCBAK` or on
+`PATH` is left alone. The path is shared across every agent on the box, so a replacement there
+changes every agent's reader at once.
 
 **And rebuild the engine for the BC version you select, rather than passing `--bc-version`
 alone.** A minor `.github/bc-versions.txt` lists runs without warning on another minor's engine

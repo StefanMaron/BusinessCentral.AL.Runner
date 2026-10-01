@@ -365,6 +365,13 @@
     <EmbeddedResource Include="$(RepoRoot)/.github/bc-versions.txt" LogicalName="AlRunner.bc-versions.txt" />
   </ItemGroup>
 
+  <!-- #4925: the ONE pin of the backup reader release (tag + per-platform SHA-256), read by
+       BackupReaderProvisioning and by ms-bucket.yml. Unconditional: a build without it would
+       ship a runner that cannot install the reader. -->
+  <ItemGroup>
+    <EmbeddedResource Include="$(RepoRoot)/.github/backup-reader.json" LogicalName="AlRunner.backup-reader.json" />
+  </ItemGroup>
+
   <PropertyGroup>
     <!-- _BCVersion's dev-machine-fallback default is declared once in the repo-root
          Directory.Build.props (#2102) — see the comment there — not per-project, so it
