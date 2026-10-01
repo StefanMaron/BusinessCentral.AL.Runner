@@ -88,6 +88,15 @@ instead of waiting for the whole bundle — followed by exactly one terminal
 `summary` line. A request naming multiple `sourcePaths` runs all of them and
 streams `test` lines across all of them before the one final `summary`.
 
+A `sourcePaths` entry that only **contains** apps (no `app.json` of its own, an `app.json` in
+every suite below it) is served as one bundle per app, so each app compiles under its own
+`app.json` — its dependencies, `propagateDependencies`, `internalsVisibleTo` and
+`preprocessorSymbols` — as the CLI's per-app compile does (#5107). Loose `.al` files at such a
+container's root, next to the apps, are not compiled, which is what the CLI does with them too.
+A container holding a suite without an `app.json` is still compiled as one module (#5119).
+`--dap` does not do this: a debug session serves one module, so a container stays one bundle
+there (#5121).
+
 Bundles execute in **dependency order**, not the order they were listed: if one
 bundle in the request declares a dependency on another, the dependency runs
 first (#2614). Without that, a dependency listed last was compiled against —
@@ -207,8 +216,9 @@ signal can reach the runner mid-run rather than being queued behind it.
 
 ### `execute`
 
-Runs one `OnRun`-bearing codeunit per bundle (run-mode). Unlike `runTests`
-this is **not** streamed — one v1-shaped response line, no `type` discriminator:
+Runs one `OnRun`-bearing codeunit per bundle (run-mode). A `sourcePaths` entry that only
+contains apps is one bundle per app, as for `runTests`, so it returns one result per app (#5107).
+Unlike `runTests` this is **not** streamed — one v1-shaped response line, no `type` discriminator:
 
 ```json
 {"exitCode":0,"tests":[{"name":"Codeunit60110.OnRun","status":"pass","durationMs":7}]}

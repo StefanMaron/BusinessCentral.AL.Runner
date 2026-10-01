@@ -5441,8 +5441,6 @@ return strictExitCode ? computedExitCode : 0;
     {
         // #5079: a module an earlier request compiled is reused only for its own source.
         DependencyLoader.BeginReuseEpoch();
-        // #5107: one source path per app, as RunTestsWithSelection already did for its callers.
-        sourcePaths = ExpandAppContainerRoots(sourcePaths);
         if (tdd == null)
             return RunAllBundlesForServerPass(sourcePaths, requestPackagePaths, runStep, cancellationToken,
                 useIncrementalChangeModel, beforeRun, pinLoadToChangeModel, null, false, false, out _);
@@ -8751,7 +8749,9 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             foreach (var p in req.SourcePaths)
                 if (!Directory.Exists(p))
                     return AlRunner.ServerProtocol.Error($"bundle directory not found: {p}");
-            sourcePaths = req.SourcePaths;
+            // #5107: one result per app of a container, each compiled under its own app.json.
+            // --dap does not opt in: RunDapLoop serves exactly one module per session.
+            sourcePaths = ExpandAppContainerRoots(req.SourcePaths);
         }
 
         var isolationError = ApplyRequestIsolation(req);
