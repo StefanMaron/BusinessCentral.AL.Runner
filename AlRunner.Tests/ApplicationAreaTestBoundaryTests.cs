@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -17,33 +15,6 @@ namespace AlRunner.Tests;
 /// </summary>
 public class ApplicationAreaTestBoundaryTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
-    private static (string output, int exit) RunRunner(string bundle, params string[] extra)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        foreach (var e in extra) args.Append(" \"").Append(e).Append('"');
-        args.Append(" \"").Append(bundle).Append('"');
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(180_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
-
     private static string WriteBundle(string name)
     {
         var root = TestScratch.Dir(name);
@@ -105,28 +76,27 @@ public class ApplicationAreaTestBoundaryTests
         return root;
     }
 
-    private static void Has(string output, string s) =>
-        Assert.True(output.Contains(s), $"expected [{s}] in runner output:\n{output}");
-
-    private static void Lacks(string output, string s) =>
-        Assert.False(output.Contains(s), $"did not expect [{s}] in runner output:\n{output}");
+    /// <summary>The CLI's "no <paramref name="s"/> in the output", for a string only a failure message can carry.</summary>
+    private static void Lacks(ServerRunResult r, string s) =>
+        Assert.False(r.Tests.Any(t => t.Message.Contains(s)) || r.CompilationErrors.Any(c => c.Contains(s)),
+            $"did not expect [{s}] in runner output:\n{r}");
 
     [SkippableTheory]
     [InlineData("codeunit")]
     [InlineData("test")]
     [InlineData("disabled")]
-    public void AreasATestSets_DoNotReachTheNextTestOrCodeunit_UnderEveryIsolation(string isolation)
+    public async Task AreasATestSets_DoNotReachTheNextTestOrCodeunit_UnderEveryIsolation(string isolation)
     {
         TestArtifacts.SkipIfMissing();
-        var (output, _) = RunRunner(WriteBundle($"al-runner-apparea-boundary-3575-{isolation}"),
-            "--isolation", isolation);
+        var r = await SuiteServer.RunViaServer(new[] { WriteBundle($"al-runner-apparea-boundary-3575-{isolation}") },
+            Array.Empty<string>(), testIsolation: isolation);
 
-        Has(output, "PASS  Codeunit63571.A_SetsAnArea");
-        Has(output, "PASS  Codeunit63571.B_NextTestInTheSameCodeunit");
-        Has(output, "PASS  Codeunit63571.C_SetsAnAreaAndIsTheLastTest");
-        Has(output, "PASS  Codeunit63572.D_NextCodeunit");
-        Lacks(output, "AAB1 FAIL");
-        Lacks(output, "AAB2 FAIL");
-        Lacks(output, "AAB3 FAIL");
+        r.AssertPassed("Codeunit63571.A_SetsAnArea");
+        r.AssertPassed("Codeunit63571.B_NextTestInTheSameCodeunit");
+        r.AssertPassed("Codeunit63571.C_SetsAnAreaAndIsTheLastTest");
+        r.AssertPassed("Codeunit63572.D_NextCodeunit");
+        Lacks(r, "AAB1 FAIL");
+        Lacks(r, "AAB2 FAIL");
+        Lacks(r, "AAB3 FAIL");
     }
 }

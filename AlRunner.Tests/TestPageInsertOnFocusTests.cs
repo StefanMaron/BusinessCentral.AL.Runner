@@ -8,7 +8,6 @@ namespace AlRunner.Tests;
 
 public sealed class TestPageInsertOnFocusTests : IDisposable
 {
-
     private readonly string _root;
 
     public TestPageInsertOnFocusTests()

@@ -19,7 +19,7 @@ namespace AlRunner.Tests;
 /// see StefanMaron/BusinessCentral.AL.Language.Tests PR extending Codeunit 60943 "Test
 /// AssertError Rollback" (three new cases), per
 /// .claude/rules/bc-behavior-tests-go-upstream.md. This test exists so a regression in OUR
-/// OWN rollback mechanism fails loudly here, spawning the real runner against a synthetic
+/// OWN rollback mechanism fails loudly here, running the real runner (SuiteServer) against a synthetic
 /// bundle, without depending on the submodule pin having moved yet.
 ///
 /// No Library Assert dependency (no "application" in the fixture's app.json — see
@@ -28,7 +28,6 @@ namespace AlRunner.Tests;
 /// </summary>
 public class AssertErrorRollbackScopeTests
 {
-
     [SkippableFact]
     public async Task UnrelatedAssertError_RollsBackMultiWriteAndInStatementShapes()
     {

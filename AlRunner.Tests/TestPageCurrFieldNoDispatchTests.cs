@@ -27,7 +27,6 @@ namespace AlRunner.Tests;
 
 public sealed class TestPageCurrFieldNoDispatchTests : IDisposable
 {
-
     private readonly string _root;
 
     public TestPageCurrFieldNoDispatchTests()

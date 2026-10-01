@@ -10,7 +10,6 @@ namespace AlRunner.Tests;
 
 public sealed class TestPageFailedInsertRaisesTests : IDisposable
 {
-
     private readonly string _root;
 
     public TestPageFailedInsertRaisesTests()

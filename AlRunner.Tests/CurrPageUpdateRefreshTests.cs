@@ -25,7 +25,6 @@ namespace AlRunner.Tests;
 
 public sealed class CurrPageUpdateRefreshTests : IDisposable
 {
-
     private readonly string _root;
 
     public CurrPageUpdateRefreshTests()
@@ -417,5 +416,4 @@ public sealed class CurrPageUpdateRefreshTests : IDisposable
             }
             """);
     }
-
 }

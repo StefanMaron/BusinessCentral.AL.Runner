@@ -25,7 +25,6 @@ namespace AlRunner.Tests;
 /// </summary>
 public class CodeunitRunCommitBoundaryTests
 {
-
     [SkippableFact]
     public async Task GuardedRun_CommitThenError_KeepsTheCommittedRowAndRollsBackTheRest()
     {

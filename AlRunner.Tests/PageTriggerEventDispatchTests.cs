@@ -33,7 +33,6 @@ namespace AlRunner.Tests;
 /// </summary>
 public class PageTriggerEventDispatchTests
 {
-
     [SkippableFact]
     public async Task PageTriggerEventSubscribers_AreRegisteredAndTheirVetoIsHonoured()
     {

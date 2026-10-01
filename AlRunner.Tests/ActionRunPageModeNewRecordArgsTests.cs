@@ -16,7 +16,6 @@ namespace AlRunner.Tests;
 
 public sealed class ActionRunPageModeNewRecordArgsTests : IDisposable
 {
-
     private readonly string _root;
 
     public ActionRunPageModeNewRecordArgsTests()
@@ -335,5 +334,4 @@ public sealed class ActionRunPageModeNewRecordArgsTests : IDisposable
             }
             """);
     }
-
 }

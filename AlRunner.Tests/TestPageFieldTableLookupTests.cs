@@ -32,7 +32,6 @@ namespace AlRunner.Tests;
 /// </summary>
 public class TestPageFieldTableLookupTests
 {
-
     private static string WriteBundle()
     {
         var root = TestScratch.Dir("al-runner-testpage-field-table-lookup-2549");

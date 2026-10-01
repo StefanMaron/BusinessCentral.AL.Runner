@@ -13,7 +13,6 @@ namespace AlRunner.Tests;
 
 public sealed class RecordLinkColumnsEndToEndTests : IDisposable
 {
-
     private readonly string _root;
 
     public RecordLinkColumnsEndToEndTests()

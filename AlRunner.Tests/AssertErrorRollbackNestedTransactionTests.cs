@@ -18,7 +18,7 @@ namespace AlRunner.Tests;
 /// and belongs upstream — see StefanMaron/BusinessCentral.AL.Language.Tests PR extending
 /// error-handling/ with Codeunit 60945 "Test AssertError Rollback NTx", per
 /// .claude/rules/bc-behavior-tests-go-upstream.md. This test exists so a regression in OUR
-/// OWN commit-point bookkeeping fails loudly here, spawning the real runner against a
+/// OWN commit-point bookkeeping fails loudly here, running the real runner (SuiteServer) against a
 /// synthetic bundle, without depending on the submodule pin having moved yet (the corpus PR
 /// had not merged when this test was written).
 ///
@@ -29,7 +29,6 @@ namespace AlRunner.Tests;
 /// </summary>
 public class AssertErrorRollbackNestedTransactionTests
 {
-
     [SkippableFact]
     public async Task UnrelatedAssertError_RollsBackWritesMadeBeforePlainNestedTransaction()
     {

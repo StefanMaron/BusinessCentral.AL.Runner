@@ -17,7 +17,6 @@ namespace AlRunner.Tests;
 
 public sealed class TestPageClosedVariableTests : IDisposable
 {
-
     private readonly string _root;
 
     public TestPageClosedVariableTests()
@@ -312,5 +311,4 @@ public sealed class TestPageClosedVariableTests : IDisposable
             }
             """);
     }
-
 }

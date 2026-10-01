@@ -11,7 +11,7 @@ namespace AlRunner.Tests;
 /// The BEHAVIOURAL claim is plain BC behaviour and lives upstream —
 /// StefanMaron/BusinessCentral.AL.Language.Tests#278, codeunit 60899
 /// "Test TxModel AutoRollback", per .claude/rules/bc-behavior-tests-go-upstream.md, where all
-/// five arms were measured on a real BC 28.4 service tier. This test spawns the real runner
+/// five arms were measured on a real BC 28.4 service tier. This test runs the real runner (SuiteServer)
 /// against a synthetic bundle so a regression in the runner's own guard fails loudly here
 /// without depending on the submodule pin having moved yet.
 ///
@@ -22,7 +22,6 @@ namespace AlRunner.Tests;
 /// </summary>
 public class TransactionModelCommitRefusalTests
 {
-
     [SkippableFact]
     public async Task AutoRollbackTest_ExplicitCommit_IsRefusedWithBcOwnText()
     {

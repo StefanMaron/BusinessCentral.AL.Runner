@@ -15,7 +15,6 @@ namespace AlRunner.Tests;
 /// </summary>
 public class XmlPortImportFailureRollbackTests
 {
-
     [SkippableFact]
     public async Task GuardedImport_FailureRollsBackItsRows_SuccessKeepsThem()
     {

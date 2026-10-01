@@ -11,7 +11,6 @@ namespace AlRunner.Tests;
 
 public sealed class ApplicationAreaControlRemovalTests : IDisposable
 {
-
     private readonly string _root;
 
     public ApplicationAreaControlRemovalTests()

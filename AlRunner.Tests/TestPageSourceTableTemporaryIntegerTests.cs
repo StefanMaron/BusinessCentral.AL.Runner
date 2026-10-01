@@ -22,7 +22,6 @@ namespace AlRunner.Tests;
 
 public sealed class TestPageSourceTableTemporaryIntegerTests : IDisposable
 {
-
     private readonly string _root;
 
     public TestPageSourceTableTemporaryIntegerTests()

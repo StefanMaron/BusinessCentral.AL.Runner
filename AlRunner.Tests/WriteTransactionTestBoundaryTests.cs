@@ -10,7 +10,7 @@ namespace AlRunner.Tests;
 ///
 /// The BEHAVIOURAL claim is plain BC behaviour and lives upstream (see the PR body's
 /// <c>Corpus-PR:</c> line, codeunit 60878 "Test Write Tx Test Boundary"), per
-/// .claude/rules/bc-behavior-tests-go-upstream.md. This test spawns the real runner against a
+/// .claude/rules/bc-behavior-tests-go-upstream.md. This test runs the real runner (SuiteServer) against a
 /// synthetic bundle so a regression in the runner's own boundary handling fails loudly here
 /// without depending on the submodule pin having moved.
 ///
@@ -20,7 +20,6 @@ namespace AlRunner.Tests;
 /// </summary>
 public class WriteTransactionTestBoundaryTests
 {
-
     [SkippableFact]
     public async Task UncommittedWriteInAnEarlierTest_DoesNotLeaveTheNextTestInAWriteTransaction()
     {

@@ -18,7 +18,6 @@ namespace AlRunner.Tests;
 
 public sealed class PageOpensOnStoredRowTests : IDisposable
 {
-
     private readonly string _root;
 
     public PageOpensOnStoredRowTests()
@@ -326,5 +325,4 @@ public sealed class PageOpensOnStoredRowTests : IDisposable
             }
             """);
     }
-
 }

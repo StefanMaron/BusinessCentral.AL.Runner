@@ -42,7 +42,6 @@ namespace AlRunner.Tests;
 
 public sealed class TestPageExtensionActionWithPartDispatchTests : IDisposable
 {
-
     private readonly string _root;
 
     public TestPageExtensionActionWithPartDispatchTests()

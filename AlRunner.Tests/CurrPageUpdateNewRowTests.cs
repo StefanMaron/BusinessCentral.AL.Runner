@@ -19,7 +19,6 @@ namespace AlRunner.Tests;
 
 public sealed class CurrPageUpdateNewRowTests : IDisposable
 {
-
     private readonly string _root;
 
     public CurrPageUpdateNewRowTests()
@@ -331,5 +330,4 @@ public sealed class CurrPageUpdateNewRowTests : IDisposable
             }
             """);
     }
-
 }

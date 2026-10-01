@@ -59,7 +59,6 @@ namespace AlRunner.Tests;
 
 public sealed class TestPageModalClosePartFlushTests : IDisposable
 {
-
     private readonly string _root;
 
     public TestPageModalClosePartFlushTests()

@@ -16,7 +16,6 @@ namespace AlRunner.Tests;
 
 public sealed class TestPageDeletedRowCloseTests : IDisposable
 {
-
     private readonly string _root;
 
     public TestPageDeletedRowCloseTests()
@@ -557,5 +556,4 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
             }
             """);
     }
-
 }

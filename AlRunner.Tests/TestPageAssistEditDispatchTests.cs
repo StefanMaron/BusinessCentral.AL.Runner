@@ -28,12 +28,11 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-// Spawns the runner as a subprocess, same convention as TestPageDrillDownDispatchTests, whose
+// Runs on the shared test server (SuiteServer), same convention as TestPageDrillDownDispatchTests, whose
 // shape this follows deliberately: assist-edit is that test's sibling surface and the two
 // should not diverge in how they are driven.
 public sealed class TestPageAssistEditDispatchTests : IDisposable
 {
-
     private readonly string _root;
 
     public TestPageAssistEditDispatchTests()

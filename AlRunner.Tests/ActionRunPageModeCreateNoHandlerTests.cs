@@ -14,7 +14,6 @@ namespace AlRunner.Tests;
 
 public sealed class ActionRunPageModeCreateNoHandlerTests : IDisposable
 {
-
     private readonly string _root;
 
     public ActionRunPageModeCreateNoHandlerTests()
@@ -213,5 +212,4 @@ public sealed class ActionRunPageModeCreateNoHandlerTests : IDisposable
             }
             """);
     }
-
 }

@@ -3,18 +3,12 @@
 // control's AL name there, not its caption; the BC half is corpus codeunit 67630 (and 60662).
 // This pins the runner's ITestField.Name for a page control and for two controls one
 // pageextension adds, so the delta lookup has to match on the control id.
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
 
 public sealed class TestPageFieldErrorNamesControlTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
     private const string Al = """
         table 63450 "Fen Row"
         {
@@ -149,7 +143,7 @@ public sealed class TestPageFieldErrorNamesControlTests
         """;
 
     [SkippableFact]
-    public void FieldErrors_NameTheControl_NotItsCaption()
+    public async Task FieldErrors_NameTheControl_NotItsCaption()
     {
         TestArtifacts.SkipIfMissing();
         var root = TestScratch.Dir("al-runner-3458-field-error-control-name");
@@ -161,29 +155,9 @@ public sealed class TestPageFieldErrorNamesControlTests
         """);
         File.WriteAllText(Path.Combine(root, "Fen.al"), Al);
 
-        var (output, exitCode) = RunCli($" --no-cache \"{root}\"");
-        Assert.False(output.Contains("WRONG:"), output);
-        Assert.True(output.Contains("Tests: 5   passed 5   failed 0"), output);
-        Assert.Equal(0, exitCode);
-    }
-
-    private static (string Output, int ExitCode) RunCli(string args)
-    {
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet",
-            Arguments = TestBuildConfig.RunArgs(ProjectPath) + TestBuildConfig.BcVersionArg + args,
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        using var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(240_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
+        var r = await SuiteServer.RunViaServer(root);
+        Assert.False(r.Tests.Any(t => t.Message.Contains("WRONG:")), r.ToString());
+        Assert.True(r.Total == 5 && r.Passed == 5 && r.Failed == 0, r.ToString());
+        Assert.Equal(0, r.ExitCode);
     }
 }

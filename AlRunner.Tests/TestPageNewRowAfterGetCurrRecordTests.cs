@@ -12,7 +12,6 @@ namespace AlRunner.Tests;
 
 public sealed class TestPageNewRowAfterGetCurrRecordTests : IDisposable
 {
-
     private readonly string _root;
 
     public TestPageNewRowAfterGetCurrRecordTests()

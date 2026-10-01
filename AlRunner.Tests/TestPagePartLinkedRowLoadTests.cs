@@ -22,8 +22,8 @@ namespace AlRunner.Tests;
 /// StefanMaron/BusinessCentral.AL.Language.Tests codeunit 60815 "Test Page Part Agcr Tests"
 /// (corpus PR #141, all 8 BC legs green, independently confirmed against a local BC 28.4
 /// container), per .claude/rules/bc-behavior-tests-go-upstream.md. This test exists so a
-/// regression in OUR OWN eager-build/refresh-on-load mechanism fails loudly here, spawning
-/// the real runner against a synthetic bundle, without depending on the submodule pin having
+/// regression in OUR OWN eager-build/refresh-on-load mechanism fails loudly here, running
+/// the real runner (SuiteServer) against a synthetic bundle, without depending on the submodule pin having
 /// moved yet.
 ///
 /// No Library Assert dependency (no "application" in the fixture's app.json — see
@@ -32,7 +32,6 @@ namespace AlRunner.Tests;
 /// </summary>
 public class TestPagePartLinkedRowLoadTests
 {
-
     private static string WriteBundle()
     {
         var root = TestScratch.Dir("al-runner-testpage-part-linked-row-load-2677");

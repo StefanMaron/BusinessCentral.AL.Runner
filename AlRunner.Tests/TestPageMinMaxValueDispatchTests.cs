@@ -24,7 +24,6 @@ namespace AlRunner.Tests;
 
 public sealed class TestPageMinMaxValueDispatchTests : IDisposable
 {
-
     private readonly string _root;
 
     public TestPageMinMaxValueDispatchTests()

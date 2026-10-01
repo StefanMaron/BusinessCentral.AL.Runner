@@ -14,7 +14,6 @@ namespace AlRunner.Tests;
 
 public sealed class ActionRunObjectCodeunitSharedRecTests : IDisposable
 {
-
     private readonly string _root;
 
     public ActionRunObjectCodeunitSharedRecTests()
@@ -201,5 +200,4 @@ public sealed class ActionRunObjectCodeunitSharedRecTests : IDisposable
             }
             """);
     }
-
 }

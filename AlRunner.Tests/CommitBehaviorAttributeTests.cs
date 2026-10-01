@@ -12,8 +12,8 @@ namespace AlRunner.Tests;
 /// rolls the write back; Error makes Commit() raise") is a plain-BC-behaviour claim and lives
 /// upstream — StefanMaron/BusinessCentral.AL.Language.Tests#276, codeunit 60881
 /// "Test Commit Behavior Attr", per .claude/rules/bc-behavior-tests-go-upstream.md. This test
-/// exists so a regression in OUR OWN commit-point bookkeeping fails loudly here, spawning the
-/// real runner against a synthetic bundle, without depending on the submodule pin having moved
+/// exists so a regression in OUR OWN commit-point bookkeeping fails loudly here, running the
+/// real runner (SuiteServer) against a synthetic bundle, without depending on the submodule pin having moved
 /// yet (that corpus PR had not merged when this test was written).
 ///
 /// The AL assertions below are all plain BC-behaviour claims already green upstream; what
@@ -30,7 +30,6 @@ namespace AlRunner.Tests;
 /// </summary>
 public class CommitBehaviorAttributeTests
 {
-
     [SkippableFact]
     public async Task CommitBehaviorAttribute_IsConsultedByALCommit()
     {

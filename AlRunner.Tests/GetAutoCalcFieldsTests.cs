@@ -7,11 +7,10 @@ namespace AlRunner.Tests;
 /// replaces BC's primary-key lookup and must call BC's CalcAutoCalcFieldsAsync after a found record,
 /// as BC's own body does. Get, Get(RecordId), GetBySystemId and RecordRef.Get all route through it.
 /// The BC-behaviour claim is pinned upstream in corpus codeunit 60910 "Test SetAutoCalcFields On Get";
-/// this spawns the runner on a platform-only bundle so a regression in the replacement fails here.
+/// this runs the runner (SuiteServer) on a platform-only bundle so a regression in the replacement fails here.
 /// </summary>
 public class GetAutoCalcFieldsTests
 {
-
     [SkippableFact]
     public async Task PrimaryKeyLookups_HonorSetAutoCalcFields()
     {

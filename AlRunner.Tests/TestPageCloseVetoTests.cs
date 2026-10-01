@@ -17,7 +17,6 @@ namespace AlRunner.Tests;
 
 public sealed class TestPageCloseVetoTests : IDisposable
 {
-
     private readonly string _root;
 
     public TestPageCloseVetoTests()
@@ -168,5 +167,4 @@ public sealed class TestPageCloseVetoTests : IDisposable
             }
             """);
     }
-
 }

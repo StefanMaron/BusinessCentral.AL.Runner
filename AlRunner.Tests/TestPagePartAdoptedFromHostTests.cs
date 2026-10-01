@@ -42,7 +42,6 @@ namespace AlRunner.Tests;
 
 public sealed class TestPagePartAdoptedFromHostTests : IDisposable
 {
-
     private readonly string _root;
 
     public TestPagePartAdoptedFromHostTests()

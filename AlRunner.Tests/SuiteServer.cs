@@ -48,16 +48,21 @@ public static class SuiteServer
     public static Task<ServerRunResult> RunViaServer(params string[] sourcePaths)
         => RunViaServer(sourcePaths, Array.Empty<string>());
 
-    /// <summary>As <see cref="RunViaServer(string[])"/>, with the request's <c>packagePaths</c> (the CLI's <c>--packages</c>).</summary>
+    /// <summary>
+    /// As <see cref="RunViaServer(string[])"/>, with the request's <c>packagePaths</c> (the CLI's
+    /// <c>--packages</c>) and <c>testIsolation</c> (the CLI's <c>--isolation</c>).
+    /// </summary>
     public static async Task<ServerRunResult> RunViaServer(string[] sourcePaths, string[] packagePaths,
-        TimeSpan? timeout = null)
+        string? testIsolation = null, TimeSpan? timeout = null)
     {
-        var request = JsonSerializer.Serialize(new
+        var fields = new Dictionary<string, object>
         {
-            command = "runTests",
-            sourcePaths,
-            packagePaths,
-        });
+            ["command"] = "runTests",
+            ["sourcePaths"] = sourcePaths,
+            ["packagePaths"] = packagePaths,
+        };
+        if (testIsolation != null) fields["testIsolation"] = testIsolation;
+        var request = JsonSerializer.Serialize(fields);
 
         await Slots.WaitAsync();
         Pooled? pooled = null;
@@ -71,12 +76,8 @@ public static class SuiteServer
             pooled.Requests++;
 
             // The canary after every request names the request that left state behind.
-            var again = await SharedServerCanary.RunAsync(pooled.Server, pooled.CanaryBundle);
-            if (again != pooled.CanaryBaseline)
-                throw new InvalidOperationException(
-                    "SuiteServer canary: this request left server-process state behind, so the shared " +
-                    "server is discarded (docs/shared-cli-server.md#suite-server).\n" +
-                    $"request: {request}\n--- canary first ---\n{pooled.CanaryBaseline}\n--- canary now ---\n{again}");
+            CheckCanary(request, pooled.CanaryBaseline,
+                await SharedServerCanary.RunAsync(pooled.Server, pooled.CanaryBundle));
 
             keep = pooled.Requests < RequestsPerServer;
             return result;
@@ -90,6 +91,16 @@ public static class SuiteServer
             }
             Slots.Release();
         }
+    }
+
+    /// <summary>Throws, naming the request, when the canary's fingerprint after it differs from the server's first.</summary>
+    internal static void CheckCanary(string request, string baseline, string after)
+    {
+        if (after != baseline)
+            throw new InvalidOperationException(
+                "SuiteServer canary: this request left server-process state behind, so the shared " +
+                "server is discarded (docs/shared-cli-server.md#suite-server).\n" +
+                $"request: {request}\n--- canary first ---\n{baseline}\n--- canary now ---\n{after}");
     }
 
     private static async Task<Pooled> StartAsync()

@@ -10,7 +10,6 @@ namespace AlRunner.Tests;
 
 public sealed class LocalTestPageTrapScopeTests : IDisposable
 {
-
     private readonly string _root;
 
     public LocalTestPageTrapScopeTests()
@@ -188,7 +187,6 @@ public sealed class LocalTestPageTrapScopeTests : IDisposable
                 HandlerRan := true;
             end;
         }
-
 
         // The disposed scope here is the test method's own: a trap left on a [Test]'s local must
         // not capture the next test's page run. Declaration order is the run order.

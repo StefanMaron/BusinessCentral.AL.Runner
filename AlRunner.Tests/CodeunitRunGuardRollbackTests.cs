@@ -36,7 +36,6 @@ namespace AlRunner.Tests;
 /// </summary>
 public class CodeunitRunGuardRollbackTests
 {
-
     [SkippableFact]
     public async Task GuardedRun_InstanceForm_TrapsAndRollsBack_BothSpellingsAgree()
     {

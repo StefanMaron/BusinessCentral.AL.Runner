@@ -16,7 +16,6 @@ namespace AlRunner.Tests;
 
 public sealed class PageRunClonesCallersRecordTests : IDisposable
 {
-
     private readonly string _root;
 
     public PageRunClonesCallersRecordTests()
@@ -294,5 +293,4 @@ public sealed class PageRunClonesCallersRecordTests : IDisposable
             }
             """);
     }
-
 }

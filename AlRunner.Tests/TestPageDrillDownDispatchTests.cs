@@ -32,7 +32,6 @@ namespace AlRunner.Tests;
 // Runs through the suite's shared server (#5111); the fixture uses a per-instance Guid temp dir.
 public sealed class TestPageDrillDownDispatchTests : IDisposable
 {
-
     private readonly string _root;
 
     public TestPageDrillDownDispatchTests()

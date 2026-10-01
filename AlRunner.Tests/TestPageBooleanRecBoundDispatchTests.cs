@@ -29,7 +29,6 @@ namespace AlRunner.Tests;
 
 public sealed class TestPageBooleanRecBoundDispatchTests : IDisposable
 {
-
     private readonly string _root;
 
     public TestPageBooleanRecBoundDispatchTests()
