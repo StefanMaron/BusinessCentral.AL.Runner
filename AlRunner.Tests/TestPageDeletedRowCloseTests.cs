@@ -10,18 +10,12 @@
 //
 // The fixture declares no "application", per .claude/rules/no-base-app-in-csharp-tests.md.
 
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
 
 public sealed class TestPageDeletedRowCloseTests : IDisposable
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
     private readonly string _root;
 
     public TestPageDeletedRowCloseTests()
@@ -37,18 +31,18 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
     }
 
     [SkippableFact]
-    public void AnActionThatLeavesTheRowDeleted_ClosesACard_AndMovesAList()
+    public async Task AnActionThatLeavesTheRowDeleted_ClosesACard_AndMovesAList()
     {
         TestArtifacts.SkipIfMissing();
         var pkg = TestArtifacts.PlatformAppsDir();
         TestArtifacts.SkipIfDirectoryMissing(pkg, "platform apps");
 
-        var (exit, output) = Spawn(_root, pkg);
+        var r = await SuiteServer.RunViaServer(_root);
 
         // Each arm asserts inside AL; the counts separate "passed" from "discovered nothing".
-        Assert.True(output.Contains("passed 18 "),
-            $"expected all eighteen arms to pass; exit={exit}\n{output}");
-        Assert.Contains("failed 0 ", output);
+        Assert.True(r.Passed == 18,
+            $"expected all eighteen arms to pass; exit={r.ExitCode}\n{r}");
+        Assert.True(r.Failed == 0, $"expected 0 failed\n{r}");
     }
 
     private void WriteBundle()
@@ -561,32 +555,5 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
                 end;
             }
             """);
-    }
-
-    private static (int ExitCode, string Output) Spawn(string bundle, string pkgDir)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        args.Append($" \"{bundle}\"");
-        args.Append($" --package-cache \"{pkgDir}\"");
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet",
-            Arguments = args.ToString(),
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        using var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(240_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (p.ExitCode, sb.ToString());
     }
 }

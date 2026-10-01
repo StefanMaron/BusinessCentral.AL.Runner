@@ -522,9 +522,6 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // Measured 81.7s in CI.
             ["ManifestFeaturesSubprocessTests"] = 81,
             ["TestPageDrillDownDispatchTests"] = 75,
-            // #1870: one test, spawning a real runner subprocess against an AL fixture
-            // (BC engine cold-start + AL emit/compile once). Measured 63.9s in CI.
-            ["TestPageBooleanRecBoundDispatchTests"] = 63,
             ["ServerTestIsolationTests"] = 69,
             ["ServerStreamingTests"] = 50,
             ["ExpectationManifestWiringTests"] = 47,

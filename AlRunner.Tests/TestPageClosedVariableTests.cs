@@ -11,19 +11,12 @@
 //
 // The fixture declares no "application", per .claude/rules/no-base-app-in-csharp-tests.md.
 
-using System.Diagnostics;
-using System.Text;
-using System.Text.RegularExpressions;
 using Xunit;
 
 namespace AlRunner.Tests;
 
 public sealed class TestPageClosedVariableTests : IDisposable
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
     private readonly string _root;
 
     public TestPageClosedVariableTests()
@@ -39,19 +32,17 @@ public sealed class TestPageClosedVariableTests : IDisposable
     }
 
     [SkippableFact]
-    public void ATestPageVariable_IsOpenOnlyBetweenOpenAndClose()
+    public async Task ATestPageVariable_IsOpenOnlyBetweenOpenAndClose()
     {
         TestArtifacts.SkipIfMissing();
         var pkg = TestArtifacts.PlatformAppsDir();
         TestArtifacts.SkipIfDirectoryMissing(pkg, "platform apps");
 
-        var (exit, output) = Spawn(_root, pkg);
+        var r = await SuiteServer.RunViaServer(_root);
 
-        var m = Regex.Match(output, @"Tests:\s+(\d+)\s+passed\s+(\d+)\s+failed\s+(\d+)");
-        Assert.True(m.Success, $"no Tests: summary line; exit={exit}\n{output}");
-        Assert.True(m.Groups[1].Value == "11" && m.Groups[2].Value == "11" && m.Groups[3].Value == "0",
-            $"expected all eleven arms to pass; exit={exit}\n{output}");
-        Assert.Equal(0, exit);
+        Assert.True(r.Total == 11 && r.Passed == 11 && r.Failed == 0,
+            $"expected all eleven arms to pass; exit={r.ExitCode}\n{r}");
+        Assert.Equal(0, r.ExitCode);
     }
 
     private void WriteBundle()
@@ -319,32 +310,5 @@ public sealed class TestPageClosedVariableTests : IDisposable
                 end;
             }
             """);
-    }
-
-    private static (int ExitCode, string Output) Spawn(string bundle, string pkgDir)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        args.Append($" \"{bundle}\"");
-        args.Append($" --package-cache \"{pkgDir}\"");
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet",
-            Arguments = args.ToString(),
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        using var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(240_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (p.ExitCode, sb.ToString());
     }
 }

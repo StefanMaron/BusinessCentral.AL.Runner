@@ -24,93 +24,41 @@
 //      platform step, so a declaration check that merely resolved the method name would fire on
 //      every page in existence and route every ordinary page through a trigger it never wrote.
 //      The fixture's plain page declares neither and asserts an EMPTY trace after a full walk.
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
 
 public sealed class PageRowsetTriggerTests
 {
-    /// <summary>The cap this file's subprocess spawns actually apply, and the single source of
-    /// the figure their timeout messages report (#4275). Derived rather than repeated: a literal
-    /// in the message is invisible while it happens to match, and wrong the moment the cap moves.
-    /// Measured for real on #3435 — a cap squeezed to 3s still threw "did not exit within 120s".
-    /// Same shape as BcVersionDefaultDocumentationTests.SpawnTimeoutMs (#3487).</summary>
-    private const int SpawnTimeoutMs = 180_000;
-
     private static readonly string RepoRoot = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
 
     private static readonly string FixtureDir =
         Path.Combine(RepoRoot, "AlRunner.Tests", "Fixtures", "PageRowsetTriggers");
 
-    private static (int ExitCode, string StdOut, string StdErr) Run(string cacheDir)
-    {
-        var sb = new StringBuilder(TestBuildConfig.RunArgs(Path.Combine(RepoRoot, "AlRunner")));
-        sb.Append(' ').Append($"\"{FixtureDir}\"");
-        sb.Append(' ').Append($"--cache \"{cacheDir}\"");
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet",
-            Arguments = sb.ToString(),
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WorkingDirectory = RepoRoot,
-        };
-
-        var outSb = new StringBuilder();
-        var errSb = new StringBuilder();
-        using var proc = Process.Start(psi)!;
-        proc.OutputDataReceived += (_, e) => { if (e.Data != null) lock (outSb) outSb.AppendLine(e.Data); };
-        proc.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (errSb) errSb.AppendLine(e.Data); };
-        proc.BeginOutputReadLine();
-        proc.BeginErrorReadLine();
-        if (!proc.WaitForExit(SpawnTimeoutMs))
-        {
-            try { proc.Kill(entireProcessTree: true); } catch { }
-            throw new TimeoutException($"al-runner did not exit within {SpawnTimeoutMs / 1000}s.");
-        }
-        // WaitForExit(int) does not drain the async output callbacks; the parameterless
-        // overload does. See #2496.
-        proc.WaitForExit();
-        return (proc.ExitCode, outSb.ToString(), errSb.ToString());
-    }
-
     [Fact]
-    public void NavigationGoesThroughThePagesOwnTriggers_AndOnlyWhenItDeclaresThem()
+    public async Task NavigationGoesThroughThePagesOwnTriggers_AndOnlyWhenItDeclaresThem()
     {
-        var cacheDir = TestScratch.Dir("al-runner-prt-tests");
-        try
-        {
-            var (exit, stdout, stderr) = Run(cacheDir);
+        var r = await SuiteServer.RunViaServer(FixtureDir);
 
-            Assert.True(exit == 0,
-                $"every fixture test must pass. exit={exit}\nstdout:\n{stdout}\nstderr:\n{stderr}");
+        Assert.True(r.ExitCode == 0,
+            $"every fixture test must pass. exit={r.ExitCode}\n{r}");
 
-            // Positive: the rowset a walk produces is the triggers', reached from both ends.
-            Assert.Contains("PASS  Codeunit70645.TriggerPage_FirstAndNext_WalkTheRowsetTheTriggersServe", stdout);
-            Assert.Contains("PASS  Codeunit70645.TriggerPage_LastAndPrevious_WalkTheRowsetTheTriggersServe", stdout);
+        // Positive: the rowset a walk produces is the triggers', reached from both ends.
+        r.AssertPassed("Codeunit70645.TriggerPage_FirstAndNext_WalkTheRowsetTheTriggersServe");
+        r.AssertPassed("Codeunit70645.TriggerPage_LastAndPrevious_WalkTheRowsetTheTriggersServe");
 
-            // Negative: a row the table holds and the triggers do not is refused. Without this,
-            // an implementation reading the table passes every positive arm above.
-            Assert.Contains("PASS  Codeunit70645.TriggerPage_GoToKey_RefusesARowTheTriggersDoNotServe", stdout);
+        // Negative: a row the table holds and the triggers do not is refused. Without this,
+        // an implementation reading the table passes every positive arm above.
+        r.AssertPassed("Codeunit70645.TriggerPage_GoToKey_RefusesARowTheTriggersDoNotServe");
 
-            // The runner's own call sequence, which the corpus does not pin.
-            Assert.Contains("PASS  Codeunit70645.TriggerPage_FirstAndNext_PassMinusAndPlusOne", stdout);
-            Assert.Contains("PASS  Codeunit70645.TriggerPage_BeforeTheBufferIsActive_TheTriggersStillDecide", stdout);
+        // The runner's own call sequence, which the corpus does not pin.
+        r.AssertPassed("Codeunit70645.TriggerPage_FirstAndNext_PassMinusAndPlusOne");
+        r.AssertPassed("Codeunit70645.TriggerPage_BeforeTheBufferIsActive_TheTriggersStillDecide");
 
-            // The half that breaks silently: a page declaring neither trigger must raise neither.
-            Assert.Contains("PASS  Codeunit70645.PlainPage_DeclaringNeitherTrigger_RaisesNeither", stdout);
+        // The half that breaks silently: a page declaring neither trigger must raise neither.
+        r.AssertPassed("Codeunit70645.PlainPage_DeclaringNeitherTrigger_RaisesNeither");
 
-            Assert.DoesNotContain("FAIL", stdout);
-        }
-        finally
-        {
-            try { Directory.Delete(cacheDir, recursive: true); } catch { /* best-effort cleanup */ }
-        }
+        r.AssertNoFailures();
     }
 }

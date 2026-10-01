@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -31,39 +29,11 @@ namespace AlRunner.Tests;
 /// alDiagnostics.Count == 0, EMIT-ZERO requires sources.Count == 0 — so the
 /// module silently ran with a real BC compile error in it.
 ///
-/// This test spawns the real runner CLI (not BcCompiler in-process) because
-/// the fix lives in Program.cs's post-emit gating, not in BcCompiler.Emit
-/// itself — an in-process BcCompiler-level test would prove the diagnostic
-/// exists but not that the CLI actually refuses to run the module.
+/// Runs on SuiteServer, so it pins the --server gate; the CLI gate is pinned by
+/// ReportLayoutFileResolutionTests.LayoutFileTrulyMissing_StillFailsCompileLoudly.
 /// </summary>
 public class QueryColumnAlDiagnosticFailureTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
-    private static (string output, int exit) RunRunner(string bundle)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        args.Append(" \"").Append(bundle).Append('"');
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(180_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
-
     private static string WriteBundle(string suffix, string queryBody)
     {
         var root = TestScratch.Dir("al-runner-al0353-" + suffix);
@@ -99,7 +69,7 @@ public class QueryColumnAlDiagnosticFailureTests
     }
 
     [SkippableFact]
-    public void Column_DeclaresDataSourceAndMethodCount_FailsCompileWithAl0353()
+    public async Task Column_DeclaresDataSourceAndMethodCount_FailsCompileWithAl0353()
     {
         TestArtifacts.SkipIfMissing();
 
@@ -122,17 +92,18 @@ public class QueryColumnAlDiagnosticFailureTests
         }
         """);
 
-        var (output, exitCode) = RunRunner(root);
+        var r = await SuiteServer.RunViaServer(root);
 
         // Would still pass if the runner always returned a default/no-op — assert
         // the SPECIFIC BC diagnostic, not just "something failed".
-        Assert.NotEqual(0, exitCode);
-        Assert.Contains("AL0353", output);
-        Assert.Contains("A Column must have a valid data source or have the 'Method' property set to 'Count'", output);
+        Assert.NotEqual(0, r.ExitCode);
+        Assert.Contains(r.CompilationErrors, c => c.Contains("AL0353"));
+        Assert.Contains(r.CompilationErrors,
+            c => c.Contains("A Column must have a valid data source or have the 'Method' property set to 'Count'"));
     }
 
     [SkippableFact]
-    public void Column_MethodCountWithNoDataSource_CompilesCleanly()
+    public async Task Column_MethodCountWithNoDataSource_CompilesCleanly()
     {
         TestArtifacts.SkipIfMissing();
 
@@ -157,9 +128,9 @@ public class QueryColumnAlDiagnosticFailureTests
         }
         """);
 
-        var (output, exitCode) = RunRunner(root);
+        var r = await SuiteServer.RunViaServer(root);
 
-        Assert.Equal(0, exitCode);
-        Assert.DoesNotContain("AL0353", output);
+        Assert.Equal(0, r.ExitCode);
+        Assert.DoesNotContain(r.CompilationErrors, c => c.Contains("AL0353"));
     }
 }

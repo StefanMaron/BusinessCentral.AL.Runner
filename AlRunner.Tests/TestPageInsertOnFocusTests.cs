@@ -2,18 +2,12 @@
 // applies when it decides a started new row is written, one AL test per rule, so removing any
 // one rule reds exactly one test. The BC behaviour itself is adjudicated upstream by corpus
 // codeunit 60576 "TPBK Tests"; see docs/testpage-write-buffer.md#insert-on-focus.
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
 
 public sealed class TestPageInsertOnFocusTests : IDisposable
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
     private readonly string _root;
 
     public TestPageInsertOnFocusTests()
@@ -25,14 +19,6 @@ public sealed class TestPageInsertOnFocusTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch { /* best-effort cleanup */ }
-    }
-
-    private static string[] ExtraPackageCacheArgs()
-    {
-        var platformApps = TestArtifacts.PlatformAppsDir();
-        return Directory.Exists(platformApps)
-            ? new[] { "--package-cache", platformApps }
-            : Array.Empty<string>();
     }
 
     private void WriteBundle()
@@ -228,37 +214,15 @@ public sealed class TestPageInsertOnFocusTests : IDisposable
         """);
     }
 
-    private (string output, int exit) RunBundled()
-    {
-        var args = new StringBuilder(
-            TestBuildConfig.RunArgs(ProjectPath) + TestBuildConfig.BcVersionArg + $" \"{_root}\"");
-        foreach (var a in ExtraPackageCacheArgs()) args.Append($" \"{a}\"");
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(600_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
-
     [SkippableFact]
-    public void EachInsertOnFocusRule_HoldsOnItsOwnTest()
+    public async Task EachInsertOnFocusRule_HoldsOnItsOwnTest()
     {
         TestArtifacts.SkipIfMissing();
 
         WriteBundle();
-        var (output, exit) = RunBundled();
+        var r = await SuiteServer.RunViaServer(_root);
 
-        Assert.True(exit == 0, $"Expected the bundle to pass; exit={exit}\n{output}");
+        Assert.True(r.ExitCode == 0, $"Expected the bundle to pass; exit={r.ExitCode}\n{r}");
         foreach (var name in new[]
                  {
                      "NonKeyWrite_InsertsBeforeTheWrite",
@@ -266,7 +230,7 @@ public sealed class TestPageInsertOnFocusTests : IDisposable
                      "DelayedInsert_DoesNotInsertOnFocus",
                      "Repeater_FocusFromAnotherRow_DoesNotInsert",
                  })
-            Assert.Contains("PASS  Codeunit62794." + name, output);
-        Assert.DoesNotContain("FAIL", output);
+            r.AssertPassed("Codeunit62794." + name);
+        r.AssertNoFailures();
     }
 }

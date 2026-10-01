@@ -22,90 +22,35 @@
 //
 // The last test is the one that must not regress: real BC's Modify rejects a change to a
 // read-only column BY NAME (issue #2636), before any write-through happens.
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
 
 public sealed class FeatureKeyVirtualTableTests
 {
-    /// <summary>The cap this file's subprocess spawns actually apply, and the single source of
-    /// the figure their timeout messages report (#4275). Derived rather than repeated: a literal
-    /// in the message is invisible while it happens to match, and wrong the moment the cap moves.
-    /// Measured for real on #3435 — a cap squeezed to 3s still threw "did not exit within 120s".
-    /// Same shape as BcVersionDefaultDocumentationTests.SpawnTimeoutMs (#3487).</summary>
-    private const int SpawnTimeoutMs = 120_000;
-
     private static readonly string RepoRoot = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
 
     private static readonly string FixtureDir =
         Path.Combine(RepoRoot, "AlRunner.Tests", "Fixtures", "FeatureKeyVirtualTable");
 
-    private static (int ExitCode, string StdOut, string StdErr) Run(string cacheDir)
-    {
-        var sb = new StringBuilder(TestBuildConfig.RunArgs(Path.Combine(RepoRoot, "AlRunner")));
-        sb.Append(' ').Append($"\"{FixtureDir}\"");
-        sb.Append(' ').Append($"--cache \"{cacheDir}\"");
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet",
-            Arguments = sb.ToString(),
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WorkingDirectory = RepoRoot,
-        };
-
-        var outSb = new StringBuilder();
-        var errSb = new StringBuilder();
-        using var proc = Process.Start(psi)!;
-        proc.OutputDataReceived += (_, e) => { if (e.Data != null) lock (outSb) outSb.AppendLine(e.Data); };
-        proc.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (errSb) errSb.AppendLine(e.Data); };
-        proc.BeginOutputReadLine();
-        proc.BeginErrorReadLine();
-        if (!proc.WaitForExit(SpawnTimeoutMs))
-        {
-            try { proc.Kill(entireProcessTree: true); } catch { }
-            throw new TimeoutException($"al-runner did not exit within {SpawnTimeoutMs / 1000}s.");
-        }
-        // WaitForExit(int) returns as soon as the process exits and does NOT wait for the
-        // async BeginOutputReadLine/BeginErrorReadLine callbacks to drain — only the
-        // parameterless overload does. Without this the last stdout lines can still be in
-        // flight when we read outSb, and an Assert.Contains on a line the runner definitely
-        // printed fails intermittently, the more so the more loaded the machine is (#2496).
-        proc.WaitForExit();
-        return (proc.ExitCode, outSb.ToString(), errSb.ToString());
-    }
-
     [Fact]
-    public void FeatureKey_RoutedToBcsOwnProvider_AllFixtureTestsPass()
+    public async Task FeatureKey_RoutedToBcsOwnProvider_AllFixtureTestsPass()
     {
-        var cacheDir = TestScratch.Dir("al-runner-fkv-tests");
-        try
-        {
-            var (exit, stdout, stderr) = Run(cacheDir);
+        var r = await SuiteServer.RunViaServer(FixtureDir);
 
-            Assert.True(exit == 0,
-                $"expected a clean run (every fixture test must pass). exit={exit}\nstdout:\n{stdout}\nstderr:\n{stderr}");
+        Assert.True(r.ExitCode == 0,
+            $"expected a clean run (every fixture test must pass). exit={r.ExitCode}\n{r}");
 
-            // The route works at all — the direct RED this fixes.
-            Assert.Contains("PASS  Codeunit60821.FeatureKey_AnswersBcsOwnRows", stdout);
-            // Rules out N blank rows, and proves Get reaches the same rowset FindSet walked.
-            Assert.Contains("PASS  Codeunit60821.FeatureKey_EveryRowHasANonBlankIdThatGetRoundTrips", stdout);
-            // Negative: a provider answering every Get with a row would pass the above.
-            Assert.Contains("PASS  Codeunit60821.FeatureKey_GetOnAnUnknownId_ReturnsFalse", stdout);
-            // The read-only contract: changing a read-only column raises BC's own error naming
-            // that column, before any write-through happens (#2636).
-            Assert.Contains("PASS  Codeunit60821.FeatureKey_Modify_ChangingAReadOnlyColumn_RaisesNamingTheField", stdout);
-            Assert.DoesNotContain("FAIL", stdout);
-        }
-        finally
-        {
-            try { Directory.Delete(cacheDir, recursive: true); } catch { /* best-effort cleanup */ }
-        }
+        // The route works at all — the direct RED this fixes.
+        r.AssertPassed("Codeunit60821.FeatureKey_AnswersBcsOwnRows");
+        // Rules out N blank rows, and proves Get reaches the same rowset FindSet walked.
+        r.AssertPassed("Codeunit60821.FeatureKey_EveryRowHasANonBlankIdThatGetRoundTrips");
+        // Negative: a provider answering every Get with a row would pass the above.
+        r.AssertPassed("Codeunit60821.FeatureKey_GetOnAnUnknownId_ReturnsFalse");
+        // The read-only contract: changing a read-only column raises BC's own error naming
+        // that column, before any write-through happens (#2636).
+        r.AssertPassed("Codeunit60821.FeatureKey_Modify_ChangingAReadOnlyColumn_RaisesNamingTheField");
+        r.AssertNoFailures();
     }
 }

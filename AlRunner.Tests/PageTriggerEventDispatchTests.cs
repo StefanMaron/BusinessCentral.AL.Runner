@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -35,34 +33,8 @@ namespace AlRunner.Tests;
 /// </summary>
 public class PageTriggerEventDispatchTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
-    private static (string output, int exit) RunRunner(params string[] bundles)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        foreach (var b in bundles) args.Append(" \"").Append(b).Append('"');
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(180_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
-
     [SkippableFact]
-    public void PageTriggerEventSubscribers_AreRegisteredAndTheirVetoIsHonoured()
+    public async Task PageTriggerEventSubscribers_AreRegisteredAndTheirVetoIsHonoured()
     {
         TestArtifacts.SkipIfMissing();
 
@@ -268,13 +240,13 @@ public class PageTriggerEventDispatchTests
         }
         """);
 
-        var (output, exitCode) = RunRunner(root);
+        var r = await SuiteServer.RunViaServer(root);
 
-        Assert.True(exitCode == 0,
-            $"Expected all three page-trigger-event tests to pass (exit 0); got exit {exitCode}.\n{output}");
-        Assert.DoesNotContain("FAIL", output);
-        Assert.Contains("PASS  Codeunit63439.PageEvents_ReachAManuallyBoundSubscriber", output);
-        Assert.Contains("PASS  Codeunit63439.AllowModifyFalse_LeavesTheRowUnwritten", output);
-        Assert.Contains("PASS  Codeunit63439.UnboundManualSubscriber_SeesNothing", output);
+        Assert.True(r.ExitCode == 0,
+            $"Expected all three page-trigger-event tests to pass (exit 0); got exit {r.ExitCode}.\n{r}");
+        r.AssertNoFailures();
+        r.AssertPassed("Codeunit63439.PageEvents_ReachAManuallyBoundSubscriber");
+        r.AssertPassed("Codeunit63439.AllowModifyFalse_LeavesTheRowUnwritten");
+        r.AssertPassed("Codeunit63439.UnboundManualSubscriber_SeesNothing");
     }
 }

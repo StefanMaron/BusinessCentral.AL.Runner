@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -20,7 +18,7 @@ namespace AlRunner.Tests;
 /// and belongs upstream — see StefanMaron/BusinessCentral.AL.Language.Tests PR extending
 /// error-handling/ with Codeunit 60945 "Test AssertError Rollback NTx", per
 /// .claude/rules/bc-behavior-tests-go-upstream.md. This test exists so a regression in OUR
-/// OWN commit-point bookkeeping fails loudly here, spawning the real runner against a
+/// OWN commit-point bookkeeping fails loudly here, running the real runner (SuiteServer) against a
 /// synthetic bundle, without depending on the submodule pin having moved yet (the corpus PR
 /// had not merged when this test was written).
 ///
@@ -31,34 +29,8 @@ namespace AlRunner.Tests;
 /// </summary>
 public class AssertErrorRollbackNestedTransactionTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
-    private static (string output, int exit) RunRunner(params string[] bundles)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        foreach (var b in bundles) args.Append(" \"").Append(b).Append('"');
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(180_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
-
     [SkippableFact]
-    public void UnrelatedAssertError_RollsBackWritesMadeBeforePlainNestedTransaction()
+    public async Task UnrelatedAssertError_RollsBackWritesMadeBeforePlainNestedTransaction()
     {
         TestArtifacts.SkipIfMissing();
 
@@ -192,13 +164,13 @@ public class AssertErrorRollbackNestedTransactionTests
         }
         """);
 
-        var (output, exitCode) = RunRunner(root);
+        var r = await SuiteServer.RunViaServer(root);
 
-        Assert.True(exitCode == 0,
-            $"Expected all three tests to pass (exit 0); got exit {exitCode}.\n{output}");
-        Assert.DoesNotContain("FAIL", output);
-        Assert.Contains("PASS  Codeunit62413.Modify_QueryOpen_UnrelatedError_ModifyRollsBack", output);
-        Assert.Contains("PASS  Codeunit62413.Insert_QueryOpen_UnrelatedError_InsertRollsBack", output);
-        Assert.Contains("PASS  Codeunit62413.QueryOpen_NoWrite_UnrelatedError_NoThrow", output);
+        Assert.True(r.ExitCode == 0,
+            $"Expected all three tests to pass (exit 0); got exit {r.ExitCode}.\n{r}");
+        r.AssertNoFailures();
+        r.AssertPassed("Codeunit62413.Modify_QueryOpen_UnrelatedError_ModifyRollsBack");
+        r.AssertPassed("Codeunit62413.Insert_QueryOpen_UnrelatedError_InsertRollsBack");
+        r.AssertPassed("Codeunit62413.QueryOpen_NoWrite_UnrelatedError_NoThrow");
     }
 }

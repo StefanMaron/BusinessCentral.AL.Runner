@@ -2,8 +2,6 @@
 // AL (AutoFormatExpression). A failure there used to be swallowed into "no format declared". It
 // now propagates, as TryGetControlCaptionClass's does, and GetValue unwraps the reflection
 // wrapper so the AL error itself reaches the test. The BC half is corpus codeunit 67644.
-using System.Diagnostics;
-using System.Text;
 using AlRunner.Patches;
 using Microsoft.Dynamics.Nav.Runtime;
 using Xunit;
@@ -12,10 +10,6 @@ namespace AlRunner.Tests;
 
 public sealed class ControlFormatReadFailureTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
     private sealed class ThrowingExpression
     {
         public NavValue Get() => throw new InvalidOperationException("CFR getter failed");
@@ -111,7 +105,7 @@ public sealed class ControlFormatReadFailureTests
         """;
 
     [SkippableFact]
-    public void FailingFormatExpression_ErrorReachesTheTest()
+    public async Task FailingFormatExpression_ErrorReachesTheTest()
     {
         TestArtifacts.SkipIfMissing();
         var root = TestScratch.Dir("al-runner-3479-control-format-failure");
@@ -123,29 +117,9 @@ public sealed class ControlFormatReadFailureTests
         """);
         File.WriteAllText(Path.Combine(root, "Cfr.al"), Al);
 
-        var (output, exitCode) = RunCli($" --no-cache \"{root}\"");
-        Assert.False(output.Contains("WRONG:"), output);
-        Assert.True(output.Contains("Tests: 2   passed 2   failed 0"), output);
-        Assert.Equal(0, exitCode);
-    }
-
-    private static (string Output, int ExitCode) RunCli(string args)
-    {
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet",
-            Arguments = TestBuildConfig.RunArgs(ProjectPath) + TestBuildConfig.BcVersionArg + args,
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        using var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(240_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
+        var r = await SuiteServer.RunViaServer(root);
+        Assert.False(r.Tests.Any(t => t.Message.Contains("WRONG:")), r.ToString());
+        Assert.True(r.Total == 2 && r.Passed == 2 && r.Failed == 0, r.ToString());
+        Assert.Equal(0, r.ExitCode);
     }
 }

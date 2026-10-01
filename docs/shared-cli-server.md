@@ -63,3 +63,44 @@ Any value other than unset, `default` or `reverse` makes
 `ReversibleTestCaseOrdererTests.ConfiguredMode_ForThisRun_IsKnown` fail. The orderer throws on
 it as well, but xUnit catches an orderer's exception, logs it as a diagnostic message and runs
 the default order, so the test is what makes a typo visible.
+
+## Suite server
+
+`SuiteServer.RunViaServer` (`AlRunner.Tests/SuiteServer.cs`, #5111) runs one `runTests`
+request on a `--server` process shared by every class in the test run, instead of starting
+a runner process per fact. A one-fact class then costs a request on a warm server rather than
+a process start, which is where most of a CLI fact's time went.
+
+Use it for a fact whose assertions are only exit codes, test counts, per-test results,
+failure messages and compile errors. The helper returns those from the protocol
+(`ServerRunResult`): `AssertPassed` stands in for a `PASS  Codeunit<id>.<method>` line,
+`AssertNoFailures` for "no FAIL anywhere", `AssertCounts` for the `<P>P/<F>F/<E>E` line, and
+`CompilationErrors` carries what the CLI printed under `COMPILE FAIL`, `EMIT-EXCLUDED`
+included.
+
+Keep a fact on the CLI when it needs any of these:
+
+- a CLI-only flag (`--strict`, `--test`, `--coverage`, `--watch`, an output file, ...) or an
+  environment-variable hook;
+- an assertion on a diagnostic line the runner writes to stderr. The server's stderr is a
+  separate pipe with no marker after a request, so a negative assertion on it proves nothing;
+- a cold or warm run against a cache directory it owns, or several runner processes;
+- the CLI's own bundle discovery or exit-code path, which is what the fact is about.
+
+Every code path the conversions touch keeps at least one process-per-fact CLI test.
+
+The pool starts at most `SuiteServer.Capacity` servers, each with `--package-cache` set to the
+platform apps when they are present, and replaces a server after
+`SuiteServer.RequestsPerServer` requests. Requests to one server never overlap.
+
+After every request the pool re-runs the canary from the section above on the same server and
+throws, naming the request, when the fingerprint moved. The fact that made the request fails,
+and the server is discarded rather than handed to the next fact. A failure of this kind is a
+runner defect: file it, or match it to an open issue, and keep that class on the CLI with a
+comment naming the issue. Never change an assertion to fit the server.
+
+To list the classes that use it:
+
+```bash
+rg -l 'SuiteServer.RunViaServer' AlRunner.Tests
+```

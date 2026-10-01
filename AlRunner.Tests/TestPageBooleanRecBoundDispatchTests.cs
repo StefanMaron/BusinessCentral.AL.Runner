@@ -23,18 +23,12 @@
 // NavNCLEvaluateException the issue reported, reproduced against a real BC engine here (not a
 // mock of one).
 
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
 
 public sealed class TestPageBooleanRecBoundDispatchTests : IDisposable
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
     private readonly string _root;
 
     public TestPageBooleanRecBoundDispatchTests()
@@ -46,14 +40,6 @@ public sealed class TestPageBooleanRecBoundDispatchTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch { /* best-effort cleanup */ }
-    }
-
-    private static string[] ExtraPackageCacheArgs()
-    {
-        var platformApps = TestArtifacts.PlatformAppsDir();
-        return Directory.Exists(platformApps)
-            ? new[] { "--package-cache", platformApps }
-            : Array.Empty<string>();
     }
 
     /// <summary>
@@ -196,28 +182,6 @@ public sealed class TestPageBooleanRecBoundDispatchTests : IDisposable
         """);
     }
 
-    private (string output, int exit) RunBundled()
-    {
-        var args = new StringBuilder(
-            TestBuildConfig.RunArgs(ProjectPath) + TestBuildConfig.BcVersionArg + $" \"{_root}\"");
-        foreach (var a in ExtraPackageCacheArgs()) args.Append($" \"{a}\"");
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(600_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
-
     /// <summary>
     /// Both round-trip directions plus the negative: a Rec-bound Boolean control's
     /// SetValue must actually reach the underlying table field (not just the control's own
@@ -225,17 +189,17 @@ public sealed class TestPageBooleanRecBoundDispatchTests : IDisposable
     /// spelling rather than silently coercing or crashing with an unrelated exception.
     /// </summary>
     [SkippableFact]
-    public void SetValue_RecBoundBooleanControl_RoundTripsAndRejectsInvalidText()
+    public async Task SetValue_RecBoundBooleanControl_RoundTripsAndRejectsInvalidText()
     {
         TestArtifacts.SkipIfMissing();
 
         WriteBundle();
-        var (output, exit) = RunBundled();
+        var r = await SuiteServer.RunViaServer(_root);
 
-        Assert.True(exit == 0, $"Expected the bundle to pass; exit={exit}\n{output}");
-        Assert.Contains("PASS  Codeunit62392.SetValueTrue_RecBoundBooleanControl_PersistsToTheRow", output);
-        Assert.Contains("PASS  Codeunit62392.SetValueFalse_RecBoundBooleanControl_ClearsAPreviouslyTrueField", output);
-        Assert.Contains("PASS  Codeunit62392.SetValue_NotABooleanSpelling_IsRejectedAndNotPersisted", output);
-        Assert.DoesNotContain("FAIL", output);
+        Assert.True(r.ExitCode == 0, $"Expected the bundle to pass; exit={r.ExitCode}\n{r}");
+        r.AssertPassed("Codeunit62392.SetValueTrue_RecBoundBooleanControl_PersistsToTheRow");
+        r.AssertPassed("Codeunit62392.SetValueFalse_RecBoundBooleanControl_ClearsAPreviouslyTrueField");
+        r.AssertPassed("Codeunit62392.SetValue_NotABooleanSpelling_IsRejectedAndNotPersisted");
+        r.AssertNoFailures();
     }
 }

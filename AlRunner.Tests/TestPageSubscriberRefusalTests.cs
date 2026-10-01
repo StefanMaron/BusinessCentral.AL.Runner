@@ -35,89 +35,37 @@
 // message #3105 reports, while the accepting arm stays green. So the arms discriminate in both
 // directions: an implementation that swallowed the subscriber's error fails the first two, and
 // one that refused every write fails the third.
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
 
 public sealed class TestPageSubscriberRefusalTests
 {
-    /// <summary>The cap this file's subprocess spawns actually apply, and the single source of
-    /// the figure their timeout messages report (#4275). Derived rather than repeated: a literal
-    /// in the message is invisible while it happens to match, and wrong the moment the cap moves.
-    /// Measured for real on #3435 — a cap squeezed to 3s still threw "did not exit within 120s".
-    /// Same shape as BcVersionDefaultDocumentationTests.SpawnTimeoutMs (#3487).</summary>
-    private const int SpawnTimeoutMs = 180_000;
-
     private static readonly string RepoRoot = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
 
     private static readonly string FixtureDir =
         Path.Combine(RepoRoot, "AlRunner.Tests", "Fixtures", "TestPageSubscriberRefusal");
 
-    private static (int ExitCode, string StdOut, string StdErr) Run(string cacheDir)
-    {
-        var sb = new StringBuilder(TestBuildConfig.RunArgs(Path.Combine(RepoRoot, "AlRunner")));
-        sb.Append(' ').Append($"\"{FixtureDir}\"");
-        sb.Append(' ').Append($"--cache \"{cacheDir}\"");
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet",
-            Arguments = sb.ToString(),
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WorkingDirectory = RepoRoot,
-        };
-
-        var outSb = new StringBuilder();
-        var errSb = new StringBuilder();
-        using var proc = Process.Start(psi)!;
-        proc.OutputDataReceived += (_, e) => { if (e.Data != null) lock (outSb) outSb.AppendLine(e.Data); };
-        proc.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (errSb) errSb.AppendLine(e.Data); };
-        proc.BeginOutputReadLine();
-        proc.BeginErrorReadLine();
-        if (!proc.WaitForExit(SpawnTimeoutMs))
-        {
-            try { proc.Kill(entireProcessTree: true); } catch { }
-            throw new TimeoutException($"al-runner did not exit within {SpawnTimeoutMs / 1000}s.");
-        }
-        // WaitForExit(int) does not drain the async output callbacks; the parameterless
-        // overload does. See #2496.
-        proc.WaitForExit();
-        return (proc.ExitCode, outSb.ToString(), errSb.ToString());
-    }
-
     [Fact]
-    public void ARefusalRaisedInATableSubscriber_ReachesTheAssertErrorAndTheControlsLedger()
+    public async Task ARefusalRaisedInATableSubscriber_ReachesTheAssertErrorAndTheControlsLedger()
     {
-        var cacheDir = TestScratch.Dir("al-runner-tsr-tests");
-        try
-        {
-            var (exit, stdout, stderr) = Run(cacheDir);
+        var r = await SuiteServer.RunViaServer(FixtureDir);
 
-            Assert.True(exit == 0,
-                $"every fixture test must pass. exit={exit}\nstdout:\n{stdout}\nstderr:\n{stderr}");
+        Assert.True(r.ExitCode == 0,
+            $"every fixture test must pass. exit={r.ExitCode}\n{r}");
 
-            // The claim: the subscriber's Error travels out of SetValue, carrying its own
-            // message, and the delete it refused did not happen.
-            Assert.Contains("PASS  Codeunit70604.SubscriberRefusal_ReachesTheAssertErrorAroundSetValue", stdout);
+        // The claim: the subscriber's Error travels out of SetValue, carrying its own
+        // message, and the delete it refused did not happen.
+        r.AssertPassed("Codeunit70604.SubscriberRefusal_ReachesTheAssertErrorAroundSetValue");
 
-            // The ledger, read after asserterror swallowed the exception — the half Microsoft's
-            // Codeunit134614 asserts and #3105 reported as never reached.
-            Assert.Contains("PASS  Codeunit70604.SubscriberRefusal_RecordsExactlyOneValidationError", stdout);
+        // The ledger, read after asserterror swallowed the exception — the half Microsoft's
+        // Codeunit134614 asserts and #3105 reported as never reached.
+        r.AssertPassed("Codeunit70604.SubscriberRefusal_RecordsExactlyOneValidationError");
 
-            // The mirror, without which "throw on every SetValue" would satisfy the two above.
-            Assert.Contains("PASS  Codeunit70604.UnguardedRow_IsDeletedAndRecordsNoValidationError", stdout);
+        // The mirror, without which "throw on every SetValue" would satisfy the two above.
+        r.AssertPassed("Codeunit70604.UnguardedRow_IsDeletedAndRecordsNoValidationError");
 
-            Assert.DoesNotContain("FAIL", stdout);
-        }
-        finally
-        {
-            try { Directory.Delete(cacheDir, recursive: true); } catch { /* best-effort cleanup */ }
-        }
+        r.AssertNoFailures();
     }
 }

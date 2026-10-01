@@ -19,18 +19,12 @@
 //
 // The fixture declares no "application", per .claude/rules/no-base-app-in-csharp-tests.md.
 
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
 
 public sealed class CurrPageUpdateRefreshTests : IDisposable
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
     private readonly string _root;
 
     public CurrPageUpdateRefreshTests()
@@ -46,24 +40,24 @@ public sealed class CurrPageUpdateRefreshTests : IDisposable
     }
 
     [SkippableFact]
-    public void CurrPageUpdate_RefreshesTheHostAfterTheTriggerReturns_AndOnlyWhenItIsCalled()
+    public async Task CurrPageUpdate_RefreshesTheHostAfterTheTriggerReturns_AndOnlyWhenItIsCalled()
     {
         TestArtifacts.SkipIfMissing();
         var pkg = TestArtifacts.PlatformAppsDir();
         TestArtifacts.SkipIfDirectoryMissing(pkg, "platform apps");
 
-        var (exit, output) = Spawn(_root, pkg);
+        var r = await SuiteServer.RunViaServer(_root);
 
         // Each arm is a [Test] procedure asserting inside AL, so a green run IS the claim.
         // The exit code alone would not distinguish "passed" from "discovered nothing", hence
         // the explicit pass/fail counts below.
-        Assert.True(output.Contains("passed 5 "),
-            $"expected all five arms to pass; exit={exit}\n{output}");
-        Assert.DoesNotContain("failed 1 ", output);
-        Assert.DoesNotContain("failed 2 ", output);
-        Assert.DoesNotContain("failed 3 ", output);
-        Assert.DoesNotContain("failed 4 ", output);
-        Assert.DoesNotContain("failed 5 ", output);
+        Assert.True(r.Passed == 5,
+            $"expected all five arms to pass; exit={r.ExitCode}\n{r}");
+        Assert.NotEqual(1, r.Failed);
+        Assert.NotEqual(2, r.Failed);
+        Assert.NotEqual(3, r.Failed);
+        Assert.NotEqual(4, r.Failed);
+        Assert.NotEqual(5, r.Failed);
     }
 
     private void WriteBundle()
@@ -421,32 +415,5 @@ public sealed class CurrPageUpdateRefreshTests : IDisposable
                 end;
             }
             """);
-    }
-
-    private static (int ExitCode, string Output) Spawn(string bundle, string pkgDir)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        args.Append($" \"{bundle}\"");
-        args.Append($" --package-cache \"{pkgDir}\"");
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet",
-            Arguments = args.ToString(),
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        using var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(240_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (p.ExitCode, sb.ToString());
     }
 }

@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -14,8 +12,8 @@ namespace AlRunner.Tests;
 /// rolls the write back; Error makes Commit() raise") is a plain-BC-behaviour claim and lives
 /// upstream — StefanMaron/BusinessCentral.AL.Language.Tests#276, codeunit 60881
 /// "Test Commit Behavior Attr", per .claude/rules/bc-behavior-tests-go-upstream.md. This test
-/// exists so a regression in OUR OWN commit-point bookkeeping fails loudly here, spawning the
-/// real runner against a synthetic bundle, without depending on the submodule pin having moved
+/// exists so a regression in OUR OWN commit-point bookkeeping fails loudly here, running the
+/// real runner (SuiteServer) against a synthetic bundle, without depending on the submodule pin having moved
 /// yet (that corpus PR had not merged when this test was written).
 ///
 /// The AL assertions below are all plain BC-behaviour claims already green upstream; what
@@ -32,34 +30,8 @@ namespace AlRunner.Tests;
 /// </summary>
 public class CommitBehaviorAttributeTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
-    private static (string output, int exit) RunRunner(params string[] bundles)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        foreach (var b in bundles) args.Append(" \"").Append(b).Append('"');
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(180_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
-
     [SkippableFact]
-    public void CommitBehaviorAttribute_IsConsultedByALCommit()
+    public async Task CommitBehaviorAttribute_IsConsultedByALCommit()
     {
         TestArtifacts.SkipIfMissing();
 
@@ -235,15 +207,15 @@ public class CommitBehaviorAttributeTests
         }
         """);
 
-        var (output, exitCode) = RunRunner(root);
+        var r = await SuiteServer.RunViaServer(root);
 
-        Assert.True(exitCode == 0,
-            $"Expected all five tests to pass (exit 0); got exit {exitCode}.\n{output}");
-        Assert.DoesNotContain("FAIL", output);
-        Assert.Contains("PASS  Codeunit62449.Unattributed_CommitBeforeErrorIsDurable", output);
-        Assert.Contains("PASS  Codeunit62449.Ignore_CommitBeforeErrorIsNotDurable", output);
-        Assert.Contains("PASS  Codeunit62449.Ignore_GovernsUnattributedCallee", output);
-        Assert.Contains("PASS  Codeunit62449.Ignore_ScopeIsPoppedOnReturn", output);
-        Assert.Contains("PASS  Codeunit62449.ErrorBehavior_CommitRaisesBcOwnText", output);
+        Assert.True(r.ExitCode == 0,
+            $"Expected all five tests to pass (exit 0); got exit {r.ExitCode}.\n{r}");
+        r.AssertNoFailures();
+        r.AssertPassed("Codeunit62449.Unattributed_CommitBeforeErrorIsDurable");
+        r.AssertPassed("Codeunit62449.Ignore_CommitBeforeErrorIsNotDurable");
+        r.AssertPassed("Codeunit62449.Ignore_GovernsUnattributedCallee");
+        r.AssertPassed("Codeunit62449.Ignore_ScopeIsPoppedOnReturn");
+        r.AssertPassed("Codeunit62449.ErrorBehavior_CommitRaisesBcOwnText");
     }
 }

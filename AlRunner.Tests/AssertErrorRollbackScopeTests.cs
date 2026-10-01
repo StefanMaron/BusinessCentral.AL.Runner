@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -21,7 +19,7 @@ namespace AlRunner.Tests;
 /// see StefanMaron/BusinessCentral.AL.Language.Tests PR extending Codeunit 60943 "Test
 /// AssertError Rollback" (three new cases), per
 /// .claude/rules/bc-behavior-tests-go-upstream.md. This test exists so a regression in OUR
-/// OWN rollback mechanism fails loudly here, spawning the real runner against a synthetic
+/// OWN rollback mechanism fails loudly here, running the real runner (SuiteServer) against a synthetic
 /// bundle, without depending on the submodule pin having moved yet.
 ///
 /// No Library Assert dependency (no "application" in the fixture's app.json — see
@@ -30,34 +28,8 @@ namespace AlRunner.Tests;
 /// </summary>
 public class AssertErrorRollbackScopeTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
-    private static (string output, int exit) RunRunner(params string[] bundles)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        foreach (var b in bundles) args.Append(" \"").Append(b).Append('"');
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(180_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
-
     [SkippableFact]
-    public void UnrelatedAssertError_RollsBackMultiWriteAndInStatementShapes()
+    public async Task UnrelatedAssertError_RollsBackMultiWriteAndInStatementShapes()
     {
         TestArtifacts.SkipIfMissing();
 
@@ -205,15 +177,15 @@ public class AssertErrorRollbackScopeTests
         }
         """);
 
-        var (output, exitCode) = RunRunner(root);
+        var r = await SuiteServer.RunViaServer(root);
 
-        Assert.True(exitCode == 0,
-            $"Expected all four rollback tests to pass (exit 0); got exit {exitCode}.\n{output}");
-        Assert.DoesNotContain("FAIL", output);
-        Assert.Contains("PASS  Codeunit62191.SingleInsert_UnrelatedError_RollsBack", output);
-        Assert.Contains("PASS  Codeunit62191.TwoInserts_SameTable_UnrelatedError_BothRollBack", output);
-        Assert.Contains("PASS  Codeunit62191.InsertThenModify_UnrelatedError_RowRollsBack", output);
-        Assert.Contains("PASS  Codeunit62191.ProcInsertsTwoThenErrors_AllRollsBack", output);
+        Assert.True(r.ExitCode == 0,
+            $"Expected all four rollback tests to pass (exit 0); got exit {r.ExitCode}.\n{r}");
+        r.AssertNoFailures();
+        r.AssertPassed("Codeunit62191.SingleInsert_UnrelatedError_RollsBack");
+        r.AssertPassed("Codeunit62191.TwoInserts_SameTable_UnrelatedError_BothRollBack");
+        r.AssertPassed("Codeunit62191.InsertThenModify_UnrelatedError_RowRollsBack");
+        r.AssertPassed("Codeunit62191.ProcInsertsTwoThenErrors_AllRollsBack");
     }
 
     /// <summary>
@@ -247,7 +219,7 @@ public class AssertErrorRollbackScopeTests
     /// pin having moved yet.
     /// </summary>
     [SkippableFact]
-    public void TriggerFailure_NoPhantomRow_And_EarlierLandedWriteStillRollsBack()
+    public async Task TriggerFailure_NoPhantomRow_And_EarlierLandedWriteStillRollsBack()
     {
         TestArtifacts.SkipIfMissing();
 
@@ -410,14 +382,14 @@ public class AssertErrorRollbackScopeTests
         }
         """);
 
-        var (output, exitCode) = RunRunner(root);
+        var r = await SuiteServer.RunViaServer(root);
 
-        Assert.True(exitCode == 0,
-            $"Expected all four rollback tests to pass (exit 0); got exit {exitCode}.\n{output}");
-        Assert.DoesNotContain("FAIL", output);
-        Assert.Contains("PASS  Codeunit62201.InsertTrue_OnInsertThrows_NothingWritten", output);
-        Assert.Contains("PASS  Codeunit62201.InsertTrue_OnInsertThrows_KeyIsFreeAgain", output);
-        Assert.Contains("PASS  Codeunit62201.DeleteLands_ThenEmptyDeleteAll_ThenError_RowRestored", output);
-        Assert.Contains("PASS  Codeunit62201.DeleteLands_ThenDeleteWithFailingTrigger_RowRestored", output);
+        Assert.True(r.ExitCode == 0,
+            $"Expected all four rollback tests to pass (exit 0); got exit {r.ExitCode}.\n{r}");
+        r.AssertNoFailures();
+        r.AssertPassed("Codeunit62201.InsertTrue_OnInsertThrows_NothingWritten");
+        r.AssertPassed("Codeunit62201.InsertTrue_OnInsertThrows_KeyIsFreeAgain");
+        r.AssertPassed("Codeunit62201.DeleteLands_ThenEmptyDeleteAll_ThenError_RowRestored");
+        r.AssertPassed("Codeunit62201.DeleteLands_ThenDeleteWithFailingTrigger_RowRestored");
     }
 }
