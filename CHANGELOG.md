@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **server:** runTests request fields for the CLI flags tests pass
 - **server:** mark the end of each request on stderr
 - **tdd:** generated stubs return defaults and tests report their own result
 - **benchmark:** a failsafe script to benchmark the full Microsoft test surface on a volunteer's Windows PC
