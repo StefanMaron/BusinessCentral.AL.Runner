@@ -138,14 +138,15 @@ public static partial class RecordPatches
 
     /// <summary>
     /// Prepended to RecordImplementation.DeleteRecordAsync(DataError), on its parentRecord: the
-    /// `2000000006` arm of BC's OnBeforeDeleteAsync ends in OnWriteToCompanyTable. Guarded on
-    /// the row existing, because a prepend runs before the delete does.
+    /// `2000000006` arm of BC's OnBeforeDeleteAsync ends in OnWriteToCompanyTable, and it runs
+    /// before the provider looks the row up — so a Delete() that finds no row bumps too
+    /// (corpus 67947 ExpandedPermission_CompanyDeleteThatDoesNotLand_*). Unlike insert, no
+    /// existence guard.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void OnCompanyDeleteRecord(object? record)
     {
-        if (!IsCompanyRow(record, out var company)) return;
-        if (!CompanyRowExists(company, company.GetFieldValue(CompanyNameFieldNo))) return;
+        if (!IsCompanyRow(record, out _)) return;
         ResetPermissionSetupForCompanyWrite();
     }
 
