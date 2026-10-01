@@ -37,20 +37,13 @@ public class ServerAffectedSelectionIncludeFailingTests
         """;
 
     // FailsAfterA runs helper A, then fails by design: its recorded coverage is the test's own
-    // statements plus helper A, and helper B is nowhere in it.
+    // statements plus helper A, and helper B is nowhere in it. PassesB is declared first: a failing
+    // test leaves the last error, so one declared before PassesB would be selected as the nearest
+    // writer of what an edited PassesB could read (#5057), which is not this file's subject.
     private const string Tests = """
         codeunit 60460 "IncFail Tests SX"
         {
             Subtype = Test;
-
-            [Test]
-            procedure FailsAfterA()
-            var
-                H: Codeunit "IncFail Helper A SX";
-            begin
-                if H.ValueA() = 1 then
-                    Error('FailsAfterA fails by design');
-            end;
 
             [Test]
             procedure PassesB()
@@ -59,6 +52,15 @@ public class ServerAffectedSelectionIncludeFailingTests
             begin
                 if H.ValueB() <> 2 then
                     Error('PassesB failed');
+            end;
+
+            [Test]
+            procedure FailsAfterA()
+            var
+                H: Codeunit "IncFail Helper A SX";
+            begin
+                if H.ValueA() = 1 then
+                    Error('FailsAfterA fails by design');
             end;
         }
         """;

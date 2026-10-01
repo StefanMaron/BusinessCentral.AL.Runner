@@ -377,6 +377,8 @@ public class ServerAffectedSelectionSessionStateTests
     public async Task CrossBundle_AnEarlierBundlesWorkDateWriter_RunsForALaterBundlesReader()
     {
         TestArtifacts.SkipIfMissing();
+        // Unrelated has its own codeunit: under Codeunit isolation a test brought in through session
+        // state runs with its whole codeunit (#5057), so a sibling of SetsWorkDate would run too.
         var writer = Bundle("al-runner-server-affected-session-xb-writer", "000000000006",
             ("Writer.Codeunit.al", """
             codeunit 61917 "SS XB Writer"
@@ -388,6 +390,12 @@ public class ServerAffectedSelectionSessionStateTests
                 begin
                     WorkDate(20200101D);
                 end;
+            }
+            """),
+            ("Unrelated.Codeunit.al", """
+            codeunit 61919 "SS XB Unrelated"
+            {
+                Subtype = Test;
 
                 [Test]
                 procedure Unrelated()

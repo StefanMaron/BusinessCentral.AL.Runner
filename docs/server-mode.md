@@ -592,7 +592,8 @@ server processes"). The runner:
    default `TestIsolation = Codeunit` every test of a selected test's codeunit, under
    `disabled` every test of the bundle (see "affectedOnly and test isolation");
 7. widens it again by session state (WorkDate, number sequences, SingleInstance
-   codeunits), which no isolation resets (see "affectedOnly and session state").
+   codeunits, the last error, static .NET state behind DotNet interop), which no isolation
+   resets (see "affectedOnly and session state").
 
 When the runner cannot prove a safe object delta, it **forces a full run**
 (`selection.forcedFull:true`) and sets `selection.reason`. Forced-full causes
@@ -665,6 +666,8 @@ Recorded per test, as keys in the test's events entry:
 | `WorkDate` | `WorkDate(<date>)` (Ncl `NavSession.set_WorkDate`) | `WorkDate()`, and the `'w'` token of `Evaluate` and date filters (`NavSession.get_WorkDate`, where every one of them reads it) |
 | a number sequence, by name and company scope | `Insert`, `Next`, `Range`, `Restart`, `Delete` | `Exists`, `Current`, `Next`, `Range`, `Restart`, `Insert` (whether it exists decides the error) |
 | a SingleInstance codeunit, by id | any use of it: resolving a variable to it, or entering one of its procedures or triggers | the same: its globals cannot be told apart by read or write |
+| the last error (#5057) | any member of Ncl `NavSession` that stores its last-error fields, whatever path reaches it: measured for an error a `[TryFunction]` traps and an error that fails the test; also `ClearLastError` | any member that only loads them: `GetLastErrorText`, `GetLastErrorCode`, `GetLastErrorObject`, `GetLastErrorCallStack` from precompiled code |
+| static .NET state (#5057) | any DotNet method or property call, and any DotNet constructor (Ncl `NavDotNet.Invoke`, `NavDotNet.CreateDotNet`) | the same: a static field or process setting cannot be told apart per call. Enum members are not recorded: AL reads no other static field (`Guid.Empty` is AL0132), and a constant holds no state |
 
 A read counts only when the test had not written that state itself first, so a test that
 sets WorkDate and then reads it is not a reader. That is a property of the test's own code,
@@ -707,10 +710,65 @@ next (SingleInstance codeunits are reset per bundle), so a change in an earlier 
 full run of it) selects every reader of a later one, and a bundle followed by another runs its WorkDate and
 sequence writers whatever changed.
 
-Not recorded, so not linked (#5057): static .NET state reached through DotNet interop,
-`Randomize` seeds, and the last error text. `GlobalLanguage` is not session state here: the
-runner answers 1033 whatever a test sets. The persisted baseline is schema 4 from this
-change, so a baseline without these keys is not used.
+The last-error readers are found by scanning `NavSession` (nested types included) for loads and
+stores of its private `lastException` and `lastErrorCallstack` fields, so a reader BC adds is
+recorded without a change here; the scan refuses to rewrite Ncl if those fields stop being
+private, or if it finds no reader or no writer. `GetLastErrorCallStack` in the bundle's own AL
+reads the runner's per-test capture (`AlCallStackCapture`, cleared before each test), which no
+test can leave for another.
+
+The last error differs from the other kinds because every write replaces it whole (BC sets it as
+each error is constructed, trapped or not):
+
+- **Only the nearest earlier writer is linked.** Where the rules above bring every earlier
+  writer, the last error brings, for each selected test, the nearest earlier test that wrote it.
+  Every error raises a write, so "every earlier writer" would select nearly every test before the
+  last selected one. A bundle followed by another runs only its last writer. The walk back does
+  not stop at a test whose write may be gone, and selects it on the way:
+  - a test with no record;
+  - a test selected for a change;
+  - a test after the first change that reads any session state, since what it read may have
+    changed and with it whether it raises an error (review of #5080, first counterexample);
+  - a write only an earlier record of the test had. A re-recording keeps such a write as a
+    maybe-write (`st|m|`) rather than a write, because a stale write would end the walk early
+    (second counterexample).
+- **A failing test's write is not kept.** A test that fails leaves its own error as the last
+  error, so its write is recorded under a separate `st|f|` key: a writer for this record, but not
+  carried into the next one. A test that failed once and passes now stops being a writer. A test
+  that is failing now is still the writer before a changed test after it.
+- **A clear before the test links nothing.** Microsoft's Test Runner app clears the last error
+  in its `OnBeforeTestMethodRun` subscriber (130453 "ALTestRunner Reset Environment"). When the
+  last write before a test opens is such a clear, made outside any test, the test records
+  `st|c|` for the kind: it cannot inherit an earlier test's error, so no walk starts from it, and
+  a walk from a later test stops there. Where every test of a bundle starts cleared, its last
+  writer is not run for the next bundle. This is measured per test, not assumed from the
+  dependency list: without the Test Runner app (or in a run that does not raise its events) the
+  last error carries over, and the walk applies.
+
+Real BC clears it between test methods under the standard runner: corpus PR
+StefanMaron/BusinessCentral.AL.Language.Tests#520 passes on the official Windows container (BC
+28.4) and on the 27.x legs. Only the 28.x Linux legs' test hub carried it within a codeunit.
+`--server` loads the Test Runner app by default from its package caches, as the CLI does (#5091),
+so with the app in the caches every test starts cleared and the last error links nothing.
+
+A test brought in through session state brings its codeunit (its bundle, under `disabled`), as
+in "affectedOnly and test isolation", except where nothing it reads can have changed: a test
+from before the first changed test, or any test when the request changed nothing. That test only
+has to reproduce its recorded run, so it brings the tests of its codeunit up to it, not after it.
+
+Not session state here, so not recorded:
+
+- the `Randomize(<seed>)` seed: every test starts from a generator seeded from the run seed and
+  its own identity (`RunSeed.BeginTest`, #2502), so what an earlier test seeded never reaches it
+  (`ServerAffectedSelectionUnrecordedStateTests.RandomizeSeed_DoesNotReachTheNextTest`);
+- `GlobalLanguage`: the runner answers 1033 whatever a test sets.
+
+Recording DotNet use links every test that calls into .NET with every other one, so a change
+before any of them selects all of them. The cost on the al-language corpus is in the pull
+request that introduced it (#5057).
+
+The persisted baseline is schema 4 from #5050 and schema 6 from #5057; an older file records
+none of the newer kinds and is not used.
 
 The cost, on the al-language corpus: see the pull request that introduced this (#5050).
 

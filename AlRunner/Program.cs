@@ -6071,7 +6071,8 @@ return strictExitCode ? computedExitCode : 0;
                     .ToList();
                 var resolverDirs = bundlePkgDirs.Concat(effectivePkgDirs).Distinct().ToList();
                 var resolver = new DependencyResolver(resolverDirs, AlRunner.Infrastructure.CacheRoots.SourceBuiltPackageDirs());
-                ordered = resolver.Resolve(roots);
+                // #5091: the Test Runner app by default, as the CLI resolve and the AL-output cache key do.
+                ordered = resolver.Resolve(WithDefaultTestTool(roots.ToList(), new[] { appJsonPath }, resolver));
                 AlRunner.Infrastructure.PhaseLog.NoteDepsResolved(ordered.Count);
                 // Same split as the CLI loop: workspace dirs reach the compiler only as the
                 // *.symbols.json of this bundle's resolved closure, never through the package
@@ -7783,18 +7784,18 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                             exactSelection.Add(testKey);
                     }
                     // #5035: a test's recording holds only what it ran, not the state earlier tests left it.
-                    var widened = AlRunner.Infrastructure.AffectedIsolationWidening.Widen(discovered, exactSelection, executor.Isolation);
-                    if (widened > 0)
-                        Console.Error.WriteLine(
-                            $"  [{affected.LogTag}] affectedOnly: selected {widened} more test(s) that share state with a selected one (TestIsolation={executor.Isolation})");
-                    // #5050: session state (WorkDate, number sequences, SingleInstance) outlives every isolation.
+                    // #5050: session state (WorkDate, number sequences, SingleInstance, ...) outlives every
+                    // isolation. #5057: repeated together, so a test either brings in gets its codeunit too.
                     var bundleChanged = (activeChangedObjectKeys?.Count ?? 0) > 0 || changedEventKeys.Count > 0
                         || activeEnvKeysByRecord.Values.Any(k => k.CoverageKeys.Count > 0 || k.EventKeys.Count > 0);
-                    var stateWidened = AlRunner.Infrastructure.AffectedSessionStateSelection.Widen(
-                        discovered, exactSelection, activePreviousEvents,
+                    var (widened, stateWidened) = AlRunner.Infrastructure.AffectedSessionStateSelection.WidenWithIsolation(
+                        discovered, exactSelection, activePreviousEvents, executor.Isolation,
                         changed: bundleChanged,
                         earlierBundleChanged: requestChangedAnyBundle,
                         laterBundleFollows: bundlesStarted < requestModuleNames.Count);
+                    if (widened > 0)
+                        Console.Error.WriteLine(
+                            $"  [{affected.LogTag}] affectedOnly: selected {widened} more test(s) that share state with a selected one (TestIsolation={executor.Isolation})");
                     requestChangedAnyBundle |= bundleChanged;
                     if (stateWidened > 0)
                         Console.Error.WriteLine(
