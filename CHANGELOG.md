@@ -78,6 +78,7 @@ All notable changes to this project are documented here. Format based on
 - **testpage:** New() on an empty linked part raises the part's OnNewRecord
 
 ### Changed
+- **suite:** last CLI test classes via the suite server
 - **suite:** run the absence-assertion CLI test classes through the suite server (#5111 batch 2)
 - **cli:** run pass/fail CLI test classes through a shared server
 - **perf:** one shared --server per server test class instead of one per test
