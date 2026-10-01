@@ -900,13 +900,14 @@ object and the tests that built, entered or held records of a changed object run
 `strictEnvironment: true`. Statements under any other untracked file still make the
 test unknown.
 
-The "actually runs" condition matters: once a request has compiled `App/` as its
-own bundle, a later request that resolves `App.app` reuses that source-compiled
-module for the AppId (#1892) rather than loading the package. The package's bytes
-then say nothing about what runs, so it is left out of the key and the statements
-stay unknown: an edit to `App/` followed by a request naming `App/` is picked up.
-While the package is the module that runs, an edit to `App/` that is not rebuilt
-into the package changes nothing the tests execute and selects nothing.
+The "actually runs" condition matters within one request: when the request also
+compiles `App/` as its own bundle, a bundle that resolves `App.app` shares that
+source-compiled module for the AppId (#1892) rather than loading the package. The
+package's bytes then say nothing about what runs, so it is left out of the key and the
+statements stay unknown. A module an earlier request compiled from `App/` is not reused
+for the package (#5079, "Another directory with the same app id"), so while the package
+is the module that runs, an edit to `App/` that is not rebuilt into the package changes
+nothing the tests execute and selects nothing.
 
 The request-bundle exclusion compares symlink-resolved paths, so a request folder
 reached through a link is never ignored. Package hashes go through the process's
@@ -1159,6 +1160,17 @@ AL-output type finders (`FindRecordType`, the codeunit/event finders) then prefe
 `BcRuntime.CurrentTestAssembly`, and stale previous-bundle assemblies are skipped
 (`BcRuntime.IsStaleBundleAssembly`), so the freshly-emitted types win over the
 same-named types still loaded from the previous run.
+
+### Another directory with the same app id
+
+Two directories declaring the same app `id` (two checkouts of one app, or a copy) can be
+sent to one server. A module an earlier request compiled for one of them is reused for the
+other only when that directory holds the same source: every `.al` file by relative path and
+content, `app.json`, and the resolved dependencies. Otherwise the request compiles its own
+source, as a fresh server would. A module compiled by a `tdd` request is never reused by a
+later request. A dependency package another request loaded from a different path is reused
+only when its bytes are the same (#5079). Within one request, bundles that share an app id
+still share one module (#1683, #1892).
 
 ### Covered: code / logic edits
 
