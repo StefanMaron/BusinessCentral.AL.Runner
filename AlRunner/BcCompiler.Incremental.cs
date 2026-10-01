@@ -2041,17 +2041,21 @@ public sealed partial class BcCompiler
             if (field == null) continue;
             if (field.GetType().GetProperty("Name")?.GetValue(field) is not string name || name.Length == 0) return null;
             if (field.GetType().GetProperty("TypeDefinition")?.GetValue(field) is not NavSymRef.TypeDefinition type) return null;
-            lines.Add(name + "\t" + RadTypeShape(type));
+            // Option members are FoldedOrdinalMoved's: appending one moves nothing a caller folded.
+            lines.Add(name + "\t" + RadTypeShape(type, withOptionMembers: false));
         }
         return string.Join("\n", lines);
     }
 
-    private static string RadTypeShape(NavSymRef.TypeDefinition? t)
+    private static string RadTypeShape(NavSymRef.TypeDefinition? t) => RadTypeShape(t, withOptionMembers: true);
+
+    private static string RadTypeShape(NavSymRef.TypeDefinition? t, bool withOptionMembers)
     {
         if (t == null) return "";
-        var args = t.TypeArguments is { Length: > 0 } ta ? "<" + string.Join(",", ta.Select(RadTypeShape)) + ">" : "";
+        var args = t.TypeArguments is { Length: > 0 } ta
+            ? "<" + string.Join(",", ta.Select(a => RadTypeShape(a, withOptionMembers))) + ">" : "";
         var dims = t.ArrayDimensions is { Length: > 0 } ad ? "[" + string.Join(",", ad) + "]" : "";
-        var options = t.OptionMembers is { Length: > 0 } om ? "{" + string.Join(",", om) + "}" : "";
+        var options = withOptionMembers && t.OptionMembers is { Length: > 0 } om ? "{" + string.Join(",", om) + "}" : "";
         return (t.Name ?? "").ToLowerInvariant() + "/" + (t.Subtype.Name ?? "").ToLowerInvariant()
             + args + dims + options + (t.Temporary ? " temporary" : "");
     }

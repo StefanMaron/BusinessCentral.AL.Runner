@@ -65,6 +65,31 @@ public class ServerIncrementalInterfaceExtendsTests
                 end;
             }
             """);
+        // The interface-typed code lives in a helper the edit never touches: a codeunit that binds
+        // `G := Impl` in the same delta as the interface edit makes BC reject the stale Impl symbol
+        // and fall back on its own, which would hide the defect.
+        File.WriteAllText(Path.Combine(dir, "Probe.al"), """
+            codeunit 71892 "Srv Iface Probe"
+            {
+                procedure ImplIsOther(): Boolean
+                var
+                    Impl: Codeunit "Srv Iface Impl";
+                    G: Interface "Srv Iface Greeter";
+                begin
+                    G := Impl;
+                    exit(G is "Srv Iface Other");
+                end;
+
+                procedure Greet(): Text
+                var
+                    Impl: Codeunit "Srv Iface Impl";
+                    G: Interface "Srv Iface Greeter";
+                begin
+                    G := Impl;
+                    exit(G.Greet());
+                end;
+            }
+            """);
         File.WriteAllText(Path.Combine(dir, "Tests.al"), """
             codeunit 71891 "Srv Iface Tests"
             {
@@ -73,23 +98,19 @@ public class ServerIncrementalInterfaceExtendsTests
                 [Test]
                 procedure ImplIsNotOther()
                 var
-                    Impl: Codeunit "Srv Iface Impl";
-                    G: Interface "Srv Iface Greeter";
+                    Probe: Codeunit "Srv Iface Probe";
                 begin
-                    G := Impl;
-                    if G is "Srv Iface Other" then
+                    if Probe.ImplIsOther() then
                         Error('G is Other');
                 end;
 
                 [Test]
                 procedure GreetStillAnswers()
                 var
-                    Impl: Codeunit "Srv Iface Impl";
-                    G: Interface "Srv Iface Greeter";
+                    Probe: Codeunit "Srv Iface Probe";
                 begin
-                    G := Impl;
-                    if G.Greet() <> 'g' then
-                        Error('Greet answered %1', G.Greet());
+                    if Probe.Greet() <> 'g' then
+                        Error('Greet answered %1', Probe.Greet());
                 end;
             }
             """);
@@ -97,15 +118,22 @@ public class ServerIncrementalInterfaceExtendsTests
     }
 
     // affectedOnly + perTestCoverage is what puts a request on the incremental change model.
-    private static string RunTestsRequest(string dir)
-        => JsonSerializer.Serialize(new
-        {
-            command = "runTests",
-            sourcePaths = new[] { dir },
-            packagePaths = Array.Empty<string>(),
-            affectedOnly = true,
-            perTestCoverage = true,
-        });
+    private static string RunTestsRequest(string dir, bool affectedOnly = true)
+        => affectedOnly
+            ? JsonSerializer.Serialize(new
+            {
+                command = "runTests",
+                sourcePaths = new[] { dir },
+                packagePaths = Array.Empty<string>(),
+                affectedOnly = true,
+                perTestCoverage = true,
+            })
+            : JsonSerializer.Serialize(new
+            {
+                command = "runTests",
+                sourcePaths = new[] { dir },
+                packagePaths = Array.Empty<string>(),
+            });
 
     private static Dictionary<string, (string Status, string Line)> ByTest(List<string> lines)
     {
@@ -144,6 +172,9 @@ public class ServerIncrementalInterfaceExtendsTests
             Assert.Equal("pass", before["GreetStillAnswers"].Status);
 
             File.WriteAllText(Path.Combine(dir, "Greeter.al"), GreeterAfter);
+            // Touch the test codeunit too, so affectedOnly selects its tests whatever it makes of an
+            // interface edit (#5083). Impl.al, the file the defect is about, stays untouched.
+            File.AppendAllText(Path.Combine(dir, "Tests.al"), "\n// touched\n");
 
             // Request 2, same process: a cold compile of these sources makes Impl an Other.
             var after = ByTest(await server.SendRequestStreamingAsync(RunTestsRequest(dir)));
@@ -158,9 +189,10 @@ public class ServerIncrementalInterfaceExtendsTests
         if (!useCache) return;
 
         // A fresh process on the same cache root: whatever the warm request left under this source's
-        // key must answer the same way.
+        // key must answer the same way. A plain full run: affectedOnly would select nothing, since
+        // the persisted affectedOnly baseline already describes this source.
         await using var second = await CliServer.StartAsync(args);
-        var cold = ByTest(await second.SendRequestStreamingAsync(RunTestsRequest(dir)));
+        var cold = ByTest(await second.SendRequestStreamingAsync(RunTestsRequest(dir, affectedOnly: false)));
         Assert.True(cold.TryGetValue("ImplIsNotOther", out var hit) && hit.Status == "fail",
             "a fresh server on the same --cache root served a stale implementer for the post-edit source. Got: "
             + string.Join(" | ", cold.Values.Select(v => v.Line)));
