@@ -69,6 +69,22 @@ internal static class AffectedSessionStateSelection
         return selected.Count - before;
     }
 
+    /// <summary>
+    /// A re-recorded test's keys plus the session-state keys of its previous record (#5069).
+    /// A use can happen only in whichever test first reaches a per-session cache (a table's
+    /// trigger mask, a caption lookup), so a narrowed run can record fewer uses than a full run
+    /// did; keeping the earlier ones means a re-recording can only widen what it links.
+    /// </summary>
+    internal static HashSet<string> WithPreviousState(HashSet<string> recorded, HashSet<string>? previous)
+    {
+        if (previous == null) return recorded;
+        foreach (var k in previous)
+            if (k.StartsWith(AlSessionStateTracker.ReadPrefix, StringComparison.Ordinal)
+                || k.StartsWith(AlSessionStateTracker.WritePrefix, StringComparison.Ordinal))
+                recorded.Add(k);
+        return recorded;
+    }
+
     // Whether a test with record `writer` wrote a kind a test with record `reader` read inherited.
     // A missing record on either side answers yes.
     private static bool WritesAnyOf(HashSet<string>? writer, HashSet<string>? reader)

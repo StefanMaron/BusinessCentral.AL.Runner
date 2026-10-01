@@ -9,7 +9,7 @@ namespace AlRunner;
 ///
 /// One JSON object per line. stdin = requests, stdout = responses.
 ///   request : {command, sourcePaths[], packagePaths[], stubPaths[], code, captureValues,
-///              coverage, perTestCoverage, affectedOnly, iterationTracking, testIsolation}
+///              coverage, perTestCoverage, affectedOnly, iterationTracking, testIsolation, tdd}
 ///             runTests/execute refuse any other field and warn on one they do not read
 ///             (#4952, docs/server-mode.md#request-fields).
 ///   runTests: STREAMING (protocol-v2.schema.json — see #1641) — zero or more
@@ -200,6 +200,13 @@ public sealed class ServerRequest
     /// </summary>
     [JsonPropertyName("includeFailing")] public bool? IncludeFailing { get; set; }
     /// <summary>
+    /// #5028, with <see cref="AffectedOnly"/>: true runs every test when the baseline was recorded in
+    /// another environment (BC build, package closure or package content), as before #5028. False
+    /// (the default) uses that baseline, narrowed by a per-object diff of the two environments, and
+    /// reports it in <c>selection.environmentDrift</c>. See docs/server-mode.md#affectedonly-across-environments.
+    /// </summary>
+    [JsonPropertyName("strictEnvironment")] public bool? StrictEnvironment { get; set; }
+    /// <summary>
     /// "codeunit" (default) | "test"/"method" | "disabled" — see <see cref="TestIsolationParser"/>.
     /// Null = the server's existing default (TestIsolation.Codeunit), matching the
     /// CLI's own default. Threaded into PipelineOptions.TestIsolation-equivalent
@@ -209,6 +216,14 @@ public sealed class ServerRequest
     /// identical CLI invocation with --test-isolation method passes.
     /// </summary>
     [JsonPropertyName("testIsolation")] public string? TestIsolation { get; set; }
+
+    /// <summary>
+    /// #5034, <c>runTests</c> only: the CLI's <c>--tdd</c> for this request. A missing member a
+    /// test calls is generated in memory; what cannot be generated reports each test of its object
+    /// as a failed <c>test</c> line with <c>errorKind: "compile"</c>. Null = the server's
+    /// <c>--tdd</c> startup flag. See docs/server-mode.md#tdd.
+    /// </summary>
+    [JsonPropertyName("tdd")] public bool? Tdd { get; set; }
 
     /// <summary>
     /// Every field the request carried that no property above declares. <c>runTests</c> and
@@ -244,7 +259,27 @@ public sealed record ServerSelection(
     bool ForcedFull,
     string? Reason,
     // #4978: previously failing tests this selection skipped; null where no selection by coverage applies.
-    int? SkippedFailing = null);
+    int? SkippedFailing = null,
+    // #5028: the baseline was recorded in another environment and used anyway; null when it was not.
+    EnvironmentDriftInfo? EnvironmentDrift = null);
+
+/// <summary>
+/// #5028: a selection made from a baseline recorded in another environment. <see cref="Objects"/>
+/// names at most <c>AffectedEnvironmentDrift.NamedObjectLimit</c> of the <see cref="ChangedObjects"/>.
+/// <see cref="Reason"/> says why an <see cref="Approximate"/> selection could not be narrowed exactly.
+/// See docs/server-mode.md#affectedonly-across-environments.
+/// </summary>
+public sealed record EnvironmentDriftInfo(
+    string Recorded,
+    string Current,
+    int ChangedObjects,
+    string Mode,
+    IReadOnlyList<string> Objects,
+    string? Reason)
+{
+    public const string Diffed = "diffed";
+    public const string Approximate = "approximate";
+}
 
 public static class ServerProtocol
 {
@@ -265,7 +300,7 @@ public static class ServerProtocol
             ["runtests"] = new HashSet<string>(StringComparer.Ordinal)
             {
                 "command", "sourcePaths", "packagePaths", "coverage", "perTestCoverage",
-                "affectedOnly", "includeFailing", "testIsolation",
+                "affectedOnly", "includeFailing", "strictEnvironment", "testIsolation", "tdd",
             },
             ["execute"] = new HashSet<string>(StringComparer.Ordinal)
             {
@@ -454,16 +489,7 @@ public static class ServerProtocol
             cached,
             cancelled = cancelled ? (bool?)true : null,
             changedFiles = cached ? null : changedFiles,
-            selection = selection == null ? null : new
-            {
-                mode = selection.Mode,
-                ran = selection.Ran,
-                skipped = selection.Skipped,
-                changedObjects = selection.ChangedObjects,
-                forcedFull = selection.ForcedFull,
-                reason = selection.Reason,
-                skippedFailing = selection.SkippedFailing,
-            },
+            selection = ToSelectionWire(selection),
             compilationErrors = compilationErrors is { Count: > 0 }
                 ? compilationErrors.Select(g => new { file = g.File, errors = g.Errors })
                 : null,
@@ -518,16 +544,7 @@ public static class ServerProtocol
             sourceScanFailures = ToScanFailureWire(sourceScanFailures),
             tests = tests.Select(ToWire),
             messages = messages is { Count: > 0 } ? messages.Select((m, i) => ToWire(m, Tag(messageTags, i))) : null,
-            selection = selection == null ? null : new
-            {
-                mode = selection.Mode,
-                ran = selection.Ran,
-                skipped = selection.Skipped,
-                changedObjects = selection.ChangedObjects,
-                forcedFull = selection.ForcedFull,
-                reason = selection.Reason,
-                skippedFailing = selection.SkippedFailing,
-            },
+            selection = ToSelectionWire(selection),
             compilationErrors = compilationErrors is { Count: > 0 }
                 ? compilationErrors.Select(g => new { file = g.File, errors = g.Errors })
                 : null,
@@ -543,6 +560,26 @@ public static class ServerProtocol
     // the CLI's --output-json document already uses (codeunitId / codeunit / exceptionType /
     // message / count / accepted). Null-omitted, and an EMPTY list omits too — unlike coverage
     // there is no "asked and found nothing" state to distinguish: no aborts is no condition.
+    private static object? ToSelectionWire(ServerSelection? selection) => selection == null ? null : new
+    {
+        mode = selection.Mode,
+        ran = selection.Ran,
+        skipped = selection.Skipped,
+        changedObjects = selection.ChangedObjects,
+        forcedFull = selection.ForcedFull,
+        reason = selection.Reason,
+        skippedFailing = selection.SkippedFailing,
+        environmentDrift = selection.EnvironmentDrift == null ? null : new
+        {
+            recorded = selection.EnvironmentDrift.Recorded,
+            current = selection.EnvironmentDrift.Current,
+            changedObjects = selection.EnvironmentDrift.ChangedObjects,
+            mode = selection.EnvironmentDrift.Mode,
+            objects = selection.EnvironmentDrift.Objects,
+            reason = selection.EnvironmentDrift.Reason,
+        },
+    };
+
     private static IEnumerable<object>? ToCompanyInitWire(IReadOnlyList<CompanyInitFailure>? failures)
         => failures is { Count: > 0 }
             ? failures.Select(f => (object)new

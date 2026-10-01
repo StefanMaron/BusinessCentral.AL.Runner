@@ -125,6 +125,8 @@ public static partial class BcRuntime
         }
         _singleInstanceKeepAlive.Clear();
         _singleInstanceCache.Clear();
+        // The same new session drops the per-table trigger masks, computed from these instances (#5069).
+        AlRunner.Patches.RecordPatches.FlushGlobalTriggerCache();
     }
 
     /// <summary>

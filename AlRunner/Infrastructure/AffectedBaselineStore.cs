@@ -23,7 +23,8 @@ internal sealed record AffectedBundleBaseline(
     HashSet<string> Failing,
     Dictionary<string, HashSet<string>> Events,
     List<SubscriberBinding>? Bindings,
-    EventObservability? Observability);
+    EventObservability? Observability,
+    BundleEnvironments? Environments = null);
 
 internal sealed record AffectedBaseline(
     Dictionary<string, AffectedModuleSnapshot> Modules,
@@ -35,7 +36,10 @@ internal static class AffectedBaselineStore
     // 2: #5008's table keys and the per-bundle "<bundle>" events entry.
     // 3: #5011's entered-scope and constructed-object coverage keys, and "obj|" bundle-wide keys.
     // 4: #5050's session-state keys ("st|w|", "st|r|") in each test's events entry.
-    internal const int SchemaVersion = 4;
+    // 5: #5028's per-test environments (Envs, TestEnv) and "dep|" coverage keys. A version-4 file is
+    //    still read, with no environment, so a run in another environment uses it approximately.
+    internal const int SchemaVersion = 5;
+    internal const int OldestReadableSchema = 4;
     internal const string CacheName = "affected-baseline";
 
     /// <summary>The file for one request's bundle set. Order and duplicates do not change the key.</summary>
@@ -62,8 +66,8 @@ internal static class AffectedBaselineStore
         {
             var dto = JsonSerializer.Deserialize<StoreDto>(File.ReadAllBytes(path), Json);
             if (dto == null) return new(null, $"{path} is empty");
-            if (dto.Schema != SchemaVersion)
-                return new(null, $"{path} has schema version {dto.Schema}, this runner reads {SchemaVersion}");
+            if (dto.Schema < OldestReadableSchema || dto.Schema > SchemaVersion)
+                return new(null, $"{path} has schema version {dto.Schema}, this runner reads {OldestReadableSchema} to {SchemaVersion}");
             return new(FromDto(dto), null);
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException
@@ -88,10 +92,13 @@ internal static class AffectedBaselineStore
     /// baselines now, by file content hash. Anything the snapshot cannot vouch for is a reason
     /// to run everything, never an empty change set.
     /// </summary>
+    /// <param name="environmentDiffed">#5028: the baseline's environment differs and its dependency
+    /// changes are selected by the environment diff, so a changed dependency set is not a reason here.</param>
     internal static ChangeResult ChangedSince(
         IReadOnlyDictionary<string, AffectedModuleSnapshot> stored,
         IEnumerable<string> moduleNames,
-        Func<string, AffectedModuleSnapshot?> current)
+        Func<string, AffectedModuleSnapshot?> current,
+        bool environmentDiffed = false)
     {
         var changed = new List<AffectedObjectId>();
         foreach (var module in moduleNames)
@@ -103,7 +110,8 @@ internal static class AffectedBaselineStore
                 return new(changed, $"module {module} has no change-model baseline in this process to compare with");
             if (!string.Equals(before.ManifestFingerprint, now.ManifestFingerprint, StringComparison.Ordinal))
                 return new(changed, $"app.json or the preprocessor symbols of {module} changed");
-            if (!string.Equals(before.SharedRefsFingerprint, now.SharedRefsFingerprint, StringComparison.Ordinal))
+            if (!environmentDiffed
+                && !string.Equals(before.SharedRefsFingerprint, now.SharedRefsFingerprint, StringComparison.Ordinal))
                 return new(changed, $"the resolved dependency set of {module} changed");
 
             foreach (var path in before.FileHashByPath.Keys.Union(now.FileHashByPath.Keys, StringComparer.Ordinal))
@@ -144,6 +152,15 @@ internal static class AffectedBaselineStore
         public List<string> Keys { get; set; } = new();
         public Dictionary<string, ModuleDto> Modules { get; set; } = new();
         public Dictionary<string, BundleDto> Bundles { get; set; } = new();
+        // #5028: each app of a recorded environment, by package content hash, stored once however
+        // many bundles resolved it.
+        public Dictionary<string, EnvAppDto>? EnvApps { get; set; }
+    }
+
+    private sealed class EnvAppDto
+    {
+        public string Name { get; set; } = "";
+        public Dictionary<string, string>? Objects { get; set; }
     }
 
     private sealed class ModuleDto
@@ -170,6 +187,10 @@ internal static class AffectedBaselineStore
         public Dictionary<string, int[]> Events { get; set; } = new();
         public List<BindingDto>? Bindings { get; set; }
         public ObservabilityDto? Observability { get; set; }
+        // Per environment id, AppId to the content hash of the package (an EnvApps key); and per
+        // test, the id of the environment its record was taken in. Null when none is recorded.
+        public Dictionary<string, Dictionary<string, string>>? Envs { get; set; }
+        public Dictionary<string, string>? TestEnv { get; set; }
     }
 
     private sealed class BindingDto
@@ -237,8 +258,24 @@ internal static class AffectedBaselineStore
                     Observable = x.Observability.ObservableEventKeys.OrderBy(k => k, StringComparer.Ordinal).ToList(),
                     Publishers = new Dictionary<string, bool>(x.Observability.PublisherObjects, StringComparer.Ordinal),
                 },
+                Envs = x.Environments?.Snapshots.ToDictionary(
+                    s => s.Key,
+                    s => s.Value.Apps.ToDictionary(kv => kv.Key.ToString("D"), kv => AddEnvApp(kv.Value), StringComparer.Ordinal),
+                    StringComparer.Ordinal),
+                TestEnv = x.Environments == null ? null : new Dictionary<string, string>(x.Environments.ByTest, StringComparer.Ordinal),
             };
         return dto;
+
+        string AddEnvApp(EnvironmentApp app)
+        {
+            dto.EnvApps ??= new Dictionary<string, EnvAppDto>(StringComparer.Ordinal);
+            dto.EnvApps.TryAdd(app.ContentHash, new EnvAppDto
+            {
+                Name = app.Name,
+                Objects = app.Objects == null ? null : new Dictionary<string, string>(app.Objects, StringComparer.Ordinal),
+            });
+            return app.ContentHash;
+        }
     }
 
     private static AffectedBaseline FromDto(StoreDto dto)
@@ -290,8 +327,37 @@ internal static class AffectedBaselineStore
                     Required(s.Identity, "a binding identity"))).ToList(),
                 x.Observability == null ? null : new EventObservability(
                     new HashSet<string>(Required(x.Observability.Observable, "observable events"), StringComparer.Ordinal),
-                    new Dictionary<string, bool>(Required(x.Observability.Publishers, "publishers"), StringComparer.Ordinal)));
+                    new Dictionary<string, bool>(Required(x.Observability.Publishers, "publishers"), StringComparer.Ordinal)),
+                dto.Schema < 5 || x.Envs == null || x.TestEnv == null ? null : Environments(x.Envs, x.TestEnv));
         }
         return new AffectedBaseline(modules, bundles);
+
+        BundleEnvironments Environments(Dictionary<string, Dictionary<string, string>> envs, Dictionary<string, string> byTest)
+        {
+            var result = new BundleEnvironments();
+            foreach (var (id, apps) in envs)
+                result.Snapshots[id] = Environment(Required(apps, $"environment {id}"));
+            foreach (var (test, id) in byTest)
+            {
+                if (id == null || !result.Snapshots.ContainsKey(id))
+                    throw new InvalidDataException($"test {test} names environment '{id}', which is not stored");
+                result.ByTest[test] = id;
+            }
+            return result;
+        }
+
+        EnvironmentSnapshot Environment(Dictionary<string, string> apps)
+        {
+            var result = new Dictionary<Guid, EnvironmentApp>();
+            foreach (var (appId, contentHash) in apps)
+            {
+                if (!Guid.TryParse(appId, out var id)) throw new InvalidDataException($"environment AppId '{appId}' is not a GUID");
+                if (dto.EnvApps == null || contentHash == null || !dto.EnvApps.TryGetValue(contentHash, out var app) || app == null)
+                    throw new InvalidDataException($"environment app {appId} names no stored package");
+                result[id] = new EnvironmentApp(contentHash, app.Name ?? "",
+                    app.Objects == null ? null : new Dictionary<string, string>(app.Objects, StringComparer.Ordinal));
+            }
+            return new EnvironmentSnapshot(result);
+        }
     }
 }

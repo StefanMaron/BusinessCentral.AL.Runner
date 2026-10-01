@@ -170,9 +170,10 @@ public class ServerAffectedSelectionPackagedDependencyTests
     }
 
     // #4979: the package replaced while no server runs. The next server finds the persisted baseline
-    // under a different environment key and runs everything, saying why.
+    // under a different environment key; since #5028 it diffs the two packages per object and runs
+    // the tests that reached the changed one (here the whole codeunit, by its isolation), with a warning.
     [SkippableFact]
-    public async Task RebuiltPackage_BetweenServerProcesses_ForcesAFullRunNamingTheEnvironment()
+    public async Task RebuiltPackage_BetweenServerProcesses_RunsTheCallerNamingTheEnvironmentDrift()
     {
         TestArtifacts.SkipIfMissing();
         var (app, testApp) = Layout();
@@ -185,18 +186,22 @@ public class ServerAffectedSelectionPackagedDependencyTests
 
         await using var second = await CliServer.StartAsync(new[] { "--cache", cache });
         var afterRebuild = await Send(second, testApp);
-        Assert.True(afterRebuild.ForcedFull, afterRebuild.Raw);
-        Assert.Contains("environment changed", afterRebuild.Raw, StringComparison.Ordinal);
+        Assert.False(afterRebuild.ForcedFull, afterRebuild.Raw);
+        Assert.Contains("\"environmentDrift\":{", afterRebuild.Raw, StringComparison.Ordinal);
+        Assert.Contains("\"mode\":\"diffed\"", afterRebuild.Raw, StringComparison.Ordinal);
+        Assert.Contains("Codeunit 60471 PkgDep Helper SX", afterRebuild.Raw, StringComparison.Ordinal);
         Assert.Equal(2, afterRebuild.Ran);
         Assert.True(afterRebuild.Status.GetValueOrDefault("CallsApp") == "fail", afterRebuild.Raw);
         Assert.Contains("the app returned 63", afterRebuild.Raw, StringComparison.Ordinal);
     }
 
-    // Review of #4986: once a request has compiled App/ as its own bundle, a later [App.Test] request
-    // resolves the package but runs that source-compiled module (#1892 reuse by AppId). Editing App/
-    // and recompiling it changes what runs while the package bytes stay the same.
+    // Review of #4986 asked what runs when a request has compiled App/ as its own bundle and a later
+    // [App.Test] request resolves the package. Until #5079 that request ran the source-compiled
+    // module (#1892 reuse by AppId), so editing App/ without repackaging changed what ran. Since #5079
+    // a module from an earlier request answers only for its own source: App.Test runs the package it
+    // resolves, as a fresh server does, and an edit to App/ that is not packaged changes nothing.
     [SkippableFact]
-    public async Task SourceCompiledModuleRunsForThePackage_EditWithoutRepackaging_RunsTheCaller()
+    public async Task SourceCompiledModuleFromAnEarlierRequest_DoesNotAnswerForThePackage()
     {
         TestArtifacts.SkipIfMissing();
         var (app, testApp) = Layout();
@@ -204,6 +209,10 @@ public class ServerAffectedSelectionPackagedDependencyTests
         var plainApp = JsonSerializer.Serialize(new
         {
             command = "runTests", sourcePaths = new[] { app }, packagePaths = Array.Empty<string>(),
+        });
+        var plainTestApp = JsonSerializer.Serialize(new
+        {
+            command = "runTests", sourcePaths = new[] { testApp }, packagePaths = Array.Empty<string>(),
         });
 
         await server.SendRequestStreamingAsync(plainApp, TimeSpan.FromSeconds(180));
@@ -215,9 +224,15 @@ public class ServerAffectedSelectionPackagedDependencyTests
         await server.SendRequestStreamingAsync(plainApp, TimeSpan.FromSeconds(180));
 
         var afterEdit = await Send(server, testApp);
-        Assert.True(afterEdit.Status.TryGetValue("CallsApp", out var status), afterEdit.Raw);
-        Assert.True(status == "fail", afterEdit.Raw);
-        Assert.Contains("the app returned 63", afterEdit.Raw, StringComparison.Ordinal);
+        Assert.DoesNotContain("the app returned 63", afterEdit.Raw, StringComparison.Ordinal);
+        Assert.True(afterEdit.Status.GetValueOrDefault("CallsApp", "not run") != "fail", afterEdit.Raw);
+
+        var lines = await server.SendRequestStreamingAsync(plainTestApp, TimeSpan.FromSeconds(180));
+        var (events, summary) = ProtocolV2Streaming.Split(lines);
+        var raw = string.Join(" | ", lines);
+        Assert.True(summary.GetProperty("exitCode").GetInt32() == 0, raw);
+        Assert.Contains(events, e => e.GetProperty("name").GetString()!.EndsWith(".CallsApp", StringComparison.Ordinal)
+            && e.GetProperty("status").GetString() == "pass");
     }
 
     [SkippableFact]
@@ -235,10 +250,11 @@ public class ServerAffectedSelectionPackagedDependencyTests
         File.WriteAllText(Path.Combine(app, "src", "Helper.Codeunit.al"), HelperSource(3));
         Package(app, testApp);
 
-        // Same AppId and version, so only the package's content can tell the two apart.
+        // Same AppId and version, so only the package's content can tell the two apart. #5028: the
+        // two builds are diffed per object, and the caller of the changed codeunit is selected.
         var afterRebuild = await Send(server, testApp);
-        Assert.True(afterRebuild.ForcedFull, afterRebuild.Raw);
-        Assert.Contains("environment changed", afterRebuild.Raw, StringComparison.Ordinal);
+        Assert.False(afterRebuild.ForcedFull, afterRebuild.Raw);
+        Assert.Contains("\"mode\":\"diffed\"", afterRebuild.Raw, StringComparison.Ordinal);
         Assert.True(afterRebuild.Status.TryGetValue("CallsApp", out var status), afterRebuild.Raw);
         Assert.True(status == "fail", afterRebuild.Raw);
         Assert.Contains("the app returned 63", afterRebuild.Raw, StringComparison.Ordinal);

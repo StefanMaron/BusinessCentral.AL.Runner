@@ -76,7 +76,10 @@ public static class WatchDashboard
         {
             // A Style object, not inline color markup: LogSingleWordTagContractTests scans source for
             // bracketed single-word tags, and this is console styling, not a log tag.
-            rows.Add(new Text(string.Join("\n", affectedLines), new Style(Color.Aqua)));
+            foreach (var line in affectedLines)
+                rows.Add(WatchAffectedReport.IsWarning(line)
+                    ? new Text(line, new Style(Color.Yellow, decoration: Decoration.Bold))
+                    : new Text(line, new Style(Color.Aqua)));
             rows.Add(new Text(string.Empty));
         }
         rows.Add(BuildTree(results));

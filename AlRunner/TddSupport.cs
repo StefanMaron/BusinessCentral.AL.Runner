@@ -46,7 +46,7 @@ public static class TddSupport
     /// </summary>
     public static IReadOnlyList<TestResult> BuildFailedTests(
         IReadOnlyList<TddExcludedObjectDetail> details)
-        => Build(details, TestOutcome.Fail, "--tdd", "<tdd-excluded>");
+        => Build(details, TestOutcome.Fail, "--tdd", "<tdd-excluded>", AlErrorKind.Compile);
 
     /// <summary>
     /// Issue #3476: the same enumeration, reported as <see cref="TestOutcome.Skipped"/>. Used
@@ -58,11 +58,11 @@ public static class TddSupport
     /// </summary>
     public static IReadOnlyList<TestResult> BuildSkippedTests(
         IReadOnlyList<TddExcludedObjectDetail> details)
-        => Build(details, TestOutcome.Skipped, "emit-excluded", "<emit-excluded>");
+        => Build(details, TestOutcome.Skipped, "emit-excluded", "<emit-excluded>", null);
 
     private static IReadOnlyList<TestResult> Build(
         IReadOnlyList<TddExcludedObjectDetail> details, TestOutcome outcome,
-        string prefix, string unreadableMethodName)
+        string prefix, string unreadableMethodName, AlErrorKind? kind)
     {
         var results = new List<TestResult>();
         foreach (var detail in details)
@@ -80,7 +80,7 @@ public static class TddSupport
                     $"{prefix}: could not re-read {detail.FilePath} to find its [Test] procedures: {ex.Message}",
                     string.Join("\n", detail.Diagnostics), TimeSpan.Zero,
                     AlCallStack: null, CodeunitDisplayName: detail.ObjectDisplayName,
-                    Exception: null, Expectation: null, InsideTestProc: false));
+                    Exception: null, Expectation: null, InsideTestProc: false, KnownErrorKind: kind));
                 continue;
             }
 
@@ -110,10 +110,81 @@ public static class TddSupport
                         $"{prefix}: {objName} did not compile — {firstDiag}",
                         diagText, TimeSpan.Zero,
                         AlCallStack: null, CodeunitDisplayName: objName,
-                        Exception: null, Expectation: null, InsideTestProc: false));
+                        Exception: null, Expectation: null, InsideTestProc: false, KnownErrorKind: kind));
                 }
             }
         }
         return results;
     }
+
+    /// <summary>
+    /// Every member --tdd generated that <paramref name="moduleName"/>'s compile depended on: the
+    /// ones its own emit generated, plus (#5037) the ones an earlier pass generated into another
+    /// source bundle for it, which this compile resolved and so does not report itself.
+    /// </summary>
+    public static List<TddGeneratedMember> MembersFor(BcEmitOutput emitOutput, string moduleName)
+    {
+        var own = emitOutput.TddGeneratedMembers ?? Array.Empty<TddGeneratedMember>();
+        return own.Concat(TddCrossBundle.GeneratedFor(moduleName).Where(m => !own.Contains(m))).ToList();
+    }
+}
+
+/// <summary>
+/// The tests whose compile depended on a --tdd-generated member, and the rewrite that reports
+/// each of them FAILED whatever happened when it ran: a generated field or enum value is working
+/// storage, so a test that only writes and reads it back would otherwise pass against
+/// scaffolding (loud-failures.md). Shared by the CLI/--watch run loop and --server (#5034).
+/// </summary>
+public sealed class TddDependents
+{
+    // "ObjectDisplayName.MethodName" -> the generated members that test's compile needed.
+    private readonly Dictionary<string, List<TddGeneratedMember>> _byTest = new();
+
+    public int Count => _byTest.Count;
+
+    public void Add(IEnumerable<TddGeneratedMember> members)
+    {
+        foreach (var m in members)
+            foreach (var testLabel in m.DependentTests)
+            {
+                if (!_byTest.TryGetValue(testLabel, out var list))
+                    _byTest[testLabel] = list = new List<TddGeneratedMember>();
+                list.Add(m);
+            }
+    }
+
+    public TestResult Apply(TestResult t)
+    {
+        var label = string.IsNullOrEmpty(t.CodeunitDisplayName) ? t.Codeunit : t.CodeunitDisplayName!;
+        if (!_byTest.TryGetValue($"{label}.{t.Method}", out var deps) || deps.Count == 0) return t;
+        var depList = string.Join("; ", deps.Select(d => $"{d.ObjectDisplayName}: {d.MemberKind} {d.Signature}"));
+        var msg = $"--tdd: this test depends on {deps.Count} generated member(s) the " +
+            $"implementing app has not defined yet: {depList}";
+        if (!string.IsNullOrEmpty(t.Message)) msg += $" (underlying result: {t.Message})";
+        return t with { Outcome = TestOutcome.Fail, Message = msg, KnownErrorKind = AlErrorKind.Compile };
+    }
+
+    public List<TestResult> Apply(IReadOnlyList<TestResult> raw)
+        => _byTest.Count == 0 ? raw as List<TestResult> ?? raw.ToList() : raw.Select(Apply).ToList();
+}
+
+/// <summary>
+/// One --server <c>runTests</c> request with <c>tdd</c> on (#5034): where the bundle loop streams
+/// the results it builds itself, and which bundle's dependents are running now.
+/// </summary>
+public sealed class TddServerRequest
+{
+    public TddServerRequest(Action<TestResult> report) => Report = report;
+
+    /// <summary>Streams one result as a <c>test</c> line.</summary>
+    public Action<TestResult> Report { get; }
+
+    /// <summary>The dependents of the bundle whose tests are running; null between bundles.</summary>
+    public TddDependents? Active { get; set; }
+
+    /// <summary>Every member generated in this request, for the stderr summary.</summary>
+    public List<TddGeneratedMember> Generated { get; } = new();
+
+    /// <summary>The rewrite for a test of the bundle running now.</summary>
+    public TestResult Apply(TestResult t) => Active?.Apply(t) ?? t;
 }

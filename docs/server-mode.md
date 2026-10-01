@@ -48,6 +48,8 @@ select the build every request compiles, and a request cannot change them (#4952
   "perTestCoverage": false,     // runTests + execute — per-test statement attribution, see #2135
   "affectedOnly": false,        // runTests: select only tests affected by object changes since the previous run (#2441)
   "includeFailing": false,      // with affectedOnly: rerun every test that did not pass last time, whatever changed (#4978)
+  "strictEnvironment": false,   // with affectedOnly: run everything when the baseline was recorded in another environment (#5028)
+  "tdd": false,                 // runTests: the CLI's --tdd for this request; default: the --tdd startup flag (#5034)
   "testIsolation": "codeunit"   // optional: "codeunit" (default) | "test"/"method" | "disabled"
                                  // — see #1616. Applies to this request only; a later
                                  // request that omits the field falls back to the
@@ -67,7 +69,7 @@ Field names are case-sensitive. What happens to a field depends on the command (
 | not declared above (`preprocessorSymbols`, `testFilter`, `SourcePaths`, …) | **refused** with one `{"error": …}` line naming the field; nothing runs | ignored |
 
 `runTests` reads `sourcePaths`, `packagePaths`, `coverage`, `perTestCoverage`, `affectedOnly`,
-`includeFailing` and `testIsolation`. `execute` reads `sourcePaths`, `code`, `packagePaths`,
+`includeFailing`, `strictEnvironment`, `tdd` and `testIsolation`. `execute` reads `sourcePaths`, `code`, `packagePaths`,
 `captureValues`, `iterationTracking`, `coverage`, `perTestCoverage`, `affectedOnly` and
 `testIsolation`.
 
@@ -154,7 +156,14 @@ answer an event in a request that omits it. A single-bundle request is unchanged
   `coverage: true` — see "Per-statement hit counts (`coverage`)" below.
 - `selection` (#2441) is present on the summary when the request set
   `affectedOnly: true`: `{mode:"affected", ran, skipped, skippedFailing,
-  changedObjects[], forcedFull, reason|null}`.
+  changedObjects[], forcedFull, reason|null, environmentDrift|omitted}`.
+  - `environmentDrift` (#5028) is present only when the baseline was recorded in
+    another environment and was used anyway: `{recorded, current, changedObjects,
+    mode:"diffed"|"approximate", objects[], reason|omitted}`. `recorded` and
+    `current` are the two BC builds, `changedObjects` how many objects of the two
+    environments' apps differ, `objects` names at most 50 of them. `approximate`
+    means the diff could not account for every difference and `reason` says why. See
+    "affectedOnly across environments".
   - `skippedFailing` counts the skipped tests whose last recorded result was not a
     pass (#4978). A client that keeps each test's previous result should keep
     showing those as failed; `0` on a forced-full run and with `includeFailing: true`.
@@ -597,10 +606,11 @@ include:
   server processes");
 - incremental change model fallback (for example `app.json` changes, dependency
   set changes, removed/unclassifiable files, duplicate declaration ambiguity);
-- coverage recorded under a different environment (BC version/artifact,
-  package-cache closure, the content of a non-Microsoft dependency package —
-  see "affectedOnly and packaged dependencies" — or the test isolation, see
-  "affectedOnly and test isolation");
+- coverage recorded under a different test isolation (see "affectedOnly and test
+  isolation"), or in a different environment when the request sets
+  `strictEnvironment: true`. Without it, a baseline from another BC build or package
+  set is used and narrowed by a diff of the two (see "affectedOnly across
+  environments");
 - the change model's baseline for a module in the request is not the code the
   coverage was recorded on (see below);
 - compile/dependency failures before test execution;
@@ -678,6 +688,21 @@ the recording is of the old code. A changed test can start writing WorkDate, or 
 reading a sequence it never read, and nothing recorded says so. A later reader can then
 fail where it passed, and a changed test can fail for want of state another test used to
 give it (a reader run alone finds no sequence). A test with no record counts as both.
+
+A test that ran to completion but is unknown because its statements could not be attributed
+to an object (for example statements in a file declaring several objects, #5003) still keeps
+its record (#5059): session-state, event and table keys name objects by id, not by file, so
+the record is complete. It is still selected on every request; the record only narrows which
+earlier writers it brings when nothing changed. A test that timed out, was skipped or has no
+result keeps no record, and brings every earlier writer.
+
+A use can land only on the test that first reaches a per-session cache: BC asks the Global
+Triggers subscribers for a table's trigger mask once per session, and those subscribers reach
+SingleInstance codeunits (#5069). Two things keep a record from shrinking because of that. Each
+bundle starts with an empty mask cache, at the same point its SingleInstance codeunits are
+dropped, so the first test to touch a table in each request computes the mask again. And a test
+recorded again keeps the session-state keys of its previous record, so a narrowed run that
+reaches some other cache in an earlier test can only add keys, never remove them.
 
 Across bundles of one request: WorkDate and number sequences carry from one bundle to the
 next (SingleInstance codeunits are reset per bundle), so a change in an earlier bundle (or a
@@ -842,9 +867,10 @@ told apart:
   records). A later test can use that instance without building it or entering any of
   its code, for example `Run()` on a codeunit with no `OnRun`. Only a whole-object
   change forces this; a change narrowed to one procedure selects the tests that
-  entered it, whichever instance they ran on;
-- a `PageExtension` changed: which page it extends is not recorded, so which tests
-  open that page is not known.
+  entered it, whichever instance they ran on.
+
+A changed `PageExtension` selects the tests that opened the page it extends; see the
+next section.
 
 The persisted store's schema changed with this (schema 3), so a store written earlier
 is no baseline. A request that records nothing does not record these either.
@@ -854,6 +880,40 @@ process per build, same cache, steady state after the first request): a
 `perTestCoverage` run took 39.5 s on average with this recording and 40.0 s with it
 stubbed out (four runs each); a plain run took 38.6 s and 40.0 s (six runs each). Both
 differences are inside run-to-run noise.
+
+#### affectedOnly and page extensions
+
+A pageextension's code runs when its base page opens, so a changed `PageExtension`
+(added, edited, removed) selects the tests that opened the base page (#5025). Every way
+a test opens a page builds an instance of the base page, which the recording keeps as
+the page's key (previous section): a `TestPage`, `Page.Run` or `Page.RunModal` by id
+with a page handler, and a `Page` variable's `RunModal`. A base page in a dependency is
+kept as its `dep|Page|id:<n>` key, so its tests are selected the same way.
+
+The base page comes from two places, and both are used:
+
+- the runner's registry now: the source-parsed pageextensions and the pageextensions
+  of the dependency packages, each base page resolved by name among the source-parsed
+  and the dependency pages. This is what names the base of an added extension;
+- the recording: each recording run stores, in the bundle's `<bundle>` entry, a
+  `pext|<extension>|<page>` key for every pageextension the registry resolved then.
+  This is what names the base of an extension removed since, including across server
+  processes (the key is persisted with the rest of the entry).
+
+An extension edited to extend another page selects the tests of both pages.
+
+A full run is forced, with a `reason`, when:
+
+- neither the registry nor the recording names the extension's base page;
+- the registry could not be read (a dependency package's symbols are unreadable);
+- an instance of the base page was built outside any one test (a test codeunit's
+  global, a SingleInstance codeunit, or before the test ran), the same rule as for
+  any other object.
+
+An event an extension declares, and the subscribers it contains, are selected as in
+"affectedOnly and event subscribers". The baseline schema is unchanged: a baseline
+recorded before #5025 has no `pext|` keys, so a pageextension removed since then
+forces a full run.
 
 #### affectedOnly and packaged dependencies
 
@@ -868,19 +928,23 @@ The environment key (see the forced-full causes above) now carries a SHA-256 of
 each resolved dependency package that is not published by Microsoft, was not
 synthesized by the runner from a sibling source (`workspace-deps`), and **is the
 module that actually runs** for its AppId. Replacing such a package, even with a
-rebuild of the same version, changes the key and forces a full run. That is what
-makes it safe for selection to ignore a statement attributed to the source folder
-of a package the key covers: the code that statement came from can only change by
-changing the key. Statements under any other untracked file still make the test
-unknown.
+rebuild of the same version, changes the key. That is what makes it safe for
+selection to ignore a statement attributed to the source folder of a package the
+key covers: the code that statement came from can only change by changing the key.
+A changed key used to force a full run; since #5028 the two packages are diffed per
+object and the tests that built, entered or held records of a changed object run
+(see "affectedOnly across environments"), unless the request sets
+`strictEnvironment: true`. Statements under any other untracked file still make the
+test unknown.
 
-The "actually runs" condition matters: once a request has compiled `App/` as its
-own bundle, a later request that resolves `App.app` reuses that source-compiled
-module for the AppId (#1892) rather than loading the package. The package's bytes
-then say nothing about what runs, so it is left out of the key and the statements
-stay unknown: an edit to `App/` followed by a request naming `App/` is picked up.
-While the package is the module that runs, an edit to `App/` that is not rebuilt
-into the package changes nothing the tests execute and selects nothing.
+The "actually runs" condition matters within one request: when the request also
+compiles `App/` as its own bundle, a bundle that resolves `App.app` shares that
+source-compiled module for the AppId (#1892) rather than loading the package. The
+package's bytes then say nothing about what runs, so it is left out of the key and the
+statements stay unknown. A module an earlier request compiled from `App/` is not reused
+for the package (#5079, "Another directory with the same app id"), so while the package
+is the module that runs, an edit to `App/` that is not rebuilt into the package changes
+nothing the tests execute and selects nothing.
 
 The request-bundle exclusion compares symlink-resolved paths, so a request folder
 reached through a link is never ignored. Package hashes go through the process's
@@ -934,12 +998,15 @@ holds no coverage for loads it.
   subscriber bindings and event observability, the environment key), and per request
   module, the change model's baseline at the moment the coverage was recorded: the
   SHA-256 of every `.al` file, the one object each file declares, and the fingerprints
-  of `app.json`/preprocessor symbols and of the resolved dependency set. Statement
-  tables are not stored. Object and scope keys are stored once and referenced by
-  index. A `Schema` field is compared with the runner's; any other value is no
-  baseline.
-- **How it selects**: the environment key must be equal, as for coverage recorded in
-  the process. Then the stored module snapshots are compared with the change model's
+  of `app.json`/preprocessor symbols and of the resolved dependency set. Since
+  schema 5, also each bundle's environment: per resolved package, its content hash
+  and a hash per object, each package stored once however many bundles resolved it
+  and per test the environment its record was taken in (see the next section). Statement tables are not stored. Object and scope keys are
+  stored once and referenced by index. A `Schema` field is compared with the
+  runner's: schema 4 (before #5028) is still read, without an environment; any other
+  value is no baseline.
+- **How it selects**: when the environment key differs, the next section applies.
+  Then the stored module snapshots are compared with the change model's
   baselines for the request, which the request's own compile has just recorded (a
   request that selects always compiles when the change model has no baseline; see the
   previous section). A file whose hash differs, that was added, or that was removed
@@ -961,6 +1028,100 @@ holds no coverage for loads it.
 Measured on the al-language corpus: see the pull request that introduced this (#5007)
 for the file size and load time.
 
+#### affectedOnly across environments
+
+A baseline over a large suite can take hours to record, and a new BC build used to
+force all of it again. Since #5028 a baseline recorded in another environment (another
+BC build or artifact, another package cache, or other package content) is used, with a
+warning, and never discarded or widened to a full run for that reason alone. The test
+isolation is not part of this: coverage recorded under another isolation still forces a
+full run.
+
+- **What is diffed**: every run that records coverage also records the apps its bundle
+  resolved (request bundles and sibling sources excluded, as in the package key above).
+  Per app it keeps the package's content hash and a hash per object: the hash of the
+  `src/*.al` file that declares the object, or, for a package with no compiled code and
+  no source (the platform's `System` app), the hash of the object's entry in its
+  `SymbolReference.json`. The next run in another environment compares the two record
+  by record. A package whose bytes are equal contributes nothing. Otherwise every object
+  whose hash differs, or that exists on one side only, is a changed object.
+- **How it selects**: a changed codeunit, page, report, query or xmlport selects the
+  tests that built an instance of it or entered one of its procedures or triggers, a
+  changed table or tableextension the tests that held a record of it, and a changed
+  pageextension the tests that opened its base page (#5025). Since #5028 each
+  test's recording keeps those objects for code outside the request's own sources too
+  (`dep|` keys). An interface has no code of its own and selects nothing. The run then
+  applies every other rule as usual, including a changed dependency set, which is part
+  of the diff rather than a reason to run everything.
+- **The warning**: `selection.environmentDrift` on the response, a `WARNING:` line on
+  stderr, and under `--watch --affected` a highlighted line in the cycle's report. It
+  names the build the baseline was recorded on, the current build, how many objects
+  differ, and the first of them.
+- **When the result is approximate**: the baseline is still used as is, and
+  `environmentDrift.mode` is `approximate` with a `reason`, when the baseline has no
+  record of its environment (written by a runner before #5028), the current closure
+  could not be read, a changed package has no AL source and does carry compiled code, a
+  changed file declares no object, a changed object is of a kind no recording holds
+  (an enum, a permission set, a report extension, …), a changed object's
+  instance or record was held outside any one test, or the BC build changed. What the
+  diff did resolve still selects its tests. Tests that reached only what could not be
+  attributed may be skipped; the account holder chose that over a full run (#5028).
+- **A request module's own `app.json`**: when it changes (a version bump included), the
+  change model cannot vouch for the module and the run is a full run, as before
+  (#5075).
+- **What is never diffed**: the platform itself (the service tier and the runtime the
+  runner loads), which is not made of AL objects. So a change of BC build is always
+  `approximate`, with a reason naming both builds, even when every package is
+  byte-equal.
+- **Each record keeps its own environment**: every test's record names the environment
+  it was taken in, and the baseline keeps each environment a record still names. A
+  test that ran is recorded in the current environment. A test the run skipped keeps
+  its record, which moves to the current environment only when the diff from its own
+  environment was exact; otherwise it keeps its older environment. The next change of
+  environment then diffs that record from where it was taken, so what changed in
+  between is never lost, only selected again. A record with no environment (from a
+  baseline written before #5028) is used as is.
+- **Strict mode**: `strictEnvironment: true` (`--strict-environment` under
+  `--watch --affected`) keeps the behaviour from before #5028: any change of
+  environment forces a full run.
+- **Within one process**: a rebuilt package of the same version is diffed, as is every
+  change between two processes. A dependency whose version changes inside one process
+  is expected to make the change model recompile the module in full and force a full
+  run for that reason; that case is not yet measured or diffed (#5074).
+### `tdd`
+
+`"tdd": true` on `runTests` is the CLI's `--tdd` for that one request (#5034): a test that
+calls a member the app does not have yet no longer turns the whole app group into a compile
+failure with no `test` lines. Starting the server with `--tdd` makes it the default for
+requests that omit the field; `"tdd": false` turns it off for one request. `execute` does not
+read it.
+
+It runs the same generation as the CLI and `--watch --tdd` (`--guide`, "TDD MODE"):
+
+- A missing member the call site anchors (a procedure's argument and return types, a field's
+  type, an enum or enumextension value) is generated in memory, never on disk, and the test
+  runs. It is still reported `"status": "fail"`, `"errorKind": "compile"`, with a message
+  naming the generated signature — a test that ran against a stub is not a pass.
+- With the app and its tests as two `sourcePaths`, the member is generated into the app bundle
+  and the app is recompiled within the same request before the test bundle compiles again.
+- A member that cannot be generated (no anchor, a `Text` argument, a precompiled dependency's
+  object) excludes the object that calls it; each of its `[Test]` procedures is a `test` line
+  with `"status": "fail"`, `"errorKind": "compile"` and a message naming the missing symbol
+  and its AL diagnostic. Every other object still runs.
+- The summary's `exitCode` is `1` (a test failed), not `3`. The members generated are listed
+  on stderr.
+
+Nothing a tdd request generated outlives it: the next request compiles the files on disk. A tdd
+request neither reads nor writes the AL-output cache, and other requests keep using it.
+
+**With `affectedOnly`.** A bundle whose compile generated a member or excluded an object keeps
+no change-model baseline from that request, so no per-test coverage is recorded for it and the
+next request compiles it in full and runs all of its tests (`forcedFull`). Without this, an
+unchanged next request would reuse the module compiled with the stub and select tests against
+coverage measured on code that is not on disk. A test excluded by the refuse path never ran, so
+it has no coverage record, and a test with no record is always selected. When the real member
+replaces the stub, the next `affectedOnly` request runs that test against it.
+
 ### `shutdown`
 
 ```json
@@ -973,6 +1134,51 @@ The server writes this response, then exits. EOF on stdin also exits.
 
 Any request-level problem returns `{"error":"<message>"}` and the server keeps
 running.
+
+## The install baseline across requests
+
+Before a bundle's first test the runner builds its install baseline: the dependency Install
+triggers and Company-Initialize (cached per dependency set since #1867), then the runner's own
+User / Company / Published Application / Access Control / Active Session rows, then the
+bundle's own Install triggers, and finally a capture that every test codeunit restores.
+
+Since #5060 a repeated `runTests` in the same process with **no edit** in between (a re-run
+with a different filter, say) reuses that whole captured baseline and skips everything after the
+dependency step. An edit to **any** loaded bundle changes the event-subscriber scope below, so
+the next run reseeds every bundle; a `--watch` cycle, which an edit usually starts, therefore
+usually misses. The first test codeunit's boundary restore puts it in place, so every test still starts
+from the rows a cold run would give it. The cache is in memory only.
+
+The key holds everything the baseline's rows depend on. When any part of it changes, the seed
+runs again:
+
+| key part | covers |
+|---|---|
+| the dependency+company key | dependency assembly MVIDs, the registered BC symbol apps, and the `--test-data` backup and company |
+| the bundle's assembly MVID | any edit to the bundle's own AL |
+| the event-subscriber scope | the MVIDs of every assembly the subscriber scan reads, because an Install trigger's events can reach any of them |
+| the bundle identity | the `app.json` id, name, publisher and version the Published Application row is written from |
+| the session identity | the session user and company the rows are written for |
+
+Runs that are never reused, and seed fresh every time:
+
+- **`testIsolation` other than `codeunit`.** Only Codeunit isolation restores (and so clears every
+  non-table leftover of the Install triggers) before any test code runs.
+- **A seed that used a `NumberSequence` or the `WorkDate`.** Both are session state outside the
+  store: sequences are reset per request, so a reuse would leave the tests without them, and a
+  `WorkDate` an earlier test moved would be stamped by a fresh seed but not by a reuse.
+- **A seed that changed the session identity** (the #2983 adoption, by a `--test-data` user or
+  by a dependency's Install trigger writing one), a change no snapshot carries.
+- **`AL_RUNNER_NO_DEP_COMPANY_CACHE=1`**, the kill switch for both install-baseline caches.
+
+Not covered: a value an Install trigger takes from the clock (`Today()`, `Time()`,
+`CurrentDateTime()`) or from `CreateGuid()` / `Random`. A reuse keeps the first run's value, so
+a server that crosses midnight can hand a test yesterday's `Today()` stamp.
+
+Under `AL_RUNNER_PERF=1` each run logs `InstallBaseline.BundleCache HIT`, `MISS … stored`,
+`MISS … not-stored: <why>` or `NOKEY <why>`. A bundle's first warm run can still miss once
+when the previous run loaded more assemblies while seeding, which widens the subscriber scope;
+the run after it hits.
 
 ## The reload contract (same-bundle, in-process)
 
@@ -992,6 +1198,17 @@ AL-output type finders (`FindRecordType`, the codeunit/event finders) then prefe
 `BcRuntime.CurrentTestAssembly`, and stale previous-bundle assemblies are skipped
 (`BcRuntime.IsStaleBundleAssembly`), so the freshly-emitted types win over the
 same-named types still loaded from the previous run.
+
+### Another directory with the same app id
+
+Two directories declaring the same app `id` (two checkouts of one app, or a copy) can be
+sent to one server. A module an earlier request compiled for one of them is reused for the
+other only when that directory holds the same source: every `.al` file by relative path and
+content, `app.json`, and the resolved dependencies. Otherwise the request compiles its own
+source, as a fresh server would. A module compiled by a `tdd` request is never reused by a
+later request. A dependency package another request loaded from a different path is reused
+only when its bytes are the same (#5079). Within one request, bundles that share an app id
+still share one module (#1683, #1892).
 
 ### Covered: code / logic edits
 

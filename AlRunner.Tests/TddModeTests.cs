@@ -392,14 +392,16 @@ public sealed class TddModeTests : IDisposable
         Assert.DoesNotContain("CalcChoice", stderr[summaryIdx..]);
     }
 
-    /// <summary>Criterion 12 — --tdd + --server is rejected, not silently ignored.</summary>
+    /// <summary>Criterion 12, now for --dap: --server takes --tdd per request (#5034,
+    /// ServerTddTests); a debug session would run the stubs in place of the app's code, so
+    /// --tdd + --dap is rejected, not silently honoured.</summary>
     [SkippableFact]
-    public void Tdd_RejectedTogetherWithServer()
+    public void Tdd_RejectedTogetherWithDap()
     {
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet",
-            Arguments = $"{TestBuildConfig.RunArgs(ProjectPath)} --tdd --server",
+            Arguments = $"{TestBuildConfig.RunArgs(ProjectPath)} --tdd --dap stdio",
             RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
             UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
         };
@@ -409,8 +411,7 @@ public sealed class TddModeTests : IDisposable
         if (!p.WaitForExit(30_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
 
         Assert.Equal(2, p.ExitCode);
-        Assert.Contains("--tdd", err);
-        Assert.Contains("--server", err);
+        Assert.Contains("--tdd is not supported together with --dap", err);
     }
 
     /// <summary>

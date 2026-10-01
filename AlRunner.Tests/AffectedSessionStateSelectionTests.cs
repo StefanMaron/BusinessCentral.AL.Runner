@@ -98,4 +98,14 @@ public class AffectedSessionStateSelectionTests
         AffectedSessionStateSelection.Widen(order, selected, recorded, changed: false, earlierBundleChanged: false, laterBundleFollows: false);
         Assert.Equal(new[] { "C.Reader", "C.SeqWriter", "C.WorkDateWriterReadingSeq" }, Sorted(selected));
     }
+
+    // #5069: a re-recording keeps the session-state keys the previous record had, and only those.
+    [Fact]
+    public void WithPreviousState_KeepsPreviousStateKeys_AndDropsPreviousOtherKeys()
+    {
+        var merged = AffectedSessionStateSelection.WithPreviousState(
+            Keys(R, "ev|Codeunit|1|OnNew"), Keys(SiR, SiW, "ev|Codeunit|1|OnOld", "tbl|Table|5"));
+        Assert.Equal(new[] { "ev|Codeunit|1|OnNew", R, SiR, SiW }.OrderBy(x => x, StringComparer.Ordinal).ToArray(), Sorted(merged));
+        Assert.Equal(new[] { R }, Sorted(AffectedSessionStateSelection.WithPreviousState(Keys(R), null)));
+    }
 }

@@ -377,6 +377,8 @@ bool watchMode = false;
 // (RunTestsWithSelection); --include-failing is its includeFailing. docs/watch-affected.md.
 bool watchAffected = false;
 bool watchIncludeFailing = false;
+// #5028: --strict-environment is runTests' strictEnvironment: a baseline from another environment runs everything.
+bool watchStrictEnvironment = false;
 // --tdd (issue #1997): local-development-only flag, off by default. Normally a test
 // referencing a not-yet-implemented table field / procedure / enum value is a
 // method-body compile ERROR, which drops the WHOLE app group (BC's ContinueBuildOnError
@@ -584,6 +586,7 @@ for (int i = 0; i < args.Length; i++)
     if (args[i] == "--watch") { watchMode = true; continue; }
     if (args[i] == "--affected") { watchAffected = true; continue; }
     if (args[i] == "--include-failing") { watchIncludeFailing = true; continue; }
+    if (args[i] == "--strict-environment") { watchStrictEnvironment = true; continue; }
     if (args[i] == "--tdd") { tddMode = true; continue; }
     if (args[i] == "--server") { continue; }  // handled above (serverMode); consume so it isn't "unknown"
     if (args[i] == "--dap")  // handled above (dapMode/dapPort/dapStdioMode); consume the flag and its optional value (numeric port, or "stdio")
@@ -680,10 +683,11 @@ if (serverMode && watchMode)
 // #5027: --affected changes how --watch runs a cycle and means nothing elsewhere; the server's
 // per-request form is runTests' affectedOnly. The refused combinations are options the selecting
 // run does not apply, so accepting them would drop them without a word.
-if (watchAffected || watchIncludeFailing)
+if (watchAffected || watchIncludeFailing || watchStrictEnvironment)
 {
     string? affectedProblem =
         watchIncludeFailing && !watchAffected ? "--include-failing is only valid with --watch --affected."
+        : watchStrictEnvironment && !watchAffected ? "--strict-environment is only valid with --watch --affected."
         : !watchMode ? "--affected is only valid with --watch (a --server client sets runTests' affectedOnly instead)."
         : tddMode ? "--affected cannot be combined with --tdd."
         : !bundledMode ? "--affected cannot be combined with --per-suite."
@@ -778,15 +782,13 @@ if (provisionSubcommand && (provisionPlatformApps || provisionTestApps || provis
     return RunExplicitProvisionModes(bcVersionArg, bundles, provisionPlatformApps, provisionTestApps,
         provisionServiceTier, provisionForce, provisionResolveVersionPrefix);
 }
-// --tdd (issue #1997) only changes the bundled-mode CLI run loop's EMIT-EXCLUDED
-// handling (Program.cs, below). --server has its own, separate EMIT-EXCLUDED guard
-// (a different Emit() call site) that this issue's reduced scope does not touch, so
-// --tdd + --server stays rejected. Rejecting explicitly beats silently ignoring the
-// flag — a --tdd run that quietly behaved like a normal run under --server would be
-// far more confusing than an upfront error naming the gap.
-if (tddMode && serverMode)
+// --tdd under --server is a per-request `tdd` field on runTests, defaulting to this flag (#5034;
+// RunTestsWithSelection). --dap runs through the same bundle loop but has no such field, and a
+// debug session stepping through generated stubs as if they were the app's code is the silent
+// fake loud-failures.md forbids — so it refuses rather than ignoring the flag.
+if (tddMode && dapMode)
 {
-    Console.Error.WriteLine("--tdd is not supported together with --server yet (local-development flag; --server's EMIT-EXCLUDED handling is a separate code path this hasn't reached). Run --tdd from the CLI directly.");
+    Console.Error.WriteLine("--tdd is not supported together with --dap: a debug session runs the code as written, and --tdd would run generated stubs in its place. Use --tdd from the CLI, or --server with runTests' tdd field.");
     return 2;
 }
 // --tdd + --watch (issue #2002, follow-up to #1997): NOT rejected. --watch's
@@ -828,7 +830,8 @@ if (tddMode && serverMode)
 // of which would silently discard this notice along with it if it were queued instead
 // of printed immediately. It duplicates on a stacked re-exec exactly like the lines
 // below do, but staying immediate here is the smaller cost versus losing it on error.
-if (tddMode && alCacheDir != null)
+// --server decides per request instead (RunBundleForServer), so its non-tdd requests keep the cache.
+if (tddMode && alCacheDir != null && !serverMode)
 {
     Console.Error.WriteLine(
         "--tdd disables the AL-output cache for this run — its synthetic FAILED tests " +
@@ -2860,7 +2863,8 @@ if (watchAffected)
     var affectedSw = System.Diagnostics.Stopwatch.StartNew();
     var affectedOutcome = RunTestsWithSelection(watchAffectedState!, bundles.ToArray(), null,
         requestCoverage: false, requestPerTestCoverage: false, affectedOnly: true,
-        includeFailing: watchIncludeFailing, onTestComplete: _ => { }, token: default);
+        includeFailing: watchIncludeFailing, onTestComplete: _ => { }, token: default,
+        strictEnvironment: watchStrictEnvironment);
     results.AddRange(WatchAffectedReport.ToBuckets(bundles, affectedOutcome, affectedSw.Elapsed,
         Reporter.FinalizeCompanyInitFailures(CompanyInitializer.DrainFailures(), expectations)));
     var stillFailing = WatchAffectedReport.SkippedFailing(affectedOutcome, watchAffectedState!);
@@ -3224,39 +3228,10 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
     // is counted/added, so a test that only ran against scaffolding can never report pass —
     // see TddGeneratedMember.DependentTests' doc comment for why a generated field is a fully
     // functional fake, not a default return, and must be treated as strictly WORSE.
-    var bundleTddDependents = new Dictionary<string, List<TddGeneratedMember>>();
-    // --tdd (orchestrator review on #2005): forces every TestResult whose compile depended on
-    // a --tdd-generated member to report FAIL, regardless of what actually happened when it
-    // ran. The test still executes in full — "keep running the test... only the reported
-    // outcome changes" — a generated PROCEDURE stub already fails on its own (it raises
-    // Error()), but a generated FIELD or enum value has nothing to fail on: it is real,
-    // functioning storage, so a test that only writes and reads it back legitimately passes,
-    // and a green result there would be the exact lie loud-failures.md's first paragraph
-    // describes — worse than a default return, because it's a fully working fake. Message is
-    // rewritten uniformly for BOTH cases (not just the field/enum one) so the failure always
-    // names the generated member(s) and their inferred type(s) explicitly, per the review.
-    List<TestResult> OverrideTddDependentResults(IReadOnlyList<TestResult> raw)
-    {
-        if (bundleTddDependents.Count == 0) return raw as List<TestResult> ?? raw.ToList();
-        var overridden = new List<TestResult>(raw.Count);
-        foreach (var t in raw)
-        {
-            var label = string.IsNullOrEmpty(t.CodeunitDisplayName) ? t.Codeunit : t.CodeunitDisplayName!;
-            if (bundleTddDependents.TryGetValue($"{label}.{t.Method}", out var deps) && deps.Count > 0)
-            {
-                var depList = string.Join("; ", deps.Select(d => $"{d.ObjectDisplayName}: {d.MemberKind} {d.Signature}"));
-                var msg = $"--tdd: this test depends on {deps.Count} generated member(s) the " +
-                    $"implementing app has not defined yet: {depList}";
-                if (!string.IsNullOrEmpty(t.Message)) msg += $" (underlying result: {t.Message})";
-                overridden.Add(t with { Outcome = TestOutcome.Fail, Message = msg });
-            }
-            else
-            {
-                overridden.Add(t);
-            }
-        }
-        return overridden;
-    }
+    var bundleTddDependents = new TddDependents();
+    // --tdd (orchestrator review on #2005): every TestResult whose compile depended on a
+    // --tdd-generated member reports FAIL, whatever happened when it ran — see TddDependents.
+    List<TestResult> OverrideTddDependentResults(IReadOnlyList<TestResult> raw) => bundleTddDependents.Apply(raw);
     // #1880: counts app groups (bundled mode) / suites (--per-suite) that actually
     // reached test execution and contributed to bundleTests — incremented at the
     // SAME point as bundleTests.AddRange below, in both loops, so a group that threw
@@ -3722,25 +3697,11 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
                     // exclusion remaining, and that case still belongs in criterion 8's list.
                     // #5037: members generated into another bundle for this module on an earlier
                     // pass of this cycle — this compile resolved them, so it reports none itself.
-                    var crossBundleMembers = tddMode
-                        ? TddCrossBundle.GeneratedFor(moduleName)
-                            .Where(m => emitOutput.TddGeneratedMembers?.Contains(m) != true).ToList()
-                        : new List<TddGeneratedMember>();
-                    if (emitOutput.TddGeneratedMembers != null || crossBundleMembers.Count > 0)
+                    if (tddMode)
                     {
-                        var bundleGenerated = (emitOutput.TddGeneratedMembers ?? Array.Empty<TddGeneratedMember>())
-                            .Concat(crossBundleMembers).ToList();
+                        var bundleGenerated = TddSupport.MembersFor(emitOutput, moduleName);
                         allTddGeneratedMembers.AddRange(bundleGenerated);
-                        // Invert DependentTests (member -> tests) into (test -> members), so
-                        // OverrideTddDependentResults can look a REAL TestResult up by its own
-                        // (CodeunitDisplayName ?? Codeunit, Method) in O(1).
-                        foreach (var m in bundleGenerated)
-                            foreach (var testLabel in m.DependentTests)
-                            {
-                                if (!bundleTddDependents.TryGetValue(testLabel, out var list))
-                                    bundleTddDependents[testLabel] = list = new List<TddGeneratedMember>();
-                                list.Add(m);
-                            }
+                        bundleTddDependents.Add(bundleGenerated);
                     }
 
                     // An emit-retry exclusion means one or more AL objects are NOT in the
@@ -5459,8 +5420,68 @@ return strictExitCode ? computedExitCode : 0;
         Action<string, string, string, IReadOnlyList<AffectedObjectId>?, string?, IReadOnlyList<AffectedScopeId>?>? beforeRun = null,
         // #4971: this request records per-test coverage, so each bundle's loaded code must be the
         // source its change-model baseline describes (docs/server-mode.md#affectedonly-and-the-al-output-cache).
-        bool pinLoadToChangeModel = false)
+        bool pinLoadToChangeModel = false,
+        // #5034: runTests' `tdd`. Null runs exactly as before.
+        TddServerRequest? tdd = null)
     {
+        // #5079: a module an earlier request compiled is reused only for its own source.
+        DependencyLoader.BeginReuseEpoch();
+        if (tdd == null)
+            return RunAllBundlesForServerPass(sourcePaths, requestPackagePaths, runStep, cancellationToken,
+                useIncrementalChangeModel, beforeRun, pinLoadToChangeModel, null, false, false, out _);
+
+        // A request is one --tdd cycle: generation starts from the files on disk, and nothing
+        // generated outlives it (the overlay would otherwise reach the next, non-tdd request).
+        TddCrossBundle.ResetForNewCycle();
+        TddCrossBundle.ClearSourceImpls();
+        try
+        {
+            // #5037: members generated into another bundle of the request need that bundle
+            // recompiled before its dependents compile again — the CLI loop's re-run, bounded alike.
+            for (var pass = 0; ; pass++)
+            {
+                var results = RunAllBundlesForServerPass(sourcePaths, requestPackagePaths, runStep, cancellationToken,
+                    useIncrementalChangeModel, beforeRun, pinLoadToChangeModel, tdd,
+                    tddAllowRerun: pass < 3, tddRerunPass: pass > 0, out var rerun);
+                if (!rerun)
+                {
+                    WriteTddSummary(tdd);
+                    return results;
+                }
+                Console.Error.WriteLine(
+                    "--tdd: generated member(s) into another bundle of this request — recompiling it and " +
+                    "compiling the bundles that depend on it again.");
+                tdd.Generated.Clear();
+            }
+        }
+        finally
+        {
+            TddCrossBundle.ResetForNewCycle();
+        }
+    }
+
+    // The CLI's closing --tdd line, on stderr: stdout is the protocol.
+    static void WriteTddSummary(TddServerRequest tdd)
+    {
+        if (tdd.Generated.Count == 0)
+        {
+            Console.Error.WriteLine("--tdd: no members were generated this request.");
+            return;
+        }
+        Console.Error.WriteLine($"--tdd: generated {tdd.Generated.Count} member(s) this request:");
+        foreach (var m in tdd.Generated)
+            Console.Error.WriteLine($"  {m.ObjectDisplayName}: {m.MemberKind} {m.Signature}");
+    }
+
+    List<ServerRunResult> RunAllBundlesForServerPass(string[] sourcePaths, string[]? requestPackagePaths,
+        Func<Assembly, IReadOnlyList<TestResult>> runStep,
+        System.Threading.CancellationToken cancellationToken,
+        bool useIncrementalChangeModel,
+        Action<string, string, string, IReadOnlyList<AffectedObjectId>?, string?, IReadOnlyList<AffectedScopeId>?>? beforeRun,
+        bool pinLoadToChangeModel,
+        TddServerRequest? tdd, bool tddAllowRerun, bool tddRerunPass, out bool tddRerun)
+    {
+        tddRerun = false;
         // Server requests share a process, so give each request the same fresh
         // NumberSequence lifetime as a standalone CLI/watch execution.
         AlRunner.Patches.NumberSequencePatches.ResetForNewExecution();
@@ -5524,7 +5545,21 @@ return strictExitCode ? computedExitCode : 0;
         {
             try
             {
-                packageCacheDirs = RunLayeredPrePass(bundleList, packageCacheDirs, workspaceScratch);
+                try
+                {
+                    packageCacheDirs = RunLayeredPrePass(bundleList, packageCacheDirs, workspaceScratch);
+                }
+                // #5037, as the CLI's re-run does: a generated member that breaks the bundle it
+                // went into is dropped and never retried this request, so the tests that need it
+                // fall through to the refuse path and report FAILED naming the missing symbol.
+                catch (Exception) when (tdd != null && tddRerunPass)
+                {
+                    Console.Error.WriteLine(
+                        "--tdd: the bundle a member was generated into did not compile with it; the " +
+                        "generated member(s) are dropped and the tests that need them report FAILED instead.");
+                    TddCrossBundle.RollBackPending(TddCrossBundle.AttemptedKeys());
+                    packageCacheDirs = RunLayeredPrePass(bundleList, packageCacheDirs, workspaceScratch);
+                }
             }
             // #2956: the same #2095 special case the CLI path applies, which server mode
             // never had — a missing/too-old package reported as "LAYERED-PREPASS-FAIL:
@@ -5768,7 +5803,7 @@ return strictExitCode ? computedExitCode : 0;
                     && !forcedFullBundles.Contains(Path.GetFullPath(bundleDir)),
                 pinLoadToChangeModel,
                 EffectiveBeforeRun(sawFallbackReason),
-                deferRuns, out var deferred,
+                deferRuns, tdd, out var deferred,
                 out var emitElapsed, out var compileElapsed, out var runElapsed);
             // A deferred bundle keeps one row: set aside here, resumed for its run below.
             var phaseRow = deferred != null ? AlRunner.Infrastructure.PhaseLog.SuspendBundle() : null;
@@ -5777,6 +5812,20 @@ return strictExitCode ? computedExitCode : 0;
             if (beforeRun != null && deferred is { ChangeModelFallbackReason: { } fellBack } loadedBundle)
                 sawFallbackReason ??= $"{loadedBundle.ModuleName}: {fellBack}";
             loadedBundles.Add((result, deferred, phaseRow, emitElapsed, compileElapsed));
+        }
+
+        // #5037: only a multi-bundle request registers a bundle to generate into, and it defers
+        // every run, so no test has streamed yet and a re-run reports nothing twice.
+        if (tdd != null && deferRuns && tddAllowRerun && TddCrossBundle.TakePendingRecompile())
+        {
+            foreach (var (_, _, phaseRow, emit, compile) in loadedBundles)
+                if (phaseRow != null)
+                {
+                    AlRunner.Infrastructure.PhaseLog.ResumeBundle(phaseRow);
+                    AlRunner.Infrastructure.PhaseLog.EndBundle(emit, compile, TimeSpan.Zero);
+                }
+            tddRerun = true;
+            return results;
         }
 
         foreach (var (loadResult, deferred, phaseRow, emit, compile) in loadedBundles)
@@ -5948,6 +5997,7 @@ return strictExitCode ? computedExitCode : 0;
         bool pinLoadToChangeModel,
         Action<string, string, string, IReadOnlyList<AffectedObjectId>?, string?>? beforeRun,
         bool deferRun,
+        TddServerRequest? tdd,
         out (string ModuleName, string? ChangeModelFallbackReason, Func<(ServerRunResult Result, TimeSpan RunElapsed)> Run)? deferred,
         out TimeSpan emitElapsed, out TimeSpan compileElapsed, out TimeSpan runElapsed)
     {
@@ -6001,6 +6051,7 @@ return strictExitCode ? computedExitCode : 0;
             + string.Join("|", envKeyPkgDirs
                 .Select(d => Path.GetFullPath(d))
                 .OrderBy(d => d, StringComparer.Ordinal));
+        AlRunner.Infrastructure.AffectedEnvironmentDrift.ForgetClosure(bundleAbs);
 
         IReadOnlyList<(AlRunner.AppManifest Manifest, string AppPath)> ordered =
             Array.Empty<(AlRunner.AppManifest, string)>();
@@ -6045,10 +6096,17 @@ return strictExitCode ? computedExitCode : 0;
                 // Workspace-deps packages are request bundles or sibling sources, which the change
                 // model or the unmappable rule covers.
                 if (pinLoadToChangeModel)
+                {
                     selectionEnvironmentKey += AlRunner.Infrastructure.DependencyPackageFingerprint.KeySegment(
                         ordered, p => IsUnderDirectory(Path.GetFullPath(p), workspaceDepsRoot),
                         (appId, appPath) => string.Equals(
                             DependencyLoader.LoadedSourcePath(appId), appPath, StringComparison.OrdinalIgnoreCase));
+                    // #5028: the apps a later run in another environment diffs this one against.
+                    AlRunner.Infrastructure.AffectedEnvironmentDrift.RecordClosure(bundleAbs,
+                        ordered, p => IsUnderDirectory(Path.GetFullPath(p), workspaceDepsRoot),
+                        (appId, appPath) => string.Equals(
+                            DependencyLoader.LoadedSourcePath(appId), appPath, StringComparison.OrdinalIgnoreCase));
+                }
                 // New bundle in the server session: replace (not inherit) the
                 // install-trigger registrations, then register this bundle's deps.
                 AlRunner.InstallTriggerRunner.ResetForNewBundle();
@@ -6121,13 +6179,15 @@ return strictExitCode ? computedExitCode : 0;
         // module's Type paired with a subscriberInstance BC's dispatcher
         // materialized from the OTHER module's Type.
         Assembly? reusedAsm = null;
+        var sourceFingerprint = BundleSourceFingerprint(bucketRoot, allPaths, fileHashes,
+            ordered.Select(o => $"{o.Manifest.AppId}|{o.Manifest.Version}|{Path.GetFullPath(o.AppPath)}"));
         if (bundleId != null)
         {
             try
             {
                 reusedAsm = DependencyLoader.TryGetByAppId(
                     bundleId.AppId, bundleId.Name, bundleId.Publisher,
-                    bundleId.Version.ToString(), bundleAbs);
+                    bundleId.Version.ToString(), bundleAbs, sourceFingerprint);
             }
             catch (AlRunner.Infrastructure.AppIdCollisionException ex)
             {
@@ -6177,7 +6237,9 @@ return strictExitCode ? computedExitCode : 0;
             bool cached = reusedAsm != null;
             string? cacheKey = null, cachePath = null, sidecarPath = null, querySidecarPath = null;
             bool? cacheGateDeclaresQuery = null;
-            if (reusedAsm == null && alCacheDir != null)
+            // #5034: a tdd request neither reads nor writes the cache, as a --tdd CLI run does not —
+            // a HIT skips the Emit that generates members and reports the excluded objects' tests.
+            if (reusedAsm == null && alCacheDir != null && tdd == null)
             {
                 // See AlCacheSidecars: a query bundle without its query-symbols sidecar must
                 // MISS. Computed INSIDE the gate (#2557), same reasoning as the CLI path: both
@@ -6254,6 +6316,10 @@ return strictExitCode ? computedExitCode : 0;
             IReadOnlyList<AffectedObjectId>? changedObjects = Array.Empty<AffectedObjectId>();
             string? changeModelFallbackReason = null;
             var baselineDescribesEmit = false;
+            // #5034: the tests --tdd reports itself (TDD-EXCLUDED objects' [Test] procedures) and
+            // the tests whose compile needed a generated member.
+            IReadOnlyList<TestResult> tddSynthetic = Array.Empty<TestResult>();
+            TddDependents? tddDependents = null;
             if (reusedAsm == null && assemblyBytes == null)
             {
                 // cacheKey == null here means #2954's do-not-cache path (see the gate above):
@@ -6305,6 +6371,25 @@ return strictExitCode ? computedExitCode : 0;
                     alDiagnostics = emitOutput.Diagnostics;
                     excludedObjects = emitOutput.ExcludedObjects;
                     excludedObjectDiagnostics = emitOutput.ExcludedObjectDiagnostics ?? Array.Empty<string>();
+                    if (tdd != null)
+                    {
+                        var generated = TddSupport.MembersFor(emitOutput, moduleName);
+                        tdd.Generated.AddRange(generated);
+                        tddDependents = new TddDependents();
+                        tddDependents.Add(generated);
+                        if (excludedObjects.Count > 0)
+                            tddSynthetic = TddSupport.BuildFailedTests(
+                                emitOutput.TddExcludedDetails ?? Array.Empty<TddExcludedObjectDetail>());
+                        // A baseline recorded with a generated member describes source that is not
+                        // on disk: an unchanged next request would replay the stub, and affectedOnly
+                        // would trust coverage measured against it. Dropped, so that request compiles
+                        // in full and reruns these tests (docs/server-mode.md#tdd).
+                        if (generated.Count > 0 || excludedObjects.Count > 0)
+                        {
+                            emitter.ClearIncrementalBaseline(moduleName);
+                            baselineDescribesEmit = false;
+                        }
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -6322,7 +6407,31 @@ return strictExitCode ? computedExitCode : 0;
                 // bundled-mode EMIT-EXCLUDED guard uses (.claude/rules/loud-failures.md);
                 // without this the server path ran the surviving objects and reported
                 // exitCode 0 while e.g. a whole test codeunit was missing from the run.
-                if (excludedObjects.Count > 0)
+                // #5034: under tdd the recovered module runs and the excluded objects' tests are
+                // reported FAILED (compile) instead, as the CLI's TDD-EXCLUDED branch does. Only
+                // when nothing survives and there is no test to report does it fall through.
+                if (excludedObjects.Count > 0 && tdd != null && (sources.Count > 0 || tddSynthetic.Count > 0))
+                {
+                    Console.Error.WriteLine(
+                        $"[server] {moduleName}: TDD-EXCLUDED — {excludedObjects.Count} object(s) could not be " +
+                        $"compiled: [{string.Join(", ", excludedObjects)}]. {tddSynthetic.Count} [Test] procedure(s) " +
+                        "they declare report as FAILED instead of vanishing from the run.");
+                    if (sources.Count == 0)
+                    {
+                        (ServerRunResult Result, TimeSpan RunElapsed) ReportOnly()
+                        {
+                            foreach (var t in tddSynthetic) tdd.Report(t);
+                            return (new ServerRunResult(tddSynthetic, 1, false, null, fileHashes), TimeSpan.Zero);
+                        }
+                        if (deferRun)
+                        {
+                            deferred = (moduleName, changeModelFallbackReason, ReportOnly);
+                            return null;
+                        }
+                        return ReportOnly().Result;
+                    }
+                }
+                else if (excludedObjects.Count > 0)
                 {
                     var names = string.Join(", ", excludedObjects);
                     // #2207: read the dedicated ExcludedObjectDiagnostics field, not
@@ -6436,7 +6545,7 @@ return strictExitCode ? computedExitCode : 0;
                     {
                         DependencyLoader.RegisterLoaded(
                             bundleId.AppId, asm, bundleId.Name, bundleId.Publisher,
-                            bundleId.Version.ToString(), bundleAbs);
+                            bundleId.Version.ToString(), bundleAbs, sourceFingerprint);
                     }
                     catch (AlRunner.Infrastructure.AppIdCollisionException ex)
                     {
@@ -6482,7 +6591,13 @@ return strictExitCode ? computedExitCode : 0;
                     BcRuntime.SetTestAssembly(asm);
                     BcRuntime.RegisterTestAssemblyInfo(asm);
                     BcRuntime.OosHooksActive = true;
+                    if (tdd != null)
+                    {
+                        foreach (var t in tddSynthetic) tdd.Report(t);
+                        tdd.Active = tddDependents;
+                    }
                     tests = runStep(asm);
+                    if (tddSynthetic.Count > 0) tests = tddSynthetic.Concat(tests).ToList();
                 }
                 catch (Exception ex)
                 {
@@ -6490,6 +6605,7 @@ return strictExitCode ? computedExitCode : 0;
                 }
                 finally
                 {
+                    if (tdd != null) tdd.Active = null;
                     BcRuntime.OosHooksActive = false;
                     rt.Stop();
                     AlRunner.Infrastructure.PhaseLog.AddAppRun(rt.Elapsed);
@@ -7387,6 +7503,8 @@ string? LoadPersistedAffectedBaseline(AlRunner.Infrastructure.AffectedSelectionS
         affectedUnknownTestsByBundle[bundle] = b.Unknown;
         affectedFailingTestsByBundle[bundle] = b.Failing;
         affectedEnvironmentKeyByBundle[bundle] = b.EnvironmentKey;
+        if (b.Environments != null) affected.EnvironmentsByBundle[bundle] = b.Environments;
+        else affected.EnvironmentsByBundle.Remove(bundle);
         affectedBaselineGenerationsByBundle.Remove(bundle);
         affectedEventsByBundle[bundle] = b.Events;
         if (b.Bindings != null) affectedBindingsByBundle[bundle] = b.Bindings;
@@ -7434,7 +7552,8 @@ void PersistAffectedBaseline(AlRunner.Infrastructure.AffectedSelectionState affe
                 affectedFailingTestsByBundle[bundle],
                 affectedEventsByBundle[bundle],
                 affectedBindingsByBundle.TryGetValue(bundle, out var bindings) ? bindings : null,
-                affectedObservabilityByBundle.TryGetValue(bundle, out var observability) ? observability : null);
+                affectedObservabilityByBundle.TryGetValue(bundle, out var observability) ? observability : null,
+                affected.EnvironmentsByBundle.TryGetValue(bundle, out var environments) ? environments : null);
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var path = AlRunner.Infrastructure.AffectedBaselineStore.PathFor(
             AlRunner.Infrastructure.CacheRoots.Resolve(AlRunner.Infrastructure.AffectedBaselineStore.CacheName), sourcePaths);
@@ -7454,8 +7573,12 @@ void PersistAffectedBaseline(AlRunner.Infrastructure.AffectedSelectionState affe
 AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infrastructure.AffectedSelectionState affected,
     string[] sourcePaths, string[]? packagePaths, bool requestCoverage, bool requestPerTestCoverage,
     bool affectedOnly, bool includeFailing, Action<TestResult> onTestComplete,
-    System.Threading.CancellationToken token, Action? afterRuns = null)
+    System.Threading.CancellationToken token, Action? afterRuns = null, bool strictEnvironment = false, bool tdd = false)
 {
+    // #5034: the emit reads the mode from BcCompiler, so it is this request's, and only for it.
+    var tddRequest = tdd ? new TddServerRequest(onTestComplete) : null;
+    var previousTddMode = BcCompiler.IsTddMode();
+    BcCompiler.SetTddMode(tdd);
     var affectedCoverageByBundle = affected.CoverageByBundle;
     var affectedUnknownTestsByBundle = affected.UnknownTestsByBundle;
     var affectedFailingTestsByBundle = affected.FailingTestsByBundle;
@@ -7506,6 +7629,20 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
         List<string> activeChangedObjectDisplay = new();
         bool activeForcedFull = false;
         string? activeForcedReason = null;
+        // #5028: what an environment diff selects on for the bundle about to run, per environment a
+        // test record was taken in ("" for records with none), and which of those diffs were exact.
+        var activeEnvKeysByRecord = new Dictionary<string, AlRunner.Infrastructure.EnvironmentDriftKeys>(StringComparer.Ordinal);
+        var activeExactRecordEnvs = new HashSet<string>(StringComparer.Ordinal);
+        EnvironmentDriftInfo? activeDrift = null;
+        var requestDriftByBundle = new Dictionary<string, EnvironmentDriftInfo>(StringComparer.Ordinal);
+        var requestExactRecordEnvsByBundle = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        string RecordEnvOf(string bundlePath, string testKey)
+            => affected.EnvironmentsByBundle.TryGetValue(bundlePath, out var envs) && envs.ByTest.TryGetValue(testKey, out var id) ? id : "";
+        // Whether the environment diff for the record this test was taken in reaches what it recorded.
+        bool EnvironmentDiffSelects(string testKey, HashSet<string> covered, HashSet<string>? events)
+            => activeEnvKeysByRecord.TryGetValue(RecordEnvOf(activeBundleKey, testKey), out var keys)
+               && (covered.Overlaps(keys.CoverageKeys) || AlRunner.Infrastructure.AffectedEventSelection.Overlaps(events, keys.EventKeys));
+        var requestEnvironmentSnapshotByBundle = new Dictionary<string, AlRunner.Infrastructure.EnvironmentSnapshot?>(StringComparer.Ordinal);
         // #5050: session state crosses bundle boundaries within one request.
         var requestChangedAnyBundle = false;
         var bundlesStarted = 0;
@@ -7522,6 +7659,38 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
             && sourcePaths.Any(p => !affectedCoverageByBundle.ContainsKey(Path.GetFullPath(p)))
             ? LoadPersistedAffectedBaseline(affected, sourcePaths)
             : null;
+
+        const string EnvironmentChangedReason =
+            "coverage baseline environment changed (BC version/artifact/package cache/dependency package content/test isolation)";
+        // #5028: docs/server-mode.md#affectedonly-across-environments. A baseline recorded in another
+        // environment is used, narrowed by a per-object diff of the two environments' apps, unless the
+        // request is strict or the test isolation differs. Returns false when it forced a full run.
+        bool UseBaselineFromAnotherEnvironment(string bundlePath, string recordedKey, string currentKey)
+        {
+            var isolationChanged = !string.Equals(AlRunner.Infrastructure.AffectedEnvironmentDrift.IsolationOf(recordedKey),
+                AlRunner.Infrastructure.AffectedEnvironmentDrift.IsolationOf(currentKey), StringComparison.Ordinal);
+            if (strictEnvironment || isolationChanged)
+            {
+                activeForcedFull = true;
+                activeForcedReason = EnvironmentChangedReason + (strictEnvironment && !isolationChanged ? "; strictEnvironment is set" : "");
+                return false;
+            }
+            // Every record is diffed against the environment it was taken in: after an approximate run
+            // a skipped test keeps its older record, so one bundle can hold records of several.
+            affected.EnvironmentsByBundle.TryGetValue(bundlePath, out var recordedEnvs);
+            requestEnvironmentSnapshotByBundle.TryGetValue(bundlePath, out var current);
+            var resolved = AlRunner.Infrastructure.AffectedEnvironmentDrift.Resolve(recordedKey, currentKey,
+                (activePreviousCoverage?.Keys ?? Enumerable.Empty<string>()).Select(t => RecordEnvOf(bundlePath, t)),
+                recordedEnvs, current, AlRunner.Patches.RecordPatches.TableExtensionBaseTableIds(),
+                activePreviousEvents != null
+                && activePreviousEvents.TryGetValue(AlRunner.Infrastructure.AlEventRaiseTracker.BundleWideKey, out var bundleWide)
+                    ? bundleWide : null,
+                AlRunner.Patches.RecordPatches.PageExtensionBasePageIds());
+            foreach (var (recordEnv, keys) in resolved.KeysByRecord) activeEnvKeysByRecord[recordEnv] = keys;
+            activeExactRecordEnvs.UnionWith(resolved.ExactRecords);
+            activeDrift = resolved.Info;
+            return true;
+        }
 
         var runs = RunAllBundlesForServer(sourcePaths, packagePaths,
             asm =>
@@ -7561,12 +7730,26 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                             activePreviousEvents != null
                             && activePreviousEvents.TryGetValue(AlRunner.Infrastructure.AlEventRaiseTracker.BundleWideKey, out var bundleWideObjects)
                                 ? bundleWideObjects : null);
-                        if (eventResult.ForceFullReason != null || tableResult.ForceFullReason != null || longLivedReason != null)
+                        // #5025: a pageextension selects the tests that opened its base page.
+                        var pageExtensionResult = AlRunner.Infrastructure.AffectedEventSelection.ChangedPageExtensionKeys(
+                            activeChangedObjectIds.Select(o => (o.Kind, o.Id)),
+                            AlRunner.Patches.RecordPatches.PageExtensionBasePageIds(),
+                            activePreviousEvents != null
+                            && activePreviousEvents.TryGetValue(AlRunner.Infrastructure.AlEventRaiseTracker.BundleWideKey, out var bundleWidePageBases)
+                                ? bundleWidePageBases : null);
+                        if (eventResult.ForceFullReason != null || tableResult.ForceFullReason != null || longLivedReason != null
+                            || pageExtensionResult.ForceFullReason != null)
                         {
                             activeForcedFull = true;
-                            activeForcedReason = eventResult.ForceFullReason ?? tableResult.ForceFullReason ?? longLivedReason;
+                            activeForcedReason = eventResult.ForceFullReason ?? tableResult.ForceFullReason ?? longLivedReason
+                                ?? pageExtensionResult.ForceFullReason;
                         }
-                        else changedEventKeys = eventResult.Keys.Union(tableResult.Keys).ToHashSet(StringComparer.Ordinal);
+                        else
+                        {
+                            changedEventKeys = eventResult.Keys.Union(tableResult.Keys).ToHashSet(StringComparer.Ordinal);
+                            activeChangedObjectKeys = changedObjectKeys;
+                            changedObjectKeys.UnionWith(pageExtensionResult.Keys);
+                        }
                     }
                 }
 
@@ -7590,6 +7773,8 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                         var previouslyFailing = activePreviousFailing?.Contains(testKey) ?? false;
                         if ((includeFailing && previouslyFailing)
                             || (activeChangedObjectKeys != null && coveredObjects.Overlaps(activeChangedObjectKeys))
+                            || EnvironmentDiffSelects(testKey, coveredObjects,
+                                activePreviousEvents != null && activePreviousEvents.TryGetValue(testKey, out var envRaised) ? envRaised : null)
                             || AlRunner.Infrastructure.AffectedEventSelection.Overlaps(
                                 activePreviousEvents != null && activePreviousEvents.TryGetValue(testKey, out var raised) ? raised : null,
                                 changedEventKeys))
@@ -7600,7 +7785,8 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                         ? TestExecutor.CodeunitsSharingStateAcrossTests(asm)
                         : null;
                     // #5050: session state (WorkDate, number sequences, SingleInstance) outlives every isolation.
-                    var bundleChanged = (activeChangedObjectKeys?.Count ?? 0) > 0 || changedEventKeys.Count > 0;
+                    var bundleChanged = (activeChangedObjectKeys?.Count ?? 0) > 0 || changedEventKeys.Count > 0
+                        || activeEnvKeysByRecord.Values.Any(k => k.CoverageKeys.Count > 0 || k.EventKeys.Count > 0);
                     var widened = AlRunner.Infrastructure.AffectedIsolationWidening.Widen(discovered, exactSelection,
                         executor.Isolation, statefulCodeunits == null ? null : statefulCodeunits.Contains);
                     var stateWidened = AlRunner.Infrastructure.AffectedSessionStateSelection.Widen(
@@ -7635,7 +7821,15 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                         activeChangedObjectDisplay,
                         activeForcedFull,
                         activeForcedReason,
-                        plannedSkippedFailing);
+                        plannedSkippedFailing,
+                        activeForcedFull ? null : activeDrift);
+                    if (!activeForcedFull && activeDrift != null)
+                    {
+                        requestDriftByBundle[activeBundleKey] = activeDrift;
+                        requestExactRecordEnvsByBundle[activeBundleKey] = new HashSet<string>(activeExactRecordEnvs, StringComparer.Ordinal);
+                        Console.Error.WriteLine($"  [{affected.LogTag}] affectedOnly: "
+                            + AlRunner.Infrastructure.AffectedEnvironmentDrift.Warning(activeDrift));
+                    }
                 }
 
                 requestSelectedTestsByBundle[activeBundleKey] = exactSelection;
@@ -7643,7 +7837,13 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 if (exactSelection == null && affectedOnly) requestChangedAnyBundle = true;
                 var previousExact = executor.ExactTestFilter;
                 executor.ExactTestFilter = exactSelection;
-                try { return executor.Run(asm, onTestComplete, token); }
+                try
+                {
+                    if (tddRequest == null) return executor.Run(asm, onTestComplete, token);
+                    // A test that ran against a generated member streams, and is returned, FAILED.
+                    return executor.Run(asm, t => onTestComplete(tddRequest.Apply(t)), token)
+                        .Select(tddRequest.Apply).ToList();
+                }
                 finally { executor.ExactTestFilter = previousExact; }
             },
             token,
@@ -7674,6 +7874,11 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
 
                 activeForcedFull = false;
                 activeForcedReason = null;
+                activeEnvKeysByRecord.Clear();
+                activeExactRecordEnvs.Clear();
+                activeDrift = null;
+                requestEnvironmentSnapshotByBundle[bundlePath] =
+                    AlRunner.Infrastructure.AffectedEnvironmentDrift.CurrentFor(bundlePath);
                 if (!affectedOnly) return;
 
                 if (activePreviousCoverage == null && persistedBaselineUnusable != null)
@@ -7687,16 +7892,18 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 if (affectedPersistedModulesByBundle.TryGetValue(bundlePath, out var persistedModules))
                 {
                     if (activePreviousCoverage == null || activePreviousUnknown == null
-                        || !affectedEnvironmentKeyByBundle.TryGetValue(bundlePath, out var persistedEnv)
-                        || !string.Equals(persistedEnv, selectionEnvironmentKey, StringComparison.Ordinal))
+                        || !affectedEnvironmentKeyByBundle.TryGetValue(bundlePath, out var persistedEnv))
                     {
                         activeForcedFull = true;
-                        activeForcedReason =
-                            "coverage baseline environment changed (BC version/artifact/package cache/dependency package content/test isolation)";
+                        activeForcedReason = EnvironmentChangedReason;
                         return;
                     }
+                    if (!string.Equals(persistedEnv, selectionEnvironmentKey, StringComparison.Ordinal)
+                        && !UseBaselineFromAnotherEnvironment(bundlePath, persistedEnv, selectionEnvironmentKey))
+                        return;
                     var persistedDiff = AlRunner.Infrastructure.AffectedBaselineStore.ChangedSince(
-                        persistedModules, requestModuleNames, emitter.TryGetAffectedModuleSnapshot);
+                        persistedModules, requestModuleNames, emitter.TryGetAffectedModuleSnapshot,
+                        environmentDiffed: activeDrift != null);
                     if (persistedDiff.ForceFullReason != null)
                     {
                         activeForcedFull = true;
@@ -7729,14 +7936,15 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                     activeForcedReason = "no previous per-test coverage baseline for this bundle";
                     return;
                 }
-                if (!affectedEnvironmentKeyByBundle.TryGetValue(bundlePath, out var previousEnv)
-                    || !string.Equals(previousEnv, selectionEnvironmentKey, StringComparison.Ordinal))
+                if (!affectedEnvironmentKeyByBundle.TryGetValue(bundlePath, out var previousEnv))
                 {
                     activeForcedFull = true;
-                    activeForcedReason =
-                        "coverage baseline environment changed (BC version/artifact/package cache/dependency package content/test isolation)";
+                    activeForcedReason = EnvironmentChangedReason;
                     return;
                 }
+                if (!string.Equals(previousEnv, selectionEnvironmentKey, StringComparison.Ordinal)
+                    && !UseBaselineFromAnotherEnvironment(bundlePath, previousEnv, selectionEnvironmentKey))
+                    return;
                 // #4971: changedObjects is relative to each module's baseline as this request found
                 // it; that has to be the baseline the stored coverage was measured against.
                 affectedBaselineGenerationsByBundle.TryGetValue(bundlePath, out var coverageGenerations);
@@ -7754,7 +7962,8 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                         + "module was loaded from a source no baseline describes)";
                 }
             },
-            pinLoadToChangeModel: collectPerTestForSelection);
+            pinLoadToChangeModel: collectPerTestForSelection,
+            tdd: tddRequest);
 
         var allTests = runs.SelectMany(r => r.Tests).ToList();
         var allCompileErrors = runs.SelectMany(r => r.CompileErrors ?? Array.Empty<CompilationErrorGroup>()).ToList();
@@ -7848,13 +8057,19 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                     exts.Add(ext);
                 }
             var eventsByTest = AlRunner.Infrastructure.AlEventRaiseTracker.CollectPerTest(extensionsOfTable);
+            // #5025: the base of every pageextension now, so a later removal can still be keyed.
+            var pageExtensionBaseKeys = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var (ext, pages) in AlRunner.Patches.RecordPatches.PageExtensionBasePageIds() ?? new Dictionary<int, List<int>>())
+                foreach (var page in pages)
+                    pageExtensionBaseKeys.Add(AlRunner.Infrastructure.AffectedEventSelection.PageExtensionBaseKey(ext, page));
             var bundleWideKey = AlRunner.Infrastructure.AlEventRaiseTracker.BundleWideKey;
             // #5011: objects built and scopes entered, which an empty body or a page without
             // triggers leaves out of statement coverage.
             var useByTest = AlRunner.Infrastructure.AlObjectUseTracker.CollectPerTest();
             var stateByTest = AlRunner.Infrastructure.AlSessionStateTracker.CollectPerTest();
             var longLivedObjectKeys = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var type in AlRunner.Infrastructure.AlObjectUseTracker.LongLivedObjects())
+            var longLivedTypes = AlRunner.Infrastructure.AlObjectUseTracker.LongLivedObjects();
+            foreach (var type in longLivedTypes)
                 if (UsedObjectOf(type) is { } o)
                     longLivedObjectKeys.Add(AlRunner.Infrastructure.AffectedEventSelection.LongLivedObjectKey(o.Key));
 
@@ -7870,6 +8085,8 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
             }
             // #4988: the event side of the baseline, stored whenever the coverage is.
             var recordedThisRequest = new List<string>();
+            AlRunner.Infrastructure.EnvironmentSnapshot? CurrentEnvironmentOf(string bundlePath)
+                => requestEnvironmentSnapshotByBundle.TryGetValue(bundlePath, out var snapshot) ? snapshot : null;
             void StoreEventBaseline(string bundlePath, Dictionary<string, HashSet<string>> nextEvents)
             {
                 affectedPersistedModulesByBundle.Remove(bundlePath);
@@ -7925,6 +8142,7 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                     affectedUnknownTestsByBundle[bundlePath] = nextUnknown;
                     affectedFailingTestsByBundle[bundlePath] = nextFailing;
                     affectedEnvironmentKeyByBundle[bundlePath] = envKey;
+                    affected.EnvironmentsByBundle[bundlePath] = new AlRunner.Infrastructure.BundleEnvironments();
                     affectedBaselineGenerationsByBundle[bundlePath] = CurrentBaselineGenerations();
                     StoreEventBaseline(bundlePath, nextEvents);
                     recordedThisRequest.Add(bundlePath);
@@ -7940,6 +8158,14 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 affectedCoverageByBundle.TryGetValue(bundlePath, out var previousCoverage);
                 affectedFailingTestsByBundle.TryGetValue(bundlePath, out var previousFailing);
                 affectedEventsByBundle.TryGetValue(bundlePath, out var previousEvents);
+                // #5028: each record names the environment it was taken in. A skipped test's record
+                // moves to this environment only when this run diffed its own environment exactly;
+                // otherwise it keeps its older one, so a later run diffs it from there.
+                var nextEnvs = new AlRunner.Infrastructure.BundleEnvironments();
+                affected.EnvironmentsByBundle.TryGetValue(bundlePath, out var previousEnvs);
+                var currentEnv = CurrentEnvironmentOf(bundlePath);
+                requestExactRecordEnvsByBundle.TryGetValue(bundlePath, out var exactRecordEnvs);
+                var diffedThisRun = requestDriftByBundle.ContainsKey(bundlePath);
                 foreach (var testKey in discoveredTests)
                 {
                     if (selectedThisRequest != null
@@ -7947,6 +8173,11 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                         && previousCoverage != null
                         && previousCoverage.TryGetValue(testKey, out var carried))
                     {
+                        var carriedEnv = RecordEnvOf(bundlePath, testKey);
+                        if (diffedThisRun && currentEnv != null && (exactRecordEnvs?.Contains(carriedEnv) ?? false))
+                            nextEnvs.Set(testKey, currentEnv);
+                        else if (carriedEnv.Length > 0 && previousEnvs!.Snapshots.TryGetValue(carriedEnv, out var carriedSnapshot))
+                            nextEnvs.Set(testKey, carriedSnapshot);
                         nextCoverage[testKey] = carried;
                         if (previousFailing?.Contains(testKey) ?? false) nextFailing.Add(testKey);
                         // No carried record means none was taken; a missing entry selects on any change.
@@ -7967,6 +8198,18 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                         continue;
                     }
                     var failed = result.Outcome != TestOutcome.Pass;
+                    // #5059: event, table and session-state keys name objects by id, not by file,
+                    // so a test that ran to completion has a complete record even when its
+                    // statements cannot be attributed. It stays unknown (selected on every
+                    // request); the record narrows only the earlier writers it brings.
+                    HashSet<string> RecordedKeys()
+                    {
+                        var keys = eventsByTest.TryGetValue(testKey, out var raised)
+                            ? new HashSet<string>(raised, StringComparer.Ordinal) : new HashSet<string>(StringComparer.Ordinal);
+                        if (stateByTest.TryGetValue(testKey, out var state)) keys.UnionWith(state);
+                        return AlRunner.Infrastructure.AffectedSessionStateSelection.WithPreviousState(
+                            keys, previousEvents != null && previousEvents.TryGetValue(testKey, out var prior) ? prior : null);
+                    }
 
                     perTestStatementTable.TryGetValue(testKey, out var statements);
                     useByTest.TryGetValue(testKey, out var used);
@@ -7995,11 +8238,18 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                         if (!string.IsNullOrEmpty(scopeName))
                             coveredObjects.Add(ToAffectedScopeKey(objKey, scopeName));
                     }
+                    // #5028: objects outside this request's sources, or packaged, keyed for an environment diff.
+                    var dependencyKeys = new HashSet<string>(StringComparer.Ordinal);
+                    void AddDependency(Type objectType)
+                    {
+                        if (AlRunner.Infrastructure.AffectedEnvironmentDrift.DependencyKeyOf(objectType) is { } k)
+                            dependencyKeys.Add(k);
+                    }
                     foreach (var s in statements ?? Enumerable.Empty<AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord>())
                         if (!Cover(s.FilePath, s.ScopeName)) { unmappable = true; break; }
                     if (used != null && !unmappable)
                     {
-                        // Outside this request's sources, or packaged: skipped, as a statement there is.
+                        // Outside this request's sources, or packaged: no source key, as a statement there has none.
                         bool Keyed(Type objectType, out string key)
                         {
                             key = "";
@@ -8011,7 +8261,8 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                         }
                         foreach (var scope in used.Scopes)
                         {
-                            if (!Keyed(AlRunner.Infrastructure.AlScopeKey.ObjectTypeOf(scope), out var objKey)) continue;
+                            var owner = AlRunner.Infrastructure.AlScopeKey.ObjectTypeOf(scope);
+                            if (!Keyed(owner, out var objKey)) { AddDependency(owner); continue; }
                             // An entered method that cannot be named cannot carry its scope key.
                             if (AlRunner.Infrastructure.AlCoverageTracker.TryResolveScope(scope, selectionSourceMap) is not { } resolved)
                             {
@@ -8022,20 +8273,22 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                         }
                         foreach (var type in used.UnresolvedScopeOwners)
                             if (Keyed(type, out _)) unmappable = true;
+                            else AddDependency(type);
                         foreach (var type in used.Objects)
                             if (Keyed(type, out var objKey)) AddKeys(objKey, null);
+                            else AddDependency(type);
                     }
 
                     if (unmappable || coveredObjects.Count == 0)
                     {
                         nextUnknown.Add(testKey);
+                        if (unmappable) nextEvents[testKey] = RecordedKeys();
                         continue;
                     }
+                    coveredObjects.UnionWith(dependencyKeys);
                     nextCoverage[testKey] = coveredObjects;
-                    var recordedKeys = eventsByTest.TryGetValue(testKey, out var raised)
-                        ? new HashSet<string>(raised, StringComparer.Ordinal) : new HashSet<string>(StringComparer.Ordinal);
-                    if (stateByTest.TryGetValue(testKey, out var state)) recordedKeys.UnionWith(state);
-                    nextEvents[testKey] = recordedKeys;
+                    if (currentEnv != null) nextEnvs.Set(testKey, currentEnv);
+                    nextEvents[testKey] = RecordedKeys();
                     if (failed) nextFailing.Add(testKey);
                 }
 
@@ -8043,6 +8296,12 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 // tests' long-lived records, so the previous entry's are kept as well.
                 var bundleWide = new HashSet<string>(eventsByTest[bundleWideKey], StringComparer.Ordinal);
                 bundleWide.UnionWith(longLivedObjectKeys);
+                bundleWide.UnionWith(pageExtensionBaseKeys);
+                foreach (var type in longLivedTypes)
+                    if ((UsedObjectOf(type) is not { } lo
+                            || AlRunner.Infrastructure.DependencyPackageFingerprint.IsUnderAny(lo.Path, packagedSourceRoots))
+                        && AlRunner.Infrastructure.AffectedEnvironmentDrift.DependencyKeyOf(type) is { } depKey)
+                        bundleWide.Add(AlRunner.Infrastructure.AffectedEventSelection.LongLivedObjectKey(depKey));
                 if (selectedThisRequest != null && previousEvents != null
                     && previousEvents.TryGetValue(bundleWideKey, out var previousBundleWide))
                     bundleWide.UnionWith(previousBundleWide);
@@ -8052,6 +8311,7 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 affectedUnknownTestsByBundle[bundlePath] = nextUnknown;
                 affectedFailingTestsByBundle[bundlePath] = nextFailing;
                 affectedEnvironmentKeyByBundle[bundlePath] = envKey;
+                affected.EnvironmentsByBundle[bundlePath] = nextEnvs;
                 affectedBaselineGenerationsByBundle[bundlePath] = CurrentBaselineGenerations();
                 StoreEventBaseline(bundlePath, nextEvents);
                 recordedThisRequest.Add(bundlePath);
@@ -8081,7 +8341,8 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 changedObjects,
                 forcedReasons.Count > 0,
                 forcedReasons.Count > 0 ? string.Join(" | ", forcedReasons) : null,
-                selectionByBundle.Values.Sum(s => s.SkippedFailing ?? 0));
+                selectionByBundle.Values.Sum(s => s.SkippedFailing ?? 0),
+                AlRunner.Infrastructure.AffectedEnvironmentDrift.Combine(selectionByBundle.Values.Select(s => s.EnvironmentDrift).OfType<EnvironmentDriftInfo>().ToList()));
         }
 
         return new AlRunner.Infrastructure.AffectedRunOutcome(runs, allTests, allCompileErrors, exitCode, cached, cancelled,
@@ -8090,6 +8351,7 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
     }
     finally
     {
+        BcCompiler.SetTddMode(previousTddMode);
         // Scoped to THIS run only — a coverage:true request must never leave hit-count tracking
         // on for a later request that didn't ask for it.
         AlRunner.Infrastructure.AlCoverageTracker.Enabled = false;
@@ -8184,6 +8446,10 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     // doesn't (see #1616 — the whole point is per-request control, not a sticky
     // session-wide override).
     var defaultServerIsolation = executor.Isolation;
+    // #5034: --tdd is the default for a runTests request that omits `tdd`; every other command
+    // compiles without it (RunTestsWithSelection sets it for the request it serves).
+    var defaultServerTdd = tddMode;
+    BcCompiler.SetTddMode(false);
 
     // Readiness handshake — MUST be the first line on stdout.
     lock (outputLock)
@@ -8360,7 +8626,9 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             var outcome = RunTestsWithSelection(affected, req.SourcePaths, req.PackagePaths,
                 req.Coverage == true, req.PerTestCoverage == true, req.AffectedOnly == true, req.IncludeFailing == true,
                 OnTestComplete, cts.Token,
-                afterRuns: () => System.Threading.Interlocked.CompareExchange(ref activeRunCts, null, cts));
+                afterRuns: () => System.Threading.Interlocked.CompareExchange(ref activeRunCts, null, cts),
+                strictEnvironment: req.StrictEnvironment == true,
+                tdd: req.Tdd ?? defaultServerTdd);
             var runs = outcome.Runs;
             var allTests = outcome.AllTests;
             var allCompileErrors = outcome.CompileErrors;

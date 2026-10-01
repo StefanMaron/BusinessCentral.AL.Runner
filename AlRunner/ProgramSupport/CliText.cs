@@ -365,8 +365,11 @@ internal static partial class ProgramSupport
         w.WriteLine("  silently skip generation and serve stale or missing results).");
         w.WriteLine();
         w.WriteLine("  --tdd + --watch works: every cycle generates again from the files on disk, so");
-        w.WriteLine("  a member you have since written is used instead of its stub. --tdd + --server");
-        w.WriteLine("  is rejected (exit 2).");
+        w.WriteLine("  a member you have since written is used instead of its stub. Under --server,");
+        w.WriteLine("  runTests takes a `tdd` field per request (--tdd sets its default); each request");
+        w.WriteLine("  generates afresh, skips the AL-output cache, and reports what it could not");
+        w.WriteLine("  generate as failed test lines with errorKind \"compile\" (docs/server-mode.md).");
+        w.WriteLine("  --tdd + --dap is rejected (exit 2).");
         w.WriteLine();
         w.WriteLine("  Scope: source-compiled implementing apps only — in the test's own folder, or in");
         w.WriteLine("  another folder passed on the same command line (al-runner --tdd MyApp MyApp.Test):");
@@ -391,7 +394,10 @@ internal static partial class ProgramSupport
         w.WriteLine("  unaffected, and how many were skipped while still failing from an earlier cycle");
         w.WriteLine("  (named on the next line); a cycle that had to run everything says why. The");
         w.WriteLine("  Tests: line counts only what ran. --include-failing also reruns every test whose");
-        w.WriteLine("  last result was not a pass. --affected is rejected (exit 2) without --watch and");
+        w.WriteLine("  last result was not a pass. A baseline recorded in another environment (another BC");
+        w.WriteLine("  build or package set) is used, narrowed by a per-object diff of the two, under a");
+        w.WriteLine("  WARNING line; --strict-environment runs everything instead.");
+        w.WriteLine("  --affected is rejected (exit 2) without --watch and");
         w.WriteLine("  with --tdd, --per-suite or --test. Details: docs/watch-affected.md.");
         w.WriteLine();
 
@@ -706,6 +712,12 @@ internal static partial class ProgramSupport
         w.WriteLine("  --include-failing       With --watch --affected: also rerun every test whose last");
         w.WriteLine("                          result was not a pass, whatever changed (runTests'");
         w.WriteLine("                          includeFailing).");
+        w.WriteLine("  --strict-environment    With --watch --affected: run everything when the baseline");
+        w.WriteLine("                          was recorded in another environment (another BC build,");
+        w.WriteLine("                          package set or package content). Without it that baseline");
+        w.WriteLine("                          is used, narrowed by a per-object diff of the two");
+        w.WriteLine("                          environments, under a WARNING line (runTests'");
+        w.WriteLine("                          strictEnvironment).");
         w.WriteLine("  --server                Long-running JSON-RPC daemon over stdin/stdout (warm");
         w.WriteLine("                          deps + BC patches loaded once; ~19s->~4s per run). One");
         w.WriteLine("                          JSON request/response per line. stdout carries ONLY the");
@@ -739,8 +751,9 @@ internal static partial class ProgramSupport
         w.WriteLine("                          cycle can start with an honestly red test (exit 1). Works");
         w.WriteLine("                          together with --watch (a cycle with a missing symbol falls");
         w.WriteLine("                          back to a full rebuild instead of the fast incremental");
-        w.WriteLine("                          path — the console names the reason). Not yet supported");
-        w.WriteLine("                          together with --server.");
+        w.WriteLine("                          path — the console names the reason). Under --server it is");
+        w.WriteLine("                          runTests' per-request `tdd` field, and this flag is the");
+        w.WriteLine("                          default for requests that omit it. Refused with --dap.");
         w.WriteLine("  --per-suite             Legacy per-Compilation path. Default is bundled mode");
         w.WriteLine("                          (5-7x faster, parity-verified).");
         w.WriteLine("  --bundled               No-op alias for the default bundled mode (deprecated).");

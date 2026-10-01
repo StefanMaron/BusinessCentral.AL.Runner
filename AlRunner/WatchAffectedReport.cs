@@ -11,6 +11,9 @@ internal static class WatchAffectedReport
     /// <summary>The marker every line this report prints starts with.</summary>
     public const string Tag = "[watch] affected:";
 
+    /// <summary>Whether a line <see cref="Describe"/> returned is the environment warning (#5028).</summary>
+    public static bool IsWarning(string line) => line.StartsWith(Tag + " WARNING:", StringComparison.Ordinal);
+
     /// <summary>
     /// One bucket per bundle when the run answered for each (it hands results back in the order
     /// it was given), otherwise one bucket holding everything, so no result or error is dropped.
@@ -69,6 +72,9 @@ internal static class WatchAffectedReport
         {
             $"{Tag} ran {selection.Ran} of {total}   skipped-unaffected {unaffected}   skipped-failing {failing}",
         };
+        // #5028: a baseline from another environment was used; never a line that can go unnoticed.
+        if (selection.EnvironmentDrift is { } drift)
+            lines.Add($"{Tag} {AffectedEnvironmentDrift.Warning(drift)}");
         if (selection.ForcedFull)
             lines.Add($"{Tag} full run — {selection.Reason ?? "reason not recorded"}");
         else if (selection.ChangedObjects.Count > 0)

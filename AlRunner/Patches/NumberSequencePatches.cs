@@ -66,6 +66,11 @@ public static class NumberSequencePatches
     private static readonly Dictionary<(string Name, bool CompanySpecific), SequenceState> _sequences =
         new(new SequenceKeyComparer());
 
+    // #5060: bumped by every AL read or write of a sequence, so TestExecutor can tell whether an
+    // install seed touched sequence state, which no install-baseline snapshot carries.
+    private static long _accessCount;
+    internal static long AccessCount => Interlocked.Read(ref _accessCount);
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void ALInsert(string name, long seed, long increment, bool companySpecific)
     {
@@ -254,6 +259,7 @@ public static class NumberSequencePatches
     // reads one to the tests that wrote it (#5050).
     private static void NoteState(string name, bool companySpecific, bool read, bool write)
     {
+        Interlocked.Increment(ref _accessCount);
         if (!AlRunner.Infrastructure.AlCoverageTracker.PerTestEnabled) return;
         var kind = AlRunner.Infrastructure.AlSessionStateTracker.NumberSequenceKind(name, companySpecific);
         if (read) AlRunner.Infrastructure.AlSessionStateTracker.NoteRead(kind);

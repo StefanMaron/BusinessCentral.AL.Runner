@@ -231,4 +231,36 @@ public class AppIdCollisionLoudFailureTests
         Assert.Contains("/bundles/a", ex.Message);
         Assert.Contains("/bundles/b", ex.Message);
     }
+
+    // #5079: across --server requests (reuse epochs) a module answers only for the source it was
+    // compiled from. Epoch-bumping tests stay in this class, which xUnit runs serially.
+    [Fact]
+    public void EarlierEpochsModule_IsReusedOnlyForTheSameSourceFingerprint()
+    {
+        var appId = Guid.NewGuid();
+        var asm = typeof(DependencyLoader).Assembly;
+        DependencyLoader.RegisterLoaded(appId, asm, "Reuse 5079", "Repro5079", "1.0.0.0", "/bundles/x", "FP-X");
+        DependencyLoader.BeginReuseEpoch();
+
+        Assert.Null(DependencyLoader.TryGetByAppId(appId, "Reuse 5079", "Repro5079", "1.0.0.0", "/bundles/y", "FP-Y"));
+        Assert.Null(DependencyLoader.TryGetByAppId(appId, "Reuse 5079", "Repro5079", "1.0.0.0", "/bundles/y", null));
+        Assert.Same(asm, DependencyLoader.TryGetByAppId(appId, "Reuse 5079", "Repro5079", "1.0.0.0", "/bundles/y", "FP-X"));
+    }
+
+    [Fact]
+    public void EarlierEpochsModule_IsReplacedByThisEpochsRegistration()
+    {
+        var appId = Guid.NewGuid();
+        // Throwaway assemblies: replacing an entry retires the one it displaces (#3974).
+        System.Reflection.Assembly Dynamic(string name) => System.Reflection.Emit.AssemblyBuilder.DefineDynamicAssembly(
+            new System.Reflection.AssemblyName(name), System.Reflection.Emit.AssemblyBuilderAccess.Run);
+        var asmX = Dynamic("Reuse5079X");
+        var asmY = Dynamic("Reuse5079Y");
+        DependencyLoader.RegisterLoaded(appId, asmX, "Reuse 5079", "Repro5079", "1.0.0.0", "/bundles/x", "FP-X");
+        DependencyLoader.BeginReuseEpoch();
+        DependencyLoader.RegisterLoaded(appId, asmY, "Reuse 5079", "Repro5079", "1.0.0.0", "/bundles/y", "FP-Y");
+
+        // Within this epoch a sibling resolving the id shares Y's module (#1683), not X's.
+        Assert.Same(asmY, DependencyLoader.TryGetByAppId(appId, "Reuse 5079", "Repro5079", "1.0.0.0", "/bundles/z", "FP-Z"));
+    }
 }
