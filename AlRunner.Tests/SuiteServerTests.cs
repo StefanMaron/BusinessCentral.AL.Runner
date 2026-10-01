@@ -153,6 +153,127 @@ public class SuiteServerTests
         Assert.Contains("SST-NOW-FAILS", r2.Tests.Single(t => t.Name == "Codeunit69981.Passes").Message);
     }
 
+    private static readonly string[] OnePassTimedOut =
+    {
+        """{"type":"test","name":"Codeunit69980.Passes","status":"pass","durationMs":5}""",
+        """{"type":"test","name":"Codeunit69980.Hangs","status":"error","durationMs":1000,"message":"Test exceeded 1s timeout.","errorKind":"timeout"}""",
+        """{"type":"summary","exitCode":1,"passed":1,"failed":0,"errors":1,"total":2,"protocolVersion":2}""",
+    };
+
+    [Fact]
+    public void AssertOutputDoesNotContain_ReadsBothTheProtocolLinesAndTheStderrSlice()
+    {
+        var r = ServerRunResult.Parse(OnePassOneFail, "[layered] WROTE B\n");
+
+        r.AssertOutputDoesNotContain("not in either");
+        // In the stderr slice only, then in a protocol line only.
+        Assert.ThrowsAny<Xunit.Sdk.XunitException>(() => r.AssertOutputDoesNotContain("[layered] WROTE B"));
+        Assert.ThrowsAny<Xunit.Sdk.XunitException>(() => r.AssertOutputDoesNotContain("SST-FAIL 42"));
+        // Case follows the comparison the caller asks for, as on the CLI's Assert.DoesNotContain.
+        r.AssertOutputDoesNotContain("wrote b");
+        Assert.ThrowsAny<Xunit.Sdk.XunitException>(() => r.AssertOutputDoesNotContain("wrote b", StringComparison.OrdinalIgnoreCase));
+        r.AssertOutputContains("[layered] WROTE B");
+    }
+
+    [Fact]
+    public void AnAbsenceAssertion_ThrowsRatherThanPasses_WhenNoStderrSliceWasRead()
+    {
+        var r = ServerRunResult.Parse(AllPass, stderr: null);
+
+        var ex = Assert.Throws<InvalidOperationException>(() => r.AssertOutputDoesNotContain("anything"));
+        Assert.Contains("no stderr slice was read", ex.Message);
+        Assert.Throws<InvalidOperationException>(() => r.StdErr);
+        Assert.Throws<InvalidOperationException>(() => r.Output);
+        // Not an XunitException: a missing instrument is not a failed assertion about the subject.
+        Assert.IsNotAssignableFrom<Xunit.Sdk.XunitException>(ex);
+    }
+
+    [Fact]
+    public void ARequestWithATimedOutTest_RefusesItsStderrSlice_ForAbsenceAndForPresence()
+    {
+        var r = ServerRunResult.Parse(OnePassTimedOut, "a line the abandoned thread did not write yet\n");
+
+        Assert.True(r.TimedOut);
+        Assert.False(ServerRunResult.Parse(OnePassOneFail, "").TimedOut);
+        var ex = Assert.Throws<InvalidOperationException>(() => r.AssertOutputDoesNotContain("never written"));
+        Assert.Contains("#5171", ex.Message);
+        Assert.Throws<InvalidOperationException>(() => r.StdErr);
+        Assert.Throws<InvalidOperationException>(() => r.AssertOutputContains("a line"));
+        // What the protocol says about the request stays readable: only the stderr claim is refused.
+        r.AssertCounts(passed: 1, failed: 0, errors: 1);
+        Assert.Equal("error", r.StatusOf("Codeunit69980.Hangs"));
+    }
+
+    [Fact]
+    public void ARequestWithATimedOutTest_IsNotReusable_AndOtherRequestsAre()
+    {
+        Assert.False(ServerPool.Reusable(ServerRunResult.Parse(OnePassTimedOut, ""), requestsServed: 1, requestsPerServer: 40));
+        Assert.True(ServerPool.Reusable(ServerRunResult.Parse(OnePassOneFail, ""), requestsServed: 1, requestsPerServer: 40));
+        Assert.False(ServerPool.Reusable(ServerRunResult.Parse(AllPass, ""), requestsServed: 40, requestsPerServer: 40));
+    }
+
+    /// <summary>
+    /// A real timeout, end to end (#5171). A pool whose servers run with a one second test timeout
+    /// serves a test that sleeps past it: the result says it timed out and refuses its stderr slice,
+    /// the pool discards that server, and the next request starts on a new one whose slice is read
+    /// normally. A pool that handed the old server out again would not have spawned a second one.
+    /// </summary>
+    [SkippableFact]
+    public async Task ATimedOutRequest_RefusesItsStderr_AndTheServerIsNotHandedOutAgain()
+    {
+        TestArtifacts.SkipIfMissing();
+        var pool = new ServerPool(capacity: 1, requestsPerServer: 40,
+            serverEnv: new Dictionary<string, string> { ["AL_RUNNER_TEST_TIMEOUT_SEC"] = "1" });
+        var slow = WriteBundle("sst-timeout", passBody: "Sleep(5000);", failBody: "");
+        var fast = WriteBundle("sst-after-timeout", passBody: "", failBody: "");
+
+        var timedOut = await pool.RunAsync(RunTestsRequest(slow), null, SharedServerCanary.RunAsync);
+
+        Assert.True(timedOut.TimedOut, timedOut.Transcript);
+        var refusal = Assert.Throws<InvalidOperationException>(() => timedOut.StdErr);
+        Assert.Contains("timed out", refusal.Message);
+        Assert.Throws<InvalidOperationException>(() => timedOut.AssertOutputDoesNotContain("anything"));
+        Assert.Equal(1, pool.SpawnCount);
+        Assert.Equal(1, pool.RetiredCount);
+
+        var after = await pool.RunAsync(RunTestsRequest(fast), null, SharedServerCanary.RunAsync);
+
+        Assert.False(after.TimedOut, after.Transcript);
+        after.AssertNoFailures();
+        Assert.Equal(2, pool.SpawnCount);
+        Assert.Equal(1, pool.RetiredCount);
+        after.AssertOutputDoesNotContain("SST-NEVER-WRITTEN");
+    }
+
+    /// <summary>
+    /// The slice is this request's own and nothing else: the end markers of the requests before it
+    /// (the canary's, and the first request's) are not in it, and neither is its own.
+    /// </summary>
+    [SkippableFact]
+    public async Task TheStderrSlice_IsOneRequestsOwn_NotTheServersWholeCapture()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = WriteBundle("sst-slice", passBody: "", failBody: "");
+        var pool = new ServerPool(capacity: 1, requestsPerServer: 40, serverEnv: null);
+
+        var first = await pool.RunAsync(RunTestsRequest(bundle), null, SharedServerCanary.RunAsync);
+        var second = await pool.RunAsync(RunTestsRequest(bundle), null, SharedServerCanary.RunAsync);
+
+        Assert.Equal(1, pool.SpawnCount);
+        foreach (var r in new[] { first, second })
+        {
+            Assert.DoesNotContain("[server] request", r.StdErr);
+            r.AssertOutputDoesNotContain("[server] request");
+        }
+    }
+
+    private static string RunTestsRequest(string bundle) => System.Text.Json.JsonSerializer.Serialize(new
+    {
+        command = "runTests",
+        sourcePaths = new[] { bundle },
+        packagePaths = Array.Empty<string>(),
+    });
+
     private static string WriteBundle(string name, string passBody, string failBody)
     {
         var dir = TestScratch.Dir("al-runner-" + name);
