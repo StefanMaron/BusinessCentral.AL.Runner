@@ -41,10 +41,6 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
     private readonly NavRecord? _parentRecord;
     private readonly SubPageLinkEntry[] _links;
 
-    /// <summary>The sibling part this one's FIELD links read, or null when they read the host's row
-    /// (#5140). Set once by GetPart right after construction.</summary>
-    internal LiveNavTestPart? Provider { get; set; }
-
     /// <summary>True once another part names this one as its Provider (#5140).</summary>
     internal bool IsProvider { get; set; }
 
@@ -329,9 +325,7 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
 
         var found = PageInstance?.RaiseOnFindRecord("-")
                     ?? record.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult();
-        _suppressProviderNotify = true;
-        try { Loaded(found); }
-        finally { _suppressProviderNotify = false; }
+        Loaded(found);
         if (!found && !parentHasNoRow) EnterNewRowLine(record);
         if (!found && IsProvider) BlankBufferWhenNoRowIsShown(record);
     }

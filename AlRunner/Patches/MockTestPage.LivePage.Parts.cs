@@ -182,22 +182,17 @@ internal partial class LiveNavTestPage
         // host into a refusal the operation never required.
         var links = SubPageLinks(definition, partPageId);
         // #5140: with a Provider, a FIELD link reads the PROVIDER part's current row, not the host's.
-        LiveNavTestPart? providerPart = null;
         NavRecord? parentRecord = null;
         if (LiveNavTestPart.AnyFieldLink(links))
         {
-            if (definition.ProviderIDSpecified && definition.ProviderID != 0)
-            {
-                providerPart = ResolveProviderPart(definition.ProviderID, controlId, partPageId);
-                parentRecord = providerPart.Record!;
-            }
-            else parentRecord = RequireRecord($"subpage part {controlId}");
+            parentRecord = definition.ProviderIDSpecified && definition.ProviderID != 0
+                ? ResolveProviderPart(definition.ProviderID, controlId, partPageId).Record!
+                : RequireRecord($"subpage part {controlId}");
         }
         var part = new LiveNavTestPart(
             partRecord, RecordPatches.GetPageControlFieldMap(partPageId),
             RecordPatches.GetInsertAllowedForPage(partPageId), partPage, _owner, partPageId,
             parentRecord: parentRecord, links: links);
-        part.Provider = providerPart;
         // A part is never MarkOpened — BC opens the HOST, and the part comes up inside it —
         // so _staticEditable sat at its constructor default of true for every part, whatever
         // the host was opened as. That made a part of a read-only page report itself editable,

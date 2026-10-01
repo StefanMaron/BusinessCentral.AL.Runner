@@ -484,26 +484,9 @@ internal partial class LiveNavTestPage
             // _suppressPartRefreshDuringScan's doc comment and that method's own explicit
             // refresh once a match is confirmed.
             if (!_suppressPartRefreshDuringScan)
-            {
                 RefreshLinkedParts();
-                // #5140: a part that is another part's Provider moved on its own — tell the host
-                // so the dependents re-read its row. Not when the host drove this reload.
-                if (!_suppressProviderNotify) _editabilityHost?.RefreshPartsProvidedBy(this);
-            }
         }
         return found;
-    }
-
-    /// <summary>Set while a host-driven <see cref="LiveNavTestPart.ReloadLinkedRow"/> loads the
-    /// row, because the host refreshes the dependents itself, in order (#5140).</summary>
-    private protected bool _suppressProviderNotify;
-
-    /// <summary>Re-point every part whose Provider is <paramref name="provider"/> at its new row.</summary>
-    private void RefreshPartsProvidedBy(LiveNavTestPage provider)
-    {
-        foreach (var part in _parts.Values.ToList())
-            if (part is LiveNavTestPart { HasLinks: true } dependent && ReferenceEquals(dependent.Provider, provider))
-                dependent.ReloadLinkedRow();
     }
 
     /// <summary>
