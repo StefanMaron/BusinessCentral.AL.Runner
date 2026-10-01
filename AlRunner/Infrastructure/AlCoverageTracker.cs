@@ -194,37 +194,52 @@ public static class AlCoverageTracker
         EnsureReflInit();
         var result = new List<AlCoverageStatement>();
 
+        foreach (var t in MappedScopeTypes(sourceMap, currentGenerationOnly: false))
+        {
+            if (Attribute.GetCustomAttribute(t, _tSourceSpansAttr!) is not object srcAttr) continue;
+            if (_piEncodedSpans!.GetValue(srcAttr) is not long[] spans || spans.Length == 0) continue;
+
+            var (label, id) = AlCallStackCapture.ParseObjectTypeAndId(t);
+            if (id == 0) continue;
+            if (!sourceMap.TryGetValue((label, id), out var filePath)) continue;
+
+            // Only indices BC's compiler actually backed with a StmtHit/CStmtHit call
+            // are real, coverable statements — see AlCoverageInstrumentedStatements
+            // for why the raw SourceSpans array is not that set on its own (it
+            // carries a trailing, never-instrumented sentinel entry).
+            var lineOffset = sourceMap.LineOffset(label, id);
+            var instrumented = AlCoverageInstrumentedStatements.Find(t);
+            foreach (var i in instrumented)
+            {
+                if (i < 0 || i >= spans.Length) continue; // defensive: BC shape drift
+                int line = AlSourceSpanCodec.AbsoluteFromLine(spans[i]) + lineOffset;
+                result.Add(new AlCoverageStatement(label, id, filePath, line, GetHitCount(t, i)));
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Every AL-compiled scope type of an object <paramref name="sourceMap"/> maps, across all
+    /// loaded assemblies — the scan behind both tables, so a never-run procedure reaches each at
+    /// 0 hits (#5186). <paramref name="currentGenerationOnly"/> skips an assembly
+    /// <see cref="BcRuntime.IsStaleBundleAssembly"/> calls stale: a warm <c>--server</c> keeps every
+    /// earlier generation of a bundle loaded, and each would add a hits:0 twin of every live
+    /// statement. The CLI loads one generation and passes false.
+    /// </summary>
+    private static IEnumerable<MemberInfo> MappedScopeTypes(AlSourceLocationMap sourceMap, bool currentGenerationOnly)
+    {
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
+            if (currentGenerationOnly && BcRuntime.IsStaleBundleAssembly(asm)) continue;
             Type[] types;
             try { types = asm.GetTypes(); }
             catch (ReflectionTypeLoadException ex) { types = ex.Types.Where(t => t != null).Cast<Type>().ToArray(); }
 
             foreach (var t in types.SelectMany(type => AlScopeKey.DeclaredByMapped(type, _tSourceSpansAttr!, sourceMap)))
-            {
-                if (Attribute.GetCustomAttribute(t, _tSourceSpansAttr!) is not object srcAttr) continue;
-                if (_piEncodedSpans!.GetValue(srcAttr) is not long[] spans || spans.Length == 0) continue;
-
-                var (label, id) = AlCallStackCapture.ParseObjectTypeAndId(t);
-                if (id == 0) continue;
-                if (!sourceMap.TryGetValue((label, id), out var filePath)) continue;
-
-                // Only indices BC's compiler actually backed with a StmtHit/CStmtHit call
-                // are real, coverable statements — see AlCoverageInstrumentedStatements
-                // for why the raw SourceSpans array is not that set on its own (it
-                // carries a trailing, never-instrumented sentinel entry).
-                var lineOffset = sourceMap.LineOffset(label, id);
-                var instrumented = AlCoverageInstrumentedStatements.Find(t);
-                foreach (var i in instrumented)
-                {
-                    if (i < 0 || i >= spans.Length) continue; // defensive: BC shape drift
-                    int line = AlSourceSpanCodec.AbsoluteFromLine(spans[i]) + lineOffset;
-                    result.Add(new AlCoverageStatement(label, id, filePath, line, GetHitCount(t, i)));
-                }
-            }
+                yield return t;
         }
-
-        return result;
     }
 
     /// <summary>
@@ -247,27 +262,20 @@ public static class AlCoverageTracker
     /// <summary>
     /// Distinct scope Types that have recorded at least one hit since the last
     /// <see cref="Reset"/> — i.e. scopes genuinely invoked in the CURRENT run.
-    ///
-    /// <para><see cref="CollectStatementTable"/> scans this set rather than every loaded
-    /// SourceSpans-carrying type (what <see cref="Collect"/> does), because a warm
-    /// <c>--server</c> process holds N Assembly generations of the same bundle — assemblies are
-    /// never unloaded — and a stale generation's Type is still reflectable after
-    /// <see cref="Reset"/>, so the whole-process scan emits a phantom hits:0 twin of every live
-    /// statement. Keying off _hits sidesteps it: a stale Type recorded nothing this run, so it
-    /// is simply absent. <see cref="Collect"/> is CLI-only and single-generation (#2042).</para>
     /// </summary>
     private static IReadOnlyCollection<MemberInfo> GetHitTrackedTypes() =>
         _hits.Keys.Select(k => k.ScopeType).Distinct().ToArray();
 
     /// <summary>
-    /// Same idea as <see cref="Collect"/> (cross-reference SourceSpans-carrying scope
-    /// types against OnStmtHit's hit counts), but scoped to <see
-    /// cref="GetHitTrackedTypes"/> instead of every loaded assembly (see that method's
-    /// doc comment for why), and keeping each statement separate — never summed by
-    /// line — while carrying the scope name plus the full decoded span instead of
-    /// collapsing to (object, line, hits). Two statements sharing a line get two
-    /// entries here with the SAME line but different id/column, which is exactly the
-    /// distinction <see cref="AlCoverageReport"/>'s line-rollup necessarily discards.
+    /// The statement-position table behind a <c>--server</c> response: the same scan
+    /// <see cref="Collect"/> does, so every instrumented statement of the request's own
+    /// assembly generation is listed and one that never ran carries 0 hits (#5186) — but
+    /// keeping each statement separate, never summed by line, with the scope name and the full
+    /// decoded span. Two statements sharing a line get two entries here with the SAME line but
+    /// different id/column, which is exactly the distinction <see cref="AlCoverageReport"/>'s
+    /// line-rollup necessarily discards. Stale generations are skipped (see
+    /// <see cref="MappedScopeTypes"/>); the hit-tracked types are added so anything that
+    /// recorded a hit this run is listed whatever the staleness check says.
     /// </summary>
     public static List<AlStatementRecord> CollectStatementTable(AlSourceLocationMap sourceMap)
     {
@@ -275,7 +283,8 @@ public static class AlCoverageTracker
         AlNavNameReflection.EnsureInit();
         var result = new List<AlStatementRecord>();
 
-        foreach (var t in GetHitTrackedTypes())
+        foreach (var t in MappedScopeTypes(sourceMap, currentGenerationOnly: true)
+                     .Concat(GetHitTrackedTypes()).Distinct())
         {
             // #2135: resolution chain shared with CollectPerTestStatementTable via
             // ResolveScopeInfo — see that method's doc comment for why this used to
