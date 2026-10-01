@@ -56,6 +56,7 @@ All notable changes to this project are documented here. Format based on
 - **testpage:** New() on an empty linked part raises the part's OnNewRecord
 
 ### Changed
+- **event-subscription:** build the Event Subscription inventory lazily
 - **selection:** wait for the approximate-drift warning on stderr
 - **server:** wait for the tdd stderr line instead of reading it at once
 - **server:** reuse the test-data install baseline across warm requests
