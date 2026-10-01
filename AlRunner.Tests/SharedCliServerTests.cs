@@ -206,4 +206,40 @@ public class SharedCliServerTests
             await shared.DisposeAsync();
         }
     }
+
+    [SkippableFact]
+    public async Task Canary_FirstRunPassesAllThreeTests_AndAnUntouchedServerMatchesAtClassEnd()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var shared = new SharedCliServer();
+        await shared.GetAsync();
+        var baseline = shared.CanaryBaseline;
+        Assert.NotNull(baseline);
+        Assert.StartsWith("summary total=3 passed=3 failed=0 errors=0 exitCode=0\n", baseline, StringComparison.Ordinal);
+        foreach (var test in new[] { "CanaryTableStartsEmpty", "CanaryNumberSequenceStartsAbsent", "CanarySingleInstanceStartsFresh" })
+            Assert.Contains($".{test} | pass |", baseline, StringComparison.Ordinal);
+
+        await shared.DisposeAsync();
+    }
+
+    // #5110: stands in for a fact that leaked server state, by editing the canary so its
+    // class-end run reports a NumberSequence that the first run did not see.
+    [SkippableFact]
+    public async Task Canary_ClassEndRunDiffersFromTheFirst_DisposeThrowsShowingBothRuns()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var shared = new SharedCliServer();
+        await shared.GetAsync();
+        var source = Path.Combine(shared.CanaryBundleDir!, "Canary.al");
+        File.WriteAllText(source, File.ReadAllText(source).Replace(
+            "if NumberSequence.Exists('ALRSharedServerCanary', false) then", "if true then", StringComparison.Ordinal));
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => shared.DisposeAsync());
+        Assert.Contains("class-end re-run differs from the first run", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("CANARY: a NumberSequence survived from an earlier request", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("passed=3 failed=0", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("passed=2 failed=1", ex.Message, StringComparison.Ordinal);
+    }
 }

@@ -8,10 +8,15 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-public class ServerAffectedSelectionPackagedDependencyTests
+// #5110: facts that need no startup flag of their own share one --server (SharedCliServer).
+public class ServerAffectedSelectionPackagedDependencyTests : IClassFixture<SharedCliServer>
 {
-    private static readonly Guid AppId = Guid.Parse("1cbc1e9b-115c-4afd-b266-0a86b8ed313c");
-    private static readonly Guid TestAppId = Guid.Parse("bf420b6a-4c85-494d-9429-0802dd697ef2");
+    private readonly SharedCliServer _fixture;
+
+    public ServerAffectedSelectionPackagedDependencyTests(SharedCliServer fixture) => _fixture = fixture;
+
+    // Fresh ids per Layout(): facts share one server, so no two may present one AppId
+    // (SharedCliServer rule (c)).
 
     // Twice(Integer): Integer, because its BC method id is the one ServerTableRelationReloadTests
     // already declares by hand in a package's SymbolReference.json.
@@ -51,7 +56,7 @@ public class ServerAffectedSelectionPackagedDependencyTests
         }
         """;
 
-    private static void WriteManifest(string dir, Guid id, string name, bool dependsOnApp)
+    private static void WriteManifest(string dir, Guid id, string name, Guid? dependsOn)
     {
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "app.json"), JsonSerializer.Serialize(new
@@ -63,8 +68,8 @@ public class ServerAffectedSelectionPackagedDependencyTests
             platform = "1.0.0.0",
             runtime = "14.0",
             idRanges = new[] { new { from = 60470, to = 60489 } },
-            dependencies = dependsOnApp
-                ? new[] { new { id = AppId, name = "PkgDep App", publisher = "AL Runner", version = "1.0.0.0" } }
+            dependencies = dependsOn is { } appId
+                ? new[] { new { id = appId, name = "PkgDep App", publisher = "AL Runner", version = "1.0.0.0" } }
                 : Array.Empty<object>(),
         }));
     }
@@ -75,10 +80,11 @@ public class ServerAffectedSelectionPackagedDependencyTests
         var root = TestScratch.Dir("al-runner-server-affected-pkgdep");
         var app = Path.Combine(root, "App");
         var testApp = Path.Combine(root, "App.Test");
-        WriteManifest(app, AppId, "PkgDep App", dependsOnApp: false);
+        var appId = Guid.NewGuid();
+        WriteManifest(app, appId, "PkgDep App", dependsOn: null);
         Directory.CreateDirectory(Path.Combine(app, "src"));
         File.WriteAllText(Path.Combine(app, "src", "Helper.Codeunit.al"), HelperSource(2));
-        WriteManifest(testApp, TestAppId, "PkgDep App Test", dependsOnApp: true);
+        WriteManifest(testApp, Guid.NewGuid(), "PkgDep App Test", dependsOn: appId);
         File.WriteAllText(Path.Combine(testApp, "Tests.Codeunit.al"), TestsSource);
         Package(app, testApp);
         return (app, testApp);
@@ -90,9 +96,10 @@ public class ServerAffectedSelectionPackagedDependencyTests
         var identity = InProcessAppPackager.ReadIdentity(Path.Combine(app, "app.json"))!;
         var packages = Path.Combine(testApp, ".alpackages");
         Directory.CreateDirectory(packages);
+        var appId = JsonDocument.Parse(File.ReadAllText(Path.Combine(app, "app.json"))).RootElement.GetProperty("id").GetGuid();
         var symbols = JsonSerializer.SerializeToUtf8Bytes(new
         {
-            AppId, Name = "PkgDep App", Publisher = "AL Runner", Version = "1.0.0.0", RuntimeVersion = "14.0",
+            AppId = appId, Name = "PkgDep App", Publisher = "AL Runner", Version = "1.0.0.0", RuntimeVersion = "14.0",
             Codeunits = new[] { new { Id = 60471, Name = "PkgDep Helper SX", Methods = new[] { new {
                 Id = 1516892452, Name = "Twice", ReturnTypeDefinition = new { Name = "Integer" },
                 Parameters = new[] { new { Name = "Value", TypeDefinition = new { Name = "Integer" } } }
@@ -114,9 +121,10 @@ public class ServerAffectedSelectionPackagedDependencyTests
 
     private static async Task<Observed> Send(CliServer server, string testApp)
     {
+        var stderrMark = server.StdErrMark;
         var lines = await server.SendRequestStreamingAsync(Request(testApp), TimeSpan.FromSeconds(180));
         var (events, summary) = ProtocolV2Streaming.Split(lines);
-        var raw = string.Join(" | ", lines) + "\n--- stderr ---\n" + server.StdErr;
+        var raw = string.Join(" | ", lines) + "\n--- stderr ---\n" + server.StdErrSince(stderrMark);
         Assert.True(summary.TryGetProperty("selection", out var selection), raw);
         return new Observed(
             events.ToDictionary(e => e.GetProperty("name").GetString()!.Split('.').Last(),
@@ -130,7 +138,7 @@ public class ServerAffectedSelectionPackagedDependencyTests
     {
         TestArtifacts.SkipIfMissing();
         var (_, testApp) = Layout();
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--no-cache" });
 
         var baseline = await Send(server, testApp);
         Assert.True(baseline.Status.GetValueOrDefault("CallsApp") == "pass", baseline.Raw);
@@ -205,7 +213,7 @@ public class ServerAffectedSelectionPackagedDependencyTests
     {
         TestArtifacts.SkipIfMissing();
         var (app, testApp) = Layout();
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--no-cache" });
         var plainApp = JsonSerializer.Serialize(new
         {
             command = "runTests", sourcePaths = new[] { app }, packagePaths = Array.Empty<string>(),
@@ -240,7 +248,7 @@ public class ServerAffectedSelectionPackagedDependencyTests
     {
         TestArtifacts.SkipIfMissing();
         var (app, testApp) = Layout();
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--no-cache" });
 
         var baseline = await Send(server, testApp);
         Assert.True(baseline.Status.GetValueOrDefault("CallsApp") == "pass", baseline.Raw);

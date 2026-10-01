@@ -10,8 +10,13 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-public class ServerAffectedSelectionExtensionEventTests
+// #5110: facts that need no startup flag of their own share one --server (SharedCliServer).
+public class ServerAffectedSelectionExtensionEventTests : IClassFixture<SharedCliServer>
 {
+    private readonly SharedCliServer _fixture;
+
+    public ServerAffectedSelectionExtensionEventTests(SharedCliServer fixture) => _fixture = fixture;
+
     private const string Table = """
         table 60492 "EvSel Tab SX"
         {
@@ -221,7 +226,7 @@ public class ServerAffectedSelectionExtensionEventTests
         var bundle = Bundle();
         var subscriberFile = Path.Combine(bundle, "Sub.Codeunit.al");
         File.WriteAllText(subscriberFile, Subscriber(bound: false));
-        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--isolation", "test", "--no-cache" });
 
         var baseline = await Send(server, bundle);
         Assert.True(baseline.ForcedFull, baseline.Raw);
@@ -250,7 +255,7 @@ public class ServerAffectedSelectionExtensionEventTests
         var (x, y) = DuplicateBaseNameBundles();
         var subscriberFile = Path.Combine(x, "Sub.Codeunit.al");
         File.WriteAllText(subscriberFile, DupSubscriber(bound: false));
-        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--isolation", "test", "--no-cache" });
 
         var baseline = await Send(server, x, y);
         Assert.True(baseline.ForcedFull, baseline.Raw);

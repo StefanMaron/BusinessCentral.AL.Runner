@@ -44,8 +44,14 @@ namespace AlRunner.Tests;
 /// (LayeredCacheTests: 150.6s -> 28.9s). This class keeps direct CLI coverage for the
 /// CLI path and now also carries the server mirror facts for #2380.
 /// </summary>
-public class LayeredSourceChainTests
+// #5110: facts that need no startup flag of their own share one --server (SharedCliServer).
+public class LayeredSourceChainTests : IClassFixture<SharedCliServer>
 {
+    private static readonly string ServerCacheDir = TestScratch.Dir("lsc-server-cache");
+    private readonly SharedCliServer _fixture;
+
+    public LayeredSourceChainTests(SharedCliServer fixture) => _fixture = fixture;
+
     private static readonly string RepoRoot = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
     private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
@@ -340,7 +346,7 @@ public class LayeredSourceChainTests
         WriteMiddleApp(middleDir, middleId, baseId);
         WriteTestApp(testsDir, testsId, middleId);
 
-        await using var server = await CliServer.StartAsync(new[] { "--cache", Path.Combine(scratch, "al-out") });
+        var server = await _fixture.GetAsync(new[] { "--cache", ServerCacheDir });
         var lines = await server.SendRequestStreamingAsync(ServerReq(testsDir), TimeSpan.FromSeconds(300));
         var (_, summary) = ProtocolV2Streaming.Split(lines);
 
@@ -405,7 +411,7 @@ public class LayeredSourceChainTests
         WriteMiddleApp(middleDir, middleId, baseId);
         WriteTestApp(testsDir, testsId, middleId);
 
-        await using var server = await CliServer.StartAsync(new[] { "--cache", Path.Combine(scratch, "al-out") });
+        var server = await _fixture.GetAsync(new[] { "--cache", ServerCacheDir });
         var lines = await server.SendRequestStreamingAsync(ServerReq(testsDir), TimeSpan.FromSeconds(300));
         var (_, summary) = ProtocolV2Streaming.Split(lines);
 

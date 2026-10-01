@@ -8,8 +8,13 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-public class ServerAffectedSelectionUnrecordedStateTests
+// #5110: facts that need no startup flag of their own share one --server (SharedCliServer).
+public class ServerAffectedSelectionUnrecordedStateTests : IClassFixture<SharedCliServer>
 {
+    private readonly SharedCliServer _fixture;
+
+    public ServerAffectedSelectionUnrecordedStateTests(SharedCliServer fixture) => _fixture = fixture;
+
     // Writer.Codeunit.al holds "US Writer" (62482) with Write(); Checker.Codeunit.al holds
     // "US Checker" (62480) with Check(). Each test codeunit reaches only one of them, so an edit to
     // one file changes exactly one test. One test per codeunit: under Codeunit isolation a codeunit
@@ -119,9 +124,10 @@ public class ServerAffectedSelectionUnrecordedStateTests
             ["packagePaths"] = Array.Empty<string>(),
             ["affectedOnly"] = affectedOnly,
         };
+        var stderrMark = server.StdErrMark;
         var lines = await server.SendRequestStreamingAsync(JsonSerializer.Serialize(request), TimeSpan.FromSeconds(180));
         var (events, summary) = ProtocolV2Streaming.Split(lines);
-        var raw = string.Join(" | ", lines) + "\n--- stderr ---\n" + server.StdErr;
+        var raw = string.Join(" | ", lines) + "\n--- stderr ---\n" + server.StdErrSince(stderrMark);
         var forced = summary.TryGetProperty("selection", out var selection) && selection.GetProperty("forcedFull").GetBoolean();
         var tests = events.ToDictionary(
             e => e.GetProperty("name").GetString()!.Split('.').Last(),
@@ -142,9 +148,9 @@ public class ServerAffectedSelectionUnrecordedStateTests
 
     // An edit to the writer changes what B reads: the full run on the edited source fails B, and the
     // narrowed run must have run B and failed it the same way. D, reading nothing, stays out.
-    private static async Task AssertReaderSelected(string bundle, string editedWriter, string failure, string writerStatus = "pass")
+    private async Task AssertReaderSelected(string bundle, string editedWriter, string failure, string writerStatus = "pass")
     {
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--no-cache" });
 
         var baseline = await Send(server, bundle);
         Assert.True(baseline.ForcedFull, baseline.Raw);
@@ -164,9 +170,9 @@ public class ServerAffectedSelectionUnrecordedStateTests
 
     // An edit to the reader alone must bring the writer it reads from, so B sees what a full run
     // gives it and passes. Without A, B would read what E left at the end of the previous request.
-    private static async Task AssertWriterBrought(string bundle, string editedChecker, string writerStatus = "pass")
+    private async Task AssertWriterBrought(string bundle, string editedChecker, string writerStatus = "pass")
     {
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--no-cache" });
 
         var baseline = await Send(server, bundle);
         Assert.True(baseline.ForcedFull, baseline.Raw);
@@ -289,7 +295,7 @@ public class ServerAffectedSelectionUnrecordedStateTests
         TestArtifacts.SkipIfMissing();
         var bundle = Bundle("al-runner-server-affected-unrecorded-lasterror-fixed", "000000000008",
             UncaughtErrorWriter("LE-ONE"), LastErrorChecker(), TrappedErrorWriter("LE-OTHER", "62487 \"US Overwriter\""));
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--no-cache" });
 
         var baseline = await Send(server, bundle);
         AssertStatus(baseline, "A_Writes", "fail");
@@ -502,7 +508,7 @@ public class ServerAffectedSelectionUnrecordedStateTests
             EnvWriter("one"), EnvChecker(), EnvWriter("other", "62487 \"US Overwriter\"", declare: false), onPrem: true);
         File.WriteAllText(Path.Combine(bundle, "CtorTests.Codeunit.al"), OtherDotNetUseTests);
         File.WriteAllText(Path.Combine(bundle, "FieldTests.Codeunit.al"), StaticFieldTests);
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--no-cache" });
 
         var baseline = await Send(server, bundle);
         Assert.True(baseline.ForcedFull, baseline.Raw);
@@ -555,7 +561,7 @@ public class ServerAffectedSelectionUnrecordedStateTests
         TestArtifacts.SkipIfMissing();
         var bundle = Bundle("al-runner-server-affected-unrecorded-seed", "000000000006",
             SeedWriter(42), SeedChecker, SeedWriter(7, "62487 \"US Overwriter\""));
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--no-cache" });
 
         var seeded42 = await Send(server, bundle, affectedOnly: false);
         AssertStatus(seeded42, "B_Reads", "fail", "RANDOM-");
@@ -648,7 +654,7 @@ public class ServerAffectedSelectionUnrecordedStateTests
                 end;
             }
             """));
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--no-cache" });
 
         var baseline = await Send(server, bundle);
         AssertStatus(baseline, "C_Reads", "pass");
@@ -726,7 +732,7 @@ public class ServerAffectedSelectionUnrecordedStateTests
                 end;
             }
             """));
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--no-cache" });
 
         AssertStatus(await Send(server, bundle), "C_Reads", "pass");
         File.WriteAllText(Path.Combine(bundle, "BHelper.Codeunit.al"), CyHelper(false));
