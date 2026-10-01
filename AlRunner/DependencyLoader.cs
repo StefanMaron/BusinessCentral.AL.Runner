@@ -1130,6 +1130,9 @@ public sealed class DependencyLoader
         WriteLine($"app:{manifest.AppId}:{manifest.Publisher}:{manifest.Name}:{manifest.Version}");
         foreach (var dep in manifest.Dependencies.OrderBy(d => $"{d.Publisher}/{d.Name}/{d.Version}/{d.AppId}", StringComparer.OrdinalIgnoreCase))
             WriteLine($"dep:{dep.AppId}:{dep.Publisher}:{dep.Name}:{dep.Version}");
+        // #5150: what this compile may see, when its app.json was recorded (a source dependency).
+        if (AlRunner.BcCompiler.DeclaredVisibilityCacheTerm(manifest.AppId) is { } visibility)
+            WriteLine(visibility);
         WriteLine($"app-bytes:{AppBytesTerm(appPath, contentHashOf)}");
 
         ms.Position = 0;
