@@ -267,14 +267,11 @@ public class ServerAffectedSelectionObjectKindTests
         Write(bundle, "Greeter.Interface.al", InterfaceCommented);
         AssertForcedFull(await Send(server, bundle), "Interface Kind Greeter SX changed");
 
-        // An extends clause changes what `is` answers for an implementer nobody edited. Only the
-        // selection is asserted here: this server's incremental compile keeps the implementer's old
-        // interface list (5089), so NextServer_* asserts the outcome.
+        // An extends clause changes what `is` answers for an implementer nobody edited. The
+        // incremental compile now falls back to a full compile for it (#5089), so the forced full
+        // run is reported through that fallback and the outcome matches a cold compile.
         Write(bundle, "Greeter.Interface.al", InterfaceExtendsOther);
-        var extends = await Send(server, bundle);
-        Assert.True(extends.ForcedFull, extends.Raw);
-        Assert.Contains("Interface Kind Greeter SX changed", extends.Reason, StringComparison.Ordinal);
-        Assert.Equal(All, extends.Ran);
+        AssertForcedFull(await Send(server, bundle), "Kind Greeter SX", "ImplIsNotOther", "G is Other");
     }
 
     // #5007's path: changed while no server runs, so the persisted baseline's diff names the object,
