@@ -12,6 +12,10 @@ namespace AlRunner.Tests;
 /// What BC returns is the corpus's claim (codeunit 68530, corpus PR #523). This pins the runner's
 /// own half: the re-read resumes after the starting row rather than casting, and a positioning
 /// column the runner cannot faithfully filter on (an aggregate) refuses with its named reason.
+///
+/// The same bundle carries #5164: the TopNumberOfRows PROPERTY seeds NavQuery's top through the
+/// Cecil-rewritten NavQuery ctor (NclCecilRewrite.Queries.cs). BC's claim is corpus 68650
+/// (corpus PR #533).
 /// </summary>
 public class QueryReadAfterWritePositionTests
 {
@@ -130,6 +134,20 @@ public class QueryReadAfterWritePositionTests
             }
         }
 
+        query 51336 "QRP Top Two"
+        {
+            QueryType = Normal;
+            OrderBy = ascending(EntryNo);
+            TopNumberOfRows = 2;
+            elements
+            {
+                dataitem(Entry; "QRP Entry")
+                {
+                    column(EntryNo; "Entry No.") { }
+                }
+            }
+        }
+
         codeunit 51333 "QRP 5133 Tests"
         {
             Subtype = Test;
@@ -175,6 +193,43 @@ public class QueryReadAfterWritePositionTests
                 Joined.Close();
                 if Seen <> '3;2;' then
                     Error('QRP-JOINTOP expected 3;2; got %1', Seen);
+            end;
+
+            // #5164: the property is the query's initial top, and caps the read with a write in it.
+            [Test]
+            procedure PropertyTop_CapsTheRead()
+            var
+                Entries: Query "QRP Top Two";
+                Seen: Text;
+            begin
+                Initialize();
+                if Entries.TopNumberOfRows() <> 2 then
+                    Error('QRP-PROPTOP TopNumberOfRows() is %1, not the property value 2', Entries.TopNumberOfRows());
+                Entries.Open();
+                while Entries.Read() do begin
+                    Seen += Format(Entries.EntryNo) + ';';
+                    MarkProcessed(Entries.EntryNo);
+                end;
+                Entries.Close();
+                if Seen <> '1;2;' then
+                    Error('QRP-PROPTOP expected 1;2; got %1', Seen);
+            end;
+
+            // The method replaces the property's value.
+            [Test]
+            procedure PropertyTop_MethodRaisesIt()
+            var
+                Entries: Query "QRP Top Two";
+                Seen: Text;
+            begin
+                Initialize();
+                Entries.TopNumberOfRows(3);
+                Entries.Open();
+                while Entries.Read() do
+                    Seen += Format(Entries.EntryNo) + ';';
+                Entries.Close();
+                if Seen <> '1;2;3;' then
+                    Error('QRP-PROPRAISE expected 1;2;3; got %1', Seen);
             end;
 
             local procedure MarkProcessed(EntryNo: Integer)
@@ -261,9 +316,13 @@ public class QueryReadAfterWritePositionTests
         Assert.DoesNotContain("QRP-RESUME", output);
         Assert.DoesNotContain("QRP-LOOP", output);
         Assert.DoesNotContain("QRP-JOINTOP", output);
+        Assert.DoesNotContain("QRP-PROPTOP", output);
+        Assert.DoesNotContain("QRP-PROPRAISE", output);
+        Assert.Contains("PASS  Codeunit51333.PropertyTop_CapsTheRead", output);
+        Assert.Contains("PASS  Codeunit51333.PropertyTop_MethodRaisesIt", output);
         Assert.Contains("PASS  Codeunit51333.JoinTop2_ModifyInLoop_StillReadsTwoRows", output);
         Assert.Contains("PASS  Codeunit51333.ModifyInLoop_ResumesAfterTheLastRow", output);
         Assert.Contains("query-reread-position-on-aggregated-column", output);
-        Assert.Contains("2P/1F/0E", output);
+        Assert.Contains("4P/1F/0E", output);
     }
 }

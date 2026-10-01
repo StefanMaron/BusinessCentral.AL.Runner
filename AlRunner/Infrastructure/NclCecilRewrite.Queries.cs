@@ -121,6 +121,22 @@ public static partial class NclCecilRewrite
                 mm.Parameters[1].ParameterType.FullName == "Microsoft.Dynamics.Nav.Runtime.SecurityFiltering" &&
                 mm.Parameters[2].ParameterType.Name == "NCLMetaQuery")
                 ?? throw new InvalidOperationException("NavQuery..ctor(ITreeObject,SecurityFiltering,NCLMetaQuery) not found");
+            // BC's body ends `ALTopNumberOfRowsToReturn = NCLMetaQuery.TopNumberOfRowsToReturn`:
+            // the TopNumberOfRows PROPERTY is the field's initial value (#5164). Bound from the
+            // original IL before it is cleared, so a BC that moves that line refuses here.
+            var topGetter = ctor3.Body.Instructions
+                .Where(i => (i.OpCode == OpCodes.Callvirt || i.OpCode == OpCodes.Call)
+                    && i.Operand is MethodReference mr && mr.Name == "get_TopNumberOfRowsToReturn"
+                    && mr.DeclaringType.Name == "NCLMetaQuery")
+                .Select(i => (MethodReference)i.Operand).SingleOrDefault();
+            var topSetter = ctor3.Body.Instructions
+                .Where(i => (i.OpCode == OpCodes.Callvirt || i.OpCode == OpCodes.Call)
+                    && i.Operand is MethodReference mr && mr.Name == "set_ALTopNumberOfRowsToReturn")
+                .Select(i => (MethodReference)i.Operand).SingleOrDefault();
+            if (topGetter == null || topSetter == null)
+                throw new InvalidOperationException(
+                    "NavQuery..ctor(ITreeObject,SecurityFiltering,NCLMetaQuery) no longer seeds "
+                    + "ALTopNumberOfRowsToReturn from NCLMetaQuery.TopNumberOfRowsToReturn — Ncl shape changed");
             {
                 var body = ctor3.Body;
                 body.Instructions.Clear();
@@ -162,7 +178,16 @@ public static partial class NclCecilRewrite
                 il.Append(il.Create(OpCodes.Call, guidNewGuid));
                 il.Append(il.Create(OpCodes.Call, execGuidSetter));
 
-                il.Append(il.Create(OpCodes.Ret));
+                // if (metaQuery != null) this.ALTopNumberOfRowsToReturn = metaQuery.TopNumberOfRowsToReturn
+                var ret = il.Create(OpCodes.Ret);
+                il.Append(il.Create(OpCodes.Ldarg_3));
+                il.Append(il.Create(OpCodes.Brfalse_S, ret));
+                il.Append(il.Create(OpCodes.Ldarg_0));
+                il.Append(il.Create(OpCodes.Ldarg_3));
+                il.Append(il.Create(OpCodes.Callvirt, topGetter));
+                il.Append(il.Create(OpCodes.Call, topSetter));
+
+                il.Append(ret);
                 body.MaxStackSize = 4;
                 Console.Error.WriteLine("[Cecil] Rewrote NavQuery..ctor(ITreeObject,SecurityFiltering,NCLMetaQuery) → null-safe minimal init");
             }
