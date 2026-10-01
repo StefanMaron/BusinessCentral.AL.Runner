@@ -691,6 +691,10 @@ public static class Reporter
                 w.WriteLine(t.Outcome is TestOutcome.Fail or TestOutcome.Error
                     ? $"{label} {FailureHeading(t, ms)}{suspectSuffix}"
                     : $"{label} {t.Codeunit}.{t.Method} ({ms}ms){suspectSuffix}");
+                // #5147: --tdd only; a fact about the generated members the test reaches, after its own message.
+                var stubLine = t.GeneratedStubs is { Count: > 0 } ? $"      {TddReport.PerTestLine(t)}" : null;
+                if (stubLine != null && t.Outcome == TestOutcome.Pass)
+                    w.WriteLine(stubLine);
                 if (t.Outcome != TestOutcome.Pass)
                 {
                     // #4600: a failure caused by an app in Action needed points there rather
@@ -707,6 +711,8 @@ public static class Reporter
                     // is why a default run's output is unchanged.
                     if (!string.IsNullOrEmpty(t.Diagnosis))
                         w.WriteLine($"      {t.Diagnosis}");
+                    if (stubLine != null)
+                        w.WriteLine(stubLine);
                     if (!string.IsNullOrEmpty(t.AlCallStack))
                     {
                         // Show the AL call stack (BC service-tier format), not the C# trace.
@@ -897,6 +903,8 @@ public static class Reporter
                 // #2240: additive and null-omitted (DefaultIgnoreCondition below), so a run that
                 // produced no diagnosis emits byte-identical JSON to before.
                 diagnosis = x.Test.Diagnosis,
+                // #5147: --tdd's generated members this test referenced; null-omitted otherwise.
+                generatedStubs = x.Test.GeneratedStubs is { Count: > 0 } gs ? gs : null,
                 stackTrace = (x.Test.AlCallStack ?? x.Test.FullException)?.TrimEnd(),
                 // #2880: `true` on a fail/error that shares a bucket with a suite error — the
                 // result may be collateral damage from objects the lost suite took with it.

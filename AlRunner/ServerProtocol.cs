@@ -14,7 +14,7 @@ namespace AlRunner;
 ///             (#4952, docs/server-mode.md#request-fields).
 ///   runTests: STREAMING (protocol-v2.schema.json — see #1641) — zero or more
 ///             {"type":"test", name, status, durationMs, message, errorKind,
-///             stackFrames, stackTrace} lines, one per completed test as it
+///             stackFrames, stackTrace, generatedStubs|omitted} lines, one per completed test as it
 ///             finishes, followed by exactly one terminal
 ///             {"type":"summary", exitCode, passed, failed, errors,
 ///             total, cached, cancelled|omitted, changedFiles|omitted,
@@ -417,6 +417,8 @@ public static class ServerProtocol
             errorKind = ErrorClassifier.Classify(t)?.ToString().ToLowerInvariant(),
             stackFrames = frames.Count > 0 ? frames.Select(ToWire) : null,
             stackTrace = (t.AlCallStack ?? t.FullException)?.TrimEnd(),
+            // #5147: under tdd, the generated members this test referenced; omitted otherwise.
+            generatedStubs = t.GeneratedStubs is { Count: > 0 } gs ? gs : null,
         };
         return JsonSerializer.Serialize(payload, Opts);
     }

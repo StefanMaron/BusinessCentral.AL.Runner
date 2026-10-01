@@ -19,9 +19,10 @@ namespace AlRunner.Tests;
 ///
 /// 1. DoubleIt (this fixture's originally-missing procedure) is now a RESOLVABLE case
 ///    per #2001's inference rules: --tdd generates a stub for it rather than excluding
-///    it. Cycle 1 therefore reports FAILED via Program.cs's OverrideTddDependentResults
-///    ("this test depends on N generated member(s)..."), not TddSupport's refuse-path
-///    message — and, because the module then compiles CLEAN (nothing excluded),
+///    it. Since #5147 the stub's body is empty, so cycle 1 reports FAILED on the test's own
+///    assertion ("expected DoubleIt(5) = 10, got 0"), with a line naming the generated
+///    member, not TddSupport's refuse-path message — and, because the module then
+///    compiles CLEAN (nothing excluded),
 ///    BcCompiler.Emit's RecordIncrementalBaseline (gated on `excludedObjects.Count ==
 ///    0`) actually records a baseline after cycle 1. That's fine for the underlying
 ///    safety argument (a baseline recorded from a generated compile is superseded
@@ -153,8 +154,8 @@ public class TddWatchTests
         try
         {
             // Cycle 1 (cold, process start): DoubleIt is resolvable, so --tdd
-            // generates a stub for it — the test compiles and RUNS against that
-            // stub, force-reported FAILED naming the generated member.
+            // generates an empty stub for it — the test compiles, RUNS against that
+            // stub, and fails on its own assertion (0 is not 10), naming the stub (#5147).
             // BareStatementCall_RefusesNotGuesses (a SIBLING object, DoThing) is not
             // resolvable at all — --tdd refuses to guess, that object is excluded,
             // and its test is reported FAILED via TddSupport's original (#2000)
@@ -163,8 +164,10 @@ public class TddWatchTests
             var cycle1 = Segment(0, m1);
             Assert.Contains("FAIL ", cycle1);
             Assert.Contains("MissingProcedure_ReportsFailedThenPasses", cycle1);
-            Assert.Contains("DoubleIt", cycle1);
-            Assert.Contains("depends on", cycle1); // OverrideTddDependentResults' message shape
+            Assert.Contains("expected DoubleIt(5) = 10, got 0", cycle1); // the test's own Error()
+            Assert.Contains("reaches generated stub(s): Tdd Watch Target Cu: procedure \"DoubleIt\"(Arg1: Integer): Integer", cycle1);
+            Assert.Contains("--tdd: 1 test(s) reach generated stubs this run:", cycle1);
+            Assert.DoesNotContain("depends on", cycle1); // the pre-#5147 blanket rewrite
             Assert.Contains("BareStatementCall_RefusesNotGuesses", cycle1);
             Assert.Contains("DoThing", cycle1);
             Assert.Contains("did not compile", cycle1); // TddSupport.BuildFailedTests' message shape
@@ -193,6 +196,11 @@ public class TddWatchTests
             var cycle2 = Segment(m1 + 1, m2);
             Assert.Contains("PASS", cycle2);
             Assert.Contains("MissingProcedure_ReportsFailedThenPasses", cycle2);
+            Assert.DoesNotContain("reaches generated stub", cycle2);
+            // Each cycle's closing block lists that cycle's generated members only (#5147):
+            // DoubleIt is written now, so nothing was generated in cycle 2.
+            Assert.Contains("--tdd: no members were generated this run", cycle2);
+            Assert.DoesNotContain("--tdd: generated", cycle2);
             Assert.Contains("BareStatementCall_RefusesNotGuesses", cycle2);
             Assert.Contains("DoThing", cycle2);
             Assert.Contains("did not compile", cycle2);

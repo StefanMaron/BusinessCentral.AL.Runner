@@ -36,15 +36,12 @@ namespace AlRunner;
 /// API the implementing app still has to hand-write to replace the generated stub.
 /// </summary>
 /// <remarks>
-/// <see cref="DependentTests"/> — every "<c>ObjectDisplayName.MethodName</c>" the compile
-/// identified as referencing THIS member, resolved statically from each AL0132 diagnostic's
-/// own Location (source tree + span) rather than from anything observed at runtime — see
-/// <c>Program.cs</c>'s per-bundle override, which forces every one of these tests to report
-/// FAILED regardless of whether it happened to execute cleanly. A member the implementing app
-/// has not defined yet is scaffolding, not an implementation; a test that only ran against
-/// scaffolding must never be reported as a pass (.claude/rules/loud-failures.md) — a generated
-/// field silently holding whatever was written to it is a fully functional fake, which is
-/// worse than a default return, not better.
+/// <see cref="DependentTests"/> — every "<c>ObjectDisplayName.MethodName</c>" [Test] that
+/// reaches THIS member: the procedure holding an AL0132 naming it, or one that calls that
+/// procedure through this compile's call graph (<see cref="TddCallGraph"/>), resolved
+/// statically rather than from anything observed at runtime. Each of
+/// those tests' results names this member (<see cref="TddDependents"/>, #5147) whatever its
+/// outcome, so a pass against a generated member is never silent.
 /// </remarks>
 public sealed record TddGeneratedMember(string ObjectDisplayName, string MemberKind, string Signature)
 {
@@ -107,6 +104,7 @@ public static class TddGeneration
         // diagnostic's own Location, never from what actually executed — see
         // TddGeneratedMember.DependentTests' doc comment for why that matters.
         var dependentsByKey = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        TddCallGraph? callGraph = null;
 
         foreach (var diag in emitResult.Diagnostics)
         {
@@ -131,12 +129,13 @@ public static class TddGeneration
                 }
                 if (member == null) continue; // this key was attempted (now or earlier) and refused
 
-                var testId = FindEnclosingTestMethod(diag);
-                if (testId == null) continue; // couldn't attribute — still generated, just untracked
-                var label = $"{testId.Value.ObjectName}.{testId.Value.MethodName}";
+                // #5147: every [Test] that reaches the referencing method, directly or through
+                // procedures it calls in this compile (helpers, library codeunits).
+                callGraph ??= TddCallGraph.Build(compilation, originalTrees);
                 if (!dependentsByKey.TryGetValue(key, out var list))
                     dependentsByKey[key] = list = new List<string>();
-                if (!list.Contains(label)) list.Add(label);
+                foreach (var label in callGraph.TestsReaching(diag))
+                    if (!list.Contains(label)) list.Add(label);
             }
             catch
             {
@@ -333,44 +332,6 @@ public static class TddGeneration
         return result.Value.Member;
     }
 
-    /// <summary>
-    /// Walks UP from an AL0132 diagnostic's own location to the enclosing <c>[Test]</c>
-    /// procedure (if any) and its declaring object, purely from syntax — the same "resolve
-    /// statically, never from what ran" discipline as the rest of generation. Returns null when
-    /// the diagnostic isn't inside a [Test] procedure at all (an unlikely shape: a missing
-    /// symbol referenced from a non-test member), in which case the generated member still
-    /// happens, it's just not attributable to a specific test for the override in Program.cs.
-    /// </summary>
-    private static (string ObjectName, string MethodName)? FindEnclosingTestMethod(NavDiag.Diagnostic diag)
-    {
-        var tree = diag.Location.SourceTree;
-        if (tree == null) return null;
-        var root = tree.GetRoot();
-        var token = root.FindToken(diag.Location.SourceSpan.Start);
-
-        NavSyntax.MethodDeclarationSyntax? method = null;
-        for (NavCA.SyntaxNode? n = token.Parent; n != null; n = n.Parent)
-        {
-            if (n is NavSyntax.MethodDeclarationSyntax m) { method = m; break; }
-        }
-        if (method == null) return null;
-        var isTest = method.Attributes.Any(a =>
-            string.Equals(IdentTextOf(a.Name), "Test", StringComparison.OrdinalIgnoreCase));
-        if (!isTest) return null;
-
-        NavSyntax.ObjectSyntax? obj = null;
-        for (NavCA.SyntaxNode? n = method; n != null; n = n.Parent)
-        {
-            if (n is NavSyntax.ObjectSyntax o) { obj = o; break; }
-        }
-        if (obj == null) return null;
-
-        var objName = Unquote(IdentTextOf(obj.Name));
-        var methodName = Unquote(IdentTextOf(method.Name));
-        if (objName.Length == 0 || methodName.Length == 0) return null;
-        return (objName, methodName);
-    }
-
     private static (NavSyntax.ObjectSyntax, TddGeneratedMember)? TryGenerateField(
         NavCA.Compilation compilation, NavCA.ParseOptions parseOptions,
         NavSyntax.ObjectSyntax targetObj, string fieldName, NavSyntax.MemberAccessExpressionSyntax mae,
@@ -430,10 +391,11 @@ public static class TddGeneration
 
         var quotedName = Quote(procName);
         var paramList = string.Join("; ", paramTypes.Select((t, i) => $"Arg{i + 1}: {t}"));
-        var errMsg = $"--tdd: {procName} is a generated stub -- the implementing app has not defined it yet.";
+        // #5147: an empty body, so the call returns the type's default and the test's own
+        // assertion decides its result — the red of the red-green loop.
         var snippet =
             $"codeunit 1 \"__TddGen__\" {{ procedure {quotedName}({paramList}): {returnType} " +
-            $"begin Error('{errMsg.Replace("'", "''")}'); end; }}";
+            "begin end; }";
         var synthTree = NavSyntax.SyntaxTree.ParseObjectText(snippet, path: "<tdd-generated>", encoding: null!, parseOptions, default);
         var synthCodeunit = (NavSyntax.CodeunitSyntax)synthTree.GetRoot().ChildNodes().OfType<NavSyntax.ObjectSyntax>().First();
         var newMethod = synthCodeunit.Members.OfType<NavSyntax.MethodDeclarationSyntax>().First();
