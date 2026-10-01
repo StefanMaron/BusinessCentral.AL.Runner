@@ -424,6 +424,50 @@ public sealed class AlOutputCacheDoNotCacheTests : IDisposable
             + $"\n{warm.Diagnostics}");
     }
 
+    /// <summary>
+    /// #5107: a server source path that only contains apps is served as one bundle per app. Each
+    /// of those bundles must still write its own AL-output entry cold and be served from it warm,
+    /// by a fresh server process — the expansion must not cost the cache.
+    /// </summary>
+    [SkippableFact]
+    public async Task ServerMode_ContainerOfApps_EachPerAppBundleIsCachedAndHitWarm()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (bundle, pkg, cache) = Arrange("server-container-per-app", siblingManifestValid: true);
+
+        var cold = await RunServerBundleAsync(bundle, pkg, cache, "server-container-cold");
+        Assert.True(cold.Summary.GetProperty("passed").GetInt32() == 2, cold.Diagnostics);
+        Assert.True(cold.CacheMisses == 2 && cold.CacheHits == 0,
+            $"expected one cache MISS per app (2), got {cold.CacheMisses} miss(es), {cold.CacheHits} hit(s)\n{cold.Diagnostics}");
+        var written = Directory.GetFiles(cache, "*.dll");
+        Assert.True(written.Length == 2,
+            $"expected one AL-output entry per app (2), found {written.Length}: "
+            + $"{string.Join(", ", written.Select(Path.GetFileName))}\n{cold.Diagnostics}");
+
+        var warm = await RunServerBundleAsync(bundle, pkg, cache, "server-container-warm");
+        Assert.True(warm.Summary.GetProperty("passed").GetInt32() == 2, warm.Diagnostics);
+        Assert.True(warm.CacheHits == 2 && warm.CacheMisses == 0,
+            $"expected both per-app bundles served from the cache, got {warm.CacheHits} hit(s), {warm.CacheMisses} miss(es)\n{warm.Diagnostics}");
+    }
+
+    /// <summary>
+    /// Suite A alone through --server. It declares Fabrikam Dep Z, whose .app carries no
+    /// SymbolReference.json; the CLI compiles and passes it, and the server must too rather than
+    /// failing the module on BC's AL1022 for a package its scanner cannot read (#5107).
+    /// </summary>
+    [SkippableFact]
+    public async Task ServerMode_AppDeclaringASymbolLessPackage_CompilesAndPassesLikeTheCli()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (bundle, pkg, cache) = Arrange("server-symbol-less-dep", siblingManifestValid: true);
+
+        var run = await RunServerBundleAsync(Path.Combine(bundle, "suiteA"), pkg, cache, "server-symbol-less-dep");
+
+        Assert.True(run.Summary.GetProperty("exitCode").GetInt32() == 0
+            && run.Summary.GetProperty("passed").GetInt32() == 1, run.Summary + "\n" + run.Diagnostics);
+        Assert.DoesNotContain("AL1022", run.Summary.ToString());
+    }
+
     // ── fixture ───────────────────────────────────────────────────────────────────────────
 
     /// <summary>

@@ -238,19 +238,31 @@ public class TransitiveDependencyVisibilityTests
         AssertRefused(output, exit);
     }
 
+    [SkippableFact]
+    public void OneBundle_PropagatedTransitiveDependency_Compiles()
+    {
+        TestArtifacts.SkipIfMissing();
+        var scratch = TestScratch.Dir("tdv-bundle-propagated");
+        var chain = WriteChain(scratch, middlePropagates: true, testReferencesBase: true);
+
+        var (output, exit) = RunRunner(Path.Combine(scratch, "al-out"), chain.Root);
+
+        AssertPassed(output, exit);
+    }
+
     // ── --server: two workspaces sharing app ids, differing only in propagation ─
 
-    private static string ServerReq(string sourcePath) => System.Text.Json.JsonSerializer.Serialize(new
+    private static string ServerReq(string[] sourcePaths) => System.Text.Json.JsonSerializer.Serialize(new
     {
         command = "runTests",
-        sourcePaths = new[] { sourcePath },
+        sourcePaths,
         packagePaths = Array.Empty<string>(),
     });
 
-    private static async Task<(bool Passed, string Text)> ServeAsync(CliServer server, string testDir)
+    private static async Task<(bool Passed, string Text)> ServeAsync(CliServer server, params string[] sourcePaths)
     {
         var mark = server.StdErrMark;
-        var lines = await server.SendRequestStreamingAsync(ServerReq(testDir), TimeSpan.FromSeconds(300));
+        var lines = await server.SendRequestStreamingAsync(ServerReq(sourcePaths), TimeSpan.FromSeconds(300));
         var (_, summary) = ProtocolV2Streaming.Split(lines);
         var text = string.Join(" | ", lines);
         if (summary.TryGetProperty("compilationErrors", out var groups))
@@ -299,4 +311,73 @@ public class TransitiveDependencyVisibilityTests
     [SkippableFact]
     public Task Server_NonPropagatingWorkspaceFirst_EachRequestUsesItsOwnDeclarations()
         => AssertEachRequestUsesItsOwnDeclarations(firstPropagates: false);
+
+    // ── --server: one source path holding all three apps (#5107) ──────────────
+
+    private static Task<CliServer> StartServerAsync(string scratch)
+    {
+        var args = new List<string> { "--cache", Path.Combine(scratch, "al-out") };
+        var platformApps = TestArtifacts.PlatformAppsDir();
+        if (Directory.Exists(platformApps)) { args.Add("--package-cache"); args.Add(platformApps); }
+        return CliServer.StartAsync(args);
+    }
+
+    private static void AssertServedRefused((bool Passed, string Text) r, string step)
+    {
+        Assert.False(r.Passed, $"{step}: the test app names an undeclared transitive dependency, so it must not compile:\n{r.Text}");
+        Assert.Contains($"AL0185: Codeunit '{BaseCodeunit}' is missing", r.Text);
+    }
+
+    private static void AssertServedPassed((bool Passed, string Text) r, string step)
+        => Assert.True(r.Passed, $"{step}: expected the chain test to compile and pass:\n{r.Text}");
+
+    /// <summary>The requests the other facts of this class make, served first so the bundle
+    /// request below meets a server that has already compiled the same app shapes.</summary>
+    private static async Task ServeOtherShapesAsync(CliServer server, string scratch)
+    {
+        var direct = WriteChain(scratch, middlePropagates: false, testReferencesBase: false, rootName: "other-direct");
+        AssertServedPassed(await ServeAsync(server, direct.TestDir), "sibling, declared");
+        var siblingTransitive = WriteChain(scratch, middlePropagates: false, testReferencesBase: true, rootName: "other-sibling");
+        AssertServedRefused(await ServeAsync(server, siblingTransitive.TestDir), "sibling, undeclared");
+        var layered = WriteChain(scratch, middlePropagates: true, testReferencesBase: true, rootName: "other-layered");
+        AssertServedPassed(await ServeAsync(server, layered.BaseDir, layered.MiddleDir, layered.TestDir), "layered, propagated");
+    }
+
+    [SkippableFact]
+    public async Task Server_OneBundle_UndeclaredTransitiveDependency_FirstRequest_RefusedLikeCli()
+    {
+        TestArtifacts.SkipIfMissing();
+        var scratch = TestScratch.Dir("tdv-server-bundle-first");
+        var chain = WriteChain(scratch, middlePropagates: false, testReferencesBase: true);
+        await using var server = await StartServerAsync(scratch);
+
+        AssertServedRefused(await ServeAsync(server, chain.Root), "first request");
+        AssertServedRefused(await ServeAsync(server, chain.Root), "same request again");
+    }
+
+    [SkippableFact]
+    public async Task Server_OneBundle_UndeclaredTransitiveDependency_AfterOtherRequests_RefusedLikeCli()
+    {
+        TestArtifacts.SkipIfMissing();
+        var scratch = TestScratch.Dir("tdv-server-bundle-after");
+        await using var server = await StartServerAsync(scratch);
+        await ServeOtherShapesAsync(server, scratch);
+
+        var chain = WriteChain(scratch, middlePropagates: false, testReferencesBase: true);
+        AssertServedRefused(await ServeAsync(server, chain.Root), "after other requests");
+    }
+
+    [SkippableFact]
+    public async Task Server_OneBundle_PropagatedTransitiveDependency_CompilesFirstAndAfterOtherRequests()
+    {
+        TestArtifacts.SkipIfMissing();
+        var scratch = TestScratch.Dir("tdv-server-bundle-propagated");
+        var chain = WriteChain(scratch, middlePropagates: true, testReferencesBase: true);
+        await using var server = await StartServerAsync(scratch);
+
+        AssertServedPassed(await ServeAsync(server, chain.Root), "first request");
+        await ServeOtherShapesAsync(server, scratch);
+        var again = WriteChain(scratch, middlePropagates: true, testReferencesBase: true, rootName: "chain-again");
+        AssertServedPassed(await ServeAsync(server, again.Root), "after other requests");
+    }
 }

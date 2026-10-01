@@ -6345,6 +6345,10 @@ return strictExitCode ? computedExitCode : 0;
                 // as the CLI loop.
                 if (alCacheDir != null && cacheKey != null)
                     AlRunner.Infrastructure.PhaseLog.NoteCacheMiss();
+                // The CLI bundle loop's scope, so a declared dependency whose .app carries no
+                // SymbolReference.json is not handed to BC's package scanner, which answers AL1022
+                // for it and turns a module the CLI runs into AL-DIAGNOSTIC-FAIL here (#5107).
+                using var serverDepScope = BcCompiler.ScopeSymbolBearingDepsOnly();
                 IReadOnlyList<EmittedSource> sources;
                 IReadOnlyList<string> alDiagnostics;
                 IReadOnlyList<string> excludedObjects;
@@ -7597,6 +7601,9 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
     System.Threading.CancellationToken token, Action? afterRuns = null, bool strictEnvironment = false, bool tdd = false)
 {
     // #5034: the emit reads the mode from BcCompiler, so it is this request's, and only for it.
+    // #5107: before anything keys on a bundle path, so selection state, module names and the
+    // runs all name the per-app paths RunAllBundlesForServer compiles.
+    sourcePaths = ExpandAppContainerRoots(sourcePaths);
     var tddRequest = tdd ? new TddServerRequest(onTestComplete) : null;
     var previousTddMode = BcCompiler.IsTddMode();
     BcCompiler.SetTddMode(tdd);
@@ -8751,7 +8758,9 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             foreach (var p in req.SourcePaths)
                 if (!Directory.Exists(p))
                     return AlRunner.ServerProtocol.Error($"bundle directory not found: {p}");
-            sourcePaths = req.SourcePaths;
+            // #5107: one result per app of a container, each compiled under its own app.json.
+            // --dap does not opt in: RunDapLoop serves exactly one module per session.
+            sourcePaths = ExpandAppContainerRoots(req.SourcePaths);
         }
 
         var isolationError = ApplyRequestIsolation(req);

@@ -166,6 +166,49 @@ public class ServerAffectedSelectionMultiSourcePathsTests
             $"expected narrowing to remain stable on an unchanged re-request, got: {string.Join(" | ", lines3)}");
     }
 
+    // #5107: one sourcePaths entry that CONTAINS the app and the test-app. The server splits it
+    // into one path per app; selection state must be keyed on those same paths, or the unchanged
+    // re-request finds no baseline and runs everything again.
+    [SkippableFact]
+    public async Task AffectedOnly_ContainerOfApps_UnchangedRerequest_Narrows()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var root = TestScratch.Dir("al-runner-server-affected-container");
+        Directory.CreateDirectory(root);
+        MakeAppBundle(root, """
+        codeunit 60360 "Multi Affected Helper SX"
+        {
+            procedure Value(): Integer
+            begin
+                exit(1);
+            end;
+        }
+        """);
+        MakeTestAppBundle(root);
+        var request = JsonSerializer.Serialize(new
+        {
+            command = "runTests",
+            sourcePaths = new[] { root },
+            packagePaths = Array.Empty<string>(),
+            affectedOnly = true,
+            perTestCoverage = true,
+        });
+
+        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
+
+        var lines1 = await server.SendRequestStreamingAsync(request);
+        var (events1, _) = ProtocolV2Streaming.Split(lines1);
+        Assert.True(events1.Count == 1 && events1[0].GetProperty("status").GetString() == "pass",
+            string.Join(" | ", lines1));
+
+        var lines2 = await server.SendRequestStreamingAsync(request);
+        var (_, summary2) = ProtocolV2Streaming.Split(lines2);
+        Assert.True(summary2.TryGetProperty("selection", out var selection2), string.Join(" | ", lines2));
+        Assert.False(selection2.GetProperty("forcedFull").GetBoolean(),
+            $"expected an unchanged re-request of the container to narrow, got: {string.Join(" | ", lines2)}");
+    }
+
     // #2535: the mirror problem to the one above. `AffectedOnly_DependencyEditBetweenRequests_StillNarrows`
     // proves the CHANGED-object side survives a cross-bundle edit (#2492's PeekChangedObjects
     // union). This proves the COVERAGE-attribution side: a test whose own execution reaches
