@@ -181,10 +181,18 @@ internal partial class LiveNavTestPage
         // parent-less case. Demanding the record up front turned every part access on such a
         // host into a refusal the operation never required.
         var links = SubPageLinks(definition, partPageId);
+        // #5140: with a Provider, a FIELD link reads the PROVIDER part's current row, not the host's.
+        NavRecord? parentRecord = null;
+        if (LiveNavTestPart.AnyFieldLink(links))
+        {
+            parentRecord = definition.ProviderIDSpecified && definition.ProviderID != 0
+                ? ResolveProviderPart(definition.ProviderID, controlId, partPageId).Record!
+                : RequireRecord($"subpage part {controlId}");
+        }
         var part = new LiveNavTestPart(
             partRecord, RecordPatches.GetPageControlFieldMap(partPageId),
             RecordPatches.GetInsertAllowedForPage(partPageId), partPage, _owner, partPageId,
-            parentRecord: LiveNavTestPart.AnyFieldLink(links) ? RequireRecord($"subpage part {controlId}") : null, links: links);
+            parentRecord: parentRecord, links: links);
         // A part is never MarkOpened — BC opens the HOST, and the part comes up inside it —
         // so _staticEditable sat at its constructor default of true for every part, whatever
         // the host was opened as. That made a part of a read-only page report itself editable,
@@ -254,6 +262,23 @@ internal partial class LiveNavTestPage
 
         _parts[controlId] = part;
         return part;
+    }
+
+    /// <summary>
+    /// The sibling part a <c>Provider</c> names (#5140), built first so its row is the one the
+    /// dependent part's FIELD links read. A provider that is not reachable, or that has no source
+    /// table to read from, refuses by name rather than falling back to the host's row.
+    /// </summary>
+    private LiveNavTestPart ResolveProviderPart(int providerId, int controlId, int partPageId)
+    {
+        var subject = $"TestPage part {controlId} → page {partPageId} Provider {providerId}";
+        if (providerId == controlId)
+            throw TestPageShapeGap.PartLink(subject, "the part names itself as its own Provider");
+        if (GetPart(providerId) is not LiveNavTestPart { Record: not null } provider)
+            throw TestPageShapeGap.PartLink(subject,
+                "the Provider part is not reachable on this page or has no source table to read a row from");
+        provider.IsProvider = true;
+        return provider;
     }
 
     /// <summary>

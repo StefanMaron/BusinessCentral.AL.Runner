@@ -134,6 +134,14 @@ public sealed class TestPageRefusalClaimTests
             ["part-link-field-value-not-a-number"] = (
                 () => TestPageShapeGap.PartLink("TestPage part → page 60105 SubPageLink", Detail),
                 "TestPage part → page 60105 SubPageLink", "testpage-part-link"),
+            // #5140 — a part's Provider the runner cannot read a row from: itself, unreachable on
+            // the page, or without a source table (LiveNavTestPage.ResolveProviderPart).
+            ["part-provider-is-itself"] = (
+                () => TestPageShapeGap.PartLink("TestPage part 45 → page 60112 Provider 45", Detail),
+                "TestPage part 45 → page 60112 Provider 45", "testpage-part-link"),
+            ["part-provider-not-readable"] = (
+                () => TestPageShapeGap.PartLink("TestPage part 46 → page 60113 Provider 47", Detail),
+                "TestPage part 46 → page 60113 Provider 47", "testpage-part-link"),
             ["control-binding"] = (
                 () => TestPageShapeGap.ControlBinding("TestPage control 788108655", Detail),
                 "TestPage control 788108655", "testpage-control-binding"),
@@ -431,7 +439,12 @@ public sealed class TestPageRefusalClaimTests
         // the SubPageLink loop beside it already did: DependencyPageMetadataXml deliberately
         // writes FieldID 0 when it cannot resolve a field NAME to an id, so filtering past it
         // would show the wrong rows rather than none.
-        Assert.Equal(12, Regex.Matches(mock, @"throw TestPageShapeGap\.").Count);
+        //
+        // 12 -> 14 by #5140, also ADDITIONS: a part's Provider that names itself, or is not
+        // reachable / has no source table, refuses by name rather than falling back to the
+        // host's row (the two throws in LiveNavTestPage.ResolveProviderPart; both registered in
+        // Sites above as testpage-part-link).
+        Assert.Equal(14, Regex.Matches(mock, @"throw TestPageShapeGap\.").Count);
         // 6: the SubPageLink FilterType site, the two evaluator-fault arms #3444 added - a
         // fault inside BC's own NavValueEvaluator, and a signature mismatch against it -
         // #3462's bind refusal, which claimed testpage-temporal-evaluator under
