@@ -25,7 +25,7 @@ codeunit 66501 "Dpr Tests"
 
         Assert.ExpectedError('out-of-scope:');
         Assert.ExpectedError('dotnet-platform-unsupported');
-        Assert.ExpectedError('GetBarcodeStream');
+        Assert.ExpectedError('out-of-scope: NavDotNet.Invoke(Microsoft.Dynamics.Nav.MX.BarcodeProviders.QRCodeProvider.GetBarcodeStream) — ');
         Assert.ExpectedError('System.Drawing.Common');
         Assert.NotExpectedError('The type initializer for ''Gdip''');
     end;
@@ -46,7 +46,7 @@ codeunit 66501 "Dpr Tests"
 
         Assert.ExpectedError('out-of-scope:');
         Assert.ExpectedError('dotnet-platform-unsupported');
-        Assert.ExpectedError('FromStream');
+        Assert.ExpectedError('out-of-scope: NavDotNet.Invoke(System.Drawing.Image.FromStream) — ');
         Assert.ExpectedError('System.Drawing.Common');
         Assert.NotExpectedError('The type initializer for ''Gdip''');
     end;

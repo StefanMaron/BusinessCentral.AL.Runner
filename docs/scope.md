@@ -272,11 +272,12 @@ which they run at all — the boundary is the host, not the runner's design.
 
 | API | Reason |
 |---|---|
-| `System.Drawing` (`Bitmap`, `Graphics`, `Image`, …) constructed through BC's .NET interop | `System.Drawing.Common` 8.0 — the copy BC itself ships — throws `PlatformNotSupportedException` from its `Gdip` class initializer on every non-Windows OS. |
-| Any other .NET type whose constructor raises `PlatformNotSupportedException` | Same shape; the refusal reports whichever .NET library raised it, so it does not need a per-type list here. |
+| `System.Drawing` (`Bitmap`, `Graphics`, `Image`, …) reached through BC's .NET interop — a constructor, a static member call, or an instance call on an object that constructed without trouble (the System Application's QR-code provider) | `System.Drawing.Common` 8.0 — the copy BC itself ships — throws `PlatformNotSupportedException` from its `Gdip` class initializer on every non-Windows OS. |
+| Any other .NET type whose constructor or member raises `PlatformNotSupportedException` | Same shape; the refusal reports whichever .NET library raised it, so it does not need a per-type list here. |
 
-Reason token: `dotnet-platform-unsupported`. The refusal names the AL-visible type, the .NET
-library that refused, this host's OS, and .NET's own message.
+Reason token: `dotnet-platform-unsupported`. The refusal names the AL-visible type (and, for a
+member call, the member: `NavDotNet.Invoke(<Type>.<Member>)`), the .NET library that refused,
+this host's OS, and .NET's own message.
 
 **Installing a native package does not help, and no runtime switch exists.** Decompiled from
 the artifact BC ships, `SafeNativeMethods.Gdip..cctor` reads
