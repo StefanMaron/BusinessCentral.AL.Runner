@@ -7,8 +7,13 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-public sealed class ServerTddTests
+// #5110: facts that need no startup flag of their own share one --server (SharedCliServer).
+public sealed class ServerTddTests : IClassFixture<SharedCliServer>
 {
+    private readonly SharedCliServer _fixture;
+
+    public ServerTddTests(SharedCliServer fixture) => _fixture = fixture;
+
     private static readonly string RepoRoot = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
     private static readonly string TwoFolderRoot = Path.Combine(
@@ -87,13 +92,15 @@ public sealed class ServerTddTests
         }
         """;
 
-    private static string Bundle(string prefix, bool withRefused)
+    // appIdSuffix: one per fact on the shared server (SharedCliServer rule (c)); two bundles of
+    // one fact share it only where the fact is about that reuse.
+    private static string Bundle(string prefix, bool withRefused, string appIdSuffix = "000000000001")
     {
         var dir = TestScratch.Dir(prefix);
         Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, "app.json"), """
+        File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
         {
-          "id": "c5034000-0000-4a11-9111-000000000001",
+          "id": "c5034000-0000-4a11-9111-{{appIdSuffix}}",
           "name": "Server Tdd SX",
           "publisher": "AL Runner",
           "version": "1.0.0.0",
@@ -129,9 +136,10 @@ public sealed class ServerTddTests
         };
         if (tdd != null) request["tdd"] = tdd;
         if (affectedOnly) request["affectedOnly"] = true;
+        var stderrMark = server.StdErrMark;
         var lines = await server.SendRequestStreamingAsync(JsonSerializer.Serialize(request), TimeSpan.FromSeconds(240));
         var (events, summary) = ProtocolV2Streaming.Split(lines);
-        var raw = string.Join(" | ", lines) + "\n--- stderr ---\n" + server.StdErr;
+        var raw = string.Join(" | ", lines) + "\n--- stderr ---\n" + server.StdErrSince(stderrMark);
         return new Response(
             events.ToDictionary(e => e.GetProperty("name").GetString()!.Split('.').Last(), e => e, StringComparer.Ordinal),
             summary, raw);
@@ -240,10 +248,10 @@ public sealed class ServerTddTests
     public async Task AffectedOnly_UnchangedRequestAfterStub_CompilesTheSourceOnDisk()
     {
         TestArtifacts.SkipIfMissing();
-        var bundle = Bundle("al-runner-server-tdd-affected", withRefused: false);
+        var bundle = Bundle("al-runner-server-tdd-affected", withRefused: false, "000000000021");
         try
         {
-            await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+            var server = await _fixture.GetAsync(new[] { "--no-cache" });
 
             var red = await Send(server, new[] { bundle }, tdd: true, affectedOnly: true);
             Assert.True(red.ExitCode == 1, red.Raw);
@@ -267,10 +275,10 @@ public sealed class ServerTddTests
     public async Task AffectedOnly_StubReplacedByRealProcedure_SelectsTheTestAndItPasses()
     {
         TestArtifacts.SkipIfMissing();
-        var bundle = Bundle("al-runner-server-tdd-affected-real", withRefused: false);
+        var bundle = Bundle("al-runner-server-tdd-affected-real", withRefused: false, "000000000022");
         try
         {
-            await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+            var server = await _fixture.GetAsync(new[] { "--no-cache" });
 
             var red = await Send(server, new[] { bundle }, tdd: true, affectedOnly: true);
             Assert.True(red.ExitCode == 1, red.Raw);
@@ -296,11 +304,11 @@ public sealed class ServerTddTests
     public async Task TddRequestThenPlainRequest_OtherDirectorySameId_CompilesItsOwnSource()
     {
         TestArtifacts.SkipIfMissing();
-        var x = Bundle("al-runner-server-tdd-reuse-x", withRefused: false);
-        var y = Bundle("al-runner-server-tdd-reuse-y", withRefused: false);
+        var x = Bundle("al-runner-server-tdd-reuse-x", withRefused: false, "000000000023");
+        var y = Bundle("al-runner-server-tdd-reuse-y", withRefused: false, "000000000023");
         try
         {
-            await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+            var server = await _fixture.GetAsync(new[] { "--no-cache" });
             var red = await Send(server, new[] { x }, tdd: true);
             Assert.True(red.ExitCode == 1, red.Raw);
 
@@ -384,11 +392,11 @@ public sealed class ServerTddTests
     public async Task Execute_AfterTddRunTests_CompilesWithoutTdd()
     {
         TestArtifacts.SkipIfMissing();
-        var bundle = Bundle("al-runner-server-tdd-exec-after", withRefused: false);
+        var bundle = Bundle("al-runner-server-tdd-exec-after", withRefused: false, "000000000024");
         var dir = ExecBundle("al-runner-server-tdd-exec-after-x", "000000000012");
         try
         {
-            await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+            var server = await _fixture.GetAsync(new[] { "--no-cache" });
             var red = await Send(server, new[] { bundle }, tdd: true);
             Assert.True(red.ExitCode == 1, red.Raw);
             var exit = await ExecuteExit(server, dir);
@@ -418,7 +426,7 @@ public sealed class ServerTddTests
         var test = Path.Combine(TwoFolderRoot, "test");
         var before = HashDir(app);
 
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--no-cache" });
         var red = await Send(server, new[] { app, test }, tdd: true);
         Assert.True(red.ExitCode == 1, red.Raw);
         Assert.Equal(4, red.Tests.Count);
