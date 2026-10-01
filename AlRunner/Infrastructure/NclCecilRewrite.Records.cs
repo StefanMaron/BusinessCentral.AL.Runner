@@ -1956,8 +1956,9 @@ public static partial class NclCecilRewrite
         // body dereferences metaQuery (metaQuery.ApplicationObjectId, ValidateColumns,
         // ExtractDefaultRuntimeFilters, TopNumberOfRowsToReturn). We have no real metadata
         // tier, so we rewrite the ctor to be null-safe: just call base, set securityFiltering,
-        // set NCLMetaQuery (may be null), and ExecutionGuid = Guid.NewGuid(). All metadata-
-        // touching field inits are skipped — they'll fall to method-level rewrites.
+        // set NCLMetaQuery (may be null), ExecutionGuid = Guid.NewGuid(), and — when metaQuery
+        // is not null — ALTopNumberOfRowsToReturn from it (#5164). The other metadata-touching
+        // inits are skipped — they'll fall to method-level rewrites.
         //
         // Same trim applied to the (ITreeObject, int, SecurityFiltering) overload.
         // The (ITreeObject, int, SecurityFiltering, NCLMetaQuery) overload chains to
