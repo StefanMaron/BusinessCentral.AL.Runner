@@ -14,6 +14,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **isolation:** --isolation test runs a codeunit's tests on one instance, as BC's TestIsolation = Function does
 - **permissions:** a Company insert or delete advances the permission setup version mid-transaction
 - **server:** link affectedOnly tests through the last error and DotNet state
 - **selection:** a changed object kind that maps to no selection key forces a full run
