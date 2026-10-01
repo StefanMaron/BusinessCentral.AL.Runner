@@ -334,9 +334,15 @@ public sealed class BcInternalsNullForgivingGuardTests
         // BcShape.Property: it decides whether a reportextension's merged data items let it be
         // bound whole, and a silent null would demote every extension to the request-page step.
         //
-        // 120 -> 128 for a query's positioned re-read (RecordPatches.QueryProjection.cs, #5133):
-        // a null from any of those reads would position the re-read on nothing, rereading from the top.
-        Assert.Equal(128, converted);
+        // 120 -> 123 for the request's FiltersAndMarks, FiltersAndMarks.Filters and
+        // FilterFieldDictionary.Items in RecordPatches.QueryJoinWhereFilters.cs (#5145), each a
+        // BcShape.Property: a silent null there would drop a join query's WHERE filters before
+        // grouping, and the post-projection pass would then test them against one row per group.
+        //
+        // 123 -> 131 for a query's positioned re-read and ORDER BY (RecordPatches.QueryProjection.cs,
+        // #5133, #5160): a null from any of those reads would position the re-read on nothing,
+        // rereading from the top.
+        Assert.Equal(131, converted);
     }
 
     /// <summary>

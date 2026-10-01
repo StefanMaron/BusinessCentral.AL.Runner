@@ -8,8 +8,13 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-public sealed class ServerModuleReuseSourceTests
+// #5110: facts that need no startup flag of their own share one --server (SharedCliServer).
+public sealed class ServerModuleReuseSourceTests : IClassFixture<SharedCliServer>
 {
+    private readonly SharedCliServer _fixture;
+
+    public ServerModuleReuseSourceTests(SharedCliServer fixture) => _fixture = fixture;
+
     private static string Calc(int factor) => $$"""
         codeunit 65330 "Reuse Calc"
         {
@@ -50,13 +55,15 @@ public sealed class ServerModuleReuseSourceTests
         }
         """;
 
-    private const string AppId = "c5079000-0000-4a11-9111-000000000001";
+    // Each fact declares its own id, shared only by that fact's two directories, so no fact on the
+    // shared server can be answered from another fact's module (SharedCliServer rule (c)).
+    private static string AppId(int fact, int app = 1) => $"c5079000-0000-4a11-9111-0000000000{fact}{app}";
 
-    private static void WriteApp(string dir, string id = AppId, string name = "Reuse Source SX", string? dependsOn = null)
+    private static void WriteApp(string dir, string id, string name = "Reuse Source SX", string? dependsOn = null)
     {
         Directory.CreateDirectory(dir);
         var deps = dependsOn == null ? "[]" : $$"""
-            [ { "id": "{{AppId}}", "name": "Reuse Source SX", "publisher": "AL Runner", "version": "1.0.0.0" } ]
+            [ { "id": "{{dependsOn}}", "name": "Reuse Source SX", "publisher": "AL Runner", "version": "1.0.0.0" } ]
             """;
         File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
         {
@@ -74,6 +81,7 @@ public sealed class ServerModuleReuseSourceTests
 
     private static async Task<(int Exit, Dictionary<string, string> Status, string Raw)> RunTests(CliServer server, params string[] bundles)
     {
+        var stderrMark = server.StdErrMark;
         var lines = await server.SendRequestStreamingAsync(JsonSerializer.Serialize(new Dictionary<string, object?>
         {
             ["command"] = "runTests", ["sourcePaths"] = bundles, ["packagePaths"] = Array.Empty<string>(),
@@ -82,7 +90,7 @@ public sealed class ServerModuleReuseSourceTests
         return (summary.GetProperty("exitCode").GetInt32(),
             events.ToDictionary(e => e.GetProperty("name").GetString()!.Split('.').Last(),
                 e => e.GetProperty("status").GetString()!, StringComparer.Ordinal),
-            string.Join(" | ", lines) + "\n--- stderr ---\n" + server.StdErr);
+            string.Join(" | ", lines) + "\n--- stderr ---\n" + server.StdErrSince(stderrMark));
     }
 
     /// <summary>The issue's reproducer: runTests on X, then execute on Y, whose source does not
@@ -94,24 +102,25 @@ public sealed class ServerModuleReuseSourceTests
         var root = TestScratch.Dir("al-runner-server-reuse-5079-exec");
         var x = Path.Combine(root, "x");
         var y = Path.Combine(root, "y");
-        WriteApp(x);
+        WriteApp(x, AppId(1));
         File.WriteAllText(Path.Combine(x, "Calc.Codeunit.al"), Calc(2));
         File.WriteAllText(Path.Combine(x, "Tests.Codeunit.al"), CalcTests(42));
-        WriteApp(y);
+        WriteApp(y, AppId(1));
         File.WriteAllText(Path.Combine(y, "Calc.Codeunit.al"), Calc(2));
         File.WriteAllText(Path.Combine(y, "Exec.Codeunit.al"), ExecMissing);
         try
         {
-            await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+            var server = await _fixture.GetAsync(new[] { "--no-cache" });
             var first = await RunTests(server, x);
             Assert.True(first.Exit == 0, first.Raw);
 
+            var mark = server.StdErrMark;
             var line = await server.SendAsync(JsonSerializer.Serialize(new Dictionary<string, object?>
             {
                 ["command"] = "execute", ["sourcePaths"] = new[] { y },
             }), TimeSpan.FromSeconds(240));
             using var doc = JsonDocument.Parse(line);
-            Assert.True(doc.RootElement.GetProperty("exitCode").GetInt32() == 3, line + "\n" + server.StdErr);
+            Assert.True(doc.RootElement.GetProperty("exitCode").GetInt32() == 3, line + "\n" + server.StdErrSince(mark));
             Assert.Contains("QuadIt", line, StringComparison.Ordinal);
         }
         finally
@@ -129,15 +138,15 @@ public sealed class ServerModuleReuseSourceTests
         var root = TestScratch.Dir("al-runner-server-reuse-5079-src");
         var x = Path.Combine(root, "x");
         var y = Path.Combine(root, "y");
-        WriteApp(x);
+        WriteApp(x, AppId(2));
         File.WriteAllText(Path.Combine(x, "Calc.Codeunit.al"), Calc(2));
         File.WriteAllText(Path.Combine(x, "Tests.Codeunit.al"), CalcTests(42));
-        WriteApp(y);
+        WriteApp(y, AppId(2));
         File.WriteAllText(Path.Combine(y, "Calc.Codeunit.al"), Calc(3));
         File.WriteAllText(Path.Combine(y, "Tests.Codeunit.al"), CalcTests(63, "Scale_TriplesInY"));
         try
         {
-            await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+            var server = await _fixture.GetAsync(new[] { "--no-cache" });
             var first = await RunTests(server, x);
             Assert.True(first.Exit == 0 && first.Status["Scale_Works"] == "pass", first.Raw);
             // Y's own test, and only it: X's module would run X's test instead.
@@ -164,16 +173,16 @@ public sealed class ServerModuleReuseSourceTests
         var x = Path.Combine(rootX, "x");
         var yApp = Path.Combine(rootY, "y-app");
         var yTest = Path.Combine(rootY, "y-test");
-        WriteApp(x);
+        WriteApp(x, AppId(3));
         File.WriteAllText(Path.Combine(x, "Calc.Codeunit.al"), Calc(2));
         File.WriteAllText(Path.Combine(x, "Tests.Codeunit.al"), CalcTests(42));
-        WriteApp(yApp);
+        WriteApp(yApp, AppId(3));
         File.WriteAllText(Path.Combine(yApp, "Calc.Codeunit.al"), Calc(3));
-        WriteApp(yTest, id: "c5079000-0000-4a11-9111-000000000002", name: "Reuse Source Tests SX", dependsOn: AppId);
+        WriteApp(yTest, AppId(3, app: 2), name: "Reuse Source Tests SX", dependsOn: AppId(3));
         File.WriteAllText(Path.Combine(yTest, "Tests.Codeunit.al"), CalcTests(63, "Scale_TriplesInY"));
         try
         {
-            await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+            var server = await _fixture.GetAsync(new[] { "--no-cache" });
             var first = await RunTests(server, x);
             Assert.True(first.Exit == 0, first.Raw);
             var second = await RunTests(server, yTest);

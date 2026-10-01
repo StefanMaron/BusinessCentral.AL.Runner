@@ -9,8 +9,14 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-public class ServerAffectedSelectionEventSubscriberTests
+// #5110: facts that need no startup flag of their own share one --server (SharedCliServer).
+public class ServerAffectedSelectionEventSubscriberTests : IClassFixture<SharedCliServer>
 {
+    private readonly SharedCliServer _fixture;
+    private static int _bundleVariant;
+
+    public ServerAffectedSelectionEventSubscriberTests(SharedCliServer fixture) => _fixture = fixture;
+
     private const string Publisher = """
         codeunit 60490 "EvSel Pub SX"
         {
@@ -113,9 +119,11 @@ public class ServerAffectedSelectionEventSubscriberTests
     {
         var dir = TestScratch.Dir("al-runner-server-affected-evsub");
         Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, "app.json"), """
+        // A fresh AppId per bundle: facts share one server (SharedCliServer rule (c)).
+        var variant = Interlocked.Increment(ref _bundleVariant);
+        File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
         {
-          "id": "6b1b8e0a-4c3e-4f59-9a0e-2f3d1e4c4988",
+          "id": "6b1b8e0a-4c3e-4f59-9a0e-2f3d1e4c{{variant:x4}}",
           "name": "Server Affected Event Subscriber Probe",
           "publisher": "AL Runner",
           "version": "1.0.0.0",
@@ -171,7 +179,7 @@ public class ServerAffectedSelectionEventSubscriberTests
         TestArtifacts.SkipIfMissing();
         var bundle = Bundle();
         WriteSubscriber(bundle, Subscriber("", "", ""));
-        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--isolation", "test", "--no-cache" });
 
         var baseline = await Send(server, bundle);
         Assert.True(baseline.ForcedFull, baseline.Raw);
@@ -223,7 +231,7 @@ public class ServerAffectedSelectionEventSubscriberTests
         TestArtifacts.SkipIfMissing();
         var bundle = Bundle();
         WriteSubscriber(bundle, Subscriber(OnWork, "", ""));
-        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--isolation", "test", "--no-cache" });
 
         var baseline = await Send(server, bundle);
         Assert.True(baseline.ForcedFull, baseline.Raw);

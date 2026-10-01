@@ -8,8 +8,14 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-public class ServerAffectedSelectionIncludeFailingTests
+// #5110: facts that need no startup flag of their own share one --server (SharedCliServer).
+public class ServerAffectedSelectionIncludeFailingTests : IClassFixture<SharedCliServer>
 {
+    private readonly SharedCliServer _fixture;
+    private static int _bundleVariant;
+
+    public ServerAffectedSelectionIncludeFailingTests(SharedCliServer fixture) => _fixture = fixture;
+
     private const string HelperA = """
         codeunit 60451 "IncFail Helper A SX"
         {
@@ -96,9 +102,11 @@ public class ServerAffectedSelectionIncludeFailingTests
     {
         var dir = TestScratch.Dir("al-runner-server-affected-incfail");
         Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, "app.json"), """
+        // A fresh AppId per bundle: facts share one server (SharedCliServer rule (c)).
+        var variant = Interlocked.Increment(ref _bundleVariant);
+        File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
         {
-          "id": "2853a187-f1c7-4c3b-9b56-c2f4bb2d1d8d",
+          "id": "2853a187-f1c7-4c3b-9b56-c2f4bb2d{{variant:x4}}",
           "name": "Server Affected IncludeFailing Probe",
           "publisher": "AL Runner",
           "version": "1.0.0.0",
@@ -152,7 +160,7 @@ public class ServerAffectedSelectionIncludeFailingTests
     {
         TestArtifacts.SkipIfMissing();
         var bundle = Bundle(Tests);
-        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--isolation", "test", "--no-cache" });
 
         var baseline = await Send(server, bundle, includeFailing: null);
         Assert.True(baseline.ForcedFull, baseline.Raw);
@@ -182,7 +190,7 @@ public class ServerAffectedSelectionIncludeFailingTests
     {
         TestArtifacts.SkipIfMissing();
         var bundle = Bundle(Tests);
-        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--isolation", "test", "--no-cache" });
 
         var baseline = await Send(server, bundle, includeFailing: null);
         Assert.Equal("fail", baseline.Status["Codeunit60460.FailsAfterA"]);

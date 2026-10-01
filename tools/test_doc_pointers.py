@@ -178,6 +178,7 @@ CODE_TREES = (
     ("tools", "*.sh"),
     ("tools", "*.cs"),
     ("tools", "*.js"),
+    ("tools", "*.ps1"),
     ("scripts", "*.js"),
     ("scripts", "*.py"),
     ("scripts", "*.sh"),

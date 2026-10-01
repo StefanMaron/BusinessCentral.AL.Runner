@@ -197,9 +197,13 @@ public static class JoinExecutor
     /// reachable from <paramref name="dataAccessSource"/> and return the query-projected rows
     /// (ReadOnlyRecordBuffers as objects). Eagerly materialised so any failure surfaces as a
     /// managed exception at the call site, never a native crash mid-enumeration.
+    /// <paramref name="whereFilters"/> pairs a non-aggregated query column (as object) with a
+    /// predicate over that column's value; every joined row must satisfy all of them BEFORE
+    /// grouping (#5145).
     /// </summary>
     public static List<object> Execute(
-        JoinContext ctx, object nclMetaQuery, object dataAccessSource, object? flowFiltersAndMarks)
+        JoinContext ctx, object nclMetaQuery, object dataAccessSource, object? flowFiltersAndMarks,
+        IReadOnlyList<KeyValuePair<object, Func<object?, bool>>> whereFilters)
     {
         Log(ctx, "ExecuteJoinQuery start");
         EnsureReflection(nclMetaQuery);
@@ -268,6 +272,7 @@ public static class JoinExecutor
 
         // 3. Project each combo into the query result slots.
         var plan = BuildJoinProjectionPlan(ctx, queryDef);
+        combos = ApplyWhereFilters(ctx, plan, combos, whereFilters, flowFiltersAndMarks);
         bool hasAggregate = plan.Columns.Any(c => c.Aggregation != "None");
         List<object?[]> projected;
         if (!hasAggregate)
@@ -492,6 +497,31 @@ public static class JoinExecutor
     }
 
     /// <summary>
+    /// #5145: keep only the joined rows whose non-aggregated columns satisfy every WHERE
+    /// filter. Applied before grouping, so a group totals only its rows inside a filter on a
+    /// column that is not a group key. RecordPatches.ApplyJoinRuntimeFilters still runs on
+    /// the projected rows afterwards; it answers the same for these columns, because every row
+    /// left in a group passed here, and it remains the HAVING pass for aggregated columns.
+    /// A filter whose column is not a non-aggregated plan column is left to that pass, which
+    /// refuses a column it cannot locate.
+    /// </summary>
+    private static List<Dictionary<string, object?>> ApplyWhereFilters(JoinContext ctx,
+        JoinProjectionPlan plan, List<Dictionary<string, object?>> combos,
+        IReadOnlyList<KeyValuePair<object, Func<object?, bool>>> whereFilters, object? flowFiltersAndMarks)
+    {
+        var conds = new List<(JoinColumn Col, Func<object?, bool> Matches)>();
+        foreach (var f in whereFilters)
+        {
+            var col = plan.Columns.FirstOrDefault(c => c.Aggregation == "None" && Equals(c.ColumnObj, f.Key));
+            if (col != null) conds.Add((col, f.Value));
+        }
+        if (conds.Count == 0) return combos;
+        return combos
+            .Where(combo => conds.All(c => c.Matches(ResolveComboValue(ctx, c.Col, combo, flowFiltersAndMarks))))
+            .ToList();
+    }
+
+    /// <summary>
     /// Group <paramref name="combos"/> (the joined, pre-projection rows) by their GROUP BY
     /// key — every non-aggregated column in <paramref name="plan"/> — and build one output
     /// row per group. A query with NO non-aggregated column at all is BC's scalar-aggregate
@@ -500,7 +530,11 @@ public static class JoinExecutor
     private static List<object?[]> BuildGroupedRows(JoinContext ctx, JoinProjectionPlan plan,
         List<Dictionary<string, object?>> combos, object? flowFiltersAndMarks)
     {
-        var groupKeyCols = plan.Columns.Where(c => c.Aggregation == "None").ToList();
+        // A filter-only column (a `filter()` element) is not in the dataset, so it is never a
+        // grouping column (#5145, corpus codeunit 68600).
+        var groupKeyCols = plan.Columns
+            .Where(c => c.Aggregation == "None" && !IsFilterOnlyColumn(c.ColumnObj))
+            .ToList();
         if (groupKeyCols.Count == 0)
             return new List<object?[]> { BuildAggregateRow(ctx, plan, combos, flowFiltersAndMarks) };
 

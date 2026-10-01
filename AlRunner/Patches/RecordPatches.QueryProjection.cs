@@ -1297,7 +1297,7 @@ public static partial class RecordPatches
             // Min/Max) column, ExecuteJoinQuery performs the implicit GROUP BY over the
             // joined rows itself (mirroring ProjectQueryRows' single-dataitem GROUP BY) —
             // see AlRunner.QueryJoin.JoinExecutor.BuildGroupedRows.
-            var joined = ExecuteJoinQuery(metaAppObj, flowFiltersAndMarks).Cast<ReadOnlyRecordBuffer>();
+            var joined = ExecuteJoinQuery(metaAppObj, flowFiltersAndMarks, request).Cast<ReadOnlyRecordBuffer>();
             // Apply the live NavQuery's runtime filters (SetRange/SetFilter) as a POST-projection
             // pass. The single-dataitem path pushes these into the temp provider's WHERE
             // (TranslateQueryFilters); the join executor reads each dataitem's table with only its

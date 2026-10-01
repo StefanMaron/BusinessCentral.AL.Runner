@@ -1189,6 +1189,9 @@ internal static partial class ProgramSupport
             WriteLine($"app:{id.AppId}:{id.Publisher}:{id.Name}:{id.Version}");
             foreach (var dep in id.Dependencies.OrderBy(d => $"{d.Publisher}/{d.Name}/{d.Version}/{d.AppId}", StringComparer.OrdinalIgnoreCase))
                 WriteLine($"dep:{dep.AppId}:{dep.Publisher}:{dep.Name}:{dep.Version}");
+            // #5150: a dependency's propagateDependencies lives in ITS app.json, not in this dir.
+            if (AlRunner.BcCompiler.DeclaredVisibilityCacheTerm(id.AppId) is { } visibility)
+                WriteLine(visibility);
             var files = AlRunner.Infrastructure.SafeDirectoryScan.Files(dir, "*.al")
                 .Append(Path.Combine(dir, "app.json"))
                 .Where(File.Exists)

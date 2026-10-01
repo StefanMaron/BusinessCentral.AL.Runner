@@ -1,7 +1,7 @@
 /// <summary>
 /// References "Loyalty Points", a field "Tdd Target Table" does not declare yet.
-/// Without --tdd this whole object is excluded from the emit. With --tdd it must
-/// report FAILED, naming "Loyalty Points".
+/// Without --tdd this whole object is excluded from the emit. With --tdd the field is
+/// generated, the test passes, and its result names "Loyalty Points" (#5147).
 /// </summary>
 codeunit 65011 "Tdd Broken Field Tests"
 {
@@ -9,7 +9,7 @@ codeunit 65011 "Tdd Broken Field Tests"
     TestPermissions = Disabled;
 
     [Test]
-    procedure MissingField_ReportsFailedNotVanished()
+    procedure MissingField_RunsAgainstGeneratedField()
     var
         Rec: Record "Tdd Target Table";
     begin

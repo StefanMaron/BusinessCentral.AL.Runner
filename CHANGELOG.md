@@ -7,6 +7,8 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **tdd:** generated stubs return defaults and tests report their own result
+- **benchmark:** a failsafe script to benchmark the full Microsoft test surface on a volunteer's Windows PC
 - **provision:** install the pinned backup reader that --test-data needs
 - **server:** per-request tdd field on runTests
 - **selection:** use a baseline from another environment, diffed per object, with a prominent warning
@@ -15,6 +17,9 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **query-join:** a filter() element is not a group key, and WHERE filters apply before grouping
+- **server:** honor dependency visibility on cache reuse
+- **coverage:** attribute a packaged dependency's statements to sibling source only when the package was built from it
 - **reports:** bind a reportextension's report triggers and data items to the report
 - **server:** enforce dependency visibility (AL0185) on --server runTests as the CLI does
 - fall back to a full compile when a procedure signature changes on the incremental path
@@ -62,6 +67,7 @@ All notable changes to this project are documented here. Format based on
 - **testpage:** New() on an empty linked part raises the part's OnNewRecord
 
 ### Changed
+- **perf:** one shared --server per server test class instead of one per test
 - **patches:** find PropertyHelper through AssemblyTypeIndex instead of scanning every Ncl and Types type at boot
 - **perf:** share the content-keyed engine caches across the suite's private --cache roots
 - **event-subscription:** build the Event Subscription inventory lazily

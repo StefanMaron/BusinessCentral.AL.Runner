@@ -7,8 +7,13 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-public class ServerAffectedSelectionUnknownRecordTests
+// #5110: facts that need no startup flag of their own share one --server (SharedCliServer).
+public class ServerAffectedSelectionUnknownRecordTests : IClassFixture<SharedCliServer>
 {
+    private readonly SharedCliServer _fixture;
+
+    public ServerAffectedSelectionUnknownRecordTests(SharedCliServer fixture) => _fixture = fixture;
+
     // Fills the SingleInstance store (codeunit 61910) the reader reads.
     private static string WriterA(int value = 42) => $$"""
         codeunit 61901 "SU Writer A"
@@ -223,9 +228,10 @@ public class ServerAffectedSelectionUnknownRecordTests
             ["packagePaths"] = Array.Empty<string>(),
             ["affectedOnly"] = true,
         };
+        var stderrMark = server.StdErrMark;
         var lines = await server.SendRequestStreamingAsync(JsonSerializer.Serialize(request), TimeSpan.FromSeconds(180));
         var (events, summary) = ProtocolV2Streaming.Split(lines);
-        var raw = string.Join(" | ", lines) + "\n--- stderr ---\n" + server.StdErr;
+        var raw = string.Join(" | ", lines) + "\n--- stderr ---\n" + server.StdErrSince(stderrMark);
         var forced = summary.TryGetProperty("selection", out var selection) && selection.GetProperty("forcedFull").GetBoolean();
         var tests = events.ToDictionary(
             e => e.GetProperty("name").GetString()!.Split('.').Last(),
@@ -247,7 +253,7 @@ public class ServerAffectedSelectionUnknownRecordTests
     {
         TestArtifacts.SkipIfMissing();
         var bundle = Bundle("al-runner-server-affected-unknown-record", "000000000001", UnmappableReader);
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--no-cache" });
 
         var baseline = await Send(server, bundle);
         Assert.True(baseline.ForcedFull, baseline.Raw);
@@ -303,7 +309,7 @@ public class ServerAffectedSelectionUnknownRecordTests
     {
         TestArtifacts.SkipIfMissing();
         var bundle = TriggerBundle("al-runner-server-affected-unknown-record-mask", "000000000004");
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--no-cache" });
 
         var baseline = await Send(server, bundle);
         Assert.True(baseline.ForcedFull, baseline.Raw);
@@ -329,7 +335,7 @@ public class ServerAffectedSelectionUnknownRecordTests
         File.WriteAllText(Path.Combine(bundle, "TriggerFirst.Codeunit.al"), TriggerFirst);
         var reader = Path.Combine(bundle, "Reader.Codeunit.al");
         File.Move(reader, reader + ".later");
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--no-cache" });
 
         var baseline = await Send(server, bundle);
         Assert.True(baseline.ForcedFull, baseline.Raw);

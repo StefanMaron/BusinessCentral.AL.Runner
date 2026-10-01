@@ -344,7 +344,9 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // for the same reason StartupOutputReexecDedupTests above does: its low end is
             // already near enough to the 60s freshness threshold that a rounded-down low
             // value would satisfy the gate while leaving the tail in place.
-            ["LayeredSourceChainTests"] = 90,
+            // #5110: one shared server per class; its BC 28.5 leg of run 36801846027 (89.1s) scaled by the
+            // local after/before ratio (37s/48.3s). An estimate until a CI leg measures it.
+            ["LayeredSourceChainTests"] = 68,
             // #2237: added by PR #4083, which introduces the layered pre-pass. Measured 78.6s
             // on the BC 28.4 leg of run 34898586907, where it was absent from this table, fell
             // back to UnmeasuredWeightSeconds and tripped the >= 75s staleness gate. ONE leg,
@@ -407,8 +409,12 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             ["CrossMajorNoteTests"] = 76,
             ["PrecompileNclShadowHopTests"] = 70,
             ["ServerPackagedDependencyReplacementTests"] = 62,
-            ["ServerAffectedSelectionMultiSourcePathsTests"] = 60,
-            ["ServerDuplicateSourcePathTests"] = 73,
+            // #5110: one shared server per class; its BC 28.5 leg of run 36801846027 (66.5s) scaled by the
+            // local after/before ratio (21.7s/38.3s). An estimate until a CI leg measures it.
+            ["ServerAffectedSelectionMultiSourcePathsTests"] = 38,
+            // #5110: one shared server per class; its BC 28.5 leg of run 36801846027 (41.4s) scaled by the
+            // local after/before ratio (9s/24.6s). An estimate until a CI leg measures it.
+            ["ServerDuplicateSourcePathTests"] = 15,
             // #2653-adjacent: tripped check-collection-weights.py on PR 2659, absent from
             // this table while costing over 60s. Measured across all six legs of that run:
             // 61.3s (27.3), 67.3s (27.5), 69.4s (28.0), 71.2s (28.1), 61.4s (28.2),
@@ -416,7 +422,9 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // InstallBaselineVirtualTableExclusionTests above spells out: a value at the low
             // end of an observed range sits on the 60s freshness threshold, which satisfies
             // the gate while leaving dispatch order at the fallback and the tail in place.
-            ["ServerAffectedSelectionTests"] = 71,
+            // #5110: one shared server per class; its BC 28.5 leg of run 36801846027 (169.7s) scaled by the
+            // local after/before ratio (24.5s/95.8s). An estimate until a CI leg measures it.
+            ["ServerAffectedSelectionTests"] = 43,
             // #5089: three server processes; 23s locally, not yet measured on CI.
             ["ServerIncrementalInterfaceExtendsTests"] = 45,
             // #4993: added by #4981 and absent from this table; tripped
@@ -425,7 +433,9 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             ["ServerAffectedSelectionCacheHitTests"] = 96,
             // #4973: added by PR #4986. Observed maximum after PR #5007: 154.6s on BC 28.5 and
             // 153.9s on BC 27.5 (run 36658745839), rounded down.
-            ["ServerAffectedSelectionPackagedDependencyTests"] = 154,
+            // #5110: one shared server per class; its BC 28.5 leg of run 36801846027 (172.5s) scaled by the
+            // local after/before ratio (71.5s/102.5s). An estimate until a CI leg measures it.
+            ["ServerAffectedSelectionPackagedDependencyTests"] = 120,
             // #4979: added by PR #5007; 116.6s on BC 28.5, 118.8s on BC 27.5 (run 36658745839).
             ["ServerAffectedSelectionPersistedBaselineTests"] = 118,
             // #5008: added by its PR, one server with eleven requests plus four server starts; 36s
@@ -442,10 +452,14 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             ["ServerAffectedSelectionObjectKindTests"] = 90,
             // #5034: added by its PR, eight server starts and seventeen requests; 75s locally. An
             // estimate until a CI leg measures it: replace with the observed maximum.
-            ["ServerTddTests"] = 200,
+            // #5110: one shared server per class; its BC 28.5 leg of run 36801846027 (161.3s) scaled by the
+            // local after/before ratio (37.8s/83.2s). An estimate until a CI leg measures it.
+            ["ServerTddTests"] = 73,
             // #5079: added by its PR, three server starts and six requests; 27s locally. An
             // estimate until a CI leg measures it: replace with the observed maximum.
-            ["ServerModuleReuseSourceTests"] = 75,
+            // #5110: one shared server per class; its BC 28.5 leg of run 36801846027 (63.2s) scaled by the
+            // local after/before ratio (9.6s/32.2s). An estimate until a CI leg measures it.
+            ["ServerModuleReuseSourceTests"] = 19,
             // #5027: added by its PR, five --watch processes, one of them through nine cycles; 51s
             // locally. #5035 added two more processes (60s locally). An estimate until a CI leg
             // measures it: replace with the observed maximum.
@@ -453,21 +467,31 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             ["WatchAffectedSelectionTests"] = 160,
             // #5035: added by its PR, five server starts and nine requests; 41s locally. An
             // estimate until a CI leg measures it: replace with the observed maximum.
-            ["ServerAffectedSelectionSharedSetupTests"] = 100,
+            // #5110: one shared server per class; its BC 28.5 leg of run 36801846027 (102.2s) scaled by the
+            // local after/before ratio (30.8s/61.4s). An estimate until a CI leg measures it.
+            ["ServerAffectedSelectionSharedSetupTests"] = 51,
             // #5050: added by its PR, five server starts and eleven requests; 33s locally. An
             // estimate until a CI leg measures it: replace with the observed maximum.
-            ["ServerAffectedSelectionSessionStateTests"] = 85,
+            // #5110: one shared server per class; its BC 28.5 leg of run 36801846027 (141.4s) scaled by the
+            // local after/before ratio (31.5s/87.4s). An estimate until a CI leg measures it.
+            ["ServerAffectedSelectionSessionStateTests"] = 51,
             // #5060: measured 84.9s on the BC 28.5.54151.55486 leg of run 36765227063.
-            ["ServerBundleInstallBaselineReuseTests"] = 84,
+            // #5110: one shared server per class; its BC 28.5 leg of run 36801846027 (92.4s) scaled by the
+            // local after/before ratio (18.2s/64.2s). An estimate until a CI leg measures it.
+            ["ServerBundleInstallBaselineReuseTests"] = 26,
             // #5059/#5069: added by PR #5066, six server starts and fourteen requests; 59s locally.
             // An estimate until a CI leg measures it: replace with the observed maximum.
-            ["ServerAffectedSelectionUnknownRecordTests"] = 120,
+            // #5110: one shared server per class; its BC 28.5 leg of run 36801846027 (140.7s) scaled by the
+            // local after/before ratio (52.3s/81.5s). An estimate until a CI leg measures it.
+            ["ServerAffectedSelectionUnknownRecordTests"] = 90,
             // #5028: added by its PR, twelve server starts and thirteen requests; 100s locally. An
             // estimate until a CI leg measures it: replace with the observed maximum.
             ["ServerAffectedSelectionEnvironmentDriftTests"] = 230,
             // #5057: added by its PR, thirteen server starts and thirty-one requests; 122s locally.
             // An estimate until a CI leg measures it: replace with the observed maximum.
-            ["ServerAffectedSelectionUnrecordedStateTests"] = 260,
+            // #5110: one shared server per class; the value recorded before it (260s) scaled by the
+            // local after/before ratio (74.9s/187s). An estimate until a CI leg measures it.
+            ["ServerAffectedSelectionUnrecordedStateTests"] = 104,
             // #2223: added by PR #4478, which introduces this collection. 4 tests, each
             // spawning a real runner subprocess against a bundle declaring an `application`
             // floor, and one of them spawning a second: the warm-skip path runs the bundle

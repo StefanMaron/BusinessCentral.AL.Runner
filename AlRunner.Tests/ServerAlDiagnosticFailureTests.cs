@@ -15,15 +15,21 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-public sealed class ServerAlDiagnosticFailureTests
+// #5110: facts that need no startup flag of their own share one --server (SharedCliServer).
+public sealed class ServerAlDiagnosticFailureTests : IClassFixture<SharedCliServer>
 {
+    private readonly SharedCliServer _fixture;
+
+    public ServerAlDiagnosticFailureTests(SharedCliServer fixture) => _fixture = fixture;
+
     private static string WriteBundle(string suffix, string queryBody)
     {
         var root = TestScratch.Dir("al-runner-server-al0353-" + suffix);
         Directory.CreateDirectory(root);
-        File.WriteAllText(Path.Combine(root, "app.json"), """
+        // One AppId per bundle on the shared server (SharedCliServer rule (c)).
+        File.WriteAllText(Path.Combine(root, "app.json"), $$"""
         {
-          "id": "e4444444-4444-4444-4444-444444444444",
+          "id": "e4444444-4444-4444-4444-44444444444{{(suffix == "bad" ? 4 : 5)}}",
           "name": "Server AL0353 Diagnostic Test",
           "publisher": "Repro2152",
           "version": "1.0.0.0",
@@ -79,7 +85,7 @@ public sealed class ServerAlDiagnosticFailureTests
         """);
         try
         {
-            await using var server = await CliServer.StartAsync();
+            var server = await _fixture.GetAsync();
             var lines = await server.SendRequestStreamingAsync(Req(bundle), TimeSpan.FromSeconds(180));
             var (_, d) = ProtocolV2Streaming.Split(lines);
 
@@ -125,7 +131,7 @@ public sealed class ServerAlDiagnosticFailureTests
         """);
         try
         {
-            await using var server = await CliServer.StartAsync();
+            var server = await _fixture.GetAsync();
             var lines = await server.SendRequestStreamingAsync(Req(bundle), TimeSpan.FromSeconds(180));
             var (_, d) = ProtocolV2Streaming.Split(lines);
 

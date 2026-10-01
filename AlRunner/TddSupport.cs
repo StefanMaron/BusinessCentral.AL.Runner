@@ -130,10 +130,12 @@ public static class TddSupport
 }
 
 /// <summary>
-/// The tests whose compile depended on a --tdd-generated member, and the rewrite that reports
-/// each of them FAILED whatever happened when it ran: a generated field or enum value is working
-/// storage, so a test that only writes and reads it back would otherwise pass against
-/// scaffolding (loud-failures.md). Shared by the CLI/--watch run loop and --server (#5034).
+/// The tests that reach a --tdd-generated member, resolved statically from each AL0132's
+/// location and the compile's call graph (<see cref="TddGeneratedMember.DependentTests"/>,
+/// <see cref="TddCallGraph"/>), and the annotation that
+/// names those members on each such result (#5147). The result's own outcome and message are
+/// kept: the test reports what its assertions said. Shared by the CLI/--watch run loop and
+/// --server (#5034); docs/server-mode.md#tdd.
 /// </summary>
 public sealed class TddDependents
 {
@@ -149,7 +151,7 @@ public sealed class TddDependents
             {
                 if (!_byTest.TryGetValue(testLabel, out var list))
                     _byTest[testLabel] = list = new List<TddGeneratedMember>();
-                list.Add(m);
+                if (!list.Contains(m)) list.Add(m);
             }
     }
 
@@ -157,15 +159,39 @@ public sealed class TddDependents
     {
         var label = string.IsNullOrEmpty(t.CodeunitDisplayName) ? t.Codeunit : t.CodeunitDisplayName!;
         if (!_byTest.TryGetValue($"{label}.{t.Method}", out var deps) || deps.Count == 0) return t;
-        var depList = string.Join("; ", deps.Select(d => $"{d.ObjectDisplayName}: {d.MemberKind} {d.Signature}"));
-        var msg = $"--tdd: this test depends on {deps.Count} generated member(s) the " +
-            $"implementing app has not defined yet: {depList}";
-        if (!string.IsNullOrEmpty(t.Message)) msg += $" (underlying result: {t.Message})";
-        return t with { Outcome = TestOutcome.Fail, Message = msg, KnownErrorKind = AlErrorKind.Compile };
+        return t with { GeneratedStubs = deps.Select(TddReport.Describe).ToList() };
     }
 
     public List<TestResult> Apply(IReadOnlyList<TestResult> raw)
         => _byTest.Count == 0 ? raw as List<TestResult> ?? raw.ToList() : raw.Select(Apply).ToList();
+}
+
+/// <summary>
+/// #5147: the text every surface (CLI, --watch, --server stderr) prints for tests that ran
+/// against generated members. A statement of fact only: the test's status is its own.
+/// </summary>
+public static class TddReport
+{
+    public const string PerTestPrefix = "reaches generated stub(s): ";
+
+    public static string Describe(TddGeneratedMember m) => $"{m.ObjectDisplayName}: {m.MemberKind} {m.Signature}";
+
+    public static string PerTestLine(TestResult t) => PerTestPrefix + string.Join("; ", t.GeneratedStubs ?? Array.Empty<string>());
+
+    /// <summary>A heading and one line per test carrying <see cref="TestResult.GeneratedStubs"/>; empty when none does.</summary>
+    public static List<string> SummaryLines(IEnumerable<TestResult> tests, string scope)
+    {
+        var flagged = tests.Where(t => t.GeneratedStubs is { Count: > 0 }).ToList();
+        var lines = new List<string>();
+        if (flagged.Count == 0) return lines;
+        lines.Add($"--tdd: {flagged.Count} test(s) reach generated stubs this {scope}:");
+        foreach (var t in flagged)
+        {
+            var name = string.IsNullOrEmpty(t.CodeunitDisplayName) ? t.Codeunit : t.CodeunitDisplayName!;
+            lines.Add($"  {name}.{t.Method} ({t.Outcome.ToString().ToLowerInvariant()}): {string.Join("; ", t.GeneratedStubs!)}");
+        }
+        return lines;
+    }
 }
 
 /// <summary>
@@ -185,6 +211,16 @@ public sealed class TddServerRequest
     /// <summary>Every member generated in this request, for the stderr summary.</summary>
     public List<TddGeneratedMember> Generated { get; } = new();
 
-    /// <summary>The rewrite for a test of the bundle running now.</summary>
-    public TestResult Apply(TestResult t) => Active?.Apply(t) ?? t;
+    /// <summary>Every result of this request that reaches a generated member, for the stderr summary.</summary>
+    public List<TestResult> RanAgainstStubs { get; } = new();
+
+    /// <summary>The annotation for a test of the bundle running now; records it for the summary.</summary>
+    public TestResult Apply(TestResult t)
+    {
+        var applied = Active?.Apply(t) ?? t;
+        if (applied.GeneratedStubs is { Count: > 0 }
+            && !RanAgainstStubs.Any(r => r.Codeunit == applied.Codeunit && r.Method == applied.Method))
+            RanAgainstStubs.Add(applied);
+        return applied;
+    }
 }
