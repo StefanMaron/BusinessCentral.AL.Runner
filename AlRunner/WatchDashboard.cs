@@ -52,6 +52,8 @@ public static class WatchDashboard
     /// <param name="affectedLines">#5027: under <c>--watch --affected</c>, what the cycle's test
     /// selection did (WatchAffectedReport.Describe). Rendered above the tree, so a narrowed cycle
     /// never reads as a full run; null renders nothing.</param>
+    /// <param name="tddLines">#5147: under <c>--watch --tdd</c>, the cycle's closing --tdd block
+    /// (generated members, then the tests that ran against them), unstyled, below the tree.</param>
     public static IRenderable Build(
         IReadOnlyList<BucketResult> results,
         string bundleName,
@@ -59,7 +61,8 @@ public static class WatchDashboard
         DateTime lastRun,
         TimeSpan lastDuration,
         IReadOnlyList<(string Module, string Reason)>? fullRebuildReasons = null,
-        IReadOnlyList<string>? affectedLines = null)
+        IReadOnlyList<string>? affectedLines = null,
+        IReadOnlyList<string>? tddLines = null)
     {
         var rows = new List<IRenderable>
         {
@@ -84,6 +87,11 @@ public static class WatchDashboard
         }
         rows.Add(BuildTree(results));
         rows.Add(new Text(string.Empty));
+        if (tddLines is { Count: > 0 })
+        {
+            foreach (var line in tddLines) rows.Add(new Text(line));
+            rows.Add(new Text(string.Empty));
+        }
         rows.Add(Footer(results));
         return new Rows(rows);
     }

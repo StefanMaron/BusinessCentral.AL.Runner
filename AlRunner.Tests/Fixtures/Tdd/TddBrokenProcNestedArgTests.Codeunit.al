@@ -3,8 +3,8 @@
 /// NESTED argument to an already-resolvable procedure (Assert.AreEqual) — the return-type
 /// anchor from the acceptance table's own example (`Assert.AreEqual(100, Cu.CalcTotal())`),
 /// distinct from TddBrokenProcTests' assignment-target anchor. With --tdd this must generate
-/// CalcSubtotal(Arg1: Integer): Integer and report FAILED once the generated stub's Error()
-/// fires, naming CalcSubtotal.
+/// CalcSubtotal(Arg1: Integer): Integer with an empty body, and the test fails on its OWN
+/// assertion (Expected 100, Actual 0), its result naming CalcSubtotal (#5147).
 /// </summary>
 codeunit 65013 "Tdd Broken Proc Nested Tests"
 {
@@ -15,10 +15,10 @@ codeunit 65013 "Tdd Broken Proc Nested Tests"
         Assert: Codeunit "Tdd Assert";
 
     [Test]
-    procedure MissingProcedureNestedArg_ReportsFailedNotVanished()
+    procedure MissingProcedureNestedArg_FailsOnItsOwnAssertion()
     var
         Target: Codeunit "Tdd Target Cu";
     begin
-        Assert.AreEqual(100, Target.CalcSubtotal(5), 'unreachable — CalcSubtotal is not yet implemented');
+        Assert.AreEqual(100, Target.CalcSubtotal(5), 'CalcSubtotal(5) should be 100');
     end;
 }

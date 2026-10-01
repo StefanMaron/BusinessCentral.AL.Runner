@@ -1,6 +1,6 @@
 // #5034: --tdd under --server, as runTests' per-request `tdd` field (default: the --tdd startup
-// flag). Runner-specific — --tdd turning a compile error into generated stubs and failed tests —
-// so it lives here, not in the al-language corpus. Mechanism: docs/server-mode.md#tdd.
+// flag). Runner-specific — --tdd turning a compile error into generated stubs the tests run
+// against — so it lives here, not in the al-language corpus. Mechanism: docs/server-mode.md#tdd.
 using System.Security.Cryptography;
 using System.Text.Json;
 using Xunit;
@@ -32,10 +32,17 @@ public sealed class ServerTddTests
             begin
                 exit(StrLen(Name));
             end;
+
+            procedure TripleIt(Value: Integer): Integer
+            begin
+                exit(Value * 3);
+            end;
         }
         """;
 
-    // DoubleIt: an Integer literal argument and an Integer assignment target — generated.
+    // DoubleIt / TripleIt: an Integer literal argument and an Integer assignment target —
+    // generated with an empty body (#5147). DoubleIt's test expects 42 and fails on its own
+    // Error(); TripleIt's expects 0, the empty stub's default, and passes.
     private const string CalcTests = """
         codeunit 65301 "SrvTdd Calc Tests"
         {
@@ -50,6 +57,17 @@ public sealed class ServerTddTests
                 Result := Calc.DoubleIt(21);
                 if Result <> 42 then
                     Error('DoubleIt returned %1', Result);
+            end;
+
+            [Test]
+            procedure TripleIt_OfZero_IsZero()
+            var
+                Calc: Codeunit "SrvTdd Calc";
+                Result: Integer;
+            begin
+                Result := Calc.TripleIt(0);
+                if Result <> 0 then
+                    Error('TripleIt returned %1', Result);
             end;
         }
         """;
@@ -117,6 +135,34 @@ public sealed class ServerTddTests
         public string Message(string method) => Tests[method].GetProperty("message").GetString()!;
         public string? ErrorKind(string method)
             => Tests[method].TryGetProperty("errorKind", out var k) ? k.GetString() : null;
+        public string[] Stubs(string method)
+            => Tests[method].TryGetProperty("generatedStubs", out var g)
+                ? g.EnumerateArray().Select(e => e.GetString()!).ToArray()
+                : Array.Empty<string>();
+    }
+
+    private const string DoubleItStub = "SrvTdd Calc: procedure \"DoubleIt\"(Arg1: Integer): Integer";
+    private const string TripleItStub = "SrvTdd Calc: procedure \"TripleIt\"(Arg1: Integer): Integer";
+
+    /// <summary>#5147: DoubleIt's test ran against the empty stub and failed on its OWN Error() —
+    /// not a compile failure, not the old "generated stub" error — and names the stub it ran against.</summary>
+    private static void AssertFailedOnOwnAssertion(Response r)
+    {
+        Assert.True(r.Status("DoubleIt_ReturnsTwice") == "fail", r.Raw);
+        Assert.True(r.ErrorKind("DoubleIt_ReturnsTwice") != "compile", r.Raw);
+        Assert.Contains("DoubleIt returned 0", r.Message("DoubleIt_ReturnsTwice"), StringComparison.Ordinal);
+        Assert.DoesNotContain("generated stub", r.Message("DoubleIt_ReturnsTwice"), StringComparison.Ordinal);
+        Assert.Equal(new[] { DoubleItStub }, r.Stubs("DoubleIt_ReturnsTwice"));
+    }
+
+    /// <summary>#5147: TripleIt's test asserts the default, so it passes against the empty stub —
+    /// and its line still names the stub it ran against; the unrelated test's line names none.</summary>
+    private static void AssertDefaultPassFlagged(Response r)
+    {
+        Assert.True(r.Status("TripleIt_OfZero_IsZero") == "pass", r.Raw);
+        Assert.Equal(new[] { TripleItStub }, r.Stubs("TripleIt_OfZero_IsZero"));
+        Assert.True(r.Status("Unrelated_Passes") == "pass", r.Raw);
+        Assert.Empty(r.Stubs("Unrelated_Passes"));
     }
 
     private static async Task<Response> Send(CliServer server, string[] bundles, bool? tdd, bool affectedOnly = false)
@@ -146,9 +192,10 @@ public sealed class ServerTddTests
 
     /// <summary>
     /// The issue's acceptance, on one server: without tdd a missing symbol is a compile failure
-    /// with no test lines; with tdd the generated stub runs and fails, the refused call reports
-    /// its test FAILED naming the symbol, and the unrelated test passes; the next request without
-    /// tdd sees none of it; once the procedures are written the next request passes, unrestarted.
+    /// with no test lines; with tdd each test runs against the empty generated stub and reports
+    /// its own result, naming the stub (#5147), the refused call reports its test FAILED naming
+    /// the symbol, and the unrelated test passes; the next request without tdd sees none of it;
+    /// once the procedures are written the next request passes, unrestarted.
     /// </summary>
     [SkippableFact]
     public async Task MissingProcedures_GeneratedOrReportedPerTest_ThenPassOnceWritten()
@@ -169,34 +216,40 @@ public sealed class ServerTddTests
             var redMark = server.StdErrMark;
             var red = await Send(server, new[] { bundle }, tdd: true);
             Assert.True(red.ExitCode == 1, red.Raw);
-            Assert.Equal(new[] { "DoubleIt_ReturnsTwice", "NameLength_CountsCharacters", "Unrelated_Passes" },
+            Assert.Equal(new[] { "DoubleIt_ReturnsTwice", "NameLength_CountsCharacters", "TripleIt_OfZero_IsZero", "Unrelated_Passes" },
                 red.Tests.Keys.OrderBy(k => k, StringComparer.Ordinal).ToArray());
-            // Generated: ran as far as the stub, reported against the signature it was given.
-            AssertCompileFailure(red, "DoubleIt_ReturnsTwice", "\"DoubleIt\"(Arg1: Integer): Integer");
-            Assert.Contains("DoubleIt is a generated stub", red.Message("DoubleIt_ReturnsTwice"), StringComparison.Ordinal);
+            // Generated: each test ran against the empty stub and reports its own result.
+            AssertFailedOnOwnAssertion(red);
+            AssertDefaultPassFlagged(red);
             // Refused: the object is excluded, and its test is a line naming the missing symbol.
             AssertCompileFailure(red, "NameLength_CountsCharacters", "NameLength");
             Assert.Contains("AL0132", red.Message("NameLength_CountsCharacters"), StringComparison.Ordinal);
-            Assert.True(red.Status("Unrelated_Passes") == "pass", red.Raw);
+            Assert.Empty(red.Stubs("NameLength_CountsCharacters"));
             // Stderr is read asynchronously, so wait for the line rather than read StdErr (#5096).
             await server.StdErrSinceAsync(redMark, "SrvTdd Calc: procedure \"DoubleIt\"(Arg1: Integer): Integer");
+            // #5147: the summary lists every test that ran against a stub, with its own result.
+            await server.StdErrSinceAsync(redMark, "--tdd: 2 test(s) ran against generated stubs this request:");
+            await server.StdErrSinceAsync(redMark, $"SrvTdd Calc Tests.TripleIt_OfZero_IsZero (pass): {TripleItStub}");
+            await server.StdErrSinceAsync(redMark, $"SrvTdd Calc Tests.DoubleIt_ReturnsTwice (fail): {DoubleItStub}");
 
             var plainAgain = await Send(server, new[] { bundle }, tdd: false);
             Assert.True(plainAgain.ExitCode == 3, plainAgain.Raw);
             Assert.Empty(plainAgain.Tests);
 
             // Unchanged source, tdd again: generated and reported afresh, not served from a cache
-            // entry that holds neither the refused object's test nor the dependents' rewrite.
+            // entry that holds neither the refused object's test nor the dependents' annotation.
             var redAgain = await Send(server, new[] { bundle }, tdd: true);
             Assert.True(redAgain.ExitCode == 1, redAgain.Raw);
-            AssertCompileFailure(redAgain, "DoubleIt_ReturnsTwice", "\"DoubleIt\"(Arg1: Integer): Integer");
+            AssertFailedOnOwnAssertion(redAgain);
+            AssertDefaultPassFlagged(redAgain);
             AssertCompileFailure(redAgain, "NameLength_CountsCharacters", "NameLength");
 
             File.WriteAllText(Path.Combine(bundle, "Calc.Codeunit.al"), RealCalc);
             var green = await Send(server, new[] { bundle }, tdd: true);
             Assert.True(green.ExitCode == 0, green.Raw);
-            Assert.Equal(3, green.Tests.Count);
+            Assert.Equal(4, green.Tests.Count);
             Assert.All(green.Tests.Keys, k => Assert.True(green.Status(k) == "pass", green.Raw));
+            Assert.All(green.Tests.Keys, k => Assert.Empty(green.Stubs(k)));
         }
         finally
         {
@@ -218,8 +271,8 @@ public sealed class ServerTddTests
 
             var byDefault = await Send(server, new[] { bundle }, tdd: null);
             Assert.True(byDefault.ExitCode == 1, byDefault.Raw);
-            AssertCompileFailure(byDefault, "DoubleIt_ReturnsTwice", "\"DoubleIt\"(Arg1: Integer): Integer");
-            Assert.True(byDefault.Status("Unrelated_Passes") == "pass", byDefault.Raw);
+            AssertFailedOnOwnAssertion(byDefault);
+            AssertDefaultPassFlagged(byDefault);
 
             var off = await Send(server, new[] { bundle }, tdd: false);
             Assert.True(off.ExitCode == 3, off.Raw);
@@ -247,7 +300,7 @@ public sealed class ServerTddTests
 
             var red = await Send(server, new[] { bundle }, tdd: true, affectedOnly: true);
             Assert.True(red.ExitCode == 1, red.Raw);
-            AssertCompileFailure(red, "DoubleIt_ReturnsTwice", "\"DoubleIt\"(Arg1: Integer): Integer");
+            AssertFailedOnOwnAssertion(red);
 
             var plain = await Send(server, new[] { bundle }, tdd: false, affectedOnly: true);
             Assert.True(plain.ExitCode == 3, plain.Raw);
@@ -260,8 +313,10 @@ public sealed class ServerTddTests
     }
 
     /// <summary>
-    /// affectedOnly once the real procedure replaces the stub: the test that ran against the stub
-    /// is selected and passes. Never select too few.
+    /// affectedOnly once the real procedure replaces the stub: the tests that ran against the stub
+    /// are selected — the one that failed there, and (#5147) the one that PASSED there, whose
+    /// coverage was measured on the stub and must not let it be skipped — and both pass against
+    /// the real code. Never select too few.
     /// </summary>
     [SkippableFact]
     public async Task AffectedOnly_StubReplacedByRealProcedure_SelectsTheTestAndItPasses()
@@ -274,12 +329,16 @@ public sealed class ServerTddTests
 
             var red = await Send(server, new[] { bundle }, tdd: true, affectedOnly: true);
             Assert.True(red.ExitCode == 1, red.Raw);
+            Assert.True(red.Status("TripleIt_OfZero_IsZero") == "pass", red.Raw);
 
             File.WriteAllText(Path.Combine(bundle, "Calc.Codeunit.al"), RealCalc);
             var green = await Send(server, new[] { bundle }, tdd: true, affectedOnly: true);
             Assert.True(green.ExitCode == 0, green.Raw);
             Assert.True(green.Tests.ContainsKey("DoubleIt_ReturnsTwice"), green.Raw);
             Assert.True(green.Status("DoubleIt_ReturnsTwice") == "pass", green.Raw);
+            Assert.True(green.Tests.ContainsKey("TripleIt_OfZero_IsZero"), green.Raw);
+            Assert.True(green.Status("TripleIt_OfZero_IsZero") == "pass", green.Raw);
+            Assert.Empty(green.Stubs("TripleIt_OfZero_IsZero"));
         }
         finally
         {
@@ -407,8 +466,9 @@ public sealed class ServerTddTests
 
     /// <summary>
     /// #5037's two-bundle shape over the server: the members the test bundle calls are generated
-    /// into the app bundle, the app is recompiled within the request, and each test runs to the
-    /// stub. Nothing reaches the disk, and nothing reaches the next request.
+    /// into the app bundle, the app is recompiled within the request, and each test runs against
+    /// the empty stub — these only call it, so each passes and names it (#5147). Nothing reaches
+    /// the disk, and nothing reaches the next request.
     /// </summary>
     [SkippableFact]
     public async Task TwoBundles_GenerateIntoTheAppBundle_AndLeaveNothingBehind()
@@ -420,7 +480,7 @@ public sealed class ServerTddTests
 
         await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
         var red = await Send(server, new[] { app, test }, tdd: true);
-        Assert.True(red.ExitCode == 1, red.Raw);
+        Assert.True(red.ExitCode == 0, red.Raw);
         Assert.Equal(4, red.Tests.Count);
         foreach (var (method, proc) in new[]
                  {
@@ -429,10 +489,12 @@ public sealed class ServerTddTests
                      ("EnumValueArg_GeneratesEnumParameter", "CalcTier"),
                  })
         {
-            AssertCompileFailure(red, method, $"\"{proc}\"(Arg1: ");
-            Assert.Contains($"{proc} is a generated stub", red.Message(method), StringComparison.Ordinal);
+            Assert.True(red.Status(method) == "pass", red.Raw);
+            var stub = Assert.Single(red.Stubs(method));
+            Assert.StartsWith($"Loyalty Points: procedure \"{proc}\"(Arg1: ", stub, StringComparison.Ordinal);
         }
         Assert.True(red.Status("Unrelated_StillPasses") == "pass", red.Raw);
+        Assert.Empty(red.Stubs("Unrelated_StillPasses"));
         Assert.Equal(before, HashDir(app));
 
         var plain = await Send(server, new[] { app, test }, tdd: false);

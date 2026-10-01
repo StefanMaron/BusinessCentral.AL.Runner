@@ -2,7 +2,9 @@
 // file's current shape): --tdd infers and generates the missing member an unresolved-
 // symbol compile error names, directly into the implementing app's own source, so the
 // referencing [Test] procedure actually RUNS instead of vanishing behind a whole-module
-// compile failure. Where nothing anchors a confident guess, it still falls through to
+// compile failure. Since #5147 a generated procedure's body is empty (it returns its type's
+// default) and each such test reports its own result, annotated with the generated members
+// it ran against. Where nothing anchors a confident guess, it still falls through to
 // #1997's original refuse path (excluded, reported FAILED naming the AL diagnostic).
 //
 // This is a runner-specific claim (--tdd producing a failed/passed test where BC's
@@ -64,37 +66,29 @@ public sealed class TddModeTests : IDisposable
         lock (outSb) lock (errSb) return (outSb.ToString(), errSb.ToString(), p.ExitCode);
     }
 
+    private static JsonElement FindIn(List<JsonElement> tests, string nameContains) =>
+        tests.Single(t => t.GetProperty("name").GetString()!.Contains(nameContains));
+
+    private static string[] StubsOf(JsonElement test) =>
+        test.TryGetProperty("generatedStubs", out var s)
+            ? s.EnumerateArray().Select(e => e.GetString()!).ToArray()
+            : Array.Empty<string>();
+
     /// <summary>
-    /// The core proof, updated for issue #2001 (member generation, the deferred half of
-    /// #1997) AND for the orchestrator's review of the first version of this PR: a missing
-    /// field / procedure / enum value each now get GENERATED into the implementing app's own
-    /// source and recompiled, so the referencing [Test] procedure actually RUNS up to the
-    /// point of contact with the generated member — but EVERY test whose compile depended on
-    /// a generated member reports FAILED, never a pass, regardless of what actually happened
-    /// when it ran. Covers criteria 3 (field), 4 (procedure, all three return-type anchors),
-    /// 5 (enum value), 6 (unrelated sibling test unaffected), 9 (exit 1, not 3).
+    /// The core proof (#2001 generation, #5147 behaviour): a missing field / procedure / enum
+    /// value is generated into the implementing app's own source and recompiled; a generated
+    /// procedure has an EMPTY body returning its type's default; and each test that ran against
+    /// a generated member reports its OWN result — never a blanket FAILED — with
+    /// <c>generatedStubs</c> naming the exact signatures it ran against. Covers criteria 3
+    /// (field), 4 (procedure, all three return-type anchors), 5 (enum value), 6 (unrelated
+    /// sibling test unaffected and unannotated), 9 (exit 1, not 3).
     ///
-    /// A generated member the implementing app hasn't defined yet is scaffolding, not an
-    /// implementation. The first version of this PR let a field/enum-value test PASS once its
-    /// generated member made the assignment compile — the reasoning ("real generation
-    /// produces a real read/write") was correct as a proof of the runner's OWN mechanism, but
-    /// it is also exactly the green-test-lies-about-what-executed failure
-    /// .claude/rules/loud-failures.md exists to rule out: a generated field is a fully
-    /// functional fake, which is worse than a default return, not better, and it defeats
-    /// #1997's whole stated goal — confirming a new test reports red BEFORE touching the
-    /// implementing app. A generated PROCEDURE already failed correctly (its stub raises
-    /// Error()); the asymmetry — field/enum pass, procedure fails, for the identical "the app
-    /// doesn't have this yet" situation — was the bug.
-    ///
-    /// The proof that generation is real is now in the failure MESSAGE, not the outcome: every
-    /// assertion below pins the exact generated signature (concrete inferred type included) a
-    /// wrong guess could not have produced, because a wrong guess would have failed to compile
-    /// and fallen through to the refuse path (proven separately in
-    /// <see cref="UnresolvableCalls_RefuseRatherThanInvent"/>) instead of generating anything
-    /// to name.
+    /// The signatures prove generation is real: a wrong inferred type could not have compiled
+    /// and would have fallen through to the refuse path
+    /// (<see cref="UnresolvableCalls_RefuseRatherThanInvent"/>) instead of being named here.
     /// </summary>
     [SkippableFact]
-    public void GeneratedMembers_CompileAndRunButAlwaysReportFailed()
+    public void GeneratedMembers_RunAgainstEmptyStubs_AndReportTheirOwnResult()
     {
         TestArtifacts.SkipIfMissing();
 
@@ -106,77 +100,108 @@ public sealed class TddModeTests : IDisposable
 
         using var doc = JsonDocument.Parse(stdout.Trim());
         var root = doc.RootElement;
-        Assert.Equal(8, root.GetProperty("total").GetInt32());
-        // Exactly ONE test in this whole fixture references nothing missing at all
-        // (UnrelatedTest_StillPasses) — every other test's compile depended on --tdd
-        // generating something, so every other test must report failed. The run-level
-        // summary can never read as success while any member was generated.
-        Assert.Equal(1, root.GetProperty("passed").GetInt32());
-        Assert.Equal(7, root.GetProperty("failed").GetInt32());
+        Assert.Equal(9, root.GetProperty("total").GetInt32());
+        // Each test reports its own assertion result: the nested-argument test's assertion
+        // fails, the two refused tests fail at compile time, and every other test passes.
+        Assert.Equal(6, root.GetProperty("passed").GetInt32());
+        Assert.Equal(3, root.GetProperty("failed").GetInt32());
         Assert.Equal(0, root.GetProperty("errors").GetInt32());
 
         var tests = root.GetProperty("tests").EnumerateArray().ToList();
-        JsonElement Find(string nameContains) =>
-            tests.Single(t => t.GetProperty("name").GetString()!.Contains(nameContains));
+        JsonElement Find(string nameContains) => FindIn(tests, nameContains);
 
-        // Criterion 4 (procedure, assignment-target return-type anchor): the generated
-        // CalcTotal(Arg1: Integer): Integer stub compiles and RUNS (it hits its own
-        // generated Error()) but is reported failed for depending on generated scaffolding,
-        // not merely because the stub raised — the message names the concrete signature.
-        var proc = Find("MissingProcedure_ReportsFailedNotVanished");
-        Assert.Equal("fail", proc.GetProperty("status").GetString());
-        Assert.Contains("depends on", proc.GetProperty("message").GetString());
-        Assert.Contains("CalcTotal\"(Arg1: Integer): Integer", proc.GetProperty("message").GetString());
-
-        // Criterion 4 (procedure, NESTED-ARGUMENT return-type anchor — the acceptance
-        // table's own `Assert.AreEqual(100, Cu.CalcTotal())` example): return type comes
-        // from AreEqual's own second parameter (Integer), not from an assignment.
-        var procNested = Find("MissingProcedureNestedArg_ReportsFailedNotVanished");
+        // A non-default expectation fails on the test's OWN assertion: the empty stub returned
+        // 0, never the generated "is a generated stub" error the stub used to raise.
+        var procNested = Find("MissingProcedureNestedArg_FailsOnItsOwnAssertion");
         Assert.Equal("fail", procNested.GetProperty("status").GetString());
-        Assert.Contains("CalcSubtotal\"(Arg1: Integer): Integer", procNested.GetProperty("message").GetString());
+        var nestedMsg = procNested.GetProperty("message").GetString()!;
+        Assert.Contains("Expected:<100>. Actual:<0>", nestedMsg);
+        Assert.DoesNotContain("generated stub", nestedMsg);
+        Assert.DoesNotContain("depends on", nestedMsg);
+        Assert.Equal(new[] { "Tdd Target Cu: procedure \"CalcSubtotal\"(Arg1: Integer): Integer" }, StubsOf(procNested));
 
-        // Criterion 4 (procedure, IF-CONDITION return-type anchor — the acceptance
-        // table's `if Cust.HasLoyalty() then` example): return type is Boolean because
-        // the call sits directly in an `if ... then` condition.
-        var procIf = Find("MissingBooleanProcedure_ReportsFailedNotVanished");
-        Assert.Equal("fail", procIf.GetProperty("status").GetString());
-        Assert.Contains("HasDiscount\"(Arg1: Integer): Boolean", procIf.GetProperty("message").GetString());
+        // An assertion of the default value passes against the empty stub, and says what it ran against.
+        var deflt = Find("DefaultReturn_PassesAgainstEmptyStub");
+        Assert.Equal("pass", deflt.GetProperty("status").GetString());
+        Assert.Equal(new[] { "Tdd Target Cu: procedure \"CountOpen\"(Arg1: Integer): Integer" }, StubsOf(deflt));
 
-        // Criterion 3 (field) — the corrected behavior: even though the generated Integer
-        // field accepts the assignment cleanly and nothing else in the test fails, the
-        // result is still FAILED, and the message pins the exact inferred type (Integer) —
-        // a wrong guess (e.g. Boolean) could not have compiled and would never appear here.
-        var field = Find("MissingField_ReportsFailedNotVanished");
-        Assert.Equal("fail", field.GetProperty("status").GetString());
-        Assert.Contains("depends on", field.GetProperty("message").GetString());
-        Assert.Contains("\"Loyalty Points\": Integer", field.GetProperty("message").GetString());
-        Assert.Contains("has not defined yet", field.GetProperty("message").GetString());
+        // Criterion 4's other two anchors (assignment target, if-condition) and criteria 3/5:
+        // nothing in these tests asserts a non-default value, so they pass — and are annotated.
+        void AssertPassAgainst(string testName, string stub)
+        {
+            var t = Find(testName);
+            Assert.Equal("pass", t.GetProperty("status").GetString());
+            Assert.Equal(new[] { stub }, StubsOf(t));
+        }
+        AssertPassAgainst("MissingProcedure_RunsAgainstGeneratedStub", "Tdd Target Cu: procedure \"CalcTotal\"(Arg1: Integer): Integer");
+        AssertPassAgainst("MissingBooleanProcedure_RunsAgainstGeneratedStub", "Tdd Target Cu: procedure \"HasDiscount\"(Arg1: Integer): Boolean");
+        AssertPassAgainst("MissingField_RunsAgainstGeneratedField", "Tdd Target Table: field \"Loyalty Points\": Integer");
+        AssertPassAgainst("MissingEnumValue_RunsAgainstGeneratedValue", "Tdd Target Enum: enum value \"Archived\" = 1");
 
-        // Criterion 5 (enum value) — same corrected shape: FAILED, message pins the exact
-        // generated ordinal.
-        var enumVal = Find("MissingEnumValue_ReportsFailedNotVanished");
-        Assert.Equal("fail", enumVal.GetProperty("status").GetString());
-        Assert.Contains("enum value \"Archived\" = 1", enumVal.GetProperty("message").GetString());
-
-        // Criterion 6: an unrelated test in a SIBLING object, referencing nothing
-        // missing, still passes in the same run — the ONLY pass in this fixture.
+        // Criterion 6: an unrelated test in a SIBLING object passes, and carries no annotation.
         var healthy = Find("UnrelatedTest_StillPasses");
         Assert.Equal("pass", healthy.GetProperty("status").GetString());
+        Assert.False(healthy.TryGetProperty("generatedStubs", out _), "an unrelated test must not be annotated");
 
-        // Criterion 7 (refuse rather than invent) — proven in its own test below with the
-        // exact AL0132 diagnostics asserted; just confirms both still fail HERE too.
+        // Criterion 7 (refuse rather than invent): still FAILED at compile time, naming the symbol.
         Assert.Equal("fail", Find("BareStatementCall_RefusesNotGuesses").GetProperty("status").GetString());
         Assert.Equal("fail", Find("BothSidesUnresolved_RefusesNotGuesses").GetProperty("status").GetString());
 
-        // Criterion 8: the run prints the REAL generated-members list — one entry per
-        // member actually generated, naming the object and the inferred signature. Every
-        // signature below proves a DIFFERENT inference anchor from the acceptance table.
-        Assert.Contains("--tdd: generated 5 member(s) this run:", stderr);
+        // Criterion 8: the run prints the REAL generated-members list.
+        Assert.Contains("--tdd: generated 6 member(s) this run:", stderr);
         Assert.Contains("Tdd Target Cu: procedure \"CalcTotal\"(Arg1: Integer): Integer", stderr);
         Assert.Contains("Tdd Target Cu: procedure \"CalcSubtotal\"(Arg1: Integer): Integer", stderr);
         Assert.Contains("Tdd Target Cu: procedure \"HasDiscount\"(Arg1: Integer): Boolean", stderr);
+        Assert.Contains("Tdd Target Cu: procedure \"CountOpen\"(Arg1: Integer): Integer", stderr);
         Assert.Contains("Tdd Target Table: field \"Loyalty Points\": Integer", stderr);
         Assert.Contains("Tdd Target Enum: enum value \"Archived\" = 1", stderr);
+
+        // #5147: then every test that ran against a generated member, with its result — and
+        // only those: the unrelated test and the refused (never-run) tests are not listed.
+        var listIdx = stderr.IndexOf("--tdd: 6 test(s) ran against generated stubs this run:", StringComparison.Ordinal);
+        Assert.True(listIdx >= 0, $"expected the ran-against-stubs list in stderr:\n{stderr}");
+        var list = stderr[listIdx..];
+        Assert.Contains("Tdd Default Assert Tests.DefaultReturn_PassesAgainstEmptyStub (pass): Tdd Target Cu: procedure \"CountOpen\"(Arg1: Integer): Integer", list);
+        Assert.Contains("Tdd Broken Proc Nested Tests.MissingProcedureNestedArg_FailsOnItsOwnAssertion (fail): Tdd Target Cu: procedure \"CalcSubtotal\"", list);
+        Assert.DoesNotContain("UnrelatedTest_StillPasses", list);
+        Assert.DoesNotContain("RefusesNotGuesses", list);
+    }
+
+    /// <summary>
+    /// #5147, console output: the per-test line names the generated members after the test's own
+    /// message, and the closing list appears after the results — and neither appears for a run
+    /// in which no test referenced a generated member (<see cref="TddTwoFolderTests"/>'s
+    /// NothingMissing case covers that run's closing line).
+    /// </summary>
+    [SkippableFact]
+    public void ConsoleOutput_NamesGeneratedStubsPerTestAndInTheClosingList()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var alCache = Path.Combine(_scratch, "al-cache-console");
+        var (stdout, _, exit) = RunRunner("--tdd", "--show-pass", $"--cache \"{alCache}\"", $"\"{FixturePath}\"");
+        Assert.Equal(1, exit);
+
+        var lines = stdout.Replace("\r\n", "\n").Split('\n');
+        int IndexOf(string needle) => Array.FindIndex(lines, l => l.Contains(needle, StringComparison.Ordinal));
+
+        var nested = IndexOf("MissingProcedureNestedArg_FailsOnItsOwnAssertion");
+        Assert.True(nested >= 0 && lines[nested].TrimStart().StartsWith("FAIL", StringComparison.Ordinal), stdout);
+        Assert.Contains("Expected:<100>. Actual:<0>", lines[nested + 1]);
+        Assert.Equal("ran against generated stub(s): Tdd Target Cu: procedure \"CalcSubtotal\"(Arg1: Integer): Integer",
+            lines[nested + 2].Trim());
+
+        var deflt = IndexOf("DefaultReturn_PassesAgainstEmptyStub");
+        Assert.True(deflt >= 0 && lines[deflt].TrimStart().StartsWith("PASS", StringComparison.Ordinal), stdout);
+        Assert.Equal("ran against generated stub(s): Tdd Target Cu: procedure \"CountOpen\"(Arg1: Integer): Integer",
+            lines[deflt + 1].Trim());
+
+        var healthy = IndexOf("UnrelatedTest_StillPasses");
+        Assert.True(healthy >= 0, stdout);
+        Assert.DoesNotContain("ran against", lines[healthy + 1]);
+
+        var listIdx = IndexOf("--tdd: 6 test(s) ran against generated stubs this run:");
+        Assert.True(listIdx > IndexOf("Tests: "), $"the list must follow the results summary:\n{stdout}");
     }
 
     /// <summary>
@@ -255,22 +280,21 @@ public sealed class TddModeTests : IDisposable
         Assert.Contains("UnrelatedTest_StillPasses", stdout);
         Assert.Contains("passed 1 ", stdout);
         Assert.Contains("failed 0 ", stdout);
-        Assert.Contains("skipped 7 ", stdout);
-        Assert.Contains("MissingProcedure_ReportsFailedNotVanished", stdout);
+        Assert.Contains("skipped 8 ", stdout);
+        Assert.Contains("MissingProcedure_RunsAgainstGeneratedStub", stdout);
     }
 
     private static readonly string EnumArgsFixturePath = Path.Combine(
         RepoRoot, "AlRunner.Tests", "Fixtures", "TddEnumArgs");
 
-    private static JsonElement FindTest(List<JsonElement> tests, string nameContains) =>
-        tests.Single(t => t.GetProperty("name").GetString()!.Contains(nameContains));
+    private static JsonElement FindTest(List<JsonElement> tests, string nameContains) => FindIn(tests, nameContains);
 
     /// <summary>
     /// #5038: an enum-value argument (<c>"Loyalty Tier"::Gold</c>) anchors an
     /// <c>Enum "Loyalty Tier"</c> parameter, alone or next to a literal, and an enum declared
     /// in a namespace the implementing codeunit does not import is written namespace-qualified.
-    /// "generated stub" in each message is the stub's own Error(): the test compiled and ran
-    /// as far as the call.
+    /// Each test only calls the generated procedure, so it passes against the empty stub and
+    /// names the signature it ran against (#5147).
     /// </summary>
     [SkippableFact]
     public void EnumValueArguments_GenerateEnumParameters()
@@ -289,10 +313,9 @@ public sealed class TddModeTests : IDisposable
         void AssertGenerated(string testName, string signature, string procName)
         {
             var t = FindTest(tests, testName);
-            Assert.Equal("fail", t.GetProperty("status").GetString());
-            var msg = t.GetProperty("message").GetString()!;
-            Assert.Contains(signature, msg);
-            Assert.Contains($"{procName} is a generated stub", msg);
+            Assert.Equal("pass", t.GetProperty("status").GetString());
+            Assert.Equal(new[] { $"Tdd Loyalty Cu: procedure {signature}" }, StubsOf(t));
+            Assert.Contains($"\"{procName}\"(", signature);
             Assert.Contains($"Tdd Loyalty Cu: procedure {signature}", stderr);
         }
 
@@ -305,13 +328,11 @@ public sealed class TddModeTests : IDisposable
         AssertGenerated("NamespacedEnumValueArg_GeneratesQualifiedEnumParameter",
             "\"CalcStatus\"(Arg1: Enum TddEnumArgs.Membership.\"Member Status\"): Integer", "CalcStatus");
 
-        // Field sibling: same resolver on an assignment's right-hand side. No "underlying
-        // result" means the test's own read-back of the enum value did not raise.
+        // Field sibling: same resolver on an assignment's right-hand side. A pass means the
+        // test's own read-back of the enum value held.
         var field = FindTest(tests, "EnumValueAssignment_GeneratesEnumField");
-        Assert.Equal("fail", field.GetProperty("status").GetString());
-        var fieldMsg = field.GetProperty("message").GetString()!;
-        Assert.Contains("\"Tier\": Enum \"Loyalty Tier\"", fieldMsg);
-        Assert.DoesNotContain("underlying result", fieldMsg);
+        Assert.Equal("pass", field.GetProperty("status").GetString());
+        Assert.Equal(new[] { "Tdd Loyalty Member: field \"Tier\": Enum \"Loyalty Tier\"" }, StubsOf(field));
         Assert.Contains("Tdd Loyalty Member: field \"Tier\": Enum \"Loyalty Tier\"", stderr);
 
         Assert.Contains("--tdd: generated 7 member(s) this run:", stderr);
@@ -332,10 +353,9 @@ public sealed class TddModeTests : IDisposable
         string testName, string signature, string procName)
     {
         var t = FindTest(tests, testName);
-        Assert.Equal("fail", t.GetProperty("status").GetString());
-        var msg = t.GetProperty("message").GetString()!;
-        Assert.DoesNotContain("did not compile", msg);
-        Assert.Contains($"{procName} is a generated stub", msg);
+        Assert.Equal("pass", t.GetProperty("status").GetString());
+        Assert.Contains($"\"{procName}\"(", signature);
+        Assert.Equal(new[] { $"Tdd Loyalty Cu: procedure {signature}" }, StubsOf(t));
         Assert.Contains($"Tdd Loyalty Cu: procedure {signature}", stderr);
     }
 

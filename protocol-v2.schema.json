@@ -46,6 +46,11 @@
           "items": { "$ref": "#/definitions/AlStackFrame" }
         },
         "stackTrace": { "type": "string" },
+        "generatedStubs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "runTests with tdd only (#5147): the members tdd generated that this test's compile referenced, each as 'Object: kind signature'. Present whatever the status; the status is the test's own result. Omitted when the test referenced no generated member."
+        },
         "messages": {
           "type": "array",
           "items": { "type": "string" }

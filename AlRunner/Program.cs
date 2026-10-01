@@ -2664,8 +2664,41 @@ List<string> RenderDashboardLines(WatchStatus status, DateTime ts, TimeSpan dur)
     // below deliberately does NOT pass it: while "⟳ running…" is showing, the reason
     // in this list (if any) is stale — it belongs to the PREVIOUS cycle, and the cycle
     // in flight hasn't decided whether it needs a full rebuild yet.
-    rec.Write(WatchDashboard.Build(results, watchBundleName, status, ts, dur, watchFullRebuildReasons, watchAffectedLines));
+    rec.Write(WatchDashboard.Build(results, watchBundleName, status, ts, dur, watchFullRebuildReasons, watchAffectedLines,
+        tddMode ? TddClosingLines() : null));
     return sw.ToString().Replace("\r\n", "\n").TrimEnd('\n').Split('\n').ToList();
+}
+
+// --tdd's closing block, after the results (CLI) or each --watch cycle's. issue #2001 criterion
+// 8: the members actually generated — the API the implementing app still has to write; a
+// refused symbol is a FAILED test above, never in this list. #5147: then the tests that ran
+// against a generated member, whatever their result.
+List<string> TddClosingLines()
+{
+    var lines = new List<string>();
+    if (allTddGeneratedMembers.Count == 0 && tddSyntheticFailedCount > 0)
+    {
+        lines.Add(
+            "--tdd: no members were generated this run — every missing symbol was reported " +
+            "as a failed test instead (see the FAILED test messages above for each missing " +
+            "symbol).");
+    }
+    else if (allTddGeneratedMembers.Count == 0)
+    {
+        // #5037: never claim failures were reported when none were.
+        lines.Add(results.Any(r => r.CompileErrors.Count > 0 || r.ProcessError != null)
+            ? "--tdd: no members were generated this run, and no test was reported failed for a " +
+              "missing symbol — the error(s) reported above stopped the run first."
+            : "--tdd: no members were generated this run — no test referenced a missing symbol.");
+    }
+    else
+    {
+        lines.Add($"--tdd: generated {allTddGeneratedMembers.Count} member(s) this run:");
+        foreach (var m in allTddGeneratedMembers)
+            lines.Add($"  {TddReport.Describe(m)}");
+    }
+    lines.AddRange(TddReport.SummaryLines(results.SelectMany(b => b.Tests), "run"));
+    return lines;
 }
 
 // #2949: the trailing sentence of an EMIT-EXCLUDED / TDD-EXCLUDED report.
@@ -2792,6 +2825,9 @@ if (tddMode && !tddRecompileRerun)
 {
     TddCrossBundle.ResetForNewCycle();
     tddRecompileReruns = 0;
+    // A --watch cycle reports its own generated members (#5147), not every earlier cycle's.
+    allTddGeneratedMembers.Clear();
+    tddSyntheticFailedCount = 0;
 }
 
 // #2683: re-synthesise the dependency workspace before re-running. The pre-passes above
@@ -3236,17 +3272,11 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
     var bundleErrors = new List<string>();
     var bundleStage = BucketStage.Ran;
     int sP = 0, sF = 0, sE = 0;
-    // --tdd (orchestrator review on #2005): "ObjectDisplayName.MethodName" -> every member
-    // that test's compile depended on --tdd generating. Populated below wherever this
-    // bundle's emitOutput.TddGeneratedMembers is collected; consumed by
-    // OverrideTddDependentResults right before either execution loop's real TestResult set
-    // is counted/added, so a test that only ran against scaffolding can never report pass —
-    // see TddGeneratedMember.DependentTests' doc comment for why a generated field is a fully
-    // functional fake, not a default return, and must be treated as strictly WORSE.
+    // --tdd: the tests whose compile referenced a generated member, populated wherever this
+    // bundle's emitOutput.TddGeneratedMembers is collected. Each such result keeps its own
+    // outcome and is annotated with the members it ran against (#5147, TddDependents).
     var bundleTddDependents = new TddDependents();
-    // --tdd (orchestrator review on #2005): every TestResult whose compile depended on a
-    // --tdd-generated member reports FAIL, whatever happened when it ran — see TddDependents.
-    List<TestResult> OverrideTddDependentResults(IReadOnlyList<TestResult> raw) => bundleTddDependents.Apply(raw);
+    List<TestResult> AnnotateTddDependentResults(IReadOnlyList<TestResult> raw) => bundleTddDependents.Apply(raw);
     // #1880: counts app groups (bundled mode) / suites (--per-suite) that actually
     // reached test execution and contributed to bundleTests — incremented at the
     // SAME point as bundleTests.AddRange below, in both loops, so a group that threw
@@ -4282,7 +4312,7 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
                     BcRuntime.SetTestAssembly(asm, wireFieldTriggers: false);
                 BcRuntime.OosHooksActive = true;
                 var execSw = System.Diagnostics.Stopwatch.StartNew();
-                tests = OverrideTddDependentResults(executor.Run(asm));
+                tests = AnnotateTddDependentResults(executor.Run(asm));
                 execSw.Stop();
                 AlRunner.PerfTrace.Log($"TestExecutor.Run {rel} {execSw.ElapsedMilliseconds}ms");
                 // #2415: Run() returns normally even when a watchdog timeout aborted the
@@ -4423,7 +4453,7 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
                     BcRuntime.RegisterTestAssemblyInfo(asm);
                 }
                 BcRuntime.OosHooksActive = true;
-                tests = OverrideTddDependentResults(executor.Run(asm));
+                tests = AnnotateTddDependentResults(executor.Run(asm));
                 // #2415: see the bundled-mode call site's identical comment — Run()
                 // returns normally on a watchdog-timeout abort, so the catch below
                 // never sees it.
@@ -4643,6 +4673,11 @@ else
         Reporter.PrintSummary(results, Console.Out);
     foreach (var line in watchAffectedLines ?? new List<string>())
         Console.WriteLine(line);
+    if (tddMode)
+    {
+        Console.WriteLine();
+        foreach (var line in TddClosingLines()) Console.WriteLine(line);
+    }
     // #4561: the one-shot flush is never reached from --watch; once per cycle.
     AlRunner.Infrastructure.FailureOnlyNotes.FlushAfter(Console.Error, results.SelectMany(b => b.Tests));
     Reporter.PrintActionNeeded(results, Console.Out);
@@ -5148,35 +5183,9 @@ if (willResume)
 }
 if (tddMode)
 {
-    // issue #2001 acceptance criterion 8: print the members --tdd actually generated this
-    // run — the API the implementing app still has to provide, derived from the tests
-    // rather than written by hand. A symbol --tdd could not confidently infer (or that
-    // resolved onto a precompiled dependency, out of scope) still falls through to
-    // TddSupport's refuse path and shows up as a FAILED test above, never in this list —
-    // this list is only what was actually inferred, generated, and recompiled clean.
     var tddOut = outputJson ? Console.Error : Console.Out;
     tddOut.WriteLine();
-    if (allTddGeneratedMembers.Count == 0 && tddSyntheticFailedCount > 0)
-    {
-        tddOut.WriteLine(
-            "--tdd: no members were generated this run — every missing symbol was reported " +
-            "as a failed test instead (see the FAILED test messages above for each missing " +
-            "symbol).");
-    }
-    else if (allTddGeneratedMembers.Count == 0)
-    {
-        // #5037: never claim failures were reported when none were.
-        tddOut.WriteLine(results.Any(r => r.CompileErrors.Count > 0 || r.ProcessError != null)
-            ? "--tdd: no members were generated this run, and no test was reported failed for a " +
-              "missing symbol — the error(s) reported above stopped the run first."
-            : "--tdd: no members were generated this run — no test referenced a missing symbol.");
-    }
-    else
-    {
-        tddOut.WriteLine($"--tdd: generated {allTddGeneratedMembers.Count} member(s) this run:");
-        foreach (var m in allTddGeneratedMembers)
-            tddOut.WriteLine($"  {m.ObjectDisplayName}: {m.MemberKind} {m.Signature}");
-    }
+    foreach (var line in TddClosingLines()) tddOut.WriteLine(line);
 }
 // #2403: the run is over by now, so a write failure here must not take the run's exit
 // code (or its already-printed summary) down with it. TryWrite re-creates the parent —
@@ -5469,6 +5478,7 @@ return strictExitCode ? computedExitCode : 0;
                     "--tdd: generated member(s) into another bundle of this request — recompiling it and " +
                     "compiling the bundles that depend on it again.");
                 tdd.Generated.Clear();
+                tdd.RanAgainstStubs.Clear();
             }
         }
         finally
@@ -5487,7 +5497,9 @@ return strictExitCode ? computedExitCode : 0;
         }
         Console.Error.WriteLine($"--tdd: generated {tdd.Generated.Count} member(s) this request:");
         foreach (var m in tdd.Generated)
-            Console.Error.WriteLine($"  {m.ObjectDisplayName}: {m.MemberKind} {m.Signature}");
+            Console.Error.WriteLine($"  {TddReport.Describe(m)}");
+        foreach (var line in TddReport.SummaryLines(tdd.RanAgainstStubs, "request"))
+            Console.Error.WriteLine(line);
     }
 
     List<ServerRunResult> RunAllBundlesForServerPass(string[] sourcePaths, string[]? requestPackagePaths,
@@ -7858,7 +7870,7 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 try
                 {
                     if (tddRequest == null) return executor.Run(asm, onTestComplete, token);
-                    // A test that ran against a generated member streams, and is returned, FAILED.
+                    // A test that ran against a generated member streams, and is returned, naming it (#5147).
                     return executor.Run(asm, t => onTestComplete(tddRequest.Apply(t)), token)
                         .Select(tddRequest.Apply).ToList();
                 }

@@ -1,6 +1,6 @@
 // #5037: --tdd with the implementing app and its tests passed as two source folders
 // (`al-runner --tdd app test`). Runner-specific (--tdd turning a compile error into generated
-// stubs and FAILED tests), so it lives here, not in the al-language corpus.
+// stubs the tests run against), so it lives here, not in the al-language corpus.
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
@@ -63,9 +63,9 @@ public sealed class TddTwoFolderTests : IDisposable
 
     /// <summary>
     /// The members the test bundle calls are generated into the APP bundle, the app is
-    /// recompiled with them, and each test runs as far as the generated stub's own Error().
-    /// "is a generated stub" can only come from executing the stub, so it proves the member
-    /// reached the module the test ran against — not just the symbols it compiled against.
+    /// recompiled with them, and each test runs against the empty stub (#5147). The tests only
+    /// call the procedures, so each passes and names the signature it ran against; the call
+    /// could not have run unless the member reached the module the test ran against.
     /// </summary>
     [SkippableFact]
     public void TwoSourceFolders_GenerateIntoTheAppBundleAndRunToTheStub()
@@ -77,28 +77,32 @@ public sealed class TddTwoFolderTests : IDisposable
             "--tdd", $"--cache \"{Path.Combine(_scratch, "cache")}\"", "--output-json",
             $"\"{AppDir}\"", $"\"{Path.Combine(FixtureRoot, "test")}\"");
 
-        Assert.True(exit == 1, $"exit {exit}\n{stderr}");
+        // Every test passes: the exit code is the tests' own, not a --tdd verdict.
+        Assert.True(exit == 0, $"exit {exit}\n{stderr}");
         using var doc = JsonDocument.Parse(stdout.Trim());
         var root = doc.RootElement;
         Assert.Equal(4, root.GetProperty("total").GetInt32());
-        Assert.Equal(1, root.GetProperty("passed").GetInt32());
-        Assert.Equal(3, root.GetProperty("failed").GetInt32());
+        Assert.Equal(4, root.GetProperty("passed").GetInt32());
+        Assert.Equal(0, root.GetProperty("failed").GetInt32());
         var tests = root.GetProperty("tests").EnumerateArray().ToList();
 
         void AssertRanToStub(string testName, string signature, string procName)
         {
             var t = FindTest(tests, testName);
-            Assert.Equal("fail", t.GetProperty("status").GetString());
-            var msg = t.GetProperty("message").GetString()!;
-            Assert.Contains(signature, msg);
-            Assert.Contains($"{procName} is a generated stub", msg);
+            Assert.Equal("pass", t.GetProperty("status").GetString());
+            Assert.Contains($"\"{procName}\"(", signature);
+            Assert.Equal(new[] { $"Loyalty Points: procedure {signature}" },
+                t.GetProperty("generatedStubs").EnumerateArray().Select(e => e.GetString()).ToArray());
             Assert.Contains($"Loyalty Points: procedure {signature}", stderr);
         }
         AssertRanToStub("VariableArg_GeneratesDecimalParameter", "\"CalcBasePoints\"(Arg1: Decimal): Integer", "CalcBasePoints");
         AssertRanToStub("LiteralArg_GeneratesIntegerParameter", "\"CalcLit\"(Arg1: Integer): Integer", "CalcLit");
         AssertRanToStub("EnumValueArg_GeneratesEnumParameter", "\"CalcTier\"(Arg1: Enum \"Two Folder Tier\"): Integer", "CalcTier");
-        Assert.Equal("pass", FindTest(tests, "Unrelated_StillPasses").GetProperty("status").GetString());
+        var unrelated = FindTest(tests, "Unrelated_StillPasses");
+        Assert.Equal("pass", unrelated.GetProperty("status").GetString());
+        Assert.False(unrelated.TryGetProperty("generatedStubs", out _));
         Assert.Contains("--tdd: generated 3 member(s) this run:", stderr);
+        Assert.Contains("--tdd: 3 test(s) ran against generated stubs this run:", stderr);
 
         // In memory only: the app's files on disk are what they were.
         Assert.Equal(before, HashDir(AppDir));
@@ -154,9 +158,9 @@ public sealed class TddTwoFolderTests : IDisposable
     /// <summary>
     /// --watch --tdd (#2002) over the two folders, one edit cycle: cycle 1 generates all three
     /// members into the app; the developer then writes CalcLit for real in the app. Cycle 2 must
-    /// generate from the edited file again — CalcLit's test passes against the real procedure
-    /// (a stale overlay would have kept the stub, or declared CalcLit twice), while CalcBasePoints
-    /// is still generated and still runs to its stub.
+    /// generate from the edited file again — CalcLit's test runs against the real procedure and
+    /// no longer names a stub (a stale overlay would have kept the stub, or declared CalcLit
+    /// twice), while CalcBasePoints is still generated and its test still names it (#5147).
     /// </summary>
     [SkippableFact]
     public async Task Watch_OneEditCycle_RegeneratesFromTheEditedApp()
@@ -214,11 +218,14 @@ public sealed class TddTwoFolderTests : IDisposable
 
         try
         {
+            const string calcLitStub = "ran against generated stub(s): Loyalty Points: procedure \"CalcLit\"(Arg1: Integer): Integer";
+            const string calcBaseStub = "ran against generated stub(s): Loyalty Points: procedure \"CalcBasePoints\"(Arg1: Decimal): Integer";
             int m1 = await WaitForMarkerAfter(0, TimeSpan.FromSeconds(180));
             var cycle1 = Segment(0, m1);
-            Assert.Contains("CalcLit is a generated stub", cycle1);
-            Assert.Contains("CalcBasePoints is a generated stub", cycle1);
-            Assert.StartsWith("FAIL", Line(cycle1, "LiteralArg_GeneratesIntegerParameter").TrimStart());
+            Assert.StartsWith("PASS", Line(cycle1, "LiteralArg_GeneratesIntegerParameter").TrimStart());
+            Assert.Contains(calcLitStub, cycle1);
+            Assert.Contains(calcBaseStub, cycle1);
+            Assert.Contains("--tdd: 3 test(s) ran against generated stubs this run:", cycle1);
 
             var original = await File.ReadAllTextAsync(cuPath);
             var lastBrace = original.LastIndexOf('}');
@@ -230,8 +237,9 @@ public sealed class TddTwoFolderTests : IDisposable
             int m2 = await WaitForMarkerAfter(m1 + 1, TimeSpan.FromSeconds(240));
             var cycle2 = Segment(m1 + 1, m2);
             Assert.StartsWith("PASS", Line(cycle2, "LiteralArg_GeneratesIntegerParameter").TrimStart());
-            Assert.DoesNotContain("CalcLit is a generated stub", cycle2);
-            Assert.Contains("CalcBasePoints is a generated stub", cycle2);
+            Assert.DoesNotContain(calcLitStub, cycle2);
+            Assert.Contains(calcBaseStub, cycle2);
+            Assert.Contains("--tdd: 2 test(s) ran against generated stubs this run:", cycle2);
         }
         finally
         {

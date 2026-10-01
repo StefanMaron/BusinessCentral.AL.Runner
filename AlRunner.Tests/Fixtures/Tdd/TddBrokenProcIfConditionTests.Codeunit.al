@@ -1,9 +1,8 @@
 /// <summary>
 /// References HasDiscount, a procedure "Tdd Target Cu" does not declare yet, used as an
 /// `if <call> then` CONDITION — the acceptance table's `if Cust.HasLoyalty() then` anchor.
-/// With --tdd this must generate HasDiscount(Arg1: Integer): Boolean and report FAILED once
-/// the generated stub's Error() fires (evaluating the condition reaches the stub body before
-/// any branch), naming HasDiscount.
+/// With --tdd this must generate HasDiscount(Arg1: Integer): Boolean with an empty body, which
+/// returns false, so the test passes and its result names HasDiscount (#5147).
 /// </summary>
 codeunit 65014 "Tdd Broken Proc If Tests"
 {
@@ -11,7 +10,7 @@ codeunit 65014 "Tdd Broken Proc If Tests"
     TestPermissions = Disabled;
 
     [Test]
-    procedure MissingBooleanProcedure_ReportsFailedNotVanished()
+    procedure MissingBooleanProcedure_RunsAgainstGeneratedStub()
     var
         Target: Codeunit "Tdd Target Cu";
     begin

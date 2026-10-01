@@ -38,13 +38,9 @@ namespace AlRunner;
 /// <remarks>
 /// <see cref="DependentTests"/> — every "<c>ObjectDisplayName.MethodName</c>" the compile
 /// identified as referencing THIS member, resolved statically from each AL0132 diagnostic's
-/// own Location (source tree + span) rather than from anything observed at runtime — see
-/// <c>Program.cs</c>'s per-bundle override, which forces every one of these tests to report
-/// FAILED regardless of whether it happened to execute cleanly. A member the implementing app
-/// has not defined yet is scaffolding, not an implementation; a test that only ran against
-/// scaffolding must never be reported as a pass (.claude/rules/loud-failures.md) — a generated
-/// field silently holding whatever was written to it is a fully functional fake, which is
-/// worse than a default return, not better.
+/// own Location (source tree + span) rather than from anything observed at runtime. Each of
+/// those tests' results names this member (<see cref="TddDependents"/>, #5147) whatever its
+/// outcome, so a pass against a generated member is never silent.
 /// </remarks>
 public sealed record TddGeneratedMember(string ObjectDisplayName, string MemberKind, string Signature)
 {
@@ -339,7 +335,7 @@ public static class TddGeneration
     /// statically, never from what ran" discipline as the rest of generation. Returns null when
     /// the diagnostic isn't inside a [Test] procedure at all (an unlikely shape: a missing
     /// symbol referenced from a non-test member), in which case the generated member still
-    /// happens, it's just not attributable to a specific test for the override in Program.cs.
+    /// happens, it's just not attributable to a specific test for <see cref="TddDependents"/>.
     /// </summary>
     private static (string ObjectName, string MethodName)? FindEnclosingTestMethod(NavDiag.Diagnostic diag)
     {
@@ -430,10 +426,11 @@ public static class TddGeneration
 
         var quotedName = Quote(procName);
         var paramList = string.Join("; ", paramTypes.Select((t, i) => $"Arg{i + 1}: {t}"));
-        var errMsg = $"--tdd: {procName} is a generated stub -- the implementing app has not defined it yet.";
+        // #5147: an empty body, so the call returns the type's default and the test's own
+        // assertion decides its result — the red of the red-green loop.
         var snippet =
             $"codeunit 1 \"__TddGen__\" {{ procedure {quotedName}({paramList}): {returnType} " +
-            $"begin Error('{errMsg.Replace("'", "''")}'); end; }}";
+            "begin end; }";
         var synthTree = NavSyntax.SyntaxTree.ParseObjectText(snippet, path: "<tdd-generated>", encoding: null!, parseOptions, default);
         var synthCodeunit = (NavSyntax.CodeunitSyntax)synthTree.GetRoot().ChildNodes().OfType<NavSyntax.ObjectSyntax>().First();
         var newMethod = synthCodeunit.Members.OfType<NavSyntax.MethodDeclarationSyntax>().First();
