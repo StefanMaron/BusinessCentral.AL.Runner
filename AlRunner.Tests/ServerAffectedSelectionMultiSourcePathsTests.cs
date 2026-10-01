@@ -31,8 +31,13 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-public class ServerAffectedSelectionMultiSourcePathsTests
+// #5110: facts that need no startup flag of their own share one --server (SharedCliServer).
+public class ServerAffectedSelectionMultiSourcePathsTests : IClassFixture<SharedCliServer>
 {
+    private readonly SharedCliServer _fixture;
+
+    public ServerAffectedSelectionMultiSourcePathsTests(SharedCliServer fixture) => _fixture = fixture;
+
     private static string MakeAppBundle(string root, string helperBody)
     {
         var dir = Path.Combine(root, "app");
@@ -118,7 +123,7 @@ public class ServerAffectedSelectionMultiSourcePathsTests
         """);
         var testAppDir = MakeTestAppBundle(root);
 
-        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--isolation", "test", "--no-cache" });
 
         // Request 1: first cycle, necessarily a full run (no baseline yet).
         var lines1 = await server.SendRequestStreamingAsync(RunTestsRequest(appDir, testAppDir));
@@ -286,7 +291,7 @@ public class ServerAffectedSelectionMultiSourcePathsTests
         var appDir = MakeAppBundleTwoHelpers(root);
         var testAppDir = MakeTestApp2Bundle(root);
 
-        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--isolation", "test", "--no-cache" });
 
         // Request 1: first cycle (no baseline yet) — necessarily runs both tests and
         // records their per-test coverage, which for EACH test crosses into the
