@@ -4,7 +4,8 @@ namespace AlRunner.Infrastructure;
 /// Per-test record of the session state a test wrote and the session state it read before writing
 /// it itself (#5050), for <c>affectedOnly</c> selection. Session state is what survives a test
 /// boundary under every test isolation because no database rollback reaches it: WorkDate, number
-/// sequences, SingleInstance codeunit instances. How selection uses it:
+/// sequences, SingleInstance codeunit instances, the last error and static .NET state (#5057). How
+/// selection uses it:
 /// docs/server-mode.md#affectedonly-and-session-state.
 ///
 /// A kind is read "inherited" when the test reads it before its own first write, so its value

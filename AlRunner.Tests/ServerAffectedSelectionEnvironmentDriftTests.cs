@@ -290,10 +290,10 @@ public class ServerAffectedSelectionEnvironmentDriftTests
         var (app, testApp, cache) = Layout("approximate");
         await RecordBaseline(testApp, cache);
 
-        // A baseline written before #5028 carries no record of its environment's objects.
+        // A baseline with no record of its environment's objects (one written before #5028 had none;
+        // such a file is now refused on its schema, so the record is removed from a current one).
         var file = Assert.Single(Directory.GetFiles(Path.Combine(cache, AffectedBaselineStore.CacheName), "*.json"));
         var json = JsonNode.Parse(File.ReadAllText(file))!.AsObject();
-        json["Schema"] = 4;
         json.Remove("EnvApps");
         foreach (var bundle in json["Bundles"]!.AsObject())
         {

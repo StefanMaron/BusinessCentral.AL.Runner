@@ -38,8 +38,12 @@ internal static class AffectedBaselineStore
     // 4: #5050's session-state keys ("st|w|", "st|r|") in each test's events entry.
     // 5: #5028's per-test environments (Envs, TestEnv) and "dep|" coverage keys. A version-4 file is
     //    still read, with no environment, so a run in another environment uses it approximately.
-    internal const int SchemaVersion = 5;
-    internal const int OldestReadableSchema = 4;
+    // 6: #5057's "LastError" and "DotNet" session-state kinds. An older file never recorded them and
+    //    would link no test through them, so it is no baseline: one full run re-records it. (Reading
+    //    it as "every test reads and writes both" would survive re-recording through
+    //    AffectedSessionStateSelection.WithPreviousState and widen every later selection for good.)
+    internal const int SchemaVersion = 6;
+    internal const int OldestReadableSchema = 6;
     internal const string CacheName = "affected-baseline";
 
     /// <summary>The file for one request's bundle set. Order and duplicates do not change the key.</summary>
@@ -328,7 +332,7 @@ internal static class AffectedBaselineStore
                 x.Observability == null ? null : new EventObservability(
                     new HashSet<string>(Required(x.Observability.Observable, "observable events"), StringComparer.Ordinal),
                     new Dictionary<string, bool>(Required(x.Observability.Publishers, "publishers"), StringComparer.Ordinal)),
-                dto.Schema < 5 || x.Envs == null || x.TestEnv == null ? null : Environments(x.Envs, x.TestEnv));
+                x.Envs == null || x.TestEnv == null ? null : Environments(x.Envs, x.TestEnv));
         }
         return new AffectedBaseline(modules, bundles);
 

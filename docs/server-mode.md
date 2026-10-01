@@ -592,7 +592,8 @@ server processes"). The runner:
    default `TestIsolation = Codeunit` every test of a selected test's codeunit, under
    `disabled` every test of the bundle (see "affectedOnly and test isolation");
 7. widens it again by session state (WorkDate, number sequences, SingleInstance
-   codeunits), which no isolation resets (see "affectedOnly and session state").
+   codeunits, the last error, static .NET state behind DotNet interop), which no isolation
+   resets (see "affectedOnly and session state").
 
 When the runner cannot prove a safe object delta, it **forces a full run**
 (`selection.forcedFull:true`) and sets `selection.reason`. Forced-full causes
@@ -665,6 +666,8 @@ Recorded per test, as keys in the test's events entry:
 | `WorkDate` | `WorkDate(<date>)` (Ncl `NavSession.set_WorkDate`) | `WorkDate()`, and the `'w'` token of `Evaluate` and date filters (`NavSession.get_WorkDate`, where every one of them reads it) |
 | a number sequence, by name and company scope | `Insert`, `Next`, `Range`, `Restart`, `Delete` | `Exists`, `Current`, `Next`, `Range`, `Restart`, `Insert` (whether it exists decides the error) |
 | a SingleInstance codeunit, by id | any use of it: resolving a variable to it, or entering one of its procedures or triggers | the same: its globals cannot be told apart by read or write |
+| the last error (#5057) | any member of Ncl `NavSession` that stores its last-error fields, whatever path reaches it: measured for an error a `[TryFunction]` traps and an error that fails the test; also `ClearLastError` | any member that only loads them: `GetLastErrorText`, `GetLastErrorCode`, `GetLastErrorObject`, `GetLastErrorCallStack` from precompiled code |
+| static .NET state (#5057) | any DotNet method or property call, and any DotNet constructor (Ncl `NavDotNet.Invoke`, `NavDotNet.CreateDotNet`) | the same: a static field or process setting cannot be told apart per call. Enum members are not recorded: AL reads no other static field (`Guid.Empty` is AL0132), and a constant holds no state |
 
 A read counts only when the test had not written that state itself first, so a test that
 sets WorkDate and then reads it is not a reader. That is a property of the test's own code,
@@ -707,10 +710,26 @@ next (SingleInstance codeunits are reset per bundle), so a change in an earlier 
 full run of it) selects every reader of a later one, and a bundle followed by another runs its WorkDate and
 sequence writers whatever changed.
 
-Not recorded, so not linked (#5057): static .NET state reached through DotNet interop,
-`Randomize` seeds, and the last error text. `GlobalLanguage` is not session state here: the
-runner answers 1033 whatever a test sets. The persisted baseline is schema 4 from this
-change, so a baseline without these keys is not used.
+The last-error readers are found by scanning `NavSession` (nested types included) for loads and
+stores of its private `lastException` and `lastErrorCallstack` fields, so a reader BC adds is
+recorded without a change here; the scan refuses to rewrite Ncl if those fields stop being
+private, or if it finds no reader or no writer. `GetLastErrorCallStack` in the bundle's own AL
+reads the runner's per-test capture (`AlCallStackCapture`, cleared before each test), which no
+test can leave for another.
+
+Not session state here, so not recorded:
+
+- the `Randomize(<seed>)` seed: every test starts from a generator seeded from the run seed and
+  its own identity (`RunSeed.BeginTest`, #2502), so what an earlier test seeded never reaches it
+  (`ServerAffectedSelectionUnrecordedStateTests.RandomizeSeed_DoesNotReachTheNextTest`);
+- `GlobalLanguage`: the runner answers 1033 whatever a test sets.
+
+Recording DotNet use links every test that calls into .NET with every other one, so a change
+before any of them selects all of them. The cost on the al-language corpus is in the pull
+request that introduced it (#5057).
+
+The persisted baseline is schema 4 from #5050 and schema 6 from #5057; an older file records
+none of the newer kinds and is not used.
 
 The cost, on the al-language corpus: see the pull request that introduced this (#5050).
 

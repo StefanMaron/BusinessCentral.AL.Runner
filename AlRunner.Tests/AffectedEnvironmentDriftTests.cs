@@ -249,14 +249,21 @@ public class AffectedEnvironmentDriftTests
         envs.Prune();
         Assert.Single(envs.Snapshots);
 
-        // A version-4 file (before #5028) loads, with no environment to diff against.
-        File.WriteAllText(path, text.Replace($"\"Schema\":{AffectedBaselineStore.SchemaVersion},", "\"Schema\":4,", StringComparison.Ordinal));
+        // A file with no environment record loads, with no environment to diff against.
+        var node = System.Text.Json.Nodes.JsonNode.Parse(text)!.AsObject();
+        foreach (var b in node["Bundles"]!.AsObject())
+        {
+            b.Value!.AsObject().Remove("Envs");
+            b.Value!.AsObject().Remove("TestEnv");
+        }
+        File.WriteAllText(path, node.ToJsonString());
         var old = AffectedBaselineStore.Load(path);
         Assert.Null(old.Unusable);
         Assert.Null(old.Baseline!.Bundles["/b"].Environments);
 
-        File.WriteAllText(path, text.Replace($"\"Schema\":{AffectedBaselineStore.SchemaVersion},", "\"Schema\":3,", StringComparison.Ordinal));
-        Assert.Contains("schema version 3", AffectedBaselineStore.Load(path).Unusable);
+        // A version-5 file (before #5057) recorded no LastError or DotNet use, so it is no baseline.
+        File.WriteAllText(path, text.Replace($"\"Schema\":{AffectedBaselineStore.SchemaVersion},", "\"Schema\":5,", StringComparison.Ordinal));
+        Assert.Contains("schema version 5", AffectedBaselineStore.Load(path).Unusable);
     }
 
     [Fact]

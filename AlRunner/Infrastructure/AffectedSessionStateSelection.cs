@@ -1,5 +1,6 @@
 // AffectedSessionStateSelection — #5050: widens an affectedOnly selection to the tests linked to a
-// selected one through session state (WorkDate, number sequences, SingleInstance codeunits), which
+// selected one through session state (WorkDate, number sequences, SingleInstance codeunits, the
+// last error, static .NET state), which
 // survives every test isolation. Rules and why they are this wide:
 // docs/server-mode.md#affectedonly-and-session-state.
 namespace AlRunner.Infrastructure;
@@ -60,7 +61,7 @@ internal static class AffectedSessionStateSelection
                 }
             }
         }
-        // SingleInstance codeunits are reset per bundle; WorkDate and number sequences are not.
+        // SingleInstance codeunits are reset per bundle; every other kind is not.
         if (laterBundleFollows)
             foreach (var t in discovered)
                 if (Record(t) is not { } r || r.Any(k => k.StartsWith(AlSessionStateTracker.WritePrefix, StringComparison.Ordinal)
