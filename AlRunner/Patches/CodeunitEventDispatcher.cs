@@ -181,7 +181,7 @@ public static partial class BcRuntime
     /// <summary>The AL event name a publisher's <c>&lt;Event&gt;_Scope</c> class belongs to: its
     /// <c>[NavName]</c>, the declared name verbatim, which is what subscribers name and the registry
     /// is keyed by. The class name is that name only when the compiler did not mangle it — a quoted
-    /// <c>"On Before Quoted"</c> compiles to <c>On_Before_Quoted_Scope</c> (#5167). The C# method
+    /// <c>"On Before Quoted"</c> compiles to <c>On_Before_Quoted_Scope</c> (#5167; corpus 67046). The C# method
     /// name stays <see cref="TryDecodeEventScopeName"/>'s answer. A scope class without
     /// <c>[NavName]</c> (none emitted by BC; test stand-ins) answers the suffix decode.</summary>
     internal static bool TryGetEventScopeAlName(Type scopeType, out string eventName)
