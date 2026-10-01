@@ -100,7 +100,9 @@ everything up front:
 al-runner --test-data ./my-test-app
 ```
 
-It needs the `bcbak` backup reader on your `PATH`. When a test fails on a table
+It needs the `bcbak` backup reader. Auto-provision installs the pinned release into
+`~/.cache/al-runner/bcbak/` (checksum-verified; `al-runner provision --test-data` does the same
+up front), unless one is already on your `PATH` or named by `AL_RUNNER_BCBAK`. When a test fails on a table
 with no rows, the runner prints a one-line note naming that table and pointing
 here — so you find out that the cause was missing data rather than guessing at
 the assertion.

@@ -16,6 +16,8 @@
 // LOCATING THE BINARY
 //   AL_RUNNER_BCBAK first (a file, or a directory containing `bcbak`), then a probed
 //   per-user cache directory, then PATH. No path to any particular checkout is compiled in.
+//   Auto-provision installs the pinned release into the cache slot (BackupReaderProvisioning,
+//   #4925); the other two are the user's and never replaced.
 //   Absence is a loud, actionable failure naming every location probed — never a silent
 //   "no test data" run.
 //
@@ -42,7 +44,10 @@ public sealed class BackupReaderException : Exception
 internal static class BackupReaderTool
 {
     internal const string ExecutableEnvVar = "AL_RUNNER_BCBAK";
-    private const string ExecutableName = "bcbak";
+    private const string InstallDirName = "bcbak";
+    // Windows' process launch appends `.exe` to an extensionless name, so a file named `bcbak`
+    // there is found by File.Exists and then cannot be started.
+    private static readonly string ExecutableName = OperatingSystem.IsWindows() ? "bcbak.exe" : "bcbak";
 
     private static string? _resolved;
     private static string? _identity;
@@ -59,10 +64,19 @@ internal static class BackupReaderTool
             candidates.Add(trimmed);
             candidates.Add(Path.Combine(trimmed, ExecutableName));
         }
-        if (!string.IsNullOrEmpty(cacheRoot))
-            candidates.Add(Path.Combine(cacheRoot, ExecutableName, ExecutableName));
+        var managed = ManagedInstallPath(cacheRoot);
+        if (managed != null)
+            candidates.Add(managed);
         return candidates;
     }
+
+    /// <summary>The per-user cache slot auto-provision installs the pinned reader into (#4925);
+    /// null when there is no cache root.</summary>
+    internal static string? ManagedInstallPath(string? cacheRoot)
+        => string.IsNullOrEmpty(cacheRoot) ? null : Path.Combine(cacheRoot, InstallDirName, ExecutableName);
+
+    /// <summary>The per-user cache root this process probes; null when it cannot be resolved.</summary>
+    internal static string? DefaultCacheRoot() => TryDefaultCacheRoot();
 
     /// <summary>The resolved reader executable. Throws (naming every probed location and the
     /// env var that overrides them) rather than returning null, so a caller cannot continue
@@ -77,20 +91,26 @@ internal static class BackupReaderTool
             if (File.Exists(candidate))
                 return _resolved = Path.GetFullPath(candidate);
 
-        var onPath = TryFindOnPath(ExecutableName);
+        var onPath = FindOnPath();
         if (onPath != null) return _resolved = onPath;
 
-        // Everything actionable on the FIRST line (#2779), for the same reason TestDataOptions.
-        // ResolveBackupPath does it: the bundle reporter keeps only line 1 of an EXEC-FAIL
-        // message, so a "Probed:" list on line 3 never reached anyone. This message's whole
-        // value is the list of places that were looked in and the env var that overrides them.
-        var probed = string.Join(", ",
-            CandidateExecutables(env, cacheRoot).Append($"<each PATH entry>/{ExecutableName}").Select(c => $"'{c}'"));
-        throw new BackupReaderException(
-            $"--test-data needs the BC backup reader '{ExecutableName}', which was not found — "
-            + $"probed {probed}. Set {ExecutableEnvVar} to the executable "
-            + "(or to the directory containing it).");
+        throw new BackupReaderException(NotFoundMessage(CandidateExecutables(env, cacheRoot)));
     }
+
+    /// <summary>Everything actionable on the FIRST line (#2779): the bundle reporter keeps only
+    /// line 1 of an EXEC-FAIL message.</summary>
+    internal static string NotFoundMessage(IReadOnlyList<string> candidates)
+    {
+        var probed = string.Join(", ",
+            candidates.Append($"<each PATH entry>/{ExecutableName}").Select(c => $"'{c}'"));
+        return $"--test-data needs the BC backup reader '{ExecutableName}', which was not found — "
+            + $"probed {probed}. Auto-provision installs the pinned release (off under --no-auto-provision), "
+            + $"or run `al-runner provision --test-data`, or set {ExecutableEnvVar} to the executable "
+            + "(or to the directory containing it).";
+    }
+
+    /// <summary>The reader on PATH, or null.</summary>
+    internal static string? FindOnPath() => TryFindOnPath(ExecutableName);
 
     /// <summary>Reset the memoised resolution/identity. Test-only seam: the resolution reads
     /// process environment state that a test needs to vary.</summary>

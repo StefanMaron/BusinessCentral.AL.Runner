@@ -91,7 +91,7 @@ name: MS bucket (manual)
 #     28.1.49838.54308  OK      28.4.53241.54318  OK
 #
 #   28.0.46665.54310 was not re-measured (no local backup); v0.1.1 read it and v0.1.2 changes
-#   only the refusal path, so it is expected to keep reading it. The pin comment on READER_TAG
+#   only the refusal path, so it is expected to keep reading it. The pin comment on READER_PIN
 #   below carries the v0.1.1-vs-v0.1.2 comparison and the decoded-value check behind the bump.
 #
 #   So the default bc-version (the newest prefix in .github/bc-versions.txt, currently 28.4)
@@ -358,21 +358,20 @@ jobs:
         if: ${{ inputs.test-data }}
         id: reader
         env:
-          # PINNED, deliberately (#2779). This used to resolve the LATEST release at run time
-          # (`gh release view … --jq .tagName`), which made this workflow's result depend on
-          # when another repository last published — a change here could not explain a change
-          # in the answer, and the first run's failure was investigated as a reader regression
-          # partly because the tag had moved between the working local baseline and CI. It had
-          # not regressed; but the workflow's own comment already said the reader's identity
-          # keys the install-baseline cache and that a reader fix changes DECODED VALUES, which
-          # is an argument for pinning it, not for floating it.
+          # PINNED, deliberately (#2779), and pinned ONCE (#4925): the tag and every platform's
+          # SHA-256 live in .github/backup-reader.json, which the runner embeds and installs from
+          # under auto-provision. This step reads the same file, so CI and a developer's box run
+          # the same reader build. Resolving the latest release at run time made this workflow's
+          # result depend on when another repository last published, and the reader's identity
+          # keys the install-baseline cache: a reader fix changes DECODED VALUES.
           #
           # To move it: pick the new tag from
-          # https://github.com/StefanMaron/BusinessCentral.DbReader/releases, run this
-          # workflow once on the new pin, and compare the pass/fail totals against the previous
-          # pin's run before merging the bump. A reader upgrade that changes decoded values
-          # changes this measurement, so the bump belongs in its own PR with both numbers in
-          # the body.
+          # https://github.com/StefanMaron/BusinessCentral.DbReader/releases, put its tag and
+          # each asset's SHA-256 (the release's SHA256SUMS) into .github/backup-reader.json, run
+          # this workflow once on the new pin, and compare the pass/fail totals against the
+          # previous pin's run before merging the bump. A reader upgrade that changes decoded
+          # values changes this measurement, so the bump belongs in its own PR with both numbers
+          # in the body.
           #
           # v0.1.1 -> v0.1.2 (#2780). v0.1.1 could not open the W1 demo backup for BC 28.2 and
           # newer at all -- `bcdb companies` exited 1 with "block <N> of MSDA region is neither
@@ -393,28 +392,30 @@ jobs:
           # `bcdb tables` listing is byte-identical (3,956 lines) and a `bcdb read` of
           # "Source Code Setup" is byte-identical between the two. v0.1.2 adds versions it can
           # open; it does not change what it decodes on the versions v0.1.1 already opened.
-          READER_TAG: v0.1.2
+          READER_PIN: .github/backup-reader.json
           GH_TOKEN: ${{ github.token }}
         run: |
           # bcbak is StefanMaron/BusinessCentral.DbReader's `bcdb`, consumed as a pinned
           # release's Native AOT asset rather than built here: a source build needs the .NET 10
           # SDK plus clang and adds minutes, and the release binary is the one that repo's own
-          # hermetic test suite gated before publishing. The runner probes the OLD name at
+          # hermetic test suite gated before publishing. The runner probes
           # ~/.cache/al-runner/bcbak/bcbak (BackupReaderTool.CandidateExecutables), so the
           # asset is installed under that name. The tag lands in the summary: the reader's
           # identity keys the install-baseline cache and a reader fix changes decoded values.
-          tag="$READER_TAG"
+          pin="$GITHUB_WORKSPACE/$READER_PIN"
+          repo=$(jq -er '.repository' "$pin")
+          tag=$(jq -er '.tag' "$pin")
+          asset=$(jq -er '.assets["linux-x64"].file' "$pin")
+          sha=$(jq -er '.assets["linux-x64"].sha256' "$pin")
           mkdir -p "$RUNNER_TEMP/reader"
           cd "$RUNNER_TEMP/reader"
-          # StefanMaron/BusinessCentral.DbReader, NOT .BakReader: that repository was renamed,
-          # and the old name only still works because GitHub redirects it. A rename redirect is
-          # not a contract -- it lasts at GitHub's discretion, and it stops the moment anyone
-          # creates a new repository at the freed-up old name, at which point this line
-          # downloads someone else's asset or 404s in a nightly nobody is watching closely.
-          gh release download "$tag" --repo StefanMaron/BusinessCentral.DbReader \
-            --pattern bcdb-linux-x64 --pattern SHA256SUMS
-          grep 'bcdb-linux-x64$' SHA256SUMS | sha256sum -c -
-          install -D -m 0755 bcdb-linux-x64 "$HOME/.cache/al-runner/bcbak/bcbak"
+          # The pin names StefanMaron/BusinessCentral.DbReader, NOT .BakReader: that repository
+          # was renamed, and the old name only still works because GitHub redirects it.
+          gh release download "$tag" --repo "$repo" --pattern "$asset"
+          # Verified against the PIN's checksum, not the release's own SHA256SUMS: a re-published
+          # asset under the same tag must fail here rather than install.
+          echo "$sha  $asset" | sha256sum -c -
+          install -D -m 0755 "$asset" "$HOME/.cache/al-runner/bcbak/bcbak"
           "$HOME/.cache/al-runner/bcbak/bcbak" --version
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 

@@ -1,0 +1,11 @@
+{
+  "repository": "StefanMaron/BusinessCentral.DbReader",
+  "tag": "v0.1.2",
+  "assets": {
+    "linux-x64": { "file": "bcdb-linux-x64", "sha256": "dcf9e508de450aa44ba89361ccb41368118b10c97d37cf9e8eaccdf52dde70f6" },
+    "linux-arm64": { "file": "bcdb-linux-arm64", "sha256": "674b643a457b48110e148209dbdf1ebf0571eb8277150b01bc229980346bdd37" },
+    "osx-x64": { "file": "bcdb-osx-x64", "sha256": "d51650d4ce09f13004e6565352fc0ed4a1269f00acfd1c00393d7a7866ecaa1d" },
+    "osx-arm64": { "file": "bcdb-osx-arm64", "sha256": "1afc299783991fe3ac46daa1beebc65f806dbccd0cf1e70a5496b9ee99b68831" },
+    "win-x64": { "file": "bcdb-win-x64.exe", "sha256": "d54087ac4f762d6ac7ac950a25b863ab975e23cb31ffce041690e59ed6d899d3" }
+  }
+}
