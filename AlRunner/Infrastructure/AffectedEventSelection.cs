@@ -76,8 +76,7 @@ internal static class AffectedEventSelection
     }
 
     /// <summary>
-    /// The keys a changed table or tableextension selects on (#5008), or why a changed
-    /// pageextension forces a full run (#5011). A table with no triggers
+    /// The keys a changed table or tableextension selects on (#5008). A table with no triggers
     /// contributes no statement to any coverage, yet an added trigger, a field property or a key
     /// changes what every test holding a record of it observes. Rules:
     /// docs/server-mode.md#affectedonly-and-changed-tables.
@@ -94,10 +93,6 @@ internal static class AffectedEventSelection
         var keys = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (kind, id) in changed)
         {
-            // A page is keyed by the tests that built it (#5011); an extension's base page is not
-            // recorded, so which tests open it is not known.
-            if (kind == "PageExtension")
-                return new(keys, $"{kind} {id} changed, and the base page of a pageextension is not recorded (#5011)");
             if (kind != "Table" && kind != "TableExtension") continue;
             if (id is not int n)
                 return new(keys, $"a changed {kind} has no object id, so the tests holding its records cannot be looked up");
@@ -131,6 +126,58 @@ internal static class AffectedEventSelection
             keys.Add(AlEventRaiseTracker.TableKey("Table", table));
             keys.Add(AlEventRaiseTracker.TriggerKey("Table", table));
         }
+    }
+
+    /// <summary>In the <see cref="AlEventRaiseTracker.BundleWideKey"/> entry (#5025): pageextension
+    /// <paramref name="extensionId"/> extended page <paramref name="pageId"/> when the baseline was
+    /// recorded, which is all that names the base of an extension removed since.</summary>
+    internal static string PageExtensionBaseKey(int extensionId, int pageId) => $"pext|{extensionId}|{pageId}";
+
+    /// <summary>
+    /// The coverage keys a changed pageextension selects on (#5025): its base page's, in both the
+    /// request-source (<c>Page|id:N</c>) and the dependency (<c>dep|Page|id:N</c>) form, since a test
+    /// opening the page records whichever applies. The base is the current registry's (an added or
+    /// edited extension) and the recorded one (an edited or removed extension). Rules:
+    /// docs/server-mode.md#affectedonly-and-page-extensions.
+    /// </summary>
+    /// <param name="currentPageBases">Each pageextension id to its base page ids now; null when the
+    /// registry could not be read.</param>
+    internal static Result ChangedPageExtensionKeys(
+        IEnumerable<(string Kind, int? Id)> changed,
+        IReadOnlyDictionary<int, List<int>>? currentPageBases,
+        HashSet<string>? recordedBundleWide)
+    {
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (kind, id) in changed)
+        {
+            if (kind != "PageExtension") continue;
+            if (id is not int n)
+                return new(keys, "a changed PageExtension has no object id, so its base page cannot be looked up");
+            if (recordedBundleWide == null)
+                return new(keys, $"PageExtension {n} changed and the coverage baseline has no record of which page each pageextension extends");
+            if (currentPageBases == null)
+                return new(keys, $"PageExtension {n} changed and the page each pageextension extends could not be read (a dependency's page symbols are unreadable)");
+            var bases = new SortedSet<int>();
+            if (currentPageBases.TryGetValue(n, out var now)) bases.UnionWith(now);
+            var recordedPrefix = $"pext|{n}|";
+            foreach (var k in recordedBundleWide)
+                if (k.StartsWith(recordedPrefix, StringComparison.Ordinal) && int.TryParse(k.AsSpan(recordedPrefix.Length), out var b))
+                    bases.Add(b);
+            if (bases.Count == 0)
+                return new(keys, $"the base page of pageextension {n} could not be resolved");
+            foreach (var b in bases)
+            {
+                var source = $"Page|id:{b}";
+                var dependency = AffectedEnvironmentDrift.DependencyKeyPrefix + source;
+                // A test can open a long-lived page without building it, so it carries no key.
+                if (recordedBundleWide.Contains(LongLivedObjectKey(source)) || recordedBundleWide.Contains(LongLivedObjectKey(dependency)))
+                    return new(keys, $"pageextension {n} extends Page {b}, an instance of which was built outside any one test "
+                        + "(a test codeunit's global, a SingleInstance codeunit, or before the test ran), so the tests using it are not recorded");
+                keys.Add(source);
+                keys.Add(dependency);
+            }
+        }
+        return new(keys, null);
     }
 
     /// <summary>In the <see cref="AlEventRaiseTracker.BundleWideKey"/> entry (#5011): an instance of

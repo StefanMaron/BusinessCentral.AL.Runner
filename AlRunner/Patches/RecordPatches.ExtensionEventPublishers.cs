@@ -41,6 +41,45 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// #5025: every pageextension id this run knows (source-parsed, then precompiled in a dependency
+    /// .app, where a same-numbered source-parsed one wins) to the ids its base page name resolves to
+    /// among the source-parsed and the dependency pages; empty when it resolves to none. Null when a
+    /// dependency .app's symbols cannot be read, which is no answer rather than "no extensions".
+    /// </summary>
+    internal static Dictionary<int, List<int>>? PageExtensionBasePageIds()
+    {
+        try
+        {
+            var pageIdsByName = new Dictionary<string, List<int>>(StringComparer.OrdinalIgnoreCase);
+            void Index(string name, int id)
+            {
+                var key = NameKey(name);
+                if (!pageIdsByName.TryGetValue(key, out var ids)) pageIdsByName[key] = ids = new List<int>();
+                if (!ids.Contains(id)) ids.Add(id);
+            }
+            foreach (var p in _parsedPages.Values) Index(p.Name, p.Id);
+            foreach (var p in DependencyPageSymbolsById().Values) Index(p.Name, p.Id);
+
+            var result = new Dictionary<int, List<int>>();
+            void Add(int extId, string baseName)
+                => result[extId] = baseName.Length > 0 && pageIdsByName.TryGetValue(NameKey(baseName), out var ids)
+                    ? ids.ToList() : new List<int>();
+            foreach (var ext in _parsedPageExtensions.Values) Add(ext.Id, ext.BaseName);
+            foreach (var symbols in DependencyAppSymbols())
+                foreach (var ext in symbols.PageExtensions ?? (IReadOnlyList<BcAppSymbolCache.PageExtensionSymbol>)Array.Empty<BcAppSymbolCache.PageExtensionSymbol>())
+                    if (!result.ContainsKey(ext.Id)) Add(ext.Id, ext.TargetObjectName);
+            return result;
+        }
+        catch (AlRunner.Infrastructure.BcAppSymbolReadException)
+        {
+            return null;
+        }
+
+        // The NamesEqual rule (case- and space-insensitive) as a dictionary key.
+        static string NameKey(string name) => name.Replace(" ", "");
+    }
+
+    /// <summary>
     /// The extension ids of base object <paramref name="baseId"/> of <paramref name="baseKind"/>
     /// (<c>Table</c>, <c>Page</c>, <c>Report</c>), source-parsed and precompiled — the registries
     /// the extension instances themselves are created from.

@@ -865,9 +865,10 @@ told apart:
   records). A later test can use that instance without building it or entering any of
   its code, for example `Run()` on a codeunit with no `OnRun`. Only a whole-object
   change forces this; a change narrowed to one procedure selects the tests that
-  entered it, whichever instance they ran on;
-- a `PageExtension` changed: which page it extends is not recorded, so which tests
-  open that page is not known.
+  entered it, whichever instance they ran on.
+
+A changed `PageExtension` selects the tests that opened the page it extends; see the
+next section.
 
 The persisted store's schema changed with this (schema 3), so a store written earlier
 is no baseline. A request that records nothing does not record these either.
@@ -877,6 +878,40 @@ process per build, same cache, steady state after the first request): a
 `perTestCoverage` run took 39.5 s on average with this recording and 40.0 s with it
 stubbed out (four runs each); a plain run took 38.6 s and 40.0 s (six runs each). Both
 differences are inside run-to-run noise.
+
+#### affectedOnly and page extensions
+
+A pageextension's code runs when its base page opens, so a changed `PageExtension`
+(added, edited, removed) selects the tests that opened the base page (#5025). Every way
+a test opens a page builds an instance of the base page, which the recording keeps as
+the page's key (previous section): a `TestPage`, `Page.Run` or `Page.RunModal` by id
+with a page handler, and a `Page` variable's `RunModal`. A base page in a dependency is
+kept as its `dep|Page|id:<n>` key, so its tests are selected the same way.
+
+The base page comes from two places, and both are used:
+
+- the runner's registry now: the source-parsed pageextensions and the pageextensions
+  of the dependency packages, each base page resolved by name among the source-parsed
+  and the dependency pages. This is what names the base of an added extension;
+- the recording: each recording run stores, in the bundle's `<bundle>` entry, a
+  `pext|<extension>|<page>` key for every pageextension the registry resolved then.
+  This is what names the base of an extension removed since, including across server
+  processes (the key is persisted with the rest of the entry).
+
+An extension edited to extend another page selects the tests of both pages.
+
+A full run is forced, with a `reason`, when:
+
+- neither the registry nor the recording names the extension's base page;
+- the registry could not be read (a dependency package's symbols are unreadable);
+- an instance of the base page was built outside any one test (a test codeunit's
+  global, a SingleInstance codeunit, or before the test ran), the same rule as for
+  any other object.
+
+An event an extension declares, and the subscribers it contains, are selected as in
+"affectedOnly and event subscribers". The baseline schema is unchanged: a baseline
+recorded before #5025 has no `pext|` keys, so a pageextension removed since then
+forces a full run.
 
 #### affectedOnly and packaged dependencies
 
@@ -1009,8 +1044,9 @@ full run.
   by record. A package whose bytes are equal contributes nothing. Otherwise every object
   whose hash differs, or that exists on one side only, is a changed object.
 - **How it selects**: a changed codeunit, page, report, query or xmlport selects the
-  tests that built an instance of it or entered one of its procedures or triggers, and
-  a changed table or tableextension the tests that held a record of it. Since #5028 each
+  tests that built an instance of it or entered one of its procedures or triggers, a
+  changed table or tableextension the tests that held a record of it, and a changed
+  pageextension the tests that opened its base page (#5025). Since #5028 each
   test's recording keeps those objects for code outside the request's own sources too
   (`dep|` keys). An interface has no code of its own and selects nothing. The run then
   applies every other rule as usual, including a changed dependency set, which is part
@@ -1024,7 +1060,7 @@ full run.
   record of its environment (written by a runner before #5028), the current closure
   could not be read, a changed package has no AL source and does carry compiled code, a
   changed file declares no object, a changed object is of a kind no recording holds
-  (an enum, a permission set, a report or page extension, …), a changed object's
+  (an enum, a permission set, a report extension, …), a changed object's
   instance or record was held outside any one test, or the BC build changed. What the
   diff did resolve still selects its tests. Tests that reached only what could not be
   attributed may be skipped; the account holder chose that over a full run (#5028).
