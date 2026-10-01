@@ -268,7 +268,9 @@ public static partial class RecordPatches
                 NameOf(parsed.PrimaryKey, synthesizedPkName), pkRelations,
                 clustered: parsed.PrimaryKey is null || (parsed.PrimaryKey.Clustered ?? false),
                 unique: parsed.PrimaryKey?.Unique ?? false,
-                sumIndexFields: SumIndexFieldsOf(parsed.PrimaryKey, allParsed));
+                sumIndexFields: SumIndexFieldsOf(parsed.PrimaryKey, allParsed),
+                obsoleteState: parsed.PrimaryKey?.ObsoleteState ?? "No",
+                obsoleteReason: parsed.PrimaryKey?.ObsoleteReason);
 
             // Build secondary key MetaKey objects
             var allKeys = new List<object> { pkKey };
@@ -280,7 +282,8 @@ public static partial class RecordPatches
                     if (skRelations.Length > 0)
                         allKeys.Add(BuildMetaKey(sk.Name, skRelations,
                             clustered: sk.Clustered ?? false, unique: sk.Unique,
-                            sumIndexFields: SumIndexFieldsOf(sk, allParsed)));
+                            sumIndexFields: SumIndexFieldsOf(sk, allParsed),
+                            obsoleteState: sk.ObsoleteState, obsoleteReason: sk.ObsoleteReason));
                 }
             }
 
@@ -1537,6 +1540,21 @@ public static partial class RecordPatches
         new ParsedField(0, "SystemRowVersion", "BigInteger", 0,
             Editable: false, DataClassificationName: "SystemMetadata");
 
+    /// <summary>The id of a platform field a KEY may name although no table declares it —
+    /// SystemId, the four audit fields, and SystemRowVersion at id 0 (see
+    /// <see cref="SystemRowVersionParsedField"/>) — or null for any other name. Every key
+    /// reader falls back to this after the table's own fields (#5135): BC enumerates such a
+    /// key, and corpus codeunit 68540 measures it.</summary>
+    internal static int? PlatformKeyFieldId(string? name)
+    {
+        if (string.IsNullOrEmpty(name)) return null;
+        foreach (var f in SystemParsedFields)
+            if (string.Equals(f.FieldName, name, StringComparison.OrdinalIgnoreCase)) return f.FieldId;
+        return string.Equals(SystemRowVersionParsedField.FieldName, name, StringComparison.OrdinalIgnoreCase)
+            ? SystemRowVersionParsedField.FieldId
+            : null;
+    }
+
     /// <summary>
     /// Resolve a field NAME that a CalcFormula or a TableRelation states, on
     /// <paramref name="table"/>, to the <see cref="ParsedField"/> the built NCLMetaTable
@@ -1815,6 +1833,7 @@ public static partial class RecordPatches
             foreach (var fn in ek.FieldNames)
             {
                 if (fieldIdByName.TryGetValue(fn, out var fid)) ids.Add(fid);
+                else if (PlatformKeyFieldId(fn) is { } platformId) ids.Add(platformId);
                 else { unresolved = fn; break; }
             }
             if (unresolved != null)
@@ -1829,7 +1848,8 @@ public static partial class RecordPatches
             if (ids.Count == 0) continue;
             allKeys.Add(BuildMetaKey(ek.Name,
                 ids.Select(fid => BuildFieldMetadataRelation(fid, FieldNameById(allParsed, fid))).ToArray(),
-                clustered: false));
+                clustered: false,
+                obsoleteState: ek.ObsoleteState, obsoleteReason: ek.ObsoleteReason));
         }
     }
 
@@ -1857,7 +1877,8 @@ public static partial class RecordPatches
 
     private static object BuildMetaKey(
         string name, object[] fieldRelations, bool clustered,
-        bool unique = false, object[]? sumIndexFields = null)
+        bool unique = false, object[]? sumIndexFields = null,
+        string obsoleteState = "No", string? obsoleteReason = null)
     {
         var ctor = _tMetaKey!.GetConstructors()
             .OrderByDescending(c => c.GetParameters().Length)
@@ -1877,6 +1898,20 @@ public static partial class RecordPatches
             if (p.Name == "name") { args[i] = name; continue; }
             if (p.Name == "clustered") { args[i] = clustered; continue; }
             if (p.Name == "unique") { args[i] = unique; continue; }
+            // #5136 — BC's NCLMetaKey.CreateFromMetaKey copies these onto the live key, and
+            // NavRecordRef.ALKeyCount/ALKeyIndex hide a Removed one; as for fields (#1780), only
+            // a non-default state is passed and the ctor's own "No" stands otherwise.
+            if (p.Name == "obsoleteState" && _tObsoleteState != null
+                && !string.Equals(obsoleteState, "No", StringComparison.OrdinalIgnoreCase))
+            {
+                args[i] = Enum.Parse(_tObsoleteState, obsoleteState, ignoreCase: true);
+                continue;
+            }
+            if (p.Name == "obsoleteReason" && !string.IsNullOrEmpty(obsoleteReason))
+            {
+                args[i] = obsoleteReason;
+                continue;
+            }
             if (p.Name == "enabled") { args[i] = (bool?)true; continue; }
             if (p.Name == "fieldRelations")
             {

@@ -559,7 +559,14 @@ internal static partial class BcAppSymbolCache
                     }
                 }
                 if (fieldNames.Count > 0)
-                    keys.Add(new ParsedExtensionKey(keyName, fieldNames));
+                {
+                    // #5136 — the key's ObsoleteState, stated as a field's is.
+                    var keyProps = SymbolProperties(key);
+                    keys.Add(new ParsedExtensionKey(keyName, fieldNames,
+                        keyProps.TryGetValue("ObsoleteState", out var keyObsolete) && !string.IsNullOrWhiteSpace(keyObsolete)
+                            ? keyObsolete.Trim() : "No",
+                        keyProps.TryGetValue("ObsoleteReason", out var keyObsoleteReason) ? keyObsoleteReason : null));
+                }
             }
         }
 
