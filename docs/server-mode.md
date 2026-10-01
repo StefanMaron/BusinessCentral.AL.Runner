@@ -30,6 +30,39 @@ select the build every request compiles, and a request cannot change them (#4952
   Wait for it before sending the first request. (On a cold start the runner may
   re-exec itself once for a clean Cecil load; the child inherits the same stdio,
   so the readiness line still arrives on the same pipe — just later.)
+- **stderr marks the end of each request.** See the next section.
+
+### stderr request marker
+
+After each request, the server writes one line to stderr (#5168):
+
+```
+[server] request <n> done
+```
+
+`<n>` counts requests from 1: every non-empty stdin line, malformed ones included, except a
+`cancel`, which is answered on the side channel and gets no number and no marker. `shutdown`
+gets one before the process exits.
+
+The line comes after the request's stdout response and after everything else the request writes
+to stderr. Those writes all happen on the dispatch thread or on threads the request joins
+before it returns, and all go through one writer, so a client that reads stderr up to the
+marker has every line the request wrote. That makes a negative check on the slice sound: a line
+missing from it was never written by that request. Lines before request 1's marker include
+the startup output.
+
+One exception: a test that hits the test timeout is abandoned on its own thread, not joined.
+Anything that thread writes later lands in whichever request is running then.
+
+The line prints at default verbosity. It bypasses Log's tag filter, which would otherwise drop a
+`[server]` line (`Log.WriteLineToStdErrUnfiltered`; docs/log-filter.md). It has no severity
+word in it, so a client that flags lines containing `error` or `warn` does not flag it. A client
+that shows stderr to a user can drop lines matching `^\[server\] request \d+ done$`. ALchemist,
+a VS Code extension that drives `--server`, reads only the server's stdout (`src/execution/serverProcess.ts`), so the
+marker does not reach its UI. `protocol-v2.schema.json` describes stdout only and is unchanged.
+
+In `AlRunner.Tests`, `CliServer.StdErrOfRequestAsync(n)` and `StdErrOfLastRequestAsync()` return
+one request's slice (docs/shared-cli-server.md).
 
 ## Requests
 

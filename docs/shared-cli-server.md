@@ -10,10 +10,14 @@ startup flags, no fact that stops or kills the server, and a distinct app id for
 Two more rules come from converting classes in #5110:
 
 - **Read stderr per request.** A shared server's `CliServer.StdErr` holds every earlier
-  request's output too. Take `StdErrMark` before the request and read `StdErrSinceAsync(mark,
-  anchor)` after it (#5096, #5100). A negative assertion needs an anchor the runner writes
-  after the line it excludes; where there is none, `StdErrSince(mark)` is exactly as strong as
-  the unsynchronised read the fact made before it shared a server, and no stronger.
+  request's output too. Read `StdErrOfLastRequestAsync()` after the request, or
+  `StdErrOfRequestAsync(n)` with `RequestsSent` read right after sending it (#5168). Both wait
+  for the server's `[server] request <n> done` marker, which comes after every line the request
+  writes to stderr, so a negative assertion on the slice is sound
+  (docs/server-mode.md#stderr-request-marker). `StdErrMark` with `StdErrSinceAsync(mark,
+  anchor)` (#5096, #5100) still works where a positive anchor is what the fact needs;
+  `StdErrSince(mark)` with no wait is no stronger than the unsynchronised read the fact made
+  before it shared a server.
 - **A fact that only passes on a fresh server is a finding.** File it, keep that class on one
   server per fact, and name the issue in the class. `TransitiveDependencyVisibilityTests` is
   the example (#5107).
