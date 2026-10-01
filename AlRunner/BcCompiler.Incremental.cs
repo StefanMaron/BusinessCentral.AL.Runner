@@ -1066,6 +1066,17 @@ public sealed partial class BcCompiler
             return null;
         }
 
+        if (ProcedureLeftPublicSurface(baseline.ModuleDef, deltaModuleDef, allChangedIdentities) is { } gone)
+        {
+            fallbackReason =
+                $"{gone} no longer declares a procedure it declared last cycle (removed, renamed or made local). "
+                + "An UNMODIFIED caller of it must fail to compile, and a cold build then excludes that "
+                + "caller; reusing its cached C# would run it against a member that may still exist "
+                + "(a local procedure keeps its member id) or throw at run time instead. Which objects call "
+                + "it cannot be read from the change set, so falling back to a full compile for this cycle";
+            return null;
+        }
+
         var mergedModuleDef = MergeModuleDefinition(baseline.ModuleDef, allChangedIdentities, deltaModuleDef);
 
         var newFileHashByPath = new Dictionary<string, string>(baseline.FileHashByPath, StringComparer.Ordinal);
@@ -1747,9 +1758,8 @@ public sealed partial class BcCompiler
     /// switch. What moves is the id the CALLER bakes — an Integer argument used to widen to
     /// <c>Which(Decimal)</c> and now binds to <c>Which(Integer)</c>. An un-rebound caller
     /// therefore dispatches a member that still exists and gets the PREVIOUS overload's answer:
-    /// no <c>NavNCLMissingMethodException</c>, no diagnostic, no log line. Not every other
-    /// breaking edit is loud: a procedure removed or made local while an unedited caller still
-    /// calls it stays on the fast path too (#5102).</para>
+    /// no <c>NavNCLMissingMethodException</c>, no diagnostic, no log line. A removed or
+    /// local-made procedure is <see cref="ProcedureLeftPublicSurface"/>'s (#5102).</para>
     ///
     /// <para><b>Why a full-compile fallback rather than a rebind.</b> Rebinding needs to know who
     /// the callers ARE, which needs an object-reference graph this fast path does not maintain.
@@ -1991,8 +2001,7 @@ public sealed partial class BcCompiler
     /// Attributes are not compared: [TryFunction] moves the member id, and an event publisher's
     /// attribute leaves its callers' C# unchanged (both measured in
     /// BcCompilerIncrementalSignatureTests). Body edits and parameter renames stay on the fast
-    /// path. A procedure removed or made local while an unedited caller still calls it is not
-    /// caught here and stays on the fast path (#5102).
+    /// path. A procedure that left the surface is <see cref="ProcedureLeftPublicSurface"/>'s (#5102).
     /// Interfaces are <see cref="InterfaceShapeChanged"/>'s. An object that reads twice or not at
     /// all counts as changed: a wrong "unchanged" is a stale emit.
     /// </summary>
@@ -2014,6 +2023,37 @@ public sealed partial class BcCompiler
             var nowByName = ParseSignatures(now);
             foreach (var (name, signatures) in wasByName)
                 if (nowByName.TryGetValue(name, out var nowSignatures) && signatures != nowSignatures)
+                    return $"{id.Kind} '{id.Name}' procedure '{name}'";
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// #5102: names the first changed object that declared a serialized procedure last cycle and no
+    /// longer does, or null. Local procedures are not serialized, so making one <c>local</c> reads
+    /// as a removal, which is the point: no other object may call it, and a cold build excludes an
+    /// unedited caller that does (measured in BcCompilerIncrementalProcedureRemovalTests). Only the
+    /// NAME is compared (case-insensitively), so an added procedure, an overload added or dropped
+    /// under a name that stays, and a local helper's own edits stay on the fast path. An object that
+    /// reads twice or not at all counts as changed.
+    /// </summary>
+    private static string? ProcedureLeftPublicSurface(
+        NavSymRef.ModuleDefinition before, NavSymRef.ModuleDefinition after, IReadOnlySet<RadObjectIdentity> changed)
+    {
+        var wanted = changed
+            .Where(i => i.Kind != NavCA.SymbolKind.Interface && RadMergeablePropertiesByKind.Any(p => p.Kind == i.Kind))
+            .ToHashSet();
+        if (wanted.Count == 0) return null;
+        var previous = RadShapes(before, wanted, ProcedureSignaturesOf);
+        var current = RadShapes(after, wanted, ProcedureSignaturesOf);
+        foreach (var id in wanted)
+        {
+            if (!previous.TryGetValue(id, out var was)) continue; // added this cycle
+            if (!current.TryGetValue(id, out var now)) continue;  // removed or renamed: ObjectIdMoved's territory
+            if (was == null || now == null) return $"{id.Kind} '{id.Name}'";
+            var nowByName = ParseSignatures(now);
+            foreach (var name in ParseSignatures(was).Keys)
+                if (!nowByName.ContainsKey(name))
                     return $"{id.Kind} '{id.Name}' procedure '{name}'";
         }
         return null;
