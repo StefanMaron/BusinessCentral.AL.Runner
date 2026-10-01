@@ -102,6 +102,13 @@ public sealed class RunnerShapeGapClaimTests
             ["query-column-filter-kind-unretargetable"] = (
                 () => Invoke("Query", "Query.SetFilter/SetRange on a query column", "query-column-filter-kind-unretargetable", "the probe detail"),
                 "Query.SetFilter/SetRange on a query column", "query-column-filter-kind-unretargetable", QueryDoc),
+            // #5133. A DISTINCT surface: the query itself is one the executor takes, and a write
+            // invalidated its result set mid-loop. The re-read positions on the query's OrderBy,
+            // and when an OrderBy column is an aggregate the runner has no faithful positioning
+            // filter for it (FindQueryFromPosition), so it refuses rather than guess.
+            ["query-reread-position-on-aggregated-column"] = (
+                () => Invoke("Query", "Query.Read after a write to the query's table", "query-reread-position-on-aggregated-column", "the probe detail"),
+                "Query.Read after a write to the query's table", "query-reread-position-on-aggregated-column", QueryDoc),
 
             ["user-property-companion-row"] = (
                 () => Invoke("UserPropertyCompanionRow", "User (2000000120) insert", "the probe detail"),
@@ -382,7 +389,28 @@ public sealed class RunnerShapeGapClaimTests
         // SAME factory and surface (`RunnerShapeGap.RequestPageReport`) that BindRequestPageOpenedByBc
         // already pins. Nothing was deleted: #4808 removed a Cecil rewrite and a swallowed-NRE
         // catch, neither of which was a RunnerShapeGap refusal.
-        Assert.Equal(23, total);
+        // 23 -> 24 (#5133): RecordPatches.QueryProjection.BuildQueryPositionPredicate, refusing a
+        // re-read positioned on an aggregated column, WITH its Sites entry above — a new surface.
+        Assert.Equal(24, total);
+    }
+
+    [Fact]
+    public void EveryQueryRefusalSurface_HasASitesEntry()
+    {
+        // RunnerShapeGap.Query takes its surface anchor as a literal, so the roster can be checked
+        // against the code: a new query refusal cannot reach the floor above without stating its
+        // claim in Sites.
+        var surfaces = FullyCorrectedFiles.Concat(PartiallyCorrectedFiles.Select(x => x.File))
+            .SelectMany(f => Regex.Matches(CodeOf(f),
+                    @"RunnerShapeGap\.Query\(\s*""[^""]*""\s*,\s*""([^""]+)""")
+                .Select(m => m.Groups[1].Value))
+            .Distinct()
+            .ToList();
+
+        Assert.True(surfaces.Count >= 9, $"expected the query refusal surfaces, found {surfaces.Count}");
+        foreach (var surface in surfaces)
+            Assert.True(Sites.Values.Any(v => v.Surface == surface),
+                $"RunnerShapeGap.Query surface '{surface}' has no Sites entry stating its claim");
     }
 
     // ── The nine sites the issue's own measurement could not see ─────────────────────────

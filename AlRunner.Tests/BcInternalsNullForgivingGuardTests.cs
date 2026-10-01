@@ -339,10 +339,14 @@ public sealed class BcInternalsNullForgivingGuardTests
         // BcShape.Property: a silent null there would drop a join query's WHERE filters before
         // grouping, and the post-projection pass would then test them against one row per group.
         //
-        // 123 -> 124 for NavServerHandle.ObjectType in DotNetInteropShims.ReadObjectType (#3222),
+        // 123 -> 131 for a query's positioned re-read and ORDER BY (RecordPatches.QueryProjection.cs,
+        // #5133, #5160): a null from any of those reads would position the re-read on nothing,
+        // rereading from the top.
+        //
+        // 131 -> 132 for NavServerHandle.ObjectType in DotNetInteropShims.ReadObjectType (#3222),
         // a BcShape.Property: a silent null would name the interface instead of the handle's type
         // in the dotnet-platform-unsupported refusal for a failed DotNet member call.
-        Assert.Equal(124, converted);
+        Assert.Equal(132, converted);
     }
 
     /// <summary>
