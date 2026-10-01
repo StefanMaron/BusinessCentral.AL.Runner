@@ -7684,7 +7684,8 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 recordedEnvs, current, AlRunner.Patches.RecordPatches.TableExtensionBaseTableIds(),
                 activePreviousEvents != null
                 && activePreviousEvents.TryGetValue(AlRunner.Infrastructure.AlEventRaiseTracker.BundleWideKey, out var bundleWide)
-                    ? bundleWide : null);
+                    ? bundleWide : null,
+                AlRunner.Patches.RecordPatches.PageExtensionBasePageIds());
             foreach (var (recordEnv, keys) in resolved.KeysByRecord) activeEnvKeysByRecord[recordEnv] = keys;
             activeExactRecordEnvs.UnionWith(resolved.ExactRecords);
             activeDrift = resolved.Info;
@@ -7729,12 +7730,26 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                             activePreviousEvents != null
                             && activePreviousEvents.TryGetValue(AlRunner.Infrastructure.AlEventRaiseTracker.BundleWideKey, out var bundleWideObjects)
                                 ? bundleWideObjects : null);
-                        if (eventResult.ForceFullReason != null || tableResult.ForceFullReason != null || longLivedReason != null)
+                        // #5025: a pageextension selects the tests that opened its base page.
+                        var pageExtensionResult = AlRunner.Infrastructure.AffectedEventSelection.ChangedPageExtensionKeys(
+                            activeChangedObjectIds.Select(o => (o.Kind, o.Id)),
+                            AlRunner.Patches.RecordPatches.PageExtensionBasePageIds(),
+                            activePreviousEvents != null
+                            && activePreviousEvents.TryGetValue(AlRunner.Infrastructure.AlEventRaiseTracker.BundleWideKey, out var bundleWidePageBases)
+                                ? bundleWidePageBases : null);
+                        if (eventResult.ForceFullReason != null || tableResult.ForceFullReason != null || longLivedReason != null
+                            || pageExtensionResult.ForceFullReason != null)
                         {
                             activeForcedFull = true;
-                            activeForcedReason = eventResult.ForceFullReason ?? tableResult.ForceFullReason ?? longLivedReason;
+                            activeForcedReason = eventResult.ForceFullReason ?? tableResult.ForceFullReason ?? longLivedReason
+                                ?? pageExtensionResult.ForceFullReason;
                         }
-                        else changedEventKeys = eventResult.Keys.Union(tableResult.Keys).ToHashSet(StringComparer.Ordinal);
+                        else
+                        {
+                            changedEventKeys = eventResult.Keys.Union(tableResult.Keys).ToHashSet(StringComparer.Ordinal);
+                            activeChangedObjectKeys = changedObjectKeys;
+                            changedObjectKeys.UnionWith(pageExtensionResult.Keys);
+                        }
                     }
                 }
 
@@ -8032,6 +8047,11 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                     exts.Add(ext);
                 }
             var eventsByTest = AlRunner.Infrastructure.AlEventRaiseTracker.CollectPerTest(extensionsOfTable);
+            // #5025: the base of every pageextension now, so a later removal can still be keyed.
+            var pageExtensionBaseKeys = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var (ext, pages) in AlRunner.Patches.RecordPatches.PageExtensionBasePageIds() ?? new Dictionary<int, List<int>>())
+                foreach (var page in pages)
+                    pageExtensionBaseKeys.Add(AlRunner.Infrastructure.AffectedEventSelection.PageExtensionBaseKey(ext, page));
             var bundleWideKey = AlRunner.Infrastructure.AlEventRaiseTracker.BundleWideKey;
             // #5011: objects built and scopes entered, which an empty body or a page without
             // triggers leaves out of statement coverage.
@@ -8266,6 +8286,7 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 // tests' long-lived records, so the previous entry's are kept as well.
                 var bundleWide = new HashSet<string>(eventsByTest[bundleWideKey], StringComparer.Ordinal);
                 bundleWide.UnionWith(longLivedObjectKeys);
+                bundleWide.UnionWith(pageExtensionBaseKeys);
                 foreach (var type in longLivedTypes)
                     if ((UsedObjectOf(type) is not { } lo
                             || AlRunner.Infrastructure.DependencyPackageFingerprint.IsUnderAny(lo.Path, packagedSourceRoots))

@@ -89,7 +89,7 @@ public class AffectedEnvironmentDriftTests
                 new AffectedObjectId("Enum", 36, "Document Type"),
             },
             new Dictionary<int, List<int>>(),
-            new HashSet<string>(StringComparer.Ordinal));
+            new HashSet<string>(StringComparer.Ordinal), new Dictionary<int, List<int>>());
         Assert.Equal(new[] { "dep|Codeunit|id:80" }, keys.CoverageKeys);
         Assert.Contains("tbl|Table|18", keys.EventKeys);
         Assert.Equal("Enum 36 Document Type changed, and no test recording holds the use of this kind of object (Enum)",
@@ -97,8 +97,30 @@ public class AffectedEnvironmentDriftTests
 
         var longLived = AffectedEnvironmentDrift.SelectionKeys(new[] { new AffectedObjectId("Codeunit", 80, "Sales-Post") },
             new Dictionary<int, List<int>>(),
-            new HashSet<string>(StringComparer.Ordinal) { AffectedEventSelection.LongLivedObjectKey("dep|Codeunit|id:80") });
+            new HashSet<string>(StringComparer.Ordinal) { AffectedEventSelection.LongLivedObjectKey("dep|Codeunit|id:80") },
+            new Dictionary<int, List<int>>());
         Assert.Contains("built outside any one test", Assert.Single(longLived.Unattributed));
+    }
+
+    // #5025: a dependency's pageextension selects through its base page, now or as recorded.
+    [Fact]
+    public void SelectionKeys_PageExtension_KeysItsBasePage_CurrentOrRecorded()
+    {
+        var current = new Dictionary<int, List<int>> { [9001] = new() { 21 } };
+        var recorded = new HashSet<string>(StringComparer.Ordinal) { AffectedEventSelection.PageExtensionBaseKey(9002, 22) };
+        var keys = AffectedEnvironmentDrift.SelectionKeys(new[]
+            {
+                new AffectedObjectId("PageExtension", 9001, "Edited"),
+                new AffectedObjectId("PageExtension", 9002, "Removed"),
+            },
+            new Dictionary<int, List<int>>(), recorded, current);
+        Assert.Empty(keys.Unattributed);
+        Assert.Equal(new[] { "Page|id:21", "Page|id:22", "dep|Page|id:21", "dep|Page|id:22" },
+            keys.CoverageKeys.OrderBy(k => k, StringComparer.Ordinal));
+
+        var unknown = AffectedEnvironmentDrift.SelectionKeys(new[] { new AffectedObjectId("PageExtension", 9003, "New") },
+            new Dictionary<int, List<int>>(), recorded, current);
+        Assert.Contains("base page of pageextension 9003 could not be resolved", Assert.Single(unknown.Unattributed));
     }
 
     [Fact]
@@ -138,7 +160,7 @@ public class AffectedEnvironmentDriftTests
         var envs = new BundleEnvironments();
         envs.Set("T.A", env);
         var r = AffectedEnvironmentDrift.Resolve("28.1.1.0|/bc", "28.2.2.0|/bc", new[] { AffectedEnvironmentDrift.IdOf(env) },
-            envs, env, new Dictionary<int, List<int>>(), new HashSet<string>(StringComparer.Ordinal));
+            envs, env, new Dictionary<int, List<int>>(), new HashSet<string>(StringComparer.Ordinal), new Dictionary<int, List<int>>());
         Assert.Equal(EnvironmentDriftInfo.Approximate, r.Info.Mode);
         Assert.Equal(0, r.Info.ChangedObjects);
         Assert.Contains("the BC platform changed (28.1.1.0 to 28.2.2.0) and is not diffed", r.Info.Reason);
@@ -156,7 +178,7 @@ public class AffectedEnvironmentDriftTests
         envs.Set("T.New", e2);
         var (id1, id2) = (AffectedEnvironmentDrift.IdOf(e1), AffectedEnvironmentDrift.IdOf(e2));
         var r = AffectedEnvironmentDrift.Resolve("28.1.1.0|/bc|/p", "28.1.1.0|/bc|/q", new[] { id1, id2, id1, "" },
-            envs, e3, new Dictionary<int, List<int>>(), new HashSet<string>(StringComparer.Ordinal));
+            envs, e3, new Dictionary<int, List<int>>(), new HashSet<string>(StringComparer.Ordinal), new Dictionary<int, List<int>>());
 
         Assert.Equal(new[] { "dep|Codeunit|id:80", "dep|Codeunit|id:90" }, r.KeysByRecord[id1].CoverageKeys.OrderBy(k => k, StringComparer.Ordinal));
         Assert.Equal(new[] { "dep|Codeunit|id:90" }, r.KeysByRecord[id2].CoverageKeys);

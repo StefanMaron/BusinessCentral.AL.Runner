@@ -143,12 +143,58 @@ public class AffectedEventSelectionTests
     }
 
     [Fact]
-    public void ChangedPageExtension_ForcesFull_ChangedPageIsLeftToTheTestsThatBuiltIt()
+    public void ChangedPageOrPageExtension_KeysNoTable()
     {
-        var page = Tables(new (string, int?)[] { ("Page", 50103) });
-        Assert.Null(page.ForceFullReason);
-        Assert.Empty(page.Keys);
-        Assert.Contains("PageExtension 50105 changed", Tables(new (string, int?)[] { ("PageExtension", 50105) }).ForceFullReason);
+        var r = Tables(new (string, int?)[] { ("Page", 50103), ("PageExtension", 50105) });
+        Assert.Null(r.ForceFullReason);
+        Assert.Empty(r.Keys);
+    }
+
+    // #5025 — ChangedPageExtensionKeys. The server-level proof is ServerAffectedSelectionPageExtensionTests.
+    private static AffectedEventSelection.Result PageExtensions(
+        (string, int?)[] changed, Dictionary<int, List<int>>? bases, params string[] bundleWide)
+        => AffectedEventSelection.ChangedPageExtensionKeys(changed, bases,
+            bundleWide.Length == 1 && bundleWide[0] == "<none>" ? null : bundleWide.ToHashSet(StringComparer.Ordinal));
+
+    [Fact]
+    public void ChangedPageExtension_KeysItsBasePage_FromTheRegistryOrTheRecording()
+    {
+        var bases = new Dictionary<int, List<int>> { [50105] = new() { 50103 } };
+        var added = PageExtensions(new (string, int?)[] { ("PageExtension", 50105), ("Codeunit", 50100), ("Page", 50104) }, bases);
+        Assert.Null(added.ForceFullReason);
+        Assert.Equal(new[] { "Page|id:50103", "dep|Page|id:50103" }, added.Keys.OrderBy(k => k, StringComparer.Ordinal));
+
+        // Removed: gone from the registry; the recording run named its base.
+        var removed = PageExtensions(new (string, int?)[] { ("PageExtension", 50106) }, bases,
+            AffectedEventSelection.PageExtensionBaseKey(50106, 50107), "pext|501060|1");
+        Assert.Null(removed.ForceFullReason);
+        Assert.Equal(new[] { "Page|id:50107", "dep|Page|id:50107" }, removed.Keys.OrderBy(k => k, StringComparer.Ordinal));
+
+        // Rebased: both the page it extended and the one it extends now.
+        var rebased = PageExtensions(new (string, int?)[] { ("PageExtension", 50105) }, bases,
+            AffectedEventSelection.PageExtensionBaseKey(50105, 50108));
+        Assert.Equal(new[] { "Page|id:50103", "Page|id:50108", "dep|Page|id:50103", "dep|Page|id:50108" },
+            rebased.Keys.OrderBy(k => k, StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void ChangedPageExtension_ForcesFull_WhenItsBaseCannotBeNamed_OrIsHeldOutsideATest()
+    {
+        var bases = new Dictionary<int, List<int>> { [50105] = new() { 50103 }, [50109] = new() };
+        Assert.Contains("base page of pageextension 50109 could not be resolved",
+            PageExtensions(new (string, int?)[] { ("PageExtension", 50109) }, bases).ForceFullReason);
+        Assert.Contains("could not be read",
+            PageExtensions(new (string, int?)[] { ("PageExtension", 50105) }, null).ForceFullReason);
+        Assert.Contains("no record of which page each pageextension extends",
+            PageExtensions(new (string, int?)[] { ("PageExtension", 50105) }, bases, "<none>").ForceFullReason);
+        Assert.Contains("has no object id",
+            PageExtensions(new (string, int?)[] { ("PageExtension", null) }, bases).ForceFullReason);
+        Assert.Null(PageExtensions(new (string, int?)[] { ("Page", 50103) }, null, "<none>").ForceFullReason);
+
+        foreach (var held in new[] { "Page|id:50103", "dep|Page|id:50103" })
+            Assert.Contains("extends Page 50103, an instance of which was built outside any one test",
+                PageExtensions(new (string, int?)[] { ("PageExtension", 50105) }, bases,
+                    AffectedEventSelection.LongLivedObjectKey(held)).ForceFullReason);
     }
 
     // #5011 — a whole-object change to an instance no one test built.
