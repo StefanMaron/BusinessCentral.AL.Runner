@@ -92,8 +92,11 @@ public class AffectedEnvironmentDriftTests
             new HashSet<string>(StringComparer.Ordinal), new Dictionary<int, List<int>>());
         Assert.Equal(new[] { "dep|Codeunit|id:80" }, keys.CoverageKeys);
         Assert.Contains("tbl|Table|18", keys.EventKeys);
-        Assert.Equal("Enum 36 Document Type changed, and no test recording holds the use of this kind of object (Enum)",
-            Assert.Single(keys.Unattributed));
+        Assert.Equal(new[]
+            {
+                "Interface IThing changed, and no test recording holds the use of this kind of object (Interface)",
+                "Enum 36 Document Type changed, and no test recording holds the use of this kind of object (Enum)",
+            }, keys.Unattributed);
 
         var longLived = AffectedEnvironmentDrift.SelectionKeys(new[] { new AffectedObjectId("Codeunit", 80, "Sales-Post") },
             new Dictionary<int, List<int>>(),
@@ -249,14 +252,21 @@ public class AffectedEnvironmentDriftTests
         envs.Prune();
         Assert.Single(envs.Snapshots);
 
-        // A version-4 file (before #5028) loads, with no environment to diff against.
-        File.WriteAllText(path, text.Replace($"\"Schema\":{AffectedBaselineStore.SchemaVersion},", "\"Schema\":4,", StringComparison.Ordinal));
+        // A file with no environment record loads, with no environment to diff against.
+        var node = System.Text.Json.Nodes.JsonNode.Parse(text)!.AsObject();
+        foreach (var b in node["Bundles"]!.AsObject())
+        {
+            b.Value!.AsObject().Remove("Envs");
+            b.Value!.AsObject().Remove("TestEnv");
+        }
+        File.WriteAllText(path, node.ToJsonString());
         var old = AffectedBaselineStore.Load(path);
         Assert.Null(old.Unusable);
         Assert.Null(old.Baseline!.Bundles["/b"].Environments);
 
-        File.WriteAllText(path, text.Replace($"\"Schema\":{AffectedBaselineStore.SchemaVersion},", "\"Schema\":3,", StringComparison.Ordinal));
-        Assert.Contains("schema version 3", AffectedBaselineStore.Load(path).Unusable);
+        // A version-5 file (before #5057) recorded no LastError or DotNet use, so it is no baseline.
+        File.WriteAllText(path, text.Replace($"\"Schema\":{AffectedBaselineStore.SchemaVersion},", "\"Schema\":5,", StringComparison.Ordinal));
+        Assert.Contains("schema version 5", AffectedBaselineStore.Load(path).Unusable);
     }
 
     [Fact]

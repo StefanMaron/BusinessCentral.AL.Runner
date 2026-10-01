@@ -431,6 +431,9 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // #5025: added by its PR, one server with nine requests plus two more server starts. An
             // estimate until a CI leg measures it: replace with the observed maximum.
             ["ServerAffectedSelectionPageExtensionTests"] = 85,
+            // #5083: added by its PR, one server with twelve requests plus five more server starts. An
+            // estimate until a CI leg measures it: replace with the observed maximum.
+            ["ServerAffectedSelectionObjectKindTests"] = 90,
             // #5034: added by its PR, eight server starts and seventeen requests; 75s locally. An
             // estimate until a CI leg measures it: replace with the observed maximum.
             ["ServerTddTests"] = 200,
@@ -456,6 +459,9 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // #5028: added by its PR, twelve server starts and thirteen requests; 100s locally. An
             // estimate until a CI leg measures it: replace with the observed maximum.
             ["ServerAffectedSelectionEnvironmentDriftTests"] = 230,
+            // #5057: added by its PR, thirteen server starts and thirty-one requests; 122s locally.
+            // An estimate until a CI leg measures it: replace with the observed maximum.
+            ["ServerAffectedSelectionUnrecordedStateTests"] = 260,
             // #2223: added by PR #4478, which introduces this collection. 4 tests, each
             // spawning a real runner subprocess against a bundle declaring an `application`
             // floor, and one of them spawning a second: the warm-skip path runs the bundle

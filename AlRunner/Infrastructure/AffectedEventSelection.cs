@@ -180,6 +180,33 @@ internal static class AffectedEventSelection
         return new(keys, null);
     }
 
+    // Kinds a change of which some recorded key selects on: an instance built or a scope entered (the
+    // object's own key), a record held (ChangedTableKeys), a base page opened (ChangedPageExtensionKeys).
+    // A kind added here without its keys is the silent too-few selection #5083 closed.
+    private static readonly HashSet<string> KeyedKinds = new(StringComparer.Ordinal)
+    {
+        "Codeunit", "Page", "Report", "Query", "XmlPort", "Table", "TableExtension", "PageExtension",
+    };
+
+    /// <summary>
+    /// Why a changed object forces a full run because no recorded key can select the tests that
+    /// reached it (#5083): every kind outside <see cref="KeyedKinds"/>,
+    /// an enum, an enumextension, a reportextension and an interface among them. Null when every changed kind is keyed.
+    /// Rules: docs/server-mode.md#affectedonly-and-object-kinds-no-test-records.
+    /// </summary>
+    internal static string? UnkeyedKindChange(IEnumerable<AffectedObjectId> changed)
+    {
+        foreach (var o in changed.OrderBy(o => o.Kind, StringComparer.Ordinal).ThenBy(o => o.Id ?? int.MaxValue))
+        {
+            if (KeyedKinds.Contains(o.Kind)) continue;
+            var what = o.Id is int id ? $"{o.Kind} {id}" : $"{o.Kind} {o.Name}";
+            return o.Kind is "Enum" or "EnumExtension"
+                ? $"{what} changed, and which tests read an enum's values, captions or implementations is not recorded"
+                : $"{what} changed, and no test recording holds the use of this kind of object ({o.Kind})";
+        }
+        return null;
+    }
+
     /// <summary>In the <see cref="AlEventRaiseTracker.BundleWideKey"/> entry (#5011): an instance of
     /// the object (<c>Kind|id:N</c>) was built outside any one test, or held where another test can
     /// use it without building one or entering its code.</summary>

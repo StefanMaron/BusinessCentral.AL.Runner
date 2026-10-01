@@ -27,12 +27,17 @@ internal static class AffectedIsolationWidening
             return selected.Count - before;
         }
         var codeunits = selected.Select(CodeunitOf)
-            .Where(c => isolation != TestIsolation.Test || sharesStateAcrossTests?.Invoke(c) != false)
+            .Where(c => SharesState(isolation, c, sharesStateAcrossTests))
             .ToHashSet(StringComparer.Ordinal);
         foreach (var test in discovered)
             if (codeunits.Contains(CodeunitOf(test))) selected.Add(test);
         return selected.Count - before;
     }
+
+    /// <summary>Whether a selected test's codeunit carries state to its other tests under
+    /// <paramref name="isolation"/>; only <see cref="TestIsolation.Test"/> asks the predicate.</summary>
+    internal static bool SharesState(TestIsolation isolation, string codeunit, Func<string, bool>? sharesStateAcrossTests)
+        => isolation != TestIsolation.Test || sharesStateAcrossTests?.Invoke(codeunit) != false;
 
     /// <summary>
     /// The selection environment key with the isolation appended: coverage recorded under one

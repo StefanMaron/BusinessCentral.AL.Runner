@@ -166,6 +166,7 @@ public sealed class ServerTddTests
             Assert.True(plain.ExitCode == 3, plain.Raw);
             Assert.Empty(plain.Tests);
 
+            var redMark = server.StdErrMark;
             var red = await Send(server, new[] { bundle }, tdd: true);
             Assert.True(red.ExitCode == 1, red.Raw);
             Assert.Equal(new[] { "DoubleIt_ReturnsTwice", "NameLength_CountsCharacters", "Unrelated_Passes" },
@@ -177,7 +178,8 @@ public sealed class ServerTddTests
             AssertCompileFailure(red, "NameLength_CountsCharacters", "NameLength");
             Assert.Contains("AL0132", red.Message("NameLength_CountsCharacters"), StringComparison.Ordinal);
             Assert.True(red.Status("Unrelated_Passes") == "pass", red.Raw);
-            Assert.Contains("SrvTdd Calc: procedure \"DoubleIt\"(Arg1: Integer): Integer", server.StdErr);
+            // Stderr is read asynchronously, so wait for the line rather than read StdErr (#5096).
+            await server.StdErrSinceAsync(redMark, "SrvTdd Calc: procedure \"DoubleIt\"(Arg1: Integer): Integer");
 
             var plainAgain = await Send(server, new[] { bundle }, tdd: false);
             Assert.True(plainAgain.ExitCode == 3, plainAgain.Raw);

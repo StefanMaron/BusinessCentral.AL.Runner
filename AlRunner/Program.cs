@@ -6071,7 +6071,8 @@ return strictExitCode ? computedExitCode : 0;
                     .ToList();
                 var resolverDirs = bundlePkgDirs.Concat(effectivePkgDirs).Distinct().ToList();
                 var resolver = new DependencyResolver(resolverDirs, AlRunner.Infrastructure.CacheRoots.SourceBuiltPackageDirs());
-                ordered = resolver.Resolve(roots);
+                // #5091: the Test Runner app by default, as the CLI resolve and the AL-output cache key do.
+                ordered = resolver.Resolve(WithDefaultTestTool(roots.ToList(), new[] { appJsonPath }, resolver));
                 AlRunner.Infrastructure.PhaseLog.NoteDepsResolved(ordered.Count);
                 // Same split as the CLI loop: workspace dirs reach the compiler only as the
                 // *.symbols.json of this bundle's resolved closure, never through the package
@@ -7737,12 +7738,14 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                             activePreviousEvents != null
                             && activePreviousEvents.TryGetValue(AlRunner.Infrastructure.AlEventRaiseTracker.BundleWideKey, out var bundleWidePageBases)
                                 ? bundleWidePageBases : null);
-                        if (eventResult.ForceFullReason != null || tableResult.ForceFullReason != null || longLivedReason != null
-                            || pageExtensionResult.ForceFullReason != null)
+                        // #5083: a changed kind no recorded key reaches (an enum, a reportextension, ...).
+                        var unkeyedKindReason = AlRunner.Infrastructure.AffectedEventSelection.UnkeyedKindChange(activeChangedObjectIds);
+                        if (unkeyedKindReason != null || eventResult.ForceFullReason != null || tableResult.ForceFullReason != null
+                            || longLivedReason != null || pageExtensionResult.ForceFullReason != null)
                         {
                             activeForcedFull = true;
-                            activeForcedReason = eventResult.ForceFullReason ?? tableResult.ForceFullReason ?? longLivedReason
-                                ?? pageExtensionResult.ForceFullReason;
+                            activeForcedReason = unkeyedKindReason ?? eventResult.ForceFullReason ?? tableResult.ForceFullReason
+                                ?? longLivedReason ?? pageExtensionResult.ForceFullReason;
                         }
                         else
                         {
@@ -7784,26 +7787,21 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                     var statefulCodeunits = executor.Isolation == TestIsolation.Test
                         ? TestExecutor.CodeunitsSharingStateAcrossTests(asm)
                         : null;
-                    // #5050: session state (WorkDate, number sequences, SingleInstance) outlives every isolation.
+                    // #5050: session state (WorkDate, number sequences, SingleInstance, ...) outlives every
+                    // isolation. #5057: repeated together, so a test either brings in gets its codeunit too;
+                    // under Test isolation only a codeunit that carries state across its tests (#4826).
                     var bundleChanged = (activeChangedObjectKeys?.Count ?? 0) > 0 || changedEventKeys.Count > 0
                         || activeEnvKeysByRecord.Values.Any(k => k.CoverageKeys.Count > 0 || k.EventKeys.Count > 0);
-                    var widened = AlRunner.Infrastructure.AffectedIsolationWidening.Widen(discovered, exactSelection,
-                        executor.Isolation, statefulCodeunits == null ? null : statefulCodeunits.Contains);
-                    var stateWidened = AlRunner.Infrastructure.AffectedSessionStateSelection.Widen(
-                        discovered, exactSelection, activePreviousEvents,
+                    var (widened, stateWidened) = AlRunner.Infrastructure.AffectedSessionStateSelection.WidenWithIsolation(
+                        discovered, exactSelection, activePreviousEvents, executor.Isolation,
                         changed: bundleChanged,
                         earlierBundleChanged: requestChangedAnyBundle,
-                        laterBundleFollows: bundlesStarted < requestModuleNames.Count);
-                    // #4826: under Test isolation a test the session-state rule just added can sit in a
-                    // codeunit whose earlier tests set its globals, so widen those codeunits once more. Not a
-                    // loop: re-applying the session-state rule would treat an added writer as a changed test.
-                    if (stateWidened > 0 && executor.Isolation == TestIsolation.Test)
-                        widened += AlRunner.Infrastructure.AffectedIsolationWidening.Widen(discovered, exactSelection,
-                            executor.Isolation, statefulCodeunits!.Contains);
-                    requestChangedAnyBundle |= bundleChanged;
+                        laterBundleFollows: bundlesStarted < requestModuleNames.Count,
+                        sharesStateAcrossTests: statefulCodeunits == null ? null : statefulCodeunits.Contains);
                     if (widened > 0)
                         Console.Error.WriteLine(
                             $"  [{affected.LogTag}] affectedOnly: selected {widened} more test(s) that share state with a selected one (TestIsolation={executor.Isolation})");
+                    requestChangedAnyBundle |= bundleChanged;
                     if (stateWidened > 0)
                         Console.Error.WriteLine(
                             $"  [{affected.LogTag}] affectedOnly: selected {stateWidened} more test(s) linked to a selected one through session state");
