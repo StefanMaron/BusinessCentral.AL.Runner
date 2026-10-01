@@ -102,7 +102,10 @@ public class ServerExecuteContainerTests
 
         var (response, raw) = await ExecuteAsync(scratch, root);
 
-        Assert.True(raw.Contains("AL0185: Codeunit 'SEC Base Api' is missing"), raw);
+        var errors = response.TryGetProperty("compilationErrors", out var groups)
+            ? groups.EnumerateArray().SelectMany(g => g.GetProperty("errors").EnumerateArray().Select(e => e.GetString() ?? "")).ToList()
+            : new List<string>();
+        Assert.True(errors.Any(e => e.Contains("AL0185: Codeunit 'SEC Base Api' is missing")), raw);
         Assert.True(response.GetProperty("exitCode").GetInt32() != 0, raw);
         if (response.TryGetProperty("tests", out var tests))
             Assert.False(tests.EnumerateArray().Any(t => t.GetProperty("name").GetString() == "Codeunit60100.OnRun"
