@@ -9,7 +9,7 @@ namespace AlRunner;
 ///
 /// One JSON object per line. stdin = requests, stdout = responses.
 ///   request : {command, sourcePaths[], packagePaths[], stubPaths[], code, captureValues,
-///              coverage, perTestCoverage, affectedOnly, iterationTracking, testIsolation}
+///              coverage, perTestCoverage, affectedOnly, iterationTracking, testIsolation, tdd}
 ///             runTests/execute refuse any other field and warn on one they do not read
 ///             (#4952, docs/server-mode.md#request-fields).
 ///   runTests: STREAMING (protocol-v2.schema.json — see #1641) — zero or more
@@ -218,6 +218,14 @@ public sealed class ServerRequest
     [JsonPropertyName("testIsolation")] public string? TestIsolation { get; set; }
 
     /// <summary>
+    /// #5034, <c>runTests</c> only: the CLI's <c>--tdd</c> for this request. A missing member a
+    /// test calls is generated in memory; what cannot be generated reports each test of its object
+    /// as a failed <c>test</c> line with <c>errorKind: "compile"</c>. Null = the server's
+    /// <c>--tdd</c> startup flag. See docs/server-mode.md#tdd.
+    /// </summary>
+    [JsonPropertyName("tdd")] public bool? Tdd { get; set; }
+
+    /// <summary>
     /// Every field the request carried that no property above declares. <c>runTests</c> and
     /// <c>execute</c> refuse a request with any (#4952); see <see cref="ServerProtocol.CheckFields"/>.
     /// </summary>
@@ -292,7 +300,7 @@ public static class ServerProtocol
             ["runtests"] = new HashSet<string>(StringComparer.Ordinal)
             {
                 "command", "sourcePaths", "packagePaths", "coverage", "perTestCoverage",
-                "affectedOnly", "includeFailing", "strictEnvironment", "testIsolation",
+                "affectedOnly", "includeFailing", "strictEnvironment", "testIsolation", "tdd",
             },
             ["execute"] = new HashSet<string>(StringComparer.Ordinal)
             {

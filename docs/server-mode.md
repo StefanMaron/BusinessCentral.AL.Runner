@@ -49,6 +49,7 @@ select the build every request compiles, and a request cannot change them (#4952
   "affectedOnly": false,        // runTests: select only tests affected by object changes since the previous run (#2441)
   "includeFailing": false,      // with affectedOnly: rerun every test that did not pass last time, whatever changed (#4978)
   "strictEnvironment": false,   // with affectedOnly: run everything when the baseline was recorded in another environment (#5028)
+  "tdd": false,                 // runTests: the CLI's --tdd for this request; default: the --tdd startup flag (#5034)
   "testIsolation": "codeunit"   // optional: "codeunit" (default) | "test"/"method" | "disabled"
                                  // — see #1616. Applies to this request only; a later
                                  // request that omits the field falls back to the
@@ -68,7 +69,7 @@ Field names are case-sensitive. What happens to a field depends on the command (
 | not declared above (`preprocessorSymbols`, `testFilter`, `SourcePaths`, …) | **refused** with one `{"error": …}` line naming the field; nothing runs | ignored |
 
 `runTests` reads `sourcePaths`, `packagePaths`, `coverage`, `perTestCoverage`, `affectedOnly`,
-`includeFailing`, `strictEnvironment` and `testIsolation`. `execute` reads `sourcePaths`, `code`, `packagePaths`,
+`includeFailing`, `strictEnvironment`, `tdd` and `testIsolation`. `execute` reads `sourcePaths`, `code`, `packagePaths`,
 `captureValues`, `iterationTracking`, `coverage`, `perTestCoverage`, `affectedOnly` and
 `testIsolation`.
 
@@ -899,13 +900,14 @@ object and the tests that built, entered or held records of a changed object run
 `strictEnvironment: true`. Statements under any other untracked file still make the
 test unknown.
 
-The "actually runs" condition matters: once a request has compiled `App/` as its
-own bundle, a later request that resolves `App.app` reuses that source-compiled
-module for the AppId (#1892) rather than loading the package. The package's bytes
-then say nothing about what runs, so it is left out of the key and the statements
-stay unknown: an edit to `App/` followed by a request naming `App/` is picked up.
-While the package is the module that runs, an edit to `App/` that is not rebuilt
-into the package changes nothing the tests execute and selects nothing.
+The "actually runs" condition matters within one request: when the request also
+compiles `App/` as its own bundle, a bundle that resolves `App.app` shares that
+source-compiled module for the AppId (#1892) rather than loading the package. The
+package's bytes then say nothing about what runs, so it is left out of the key and the
+statements stay unknown. A module an earlier request compiled from `App/` is not reused
+for the package (#5079, "Another directory with the same app id"), so while the package
+is the module that runs, an edit to `App/` that is not rebuilt into the package changes
+nothing the tests execute and selects nothing.
 
 The request-bundle exclusion compares symlink-resolved paths, so a request folder
 reached through a link is never ignored. Package hashes go through the process's
@@ -1048,6 +1050,39 @@ full run.
   change between two processes. A dependency whose version changes inside one process
   is expected to make the change model recompile the module in full and force a full
   run for that reason; that case is not yet measured or diffed (#5074).
+### `tdd`
+
+`"tdd": true` on `runTests` is the CLI's `--tdd` for that one request (#5034): a test that
+calls a member the app does not have yet no longer turns the whole app group into a compile
+failure with no `test` lines. Starting the server with `--tdd` makes it the default for
+requests that omit the field; `"tdd": false` turns it off for one request. `execute` does not
+read it.
+
+It runs the same generation as the CLI and `--watch --tdd` (`--guide`, "TDD MODE"):
+
+- A missing member the call site anchors (a procedure's argument and return types, a field's
+  type, an enum or enumextension value) is generated in memory, never on disk, and the test
+  runs. It is still reported `"status": "fail"`, `"errorKind": "compile"`, with a message
+  naming the generated signature — a test that ran against a stub is not a pass.
+- With the app and its tests as two `sourcePaths`, the member is generated into the app bundle
+  and the app is recompiled within the same request before the test bundle compiles again.
+- A member that cannot be generated (no anchor, a `Text` argument, a precompiled dependency's
+  object) excludes the object that calls it; each of its `[Test]` procedures is a `test` line
+  with `"status": "fail"`, `"errorKind": "compile"` and a message naming the missing symbol
+  and its AL diagnostic. Every other object still runs.
+- The summary's `exitCode` is `1` (a test failed), not `3`. The members generated are listed
+  on stderr.
+
+Nothing a tdd request generated outlives it: the next request compiles the files on disk. A tdd
+request neither reads nor writes the AL-output cache, and other requests keep using it.
+
+**With `affectedOnly`.** A bundle whose compile generated a member or excluded an object keeps
+no change-model baseline from that request, so no per-test coverage is recorded for it and the
+next request compiles it in full and runs all of its tests (`forcedFull`). Without this, an
+unchanged next request would reuse the module compiled with the stub and select tests against
+coverage measured on code that is not on disk. A test excluded by the refuse path never ran, so
+it has no coverage record, and a test with no record is always selected. When the real member
+replaces the stub, the next `affectedOnly` request runs that test against it.
 
 ### `shutdown`
 
@@ -1125,6 +1160,17 @@ AL-output type finders (`FindRecordType`, the codeunit/event finders) then prefe
 `BcRuntime.CurrentTestAssembly`, and stale previous-bundle assemblies are skipped
 (`BcRuntime.IsStaleBundleAssembly`), so the freshly-emitted types win over the
 same-named types still loaded from the previous run.
+
+### Another directory with the same app id
+
+Two directories declaring the same app `id` (two checkouts of one app, or a copy) can be
+sent to one server. A module an earlier request compiled for one of them is reused for the
+other only when that directory holds the same source: every `.al` file by relative path and
+content, `app.json`, and the resolved dependencies. Otherwise the request compiles its own
+source, as a fresh server would. A module compiled by a `tdd` request is never reused by a
+later request. A dependency package another request loaded from a different path is reused
+only when its bytes are the same (#5079). Within one request, bundles that share an app id
+still share one module (#1683, #1892).
 
 ### Covered: code / logic edits
 

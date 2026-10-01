@@ -113,7 +113,11 @@ public sealed record TestResult(string Codeunit, string Method, TestOutcome Outc
                                 // iterationTracking was not requested.
                                 IReadOnlyList<Infrastructure.AlLoopRecord>? Loops = null,
                                 IReadOnlyDictionary<int, (int Loop, int Iteration)>? CaptureTags = null,
-                                IReadOnlyList<string>? UnresolvedScopes = null);
+                                IReadOnlyList<string>? UnresolvedScopes = null,
+                                // #5034: the bucket, when the runner produced this result itself
+                                // and knows it without an exception — --tdd's missing-symbol
+                                // results (TddSupport) are Compile.
+                                AlErrorKind? KnownErrorKind = null);
 
 public sealed class TestExecutor
 {

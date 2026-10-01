@@ -195,11 +195,13 @@ public class ServerAffectedSelectionPackagedDependencyTests
         Assert.Contains("the app returned 63", afterRebuild.Raw, StringComparison.Ordinal);
     }
 
-    // Review of #4986: once a request has compiled App/ as its own bundle, a later [App.Test] request
-    // resolves the package but runs that source-compiled module (#1892 reuse by AppId). Editing App/
-    // and recompiling it changes what runs while the package bytes stay the same.
+    // Review of #4986 asked what runs when a request has compiled App/ as its own bundle and a later
+    // [App.Test] request resolves the package. Until #5079 that request ran the source-compiled
+    // module (#1892 reuse by AppId), so editing App/ without repackaging changed what ran. Since #5079
+    // a module from an earlier request answers only for its own source: App.Test runs the package it
+    // resolves, as a fresh server does, and an edit to App/ that is not packaged changes nothing.
     [SkippableFact]
-    public async Task SourceCompiledModuleRunsForThePackage_EditWithoutRepackaging_RunsTheCaller()
+    public async Task SourceCompiledModuleFromAnEarlierRequest_DoesNotAnswerForThePackage()
     {
         TestArtifacts.SkipIfMissing();
         var (app, testApp) = Layout();
@@ -207,6 +209,10 @@ public class ServerAffectedSelectionPackagedDependencyTests
         var plainApp = JsonSerializer.Serialize(new
         {
             command = "runTests", sourcePaths = new[] { app }, packagePaths = Array.Empty<string>(),
+        });
+        var plainTestApp = JsonSerializer.Serialize(new
+        {
+            command = "runTests", sourcePaths = new[] { testApp }, packagePaths = Array.Empty<string>(),
         });
 
         await server.SendRequestStreamingAsync(plainApp, TimeSpan.FromSeconds(180));
@@ -218,9 +224,15 @@ public class ServerAffectedSelectionPackagedDependencyTests
         await server.SendRequestStreamingAsync(plainApp, TimeSpan.FromSeconds(180));
 
         var afterEdit = await Send(server, testApp);
-        Assert.True(afterEdit.Status.TryGetValue("CallsApp", out var status), afterEdit.Raw);
-        Assert.True(status == "fail", afterEdit.Raw);
-        Assert.Contains("the app returned 63", afterEdit.Raw, StringComparison.Ordinal);
+        Assert.DoesNotContain("the app returned 63", afterEdit.Raw, StringComparison.Ordinal);
+        Assert.True(afterEdit.Status.GetValueOrDefault("CallsApp", "not run") != "fail", afterEdit.Raw);
+
+        var lines = await server.SendRequestStreamingAsync(plainTestApp, TimeSpan.FromSeconds(180));
+        var (events, summary) = ProtocolV2Streaming.Split(lines);
+        var raw = string.Join(" | ", lines);
+        Assert.True(summary.GetProperty("exitCode").GetInt32() == 0, raw);
+        Assert.Contains(events, e => e.GetProperty("name").GetString()!.EndsWith(".CallsApp", StringComparison.Ordinal)
+            && e.GetProperty("status").GetString() == "pass");
     }
 
     [SkippableFact]

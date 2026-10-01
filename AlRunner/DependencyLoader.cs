@@ -62,13 +62,33 @@ public sealed class DependencyLoader
         OwnBundleRegistryReplay? OwnBundleReplay = null,
         // #4096: which references this module was compiled allowed to see. A different
         // workspace with the same identity but different declarations must not reuse it.
-        string? VisibilitySignature = null)
+        string? VisibilitySignature = null,
+        // #5079: the reuse epoch (one --server request) that registered or last vouched for this
+        // module, the bundle source it was compiled from (null: not a bundle's own compile), and
+        // whether it was compiled under --tdd, whose generated members are not on disk (#5034).
+        long Epoch = 0,
+        string? SourceFingerprint = null,
+        bool TddCompiled = false)
     {
         /// <summary>Every assembly of this app, primary first; never empty.</summary>
         internal IReadOnlyList<Assembly> AllAssemblies => Assemblies ?? new[] { Asm };
     }
 
     private static readonly ConcurrentDictionary<Guid, LoadedAppEntry> _cache = new();
+    private static long _reuseEpoch;
+
+    /// <summary>
+    /// #5079: starts a --server request. A module registered in an earlier request is reused
+    /// for a different directory only when that directory holds the source it was compiled from,
+    /// and never when it was compiled under --tdd. Within one request (and a whole CLI or --watch
+    /// run, which never calls this) the #1683/#1892 sharing is unchanged.
+    /// </summary>
+    public static void BeginReuseEpoch() => Interlocked.Increment(ref _reuseEpoch);
+
+    private static long CurrentEpoch => Interlocked.Read(ref _reuseEpoch);
+
+    // An earlier request's module, which only the source it was compiled from may reuse.
+    private static bool FromEarlierEpoch(LoadedAppEntry entry) => entry.Epoch != CurrentEpoch;
     private static readonly ConcurrentDictionary<string, Assembly> _byName =
         new(StringComparer.OrdinalIgnoreCase);
     private static int _resolverInstalled;
@@ -201,8 +221,16 @@ public sealed class DependencyLoader
                 var packageRewritten = identityMatches && sameDirectory
                     && existing.Tier3CacheKey != null
                     && !string.Equals(existing.Tier3CacheKey, ComputeSourceDependencyCacheKey(m, path), StringComparison.Ordinal);
-                if (identityMatches && !packageRewritten)
+                // #5079: across --server requests a different path is the same module only when its
+                // package holds the same bytes; a --tdd compile is never carried into a later request.
+                var staleForThisRequest = identityMatches && FromEarlierEpoch(existing)
+                    && (existing.TddCompiled
+                        || (!sameDirectory
+                            && (existing.Tier3CacheKey == null
+                                || !string.Equals(existing.Tier3CacheKey, ComputeSourceDependencyCacheKey(m, path), StringComparison.Ordinal))));
+                if (identityMatches && !packageRewritten && !staleForThisRequest)
                 {
+                    _cache[m.AppId] = existing with { Epoch = CurrentEpoch };
                     // #2593/#2579: this dependency's Assembly is being reused without calling
                     // LoadOne again — but LoadOne is the ONLY place that replays this dependency's
                     // Tier-3 metadata sidecars (report/report-layout/page/xmlport/enum/object) into the
@@ -336,7 +364,8 @@ public sealed class DependencyLoader
                     RetireGeneration(superseded.AllAssemblies, keep: appAssemblies);
                 _cache[m.AppId] = new LoadedAppEntry(
                     asm, m.Name, m.Publisher, m.Version.ToString(), path, tier3CacheKey, appAssemblies,
-                    VisibilitySignature: BcCompiler.DeclaredVisibilitySignature(m.AppId));
+                    VisibilitySignature: BcCompiler.DeclaredVisibilitySignature(m.AppId),
+                    Epoch: CurrentEpoch, TddCompiled: BcCompiler.IsTddMode());
                 RegisterAppAssemblies(appAssemblies, m, path);
                 list.AddRange(appAssemblies);
             }
@@ -1410,7 +1439,8 @@ public sealed class DependencyLoader
     /// each SuiteDir at most once), so this only narrows the check for the
     /// caller that genuinely needs it.
     /// </summary>
-    public static Assembly? TryGetByAppId(Guid appId, string name, string publisher, string version, string sourcePath)
+    public static Assembly? TryGetByAppId(Guid appId, string name, string publisher, string version, string sourcePath,
+        string? sourceFingerprint = null)
     {
         if (!_cache.TryGetValue(appId, out var entry)) return null;
         // #2556: SourcePath is asked FIRST. A collision is by definition between two
@@ -1426,6 +1456,11 @@ public sealed class DependencyLoader
                 appId, entry.Name, entry.Publisher, entry.Version, entry.SourcePath,
                 name, publisher, version, sourcePath);
         if (!string.Equals(entry.VisibilitySignature, BcCompiler.DeclaredVisibilitySignature(appId), StringComparison.Ordinal))
+            return null;
+        // #5079: an earlier request's module answers only for the source it was compiled from.
+        if (FromEarlierEpoch(entry)
+            && (entry.TddCompiled || sourceFingerprint == null
+                || !string.Equals(entry.SourceFingerprint, sourceFingerprint, StringComparison.Ordinal)))
             return null;
         return entry.Asm;
     }
@@ -1471,10 +1506,12 @@ public sealed class DependencyLoader
     /// each rerun's freshly-compiled module must become the one a LATER sibling
     /// bundle in a subsequent request resolves to, not whatever compiled first.
     /// </summary>
-    public static void RegisterLoaded(Guid appId, Assembly asm, string name, string publisher, string version, string sourcePath)
+    public static void RegisterLoaded(Guid appId, Assembly asm, string name, string publisher, string version, string sourcePath,
+        string? sourceFingerprint = null)
     {
         var newEntry = new LoadedAppEntry(asm, name, publisher, version, sourcePath,
-            VisibilitySignature: BcCompiler.DeclaredVisibilitySignature(appId));
+            VisibilitySignature: BcCompiler.DeclaredVisibilitySignature(appId),
+            Epoch: CurrentEpoch, SourceFingerprint: sourceFingerprint, TddCompiled: BcCompiler.IsTddMode());
         if (_cache.TryAdd(appId, newEntry)) return;
         var existing = _cache[appId];
         // #2556: SourcePath first, for the same reason as TryGetByAppId above — this is the
@@ -1484,9 +1521,12 @@ public sealed class DependencyLoader
         // that happened to run first.
         // #4096: a module compiled under different declarations is replaced the same way, so the
         // next lookup does not keep finding the stale one and recompiling.
+        // #5079: an earlier request's module that TryGetByAppId refused is replaced the same way,
+        // so this request's siblings resolve the module compiled from this request's source.
         if (string.Equals(existing.SourcePath, sourcePath, StringComparison.OrdinalIgnoreCase)
             || (IdentityMatches(existing, name, publisher, version)
-                && !string.Equals(existing.VisibilitySignature, newEntry.VisibilitySignature, StringComparison.Ordinal)))
+                && (FromEarlierEpoch(existing)
+                    || !string.Equals(existing.VisibilitySignature, newEntry.VisibilitySignature, StringComparison.Ordinal))))
         {
             RetireGeneration(existing.AllAssemblies, keep: new[] { asm });
             _cache[appId] = newEntry;
