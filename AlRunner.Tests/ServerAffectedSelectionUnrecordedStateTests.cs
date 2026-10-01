@@ -249,6 +249,39 @@ public class ServerAffectedSelectionUnrecordedStateTests
         await AssertWriterBrought(bundle, LastErrorChecker("LASTERROR"), writerStatus: "fail");
     }
 
+    private const string QuietWriter = """
+        codeunit 62482 "US Writer"
+        {
+            procedure Write()
+            begin
+            end;
+        }
+        """;
+
+    /// <summary>A test that failed wrote the last error only because it failed. Once fixed it is not
+    /// a writer any more, so an edit to a later reader no longer brings it.</summary>
+    [SkippableFact]
+    public async Task LastError_AFixedFailingTest_IsNoLongerLinked()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = Bundle("al-runner-server-affected-unrecorded-lasterror-fixed", "000000000008",
+            UncaughtErrorWriter("LE-ONE"), LastErrorChecker(), TrappedErrorWriter("LE-OTHER", "62487 \"US Overwriter\""));
+        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+
+        var baseline = await Send(server, bundle);
+        AssertStatus(baseline, "A_Writes", "fail");
+
+        File.WriteAllText(Path.Combine(bundle, "Writer.Codeunit.al"), QuietWriter);
+        var fixedRun = await Send(server, bundle);
+        AssertStatus(fixedRun, "A_Writes", "pass");
+
+        File.WriteAllText(Path.Combine(bundle, "Checker.Codeunit.al"), LastErrorChecker("LASTERROR"));
+        var edited = await Send(server, bundle);
+        Assert.False(edited.ForcedFull, edited.Raw);
+        Assert.True(edited.Tests.ContainsKey("B_Reads") && !edited.Tests.ContainsKey("A_Writes"),
+            $"reader edit: ran [{string.Join(", ", edited.Ran)}], expected B_Reads without A_Writes:\n{edited.Raw}");
+    }
+
     // ── Static .NET state through DotNet interop ───────────────────────────────────────────────
 
     private const string EnvDeclaration = """

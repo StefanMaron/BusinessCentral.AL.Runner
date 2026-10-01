@@ -82,14 +82,9 @@ public class WatchAffectedSelectionTests
                 E.P();
             end;
 
-            [Test]
-            procedure RaisesWork()
-            var
-                P: Codeunit "WAff Pub SX";
-            begin
-                P.DoWork();
-            end;
-
+            // InsertsRow is declared before RaisesWork: RaisesWork is still failing when the table
+            // trigger is added, and a failing test declared just before an edited one is selected as
+            // the writer of the last error it could now read (#5057).
             [Test]
             procedure InsertsRow()
             var
@@ -97,6 +92,14 @@ public class WatchAffectedSelectionTests
             begin
                 T.PK := 1;
                 T.Insert(true);
+            end;
+
+            [Test]
+            procedure RaisesWork()
+            var
+                P: Codeunit "WAff Pub SX";
+            begin
+                P.DoWork();
             end;
 
             [Test]

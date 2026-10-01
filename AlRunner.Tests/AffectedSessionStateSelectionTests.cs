@@ -121,11 +121,11 @@ public class AffectedSessionStateSelectionTests
     }
 
     /// <summary>A changed test recorded as writing the last error may have stopped writing it, so the
-    /// walk does not stop there; a test with no record does not stop it either.</summary>
+    /// walk does not stop there.</summary>
     [Fact]
-    public void Changed_TheWalkPassesTheChangedTestAndUnrecordedTests()
+    public void Changed_TheWalkPassesTheChangedTest()
     {
-        var order = new[] { "C.LeW1", "C.NoRecord", "C.Changed", "C.LeReader" };
+        var order = new[] { "C.LeW1", "C.Changed", "C.LeReader" };
         var recorded = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal)
         {
             ["C.LeW1"] = Keys(LeW),
@@ -134,7 +134,7 @@ public class AffectedSessionStateSelectionTests
         };
         var selected = Keys("C.Changed");
         AffectedSessionStateSelection.Widen(order, selected, recorded, true, false, false);
-        Assert.Equal(new[] { "C.Changed", "C.LeReader", "C.LeW1", "C.NoRecord" }, Sorted(selected));
+        Assert.Equal(new[] { "C.Changed", "C.LeReader", "C.LeW1" }, Sorted(selected));
     }
 
     [Fact]
@@ -166,6 +166,28 @@ public class AffectedSessionStateSelectionTests
         var selected = Keys();
         AffectedSessionStateSelection.Widen(order, selected, recorded, false, false, laterBundleFollows: true);
         Assert.Equal(new[] { "C.LeW2" }, Sorted(selected));
+    }
+
+    /// <summary>A test that threw records its last-error write under the failed-write key: a writer for
+    /// the nearest-writer walk, and not carried into its next record.</summary>
+    [Fact]
+    public void AFailedRunsLastErrorWrite_StopsTheWalk_AndIsNotCarriedForward()
+    {
+        var leF = AlSessionStateTracker.FailedWriteKey(AlSessionStateTracker.LastErrorKind);
+        var order = new[] { "C.LeW1", "C.Failing", "C.LeReader" };
+        var recorded = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal)
+        {
+            ["C.LeW1"] = Keys(LeW),
+            ["C.Failing"] = Keys(leF),
+            ["C.LeReader"] = Keys(LeR),
+        };
+        var selected = Keys("C.LeReader");
+        AffectedSessionStateSelection.Widen(order, selected, recorded, false, false, false);
+        Assert.Equal(new[] { "C.Failing", "C.LeReader" }, Sorted(selected));
+
+        // A trapped write from an earlier passing record is still carried; the failed run's is not.
+        var merged = AffectedSessionStateSelection.WithPreviousState(Keys(R), Keys(leF, LeW));
+        Assert.Equal(new[] { R, LeW }.OrderBy(x => x, StringComparer.Ordinal).ToArray(), Sorted(merged));
     }
 
     // #5069: a re-recording keeps the session-state keys the previous record had, and only those.

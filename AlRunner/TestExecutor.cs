@@ -2075,6 +2075,8 @@ public sealed class TestExecutor
                 ApplyTestTransactionModel(m, threw);
 
             BcRuntime.LeaveTestExecutionScope();
+            // #5057: before the window closes, so it lands on this test's own record.
+            AlRunner.Infrastructure.AlSessionStateTracker.NoteTestEnd(threw);
             // #2135: close this test's coverage-attribution window — see BeginTest's
             // call above. A stray timed-out background thread (see this method's
             // TIMEOUT branch above) may still be executing AL statements after this

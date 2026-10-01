@@ -6,12 +6,7 @@ namespace AlRunner.Infrastructure;
 
 internal static class AffectedSessionStateSelection
 {
-    /// <summary>
-    /// Kinds whose every write replaces the whole value without reading the old one (#5057), so a
-    /// reader sees only the nearest earlier writer's value and only that writer is linked. Every
-    /// NavSession member storing the last-error fields assigns them outright (bc284).
-    /// </summary>
-    internal static readonly string[] OverwriteKinds = { AlSessionStateTracker.LastErrorKind };
+    private static readonly string[] OverwriteKinds = AlSessionStateTracker.OverwriteKinds;
 
     private static bool IsOverwriteWrite(string key)
         => OverwriteKinds.Any(k => string.Equals(key, AlSessionStateTracker.WriteKey(k), StringComparison.Ordinal));
@@ -127,7 +122,7 @@ internal static class AffectedSessionStateSelection
             for (var j = before - 1; j >= 0; j--)
             {
                 var r = record(discovered[j]);
-                if (r != null && !r.Contains(write)) continue;
+                if (r != null && !r.Contains(write) && !r.Contains(AlSessionStateTracker.FailedWriteKey(kind))) continue;
                 yield return j;
                 if (r != null) break;
             }

@@ -20,6 +20,7 @@ public static class AlSessionStateTracker
     {
         public readonly HashSet<string> Written = new(StringComparer.Ordinal);
         public readonly HashSet<string> ReadInherited = new(StringComparer.Ordinal);
+        public bool Threw;
     }
 
     private static readonly object _lock = new();
@@ -106,6 +107,30 @@ public static class AlSessionStateTracker
     /// <summary>Prepended to every NavSession member that writes its last-error fields.</summary>
     public static void NoteLastErrorWrite() => NoteWrite(LastErrorKind);
 
+    /// <summary>
+    /// Kinds whose every write replaces the whole value without reading the old one, so a reader
+    /// sees only the nearest earlier writer (AffectedSessionStateSelection). Every NavSession member
+    /// storing the last-error fields assigns them outright (bc284), and every NavBaseException sets
+    /// them as it is constructed, trapped or not.
+    /// </summary>
+    internal static readonly string[] OverwriteKinds = { LastErrorKind };
+
+    /// <summary>
+    /// Called as the open test ends. A test that threw leaves the last error to its own failure,
+    /// whatever it trapped before, so its overwrite-kind writes are recorded under
+    /// <see cref="FailedWriteKey"/>, which a re-recording does not carry forward: a test once failing
+    /// and now passing must not stay a writer for good.
+    /// </summary>
+    public static void NoteTestEnd(bool threw)
+    {
+        if (!AlCoverageTracker.PerTestEnabled || !threw) return;
+        lock (_lock)
+        {
+            var b = CurrentBucket();
+            if (b != null) b.Threw = true;
+        }
+    }
+
     /// <summary>Static .NET state reached through DotNet interop (#5057). It cannot be told apart
     /// per field, so any DotNet invocation is both a read and a write of one kind.</summary>
     internal const string DotNetKind = "DotNet";
@@ -123,6 +148,10 @@ public static class AlSessionStateTracker
     /// <summary>A key in a test's recorded set: it read <paramref name="kind"/> as an earlier test left it.</summary>
     internal static string ReadKey(string kind) => "st|r|" + kind;
 
+    /// <summary>A key in a test's recorded set: it wrote overwrite kind <paramref name="kind"/> in a
+    /// run where it threw. A write all the same, but not kept by AffectedSessionStateSelection.WithPreviousState.</summary>
+    internal static string FailedWriteKey(string kind) => "st|f|" + kind;
+
     internal const string WritePrefix = "st|w|";
     internal const string ReadPrefix = "st|r|";
 
@@ -135,7 +164,8 @@ public static class AlSessionStateTracker
             foreach (var (testKey, b) in _perTest)
             {
                 var keys = new HashSet<string>(StringComparer.Ordinal);
-                foreach (var k in b.Written) keys.Add(WriteKey(k));
+                foreach (var k in b.Written)
+                    keys.Add(b.Threw && OverwriteKinds.Contains(k) ? FailedWriteKey(k) : WriteKey(k));
                 foreach (var k in b.ReadInherited) keys.Add(ReadKey(k));
                 result[testKey] = keys;
             }

@@ -717,6 +717,21 @@ private, or if it finds no reader or no writer. `GetLastErrorCallStack` in the b
 reads the runner's per-test capture (`AlCallStackCapture`, cleared before each test), which no
 test can leave for another.
 
+The last error differs from the other kinds in two ways, both because every write replaces it
+whole (BC sets it as each error is constructed, trapped or not):
+
+- **Only the nearest earlier writer is linked.** Where the rules above bring every earlier
+  writer, the last error brings, for each selected test, the nearest earlier test that wrote it
+  (passing any test with no record, and any test the request selected for a change, which may
+  have stopped writing). Every error raises a write, so "every earlier writer" would select
+  nearly every test before the last selected one. A bundle followed by another runs only its
+  last writer.
+- **A failing test's write is not kept.** A test that fails leaves its own error as the last
+  error, so its write is recorded under a separate `st|f|` key: a writer for this record, but not
+  carried into the next one the way the other keys are. A test that failed once and passes now
+  stops being a writer. A test that is failing now is still the writer before a changed test
+  after it, so editing a test runs the failing test declared just before it.
+
 Not session state here, so not recorded:
 
 - the `Randomize(<seed>)` seed: every test starts from a generator seeded from the run seed and
