@@ -228,6 +228,27 @@ public class ServerAffectedSelectionUnrecordedStateTests
         await AssertReaderSelected(bundle, TrappedErrorWriter("LE-TWO"), "LASTERR-LE-TWO");
     }
 
+    /// <summary>The same through the persisted baseline (schema 6): a restarted server on the same
+    /// cache selects the reader on its first request, with the AL-output cache warm.</summary>
+    [SkippableFact]
+    public async Task AcrossARestart_LastErrorReader_IsSelected()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = Bundle("al-runner-server-affected-unrecorded-lasterror-restart", "000000000009",
+            TrappedErrorWriter("LE-ONE"), LastErrorChecker(), TrappedErrorWriter("LE-OTHER", "62487 \"US Overwriter\""));
+        var cache = TestScratch.Dir("al-runner-server-affected-unrecorded-lasterror-restart-cache");
+
+        await using (var recorder = await CliServer.StartAsync(new[] { "--cache", cache }))
+            Assert.True((await Send(recorder, bundle)).ForcedFull);
+
+        File.WriteAllText(Path.Combine(bundle, "Writer.Codeunit.al"), TrappedErrorWriter("LE-TWO"));
+        await using var restarted = await CliServer.StartAsync(new[] { "--cache", cache });
+        var edited = await Send(restarted, bundle);
+        Assert.False(edited.ForcedFull, $"the persisted baseline must let the first request narrow: {edited.Raw}");
+        AssertRan(edited, "restarted", "A_Writes", "B_Reads");
+        AssertStatus(edited, "B_Reads", "fail", "LASTERR-LE-TWO");
+    }
+
     /// <summary>The other direction: an edited GetLastErrorText reader brings the test that set it.</summary>
     [SkippableFact]
     public async Task LastErrorReaderEdit_BringsTheTestThatRaisedIt()

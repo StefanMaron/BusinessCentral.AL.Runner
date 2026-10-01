@@ -48,7 +48,8 @@ internal static class AffectedSessionStateSelection
         {
             // A changed test can start reading or writing any kind, which its record cannot show,
             // so every reader after the first selected test and every earlier writer is in.
-            var first = earlierBundleChanged ? -1 : IndexOfFirst(discovered, selected);
+            // From the first CHANGED test: a test brought in as a writer changes no state a full run would not.
+            var first = earlierBundleChanged ? -1 : IndexOfFirst(discovered, changedTests.Count > 0 ? changedTests : selected);
             for (var i = first + 1; i < discovered.Count; i++)
                 if (Any(discovered[i], AlSessionStateTracker.ReadPrefix)) selected.Add(discovered[i]);
             var last = LastIndex(discovered, selected);
@@ -184,7 +185,7 @@ internal static class AffectedSessionStateSelection
         return false;
     }
 
-    private static int IndexOfFirst(IReadOnlyList<string> discovered, HashSet<string> selected)
+    private static int IndexOfFirst(IReadOnlyList<string> discovered, IReadOnlySet<string> selected)
     {
         for (var i = 0; i < discovered.Count; i++)
             if (selected.Contains(discovered[i])) return i;

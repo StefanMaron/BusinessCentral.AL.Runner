@@ -211,6 +211,23 @@ public class AffectedSessionStateSelectionTests
         Assert.Equal((1, 1), (byIsolation, byState));
     }
 
+    /// <summary>A writer brought in on the first pass is not a change, so the second pass does not
+    /// take readers from it: readers come from the first CHANGED test.</summary>
+    [Fact]
+    public void WidenWithIsolation_ABroughtInWriter_DoesNotPullTheReadersAfterIt()
+    {
+        var order = new[] { "C.Writer", "C.EarlyReader", "C.ChangedReader" };
+        var recorded = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal)
+        {
+            ["C.Writer"] = Keys(W),
+            ["C.EarlyReader"] = Keys(R),
+            ["C.ChangedReader"] = Keys(R),
+        };
+        var selected = Keys("C.ChangedReader");
+        AffectedSessionStateSelection.WidenWithIsolation(order, selected, recorded, TestIsolation.Test, true, false, false);
+        Assert.Equal(new[] { "C.ChangedReader", "C.Writer" }, Sorted(selected));
+    }
+
     // #5069: a re-recording keeps the session-state keys the previous record had, and only those.
     [Fact]
     public void WithPreviousState_KeepsPreviousStateKeys_AndDropsPreviousOtherKeys()
