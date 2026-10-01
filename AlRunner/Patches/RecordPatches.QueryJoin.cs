@@ -220,7 +220,7 @@ public static partial class RecordPatches
     /// AlRunner.QueryJoin executor. Materialised eagerly inside the executor so any failure
     /// surfaces as a managed exception here, never a native crash mid-enumeration.
     /// </summary>
-    private static IEnumerable ExecuteJoinQuery(object nclMetaQuery, object? flowFiltersAndMarks)
+    private static IEnumerable ExecuteJoinQuery(object nclMetaQuery, object? flowFiltersAndMarks, object request)
     {
         EnsureJoinExecutorLoaded();
         var queryDef = BcShape.Property(
@@ -236,7 +236,8 @@ public static partial class RecordPatches
         try
         {
             return (IEnumerable)_mExecute!.Invoke(null,
-                new[] { _joinCtx, nclMetaQuery, dataAccessSource, flowFiltersAndMarks })!;
+                new[] { _joinCtx, nclMetaQuery, dataAccessSource, flowFiltersAndMarks,
+                        BuildJoinWhereFilters(nclMetaQuery, request) })!;
         }
         catch (TargetInvocationException tie) when (tie.InnerException != null)
         {
