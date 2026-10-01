@@ -1,0 +1,19 @@
+{
+  "id": "6b3c1f0e-2a54-4d8e-9c71-3222a0b5d001",
+  "name": "Runner Extras - DotNet Platform Refusal",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #3222: a Windows-only .NET library reached through an instance or static DotNet member call (not only a constructor) fails with the runner's named dotnet-platform-unsupported refusal, never BC's bare 'type initializer' message.",
+  "description": "Runner-specific by construction: on a Windows service tier every call here succeeds, so the claim 'the runner refuses it by name' cannot be a corpus test. target=OnPrem because the static-call and control tests declare DotNet types (AL0296 on Cloud).",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 66500,
+      "to": 66509
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "OnPrem"
+}

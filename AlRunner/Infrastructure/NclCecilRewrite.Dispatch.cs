@@ -851,6 +851,68 @@ public static partial class NclCecilRewrite
             }
         }
 
+        // ── NavDotNet member calls: name a platform refusal (#3222) ──────────────────
+        //
+        // Construction is covered above; a static call, or an instance call on an object whose
+        // constructor succeeded, fails later. Every such failure is built by
+        // CreateNavNCLDotNetInvokeException (Invoke<T>'s two catch blocks), so a PROLOGUE there
+        // covers both; it only throws for a platform refusal and otherwise falls through to BC's
+        // unchanged body. InvokeStaticField does not wrap FieldInfo.GetValue at all, so that one
+        // call is redirected to a same-shape helper. Shapes identical on bc270..bc284.
+        {
+            var navDotNet = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavDotNet")
+                ?? throw new InvalidOperationException("[Cecil] NavDotNet not found (#3222) — do not commit");
+
+            var mWrap = navDotNet.Methods.SingleOrDefault(x =>
+                x.Name == "CreateNavNCLDotNetInvokeException" && x.IsStatic && x.Parameters.Count == 5
+                && x.Parameters[1].ParameterType.FullName == "System.Type"
+                && x.Parameters[2].ParameterType.FullName == "System.String"
+                && x.Parameters[4].ParameterType.FullName == "System.Exception")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NavDotNet.CreateNavNCLDotNetInvokeException(string, Type, string, NavServerHandle, "
+                    + "Exception) not found — Ncl shape changed (#3222); do not commit");
+            var guard = asm.MainModule.ImportReference(
+                typeof(AlRunner.Patches.DotNetInteropShims).GetMethod(
+                    nameof(AlRunner.Patches.DotNetInteropShims.ThrowIfPlatformRefusalOnInvoke),
+                    BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "DotNetInteropShims.ThrowIfPlatformRefusalOnInvoke not found — do not commit"));
+            var wil = mWrap.Body.GetILProcessor();
+            var first = mWrap.Body.Instructions[0];
+            // Argument order is the helper's: (methodName, interfaceType, serverHandle, e).
+            wil.InsertBefore(first, wil.Create(OpCodes.Ldarg, mWrap.Parameters[2]));
+            wil.InsertBefore(first, wil.Create(OpCodes.Ldarg, mWrap.Parameters[1]));
+            wil.InsertBefore(first, wil.Create(OpCodes.Ldarg, mWrap.Parameters[3]));
+            wil.InsertBefore(first, wil.Create(OpCodes.Ldarg, mWrap.Parameters[4]));
+            wil.InsertBefore(first, wil.Create(OpCodes.Call, guard));
+            Console.Error.WriteLine(
+                "[Cecil] NavDotNet.CreateNavNCLDotNetInvokeException ← DotNetInteropShims.ThrowIfPlatformRefusalOnInvoke prologue");
+
+            var mField = navDotNet.Methods.SingleOrDefault(x =>
+                x.Name == "InvokeStaticField" && x.Parameters.Count == 2 && x.HasGenericParameters)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NavDotNet.InvokeStaticField<T>(string, uint) not found — Ncl shape changed (#3222); do not commit");
+            var getValues = mField.Body.Instructions
+                .Where(i => (i.OpCode == OpCodes.Call || i.OpCode == OpCodes.Callvirt)
+                            && i.Operand is MethodReference mr && mr.Name == "GetValue"
+                            && mr.DeclaringType.FullName == "System.Reflection.FieldInfo"
+                            && mr.Parameters.Count == 1)
+                .ToList();
+            if (getValues.Count != 1)
+                throw new InvalidOperationException(
+                    $"NavDotNet.InvokeStaticField: expected 1 FieldInfo.GetValue call, found {getValues.Count} "
+                    + "— Ncl shape changed (#3222); do not commit");
+            getValues[0].OpCode = OpCodes.Call;
+            getValues[0].Operand = asm.MainModule.ImportReference(
+                typeof(AlRunner.Patches.DotNetInteropShims).GetMethod(
+                    nameof(AlRunner.Patches.DotNetInteropShims.GetStaticFieldValue),
+                    BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "DotNetInteropShims.GetStaticFieldValue not found — do not commit"));
+            Console.Error.WriteLine(
+                "[Cecil] NavDotNet.InvokeStaticField: FieldInfo.GetValue → DotNetInteropShims.GetStaticFieldValue");
+        }
+
         // ── NavDotNet.CreateNavServerHandle catch block → OOS ────────────────────────
         // The try block (NavAutomationHelper.CreateDotNetObject — succeeds for
         // in-process types like MemoryStream, crypto) is UNTOUCHED. Only the catch

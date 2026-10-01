@@ -194,3 +194,105 @@ public sealed class DotNetInteropPlatformRefusalTests
         Assert.Contains("Some.Lib", oos!.Reason, StringComparison.Ordinal);
     }
 }
+
+// #3222 — the member-call half: BC's NavDotNet.CreateNavNCLDotNetInvokeException prologue and
+// the InvokeStaticField FieldInfo.GetValue redirect. End to end on real System.Drawing:
+// tests/runner-extras/dotnet-platform-refusal. These pin the helpers' own contract, including
+// the static-field path, which no AL reproducer reaches.
+public sealed class DotNetInteropMemberCallRefusalTests
+{
+    private static Exception GdipChain()
+    {
+        var platform = new PlatformNotSupportedException(
+            "System.Drawing.Common is not supported on non-Windows platforms.") { Source = "System.Drawing.Common" };
+        return new InvalidOperationException("wrapped",
+            new TypeInitializationException("Gdip", platform));
+    }
+
+    /// <summary>Stands in for BC's internal NavServerHandle: a non-public ObjectType.</summary>
+    private sealed class FakeServerHandle
+    {
+        internal Type ObjectType => typeof(System.IO.MemoryStream);
+    }
+
+    [Fact]
+    public void InvokePlatformRefusal_NamesTheHandlesTypeAndMember()
+    {
+        var oos = Assert.Throws<RunnerOutOfScopeException>(() =>
+            DotNetInteropShims.ThrowIfPlatformRefusalOnInvoke(
+                "GetBarcodeStream", typeof(IDisposable), new FakeServerHandle(), GdipChain()));
+
+        // The handle's concrete type wins over the interface, as in BC's own message.
+        Assert.Equal("NavDotNet.Invoke(System.IO.MemoryStream.GetBarcodeStream)", oos.Api);
+        Assert.StartsWith("dotnet-platform-unsupported", oos.Reason, StringComparison.Ordinal);
+        Assert.Contains("System.Drawing.Common", oos.Reason, StringComparison.Ordinal);
+        Assert.Equal("dotnet-platform", oos.DocAnchor);
+    }
+
+    [Fact]
+    public void InvokePlatformRefusal_WithoutAHandle_FallsBackToTheInterfaceType()
+    {
+        var oos = Assert.Throws<RunnerOutOfScopeException>(() =>
+            DotNetInteropShims.ThrowIfPlatformRefusalOnInvoke(
+                "FromStream", typeof(IDisposable), null, GdipChain()));
+        Assert.Equal("NavDotNet.Invoke(System.IDisposable.FromStream)", oos.Api);
+    }
+
+    [Fact]
+    public void InvokeOrdinaryFailure_ReturnsSoBcBuildsItsOwnError()
+    {
+        // Returning (not throwing) is what lets BC's unchanged body build NavNCLDotNetInvokeException.
+        DotNetInteropShims.ThrowIfPlatformRefusalOnInvoke(
+            "ToInt32", null, new FakeServerHandle(), new FormatException("not a number"));
+        DotNetInteropShims.ThrowIfPlatformRefusalOnInvoke(
+            "Seek", null, null, new NotSupportedException("stream does not support seeking"));
+        DotNetInteropShims.ThrowIfPlatformRefusalOnInvoke("X", null, null, null);
+    }
+
+    private static class RefusingStatics
+    {
+        public static readonly int Value = Init();
+        private static int Init() => throw new PlatformNotSupportedException("refused here") { Source = "Some.Windows.Lib" };
+    }
+
+    private static class BrokenStatics
+    {
+        public static readonly int Value = Init();
+        private static int Init() => throw new InvalidOperationException("ordinary bug");
+    }
+
+    private static class FineStatics
+    {
+        public static readonly int Value = 42;
+    }
+
+    [Fact]
+    public void StaticFieldOnARefusingType_IsRefusedByName()
+    {
+        var field = typeof(RefusingStatics).GetField(nameof(RefusingStatics.Value))!;
+        var oos = Assert.Throws<RunnerOutOfScopeException>(() =>
+            DotNetInteropShims.GetStaticFieldValue(field, null));
+        Assert.Equal(
+            $"NavDotNet.InvokeStaticField({typeof(RefusingStatics).FullName}.Value)", oos.Api);
+        Assert.Contains("Some.Windows.Lib", oos.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StaticFieldOrdinaryInitFailure_PropagatesUnchanged()
+    {
+        var field = typeof(BrokenStatics).GetField(nameof(BrokenStatics.Value))!;
+        // Exactly what FieldInfo.GetValue itself throws: TargetInvocationException over the
+        // TypeInitializationException — the helper adds and removes no wrapping.
+        var ex = Assert.Throws<System.Reflection.TargetInvocationException>(() =>
+            DotNetInteropShims.GetStaticFieldValue(field, null));
+        var init = Assert.IsType<TypeInitializationException>(ex.InnerException);
+        Assert.IsType<InvalidOperationException>(init.InnerException);
+    }
+
+    [Fact]
+    public void StaticFieldThatReads_ReturnsItsValue()
+    {
+        var field = typeof(FineStatics).GetField(nameof(FineStatics.Value))!;
+        Assert.Equal(42, DotNetInteropShims.GetStaticFieldValue(field, null));
+    }
+}
