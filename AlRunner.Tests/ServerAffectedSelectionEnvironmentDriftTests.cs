@@ -306,6 +306,7 @@ public class ServerAffectedSelectionEnvironmentDriftTests
         ChangeHelper(app, testApp);
 
         await using var second = await CliServer.StartAsync(new[] { "--cache", cache });
+        var mark = second.StdErrMark;
         var drifted = await Send(second, testApp);
         Assert.False(drifted.ForcedFull, drifted.Raw);
         Assert.Equal(0, drifted.Ran);
@@ -313,7 +314,8 @@ public class ServerAffectedSelectionEnvironmentDriftTests
         var d = drifted.Drift ?? throw new Xunit.Sdk.XunitException("no environmentDrift: " + drifted.Raw);
         Assert.Equal("approximate", d.GetProperty("mode").GetString());
         Assert.Contains("no per-object record", d.GetProperty("reason").GetString());
-        Assert.Contains("Selection is APPROXIMATE", drifted.Raw, StringComparison.Ordinal);
+        // The warning is printed on stderr, read asynchronously: wait for it (#5100).
+        await second.StdErrSinceAsync(mark, "Selection is APPROXIMATE");
     }
 
     [SkippableFact]
