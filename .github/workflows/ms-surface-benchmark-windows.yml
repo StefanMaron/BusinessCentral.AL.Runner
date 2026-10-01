@@ -153,7 +153,6 @@ jobs:
           Write-Host "resume took $([int]$t.TotalSeconds) s"
           exit $bad
       - name: Nothing written outside the working folder
-        if: always()
         shell: pwsh
         run: |
           $roots = @($env:USERPROFILE, $env:LOCALAPPDATA, $env:APPDATA)

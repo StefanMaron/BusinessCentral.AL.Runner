@@ -76,6 +76,13 @@ $Downloads = @{
     'reader-linux-x64' = @{ Url = 'https://github.com/StefanMaron/BusinessCentral.DbReader/releases/download/v0.1.2/bcdb-linux-x64';    Algo = 'SHA256'; Hash = 'DCF9E508DE450AA44BA89361CCB41368118B10C97D37CF9E8EACCDF52DDE70F6' }
     'dotnet-win-x64'   = @{ Url = 'https://builds.dotnet.microsoft.com/dotnet/Runtime/8.0.31/dotnet-runtime-8.0.31-win-x64.zip';      Algo = 'SHA512'; Hash = '9C55C58694676EE64B0EED2CD6D8CBF58B9AA8288420ACC66841E15CA0099C75D4AF0182D23A641C2342E5A151A325DF4A12FA0BDE2E47C0FB7E9A33E7B09896' }
     'dotnet-linux-x64' = @{ Url = 'https://builds.dotnet.microsoft.com/dotnet/Runtime/8.0.31/dotnet-runtime-8.0.31-linux-x64.tar.gz'; Algo = 'SHA512'; Hash = 'F336BDEC58D54BF50D74A1B38EFA82F7290D976BD2ED98B845EBCBAC42CF0D8CEF504684FC088D4B05F98737B996BF3302E52BD9C23005DEAE7C60780B2652FB' }
+    # Reference assemblies. The runtime alone is not enough: the runner hands BC's AL
+    # compiler <dotnet root>/packs/Microsoft.NETCore.App.Ref and NETStandard.Library.Ref
+    # (BcCompiler.EnumerateDotNetRefAssemblyDirs), and without them every `DotNet` alias in
+    # the test libraries fails AL0185 and 21+ objects are silently dropped (measured on
+    # Linux: Tests-SMB 685 passed instead of ~729, exit 3). An SDK install carries these.
+    'ref-netcore'      = @{ Url = 'https://api.nuget.org/v3-flatcontainer/microsoft.netcore.app.ref/8.0.31/microsoft.netcore.app.ref.8.0.31.nupkg'; Algo = 'SHA256'; Hash = 'A02862C2AF079DBD11F85C7AD4F94ED55305530E0CF0671DE279F1A1294F20C6'; Pack = 'Microsoft.NETCore.App.Ref/8.0.31' }
+    'ref-netstandard'  = @{ Url = 'https://api.nuget.org/v3-flatcontainer/netstandard.library.ref/2.1.0/netstandard.library.ref.2.1.0.nupkg'; Algo = 'SHA256'; Hash = '46EA2FCBD10A817685B85AF7CE0C397D12944BDC81209E272DE1E05EFD33C78A'; Pack = 'NETStandard.Library.Ref/2.1.0' }
     'pwsh-win-x64'     = @{ Url = 'https://github.com/PowerShell/PowerShell/releases/download/v7.4.20/PowerShell-7.4.20-win-x64.zip'; Algo = 'SHA256'; Hash = 'FB88CD3731847006B157978D6C0A426390D346696D91D1ED85B5E5EB88CB2D40' }
 }
 
@@ -277,6 +284,16 @@ if ($PSVersionTable.PSVersion.Major -lt 7 -or ($PSVersionTable.PSVersion.Major -
 # ═══ From here on: PowerShell 7.4+ ═════════════════════════════════════════════════════════
 $script:OnWindows = $IsWindows
 Add-Type -AssemblyName System.IO.Compression.ZipFile
+
+# A defect in this script must not look like a benchmark result or vanish into one red line:
+# say where it happened, and that the results folder is what to send.
+trap {
+    Write-Log "UNEXPECTED ERROR in the benchmark script: $($_.Exception.Message)" 'Red'
+    Write-Log ($_.InvocationInfo.PositionMessage -replace "`r?`n", ' | ') 'Red'
+    Write-Log ($_.ScriptStackTrace -replace "`r?`n", ' | ') 'Red'
+    Write-Log 'This is a bug in the script, not in your machine. Please send the results folder of the working folder to the person who asked you to run this.' 'Yellow'
+    exit 4
+}
 $ScriptSha = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash
 $SessionStamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss')
 
@@ -396,14 +413,22 @@ function Install-Tools {
     $dn = $Downloads["dotnet-$rid"]
     $dotnetDir = Join-Path $Dirs.Tools "dotnet-$($Pins.DotnetVersion)"
     $dotnetExe = Join-Path $dotnetDir ($(if ($script:OnWindows) { 'dotnet.exe' } else { 'dotnet' }))
-    if (-not (Test-Path -LiteralPath (Join-Path $dotnetDir '.complete'))) {
+    $dotnetKey = $dn.Hash + '|' + $Downloads['ref-netcore'].Hash + '|' + $Downloads['ref-netstandard'].Hash
+    $marker = Join-Path $dotnetDir '.complete'
+    if (-not ((Test-Path -LiteralPath $marker) -and ((Get-Content -LiteralPath $marker -Raw).Trim() -eq $dotnetKey))) {
         $arc = Join-Path $Dirs.Downloads ([System.IO.Path]::GetFileName($dn.Url))
         Get-VerifiedFile $dn.Url $arc $dn.Algo $dn.Hash
         if (Test-Path -LiteralPath $dotnetDir) { Remove-Item -LiteralPath $dotnetDir -Recurse -Force }
         New-Item -ItemType Directory -Force -Path $dotnetDir | Out-Null
         if ($script:OnWindows) { [System.IO.Compression.ZipFile]::ExtractToDirectory($arc, $dotnetDir) }
         else { & tar -xzf $arc -C $dotnetDir; if ($LASTEXITCODE) { Stop-Benchmark 2 "Could not unpack $arc." @('Delete the downloads folder and run again.') } }
-        Set-Content -LiteralPath (Join-Path $dotnetDir '.complete') -Value $dn.Hash
+        foreach ($k in @('ref-netcore', 'ref-netstandard')) {
+            $r = $Downloads[$k]
+            $nupkg = Join-Path $Dirs.Downloads ([System.IO.Path]::GetFileName($r.Url))
+            Get-VerifiedFile $r.Url $nupkg $r.Algo $r.Hash
+            [System.IO.Compression.ZipFile]::ExtractToDirectory($nupkg, (Join-Path $dotnetDir "packs/$($r.Pack)"))
+        }
+        Set-Content -LiteralPath $marker -Value $dotnetKey
     }
 
     $runnerDir = Join-Path $Dirs.Tools "al-runner-$($Pins.RunnerVersion)"
@@ -429,6 +454,21 @@ function Install-Tools {
     return @{ Dotnet = $dotnetExe; Runner = $runnerDll; RunnerDir = Split-Path -Parent $runnerDll; Reader = $readerExe }
 }
 $Tools = Install-Tools
+
+# The runner's caches are not keyed on the .NET reference packs or on this script's pins, so
+# a cache filled by a different toolchain could be reused and carry its results forward. A
+# changed toolchain therefore empties the caches and invalidates earlier bucket results.
+$ToolchainKey = @($Pins.RunnerSha256, $Pins.BcVersion, $Downloads["reader-$rid"].Hash, $Downloads["dotnet-$rid"].Hash,
+    $Downloads['ref-netcore'].Hash, $Downloads['ref-netstandard'].Hash) -join '|'
+$toolchainFile = Join-Path $script:Work 'toolchain.txt'
+if ((Test-Path -LiteralPath $toolchainFile) -and ((Get-Content -LiteralPath $toolchainFile -Raw).Trim() -ne $ToolchainKey)) {
+    Write-Log 'The toolchain changed since the last session: clearing the runner caches and earlier results.' 'Yellow'
+    foreach ($d in @($Dirs.Cache, $Dirs.AlCache, (Join-Path $Dirs.Results 'smoke'), (Join-Path $Dirs.Results 'surface'))) {
+        if (Test-Path -LiteralPath $d) { Remove-Item -LiteralPath $d -Recurse -Force }
+    }
+    New-Item -ItemType Directory -Force -Path $Dirs.Cache, $Dirs.AlCache | Out-Null
+}
+Set-Content -LiteralPath $toolchainFile -Value $ToolchainKey
 
 $readerVersion = (& $Tools.Reader --version 2>&1 | Select-Object -First 1)
 if ($LASTEXITCODE -ne 0) {
@@ -736,7 +776,7 @@ if ($workers -lt 1) {
 
 # ─── The surface ──────────────────────────────────────────────────────────────────────────
 $phase = 'surface'
-$configKey = "$($Pins.RunnerVersion)|$bc|$($Pins.ReaderTag)|$Company"
+$configKey = "$ToolchainKey|$Company"
 $queue = New-Object System.Collections.Generic.List[string]
 $done = [ordered]@{}
 foreach ($b in ($runBuckets | Sort-Object { -$minutes[$_] })) {
@@ -763,23 +803,23 @@ try {
             $avail = Get-FreeMemoryGB
             if ($running.Count -gt 0 -and $avail - $perWorkerGB -lt $reserveGB) { break }
             $b = $queue[0]; $queue.RemoveAt(0)
-            $r = Start-Bucket $b $phase $workers
-            Set-Content -LiteralPath (Join-Path $r.Out 'config.txt') -Value $configKey
-            $running.Add($r)
+            $launch = Start-Bucket $b $phase $workers
+            Set-Content -LiteralPath (Join-Path $launch.Out 'config.txt') -Value $configKey
+            $running.Add($launch)
             Write-Log ("start  {0}  ({1} running, {2} queued, {3} GB available)" -f $b, $running.Count, $queue.Count, $avail)
         }
         Start-Sleep -Seconds 10
         $avail = Get-FreeMemoryGB
         if ($avail -lt $minAvailGB) { $minAvailGB = $avail }
-        foreach ($r in @($running)) {
-            if ($r.Process.HasExited) {
-                $rec = Complete-Bucket $r
-                $running.Remove($r) | Out-Null
-                $done[$r.Bucket] = $rec
+        foreach ($job in $running.ToArray()) {
+            if ($job.Process.HasExited) {
+                $rec = Complete-Bucket $job
+                $running.Remove($job) | Out-Null
+                $done[$job.Bucket] = $rec
                 $color = 'Green'; if ($rec.status -eq 'partial') { $color = 'Yellow' } elseif ($rec.status -ne 'measured') { $color = 'Red' }
-                Write-Log ("done   {0}: {1}, exit {2}, {3} tests, {4} passed, {5} failed, {6}, peak {7} MB  [{8}/{9}]" -f $r.Bucket, $rec.status, $rec.exitCode, $rec.tests, $rec.passed, $rec.failed, (Format-Duration $rec.wallSeconds), $rec.peakProcessTreeWorkingSetMB, $done.Count, $runBuckets.Count) $color
+                Write-Log ("done   {0}: {1}, exit {2}, {3} tests, {4} passed, {5} failed, {6}, peak {7} MB  [{8}/{9}]" -f $job.Bucket, $rec.status, $rec.exitCode, $rec.tests, $rec.passed, $rec.failed, (Format-Duration $rec.wallSeconds), $rec.peakProcessTreeWorkingSetMB, $done.Count, $runBuckets.Count) $color
                 foreach ($c in @($rec.caveats | Select-Object -First 3)) { Write-Log "         $c" $color }
-            } else { Update-Memory $r }
+            } else { Update-Memory $job }
         }
         if (((Get-Date) - $lastBeat).TotalSeconds -ge 300 -and $running.Count) {
             $lastBeat = Get-Date
@@ -788,10 +828,10 @@ try {
         }
     }
 } finally {
-    foreach ($r in @($running)) {
-        if (-not $r.Process.HasExited) {
-            Write-Log "Stopping $($r.Bucket) (interrupted); it will run again next time." 'Yellow'
-            try { $r.Process.Kill($true) } catch { }
+    foreach ($job in $running.ToArray()) {
+        if (-not $job.Process.HasExited) {
+            Write-Log "Stopping $($job.Bucket) (interrupted); it will run again next time." 'Yellow'
+            try { $job.Process.Kill($true) } catch { }
         }
     }
 }
@@ -837,8 +877,8 @@ $md.Add("Runner $($Pins.RunnerVersion), BC $bc, reader $($Pins.ReaderTag), $work
 $md.Add('')
 $md.Add('| bucket | status | tests | passed | failed | errors | skipped | wall | peak MB | ref tests |')
 $md.Add('|---|---|---:|---:|---:|---:|---:|---:|---:|---:|')
-foreach ($r in $records) {
-    $md.Add(('| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} | {8} | {9} |' -f $r.bucket, $r.status, $r.tests, $r.passed, $r.failed, $r.errors, $r.skipped, (Format-Duration $r.wallSeconds), $r.peakProcessTreeWorkingSetMB, $r.referenceTests))
+foreach ($row in $records) {
+    $md.Add(('| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} | {8} | {9} |' -f $row.bucket, $row.status, $row.tests, $row.passed, $row.failed, $row.errors, $row.skipped, (Format-Duration $row.wallSeconds), $row.peakProcessTreeWorkingSetMB, $row.referenceTests))
 }
 $md.Add(('| **total** | | **{0}** | **{1}** | **{2}** | **{3}** | **{4}** | **{5}** | | {6} |' -f $summary.tests, $summary.passed, $summary.failed, $summary.errors, $summary.skipped, (Format-Duration $sessionWall), $summary.referenceTests))
 $md.Add('')
