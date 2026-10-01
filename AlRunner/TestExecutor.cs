@@ -119,7 +119,7 @@ public sealed record TestResult(string Codeunit, string Method, TestOutcome Outc
                                 // and knows it without an exception — --tdd's missing-symbol
                                 // results (TddSupport) are Compile.
                                 AlErrorKind? KnownErrorKind = null,
-                                // #5147: the --tdd-generated members this test's compile referenced
+                                // #5147: the --tdd-generated members this test reaches (TddCallGraph)
                                 // ("Object: kind Signature"), whatever its outcome. Null outside --tdd
                                 // and for a test that referenced none. Outcome and Message are untouched.
                                 IReadOnlyList<string>? GeneratedStubs = null);

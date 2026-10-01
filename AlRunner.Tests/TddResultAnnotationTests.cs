@@ -164,6 +164,7 @@ public sealed class TddResultAnnotationTests
         Assert.Contains("EMPTY body", tddSection);
         Assert.Contains(TddReport.PerTestPrefix.TrimEnd(), tddSection);
         Assert.Contains("generatedStubs", tddSection);
+        Assert.Contains("helpers, library codeunits", tddSection); // the flag follows calls, not just the [Test] body
         Assert.DoesNotContain("raises a distinctive error", tddSection);
 
         var help = new StringWriter();
@@ -174,6 +175,7 @@ public sealed class TddResultAnnotationTests
         var serverDoc = File.ReadAllText(Path.Combine(RepoRoot, "docs", "server-mode.md"));
         Assert.Contains("`generatedStubs` (#5147)", serverDoc);
         Assert.DoesNotContain("a test that ran against a stub is not a pass", serverDoc);
+        Assert.Contains("a procedure the\n  test calls directly or transitively", serverDoc.Replace("\r\n", "\n"));
 
         using var schema = JsonDocument.Parse(File.ReadAllText(Path.Combine(RepoRoot, "protocol-v2.schema.json")));
         Assert.True(schema.RootElement.GetProperty("definitions").GetProperty("TestEvent")

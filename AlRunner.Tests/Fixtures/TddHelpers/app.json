@@ -1,0 +1,15 @@
+{
+  "id": "5147a0c1-4e2b-4d6f-9a8e-1c3b5d7f9e01",
+  "name": "Runner Tests Fixture - Tdd Helpers",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves --tdd (#5147) annotates a test that reaches a generated member through a local helper or a library codeunit, not only in its own body.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65050,
+      "to": 65059
+    }
+  ],
+  "runtime": "14.0"
+}

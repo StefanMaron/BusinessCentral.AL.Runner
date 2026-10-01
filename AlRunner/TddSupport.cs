@@ -130,8 +130,9 @@ public static class TddSupport
 }
 
 /// <summary>
-/// The tests whose compile referenced a --tdd-generated member, resolved statically from each
-/// AL0132's location (<see cref="TddGeneratedMember.DependentTests"/>), and the annotation that
+/// The tests that reach a --tdd-generated member, resolved statically from each AL0132's
+/// location and the compile's call graph (<see cref="TddGeneratedMember.DependentTests"/>,
+/// <see cref="TddCallGraph"/>), and the annotation that
 /// names those members on each such result (#5147). The result's own outcome and message are
 /// kept: the test reports what its assertions said. Shared by the CLI/--watch run loop and
 /// --server (#5034); docs/server-mode.md#tdd.

@@ -140,8 +140,8 @@ answer an event in a request that omits it. A single-bundle request is unchanged
   supplied one. Omitted when no AL call stack was captured (a runner-internal
   failure); never emitted as an empty array, and `source`/`column` are omitted
   rather than invented, since BC's call-stack format carries no file path.
-- `generatedStubs` (#5147) is present only on a `tdd` request, on a test whose compile
-  referenced a member tdd generated: the generated members, as strings — see
+- `generatedStubs` (#5147) is present only on a `tdd` request, on a test that reaches a
+  member tdd generated: the generated members, as strings — see
   [`tdd`](#tdd). It states a fact and changes nothing else; `status` is the test's own.
 - `exitCode`: `0` ok · `1` test fail · `2` exec · `3` compile (same ladder as
   normal mode).
@@ -1187,12 +1187,16 @@ It runs the same generation as the CLI and `--watch --tdd` (`--guide`, "TDD MODE
   `false`, a blank date, an empty Guid, the enum's first value); a generated field or enum value
   simply exists. Each test reports its own result: `Assert.AreEqual(42, Calc.DoubleIt(21), ...)`
   fails with its own assertion message, and a test that only checks the default passes (#5147).
-- Every `test` line of a test whose compile referenced a generated member carries
+- Every `test` line of a test that reaches a generated member carries
   `"generatedStubs"`: one string per member, `"<Object>: <kind> <signature>"`, for example
   `"Calc: procedure \"DoubleIt\"(Arg1: Integer): Integer"`. It is present whatever the
-  `status`, says only which generated members the test referenced (resolved from the compile's
-  AL0132 diagnostics, not observed at run time), and is omitted for every other test. The CLI's
-  `--output-json` carries the same field.
+  `status`, and is omitted for every other test. "Reaches" is read from the code, not observed
+  at run time: the member is named by an AL0132 in the test's own body, or in a procedure the
+  test calls directly or transitively — a helper in the test codeunit or a procedure of another
+  codeunit in the same app. A branch that never ran still counts. A procedure in another
+  `sourcePaths` bundle (a test library app compiled separately) is not followed: its member is
+  still generated and listed on stderr, but the tests calling it carry no `generatedStubs`.
+  The CLI's `--output-json` carries the same field.
 - With the app and its tests as two `sourcePaths`, the member is generated into the app bundle
   and the app is recompiled within the same request before the test bundle compiles again.
 - A member that cannot be generated (no anchor, a `Text` argument, a precompiled dependency's

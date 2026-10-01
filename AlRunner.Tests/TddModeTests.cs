@@ -77,9 +77,10 @@ public sealed class TddModeTests : IDisposable
     /// <summary>
     /// The core proof (#2001 generation, #5147 behaviour): a missing field / procedure / enum
     /// value is generated into the implementing app's own source and recompiled; a generated
-    /// procedure has an EMPTY body returning its type's default; and each test that ran against
-    /// a generated member reports its OWN result — never a blanket FAILED — with
-    /// <c>generatedStubs</c> naming the exact signatures it ran against. Covers criteria 3
+    /// procedure has an EMPTY body returning its type's default; and each test that reaches a
+    /// generated member reports its OWN result, never a blanket FAILED, with
+    /// <c>generatedStubs</c> naming the exact signatures it reaches. Reaching it through a
+    /// helper or a library codeunit: <see cref="GeneratedMemberReachedThroughCalledProcedures_IsAnnotated"/>. Covers criteria 3
     /// (field), 4 (procedure, all three return-type anchors), 5 (enum value), 6 (unrelated
     /// sibling test unaffected and unannotated), 9 (exit 1, not 3).
     ///
@@ -202,6 +203,44 @@ public sealed class TddModeTests : IDisposable
 
         var listIdx = IndexOf("--tdd: 6 test(s) ran against generated stubs this run:");
         Assert.True(listIdx > IndexOf("Tests: "), $"the list must follow the results summary:\n{stdout}");
+    }
+
+    private static readonly string HelpersFixturePath = Path.Combine(
+        RepoRoot, "AlRunner.Tests", "Fixtures", "TddHelpers");
+
+    /// <summary>
+    /// #5147 review: the AL0132 sits in a procedure the test calls, not in the [Test] body — a
+    /// local helper in the test codeunit, and a procedure of a library codeunit. Each test
+    /// reaches the stub all the same, so it is annotated all the same; a test whose helper
+    /// reaches no generated member is not.
+    /// </summary>
+    [SkippableFact]
+    public void GeneratedMemberReachedThroughCalledProcedures_IsAnnotated()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var alCache = Path.Combine(_scratch, "al-cache-helpers");
+        var (stdout, stderr, exit) = RunRunner(
+            "--tdd", $"--cache \"{alCache}\"", "--output-json", $"\"{HelpersFixturePath}\"");
+
+        Assert.True(exit == 0, $"exit {exit}\n{stderr}");
+        using var doc = JsonDocument.Parse(stdout.Trim());
+        var tests = doc.RootElement.GetProperty("tests").EnumerateArray().ToList();
+        Assert.Equal(3, tests.Count);
+
+        var viaHelper = FindIn(tests, "ViaLocalHelper_RunsAgainstGeneratedStub");
+        Assert.Equal("pass", viaHelper.GetProperty("status").GetString());
+        Assert.Equal(new[] { "Tdd Helper Target Cu: procedure \"CountClosed\"(Arg1: Integer): Integer" }, StubsOf(viaHelper));
+
+        var viaLibrary = FindIn(tests, "ViaLibraryCodeunit_RunsAgainstGeneratedStub");
+        Assert.Equal("pass", viaLibrary.GetProperty("status").GetString());
+        Assert.Equal(new[] { "Tdd Helper Target Cu: procedure \"CountPending\"(Arg1: Integer): Integer" }, StubsOf(viaLibrary));
+
+        var unrelated = FindIn(tests, "ViaHelperWithoutStub_IsNotAnnotated");
+        Assert.Equal("pass", unrelated.GetProperty("status").GetString());
+        Assert.Empty(StubsOf(unrelated));
+
+        Assert.Contains("--tdd: 2 test(s) ran against generated stubs this run:", stderr);
     }
 
     /// <summary>

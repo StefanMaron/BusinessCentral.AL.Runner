@@ -240,6 +240,9 @@ public sealed class TddTwoFolderTests : IDisposable
             Assert.DoesNotContain(calcLitStub, cycle2);
             Assert.Contains(calcBaseStub, cycle2);
             Assert.Contains("--tdd: 2 test(s) ran against generated stubs this run:", cycle2);
+            // Each cycle lists only its own generated members: CalcLit is written now.
+            Assert.Contains("--tdd: generated 2 member(s) this run:", cycle2);
+            Assert.DoesNotContain("Loyalty Points: procedure \"CalcLit\"", cycle2);
         }
         finally
         {
