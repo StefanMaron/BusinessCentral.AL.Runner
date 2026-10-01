@@ -2061,6 +2061,13 @@ public static partial class NavReportSync
     /// would run them. Opening the request page alone is unaffected, which is why this sits at
     /// the run, not at binding.
     /// </summary>
+    /// <summary>Prepended to BC's <c>ReportResultSetProcessorFactory.CreateInstance</c> by
+    /// NclCecilRewrite, so the SaveAs/Execute/Print chain refuses where Report.Run does.</summary>
+    public static void GuardUnboundReportExtensionsBeforeRun(object? navReport)
+    {
+        if (navReport != null) ThrowIfExtensionReportBehaviourIsUnbound(navReport);
+    }
+
     internal static void ThrowIfExtensionReportBehaviourIsUnbound(object navReport)
     {
         if (!_extensionsWithUnboundReportBehaviour.TryGetValue(navReport, out var unbound) || unbound.ExtensionIds.Count == 0) return;

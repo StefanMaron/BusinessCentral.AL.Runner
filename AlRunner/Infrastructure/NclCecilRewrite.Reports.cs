@@ -383,6 +383,34 @@ public static partial class NclCecilRewrite
             // BC's own body only touches DataItemIterator state the runner already builds
             // (dataItems, TableViewRecord, TableViewIsSet), so there is nothing to stand in
             // for — the original is both correct and sufficient.
+            // ReportResultSetProcessorFactory.CreateInstance keeps BC's own body, with a guard
+            // prepended (#4837, #4918). Its only caller is NavReport.RunReportInternalCoreAsync, after
+            // the request page and before any report trigger, so it is where the SaveAs / Execute /
+            // Print chain crosses into a run; Report.Run refuses at the same point in
+            // NavReportSync.TryRunOrControlFlow. (DataItemIterator.StoreSetTableViewForAllDataItems
+            // is not usable: ApplyXmlViews also reaches it when a request page OPENS.) The guard throws
+            // only for a report whose reportextension could not be bound whole and otherwise returns,
+            // so BC's body runs unchanged. A prepended call shifts no token and changes no signature
+            // or layout.
+            {
+                var factoryType = asm.MainModule.Types.FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.Report.ReportResultSetProcessorFactory")
+                    ?? throw new InvalidOperationException("ReportResultSetProcessorFactory not found in Ncl.dll — Ncl shape changed; do not commit");
+                var create = factoryType.Methods.SingleOrDefault(m => m.Name == "CreateInstance"
+                        && !m.IsStatic && m.Parameters.Count == 0 && m.HasBody)
+                    ?? throw new InvalidOperationException("ReportResultSetProcessorFactory.CreateInstance() not found — Ncl shape changed; do not commit");
+                var getReport = factoryType.Methods.SingleOrDefault(m => m.Name == "get_ReportInstance" && m.Parameters.Count == 0)
+                    ?? throw new InvalidOperationException("ReportResultSetProcessorFactory.ReportInstance getter not found — Ncl shape changed; do not commit");
+                var guardInfo = typeof(AlRunner.NavReportSync).GetMethod(nameof(AlRunner.NavReportSync.GuardUnboundReportExtensionsBeforeRun),
+                    BindingFlags.Static | BindingFlags.Public)
+                    ?? throw new InvalidOperationException("NavReportSync.GuardUnboundReportExtensionsBeforeRun not found via reflection");
+                var il = create.Body.GetILProcessor();
+                var first = create.Body.Instructions[0];
+                il.InsertBefore(first, il.Create(OpCodes.Ldarg_0));
+                il.InsertBefore(first, il.Create(OpCodes.Call, getReport));
+                il.InsertBefore(first, il.Create(OpCodes.Call, asm.MainModule.ImportReference(guardInfo)));
+                create.Body.MaxStackSize = Math.Max(create.Body.MaxStackSize, 1);
+                reportRewrites++;
+            }
             Console.Error.WriteLine($"[Cecil] Rewrote {reportRewrites} NavReport/DataItemIterator method(s) (Run/RunModal→SyncRun; Add→ReportAdd; RunRequestPage→SyncRunRequestPage)");
         }
 
