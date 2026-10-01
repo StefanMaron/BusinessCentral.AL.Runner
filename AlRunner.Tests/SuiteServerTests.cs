@@ -300,6 +300,8 @@ public class SuiteServerTests
         // them apart. The startup banner is written during the baseline canary, the request before the
         // first real one, so a slice taken one request early holds it.
         Assert.DoesNotContain("server mode (JSON-RPC", first.StdErr);
+        // Relies on the canary declaring a table and the test bundle declaring none: the line is the canary's, so a slice read after the canary or one request early holds it.
+        foreach (var r in new[] { first, second }) Assert.DoesNotContain("PopulateNclMetadataCache[Table]", r.StdErr);
     }
 
     private static string RunTestsRequest(string bundle) => System.Text.Json.JsonSerializer.Serialize(new
