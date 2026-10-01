@@ -341,11 +341,12 @@ public class ServerAffectedSelectionTableChangeTests
         Assert.False(page.ForcedFull, page.Raw);
         Assert.Empty(page.Ran);
 
-        // A pageextension: its base page is not recorded, so it runs everything.
+        // A pageextension selects the tests that opened its base page (#5025). No test opens
+        // page 60677, so it selects nothing, like the new page above.
         Write(bundle, "PageExt.PageExt.al", "pageextension 60681 \"TabSel PageExt SX\" extends \"TabSel Page SX\"\n{\n}\n");
         var pageExt = await Send(server, bundle);
-        Assert.True(pageExt.ForcedFull, pageExt.Raw);
-        Assert.Contains("PageExtension 60681 changed", pageExt.Reason, StringComparison.Ordinal);
+        Assert.False(pageExt.ForcedFull, pageExt.Raw);
+        Assert.Empty(pageExt.Ran);
     }
 
     // #5007's path: the same changes made while no server runs.
