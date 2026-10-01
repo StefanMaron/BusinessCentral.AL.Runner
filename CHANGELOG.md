@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **benchmark:** a failsafe script to benchmark the full Microsoft test surface on a volunteer's Windows PC
 - **provision:** install the pinned backup reader that --test-data needs
 - **server:** per-request tdd field on runTests
 - **selection:** use a baseline from another environment, diffed per object, with a prominent warning
