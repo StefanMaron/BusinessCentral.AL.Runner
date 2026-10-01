@@ -1311,6 +1311,7 @@ public static partial class RecordPatches
             // — see TranslateQueryFilters/ApplyHavingFilters below). Done before Top so the cap
             // applies to the filtered set, matching SQL TOP-after-WHERE/HAVING.
             joined = ApplyJoinRuntimeFilters(metaAppObj, queryDef, request, joined);
+            joined = SortByQueryOrder(request, metaAppObj, queryDef, joined);
             if (position != null) joined = joined.Where(position);
             var topJ = _pReqTopNumberOfRows!.GetValue(request);
             int topNJ = topJ == null ? 0 : Convert.ToInt32(topJ);

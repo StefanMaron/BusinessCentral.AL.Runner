@@ -86,6 +86,36 @@ public class QueryReadAfterWritePositionTests
             }
         }
 
+        table 51334 "QRP Cust"
+        {
+            DataClassification = SystemMetadata;
+            fields
+            {
+                field(1; "No."; Code[20]) { }
+                field(2; Name; Text[50]) { }
+            }
+            keys { key(PK; "No.") { Clustered = true; } }
+        }
+
+        query 51335 "QRP Joined"
+        {
+            QueryType = Normal;
+            OrderBy = descending(EntryNo);
+            elements
+            {
+                dataitem(Entry; "QRP Entry")
+                {
+                    column(EntryNo; "Entry No.") { }
+                    dataitem(Cust; "QRP Cust")
+                    {
+                        DataItemLink = "No." = Entry."Cust No.";
+                        SqlJoinType = InnerJoin;
+                        column(CustName; Name) { }
+                    }
+                }
+            }
+        }
+
         query 51332 "QRP Totals By Amount"
         {
             QueryType = Normal;
@@ -112,6 +142,39 @@ public class QueryReadAfterWritePositionTests
                 Entry.Init(); Entry."Entry No." := 1; Entry."Cust No." := 'C1'; Entry.Amount := 10; Entry.Insert();
                 Entry.Init(); Entry."Entry No." := 2; Entry."Cust No." := 'C1'; Entry.Amount := 20; Entry.Insert();
                 Entry.Init(); Entry."Entry No." := 3; Entry."Cust No." := 'C2'; Entry.Amount := 30; Entry.Insert();
+            end;
+
+            local procedure InitializeCustomers()
+            var
+                Cust: Record "QRP Cust";
+            begin
+                Cust.DeleteAll();
+                Cust.Init(); Cust."No." := 'C1'; Cust.Name := 'One'; Cust.Insert();
+                Cust.Init(); Cust."No." := 'C2'; Cust.Name := 'Two'; Cust.Insert();
+            end;
+
+            // A join with TopNumberOfRows(2) and a write in the loop: the re-read is positioned
+            // before TOP is taken, so the loop still reads two rows in total (corpus 68534 pins
+            // the single-dataitem twin on BC).
+            [Test]
+            procedure JoinTop2_ModifyInLoop_StillReadsTwoRows()
+            var
+                Joined: Query "QRP Joined";
+                Seen: Text;
+            begin
+                Initialize();
+                InitializeCustomers();
+                Joined.TopNumberOfRows(2);
+                Joined.Open();
+                while Joined.Read() do begin
+                    if StrLen(Seen) > 40 then
+                        Error('QRP-JOINTOP the re-read restarted from the top: %1', Seen);
+                    Seen += Format(Joined.EntryNo) + ';';
+                    MarkProcessed(Joined.EntryNo);
+                end;
+                Joined.Close();
+                if Seen <> '3;2;' then
+                    Error('QRP-JOINTOP expected 3;2; got %1', Seen);
             end;
 
             local procedure MarkProcessed(EntryNo: Integer)
@@ -168,6 +231,23 @@ public class QueryReadAfterWritePositionTests
         return root;
     }
 
+    [Theory]
+    [InlineData(-1, 3)]
+    [InlineData(3, 3)]
+    public void APositioningSlotOutsideTheRow_RefusesAsAShapeGap(int slot, int fieldCount)
+    {
+        var ex = Assert.Throws<AlRunner.Infrastructure.BcShapeGapException>(
+            () => AlRunner.Patches.RecordPatches.RequirePositioningSlotInRow(slot, fieldCount));
+        Assert.Contains($"positioning slot {slot} is outside the projected row", ex.Message);
+    }
+
+    [Fact]
+    public void APositioningSlotInsideTheRow_IsAccepted()
+    {
+        AlRunner.Patches.RecordPatches.RequirePositioningSlotInRow(0, 3);
+        AlRunner.Patches.RecordPatches.RequirePositioningSlotInRow(2, 3);
+    }
+
     [SkippableFact]
     public void QueryReRead_ResumesAfterTheStartingRow_AndRefusesAnAggregatePosition()
     {
@@ -180,8 +260,10 @@ public class QueryReadAfterWritePositionTests
         Assert.DoesNotContain("InvalidCastException", output);
         Assert.DoesNotContain("QRP-RESUME", output);
         Assert.DoesNotContain("QRP-LOOP", output);
+        Assert.DoesNotContain("QRP-JOINTOP", output);
+        Assert.Contains("PASS  Codeunit51333.JoinTop2_ModifyInLoop_StillReadsTwoRows", output);
         Assert.Contains("PASS  Codeunit51333.ModifyInLoop_ResumesAfterTheLastRow", output);
         Assert.Contains("query-reread-position-on-aggregated-column", output);
-        Assert.Contains("1P/1F/0E", output);
+        Assert.Contains("2P/1F/0E", output);
     }
 }
