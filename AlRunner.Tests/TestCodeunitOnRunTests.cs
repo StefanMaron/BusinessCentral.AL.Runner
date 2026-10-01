@@ -234,49 +234,76 @@ public class TestCodeunitOnRunTests
         AssertFailingOnRunReported(output);
     }
 
-    [SkippableFact]
-    public void TestFilter_SelectingOneTest_StillRunsOnRunFirst()
-    {
-        TestArtifacts.SkipIfMissing();
-        var (output, _) = RunRunner(WriteBundle("al-runner-testcu-onrun-4694-filter"),
-            "--test", "C_OnRunCallCount");
+    // #5111: the three facts below read only which tests passed and what their own Error() said, so
+    // they run on the shared suite server: `test` is the CLI's --test, `testIsolation` its --isolation.
+    // The default-isolation fact above stays on the CLI because it asserts the CLI's ERROR heading lines.
 
-        Has(output, "TOR3 REPORT: counter=1 row8=No");
-        Lacks(output, "TOR3 FAIL");
-        Lacks(output, "Codeunit62691.A_");
+    private static (string Status, string Message) One(ServerRunResult r, string name)
+    {
+        var t = Assert.Single(r.Tests, t => t.Name == name);
+        return (t.Status, t.Message);
+    }
+
+    private static void LacksInAnyMessage(ServerRunResult r, string s)
+        => Assert.False(r.Tests.Any(t => t.Message.Contains(s)), $"did not expect [{s}] in any test message:\n{r}");
+
+    private static void AssertFailingOnRunReported(ServerRunResult r)
+    {
+        foreach (var method in new[] { "E_WouldPass", "F_WouldAlsoPass" })
+        {
+            var (status, message) = One(r, $"Codeunit62695.{method}");
+            Assert.Equal("error", status);
+            Assert.Contains("OnRun trigger failed, so none of its test methods ran", message);
+            Assert.Contains("TOR5 OnRun boom", message);
+        }
+        r.AssertPassed("Codeunit62696.G_FailedOnRunsWriteWasRolledBack");
     }
 
     [SkippableFact]
-    public void TestIsolation_EveryTestStartsFromThePostOnRunState()
+    public async Task TestFilter_SelectingOneTest_StillRunsOnRunFirst()
     {
         TestArtifacts.SkipIfMissing();
-        var (output, _) = RunRunner(WriteBundle("al-runner-testcu-onrun-4694-test"),
-            "--isolation", "test");
+        var r = await SuiteServer.RunViaServer(new[] { WriteBundle("al-runner-testcu-onrun-4694-filter") },
+            Array.Empty<string>(), test: "C_OnRunCallCount");
 
-        Has(output, "PASS  Codeunit62691.A_GlobalSetByOnRunIsVisible");
-        Has(output, "PASS  Codeunit62691.B_RowInsertedByOnRunIsVisible");
+        Assert.Equal(1, r.Total);
+        Assert.Contains("TOR3 REPORT: counter=1 row8=No", One(r, "Codeunit62691.C_OnRunCallCount").Message);
+        LacksInAnyMessage(r, "TOR3 FAIL");
+        Assert.Null(r.StatusOf("Codeunit62691.A_GlobalSetByOnRunIsVisible"));
+    }
+
+    [SkippableFact]
+    public async Task TestIsolation_EveryTestStartsFromThePostOnRunState()
+    {
+        TestArtifacts.SkipIfMissing();
+        var r = await SuiteServer.RunViaServer(new[] { WriteBundle("al-runner-testcu-onrun-4694-test") },
+            Array.Empty<string>(), testIsolation: "test");
+
+        r.AssertPassed("Codeunit62691.A_GlobalSetByOnRunIsVisible");
+        r.AssertPassed("Codeunit62691.B_RowInsertedByOnRunIsVisible");
         // One instance and one OnRun, as under Codeunit isolation, but the database rolls back to
         // the post-OnRun state before every test, so B_'s row 8 is gone and OnRun's row 7 is not
         // (#4826: corpus PR #517's probe, T6/T7 green on BC 28.4, Windows run 36727084058).
-        Has(output, "TOR3 REPORT: counter=1 row8=No");
-        Lacks(output, "TOR3 FAIL");
-        AssertFailingOnRunReported(output);
+        Assert.Contains("TOR3 REPORT: counter=1 row8=No", One(r, "Codeunit62691.C_OnRunCallCount").Message);
+        LacksInAnyMessage(r, "TOR3 FAIL");
+        AssertFailingOnRunReported(r);
     }
 
     [SkippableFact]
-    public void DisabledIsolation_OnRunRunsOncePerCodeunit()
+    public async Task DisabledIsolation_OnRunRunsOncePerCodeunit()
     {
         TestArtifacts.SkipIfMissing();
-        var (output, _) = RunRunner(WriteBundle("al-runner-testcu-onrun-4694-disabled"),
-            "--isolation", "disabled");
+        var r = await SuiteServer.RunViaServer(new[] { WriteBundle("al-runner-testcu-onrun-4694-disabled") },
+            Array.Empty<string>(), testIsolation: "disabled");
 
-        Has(output, "PASS  Codeunit62691.A_GlobalSetByOnRunIsVisible");
-        Has(output, "PASS  Codeunit62691.B_RowInsertedByOnRunIsVisible");
-        Has(output, "TOR3 REPORT: counter=1 row8=Yes");
-        Lacks(output, "TOR3 FAIL");
-        Has(output, "TOR4 FAIL");   // no reset at all under Disabled
+        r.AssertPassed("Codeunit62691.A_GlobalSetByOnRunIsVisible");
+        r.AssertPassed("Codeunit62691.B_RowInsertedByOnRunIsVisible");
+        Assert.Contains("TOR3 REPORT: counter=1 row8=Yes", One(r, "Codeunit62691.C_OnRunCallCount").Message);
+        LacksInAnyMessage(r, "TOR3 FAIL");
+        // No reset at all under Disabled: D_ sees row 7 left by the previous codeunit's OnRun.
+        Assert.Contains("TOR4 FAIL", One(r, "Codeunit62694.D_PreviousCodeunitsOnRunRowIsGone").Message);
         // ...so only here does a failed OnRun's own write reach the next codeunit unless it is
         // rolled back.
-        AssertFailingOnRunReported(output);
+        AssertFailingOnRunReported(r);
     }
 }

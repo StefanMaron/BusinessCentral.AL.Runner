@@ -82,9 +82,17 @@ failure messages and compile errors. The helper returns those from the protocol
 `CompilationErrors` carries what the CLI printed under `COMPILE FAIL`, `EMIT-EXCLUDED`
 included.
 
+`RunViaServer` also takes the request fields `packagePaths`, `testIsolation` (the CLI's
+`--isolation`), `test` (`--test` / `--filter`) and `excludeTests` (`--exclude-test`). The two
+selection fields are sent only when given, so a request without them runs everything, which is
+what the shared server's startup selection (none) asks for
+([`test` and `excludeTests`](server-mode.md#test-and-excludetests)). `ServerRunResult.Warnings`
+carries the summary's `warnings`, where a pattern that selected no test reports the CLI's
+`test-selection:` message next to exit code 6.
+
 Keep a fact on the CLI when it needs any of these:
 
-- a CLI-only flag (`--strict`, `--test`, `--coverage`, `--watch`, an output file, ...) or an
+- a CLI-only flag (`--strict`, `--coverage`, `--watch`, an output file, ...) or an
   environment-variable hook;
 - an assertion on what the CLI prints, rather than on a protocol field: a rendered failure line
   or diagnosis, the `Tests:` summary, a `[cache]` HIT or MISS line;
@@ -130,3 +138,26 @@ To list the classes that use it:
 ```bash
 rg -l 'SuiteServer.RunViaServer' AlRunner.Tests
 ```
+
+### What stays on the CLI, and why
+
+The classes that still start a process per fact stay there by their subject, not because nobody
+got to them: each asserts something the protocol does not carry or something process-wide. A
+request field was added only where it unlocked a fact (#5184); the rest were measured and left
+out. To re-measure, take the classes that spawn the CLI and are not on `SuiteServer`, read each
+one's flags and `AL_RUNNER_*` variables from its source, and sum its test durations from a TRX.
+
+| the CLI flag or hook | what decided it |
+|---|---|
+| `--cache`, `--package-cache`, `--isolation`, `--bc-version`, `--no-auto-provision` | not blockers: startup flags, or `testIsolation`, which is a request field |
+| `--test`, `--filter`, `--exclude-test` | request fields `test` and `excludeTests`. A fact moves to the server when it only reads which tests ran. It stays on the CLI when its subject is the flag itself (the `--filter` alias, the `--exclude-test` parse), the CLI's exit 6 text, or `--jobs` |
+| `--verbose`, `--quiet`, `--show-pass`, `AL_RUNNER_VERBOSE` | the facts assert CLI-rendered text: `EMIT-EXCLUDED` lines, exit codes, `[cache] MISS`, startup notes. A verbosity field would convert none of them. Not added |
+| `--no-cache` | cache roots are process-wide, so a fact needing it would need a server per request. Not added |
+| `--define`, `--preprocessor-symbols` | not built, not impossible: a later request can reuse a module compiled for another directory with the same app id, keyed on content, `app.json` and dependencies and not on the symbols. A server started with `--define` needs no protocol change |
+| `--output-json`, `--output-junit`, `--out` | the response already is the JSON document, so these facts assert the CLI writing a file. Not added |
+| `--coverage`, `--coverage-out` | `coverage` exists as a request field; `--coverage-out` cannot be built on the server's table, which omits procedures that never ran (#5186) |
+| `--seed`, `--expectations`, `--watch`, `--jobs`, `--affected` | process-wide or CLI-only: the seed line, the expectations manifest, the watch loop, worker processes, and the baseline file |
+| a fact about the CLI's own output | the `Tests:` summary, `FAIL` / `ERROR` heading lines, count-baseline lines, `Shard result:`, and the exit-code path itself: the text is the subject |
+
+Every converted class keeps its CLI-text and flag-parse facts on the CLI, so each code path the
+conversions touch still has a process-per-fact test.

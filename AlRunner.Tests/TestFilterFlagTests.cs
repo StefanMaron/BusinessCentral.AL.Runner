@@ -21,6 +21,11 @@
 //   "62142"    → codeunit-name (CLR type name) branch only — not present in any method name
 //   "Alpha"    → method-name branch only — "Alpha" is not a substring of "Codeunit62142"
 //
+// #5111: the facts that only read which tests ran use the request's `test` field on the shared
+// suite server (SuiteServer.RunViaServer). The ones left on the CLI each own a path the request
+// does not have: the `--test` flag, the `--filter` alias, `--exclude-test`, the exit 6 text the
+// CLI prints, and `--jobs` (docs/shared-cli-server.md#what-stays-on-the-cli-and-why).
+//
 // Ghost-test trap avoided: each assertion below checks BOTH that the targeted test ran
 // AND that the other codeunit's test did NOT run. A no-op filter (e.g. TestFilter parsed
 // but never wired into TestExecutor.Run, or a filter that only ever includes everything)
@@ -153,38 +158,46 @@ public sealed class TestFilterFlagTests : IDisposable
         lock (sb) return (sb.ToString(), p.ExitCode);
     }
 
+    private Task<ServerRunResult> RunOnServer(string? test = null, string[]? excludeTests = null)
+        => SuiteServer.RunViaServer(new[] { _root }, Array.Empty<string>(), test: test, excludeTests: excludeTests);
+
+    /// <summary>The status of each fixture test in a result: "pass", "fail", or null when it did not run.</summary>
+    private static (string? alpha, string? beta) Ran(ServerRunResult r)
+        => (r.StatusOf("Codeunit62142.AlphaCheck"), r.StatusOf("Codeunit62143.BetaCheck"));
+
     /// <summary>
-    /// Sanity control: with no `--test` flag, both codeunits run. Establishes the
-    /// baseline the filtered cases below are contrasted against.
+    /// Sanity control: with no `test` field, both codeunits run. Establishes the
+    /// baseline the filtered cases below are contrasted against. On the shared server, which
+    /// has served other requests with a selection before this one.
     /// </summary>
     [SkippableFact]
-    public void NoFilter_BothCodeunitsRun()
+    public async Task NoFilter_BothCodeunitsRun()
     {
         TestArtifacts.SkipIfMissing();
 
-        var (output, exit) = RunRunner();
+        var r = await RunOnServer();
 
-        Assert.Equal(0, exit);
-        Assert.Contains("Codeunit62142.AlphaCheck", output);
-        Assert.Contains("Codeunit62143.BetaCheck", output);
+        Assert.Equal(0, r.ExitCode);
+        Assert.Equal(("pass", "pass"), Ran(r));
+        Assert.Empty(r.Warnings);
     }
 
     /// <summary>
-    /// Positive: `--test 62142` matches via CodeunitMatchesFilter's own codeunit-name
+    /// Positive: `test` "62142" matches via CodeunitMatchesFilter's own codeunit-name
     /// (CLR type name) check — "62142" is not a substring of the method name
     /// "AlphaCheck", so this can only pass via that branch. Negative in the same
     /// assertion: Beta ("Codeunit62143") must NOT run.
     /// </summary>
     [SkippableFact]
-    public void TestFlag_CodeunitTypeNameSubstring_RunsOnlyMatchingCodeunit()
+    public async Task TestFlag_CodeunitTypeNameSubstring_RunsOnlyMatchingCodeunit()
     {
         TestArtifacts.SkipIfMissing();
 
-        var (output, exit) = RunRunner("--test 62142");
+        var r = await RunOnServer(test: "62142");
 
-        Assert.Equal(0, exit);
-        Assert.Contains("Codeunit62142.AlphaCheck", output);
-        Assert.DoesNotContain("Codeunit62143.BetaCheck", output);
+        Assert.Equal(0, r.ExitCode);
+        Assert.Equal(("pass", (string?)null), Ran(r));
+        Assert.Equal(1, r.Total);
     }
 
     /// <summary>
@@ -207,18 +220,18 @@ public sealed class TestFilterFlagTests : IDisposable
 
     /// <summary>
     /// Contrast case for the one above, proving the filter is not just "always match
-    /// the first codeunit": `--test Beta` flips which codeunit runs.
+    /// the first codeunit": `test` "Beta" flips which codeunit runs.
     /// </summary>
     [SkippableFact]
-    public void TestFlag_MethodNameSubstring_OtherCodeunit_RunsOnlyThatOne()
+    public async Task TestFlag_MethodNameSubstring_OtherCodeunit_RunsOnlyThatOne()
     {
         TestArtifacts.SkipIfMissing();
 
-        var (output, exit) = RunRunner("--test Beta");
+        var r = await RunOnServer(test: "Beta");
 
-        Assert.Equal(0, exit);
-        Assert.Contains("Codeunit62143.BetaCheck", output);
-        Assert.DoesNotContain("Codeunit62142.AlphaCheck", output);
+        Assert.Equal(0, r.ExitCode);
+        Assert.Equal(((string?)null, "pass"), Ran(r));
+        Assert.Equal(1, r.Total);
     }
 
     /// <summary>
@@ -226,32 +239,32 @@ public sealed class TestFilterFlagTests : IDisposable
     /// the filter and the compared names).
     /// </summary>
     [SkippableFact]
-    public void TestFlag_IsCaseInsensitive()
+    public async Task TestFlag_IsCaseInsensitive()
     {
         TestArtifacts.SkipIfMissing();
 
-        var (output, exit) = RunRunner("--test ALPHA");
+        var r = await RunOnServer(test: "ALPHA");
 
-        Assert.Equal(0, exit);
-        Assert.Contains("Codeunit62142.AlphaCheck", output);
-        Assert.DoesNotContain("Codeunit62143.BetaCheck", output);
+        Assert.Equal(0, r.ExitCode);
+        Assert.Equal(("pass", (string?)null), Ran(r));
+        Assert.Equal(1, r.Total);
     }
 
     /// <summary>
     /// Positive: a leading/trailing '*' is stripped as a shell-ergonomics no-op
-    /// (NormaliseFilter), so `--test *Alpha*` behaves identically to `--test Alpha`
+    /// (NormaliseFilter), so `test` "*Alpha*" behaves identically to "Alpha"
     /// rather than being treated as a literal character requiring an exact glob match.
     /// </summary>
     [SkippableFact]
-    public void TestFlag_LeadingTrailingWildcard_IsStrippedAsNoOp()
+    public async Task TestFlag_LeadingTrailingWildcard_IsStrippedAsNoOp()
     {
         TestArtifacts.SkipIfMissing();
 
-        var (output, exit) = RunRunner("--test *Alpha*");
+        var r = await RunOnServer(test: "*Alpha*");
 
-        Assert.Equal(0, exit);
-        Assert.Contains("Codeunit62142.AlphaCheck", output);
-        Assert.DoesNotContain("Codeunit62143.BetaCheck", output);
+        Assert.Equal(0, r.ExitCode);
+        Assert.Equal(("pass", (string?)null), Ran(r));
+        Assert.Equal(1, r.Total);
     }
 
     /// <summary>
@@ -320,16 +333,19 @@ public sealed class TestFilterFlagTests : IDisposable
     /// cannot work out from "0 total".
     /// </summary>
     [SkippableFact]
-    public void TestFlag_InteriorWildcard_SelectsNothing_AndSaysItIsLiteral()
+    public async Task TestFlag_InteriorWildcard_SelectsNothing_AndSaysItIsLiteral()
     {
         TestArtifacts.SkipIfMissing();
 
-        var (output, exit) = RunRunner("--test \"Alpha*Check\"");
+        var r = await RunOnServer(test: "Alpha*Check");
 
-        Assert.Equal(6, exit);
-        Assert.DoesNotContain("Codeunit62142.AlphaCheck", output);
-        Assert.Contains("--test 'Alpha*Check' selected no test in this run", output);
-        Assert.Contains("an interior '*' is matched literally", output);
+        Assert.Equal(6, r.ExitCode);
+        Assert.Equal(((string?)null, (string?)null), Ran(r));
+        Assert.Equal(0, r.Total);
+        // The CLI prints the audit's message on stderr; the server carries the same message in `warnings`.
+        var note = Assert.Single(r.Warnings);
+        Assert.Contains("--test 'Alpha*Check' selected no test in this run", note);
+        Assert.Contains("an interior '*' is matched literally", note);
     }
 
     /// <summary>

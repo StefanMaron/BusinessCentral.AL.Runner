@@ -153,6 +153,61 @@ public class SuiteServerTests
         Assert.Contains("SST-NOW-FAILS", r2.Tests.Single(t => t.Name == "Codeunit69981.Passes").Message);
     }
 
+    [Fact]
+    public void Parse_ReadsWarnings_AndAnAbsentListIsEmpty()
+    {
+        var withNote = new[]
+        {
+            """{"type":"summary","exitCode":6,"passed":0,"failed":0,"errors":0,"total":0,"warnings":["test-selection: --test 'x' selected no test in this run.","second"],"protocolVersion":2}""",
+        };
+
+        Assert.Equal(new[] { "test-selection: --test 'x' selected no test in this run.", "second" },
+            ServerRunResult.Parse(withNote, "").Warnings);
+        Assert.Empty(ServerRunResult.Parse(AllPass, "").Warnings);
+    }
+
+    /// <summary>
+    /// The positive control for the helper's selection parameters, in both directions. A request with
+    /// <c>test</c> runs only the matching test, and the next request without it runs both again, so a
+    /// helper that dropped the field (nothing narrows) and one that kept sending it (the next request
+    /// stays narrowed) both fail here. The same for <c>excludeTests</c>. The fixture's two tests both
+    /// pass, so the only thing telling the requests apart is the selection.
+    /// </summary>
+    [SkippableFact]
+    public async Task RunViaServer_TestAndExcludeTests_NarrowOneRequest_AndTheNextWithoutThemRunsEverything()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = WriteBundle("sst-selection", passBody: "", failBody: "");
+        var none = Array.Empty<string>();
+        var sources = new[] { bundle };
+        const string Passes = "Codeunit69981.Passes";
+        const string Fails = "Codeunit69981.Fails";
+
+        var baseline = await SuiteServer.RunViaServer(sources, none);
+        Assert.Equal(2, baseline.Total);
+
+        var narrowed = await SuiteServer.RunViaServer(sources, none, test: "Passes");
+        Assert.Equal(1, narrowed.Total);
+        Assert.Equal("pass", narrowed.StatusOf(Passes));
+        Assert.Null(narrowed.StatusOf(Fails));
+
+        var afterTest = await SuiteServer.RunViaServer(sources, none);
+        Assert.Equal(2, afterTest.Total);
+
+        var excluded = await SuiteServer.RunViaServer(sources, none, excludeTests: new[] { Passes });
+        Assert.Equal(1, excluded.Total);
+        Assert.Null(excluded.StatusOf(Passes));
+        Assert.Equal("pass", excluded.StatusOf(Fails));
+
+        var afterExclude = await SuiteServer.RunViaServer(sources, none);
+        Assert.Equal(2, afterExclude.Total);
+
+        // A pattern that selects nothing reaches the helper's caller as the audit's exit 6 and warning.
+        var nothing = await SuiteServer.RunViaServer(sources, none, test: "NoSuchTest");
+        Assert.Equal(6, nothing.ExitCode);
+        Assert.Contains("NoSuchTest", Assert.Single(nothing.Warnings));
+    }
+
     private static readonly string[] OnePassTimedOut =
     {
         """{"type":"test","name":"Codeunit69980.Passes","status":"pass","durationMs":5}""",
