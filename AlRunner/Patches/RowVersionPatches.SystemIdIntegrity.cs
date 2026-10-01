@@ -33,13 +33,10 @@
 // no such column-level immutability — if the incoming MutableRecordBuffer's SystemId
 // slot were ever wrong at Modify-time (reset, stale, or otherwise not matching the
 // stored row), Modify would silently write that wrong value into the store and
-// GetBySystemId would stop finding the row. No normal AL statement sequence
-// reproduces a wrong incoming value today (checked: plain field mutation, and
-// Get()-then-Modify, both keep the buffer's SystemId slot correct — see the corpus
-// regression tests this fix ships with), but the guard below is cheap, exactly
-// mirrors what real BC's SQL layer does unconditionally, and closes the mechanism
-// the fork report (credited in #2573) identified — not just the one AL shape that
-// happened to trigger it there.
+// GetBySystemId would stop finding the row. Ordinary AL reaches it: Get() one row, set
+// the primary key to another row's, Modify() — the buffer still carries the first row's
+// SystemId, and two rows ended up sharing it (#2700). The guard below mirrors what real
+// BC's SQL layer does unconditionally: the stored row keeps its own SystemId.
 //
 // ── NOT covered here: TempTableDataProvider.ModifyAll (issue #2644) ─────────────
 //
@@ -89,9 +86,6 @@ public static partial class RowVersionPatches
     private static PropertyInfo? _pSystemIdField;         // NCLMetaTable.SystemIdField (internal)
     private static PropertyInfo? _pSystemIdProp;          // MutableRecordBuffer.SystemId (internal, get-only)
     private static PropertyInfo? _pReadOnlyBuffer;         // MutableRecordBuffer.ReadOnlyBuffer (internal)
-    private static PropertyInfo? _pReadOnlyBufferSystemId; // ReadOnlyRecordBuffer.SystemId (public, but the
-                                                            // declaring type MutableRecordBuffer.ReadOnlyBuffer
-                                                            // resolves to is only known by its runtime Type)
     private static PropertyInfo? _pTableCaptionSafe;      // NCLMetaTable.TableCaptionSafe (internal)
                                                             // row's own runtime Type — kept as reflection (not a
                                                             // direct cast) so this whole mechanism is unit-testable
@@ -396,12 +390,16 @@ public static partial class RowVersionPatches
         var readOnlyBufferObj = _pReadOnlyBuffer.GetValue(recordBuffer)
             ?? throw new InvalidOperationException(
                 "[RowVersionPatches] record buffer has no ReadOnlyBuffer — cannot preserve its SystemId across Modify");
-        _pReadOnlyBufferSystemId ??= readOnlyBufferObj.GetType().GetProperty("SystemId",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException(
-                $"[RowVersionPatches] {readOnlyBufferObj.GetType().Name}.SystemId property not found — " +
-                "SystemId integrity check cannot resolve its reflection target");
-        var storedSystemId = (NavGuid)_pReadOnlyBufferSystemId.GetValue(readOnlyBufferObj)!;
+        // The SystemId to keep is the STORED row's, never ReadOnlyBuffer.SystemId: after AL sets
+        // the primary key to another row's and calls Modify, BC's
+        // RecordImplementation.EnsurePrimaryKeyFieldsSetOnlyInReadOnlyPartOfBuffer hands the
+        // provider a read-only buffer whose key names the target row but whose system fields
+        // are still the row that was read — restoring from it copied that row's SystemId onto
+        // the target (#2700; corpus 60061 Record_Modify_AfterKeySetToAnotherRow_*). The provider
+        // finds its target by the same ReadOnlyBuffer.GetRecordId() key looked up here.
+        var storedRow = FindStoredRowForModify(provider!, readOnlyBufferObj);
+        if (storedRow == null) return; // no such row: BC's Modify answers RecordNotFound itself
+        var storedSystemId = ReadRowSystemId(storedRow);
         if (storedSystemId.IsZeroOrEmpty) return; // defensive: an existing row should always carry one
 
         _pItem ??= bufferType.GetProperty("Item",
@@ -414,6 +412,30 @@ public static partial class RowVersionPatches
 
         _pItem.SetValue(recordBuffer, storedSystemId, new object[] { systemIdIndex.Value });
     }
+
+    /// <summary>The stored row a Modify of <paramref name="readOnlyBuffer"/> targets, through the
+    /// provider's own <c>TryGetValue(ReadOnlyBuffer.GetRecordId())</c> — the lookup
+    /// <c>TempTableDataProvider.Modify</c> itself makes — or null when no row has that key.</summary>
+    private static object? FindStoredRowForModify(object provider, object readOnlyBuffer)
+    {
+        if (_mGetRecordId?.DeclaringType?.IsInstanceOfType(readOnlyBuffer) != true)
+            _mGetRecordId = readOnlyBuffer.GetType().GetMethod("GetRecordId",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance, Type.EmptyTypes)
+                ?? throw new AlRunner.Infrastructure.BcShapeGapException(
+                    SystemIdModifySurface, $"{readOnlyBuffer.GetType().Name}.GetRecordId",
+                    "method not found, so Modify cannot find the stored row whose SystemId it must keep");
+        if (!AlRunner.Infrastructure.PrivateMemberLookup.FitsInstance(_mTryGetStoredRow, provider))
+            _mTryGetStoredRow = AlRunner.Infrastructure.PrivateMemberLookup.Method(provider.GetType(), "TryGetValue")
+                ?? throw new AlRunner.Infrastructure.BcShapeGapException(
+                    SystemIdModifySurface, $"{provider.GetType().Name}.TryGetValue",
+                    "method not found, so Modify cannot find the stored row whose SystemId it must keep");
+        var args = new object?[] { _mGetRecordId.Invoke(readOnlyBuffer, null), null };
+        return (bool)_mTryGetStoredRow.Invoke(provider, args)! ? args[1] : null;
+    }
+
+    private const string SystemIdModifySurface = "AL Record.Modify (SystemId preservation)";
+    private static MethodInfo? _mGetRecordId;      // ReadOnlyRecordBuffer.GetRecordId()
+    private static MethodInfo? _mTryGetStoredRow;  // TempTableDataProvider.TryGetValue (private)
 
     private static string ResolveTableCaptionSafe(object metaTable)
     {
