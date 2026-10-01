@@ -1034,7 +1034,29 @@ public sealed partial class BcCompiler
             return null;
         }
 
-        var mergedModuleDef = MergeModuleDefinition(baseline.ModuleDef, allChangedIdentities, deltaModuleDef);
+        // #5089: the interface id and a field's type are folded the same way. See InterfaceShapeChanged
+        // and FieldTypeChanged.
+        if (InterfaceShapeChanged(baseline.ModuleDef, deltaModuleDef, allChangedIdentities) is { } iface)
+        {
+            fallbackReason =
+                $"{iface} changed its procedures or its extends list. BC derives an interface's id from "
+                + "that shape, and every object that implements or uses the interface folds the id into "
+                + "its OWN generated C# (IsInterfaceOfType, InvokeInterfaceMethod), including objects in "
+                + "files that were not edited. Which objects those are cannot be read from the change set, "
+                + "so falling back to a full compile for this cycle";
+            return null;
+        }
+        if (FieldTypeChanged(baseline.ModuleDef, deltaModuleDef, allChangedIdentities) is { } retyped)
+        {
+            fallbackReason =
+                $"{retyped} changed its data type. A caller folds the field's type into its OWN generated "
+                + "C# (SetFieldValueSafe(id, NavType.<type>, …), new NavCode(<length>, …)), so reusing an UNMODIFIED caller's cached C# "
+                + "would leave it reading the field as the PREVIOUS type. Falling back to a full compile "
+                + "for this cycle";
+            return null;
+        }
+
+        var mergedModuleDef =MergeModuleDefinition(baseline.ModuleDef, allChangedIdentities, deltaModuleDef);
 
         var newFileHashByPath = new Dictionary<string, string>(baseline.FileHashByPath, StringComparer.Ordinal);
         foreach (var path in addedPaths.Concat(modifiedPaths)) newFileHashByPath[path] = currentHashes[path];
@@ -1892,6 +1914,146 @@ public sealed partial class BcCompiler
                     return $"{id.Kind} '{id.Name}' ({name})";
         }
         return null;
+    }
+
+    /// <summary>
+    /// #5089: names the first changed interface whose procedures or extends list differ from last
+    /// cycle, or that is gone, or null. BC derives the interface id from that shape (transitively,
+    /// so an interface extending it moves too), and both implementers (<c>IsInterfaceOfType</c> /
+    /// <c>IsInterfaceMethod</c> case labels) and users (<c>IsInterfaceOfType(id)</c>,
+    /// <c>InvokeInterfaceMethod(id, …)</c>) fold it into their own C# — measured in
+    /// BcCompilerIncrementalInterfaceDependentsTests. A reference can come through an expression's
+    /// type without naming the interface, so the dependents cannot be listed: fall back instead.
+    /// <para>An interface ADDED this cycle is skipped (nothing was compiled against it). One that
+    /// cannot be read, or reads twice, counts as changed: a wrong "unchanged" is a stale emit.</para>
+    /// </summary>
+    private static string? InterfaceShapeChanged(
+        NavSymRef.ModuleDefinition before, NavSymRef.ModuleDefinition after, IReadOnlySet<RadObjectIdentity> changed)
+    {
+        var wanted = changed.Where(i => i.Kind == NavCA.SymbolKind.Interface).ToHashSet();
+        if (wanted.Count == 0) return null;
+        var previous = RadShapes(before, wanted, InterfaceShapeOf);
+        var current = RadShapes(after, wanted, InterfaceShapeOf);
+        foreach (var id in wanted)
+        {
+            if (!previous.TryGetValue(id, out var was)) continue;
+            if (was == null || !current.TryGetValue(id, out var now) || now == null
+                || !string.Equals(was, now, StringComparison.Ordinal))
+                return $"Interface '{id.Name}'";
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// #5089: names the first field of a changed table or tableextension that kept its name but
+    /// changed its data type (a Code/Text length included), or null. Callers fold the type as
+    /// <c>NavType.&lt;type&gt;</c> and the length as <c>new NavCode(&lt;length&gt;, …)</c> beside
+    /// the field id <see cref="FoldedOrdinalMoved"/> already guards. A removed field is that
+    /// guard's case (its id key disappears), so a name missing on either side is skipped here.
+    /// </summary>
+    private static string? FieldTypeChanged(
+        NavSymRef.ModuleDefinition before, NavSymRef.ModuleDefinition after, IReadOnlySet<RadObjectIdentity> changed)
+    {
+        var wanted = changed
+            .Where(i => i.Kind is NavCA.SymbolKind.Table or NavCA.SymbolKind.TableExtension).ToHashSet();
+        if (wanted.Count == 0) return null;
+        var previous = RadShapes(before, wanted, FieldTypesOf);
+        var current = RadShapes(after, wanted, FieldTypesOf);
+        foreach (var id in wanted)
+        {
+            if (!previous.TryGetValue(id, out var was)) continue;
+            if (!current.TryGetValue(id, out var now)) continue; // removed or renamed: ObjectIdMoved/FoldedOrdinalMoved territory
+            if (was == null || now == null) return $"{id.Kind} '{id.Name}'";
+            var wasTypes = ParseFieldTypes(was);
+            var nowTypes = ParseFieldTypes(now);
+            foreach (var (field, type) in wasTypes)
+                if (nowTypes.TryGetValue(field, out var nowType) && !string.Equals(type, nowType, StringComparison.Ordinal))
+                    return $"{id.Kind} '{id.Name}' field '{field}' ({type} -> {nowType})";
+        }
+        return null;
+    }
+
+    private static Dictionary<string, string> ParseFieldTypes(string shape)
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var line in shape.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var tab = line.IndexOf('\t');
+            map[line[..tab]] = line[(tab + 1)..];
+        }
+        return map;
+    }
+
+    /// <summary>
+    /// One canonical string per object in <paramref name="wanted"/>, in one pass over every
+    /// namespace depth (#2507). Missing from the result: not found. Null value: found twice, or
+    /// <paramref name="shapeOf"/> could not read it.
+    /// </summary>
+    private static Dictionary<RadObjectIdentity, string?> RadShapes(
+        NavSymRef.ModuleDefinition module, IReadOnlySet<RadObjectIdentity> wanted, Func<object, string?> shapeOf)
+    {
+        var byKindAndKey = new Dictionary<(NavCA.SymbolKind Kind, string Key), RadObjectIdentity>();
+        foreach (var id in wanted) byKindAndKey[(id.Kind, IdentityElementKeyOf(id))] = id;
+        var kindsWanted = byKindAndKey.Keys.Select(k => k.Kind).ToHashSet();
+        var result = new Dictionary<RadObjectIdentity, string?>();
+        foreach (var container in EnumerateContainers(module))
+            foreach (var (propName, kind) in RadMergeablePropertiesByKind)
+            {
+                if (!kindsWanted.Contains(kind)) continue;
+                if (RadContainerProperty(propName).GetValue(container) is not Array arr) continue;
+                foreach (var item in arr)
+                {
+                    if (item == null) continue;
+                    if (!byKindAndKey.TryGetValue((kind, ElementKey(item, kind)), out var id)) continue;
+                    result[id] = result.ContainsKey(id) ? null : shapeOf(item);
+                }
+            }
+        return result;
+    }
+
+    private static string? InterfaceShapeOf(object element)
+    {
+        if (element is not NavSymRef.InterfaceDefinition d) return null;
+        var lines = new List<string>();
+        foreach (var e in d.ExtendedInterfaces ?? Array.Empty<string>())
+            lines.Add("extends:" + (e ?? "").ToLowerInvariant());
+        var methods = new List<string>();
+        foreach (var m in d.Methods ?? Array.Empty<NavSymRef.MethodDefinition>())
+        {
+            if (m == null) continue;
+            var parameters = (m.Parameters ?? Array.Empty<NavSymRef.ParameterDefinition>())
+                .Select(p => (p.IsVar ? "var " : "") + (p.Name ?? "").ToLowerInvariant() + ":" + RadTypeShape(p.TypeDefinition));
+            methods.Add("method:" + (m.Name ?? "").ToLowerInvariant() + "|" + m.Id + "|"
+                + (m.ReturnTypeDefinition != null ? RadTypeShape(m.ReturnTypeDefinition) : m.ReturnType ?? "")
+                + "|" + string.Join(",", parameters));
+        }
+        methods.Sort(StringComparer.Ordinal);
+        lines.AddRange(methods);
+        return string.Join("\n", lines);
+    }
+
+    private static string? FieldTypesOf(object element)
+    {
+        if (element.GetType().GetProperty("Fields")?.GetValue(element) is not Array fields) return "";
+        var lines = new List<string>();
+        foreach (var field in fields)
+        {
+            if (field == null) continue;
+            if (field.GetType().GetProperty("Name")?.GetValue(field) is not string name || name.Length == 0) return null;
+            if (field.GetType().GetProperty("TypeDefinition")?.GetValue(field) is not NavSymRef.TypeDefinition type) return null;
+            lines.Add(name + "\t" + RadTypeShape(type));
+        }
+        return string.Join("\n", lines);
+    }
+
+    private static string RadTypeShape(NavSymRef.TypeDefinition? t)
+    {
+        if (t == null) return "";
+        var args = t.TypeArguments is { Length: > 0 } ta ? "<" + string.Join(",", ta.Select(RadTypeShape)) + ">" : "";
+        var dims = t.ArrayDimensions is { Length: > 0 } ad ? "[" + string.Join(",", ad) + "]" : "";
+        var options = t.OptionMembers is { Length: > 0 } om ? "{" + string.Join(",", om) + "}" : "";
+        return (t.Name ?? "").ToLowerInvariant() + "/" + (t.Subtype.Name ?? "").ToLowerInvariant()
+            + args + dims + options + (t.Temporary ? " temporary" : "");
     }
 
     /// <summary>

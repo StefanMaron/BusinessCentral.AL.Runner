@@ -405,12 +405,14 @@ public sealed class BcCompilerIncrementalTests : IDisposable
         // path: GetDeclaredApplicationObjectSymbols() never returns an interface (confirmed:
         // IApplicationObjectTypeSymbol : ISymbolWithId), so this is classified via
         // SymbolJsonWriter.GetModuleDefinition's Interfaces array instead (see
-        // BcCompiler.Incremental.cs's header comment).
+        // BcCompiler.Incremental.cs's header comment). The edit keeps the interface's shape: a
+        // procedure or extends change moves its id and falls back by design (#5089,
+        // BcCompilerIncrementalInterfaceDependentsTests).
         WriteAl("IFace.al", """
             interface "Incr IFace"
             {
+                // DoIt answers an Integer.
                 procedure DoIt(): Integer;
-                procedure DoItAgain(): Integer;
             }
             """);
 

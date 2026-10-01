@@ -413,6 +413,8 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // end of an observed range sits on the 60s freshness threshold, which satisfies
             // the gate while leaving dispatch order at the fallback and the tail in place.
             ["ServerAffectedSelectionTests"] = 71,
+            // #5089: three server processes, two requests in the first; not yet measured on CI.
+            ["ServerIncrementalInterfaceExtendsTests"] = 90,
             // #4993: added by #4981 and absent from this table; tripped
             // check-collection-weights.py on main at 90.6s (BC 27.5, run 36622416591).
             // Raised to the observed maximum, 96.2s on PR #4986's BC 27.5 leg (run 36632347509).
