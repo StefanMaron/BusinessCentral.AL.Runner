@@ -12,10 +12,9 @@
 // for two DIFFERENT paths ("one of these is a stale build ... (pathA) and (pathB)"), so with
 // one path it read as nonsense on top of being wrong.
 //
-// Dedicated server, not SharedCliServer: ServerTests documents that every fact sharing that
-// process must present a distinct AppId, and the negative fact below deliberately presents
-// ONE AppId at TWO SourcePaths. Running it on the shared server would poison the AppId cache
-// for every other fact in that class.
+// The first two facts share one server (#5110) and use distinct AppIds. The negative fact keeps a
+// dedicated server: it deliberately presents ONE AppId at TWO SourcePaths, which would poison the
+// AppId cache for every other fact on a shared one.
 //
 // Credit: found and fixed independently by Mikkel Mansa Vilhelmsen (@vhn) in his fork
 // (commit 831080ea). The code here is not copied from it.
@@ -25,8 +24,13 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-public sealed class ServerAppVersionBumpTests
+// #5110: facts that need no startup flag of their own share one --server (SharedCliServer).
+public sealed class ServerAppVersionBumpTests : IClassFixture<SharedCliServer>
 {
+    private readonly SharedCliServer _fixture;
+
+    public ServerAppVersionBumpTests(SharedCliServer fixture) => _fixture = fixture;
+
     private const string AppId = "b5555555-5555-5555-5555-555555555555";
 
     private static string WriteBundle(string suffix, string version, string appName, string appId = AppId, int idBase = 62280)
@@ -91,7 +95,7 @@ public sealed class ServerAppVersionBumpTests
         var bundle = WriteBundle("bump", "1.0.0.0", "Version Bump Probe");
         try
         {
-            await using var server = await CliServer.StartAsync();
+            var server = await _fixture.GetAsync();
 
             // ── Request 1: baseline. Registers AppId -> (v1.0.0.0, this directory). ──
             var lines1 = await server.SendRequestStreamingAsync(Req(bundle), TimeSpan.FromSeconds(180));
@@ -224,7 +228,7 @@ public sealed class ServerAppVersionBumpTests
         var (appDir, testDir) = MakeAppTestPair();
         try
         {
-            await using var server = await CliServer.StartAsync();
+            var server = await _fixture.GetAsync();
 
             var lines1 = await server.SendRequestStreamingAsync(ReqBoth(appDir, testDir), TimeSpan.FromSeconds(240));
             var (_, d1) = ProtocolV2Streaming.Split(lines1);
