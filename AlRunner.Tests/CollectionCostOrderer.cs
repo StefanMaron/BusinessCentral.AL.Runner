@@ -185,7 +185,9 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // leg of the same run, 76.4s on 28.4 -- a 17% spread on one collection in one run,
             // which is why it straddles the band at all). The other four are single-leg
             // observations: a ceiling for that leg, not a settled figure.
-            ["FloorOnlyBundleEnumFieldTests"] = 76,
+            // #5182: now three requests on the suite server, so the 76 above is stale; 53s
+            // locally, not yet on CI.
+            ["FloorOnlyBundleEnumFieldTests"] = 53,
             ["ServerCrossBundleReuseRegistryReplayTests"] = 73,
             ["SuiteRootAlFilesTests"] = 71,
             ["CacheGateProbeScopeTests"] = 60,
