@@ -21,8 +21,15 @@ namespace AlRunner.Tests;
 ///
 /// Spawns the real runner in --server mode; needs the BC artifact cache. Skips when absent.
 /// </summary>
-public class ServerDuplicateSourcePathTests
+// #5110: both facts share one --server (SharedCliServer) on one class-wide --cache root.
+public class ServerDuplicateSourcePathTests : IClassFixture<SharedCliServer>
 {
+    private static readonly string CacheDir = TestScratch.Dir("al-runner-server-dup-2136-cache");
+    private const string DuplicateNotice = "duplicate bundle argument";
+    private readonly SharedCliServer _fixture;
+
+    public ServerDuplicateSourcePathTests(SharedCliServer fixture) => _fixture = fixture;
+
     private static string MakeBundle(string dirName, string appId, int idFrom, int codeunitId)
     {
         var root = TestScratch.Dir("al-runner-server-dup-2136");
@@ -72,8 +79,7 @@ public class ServerDuplicateSourcePathTests
         TestArtifacts.SkipIfMissing();
 
         var dir = MakeBundle("only", "d4e5f6a7-2136-4a1b-9c3d-000000000001", 62410, 62410);
-        var cacheDir = TestScratch.Dir("al-runner-server-dup-2136-cache");
-        await using var server = await CliServer.StartAsync(new[] { "--cache", cacheDir });
+        var server = await _fixture.GetAsync(new[] { "--cache", CacheDir });
 
         var req = JsonSerializer.Serialize(new
         {
@@ -81,6 +87,7 @@ public class ServerDuplicateSourcePathTests
             sourcePaths = new[] { dir, dir },
             packagePaths = Array.Empty<string>(),
         });
+        var mark = server.StdErrMark;
         var lines = await server.SendRequestStreamingAsync(req, TimeSpan.FromSeconds(180));
         var d = Summary(lines);
 
@@ -91,7 +98,7 @@ public class ServerDuplicateSourcePathTests
         Assert.Equal(0, d.GetProperty("failed").GetInt32());
         Assert.Equal(0, d.GetProperty("errors").GetInt32());
         Assert.Equal(0, d.GetProperty("exitCode").GetInt32());
-        Assert.True(server.StdErr.Contains("duplicate bundle argument"), server.StdErr);
+        await server.StdErrSinceAsync(mark, DuplicateNotice);
     }
 
     [SkippableFact]
@@ -101,8 +108,7 @@ public class ServerDuplicateSourcePathTests
 
         var a = MakeBundle("first", "d4e5f6a7-2136-4a1b-9c3d-000000000002", 62420, 62420);
         var b = MakeBundle("second", "d4e5f6a7-2136-4a1b-9c3d-000000000003", 62425, 62425);
-        var cacheDir = TestScratch.Dir("al-runner-server-dup-2136-cache");
-        await using var server = await CliServer.StartAsync(new[] { "--cache", cacheDir });
+        var server = await _fixture.GetAsync(new[] { "--cache", CacheDir });
 
         var req = JsonSerializer.Serialize(new
         {
@@ -110,12 +116,16 @@ public class ServerDuplicateSourcePathTests
             sourcePaths = new[] { a, b },
             packagePaths = Array.Empty<string>(),
         });
+        var mark = server.StdErrMark;
         var lines = await server.SendRequestStreamingAsync(req, TimeSpan.FromSeconds(180));
         var d = Summary(lines);
 
         Assert.Equal(2, d.GetProperty("total").GetInt32());
         Assert.Equal(2, d.GetProperty("passed").GetInt32());
         Assert.Equal(0, d.GetProperty("exitCode").GetInt32());
-        Assert.True(!server.StdErr.Contains("duplicate bundle argument"), server.StdErr);
+        // This request's slice only: on the shared server the other fact's notice is earlier in
+        // StdErr. The notice is written before the bundle compiles, as unsynchronised as before.
+        var stderr = server.StdErrSince(mark);
+        Assert.True(!stderr.Contains(DuplicateNotice), stderr);
     }
 }
