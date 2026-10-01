@@ -333,7 +333,10 @@ public sealed class BcInternalsNullForgivingGuardTests
         // 119 -> 120 for NavReport.Metadata in NavReportSync.BindReportExtensions (#4918), a
         // BcShape.Property: it decides whether a reportextension's merged data items let it be
         // bound whole, and a silent null would demote every extension to the request-page step.
-        Assert.Equal(120, converted);
+        //
+        // 120 -> 128 for a query's positioned re-read (RecordPatches.QueryProjection.cs, #5133):
+        // a null from any of those reads would position the re-read on nothing, rereading from the top.
+        Assert.Equal(128, converted);
     }
 
     /// <summary>
