@@ -190,6 +190,27 @@ public class AffectedSessionStateSelectionTests
         Assert.Equal(new[] { R, LeW }.OrderBy(x => x, StringComparer.Ordinal).ToArray(), Sorted(merged));
     }
 
+    /// <summary>A test brought in through session state runs with its whole codeunit under Codeunit
+    /// isolation, like any other selected test: run alone it would miss the state its codeunit's
+    /// earlier tests leave it (#5035). Measured on the corpus: codeunit 60720's last test, brought in
+    /// as a last-error writer without its siblings, failed where a full run passes it.</summary>
+    [Fact]
+    public void WidenWithIsolation_ATestBroughtInThroughSessionState_BringsItsCodeunit()
+    {
+        var order = new[] { "Codeunit50100.A1", "Codeunit50100.A2", "Codeunit50101.B1" };
+        var recorded = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal)
+        {
+            ["Codeunit50100.A1"] = Keys(),
+            ["Codeunit50100.A2"] = Keys(LeW),
+            ["Codeunit50101.B1"] = Keys(),
+        };
+        var selected = Keys("Codeunit50101.B1");
+        var (byIsolation, byState) = AffectedSessionStateSelection.WidenWithIsolation(
+            order, selected, recorded, TestIsolation.Codeunit, true, false, false);
+        Assert.Equal(new[] { "Codeunit50100.A1", "Codeunit50100.A2", "Codeunit50101.B1" }, Sorted(selected));
+        Assert.Equal((1, 1), (byIsolation, byState));
+    }
+
     // #5069: a re-recording keeps the session-state keys the previous record had, and only those.
     [Fact]
     public void WithPreviousState_KeepsPreviousStateKeys_AndDropsPreviousOtherKeys()

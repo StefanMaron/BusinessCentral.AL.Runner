@@ -27,17 +27,19 @@ internal static class AffectedSessionStateSelection
     /// the state it wrote reaches this bundle's first test.</param>
     /// <param name="laterBundleFollows">Another bundle of this request runs after this one and may
     /// read what this one writes, which this bundle's selection cannot see.</param>
+    /// <param name="changedTests">The tests selected for a change, before any widening; null means
+    /// <paramref name="selected"/> as it is on entry.</param>
     internal static int Widen(IReadOnlyList<string> discovered, HashSet<string> selected,
         IReadOnlyDictionary<string, HashSet<string>>? recorded, bool changed, bool earlierBundleChanged,
-        bool laterBundleFollows)
+        bool laterBundleFollows, IReadOnlySet<string>? changedTests = null)
     {
         var before = selected.Count;
         HashSet<string>? Record(string t) => recorded != null && recorded.TryGetValue(t, out var r) ? r : null;
         bool Any(string t, string prefix) => Record(t) is not { } r || r.Any(k => k.StartsWith(prefix, StringComparison.Ordinal));
-        // For a nearest-writer walk, a test selected before widening counts as unrecorded when the
-        // request changed code: it may be the changed one, and may have stopped writing.
-        var changedTests = changed || earlierBundleChanged
-            ? new HashSet<string>(selected, StringComparer.Ordinal) : new HashSet<string>(StringComparer.Ordinal);
+        // For a nearest-writer walk, a test selected for a change counts as unrecorded: it may have
+        // stopped writing.
+        changedTests = !changed && !earlierBundleChanged ? new HashSet<string>(StringComparer.Ordinal)
+            : changedTests ?? new HashSet<string>(selected, StringComparer.Ordinal);
         HashSet<string>? WalkRecord(string t) => changedTests.Contains(t) ? null : Record(t);
         bool WritesAccumulating(string t) => Record(t) is not { } r
             || r.Any(k => k.StartsWith(AlSessionStateTracker.WritePrefix, StringComparison.Ordinal) && !IsOverwriteWrite(k));
@@ -126,6 +128,27 @@ internal static class AffectedSessionStateSelection
                 yield return j;
                 if (r != null) break;
             }
+        }
+    }
+
+    /// <summary>
+    /// Isolation widening (#5035) and session-state widening, repeated until neither adds a test: a
+    /// test brought in as a writer or reader shares its codeunit's state like any other selected
+    /// test, so its codeunit (or bundle) comes too, and those tests can link further ones (#5057).
+    /// Returns how many tests each added.
+    /// </summary>
+    internal static (int Isolation, int State) WidenWithIsolation(IReadOnlyList<string> discovered,
+        HashSet<string> selected, IReadOnlyDictionary<string, HashSet<string>>? recorded, TestIsolation isolation,
+        bool changed, bool earlierBundleChanged, bool laterBundleFollows)
+    {
+        var changedTests = new HashSet<string>(selected, StringComparer.Ordinal);
+        int byIsolation = 0, byState = 0;
+        while (true)
+        {
+            byIsolation += AffectedIsolationWidening.Widen(discovered, selected, isolation);
+            var added = Widen(discovered, selected, recorded, changed, earlierBundleChanged, laterBundleFollows, changedTests);
+            byState += added;
+            if (added == 0) return (byIsolation, byState);
         }
     }
 
