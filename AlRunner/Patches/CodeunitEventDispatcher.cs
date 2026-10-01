@@ -176,6 +176,25 @@ public static partial class BcRuntime
         return false;
     }
 
+    private static readonly ConditionalWeakTable<Type, string> _eventScopeAlNames = new();
+
+    /// <summary>The AL event name a publisher's <c>&lt;Event&gt;_Scope</c> class belongs to: its
+    /// <c>[NavName]</c>, the declared name verbatim, which is what subscribers name and the registry
+    /// is keyed by. The class name is that name only when the compiler did not mangle it — a quoted
+    /// <c>"On Before Quoted"</c> compiles to <c>On_Before_Quoted_Scope</c> (#5167). The C# method
+    /// name stays <see cref="TryDecodeEventScopeName"/>'s answer. A scope class without
+    /// <c>[NavName]</c> (none emitted by BC; test stand-ins) answers the suffix decode.</summary>
+    internal static bool TryGetEventScopeAlName(Type scopeType, out string eventName)
+    {
+        if (!TryDecodeEventScopeName(scopeType.Name, out var decoded)) { eventName = ""; return false; }
+        eventName = _eventScopeAlNames.GetValue(scopeType, t =>
+        {
+            AlNavNameReflection.EnsureInit();
+            return AlNavNameReflection.GetAlName(t) ?? decoded;
+        });
+        return true;
+    }
+
     private static bool _firstDispatchLogged;
     private static bool _firstFireLogged;
     private static void DispatchCore(object publisherScope)
@@ -206,6 +225,8 @@ public static partial class BcRuntime
         var declName = declType.Name;
         var scopeName = scopeType.Name;
         if (!TryDecodeEventScopeName(scopeName, out var eventMethodName)) return;
+        // Subscribers name the AL event; eventMethodName is the C# method, mangled for a quoted name.
+        TryGetEventScopeAlName(scopeType, out var eventName);
 
         var navMethodScopeType = NavMethodScopeType;
         object? pubObj = null;
@@ -216,23 +237,23 @@ public static partial class BcRuntime
             // #5004: an extension's event is published under its base object.
             var extensionInstance = navMethodScopeType.GetProperty("ApplicationObject", BindingFlags.Public | BindingFlags.Instance)?
                 .GetValue(publisherScope);
-            var resolved = ResolveExtensionPublisherOrThrow(extensionKind, extensionId, eventMethodName, extensionInstance);
+            var resolved = ResolveExtensionPublisherOrThrow(extensionKind, extensionId, eventName, extensionInstance);
             publisherId = resolved.BaseId;
             pubObj = resolved.BaseInstance;
         }
         IReadOnlyList<MethodInfo>? subs = publisherKind switch
         {
-            PublisherKindCodeunit => EventSubscriberPatches.GetCodeunitSubscribers(publisherId, eventMethodName),
-            PublisherKindTable => EventSubscriberPatches.GetTableEventSubscribers(publisherId, eventMethodName),
+            PublisherKindCodeunit => EventSubscriberPatches.GetCodeunitSubscribers(publisherId, eventName),
+            PublisherKindTable => EventSubscriberPatches.GetTableEventSubscribers(publisherId, eventName),
             PublisherKindPage or PublisherKindReport or PublisherKindQuery or PublisherKindXmlPort
-                => EventSubscriberPatches.GetObjectEventSubscribers(publisherKind, publisherId, eventMethodName),
+                => EventSubscriberPatches.GetObjectEventSubscribers(publisherKind, publisherId, eventName),
             _ => null,
         };
         if (subs == null || subs.Count == 0) return;
         Interlocked.Increment(ref _dispatchFiredCount);
-        if (!_firstFireLogged) { _firstFireLogged = true; Console.Error.WriteLine($"[Dispatch] first FIRE: {declName}.{eventMethodName} → {subs.Count} subs"); }
+        if (!_firstFireLogged) { _firstFireLogged = true; Console.Error.WriteLine($"[Dispatch] first FIRE: {declName}.{eventName} → {subs.Count} subs"); }
         if (DispatchTraceEnabled)
-            Console.Error.WriteLine($"[Dispatch] FIRE {declName}.{eventMethodName} → {subs.Count} subs");
+            Console.Error.WriteLine($"[Dispatch] FIRE {declName}.{eventName} → {subs.Count} subs");
 
         // Publisher application object (NavCodeunit) — for NavCodeunitHandle.Target lookup of subscriber instances.
         // For an extension's event, the base object: the Sender an IncludeSender subscriber receives.
@@ -279,7 +300,7 @@ public static partial class BcRuntime
             {
                 if (DispatchTraceEnabled)
                     Console.Error.WriteLine(
-                        $"[DispatchThrow] {declName}.{eventMethodName} subscriber threw: "
+                        $"[DispatchThrow] {declName}.{eventName} subscriber threw: "
                         + $"{(tie.InnerException ?? tie).GetType().Name}: {(tie.InnerException ?? tie).Message}");
                 RethrowPreservingStack(tie.InnerException ?? tie);
             }

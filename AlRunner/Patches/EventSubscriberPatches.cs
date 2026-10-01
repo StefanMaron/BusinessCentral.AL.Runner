@@ -505,17 +505,13 @@ public static partial class EventSubscriberPatches
                 var clrTypes = resolveClrTypes(publisherId);
                 // #5004: an event the base object does not declare may be declared by one of its extensions.
                 if (resolveExtensionClrTypes != null
-                    && !clrTypes.Any(t => AssemblyTypeIndex.For(t.Assembly).FindNestedType(t, eventMethodName + "_Scope") != null))
+                    && !clrTypes.Any(t => FindEventScopeType(t, eventMethodName) != null))
                     clrTypes = clrTypes.Concat(resolveExtensionClrTypes(publisherId)).ToList();
                 if (clrTypes.Count == 0) { missing++; if (!diagLogged) { diagLogged = true; Console.Error.WriteLine($"[Subscribers] seed-miss: {publisherKindLabel}{publisherId} type not found"); } continue; }
                 bool anyScope = false;
                 foreach (var clrType in clrTypes)
                 {
-                    // Metadata-backed nested-type lookup: same answer as
-                    // GetNestedTypes().FirstOrDefault(name), without resolving every OTHER nested
-                    // type on the publisher (see AssemblyTypeIndex.FindNestedType).
-                    var scopeType = AssemblyTypeIndex.For(clrType.Assembly)
-                        .FindNestedType(clrType, eventMethodName + "_Scope");
+                    var scopeType = FindEventScopeType(clrType, eventMethodName);
                     if (scopeType == null)
                     {
                         if (dbg) Console.Error.WriteLine($"[SeedDebug] {publisherKindLabel}{publisherId}: no nested type '{eventMethodName}_Scope' — have [{string.Join(",", clrType.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic).Select(t => t.Name))}]");
@@ -538,6 +534,19 @@ public static partial class EventSubscriberPatches
         }
         if (seeded > 0)
             Console.Error.WriteLine($"[Subscribers] γeventScope seeded ({publisherKindLabel}): seeded={seeded} missing={missing} total-keys={totalKeyCount}");
+    }
+
+    /// <summary>
+    /// The publisher's scope class for the AL event a subscriber names: <c>&lt;Event&gt;_Scope</c>,
+    /// or, for a name the compiler mangled (<c>"On Before Quoted"</c> → <c>On_Before_Quoted_Scope</c>),
+    /// the <c>_Scope</c> class whose <c>[NavName]</c> is that name (#5167). Both lookups read
+    /// metadata and resolve only the match (see AssemblyTypeIndex.FindNestedType).
+    /// </summary>
+    internal static Type? FindEventScopeType(Type publisherType, string alEventName)
+    {
+        var index = AssemblyTypeIndex.For(publisherType.Assembly);
+        return index.FindNestedType(publisherType, alEventName + BcRuntime.EventScopeSuffix)
+            ?? index.FindNestedTypeByNavName(publisherType, BcRuntime.EventScopeSuffix, alEventName);
     }
 
     // Match the Greek-gamma field by suffix — the IL gamma codepoint differs from a C#

@@ -183,7 +183,7 @@ public static class AlEventRaiseTracker
         if (!BcRuntime.TryDecodeEventPublisherDeclType(decl.Name, out var kind, out var id)
             && !TryExtensionBase(decl.Name, out kind, out id))
             return null;
-        if (!BcRuntime.TryDecodeEventScopeName(scopeType.Name, out var eventName)) return null;
+        if (!BcRuntime.TryGetEventScopeAlName(scopeType, out var eventName)) return null;
         return EventKey(NormalizeDispatchKind(kind), id, eventName);
     }
 
