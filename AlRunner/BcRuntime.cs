@@ -523,6 +523,7 @@ public static partial class BcRuntime
         var name = SimpleName(asm);
         if (name != null) _latestGenerationByAssemblyName[name] = asm;
         NoteCurrentBundleAssembly(asm);
+        _registeredModules[asm] = 0;
         _retiredGenerations.TryRemove(asm, out _);
     }
 
@@ -538,10 +539,13 @@ public static partial class BcRuntime
     // keep its same-id objects from answering; a finder asks this set first instead.
     private static readonly List<Assembly> _currentBundleAssemblies = new();
 
-    // #4835: every module SetTestAssembly has loaded in this process, and the assemblies noted
-    // since the last ResetForNewBundleReload. A workspace module in the first and not the second
-    // belongs to an earlier --server request only, so IsStaleBundleAssembly hides it.
-    private static readonly ConcurrentDictionary<Assembly, byte> _workspaceModules = new();
+    // #4835, #5182: every module registered in this process through RegisterAssemblyGeneration
+    // (a bundle's, and a dependency's, Base/System Application chunks included), and the
+    // assemblies noted since the last ResetForNewBundleReload. A module in the first and not the
+    // second belongs to an earlier --server request only, so IsStaleBundleAssembly hides it: its
+    // subscribers and its same-id objects would otherwise answer for a request whose closure
+    // does not contain it, against table metadata that request never registered.
+    private static readonly ConcurrentDictionary<Assembly, byte> _registeredModules = new();
     private static readonly ConcurrentDictionary<Assembly, byte> _notedSinceReset = new();
 
     /// <summary>Add <paramref name="asm"/> to <see cref="CurrentBundleAssemblies"/> without
@@ -596,13 +600,13 @@ public static partial class BcRuntime
     /// for why the old current-assembly-only check missed cross-app calls). Returns false
     /// for an assembly whose simple name was never registered (e.g. a genuine
     /// service-tier/dependency DLL, or normal one-shot mode with no reload).
-    /// Also true for a workspace module an earlier --server request loaded and this one has not
-    /// (#4835): its same-id objects would otherwise answer for this request's.
+    /// Also true for a module (a workspace's, or a dependency's) an earlier --server request loaded
+    /// and this one has not (#4835, #5182): its same-id objects would otherwise answer for this request's.
     /// </summary>
     internal static bool IsStaleBundleAssembly(Assembly asm)
     {
         if (_retiredGenerations.ContainsKey(asm)) return true;
-        if (_workspaceModules.ContainsKey(asm) && !_notedSinceReset.ContainsKey(asm)) return true;
+        if (_registeredModules.ContainsKey(asm) && !_notedSinceReset.ContainsKey(asm)) return true;
         var name = SimpleName(asm);
         return name != null
             && _latestGenerationByAssemblyName.TryGetValue(name, out var latest)
@@ -638,7 +642,6 @@ public static partial class BcRuntime
         // happen for every app SetTestAssembly loads, not only whichever one ends up being
         // CurrentTestAssembly when a cross-app call actually needs to resolve it.
         RegisterAssemblyGeneration(asm);
-        _workspaceModules[asm] = 0;
         _codeunitTypeCache.Clear();
         // NavApp.GetResource: bind this emitted assembly to the current bundle dir
         // (its app.json resourceFolders are where the app's resource bytes live).

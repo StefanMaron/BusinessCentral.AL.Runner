@@ -18,46 +18,18 @@
 // with no enum id BC builds the plain NCLOptionMetadataWithCaptions from the field's own inline
 // option string, exactly as every such bundle saw before #3594.
 //
-// This is a RUNNER-MECHANISM test. It spawns the runner, because the defect is only observable
-// end to end: the registry contents depend on which packages the bundle resolved, which is a
+// This is a RUNNER-MECHANISM test. It runs the runner (one request on the shared suite server),
+// because the defect is only observable end to end: the registry contents depend on which packages the bundle resolved, which is a
 // property of the whole load, not of any one call.
 //
-// STAYS ON THE CLI (#5111): a --server request for a bundle declaring an `application` floor leaves
-// the next request on that server unable to read its own AL table (#5182). The suite server's
-// canary discards the server after each such request, so these runs would cost a server start each.
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
 
 public sealed class FloorOnlyBundleEnumFieldTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
-    private static (string Output, int Exit) RunRunner(string relativeFixture)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        args.Append($" \"{Path.Combine(RepoRoot, "AlRunner.Tests", "Fixtures", relativeFixture)}\"");
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        using var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(240_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
+    private static string Fixture(string relative)
+        => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "Fixtures", relative));
 
     /// <summary>
     /// The regression itself, on the fixture that carried it. Asserts the DISTINGUISHING
@@ -68,11 +40,14 @@ public sealed class FloorOnlyBundleEnumFieldTests
     [InlineData("BcFloorSkip/healthy-suite")]
     [InlineData("CrossMajorNote")]
     [InlineData("SubscriberScanAudit")]
-    public void FloorOnlyBundle_RunsWithoutAnEnumMetadataAbort(string fixture)
+    public async Task FloorOnlyBundle_RunsWithoutAnEnumMetadataAbort(string fixture)
     {
         TestArtifacts.SkipIfMissing();
 
-        var (output, exit) = RunRunner(fixture);
+        // One request on the shared suite server (#5111). The server answered differently from the
+        // CLI after a floor bundle until #5182, which is what kept this class off it.
+        var result = await SuiteServer.RunViaServer(Fixture(fixture));
+        var output = result.Transcript;
 
         // The exact failure #3594 introduced here, named so a DIFFERENT abort cannot pass by
         // being green-adjacent.
@@ -82,8 +57,8 @@ public sealed class FloorOnlyBundleEnumFieldTests
 
         // ...and the bundle really ran, rather than being skipped into a vacuous green. Every
         // one of these fixtures declares exactly one test.
-        Assert.Contains("1P/0F/0E", output, StringComparison.Ordinal);
-        Assert.True(exit == 0, $"a floor-only bundle must run green. exit={exit}\n{output}");
+        result.AssertCounts(1, 0, 0);
+        Assert.True(result.ExitCode == 0, $"a floor-only bundle must run green. exit={result.ExitCode}\n{output}");
     }
 
     /// <summary>

@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **server:** runTests request fields for the CLI flags tests pass
 - **server:** mark the end of each request on stderr
 - **tdd:** generated stubs return defaults and tests report their own result
 - **benchmark:** a failsafe script to benchmark the full Microsoft test surface on a volunteer's Windows PC
@@ -18,6 +19,8 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **server:** a floor-bundle request leaves the next request unable to read its own AL table
+- **runtime:** raising an external business event completes and delivers nothing
 - **testpage:** resolve a part FIELD SubPageLink through its Provider
 - **session:** ServiceInstanceId() and SessionId() answer positive ids, as a service tier does
 - **dotnet:** System.Drawing statics and instance calls fail with a named platform refusal
@@ -76,6 +79,7 @@ All notable changes to this project are documented here. Format based on
 - **testpage:** New() on an empty linked part raises the part's OnNewRecord
 
 ### Changed
+- **suite:** last CLI test classes via the suite server
 - **suite:** run the absence-assertion CLI test classes through the suite server (#5111 batch 2)
 - **cli:** run pass/fail CLI test classes through a shared server
 - **perf:** one shared --server per server test class instead of one per test

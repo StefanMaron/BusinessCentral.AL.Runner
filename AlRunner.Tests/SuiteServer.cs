@@ -31,10 +31,13 @@ public static class SuiteServer
 
     /// <summary>
     /// As <see cref="RunViaServer(string[])"/>, with the request's <c>packagePaths</c> (the CLI's
-    /// <c>--packages</c>) and <c>testIsolation</c> (the CLI's <c>--isolation</c>).
+    /// <c>--packages</c>), <c>testIsolation</c> (<c>--isolation</c>), <c>test</c> (<c>--test</c> /
+    /// <c>--filter</c>) and <c>excludeTests</c> (<c>--exclude-test</c>, repeated). A selection field is
+    /// sent only when given, so a request without one gets the server's startup default, which for the
+    /// shared server is no selection (docs/server-mode.md#test-and-excludetests).
     /// </summary>
     public static async Task<ServerRunResult> RunViaServer(string[] sourcePaths, string[] packagePaths,
-        string? testIsolation = null, TimeSpan? timeout = null)
+        string? testIsolation = null, TimeSpan? timeout = null, string? test = null, string[]? excludeTests = null)
     {
         var fields = new Dictionary<string, object>
         {
@@ -43,6 +46,8 @@ public static class SuiteServer
             ["packagePaths"] = packagePaths,
         };
         if (testIsolation != null) fields["testIsolation"] = testIsolation;
+        if (test != null) fields["test"] = test;
+        if (excludeTests != null) fields["excludeTests"] = excludeTests;
         return await RunAsync(JsonSerializer.Serialize(fields), timeout, SharedServerCanary.RunAsync);
     }
 
@@ -205,6 +210,9 @@ public sealed class ServerRunResult
     public required IReadOnlyList<(string Name, string Status, string Message)> Tests { get; init; }
     public required IReadOnlyList<string> CompilationErrors { get; init; }
 
+    /// <summary>The summary's <c>warnings</c> (field notes, the <c>test-selection:</c> note); empty when it carries none.</summary>
+    public required IReadOnlyList<string> Warnings { get; init; }
+
     /// <summary>
     /// A test of this request hit the per-test timeout (<c>errorKind: "timeout"</c>). The runner abandons
     /// such a test's thread, which keeps running and may write after the request's end marker (#5171).
@@ -280,6 +288,7 @@ public sealed class ServerRunResult
     {
         var tests = new List<(string, string, string)>();
         var compileErrors = new List<string>();
+        var warnings = new List<string>();
         var timedOut = false;
         JsonElement? summary = null;
         foreach (var line in lines)
@@ -296,6 +305,8 @@ public sealed class ServerRunResult
             else if (type == "summary")
             {
                 summary = el;
+                if (el.TryGetProperty("warnings", out var ws) && ws.ValueKind == JsonValueKind.Array)
+                    warnings.AddRange(ws.EnumerateArray().Select(w => w.GetString() ?? ""));
                 if (el.TryGetProperty("compilationErrors", out var groups) && groups.ValueKind == JsonValueKind.Array)
                     foreach (var g in groups.EnumerateArray())
                         if (g.TryGetProperty("errors", out var errs) && errs.ValueKind == JsonValueKind.Array)
@@ -315,6 +326,7 @@ public sealed class ServerRunResult
             Errors = Num(s, "errors"),
             Tests = tests,
             CompilationErrors = compileErrors,
+            Warnings = warnings,
             TimedOut = timedOut,
             ProtocolText = protocol,
             Transcript = transcript,

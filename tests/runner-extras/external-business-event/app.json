@@ -1,0 +1,18 @@
+{
+  "id": "3e7b9c41-5d2a-4f86-9b0e-c18a4f6d2e75",
+  "name": "Runner Extras - External Business Event",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #5149: raising an [ExternalBusinessEvent] died with a NullReferenceException out of NavSqlConnectionScope.TryOpenConnection, because BC's subscription lookup opens a SQL connection. The runner now completes the raise and delivers nothing, as a CI service tier does where no subscription can exist (docs/scope.md#external-business-events). This suite pins that the raise returns, that the AL around it runs, and that an unrelated error in the same procedure still propagates.",
+  "description": "Runner-specific by construction: a production service tier with a Dataverse subscription would deliver the event; the runner never does.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65660,
+      "to": 65669
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}

@@ -185,7 +185,9 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // leg of the same run, 76.4s on 28.4 -- a 17% spread on one collection in one run,
             // which is why it straddles the band at all). The other four are single-leg
             // observations: a ceiling for that leg, not a settled figure.
-            ["FloorOnlyBundleEnumFieldTests"] = 76,
+            // #5182: now three requests on the suite server, so the 76 above is stale; 53s
+            // locally, not yet on CI.
+            ["FloorOnlyBundleEnumFieldTests"] = 53,
             ["ServerCrossBundleReuseRegistryReplayTests"] = 73,
             ["SuiteRootAlFilesTests"] = 71,
             ["CacheGateProbeScopeTests"] = 60,
@@ -460,6 +462,9 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // #5110: one shared server per class; its BC 28.5 leg of run 36801846027 (63.2s) scaled by the
             // local after/before ratio (9.6s/32.2s). An estimate until a CI leg measures it.
             ["ServerModuleReuseSourceTests"] = 19,
+            // #5183: added by its PR, one shared server with fifteen requests plus one more server start;
+            // 17s locally. An estimate until a CI leg measures it: replace with the observed maximum.
+            ["ServerTestSelectionFieldTests"] = 25,
             // #5027: added by its PR, five --watch processes, one of them through nine cycles; 51s
             // locally. #5035 added two more processes (60s locally). An estimate until a CI leg
             // measures it: replace with the observed maximum.
