@@ -2055,12 +2055,6 @@ public static partial class NavReportSync
             .Where(m => m.GetBaseDefinition().DeclaringType == typeof(Microsoft.Dynamics.Nav.Runtime.Extensions.NavReportExtension))
             .Select(m => m.Name);
 
-    /// <summary>
-    /// Refuses running a report one of whose reportextensions could not be bound whole: a
-    /// precompiled one that adds data items or columns, whose deltas are not merged (#4837). BC
-    /// would run them. Opening the request page alone is unaffected, which is why this sits at
-    /// the run, not at binding.
-    /// </summary>
     /// <summary>Prepended to BC's <c>ReportResultSetProcessorFactory.CreateInstance</c> by
     /// NclCecilRewrite, so the SaveAs/Execute/Print chain refuses where Report.Run does.</summary>
     public static void GuardUnboundReportExtensionsBeforeRun(object? navReport)
@@ -2068,6 +2062,12 @@ public static partial class NavReportSync
         if (navReport != null) ThrowIfExtensionReportBehaviourIsUnbound(navReport);
     }
 
+    /// <summary>
+    /// Refuses running a report one of whose reportextensions could not be bound whole: a
+    /// precompiled one that adds data items or columns, whose deltas are not merged (#4837). BC
+    /// would run them. Opening the request page alone is unaffected, which is why this sits at
+    /// the run, not at binding.
+    /// </summary>
     internal static void ThrowIfExtensionReportBehaviourIsUnbound(object navReport)
     {
         if (!_extensionsWithUnboundReportBehaviour.TryGetValue(navReport, out var unbound) || unbound.ExtensionIds.Count == 0) return;
