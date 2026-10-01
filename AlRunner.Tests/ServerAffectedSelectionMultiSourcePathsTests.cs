@@ -49,7 +49,6 @@ public class ServerAffectedSelectionMultiSourcePathsTests : IClassFixture<Shared
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60360, "to": 60369 } ],
           "runtime": "14.0"
         }
@@ -72,7 +71,6 @@ public class ServerAffectedSelectionMultiSourcePathsTests : IClassFixture<Shared
             { "id": "a1b2c3d4-6001-4a11-9111-111111111111", "name": "Multi Affected App SX",
               "publisher": "AL Runner", "version": "1.0.0.0" }
           ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60370, "to": 60379 } ],
           "runtime": "14.0"
         }
@@ -242,7 +240,6 @@ public class ServerAffectedSelectionMultiSourcePathsTests : IClassFixture<Shared
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60380, "to": 60389 } ],
           "runtime": "14.0"
         }
@@ -282,7 +279,6 @@ public class ServerAffectedSelectionMultiSourcePathsTests : IClassFixture<Shared
             { "id": "a1b2c3d4-6003-4a11-9333-333333333333", "name": "Multi Affected App2 SX",
               "publisher": "AL Runner", "version": "1.0.0.0" }
           ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60390, "to": 60399 } ],
           "runtime": "14.0"
         }

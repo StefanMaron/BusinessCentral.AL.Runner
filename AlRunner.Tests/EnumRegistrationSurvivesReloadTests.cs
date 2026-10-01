@@ -81,7 +81,6 @@ public sealed class EnumRegistrationSurvivesReloadTests : IDisposable
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{EnumId}}, "to": {{EnumId + 9}} } ],
           "runtime": "14.0"
         }

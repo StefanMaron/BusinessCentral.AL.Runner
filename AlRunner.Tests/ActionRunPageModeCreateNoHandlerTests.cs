@@ -55,7 +55,6 @@ public sealed class ActionRunPageModeCreateNoHandlerTests : IDisposable
               "version": "1.0.0.0",
               "dependencies": [],
               "idRanges": [ { "from": 90760, "to": 90764 } ],
-              "platform": "27.0.0.0",
               "runtime": "15.0",
               "target": "Cloud"
             }

@@ -132,7 +132,6 @@ public class ServerAffectedSelectionPageExtensionTests
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60711, "to": 60718 } ],
           "runtime": "14.0"
         }

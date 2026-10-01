@@ -46,7 +46,6 @@ public class NestedTestCodeunitRunTests
           "publisher": "Repro4827",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 64827, "to": 64831 } ],
           "runtime": "14.0"
         }

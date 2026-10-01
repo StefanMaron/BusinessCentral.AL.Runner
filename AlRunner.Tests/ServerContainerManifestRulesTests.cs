@@ -32,7 +32,7 @@ public class ServerContainerManifestRulesTests
             : "";
         File.WriteAllText(Path.Combine(lib, "app.json"), $$"""
         { "id": "{{libId}}", "name": "SCM Lib", "publisher": "AL Runner", "version": "1.0.0.0",
-          "dependencies": [], "platform": "1.0.0.0",
+          "dependencies": [], 
           "idRanges": [ { "from": 60080, "to": 60084 } ], "runtime": "14.0"{{grant}} }
         """);
         File.WriteAllText(Path.Combine(lib, "Lib.Codeunit.al"), """
@@ -47,7 +47,7 @@ public class ServerContainerManifestRulesTests
         File.WriteAllText(Path.Combine(test, "app.json"), $$"""
         { "id": "{{testId}}", "name": "SCM Test", "publisher": "AL Runner", "version": "1.0.0.0",
           "dependencies": [ { "id": "{{libId}}", "name": "SCM Lib", "publisher": "AL Runner", "version": "1.0.0.0" } ],
-          "platform": "1.0.0.0", "preprocessorSymbols": [ "SCMSYM" ],
+          "preprocessorSymbols": [ "SCMSYM" ],
           "idRanges": [ { "from": 60085, "to": 60089 } ], "runtime": "14.0" }
         """);
         File.WriteAllText(Path.Combine(test, "Tests.Codeunit.al"), """

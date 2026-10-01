@@ -46,7 +46,6 @@ public class AlPerTestCoverageTests : IClassFixture<SharedCliServer>
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60200, "to": 60209 } ],
           "runtime": "14.0"
         }
@@ -253,7 +252,6 @@ public class AlPerTestCoverageTests : IClassFixture<SharedCliServer>
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60210, "to": 60219 } ],
           "runtime": "14.0"
         }

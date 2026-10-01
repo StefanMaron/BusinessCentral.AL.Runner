@@ -48,7 +48,7 @@ public class TransitiveDependencyVisibilityTests : IClassFixture<SharedCliServer
 
         File.WriteAllText(Path.Combine(baseDir, "app.json"), $$"""
         { "id": "{{baseId}}", "name": "TDV Base", "publisher": "AL Runner", "version": "1.0.0.0",
-          "dependencies": [], "platform": "1.0.0.0",
+          "dependencies": [], 
           "idRanges": [ { "from": 60050, "to": 60059 } ], "runtime": "14.0" }
         """);
         File.WriteAllText(Path.Combine(baseDir, "BaseApi.Codeunit.al"), """
@@ -65,7 +65,6 @@ public class TransitiveDependencyVisibilityTests : IClassFixture<SharedCliServer
         { "id": "{{middleId}}", "name": "TDV Middle", "publisher": "AL Runner", "version": "1.0.0.0",
           "dependencies": [ { "id": "{{baseId}}", "name": "TDV Base", "publisher": "AL Runner", "version": "1.0.0.0" } ],
           "propagateDependencies": {{(middlePropagates ? "true" : "false")}},
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60060, "to": 60069 } ], "runtime": "14.0" }
         """);
         File.WriteAllText(Path.Combine(middleDir, "MiddleApi.Codeunit.al"), """
@@ -83,7 +82,6 @@ public class TransitiveDependencyVisibilityTests : IClassFixture<SharedCliServer
         File.WriteAllText(Path.Combine(testDir, "app.json"), $$"""
         { "id": "{{testId}}", "name": "TDV Test", "publisher": "AL Runner", "version": "1.0.0.0",
           "dependencies": [ { "id": "{{middleId}}", "name": "TDV Middle", "publisher": "AL Runner", "version": "1.0.0.0" } ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60070, "to": 60079 } ], "runtime": "14.0" }
         """);
         // The declared-only body goes through the middle app (11*2+3+100 = 125). The
@@ -295,7 +293,7 @@ public class TransitiveDependencyVisibilityTests : IClassFixture<SharedCliServer
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
         { "id": "{{Guid.NewGuid()}}", "name": "TDV Canary", "publisher": "AL Runner", "version": "1.0.0.0",
-          "dependencies": [], "platform": "1.0.0.0",
+          "dependencies": [], 
           "idRanges": [ { "from": 60080, "to": 60089 } ], "runtime": "14.0" }
         """);
         File.WriteAllText(Path.Combine(dir, "Canary.Codeunit.al"), """

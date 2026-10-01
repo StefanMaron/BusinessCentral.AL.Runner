@@ -101,7 +101,6 @@ public class CacheRootsIsolationTests
           "publisher": "Repro1821",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 61920, "to": 61929 } ],
           "runtime": "14.0"
         }
@@ -125,7 +124,6 @@ public class CacheRootsIsolationTests
           "dependencies": [
             { "id": "{{depId}}", "name": "Repro1821 Dep App", "publisher": "Repro1821", "version": "1.0.0.0" }
           ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 61930, "to": 61939 } ],
           "runtime": "14.0"
         }

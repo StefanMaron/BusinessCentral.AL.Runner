@@ -36,7 +36,6 @@ public sealed class ServerCrossBundleReuseRegistryReplayTests
           "publisher": "Repro3250",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62400, "to": 62409 } ],
           "runtime": "14.0"
         }

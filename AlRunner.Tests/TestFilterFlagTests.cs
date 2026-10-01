@@ -81,7 +81,6 @@ public sealed class TestFilterFlagTests : IDisposable
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62140, "to": 62149 } ],
           "runtime": "14.0"
         }
@@ -392,7 +391,6 @@ public sealed class TestFilterFlagTests : IDisposable
               "publisher": "AL Runner",
               "version": "1.0.0.0",
               "dependencies": [],
-              "platform": "1.0.0.0",
               "idRanges": [ { "from": 62140, "to": 62149 } ],
               "runtime": "14.0"
             }

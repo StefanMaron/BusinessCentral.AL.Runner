@@ -55,7 +55,6 @@ public sealed class ActionRunObjectCodeunitSharedRecTests : IDisposable
               "version": "1.0.0.0",
               "dependencies": [],
               "idRanges": [ { "from": 90458, "to": 90464 } ],
-              "platform": "27.0.0.0",
               "runtime": "15.0",
               "target": "Cloud"
             }

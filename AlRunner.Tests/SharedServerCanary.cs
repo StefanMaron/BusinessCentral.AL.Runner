@@ -27,7 +27,6 @@ internal static class SharedServerCanary
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 69990, "to": 69992 } ],
           "runtime": "14.0"
         }

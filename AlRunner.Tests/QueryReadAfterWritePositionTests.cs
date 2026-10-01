@@ -53,7 +53,6 @@ public class QueryReadAfterWritePositionTests
           "publisher": "Repro5133",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 51330, "to": 51339 } ],
           "runtime": "14.0"
         }

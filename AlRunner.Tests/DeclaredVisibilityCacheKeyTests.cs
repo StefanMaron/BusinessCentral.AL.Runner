@@ -33,7 +33,7 @@ public sealed class DeclaredVisibilityCacheKeyTests
         File.WriteAllText(path, $$"""
         { "id": "{{app.Id}}", "name": "{{app.Name}}", "publisher": "AL Runner", "version": "1.0.0.0",
           "dependencies": [ {{deps}} ], "propagateDependencies": {{(propagates ? "true" : "false")}},
-          "platform": "1.0.0.0", "runtime": "14.0" }
+          "runtime": "14.0" }
         """);
         Assert.NotNull(InProcessAppPackager.ReadIdentity(path));
     }

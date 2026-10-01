@@ -26,7 +26,6 @@ public class ApplicationAreaTestBoundaryTests
           "publisher": "Repro3575",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 63570, "to": 63579 } ],
           "runtime": "14.0"
         }

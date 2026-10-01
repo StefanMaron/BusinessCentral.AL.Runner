@@ -53,7 +53,6 @@ public class ServerIncrementalSignatureChangeTests
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 71900, "to": 71909 } ],
           "runtime": "14.0"
         }

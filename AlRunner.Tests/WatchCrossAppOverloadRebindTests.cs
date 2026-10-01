@@ -98,7 +98,6 @@ public class WatchCrossAppOverloadRebindTests
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{LibId(c)}}, "to": {{LibId(c) + 9}} } ],
           "runtime": "14.0"
         }
@@ -123,7 +122,6 @@ public class WatchCrossAppOverloadRebindTests
             { "id": "{{AppId(c)}}", "name": "Watch Ovl App {{c}}",
               "publisher": "AL Runner", "version": "1.0.0.0" }
           ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{TestsId(c)}}, "to": {{TestsId(c) + 9}} } ],
           "runtime": "14.0"
         }

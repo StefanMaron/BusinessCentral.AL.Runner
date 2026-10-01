@@ -72,7 +72,6 @@ public sealed class ServerModuleReuseSourceTests : IClassFixture<SharedCliServer
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": {{deps}},
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 65330, "to": 65349 } ],
           "runtime": "14.0"
         }

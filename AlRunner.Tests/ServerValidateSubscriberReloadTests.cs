@@ -53,7 +53,6 @@ public class ServerValidateSubscriberReloadTests
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 79931, "to": 79939 } ],
           "runtime": "14.0"
         }

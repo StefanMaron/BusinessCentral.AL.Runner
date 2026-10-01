@@ -84,7 +84,6 @@ public sealed class CountBaselineIntegrationTests : IDisposable
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62200, "to": 62209 } ],
           "runtime": "14.0"
         }
@@ -126,7 +125,6 @@ public sealed class CountBaselineIntegrationTests : IDisposable
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62210, "to": 62219 } ],
           "runtime": "14.0"
         }

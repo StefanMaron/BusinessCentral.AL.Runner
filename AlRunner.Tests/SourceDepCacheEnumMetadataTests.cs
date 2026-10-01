@@ -122,7 +122,6 @@ public class SourceDepCacheEnumMetadataTests
           "publisher": "Repro1731",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 61900, "to": 61909 } ],
           "runtime": "14.0"
         }
@@ -172,7 +171,6 @@ public class SourceDepCacheEnumMetadataTests
           "dependencies": [
             { "id": "{{depId}}", "name": "Repro1731 Dep App", "publisher": "Repro1731", "version": "1.0.0.0" }
           ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 61910, "to": 61919 } ],
           "runtime": "14.0"
         }

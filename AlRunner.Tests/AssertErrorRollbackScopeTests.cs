@@ -43,7 +43,6 @@ public class AssertErrorRollbackScopeTests
           "publisher": "Repro2191",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62191, "to": 62199 } ],
           "runtime": "14.0"
         }
@@ -233,7 +232,6 @@ public class AssertErrorRollbackScopeTests
           "publisher": "Repro2431",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62201, "to": 62209 } ],
           "runtime": "14.0"
         }

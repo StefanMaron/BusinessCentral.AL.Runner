@@ -100,7 +100,6 @@ public class LayeredDepSymbolsIncrementalServerTests : IClassFixture<SharedCliSe
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{libId}}, "to": {{libId + 9}} } ],
           "runtime": "14.0"
         }
@@ -123,7 +122,6 @@ public class LayeredDepSymbolsIncrementalServerTests : IClassFixture<SharedCliSe
             { "id": "{{LibAppId}}", "name": "Layered RAD Lib",
               "publisher": "AL Runner", "version": "1.0.0.0" }
           ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{testId}}, "to": {{testId + 9}} } ],
           "runtime": "14.0"
         }

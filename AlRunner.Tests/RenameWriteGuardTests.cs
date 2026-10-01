@@ -23,7 +23,6 @@ public class RenameWriteGuardTests
           "publisher": "IssueTest4879",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{BaseId}}, "to": {{BaseId + 19}} } ],
           "runtime": "14.0"
         }

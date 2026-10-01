@@ -90,7 +90,6 @@ public sealed class DotNetCompilationTargetScopeTests
           "publisher": "Repro2641",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62260, "to": 62269 } ],
           "runtime": "15.0",
           "target": "{{target}}"

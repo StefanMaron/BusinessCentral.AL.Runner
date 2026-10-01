@@ -314,7 +314,6 @@ public sealed class SuiteRootAlFilesTests : IDisposable
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{idFrom}}, "to": {{idFrom + 19}} } ],
           "runtime": "14.0"
         }

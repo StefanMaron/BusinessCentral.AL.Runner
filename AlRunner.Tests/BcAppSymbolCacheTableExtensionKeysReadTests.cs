@@ -148,7 +148,6 @@ public sealed class BcAppSymbolCacheTableExtensionKeysReadTests : IDisposable
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{extensionId}}, "to": {{extensionId + 9}} } ],
           "runtime": "14.0"
         }

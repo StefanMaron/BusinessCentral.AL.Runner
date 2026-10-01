@@ -99,7 +99,6 @@ public sealed class TestPageModalClosePartFlushTests : IDisposable
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62770, "to": 62779 } ],
           "runtime": "14.0"
         }

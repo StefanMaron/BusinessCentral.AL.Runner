@@ -61,7 +61,6 @@ public sealed class TestPageDrillDownDispatchTests : IDisposable
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62380, "to": 62389 } ],
           "runtime": "14.0"
         }

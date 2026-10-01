@@ -79,7 +79,6 @@ public class WatchCrossBundleTableSchemaTests
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{TableId}}, "to": {{TableId + 4}} } ],
           "runtime": "14.0"
         }
@@ -142,7 +141,6 @@ public class WatchCrossBundleTableSchemaTests
             { "id": "{{AppId}}", "name": "Watch Schema App",
               "publisher": "AL Runner", "version": "1.0.0.0" }
           ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{TestsId}}, "to": {{TestsId + 4}} } ],
           "runtime": "14.0"
         }

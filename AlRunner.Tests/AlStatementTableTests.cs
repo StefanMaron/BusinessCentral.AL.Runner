@@ -52,7 +52,6 @@ public class AlStatementTableTests : IClassFixture<SharedCliServer>
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60190, "to": 60199 } ],
           "runtime": "14.0"
         }

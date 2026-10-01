@@ -89,7 +89,7 @@ public sealed class EnumSidecarOwnContributionEndToEndTests
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
             { "id": "{{id}}", "name": "{{name}}", "publisher": "Gap3579", "version": "1.0.0.0",
-              "dependencies": [ {{deps}} ], "platform": "1.0.0.0",
+              "dependencies": [ {{deps}} ], 
               "idRanges": [ { "from": {{from}}, "to": {{from + 9}} } ], "runtime": "14.0" }
             """);
         File.WriteAllText(Path.Combine(dir, file), al);

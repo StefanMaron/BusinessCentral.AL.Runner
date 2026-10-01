@@ -45,7 +45,6 @@ public class CommitBehaviorAttributeTests
           "publisher": "Repro3449",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62449, "to": 62459 } ],
           "runtime": "14.0"
         }

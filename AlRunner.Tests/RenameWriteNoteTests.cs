@@ -24,7 +24,6 @@ public class RenameWriteNoteTests
           "publisher": "IssueTest4877",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{BaseId}}, "to": {{BaseId + 9}} } ],
           "runtime": "14.0"
         }

@@ -39,7 +39,6 @@ public class LayeredPrePassVisibilityTests
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [ {{deps}} ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{idFrom}}, "to": {{idFrom + 9}} } ],
           "runtime": "14.0"
         }

@@ -30,7 +30,6 @@ public class SubPageViewSortingPrecedenceTests
           "publisher": "Repro4969",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62960, "to": 62969 } ],
           "runtime": "14.0"
         }

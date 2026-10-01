@@ -55,7 +55,6 @@ public sealed class ConsoleOutputEncodingTests : IDisposable
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 63950, "to": 63959 } ],
           "runtime": "14.0"
         }

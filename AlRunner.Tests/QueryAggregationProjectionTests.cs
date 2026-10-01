@@ -44,7 +44,6 @@ public class QueryAggregationProjectionTests
           "publisher": "Repro2137",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 61890, "to": 61899 } ],
           "runtime": "14.0"
         }

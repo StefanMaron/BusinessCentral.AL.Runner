@@ -44,7 +44,6 @@ public class AssertErrorRollbackNestedTransactionTests
           "publisher": "Repro2413",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62413, "to": 62419 } ],
           "runtime": "14.0"
         }

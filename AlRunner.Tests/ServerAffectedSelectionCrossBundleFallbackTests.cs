@@ -50,7 +50,6 @@ public class ServerAffectedSelectionCrossBundleFallbackTests
           "publisher": "AL Runner",
           "version": "{{version}}",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60380, "to": 60389 } ],
           "runtime": "14.0"
         }
@@ -81,7 +80,6 @@ public class ServerAffectedSelectionCrossBundleFallbackTests
             { "id": "a1b2c3d4-7001-4a11-9111-111111111111", "name": "CrossBundle Fallback App SX",
               "publisher": "AL Runner", "version": "1.0.0.0" }
           ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60390, "to": 60399 } ],
           "runtime": "14.0"
         }

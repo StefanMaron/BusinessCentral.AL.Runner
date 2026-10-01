@@ -115,7 +115,6 @@ public sealed class RecordRefCompilationTargetScopeTests : IDisposable
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{idBase}}, "to": {{idBase + 9}} } ],
           "runtime": "14.0",
           "target": "{{target}}"
@@ -381,7 +380,6 @@ public sealed class RecordRefCompilationTargetScopeTests : IDisposable
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62680, "to": 62689 } ],
           "runtime": "14.0",
           "target": "Cloud"

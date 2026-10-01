@@ -40,7 +40,6 @@ public class CodeunitRunCommitBoundaryTests
           "publisher": "Repro3773",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 63773, "to": 63777 } ],
           "runtime": "14.0"
         }

@@ -33,7 +33,6 @@ public sealed class ApplicationAreaControlRemovalTests : IDisposable
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 90750, "to": 90759 } ],
           "runtime": "17.0"
         }

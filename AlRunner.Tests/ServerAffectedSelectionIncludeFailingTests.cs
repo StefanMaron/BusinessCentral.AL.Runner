@@ -111,7 +111,6 @@ public class ServerAffectedSelectionIncludeFailingTests : IClassFixture<SharedCl
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60450, "to": 60469 } ],
           "runtime": "14.0"
         }

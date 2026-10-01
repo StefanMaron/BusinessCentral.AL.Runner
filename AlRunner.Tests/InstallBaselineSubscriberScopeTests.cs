@@ -245,7 +245,6 @@ public class InstallBaselineSubscriberScopeTests
               "publisher": "AL Runner Install Seed",
               "version": "1.0.0.0",
               "dependencies": {{deps}},
-              "platform": "1.0.0.0",
               "idRanges": [ { "from": {{baseId}}, "to": {{baseId + 4}} } ],
               "runtime": "14.0"
             }

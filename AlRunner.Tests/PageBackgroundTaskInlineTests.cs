@@ -80,7 +80,6 @@ public class PageBackgroundTaskInlineTests
           "publisher": "Repro2514",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62514, "to": 62524 } ],
           "runtime": "14.0"
         }
@@ -482,7 +481,6 @@ public class PageBackgroundTaskInlineTests
           "publisher": "Repro2650",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62650, "to": 62654 } ],
           "runtime": "14.0"
         }

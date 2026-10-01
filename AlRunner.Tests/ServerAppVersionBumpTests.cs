@@ -50,7 +50,6 @@ public sealed class ServerAppVersionBumpTests : IClassFixture<SharedCliServer>
           "publisher": "Repro2556",
           "version": "{{version}}",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{idBase}}, "to": {{idBase + 9}} } ],
           "runtime": "14.0"
         }
@@ -150,7 +149,6 @@ public sealed class ServerAppVersionBumpTests : IClassFixture<SharedCliServer>
           "publisher": "Repro2556",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62300, "to": 62309 } ],
           "runtime": "14.0"
         }
@@ -179,7 +177,6 @@ public sealed class ServerAppVersionBumpTests : IClassFixture<SharedCliServer>
               "version": "1.0.0.0"
             }
           ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62310, "to": 62319 } ],
           "runtime": "14.0"
         }

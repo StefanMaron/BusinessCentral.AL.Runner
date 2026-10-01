@@ -39,7 +39,6 @@ public sealed class ServerSameReportIdTwoWorkspacesTests
           "publisher": "Repro4137R",
           "version": "1.0.0.0",
           "dependencies": [ {{dependencies}} ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{from}}, "to": {{to}} } ],
           "runtime": "14.0"
         }

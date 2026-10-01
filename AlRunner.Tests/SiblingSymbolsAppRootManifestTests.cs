@@ -113,7 +113,6 @@ public class SiblingSymbolsAppRootManifestTests
           "publisher": "AL Runner",
           "version": "1.0.0.0",{{helpUrlLine}}{{preprocLine}}
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{idFrom}}, "to": {{idFrom + 19}} } ],
           "runtime": "14.0"
         }
@@ -184,7 +183,6 @@ public class SiblingSymbolsAppRootManifestTests
           "dependencies": [
             { "id": "{{depId}}", "name": "{{depName}}", "publisher": "AL Runner", "version": "1.0.0.0" }
           ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{idFrom}}, "to": {{idFrom + 19}} } ],
           "runtime": "14.0"
         }

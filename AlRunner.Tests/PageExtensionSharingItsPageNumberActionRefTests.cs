@@ -70,7 +70,7 @@ public sealed class PageExtensionSharingItsPageNumberActionRefTests
         Directory.CreateDirectory(root);
         File.WriteAllText(Path.Combine(root, "app.json"), $$"""
         { "id": "{{Guid.NewGuid()}}", "name": "Arn", "publisher": "AL Runner", "version": "1.0.0.0",
-          "dependencies": [], "platform": "1.0.0.0", "idRanges": [ { "from": 62800, "to": 62809 } ], "runtime": "14.0" }
+          "dependencies": [], "idRanges": [ { "from": 62800, "to": 62809 } ], "runtime": "14.0" }
         """);
         File.WriteAllText(Path.Combine(root, "Arn.al"),
             """

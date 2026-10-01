@@ -59,7 +59,7 @@ public class ServerExecuteContainerTests
             Directory.CreateDirectory(path);
             File.WriteAllText(Path.Combine(path, "app.json"), $$"""
             { "id": "{{id}}", "name": "{{name}}", "publisher": "AL Runner", "version": "1.0.0.0",
-              "dependencies": [ {{deps}} ], "propagateDependencies": false, "platform": "1.0.0.0",
+              "dependencies": [ {{deps}} ], "propagateDependencies": false, 
               "idRanges": [ { "from": {{from}}, "to": {{from + 4}} } ], "runtime": "14.0" }
             """);
             File.WriteAllText(Path.Combine(path, file), al);

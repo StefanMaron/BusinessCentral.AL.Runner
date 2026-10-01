@@ -35,7 +35,6 @@ public sealed class ServerSiblingSourceDependencyReloadTests
           "dependencies": [
             { "id": "{{subjectAppId}}", "name": "Repro4025 Subject {{tag}}", "publisher": "Repro4025", "version": "1.0.0.0" }
           ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{idBase + 5}}, "to": {{idBase + 9}} } ],
           "runtime": "14.0"
         }
@@ -76,7 +75,6 @@ public sealed class ServerSiblingSourceDependencyReloadTests
           "publisher": "Repro4025",
           "version": "{{version}}",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{idBase}}, "to": {{idBase + 4}} } ],
           "runtime": "14.0"
         }

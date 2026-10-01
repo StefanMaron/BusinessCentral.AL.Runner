@@ -44,7 +44,6 @@ public class TestPageFieldTableLookupTests
           "publisher": "Repro2549",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62560, "to": 62569 } ],
           "runtime": "14.0"
         }

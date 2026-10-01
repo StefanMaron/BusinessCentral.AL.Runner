@@ -212,7 +212,6 @@ public class TableMetadataFromBcDocumentTests
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{idFrom}}, "to": {{idTo}} } ],
           "runtime": "14.0"
         }
@@ -282,7 +281,6 @@ public class TableMetadataFromBcDocumentTests
           "publisher": "TMDep",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 70670, "to": 70674 } ],
           "runtime": "14.0"
         }
@@ -321,7 +319,6 @@ public class TableMetadataFromBcDocumentTests
           "dependencies": [
             { "id": "{{depId}}", "name": "TMDep App", "publisher": "TMDep", "version": "1.0.0.0" }
           ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 70675, "to": 70679 } ],
           "runtime": "14.0"
         }
@@ -420,7 +417,6 @@ public class TableMetadataFromBcDocumentTests
           "publisher": "TMK",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 70670, "to": 70674 } ],
           "runtime": "14.0"
         }
@@ -453,7 +449,6 @@ public class TableMetadataFromBcDocumentTests
           "dependencies": [
             { "id": "{{depId}}", "name": "TMK Dep App", "publisher": "TMK", "version": "1.0.0.0" }
           ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 70675, "to": 70679 } ],
           "runtime": "14.0"
         }
@@ -537,7 +532,6 @@ public class TableMetadataFromBcDocumentTests
           "publisher": "TME",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 70681, "to": 70689 } ],
           "runtime": "14.0"
         }
@@ -670,7 +664,6 @@ public class TableMetadataFromBcDocumentTests
           "publisher": "TMM",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 70691, "to": 70699 } ],
           "runtime": "14.0"
         }

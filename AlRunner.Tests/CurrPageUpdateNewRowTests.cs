@@ -58,7 +58,6 @@ public sealed class CurrPageUpdateNewRowTests : IDisposable
               "version": "1.0.0.0",
               "dependencies": [],
               "idRanges": [ { "from": 90470, "to": 90479 } ],
-              "platform": "27.0.0.0",
               "runtime": "15.0",
               "target": "Cloud"
             }

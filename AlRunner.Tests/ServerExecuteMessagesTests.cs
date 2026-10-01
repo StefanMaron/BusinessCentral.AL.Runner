@@ -168,7 +168,6 @@ public class ServerExecuteMessagesTests : IClassFixture<SharedCliServer>
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60202, "to": 60202 } ],
           "runtime": "14.0"
         }
