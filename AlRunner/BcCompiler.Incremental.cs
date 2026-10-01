@@ -1058,8 +1058,8 @@ public sealed partial class BcCompiler
         if (ProcedureSignatureChanged(baseline.ModuleDef, deltaModuleDef, allChangedIdentities) is { } resigned)
         {
             fallbackReason =
-                $"{resigned} changed its signature (a parameter or return type, a Code/Text length, var, or "
-                + "[TryFunction]/event attribute). A caller folds the signature into its OWN generated C# "
+                $"{resigned} changed its signature (a parameter or return type, a Code/Text length, or var). "
+                + "A caller folds the signature into its OWN generated C# "
                 + "(new NavCode(<length>, …) around an argument or a return value), and a length-only change "
                 + "keeps the member id, so reusing an UNMODIFIED caller's cached C# would leave it converting "
                 + "to the PREVIOUS signature. Falling back to a full compile for this cycle";
@@ -1987,9 +1987,11 @@ public sealed partial class BcCompiler
     /// #5093: names the first procedure of a changed object whose signature differs from last cycle,
     /// or null. Every procedure name present on both sides is compared as the multiset of its
     /// overloads' shapes (member id, kind, return type, parameter var-ness and types with
-    /// lengths, <see cref="CallShapeAttributes"/>), so a length-only change — which keeps the member
-    /// id — is caught with the rest. Body edits, parameter renames and other attributes stay on the
-    /// fast path; a removed or renamed procedure retires its id and is loud at the call site.
+    /// lengths), so a length-only change — which keeps the member id — is caught with the rest.
+    /// Attributes are not compared: [TryFunction] moves the member id, and an event publisher's
+    /// attribute leaves its callers' C# unchanged (both measured in
+    /// BcCompilerIncrementalSignatureTests). Body edits and parameter renames stay on the fast
+    /// path; a removed or renamed procedure retires its id and is loud at the call site.
     /// Interfaces are <see cref="InterfaceShapeChanged"/>'s. An object that reads twice or not at
     /// all counts as changed: a wrong "unchanged" is a stale emit.
     /// </summary>
@@ -2016,12 +2018,6 @@ public sealed partial class BcCompiler
         return null;
     }
 
-    /// <summary>Attributes that change how a CALLER invokes the procedure.</summary>
-    private static readonly HashSet<string> CallShapeAttributes = new(StringComparer.Ordinal)
-    {
-        "TryFunction", "BusinessEvent", "IntegrationEvent", "InternalEvent", "ExternalBusinessEvent",
-    };
-
     /// <summary>One <c>name\tsignature</c> line per serialized procedure; "" for a kind with none.</summary>
     private static string? ProcedureSignaturesOf(object element)
     {
@@ -2033,14 +2029,9 @@ public sealed partial class BcCompiler
             if (item is not NavSymRef.MethodDefinition m || string.IsNullOrEmpty(m.Name)) return null;
             var parameters = (m.Parameters ?? Array.Empty<NavSymRef.ParameterDefinition>())
                 .Select(p => (p.IsVar ? "var " : "") + RadTypeShape(p.TypeDefinition));
-            var attributes = (m.Attributes ?? Array.Empty<NavSymRef.AttributeDefinition>())
-                .Where(a => CallShapeAttributes.Contains(a.Name.ToString()))
-                .Select(a => a.Name + "(" + string.Join(",", (a.Arguments ?? Array.Empty<NavSymRef.AttributeArgumentDefinition>())
-                    .Select(x => x.Value ?? "")) + ")")
-                .OrderBy(a => a, StringComparer.Ordinal);
             lines.Add(m.Name + "\t" + m.Id + "|" + m.MethodKind + "|"
                 + (m.ReturnTypeDefinition != null ? RadTypeShape(m.ReturnTypeDefinition) : m.ReturnType ?? "")
-                + "|" + string.Join(",", parameters) + "|" + string.Join(",", attributes));
+                + "|" + string.Join(",", parameters));
         }
         return string.Join("\n", lines);
     }

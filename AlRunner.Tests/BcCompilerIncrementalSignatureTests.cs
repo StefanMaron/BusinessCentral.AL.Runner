@@ -51,6 +51,11 @@ public sealed class BcCompilerIncrementalSignatureTests : IDisposable
             begin
                 Error('boom');
             end;
+
+            [IntegrationEvent(false, false)]
+            procedure OnThing()
+            begin
+            end;
         }
         """;
 
@@ -94,6 +99,7 @@ public sealed class BcCompilerIncrementalSignatureTests : IDisposable
                 Lib: Codeunit "Incr Sig Lib";
             begin
                 Lib.DoIt();
+                Lib.OnThing();
             end;
         }
         """;
@@ -192,6 +198,7 @@ public sealed class BcCompilerIncrementalSignatureTests : IDisposable
     [InlineData("rename", "Len(C: Code[20]): Integer\n    begin\n        exit(StrLen(C));",
         "Len(D: Code[20]): Integer\n    begin\n        exit(StrLen(D));")]
     [InlineData("obsolete", "    procedure Len(", "    [Obsolete('x', '1.0')]\n    procedure Len(")]
+    [InlineData("eventarg", "    [IntegrationEvent(false, false)]", "    [IntegrationEvent(true, false)]")]
     [InlineData("added", "    procedure Get(", "    procedure Fresh(): Integer\n    begin\n        exit(1);\n    end;\n\n    procedure Get(")]
     public void CallerInvisibleEdit_StaysOnTheFastPathAndMatchesAColdBuild(string what, string from, string to)
     {
