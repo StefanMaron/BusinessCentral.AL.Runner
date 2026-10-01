@@ -25,6 +25,7 @@
         "environment-type-default": { "tests": 4 },
         "esm-xapp": { "tests": 1 },
         "esm-xapp-table": { "tests": 0 },
+        "external-business-event": { "tests": 6 },
         "field-virtual-table-item-tracking": { "tests": 4, "absentOn": ["27.0", "27.3", "27.5"] },
         "field-virtual-table-item-tracking-ext": { "tests": 0, "absentOn": ["27.0", "27.3", "27.5"] },
         "field-virtual-table-item-tracking-test": { "tests": 1, "absentOn": ["27.0", "27.3", "27.5"] },
