@@ -338,7 +338,11 @@ public sealed class BcInternalsNullForgivingGuardTests
         // FilterFieldDictionary.Items in RecordPatches.QueryJoinWhereFilters.cs (#5145), each a
         // BcShape.Property: a silent null there would drop a join query's WHERE filters before
         // grouping, and the post-projection pass would then test them against one row per group.
-        Assert.Equal(123, converted);
+        //
+        // 123 -> 131 for a query's positioned re-read and ORDER BY (RecordPatches.QueryProjection.cs,
+        // #5133, #5160): a null from any of those reads would position the re-read on nothing,
+        // rereading from the top.
+        Assert.Equal(131, converted);
     }
 
     /// <summary>

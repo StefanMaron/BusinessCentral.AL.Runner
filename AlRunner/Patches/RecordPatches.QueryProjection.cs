@@ -144,9 +144,151 @@ public static partial class RecordPatches
     {
         EnsureQueryProjectionReflection(self);
         var execRequest = TranslateQueryFilters(request, out var havingFilters, out var flowFam);
+        if (IsQueryRequest(request))
+            return FindQueryFromPosition(self, request, execRequest, havingFilters, flowFam);
         var raw = (IEnumerable<ReadOnlyRecordBuffer>)_mTtdpFindByPositionImpl!.Invoke(self, new[] { execRequest })!;
         raw = ApplyFirstOnly(request, raw);
         return ProjectIfQuery(request, raw, havingFilters, flowFam);
+    }
+
+    private static bool IsQueryRequest(object request)
+    {
+        var metaAppObj = _pReqMetaAppObj!.GetValue(request);
+        return metaAppObj != null && _tNCLMetaQuery != null && _tNCLMetaQuery.IsInstanceOfType(metaAppObj);
+    }
+
+    private static PropertyInfo? _pReqStartingPosition;
+    private static PropertyInfo? _pReqIncludeCurrent;
+    private static PropertyInfo? _pReqSortingFields;
+    private static PropertyInfo? _pQueryDefOrderBy;
+    private static PropertyInfo? _pQueryDefPositioningFields;
+    private static PropertyInfo? _pSortingFieldField;
+    private static MethodInfo? _mBuildPositioningFilterList;
+
+    /// <summary>
+    /// A positioned find for a QUERY: NavQuery.GetNextRowAsync re-reads from its last returned
+    /// row after a write invalidates the result set (#5133). That row is query-shaped, so BC's
+    /// TempTableDataProvider cannot position on it (its MetaTable getter casts NCLMetaQuery to
+    /// NCLMetaTable). Instead this runs the query unpositioned and keeps only the rows past the
+    /// starting row.
+    ///
+    /// Observably equivalent to BC's SQL provider, NavSqlQueryCommand.GetQueryAndPositioningFilter:
+    /// no sorting fields and no OrderBy builds no command, so Read() returns false; otherwise the
+    /// rows are filtered with BC's own DataProviderHelper.BuildPositioningFilterListFromRecordBuffer
+    /// over <c>sortingFields ?? query.PositioningFields</c>, evaluated per column with BC's own
+    /// FilterExpression.Evaluate. Positioning precedes TOP, matching NavQuery's TOP-minus-rows-read.
+    /// Corpus codeunit 68530 "QRW Query Read After Write" (corpus PR #523).
+    /// </summary>
+    private static IEnumerable<ReadOnlyRecordBuffer> FindQueryFromPosition(
+        object self, object request, object execRequest,
+        List<(object Column, object Expr)> havingFilters, object? flowFam)
+    {
+        EnsureQueryPositioningReflection(request);
+        var metaQuery = _pReqMetaAppObj!.GetValue(request)!;
+        var startingPosition = _pReqStartingPosition!.GetValue(request);
+
+        // FindImplementation re-wraps the request with a null starting position (BC's own
+        // TempTableDataProvider.FindImplementation), so this is the unpositioned query read.
+        var findParam = _mTtdpFindImpl!.GetParameters()[0].ParameterType;
+        if (!findParam.IsInstanceOfType(execRequest))
+            throw new BcShapeGapException(
+                "AL query execution (positioned re-read)", "TempTableDataProvider.FindImplementation",
+                $"takes {findParam.Name}, which a {execRequest.GetType().Name} is not, so the "
+                + "query cannot be re-read unpositioned");
+        var raw = (IEnumerable<ReadOnlyRecordBuffer>)_mTtdpFindImpl.Invoke(self, new[] { execRequest })!;
+
+        Func<ReadOnlyRecordBuffer, bool>? position = null;
+        if (startingPosition != null)
+        {
+            var queryDef = BcShape.Property(
+                _tNCLMetaQuery!, "QueryDefinition", BindingFlags.Public | BindingFlags.Instance,
+                "AL query execution (positioned re-read)").GetValue(metaQuery)!;
+            var positioningFields = QuerySortingFields(request, queryDef);
+            if (positioningFields == null)
+                return Enumerable.Empty<ReadOnlyRecordBuffer>();
+            position = BuildQueryPositionPredicate(
+                metaQuery, startingPosition, positioningFields,
+                (bool)_pReqIncludeCurrent!.GetValue(request)!);
+        }
+
+        return ApplyFirstOnly(request, ProjectIfQuery(request, raw, havingFilters, flowFam, position));
+    }
+
+    private static Func<ReadOnlyRecordBuffer, bool>? BuildQueryPositionPredicate(
+        object metaQuery, object startingPosition, object positioningFields, bool includeCurrent)
+    {
+        var fields = BcShape.RequiredEnumerable(
+            positioningFields, "SortingFieldList", "AL query execution (positioned re-read)",
+            "the positioning fields cannot be enumerated").Cast<object>().ToList();
+        // BC's BuildPositioningFilterFromRecordBuffer over zero fields is a null filter: every row.
+        if (fields.Count == 0) return null;
+
+        var slots = new int[fields.Count];
+        for (int i = 0; i < fields.Count; i++)
+        {
+            var column = _pSortingFieldField!.GetValue(fields[i]) as NCLMetaQueryColumn
+                ?? throw new BcShapeGapException(
+                    "AL query execution (positioned re-read)", "INavSortingField.Field",
+                    "a query positioning field is not an NCLMetaQueryColumn");
+            if (column.AggregationType != AggregationType.None)
+                throw RunnerShapeGap.Query(
+                    "Query.Read after a write to the query's table",
+                    "query-reread-position-on-aggregated-column",
+                    $"the query is ordered by aggregated column '{column.Name}', and resuming after "
+                    + "a write would need the positioning filter BC applies to an aggregate — #5133");
+            slots[i] = column.ColumnIndex;
+        }
+
+        // List<List<UnaryFilterExpression>>: disjunct i is (f0 = v0 AND ... AND f(n-1) > v(n-1)),
+        // its j-th term over fields[j].
+        var disjuncts = ((IEnumerable)_mBuildPositioningFilterList!.Invoke(
+                null, new[] { startingPosition, positioningFields, includeCurrent })!)
+            .Cast<IEnumerable>()
+            .Select(d => d.Cast<object>().ToArray())
+            .ToArray();
+        var session = TryGetCurrentSession(metaQuery);
+        return row => disjuncts.Any(terms =>
+        {
+            for (int j = 0; j < terms.Length; j++)
+            {
+                var slot = slots[j];
+                RequirePositioningSlotInRow(slot, row.FieldCount);
+                if (!EvaluateFilterExpression(terms[j], row[slot], session))
+                    return false;
+            }
+            return true;
+        });
+    }
+
+    private static void EnsureQueryPositioningReflection(object request)
+    {
+        if (_mBuildPositioningFilterList != null) return;
+        const string surface = "AL query execution (positioned re-read)";
+        const BindingFlags inst = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+        var nclAsm = request.GetType().Assembly;
+        const string rt = "Microsoft.Dynamics.Nav.Runtime.";
+        // Bound from the declared types: this runs for an unpositioned request too.
+        var tFindReq = nclAsm.GetType(rt + "FindProviderRequest")
+            ?? throw new BcShapeGapException(surface, "FindProviderRequest", "type not found");
+        var tPosReq = nclAsm.GetType(rt + "PositionedFindProviderRequest")
+            ?? throw new BcShapeGapException(surface, "PositionedFindProviderRequest", "type not found");
+        _pReqStartingPosition = BcShape.Property(tPosReq, "StartingPosition", inst, surface);
+        _pReqIncludeCurrent = BcShape.Property(tPosReq, "IncludeCurrent", inst, surface);
+        _pReqSortingFields = BcShape.Property(tFindReq, "SortingFields", inst, surface);
+        var tQueryDef = nclAsm.GetType(rt + "NCLMetaQueryDefinition")
+            ?? throw new BcShapeGapException(surface, "NCLMetaQueryDefinition", "type not found");
+        _pQueryDefOrderBy = BcShape.Property(tQueryDef, "OrderBy", inst, surface);
+        _pQueryDefPositioningFields = BcShape.Property(tQueryDef, "PositioningFields", inst, surface);
+        var tSortingField = nclAsm.GetType(rt + "INavSortingField")
+            ?? throw new BcShapeGapException(surface, "INavSortingField", "type not found");
+        _pSortingFieldField = BcShape.Property(tSortingField, "Field", inst, surface);
+        var tHelper = nclAsm.GetType(rt + "DataProviderHelper")
+            ?? throw new BcShapeGapException(surface, "DataProviderHelper", "type not found");
+        _mBuildPositioningFilterList = BcShape.RequiredMethod(
+            tHelper, "BuildPositioningFilterListFromRecordBuffer",
+            BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static,
+            surface, "DataProviderHelper.BuildPositioningFilterListFromRecordBuffer",
+            "the positioning filter for a query re-read cannot be built");
     }
 
     private static MethodInfo? _mGetDataAccessForTable_Orig;
@@ -1133,7 +1275,7 @@ public static partial class RecordPatches
 
     private static IEnumerable<ReadOnlyRecordBuffer> ProjectIfQuery(
         object request, IEnumerable<ReadOnlyRecordBuffer> rows, List<(object Column, object Expr)> havingFilters,
-        object? flowFiltersAndMarks)
+        object? flowFiltersAndMarks, Func<ReadOnlyRecordBuffer, bool>? position = null)
     {
         var metaAppObj = _pReqMetaAppObj!.GetValue(request);
         if (metaAppObj == null || _tNCLMetaQuery == null || !_tNCLMetaQuery.IsInstanceOfType(metaAppObj))
@@ -1169,6 +1311,8 @@ public static partial class RecordPatches
             // — see TranslateQueryFilters/ApplyHavingFilters below). Done before Top so the cap
             // applies to the filtered set, matching SQL TOP-after-WHERE/HAVING.
             joined = ApplyJoinRuntimeFilters(metaAppObj, queryDef, request, joined);
+            joined = SortByQueryOrder(request, metaAppObj, queryDef, joined);
+            if (position != null) joined = joined.Where(position);
             var topJ = _pReqTopNumberOfRows!.GetValue(request);
             int topNJ = topJ == null ? 0 : Convert.ToInt32(topJ);
             return topNJ > 0 ? joined.Take(topNJ) : joined;
@@ -1189,7 +1333,78 @@ public static partial class RecordPatches
         // the raw pre-aggregation row. Applied AFTER grouping/aggregation, BEFORE Top, matching
         // SQL's WHERE → GROUP BY → HAVING → TOP order.
         projected = ApplyHavingFilters(metaAppObj, havingFilters, projected);
+        projected = SortByQueryOrder(request, metaAppObj, queryDef!, projected);
+        if (position != null) projected = projected.Where(position);
         return topN > 0 ? projected.Take(topN) : projected;
+    }
+
+    private static ConstructorInfo? _ctorRecordBufferComparer;
+    private static MethodInfo? _mRecordBufferComparerCompare;
+
+    /// <summary>
+    /// ORDER BY for a single-dataitem query (#5160). The temp provider returns rows in key order;
+    /// BC's SQL provider orders by <c>sortingFields ?? query.PositioningFields</c> — the OrderBy
+    /// plus each dataitem's MissingOrderByColumns key tie-break — so the rows are sorted here with
+    /// BC's own RecordBufferComparer over that list. The re-read's positioning filter
+    /// (FindQueryFromPosition) uses the same list, so the first read and the re-read agree.
+    /// Stable, before TOP. Corpus codeunit 68534 "QRO Query Order After Write" (corpus PR #525).
+    /// </summary>
+    private static IEnumerable<ReadOnlyRecordBuffer> SortByQueryOrder(
+        object request, object metaQuery, object queryDef, IEnumerable<ReadOnlyRecordBuffer> rows)
+    {
+        var fields = QuerySortingFields(request, queryDef);
+        if (fields == null) return rows;
+        var list = BcShape.RequiredEnumerable(
+            fields, "SortingFieldList", "AL query execution (ORDER BY)",
+            "the query's sorting fields cannot be enumerated").Cast<object>().ToList();
+        if (list.Count == 0) return rows;
+
+        if (_ctorRecordBufferComparer == null)
+        {
+            var tComparer = metaQuery.GetType().Assembly.GetType("Microsoft.Dynamics.Nav.Runtime.RecordBufferComparer")
+                ?? throw new BcShapeGapException("AL query execution (ORDER BY)", "RecordBufferComparer", "type not found");
+            _ctorRecordBufferComparer = tComparer.GetConstructors()
+                .SingleOrDefault(c => c.GetParameters().Length == 2)
+                ?? throw new BcShapeGapException("AL query execution (ORDER BY)", "RecordBufferComparer..ctor",
+                    "no (orderByColumns, sortingRules) constructor");
+            _mRecordBufferComparerCompare = BcShape.RequiredMethod(
+                tComparer, "Compare", BindingFlags.Public | BindingFlags.Instance,
+                "AL query execution (ORDER BY)", "RecordBufferComparer.Compare",
+                "query rows cannot be compared in OrderBy order");
+        }
+        var comparer = _ctorRecordBufferComparer.Invoke(new[] { fields, TryGetCurrentSession(metaQuery) });
+        var compare = _mRecordBufferComparerCompare!;
+        return rows.OrderBy(r => r, Comparer<ReadOnlyRecordBuffer>.Create(
+            (a, b) => (int)compare.Invoke(comparer, new object[] { a, b })!));
+    }
+
+    /// <summary>
+    /// The list BC's SQL provider orders and positions by: the request's sorting fields when it
+    /// carries any, otherwise the query's PositioningFields. Null when there is neither, which is
+    /// also NavSqlQueryCommand.GetQueryAndPositioningFilter's "no command" case.
+    /// </summary>
+    private static object? QuerySortingFields(object request, object queryDef)
+    {
+        EnsureQueryPositioningReflection(request);
+        var sortingFields = _pReqSortingFields!.GetValue(request);
+        var sortingCount = sortingFields == null ? 0 : Convert.ToInt32(
+            BcShape.Property(sortingFields.GetType(), "Count", "AL query execution (ORDER BY)")
+                .GetValue(sortingFields));
+        var orderByCount = BcShape.RequiredEnumerable(
+            _pQueryDefOrderBy!.GetValue(queryDef), "NCLMetaQueryDefinition.OrderBy",
+            "AL query execution (ORDER BY)", "the query's OrderBy is unreadable")
+            .Cast<object>().Count();
+        if (sortingCount == 0 && orderByCount == 0) return null;
+        return sortingFields ?? _pQueryDefPositioningFields!.GetValue(queryDef)!;
+    }
+
+    /// <summary>A positioning field is a Normal query column, so it always has a projected slot.</summary>
+    internal static void RequirePositioningSlotInRow(int slot, int fieldCount)
+    {
+        if (slot < 0 || slot >= fieldCount)
+            throw new BcShapeGapException(
+                "AL query execution (positioned re-read)", "NCLMetaQueryColumn.ColumnIndex",
+                $"positioning slot {slot} is outside the projected row (FieldCount {fieldCount})");
     }
 
     /// <summary>
