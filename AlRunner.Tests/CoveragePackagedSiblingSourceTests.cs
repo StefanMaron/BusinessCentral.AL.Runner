@@ -231,3 +231,77 @@ public sealed class CoveragePackagedSiblingSourceTests : IDisposable
         Assert.DoesNotContain(appPrefix + "src/Helper.Codeunit.al", string.Join("\n", lines), StringComparison.Ordinal);
     }
 }
+
+/// <summary>#4991, in-process: what <see cref="AlCoverageSourceMap.Build"/> does with a sibling root
+/// marked as verified against a package's root, per object.</summary>
+[Collection(BcEngineCollection.Name)]
+public sealed class CoveragePackagedSiblingSourceMapTests : IDisposable
+{
+    private readonly BcEngineFixture _engine;
+    private readonly string _root = TestScratch.Dir("al-runner-packaged-sibling-map");
+
+    public CoveragePackagedSiblingSourceMapTests(BcEngineFixture engine) => _engine = engine;
+
+    public void Dispose()
+    {
+        try { Directory.Delete(_root, recursive: true); } catch { }
+    }
+
+    private static void Write(string path, string text)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, text);
+    }
+
+    private static string Abs(string p) => Path.GetFullPath(p).Replace('\\', '/');
+
+    private const string Same = "codeunit 79893 \"PkgSib Same\"\n{\n    procedure A()\n    begin\n    end;\n}\n";
+    private const string Packaged = "codeunit 79894 \"PkgSib Moved\"\n{\n    procedure A()\n    begin\n    end;\n}\n";
+    private const string Edited = "codeunit 79894 \"PkgSib Moved\"\n{\n\n    procedure A()\n    begin\n    end;\n}\n";
+
+    /// <summary>A packaged root holding <c>packagedFiles</c> (or missing when null) and a sibling
+    /// root, App/, holding <c>siblingFiles</c>, marked to be verified against the packaged root.</summary>
+    private (AlSourceLocationMap Map, string Sibling, string Packaged) Build(
+        (string Name, string Text)[]? packagedFiles, (string Name, string Text)[] siblingFiles)
+    {
+        TestArtifacts.SkipIf(!_engine.Ready,
+            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
+        var packaged = Path.Combine(_root, "key.src");
+        var sibling = Path.Combine(_root, "App");
+        if (packagedFiles != null)
+        {
+            Write(Path.Combine(packaged, "app.json"), "{}");
+            foreach (var (name, text) in packagedFiles) Write(Path.Combine(packaged, "src", name), text);
+        }
+        Write(Path.Combine(sibling, "app.json"), "{}");
+        foreach (var (name, text) in siblingFiles) Write(Path.Combine(sibling, "src", name), text);
+        var roots = new CoverageRoots(new[] { packaged, sibling },
+            new Dictionary<string, string>(StringComparer.Ordinal) { [sibling] = packaged });
+        return (AlCoverageSourceMap.Build(roots, relativeTo: null), sibling, packaged);
+    }
+
+    [SkippableFact]
+    public void PerObject_TheSiblingKeepsWhatMatchesThePackage_AndThePackageKeepsWhatDoesNot()
+    {
+        var (map, sibling, packaged) = Build(
+            new[] { ("Same.Codeunit.al", Same), ("Moved.Codeunit.al", Packaged) },
+            new[] { ("Same.Codeunit.al", Same), ("Moved.Codeunit.al", Edited) });
+
+        Assert.Equal(Abs(Path.Combine(sibling, "src", "Same.Codeunit.al")), map[("CodeUnit", 79893)]);
+        Assert.Equal(Abs(Path.Combine(packaged, "src", "Moved.Codeunit.al")), map[("CodeUnit", 79894)]);
+        Assert.Equal(Packaged.Split('\n').SkipLast(1), map.ObjectSourceLines("CodeUnit", 79894)!);
+    }
+
+    // The third state: the package's AL could not be read, so nothing says what ran. The sibling's
+    // object must not be attributed in its place, and the map says it is incomplete.
+    [SkippableFact]
+    public void AnUnreadablePackageRoot_LeavesTheSiblingsObjectUnmapped_AndTheMapIncomplete()
+    {
+        var (map, _, packaged) = Build(null, new[] { ("Same.Codeunit.al", Same) });
+
+        Assert.False(map.ContainsKey(("CodeUnit", 79893)),
+            $"the package's text is unknown, yet the object was attributed to {(map.TryGetValue(("CodeUnit", 79893), out var p) ? p : "")}");
+        Assert.True(map.IsIncomplete);
+        Assert.Equal(packaged, Assert.Single(map.ScanFailures).Path);
+    }
+}
