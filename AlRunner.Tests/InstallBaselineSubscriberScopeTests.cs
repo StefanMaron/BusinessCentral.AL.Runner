@@ -27,69 +27,31 @@ public class InstallBaselineSubscriberScopeTests
     private const string Miss = "InstallBaseline.DepCompanyCache MISS";
     private const string DiskHit = "InstallBaseline.DepCompanyCache DISK-HIT";
 
-    /// <summary>Warm with the same subscriber: a disk HIT. Warm after that subscriber's body
-    /// changed: a MISS, and the bundle sees the row its CURRENT subscriber writes.</summary>
+    /// <summary>One shared dependency, five processes on one cache root. Unchanged automatic
+    /// subscriber: a disk HIT. No automatic subscriber: a MISS, and no row the other app's
+    /// subscriber wrote. Only a manual-binding subscriber: a HIT on that entry, so the test
+    /// assembly's own identity is not a term. The subscriber's body changed: a MISS, and the
+    /// row its current body writes.</summary>
     [SkippableFact]
-    public void ChangedSubscriber_MissesTheBaseline_UnchangedSubscriber_HitsIt()
-    {
-        TestArtifacts.SkipIfMissing();
-        var root = TestScratch.Dir("al-runner-ib-subscriber-change");
-        try
-        {
-            var fx = Fixture.Write(root, 63300);
-            var a = fx.WriteBundle("main-a", "A", 63305, Fixture.Subscriber.Automatic, writes: "SUB-A1", expect: "SUB-A1");
-
-            var cold = Run(a);
-            AssertPassed(cold);
-            Assert.Equal(1, Count(cold.output, Miss));
-            Assert.Equal(0, Count(cold.output, DiskHit));
-
-            var warm = Run(a);
-            AssertPassed(warm);
-            Assert.Equal(0, Count(warm.output, Miss));
-            Assert.Equal(1, Count(warm.output, DiskHit));
-
-            // The same app, its subscriber now writing a different value: new MVID, new key.
-            fx.WriteBundle("main-a", "A", 63305, Fixture.Subscriber.Automatic, writes: "SUB-A2", expect: "SUB-A2");
-            var changed = Run(a);
-            AssertPassed(changed);
-            Assert.Equal(1, Count(changed.output, Miss));
-            Assert.Equal(0, Count(changed.output, DiskHit));
-        }
-        finally
-        {
-            try { Directory.Delete(root, true); } catch { }
-        }
-    }
-
-    /// <summary>An app with no automatic subscriber does not restore the baseline an app with
-    /// one wrote — and does share one with an app whose only subscriber is manual-binding, so a
-    /// test assembly's own identity is not what the key carries.</summary>
-    [SkippableFact]
-    public void AppWithoutTheSubscriber_DoesNotRestoreItsRows_ManualSubscriberSharesTheBaseline()
+    public void Baseline_IsKeyedOnTheAutomaticSubscribersArmedWhileItIsComputed()
     {
         TestArtifacts.SkipIfMissing();
         var root = TestScratch.Dir("al-runner-ib-subscriber-scope");
         try
         {
-            var fx = Fixture.Write(root, 63400);
-            var a = fx.WriteBundle("main-a", "A", 63405, Fixture.Subscriber.Automatic, writes: "SUB-A", expect: "SUB-A");
-            var b = fx.WriteBundle("main-b", "B", 63410, Fixture.Subscriber.None, writes: null, expect: null);
-            var c = fx.WriteBundle("main-c", "C", 63415, Fixture.Subscriber.Manual, writes: "SUB-C", expect: null);
+            var fx = Fixture.Write(root, 63300);
+            var a = fx.WriteBundle("main-a", "A", 63305, Fixture.Subscriber.Automatic, writes: "SUB-A1", expect: "SUB-A1");
+            var b = fx.WriteBundle("main-b", "B", 63310, Fixture.Subscriber.None, writes: null, expect: null);
+            var c = fx.WriteBundle("main-c", "C", 63315, Fixture.Subscriber.Manual, writes: "SUB-C", expect: null);
 
-            var withSub = Run(a);
-            AssertPassed(withSub);
-            Assert.Equal(1, Count(withSub.output, Miss));
+            AssertRun("A cold", Run(a), miss: 1, diskHit: 0);
+            AssertRun("A warm, subscriber unchanged", Run(a), miss: 0, diskHit: 1);
+            AssertRun("B, no subscriber", Run(b), miss: 1, diskHit: 0);
+            AssertRun("C, manual subscriber only", Run(c), miss: 0, diskHit: 1);
 
-            var without = Run(b);
-            AssertPassed(without);
-            Assert.Equal(1, Count(without.output, Miss));
-            Assert.Equal(0, Count(without.output, DiskHit));
-
-            var manual = Run(c);
-            AssertPassed(manual);
-            Assert.Equal(0, Count(manual.output, Miss));
-            Assert.Equal(1, Count(manual.output, DiskHit));
+            // The same app, its subscriber now writing a different value: new MVID, new key.
+            fx.WriteBundle("main-a", "A", 63305, Fixture.Subscriber.Automatic, writes: "SUB-A2", expect: "SUB-A2");
+            AssertRun("A warm, subscriber changed", Run(a), miss: 1, diskHit: 0);
         }
         finally
         {
@@ -97,10 +59,13 @@ public class InstallBaselineSubscriberScopeTests
         }
     }
 
-    private static void AssertPassed((string output, int exit) run)
+    private static void AssertRun(string step, (string output, int exit) run, int miss, int diskHit)
     {
         Assert.True(run.exit == 0 && Count(run.output, "1P/0F/0E") == 1,
-            $"expected the bundle's one test to pass, exit {run.exit}:\n{run.output}");
+            $"{step}: expected the bundle's one test to pass, exit {run.exit}:\n{run.output}");
+        var (m, h) = (Count(run.output, Miss), Count(run.output, DiskHit));
+        Assert.True(m == miss && h == diskHit,
+            $"{step}: expected MISS {miss} / DISK-HIT {diskHit}, got MISS {m} / DISK-HIT {h}:\n{run.output}");
     }
 
     private static (string output, int exit) Run(string bundle)
