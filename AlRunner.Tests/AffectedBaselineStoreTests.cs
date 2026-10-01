@@ -135,6 +135,23 @@ public class AffectedBaselineStoreTests
         Assert.Contains("out of range", AffectedBaselineStore.Load(path).Unusable);
     }
 
+    /// <summary>A version-6 file keyed a quoted event by its C# name, so its raisers would never be
+    /// selected once the event dispatches (#5167): it must read as no baseline, forcing a full run.</summary>
+    [Fact]
+    public void SchemaSixFile_KeyingQuotedEventsByTheirCSharpName_IsNoBaseline()
+    {
+        var dir = TestScratch.Dir("al-runner-affected-store-schema6");
+        var path = Path.Combine(dir, "s.json");
+        AffectedBaselineStore.Write(path, Sample());
+        Assert.NotNull(AffectedBaselineStore.Load(path).Baseline);
+
+        var current = AffectedBaselineStore.SchemaVersion;
+        File.WriteAllText(path, File.ReadAllText(path).Replace($"\"Schema\":{current},", "\"Schema\":6,", StringComparison.Ordinal));
+        var schema6 = AffectedBaselineStore.Load(path);
+        Assert.Null(schema6.Baseline);
+        Assert.Contains("schema version 6", schema6.Unusable);
+    }
+
     [Fact]
     public void PathFor_IgnoresOrderAndDuplicates_AndSeparatesBundleSets()
     {

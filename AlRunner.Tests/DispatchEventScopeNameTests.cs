@@ -1,5 +1,7 @@
 using AlRunner;
 using AlRunner.Infrastructure;
+using AlRunner.Patches;
+using Microsoft.Dynamics.Nav.Runtime;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -47,10 +49,62 @@ public class DispatchEventScopeNameTests
             AlEventRaiseTracker.EventScopeKey(typeof(Codeunit50100.OnBeforeHandle_Scope)));
     }
 
+    // #5167: a quoted event name is mangled into the class name; [NavName] carries the AL name.
+    [Theory]
+    [InlineData(typeof(Codeunit50100.On_Before_Quoted_Scope), "On Before Quoted")]
+    [InlineData(typeof(Codeunit50100.Ona45Checka46Value_a40Qtya41_a38_Amt_Scope), "On-Check.Value (Qty) & Amt")]
+    [InlineData(typeof(Codeunit50100.OnQuotedPlain_Scope), "OnQuotedPlain")]
+    [InlineData(typeof(Codeunit50100.OnBeforeHandle_State_Scope), "OnBeforeHandle_State")]
+    public void EventScope_AlName_IsTheNavName_OrTheDecodedName(Type scopeType, string expected)
+    {
+        Assert.True(BcRuntime.TryGetEventScopeAlName(scopeType, out var eventName));
+        Assert.Equal(expected, eventName);
+    }
+
+    [Fact]
+    public void EventScope_AlName_RefusesAClassThatIsNotAnEventScope()
+    {
+        Assert.False(BcRuntime.TryGetEventScopeAlName(typeof(Codeunit50100.On_Decoy_Frame), out var eventName));
+        Assert.Equal("", eventName);
+    }
+
+    [Fact]
+    public void RaiseTrackerKey_UsesTheAlNameOfAQuotedEvent()
+    {
+        Assert.Equal("ev|Codeunit|50100|On Before Quoted",
+            AlEventRaiseTracker.EventScopeKey(typeof(Codeunit50100.On_Before_Quoted_Scope)));
+        // Unmangled names keep the key they always had: persisted affectedOnly baselines stay valid.
+        Assert.Equal("ev|Codeunit|50100|OnQuotedPlain",
+            AlEventRaiseTracker.EventScopeKey(typeof(Codeunit50100.OnQuotedPlain_Scope)));
+    }
+
+    [Theory]
+    [InlineData("On Before Quoted", typeof(Codeunit50100.On_Before_Quoted_Scope))]
+    [InlineData("On-Check.Value (Qty) & Amt", typeof(Codeunit50100.Ona45Checka46Value_a40Qtya41_a38_Amt_Scope))]
+    [InlineData("OnBeforeHandle", typeof(Codeunit50100.OnBeforeHandle_Scope))]
+    [InlineData("OnBeforeHandle_State", typeof(Codeunit50100.OnBeforeHandle_State_Scope))]
+    public void SeedLookup_FindsTheScopeClassOfTheAlEventName(string alEventName, Type expected)
+    {
+        Assert.Same(expected, EventSubscriberPatches.FindEventScopeType(typeof(Codeunit50100), alEventName));
+    }
+
+    [Theory]
+    [InlineData("On Missing")]
+    [InlineData("On Decoy")]          // [NavName] on a class that is not an event scope
+    public void SeedLookup_FindsNothingForAnUndeclaredName(string alEventName)
+    {
+        Assert.Null(EventSubscriberPatches.FindEventScopeType(typeof(Codeunit50100), alEventName));
+    }
+
     // Stand-ins for an emitted publisher: the declaring type's name is what the decoders read.
+    // The [NavName] values mirror what BC's compiler emits for the same AL names (#5167).
     private static class Codeunit50100
     {
         public sealed class OnBeforeHandle_State_Scope { }
         public sealed class OnBeforeHandle_Scope { }
+        [NavName("On Before Quoted")] public sealed class On_Before_Quoted_Scope { }
+        [NavName("On-Check.Value (Qty) & Amt")] public sealed class Ona45Checka46Value_a40Qtya41_a38_Amt_Scope { }
+        [NavName("OnQuotedPlain")] public sealed class OnQuotedPlain_Scope { }
+        [NavName("On Decoy")] public sealed class On_Decoy_Frame { }
     }
 }

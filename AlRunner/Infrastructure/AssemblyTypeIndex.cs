@@ -279,6 +279,66 @@ internal sealed class AssemblyTypeIndex
         catch { return null; }
     }
 
+    /// <summary>
+    /// The type nested directly inside <paramref name="declaringType"/> whose simple name ends in
+    /// <paramref name="nameSuffix"/> and whose <c>[NavName]</c> is exactly <paramref name="navName"/>,
+    /// resolving only that one type. For an AL member whose name the compiler mangled into the
+    /// class name (<c>"On Before Quoted"</c> → <c>On_Before_Quoted_Scope</c>, #5167).
+    /// </summary>
+    internal Type? FindNestedTypeByNavName(Type declaringType, string nameSuffix, string navName)
+    {
+        if (_mr != null && ReferenceEquals(declaringType.Assembly, _asm))
+        {
+            try
+            {
+                int? matchedRow = null;
+                lock (_mrLock)
+                {
+                    var td = _mr.GetTypeDefinition(
+                        (TypeDefinitionHandle)MetadataTokens.EntityHandle(declaringType.MetadataToken));
+                    foreach (var nh in td.GetNestedTypes())
+                    {
+                        var nested = _mr.GetTypeDefinition(nh);
+                        if (!_mr.GetString(nested.Name).EndsWith(nameSuffix, StringComparison.Ordinal)) continue;
+                        if (!string.Equals(ReadNavName(_mr, nested.GetCustomAttributes()), navName, StringComparison.Ordinal)) continue;
+                        matchedRow = MetadataTokens.GetRowNumber(nh);
+                        break;
+                    }
+                }
+                return matchedRow is int row ? ResolveRow(row) : null;
+            }
+            catch
+            {
+                // Same fall-through as FindNestedType: an unmappable token is not an absence.
+            }
+        }
+        try
+        {
+            return declaringType.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic)
+                .FirstOrDefault(t => t.Name.EndsWith(nameSuffix, StringComparison.Ordinal)
+                    && CustomAttributeData.GetCustomAttributes(t).Any(a =>
+                        a.AttributeType.Name == "NavNameAttribute"
+                        && a.ConstructorArguments.Count > 0
+                        && string.Equals(a.ConstructorArguments[0].Value as string, navName, StringComparison.Ordinal)));
+        }
+        catch { return null; }
+    }
+
+    /// <summary>The first constructor argument of a <c>[NavName("…")]</c> among
+    /// <paramref name="attrs"/>, or null. Blob layout: ECMA-335 II.23.3 (prolog, then a SerString).</summary>
+    private static string? ReadNavName(MetadataReader mr, CustomAttributeHandleCollection attrs)
+    {
+        foreach (var cah in attrs)
+        {
+            var ca = mr.GetCustomAttribute(cah);
+            if (AttributeTypeName(mr, ca.Constructor) != "NavNameAttribute") continue;
+            var blob = mr.GetBlobReader(ca.Value);
+            if (blob.ReadUInt16() != 0x0001) return null;
+            return blob.ReadSerializedString();
+        }
+        return null;
+    }
+
     private Type? Accept(int row, Func<Type, bool>? predicate)
     {
         var t = ResolveRow(row);
