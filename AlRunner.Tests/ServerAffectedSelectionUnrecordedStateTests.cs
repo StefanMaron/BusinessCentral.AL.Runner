@@ -333,6 +333,46 @@ public class ServerAffectedSelectionUnrecordedStateTests
         AssertStatus(await Send(server, bundle, affectedOnly: false), "B_Reads", "pass");
     }
 
+    /// <summary>
+    /// #5091: a --server run loads the Test Runner app by default from its package caches, as the
+    /// CLI does (#4816), so 130453 clears the last error before each test method. The official
+    /// Windows container (BC 28.4, corpus PR 520) clears it too. Before the fix the server ran
+    /// without the app and B read A's error.
+    /// </summary>
+    [SkippableFact]
+    public async Task Server_LoadsTheDefaultTestRunnerApp_SoTheLastErrorIsClearedBetweenMethods()
+    {
+        var dirs = TestRunnerMgtEventsTests.RequireProvisioned();
+        var bundle = RawBundle("al-runner-server-default-test-tool", "00000000000d", 62480,
+            ("T.Codeunit.al", """
+            codeunit 62480 "US Tool Probe"
+            {
+                Subtype = Test;
+                [Test]
+                procedure A_Traps()
+                begin
+                    asserterror Error('TP-A');
+                end;
+
+                [Test]
+                procedure B_Reads()
+                begin
+                    if GetLastErrorText() <> '' then
+                        Error('CARRIED-%1', GetLastErrorText());
+                end;
+            }
+            """));
+        File.WriteAllText(Path.Combine(bundle, "app.json"),
+            File.ReadAllText(Path.Combine(bundle, "app.json")).Replace("\"platform\": \"1.0.0.0\"", "\"platform\": \"27.0.0.0\"", StringComparison.Ordinal));
+        await using var server = await CliServer.StartAsync(
+            new[] { "--no-cache", "--package-cache", dirs.TestApps, "--package-cache", dirs.PlatformApps },
+            configure: psi => DefaultTestToolPin.LoadFrom(psi, dirs.TestApps));
+
+        var run = await Send(server, bundle, affectedOnly: false);
+        AssertStatus(run, "A_Traps", "pass");
+        AssertStatus(run, "B_Reads", "pass");
+    }
+
     private const string EmptyLastErrorChecker = """
         codeunit 62480 "US Checker"
         {

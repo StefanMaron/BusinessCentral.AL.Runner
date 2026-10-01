@@ -6071,7 +6071,8 @@ return strictExitCode ? computedExitCode : 0;
                     .ToList();
                 var resolverDirs = bundlePkgDirs.Concat(effectivePkgDirs).Distinct().ToList();
                 var resolver = new DependencyResolver(resolverDirs, AlRunner.Infrastructure.CacheRoots.SourceBuiltPackageDirs());
-                ordered = resolver.Resolve(roots);
+                // #5091: the Test Runner app by default, as the CLI resolve and the AL-output cache key do.
+                ordered = resolver.Resolve(WithDefaultTestTool(roots.ToList(), new[] { appJsonPath }, resolver));
                 AlRunner.Infrastructure.PhaseLog.NoteDepsResolved(ordered.Count);
                 // Same split as the CLI loop: workspace dirs reach the compiler only as the
                 // *.symbols.json of this bundle's resolved closure, never through the package

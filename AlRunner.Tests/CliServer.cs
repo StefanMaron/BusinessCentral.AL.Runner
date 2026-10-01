@@ -132,7 +132,7 @@ public sealed class CliServer : IAsyncDisposable
     /// server subprocess started concurrently on a shared xUnit worker.
     /// </param>
     public static async Task<CliServer> StartAsync(IEnumerable<string>? extraArgs = null, TimeSpan? readyTimeout = null,
-        IReadOnlyDictionary<string, string>? extraEnv = null)
+        IReadOnlyDictionary<string, string>? extraEnv = null, Action<ProcessStartInfo>? configure = null)
     {
         var argList = new StringBuilder(
             TestBuildConfig.RunArgs(ProjectPath) + TestBuildConfig.BcVersionArg + " --server");
@@ -155,6 +155,7 @@ public sealed class CliServer : IAsyncDisposable
             foreach (var kv in extraEnv)
                 psi.EnvironmentVariables[kv.Key] = kv.Value;
 
+        configure?.Invoke(psi);
         var proc = Process.Start(psi)!;
         System.Threading.Interlocked.Increment(ref _startCount);
 
