@@ -14,6 +14,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **selection:** a changed object kind that maps to no selection key forces a full run
 - **selection:** key a changed pageextension to its base page under affectedOnly
 - **selection:** keep the session-state record of unmappable tests
 - **permissions:** a rolled-back transaction world advances PermissionSetupMonitor.SetupVersion
