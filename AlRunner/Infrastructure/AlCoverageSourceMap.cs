@@ -85,6 +85,8 @@ public sealed class AlSourceLocationMap : IReadOnlyDictionary<(string Label, int
 
     internal void AddText(string label, int id, ObjectTextSpan text) => _texts[(label, id)] = text;
 
+    internal bool TryGetText((string Label, int Id) key, out ObjectTextSpan text) => _texts.TryGetValue(key, out text);
+
     /// <summary>
     /// The object's source text as BC stores it for the object ("User AL Code"): the file's
     /// preamble followed by the object's own lines, so index L is the line a decoded
@@ -172,6 +174,32 @@ public sealed class AlSourceLocationMap : IReadOnlyDictionary<(string Label, int
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 }
 
+/// <summary>
+/// The roots <see cref="AlCoverageSourceMap.RootsWithParsedSourceDependencies"/> chose, in order,
+/// plus the sibling source folders whose objects ran from a package rather than from the folder:
+/// each maps to the root holding that package's embedded AL. <see cref="AlCoverageSourceMap.Build"/>
+/// attributes such a folder's object only where its text equals the package's
+/// (docs/coverage-attribution.md#a-sibling-source-folder-next-to-a-package-4991).
+/// </summary>
+public sealed class CoverageRoots : IReadOnlyList<string>
+{
+    private readonly IReadOnlyList<string> _roots;
+
+    internal CoverageRoots(IReadOnlyList<string> roots, IReadOnlyDictionary<string, string> packagedRootOfSibling)
+    {
+        _roots = roots;
+        PackagedRootOfSibling = packagedRootOfSibling;
+    }
+
+    /// <summary>Sibling root (as listed) → the materialized root of the package its objects ran from.</summary>
+    internal IReadOnlyDictionary<string, string> PackagedRootOfSibling { get; }
+
+    public string this[int index] => _roots[index];
+    public int Count => _roots.Count;
+    public IEnumerator<string> GetEnumerator() => _roots.GetEnumerator();
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+}
+
 public static class AlCoverageSourceMap
 {
     /// <summary>One object as parsed from a file: label, id, and its line offset.</summary>
@@ -220,6 +248,10 @@ public static class AlCoverageSourceMap
     /// Those roots go FIRST: <see cref="Build"/> keeps the last root's mapping of an object, so
     /// an object that also has a source root keeps the source root's file, as before #4273.
     /// <paramref name="packagedRoots"/> is a test seam; null means the registered packages.</para>
+    ///
+    /// <para>#4991: a registered source folder that is not an execution root, and whose app.json
+    /// names a package registered above, did not supply the code that ran: the package did. The
+    /// result marks it for <see cref="Build"/> to verify against that package's root.</para>
     /// </summary>
     public static IReadOnlyList<string> RootsWithParsedSourceDependencies(
         IEnumerable<string> executionRoots, IEnumerable<string>? packagedRoots = null)
@@ -227,7 +259,7 @@ public static class AlCoverageSourceMap
         var roots = new List<string>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        void Add(string root)
+        bool Add(string root)
         {
             // Canonical for the dedup only; the root added is the caller's own spelling.
             //
@@ -256,14 +288,30 @@ public static class AlCoverageSourceMap
             try { key = Path.GetFullPath(root).Replace('\\', '/').TrimEnd('/'); }
             catch (ArgumentException) { key = root; }
             catch (NotSupportedException) { key = root; }
-            if (seen.Add(key)) roots.Add(root);
+            if (!seen.Add(key)) return false;
+            roots.Add(root);
+            return true;
         }
 
-        foreach (var dir in packagedRoots ?? PackagedDependencySources.Roots()) Add(dir);
+        var packaged = packagedRoots?.Select(r => ((Guid?)null, r)).ToList()
+            ?? PackagedDependencySources.RootsByApp().Select(p => ((Guid?)p.AppId, p.Root)).ToList();
+        var packagedRootByApp = new Dictionary<Guid, string>();
+        foreach (var (appId, dir) in packaged)
+        {
+            Add(dir);
+            if (appId is Guid id) packagedRootByApp[id] = dir;
+        }
         foreach (var root in executionRoots) Add(root);
         // After the execution roots, so a directory that is both keeps the caller's spelling.
-        foreach (var dir in AlRunner.Patches.RecordPatches.RegisteredSourceDirs()) Add(dir);
-        return roots;
+        var packagedRootOfSibling = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var dir in AlRunner.Patches.RecordPatches.RegisteredSourceDirs())
+        {
+            if (!Add(dir) || packagedRootByApp.Count == 0) continue;
+            if (InProcessAppPackager.ReadIdentity(Path.Combine(dir, "app.json")) is { } identity
+                && packagedRootByApp.TryGetValue(identity.AppId, out var packagedRoot))
+                packagedRootOfSibling[dir] = packagedRoot;
+        }
+        return new CoverageRoots(roots, packagedRootOfSibling);
     }
 
     /// <summary>
@@ -288,8 +336,11 @@ public static class AlCoverageSourceMap
         var rootList = roots as IReadOnlyList<string> ?? roots.ToList();
         var symbolsByAppJson = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
         var appJsonByDir = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        var packagedRootOfSibling = (roots as CoverageRoots)?.PackagedRootOfSibling;
         foreach (var root in rootList)
         {
+            string? verifyAgainst = null;
+            packagedRootOfSibling?.TryGetValue(root, out verifyAgainst);
             if (!Directory.Exists(root))
             {
                 // Not the same as a root with nothing in it: the caller named this path, so
@@ -345,6 +396,7 @@ public static class AlCoverageSourceMap
                 var parsed = ParseObjects(file, symbols, out var readFailure);
                 foreach (var o in parsed)
                 {
+                    if (verifyAgainst != null && !SameTextAsPackage(map, o, file, verifyAgainst)) continue;
                     map.Add(o.Label, o.Id, path, o.LineOffset);
                     map.AddText(o.Label, o.Id, new AlSourceLocationMap.ObjectTextSpan(
                         AbsolutePathOf(file), o.PreambleLines, o.StartLine, o.EndLine, stampLength, stampWrite));
@@ -435,6 +487,41 @@ public static class AlCoverageSourceMap
         catch (ArgumentException) { return file.Replace('\\', '/'); }
         catch (NotSupportedException) { return file.Replace('\\', '/'); }
         catch (PathTooLongException) { return file.Replace('\\', '/'); }
+    }
+
+    /// <summary>
+    /// #4991: whether a sibling source folder's object may replace what its package's root mapped.
+    /// Only when that root mapped the object and both texts are equal line for line — the file's
+    /// preamble plus the object's lines, which is what a decoded [SourceSpans] line indexes, so equal
+    /// texts give equal file lines. Otherwise the package's mapping stays, or the object stays
+    /// unmapped when the package's root mapped nothing (an unextractable package is already a scan
+    /// failure): an unreadable or unmatched text never falls back to the sibling's lines.
+    /// </summary>
+    private static bool SameTextAsPackage(AlSourceLocationMap map, ParsedObject o, string file, string packagedRoot)
+    {
+        if (!map.TryGetText((o.Label, o.Id), out var packaged)
+            || !AbsolutePathOf(packaged.AbsolutePath).StartsWith(
+                AbsolutePathOf(packagedRoot).TrimEnd('/') + "/", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var sibling = ObjectText(file, o.PreambleLines, o.StartLine, o.EndLine);
+        var compiled = ObjectText(packaged.AbsolutePath, packaged.PreambleLines, packaged.StartLine, packaged.EndLine);
+        return sibling != null && compiled != null && sibling.SequenceEqual(compiled, StringComparer.Ordinal);
+    }
+
+    /// <summary>Preamble plus object lines of <paramref name="file"/>, split as
+    /// <see cref="AlSourceLocationMap.ObjectSourceLines"/> splits them; null when unreadable.</summary>
+    private static List<string>? ObjectText(string file, int preambleLines, int startLine, int endLine)
+    {
+        var lines = new List<string>();
+        try
+        {
+            using var reader = new StreamReader(file, System.Text.Encoding.UTF8);
+            string? line;
+            while ((line = reader.ReadLine()) != null) lines.Add(line);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+        if (endLine >= lines.Count || preambleLines > startLine) return null;
+        return lines.Take(preambleLines).Concat(lines.Skip(startLine).Take(endLine - startLine + 1)).ToList();
     }
 
     /// <summary>The nearest app.json in <paramref name="dir"/> or an ancestor, or null. The

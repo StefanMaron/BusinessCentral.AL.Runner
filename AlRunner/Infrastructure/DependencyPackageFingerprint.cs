@@ -46,13 +46,19 @@ internal static class DependencyPackageFingerprint
     /// the app.json in the directory names an AppId in <paramref name="packagedAppIds"/>, and the
     /// directory neither lies inside nor contains a request bundle, whose files the change model
     /// tracks and which must never be ignored.
+    /// <para>#4991: also the directory holding a covered package's own embedded AL, where coverage
+    /// puts the package's statements when the source folder's text differs from the package's.
+    /// <paramref name="materializedRoots"/> is a test seam; null means the registered packages.</para>
     /// </summary>
     public static IReadOnlyList<string> PackagedSourceRoots(
-        IEnumerable<string> registeredDirs, IEnumerable<string> requestRoots, IReadOnlySet<Guid> packagedAppIds)
+        IEnumerable<string> registeredDirs, IEnumerable<string> requestRoots, IReadOnlySet<Guid> packagedAppIds,
+        IEnumerable<(Guid AppId, string Root)>? materializedRoots = null)
     {
         var requests = requestRoots.Select(r => new RequestRoot(Normalize(r), BundleRootDeduplication.Canonicalize(r))).ToList();
         var roots = new List<string>();
         if (packagedAppIds.Count == 0) return roots;
+        foreach (var (appId, root) in materializedRoots ?? PackagedDependencySources.RootsByApp(packagedAppIds.Contains))
+            if (packagedAppIds.Contains(appId)) roots.Add(Normalize(root));
         foreach (var dir in registeredDirs.Select(Normalize).Distinct(StringComparer.Ordinal))
         {
             // Canonical (symlinks resolved) for this exclusion only: two spellings of one request

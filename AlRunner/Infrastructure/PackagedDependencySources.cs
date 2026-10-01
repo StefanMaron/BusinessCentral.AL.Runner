@@ -51,12 +51,20 @@ internal static class PackagedDependencySources
     /// </summary>
     public static IReadOnlyList<string> Roots() => Roots(CacheRoots.Resolve("compiled-deps"));
 
-    internal static IReadOnlyList<string> Roots(string cacheDir)
+    internal static IReadOnlyList<string> Roots(string cacheDir) => RootsByApp(cacheDir).Select(r => r.Root).ToList();
+
+    /// <summary><see cref="Roots()"/>, each with the AppId whose package it holds (#4991); only the
+    /// packages <paramref name="include"/> accepts, when given, so nothing else is extracted.</summary>
+    public static IReadOnlyList<(Guid AppId, string Root)> RootsByApp(Func<Guid, bool>? include = null) =>
+        RootsByApp(CacheRoots.Resolve("compiled-deps"), include);
+
+    internal static IReadOnlyList<(Guid AppId, string Root)> RootsByApp(string cacheDir, Func<Guid, bool>? include = null)
     {
-        var roots = new List<string>();
-        foreach (var (_, (appPath, cacheKey)) in _apps.OrderBy(kv => kv.Value.CacheKey, StringComparer.Ordinal))
+        var roots = new List<(Guid, string)>();
+        foreach (var (appId, (appPath, cacheKey)) in _apps.OrderBy(kv => kv.Value.CacheKey, StringComparer.Ordinal))
         {
-            try { roots.Add(Materialize(appPath, cacheKey, cacheDir)); }
+            if (include != null && !include(appId)) continue;
+            try { roots.Add((appId, Materialize(appPath, cacheKey, cacheDir))); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
             {
                 // The absent directory is still returned: Build reports it as a scan failure, so
@@ -65,7 +73,7 @@ internal static class PackagedDependencySources
                 var dir = Path.Combine(cacheDir, cacheKey + ".src");
                 _extractionFailures[dir] =
                     $"the AL of package {appPath} could not be extracted ({ex.GetType().Name}: {ex.Message})";
-                roots.Add(dir);
+                roots.Add((appId, dir));
             }
         }
         return roots;

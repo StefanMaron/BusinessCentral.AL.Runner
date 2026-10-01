@@ -1009,7 +1009,9 @@ environments", where an unkeyed kind makes the diff approximate instead.
 A common layout is `App/` (source), `App.Test/` (source) and
 `App.Test/.alpackages/App.app`, with a request naming only `App.Test`. The app then
 runs from the package, and the statements it executes are attributed to the files
-of its source folder `App/`, which the runner registers as a sibling source. No
+of its source folder `App/`, which the runner registers as a sibling source — or,
+where `App/`'s text differs from the package's, to the package's own embedded AL
+(docs/coverage-attribution.md#a-sibling-source-folder-next-to-a-package-4991). No
 module of the request tracks those files, so they used to make every test that
 calls into the app unknown, and it reran on every request (#4973).
 
@@ -1019,7 +1021,8 @@ synthesized by the runner from a sibling source (`workspace-deps`), and **is the
 module that actually runs** for its AppId. Replacing such a package, even with a
 rebuild of the same version, changes the key. That is what makes it safe for
 selection to ignore a statement attributed to the source folder of a package the
-key covers: the code that statement came from can only change by changing the key.
+key covers, or to that package's embedded AL: the code that statement came from can
+only change by changing the key.
 A changed key used to force a full run; since #5028 the two packages are diffed per
 object and the tests that built, entered or held records of a changed object run
 (see "affectedOnly across environments"), unless the request sets
