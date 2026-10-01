@@ -183,11 +183,8 @@ public static class AlEventRaiseTracker
         if (!BcRuntime.TryDecodeEventPublisherDeclType(decl.Name, out var kind, out var id)
             && !TryExtensionBase(decl.Name, out kind, out id))
             return null;
-        var name = scopeType.Name;
-        const string suffix = "_Scope";
-        var cut = name.LastIndexOf(suffix, StringComparison.Ordinal);
-        if (cut <= 0) return null;
-        return EventKey(NormalizeDispatchKind(kind), id, name.Substring(0, cut));
+        if (!BcRuntime.TryDecodeEventScopeName(scopeType.Name, out var eventName)) return null;
+        return EventKey(NormalizeDispatchKind(kind), id, eventName);
     }
 
     /// <summary>An extension class (<c>TableExtension&lt;N&gt;</c>, …) as the base object its events are
