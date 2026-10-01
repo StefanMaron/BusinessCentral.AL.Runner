@@ -521,6 +521,7 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // BcCompiler.Emit() call with no package cache wired (see the file header).
             // Measured 81.7s in CI.
             ["ManifestFeaturesSubprocessTests"] = 81,
+            ["TestPageDrillDownDispatchTests"] = 75,
             ["ServerTestIsolationTests"] = 69,
             ["ServerStreamingTests"] = 50,
             ["ExpectationManifestWiringTests"] = 47,
