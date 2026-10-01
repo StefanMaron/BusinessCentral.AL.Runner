@@ -169,6 +169,8 @@ public sealed class HomeRootedPathsEnvOverrideTests
         foreach (var name in new[] { BcArtifacts.ArtifactsRootEnvVar, BcArtifacts.SymbolsRootEnvVar,
                                      CacheRoots.CacheRootEnvVar, CacheRoots.NoCacheRootEnvVar })
             psi.Environment.Remove(name);
+        // The subject is where EVERY cache lands, the engine caches included (#5109).
+        SharedEngineCaches.Isolate(psi);
         foreach (var (k, v) in env)
         {
             if (v == null) psi.Environment.Remove(k);
