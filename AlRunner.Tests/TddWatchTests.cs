@@ -197,6 +197,10 @@ public class TddWatchTests
             Assert.Contains("PASS", cycle2);
             Assert.Contains("MissingProcedure_ReportsFailedThenPasses", cycle2);
             Assert.DoesNotContain("ran against generated stub", cycle2);
+            // Each cycle's closing block lists that cycle's generated members only (#5147):
+            // DoubleIt is written now, so nothing was generated in cycle 2.
+            Assert.Contains("--tdd: no members were generated this run", cycle2);
+            Assert.DoesNotContain("--tdd: generated", cycle2);
             Assert.Contains("BareStatementCall_RefusesNotGuesses", cycle2);
             Assert.Contains("DoThing", cycle2);
             Assert.Contains("did not compile", cycle2);
