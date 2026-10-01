@@ -69,6 +69,7 @@ public static partial class NclCecilRewrite
         AddMetadataOwned(set);
         AddReportsOwned(set);
         AddRuntimeOwned(set);
+        AddExternalEventsOwned(set);
         return set;
     }
 
@@ -509,6 +510,7 @@ public static partial class NclCecilRewrite
         RewriteNcl_Metadata(asm);
         RewriteNcl_Reports(asm, oosCtor);
         RewriteNcl_Runtime(asm);
+        RewriteNcl_ExternalEvents(asm);
         // Last: it rewrites every read of RecordImplementation.dataAccess, including any an
         // earlier pass emitted.
         RewriteNcl_RecordDataAccessReads(asm);
