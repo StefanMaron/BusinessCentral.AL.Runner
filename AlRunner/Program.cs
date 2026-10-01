@@ -8594,8 +8594,9 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     }
 
     // #5183: the request's `test` / `excludeTests` (the CLI's --test / --exclude-test) on the shared
-    // executor, or the startup defaults when it carries none. Returns an error response string when
-    // the request cannot be honoured, else null. HandleServerRunTests puts the defaults back.
+    // executor, or the startup defaults when it carries none — every runTests sets both, so one
+    // request's selection cannot reach the next, and nothing else in --server reads them. Returns an
+    // error response string when the request cannot be honoured, else null.
     string? ApplyRequestTestSelection(AlRunner.ServerRequest req)
     {
         var carries = req.Test != null || req.ExcludeTests is { Length: > 0 };
@@ -8792,9 +8793,6 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         }
         finally
         {
-            // #5183: the next request starts from the startup selection, never this request's.
-            executor.TestFilter = defaultServerTestFilter;
-            executor.Exclusions = defaultServerExclusions;
             // Belt-and-braces: reaches the same state as the explicit clear above on
             // every path, INCLUDING an exception thrown before that point (e.g. from
             // RunAllBundlesForServer) — a pathological caller must never be left with a

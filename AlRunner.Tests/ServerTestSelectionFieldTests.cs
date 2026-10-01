@@ -131,6 +131,9 @@ public sealed class ServerTestSelectionFieldTests : IClassFixture<SharedCliServe
         Assert.Equal(new[] { "BetaCheck" }, excluded.Ran);
         Assert.True(excluded.ExitCode == 0, excluded.Raw);
 
+        var afterExclude = await Send(server, bundle);
+        Assert.Equal(Both, afterExclude.Ran);
+
         // A prefix of the codeunit name must not swallow it (the CLI flag's rule).
         var partial = await Send(server, bundle, r => r["excludeTests"] = new[] { qualified.Split('.')[0][..^1] });
         Assert.Equal(Both, partial.Ran);

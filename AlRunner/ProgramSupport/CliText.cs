@@ -499,8 +499,10 @@ internal static partial class ProgramSupport
         w.WriteLine("                          is accepted as a shell-friendly no-op; an interior '*' is");
         w.WriteLine("                          matched literally (no glob). A PATTERN that selects no test");
         w.WriteLine("                          in the whole invocation fails the run with exit 6 (under");
-        w.WriteLine("                          --jobs, summed across workers). Not applied in --watch or");
-        w.WriteLine("                          --server, where each cycle or request reports its own count.");
+        w.WriteLine("                          --jobs, summed across workers). Not judged in --watch, where");
+        w.WriteLine("                          each cycle reports its own count. Under --server a request");
+        w.WriteLine("                          sets it per request with runTests' test field, with the same");
+        w.WriteLine("                          exit 6 (a startup --test is not judged).");
         w.WriteLine("  --isolation MODE, --test-isolation MODE");
         w.WriteLine("                          Test isolation:");
         w.WriteLine("                            codeunit  state shared inside a codeunit, reset between");
@@ -574,7 +576,8 @@ internal static partial class ProgramSupport
         w.WriteLine("                          the bundle: the hung thread is never killed and keeps");
         w.WriteLine("                          mutating shared state, so continuing in-process would report");
         w.WriteLine("                          results that lie. Re-running with the hung test excluded is");
-        w.WriteLine("                          how the abandoned tests get reached.");
+        w.WriteLine("                          how the abandoned tests get reached. Under --server a");
+        w.WriteLine("                          request sets it with runTests' excludeTests field.");
         w.WriteLine("  --bc-version X          Select the BC artifact version (e.g. \"28.1\" or a full");
         w.WriteLine("                          version) for a bundle run. --precompile and --emit-app do");
         w.WriteLine("                          not read it; see their own entries below. Default");

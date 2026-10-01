@@ -83,6 +83,8 @@ one request's slice (docs/shared-cli-server.md).
   "includeFailing": false,      // with affectedOnly: rerun every test that did not pass last time, whatever changed (#4978)
   "strictEnvironment": false,   // with affectedOnly: run everything when the baseline was recorded in another environment (#5028)
   "tdd": false,                 // runTests: the CLI's --tdd for this request; default: the --tdd startup flag (#5034)
+  "test": "Alpha",              // runTests: the CLI's --test/--filter for this request; default: the --test startup flag (#5183)
+  "excludeTests": ["Codeunit1"], // runTests: the CLI's --exclude-test (repeatable) for this request (#5183)
   "testIsolation": "codeunit"   // optional: "codeunit" (default) | "test"/"method" | "disabled"
                                  // — see #1616. Applies to this request only; a later
                                  // request that omits the field falls back to the
@@ -102,13 +104,14 @@ Field names are case-sensitive. What happens to a field depends on the command (
 | not declared above (`preprocessorSymbols`, `testFilter`, `SourcePaths`, …) | **refused** with one `{"error": …}` line naming the field; nothing runs | ignored |
 
 `runTests` reads `sourcePaths`, `packagePaths`, `coverage`, `perTestCoverage`, `affectedOnly`,
-`includeFailing`, `strictEnvironment`, `tdd` and `testIsolation`. `execute` reads `sourcePaths`, `code`, `packagePaths`,
+`includeFailing`, `strictEnvironment`, `tdd`, `test`, `excludeTests` and `testIsolation`. `execute` reads `sourcePaths`, `code`, `packagePaths`,
 `captureValues`, `iterationTracking`, `coverage`, `perTestCoverage`, `affectedOnly` and
 `testIsolation`.
 
 `warnings` sits on the `runTests` summary line and on the `execute` response, and is omitted
 when empty. Preprocessor symbols have no request field: start the server with `--define SYM` or
-`--preprocessor-symbols A,B`.
+`--preprocessor-symbols A,B`. Which other CLI flags have none, and why:
+[CLI flags with no request field](#cli-flags-with-no-request-field).
 
 ## Responses
 
@@ -1276,6 +1279,40 @@ coverage measured on code that is not on disk. A test excluded by the refuse pat
 it has no coverage record, and a test with no record is always selected. When the real member
 replaces the stub, the next `affectedOnly` request runs every test that reached the stub —
 the ones that passed there as well as the ones that failed.
+
+### `test` and `excludeTests`
+
+`"test": "PATTERN"` on `runTests` is the CLI's `--test PATTERN` (alias `--filter`) for that one request
+(#5183), and `"excludeTests": ["Codeunit134228", "Codeunit134228.Method"]` is `--exclude-test`, repeated. They
+run through the same `TestExecutor.TestFilter` and `TestExclusionFilter` the CLI flags set, so the matching is
+the CLI's: `PATTERN` is a case-insensitive substring of `CodeunitNNNN.Method` (a leading or trailing `*` is a
+no-op, an interior `*` is matched literally), and an `excludeTests` entry is a whole codeunit name or a whole
+qualified test name, never a prefix. Both apply to every bundle in the request.
+
+- **Per request.** A request that omits a field gets the server's startup flag (`--test`, `--exclude-test`),
+  or no selection when it was started without one. The next request never inherits the previous request's
+  value; `ServerTestSelectionFieldTests` sends a request with each field and then one without.
+- **A pattern that selects nothing is exit 6**, as on the CLI (#4055): the summary's `exitCode` is `6` and
+  `warnings` carries `test-selection: --test 'PATTERN' selected no test in this run. ...`. A match that
+  `excludeTests` then removed is not a no-match (the count is taken before exclusion, as on the CLI). When a
+  bundle did not compile or execute, the zero cannot be attributed to the pattern, so the code stays as it is
+  and the warning says "not judged". The audit judges a `test` the request carried, not a startup `--test`.
+- **Refused with `affectedOnly`.** `test` or `excludeTests` together with `affectedOnly` returns
+  `{"error": ...}` and runs nothing: selection decides which tests run, and a baseline recorded from a narrowed
+  run would describe tests that never ran. The CLI refuses `--affected` with `--test` for the same reason.
+
+### CLI flags with no request field
+
+A `runTests` request carrying a field the server does not declare is refused with an error line naming the
+field ([Request fields](#request-fields)); for the CLI flags below, the error also says why. They have no
+request field because they are not per-request on this server, not because nobody asked:
+
+| CLI flag | why a request cannot carry it |
+|---|---|
+| `--define`, `--preprocessor-symbols` | The preprocessor symbols change which `#if` branch compiles, but the module a later request reuses for another directory with the same app id ([Another directory with the same app id](#another-directory-with-the-same-app-id)) is keyed on the files' content, `app.json` and the resolved dependencies (`ProgramSupport.BundleSourceFingerprint`), not on the symbol set. A request that changed the symbols could be served a module compiled under other ones. Start the server with the flag. |
+| `--verbose`, `--quiet`, `--show-pass`, `--failures-only` | Results already arrive as structured `test` lines whatever the CLI would have printed. Diagnostics on stderr follow the server's own `--verbose`, a process-wide switch. |
+| `--output-json`, `--output-junit`, `--out`, `--coverage-out` | The response is already the JSON document, and a client writes its own files from it. `--coverage-out` also cannot be built on the server's coverage table: that table has no entry for a procedure that never ran, where the CLI's cobertura reports it at 0 hits (#5186). |
+| `--no-cache`, `--cache DIR` | Cache roots are process-wide directories chosen at startup. |
 
 ### `shutdown`
 
