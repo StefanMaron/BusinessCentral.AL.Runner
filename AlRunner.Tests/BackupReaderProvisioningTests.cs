@@ -181,6 +181,20 @@ public sealed class BackupReaderProvisioningTests : IDisposable
         Assert.False(File.Exists(Managed));
     }
 
+    /// <summary>#3433's box with a reader on PATH as well: the cache slot is probed before PATH,
+    /// so a stale slot is what the run would start, and it must be replaced.</summary>
+    [Fact]
+    public void StaleCacheSlot_WithAReaderOnPathToo_IsStillReplaced()
+    {
+        Publish(PinnedBytes);
+        PreInstall(OtherBytes);
+
+        Assert.Equal(BackupReaderProvisioning.Outcome.Replaced,
+            Ensure(PinFor(PinnedBytes), onPath: "/usr/local/bin/bcbak"));
+        Assert.Single(_fetched);
+        Assert.Equal(PinnedBytes, File.ReadAllBytes(Managed));
+    }
+
     // ───────────────────────────────────────── refuses, each by its own name ──
 
     [Fact]
@@ -272,6 +286,61 @@ public sealed class BackupReaderProvisioningTests : IDisposable
 
         Assert.Equal(BackupReaderProvisioningFailure.ChecksumMissing, ex.Failure);
         Assert.Empty(_fetched);
+    }
+
+    [Fact]
+    public void SlotDirectoryBlockedByAFile_IsInstallFailed_NotAnUnhandledException()
+    {
+        Publish(PinnedBytes);
+        // `<cache>/bcbak` is a FILE, so the slot's directory cannot be created.
+        File.WriteAllBytes(Path.Combine(_cacheRoot, "bcbak"), OtherBytes);
+
+        var ex = Assert.Throws<BackupReaderProvisioningException>(() => Ensure(PinFor(PinnedBytes)));
+
+        Assert.Equal(BackupReaderProvisioningFailure.InstallFailed, ex.Failure);
+        Assert.Contains(Path.Combine(_cacheRoot, "bcbak"), ex.Message, StringComparison.Ordinal);
+        Assert.Equal(OtherBytes, File.ReadAllBytes(Path.Combine(_cacheRoot, "bcbak")));
+    }
+
+    [Fact]
+    public void SlotOccupiedByADirectory_IsInstallFailed_AndLeavesNoPartialBehind()
+    {
+        Publish(PinnedBytes);
+        // The verified download cannot be renamed onto a directory.
+        Directory.CreateDirectory(Managed);
+
+        var ex = Assert.Throws<BackupReaderProvisioningException>(() => Ensure(PinFor(PinnedBytes)));
+
+        Assert.Equal(BackupReaderProvisioningFailure.InstallFailed, ex.Failure);
+        Assert.Single(_fetched);
+        Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(Managed)!));
+    }
+
+    // ────────────────────────────────────────────────────── the pin itself ──
+
+    [Theory]
+    [InlineData("{\"repository\":\"a/b\",\"assets\":{}}")]                  // no tag
+    [InlineData("{\"tag\":\"v1.0.0\",\"assets\":{}}")]                       // no repository
+    [InlineData("{\"repository\":\" \",\"tag\":\"v1.0.0\"}")]                // blank repository
+    [InlineData("{\"repository\":\"a/b\",\"tag\":5}")]                       // tag not a string
+    [InlineData("{\"repository\":[\"a/b\"],\"tag\":\"v1.0.0\"}")]          // repository not a string
+    [InlineData("[\"not\", \"an\", \"object\"]")]                            // root not an object
+    [InlineData("this is not json")]
+    public void UnreadablePin_IsPinUnreadable(string json)
+    {
+        var ex = Assert.Throws<BackupReaderProvisioningException>(() => BackupReaderPin.Parse(json));
+        Assert.Equal(BackupReaderProvisioningFailure.PinUnreadable, ex.Failure);
+    }
+
+    [Fact]
+    public void ValidPin_Parses_WithANonStringChecksumReadAsMissing()
+    {
+        var pin = BackupReaderPin.Parse(
+            "{\"repository\":\"a/b\",\"tag\":\"v1.0.0\",\"assets\":{\"linux-x64\":{\"file\":\"bcdb-linux-x64\",\"sha256\":7}}}");
+
+        Assert.Equal("a/b", pin.Repository);
+        Assert.Equal("v1.0.0", pin.Tag);
+        Assert.Null(pin.Assets["linux-x64"].Sha256);
     }
 
     // ────────────────────────────────────────────────────── the one pin ──

@@ -40,8 +40,12 @@ internal sealed record BackupReaderPin(
         {
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
-            var repository = root.TryGetProperty("repository", out var r) ? r.GetString() : null;
-            var tag = root.TryGetProperty("tag", out var t) ? t.GetString() : null;
+            if (root.ValueKind != JsonValueKind.Object)
+                throw new BackupReaderProvisioningException(BackupReaderProvisioningFailure.PinUnreadable,
+                    $"--test-data: the backup reader pin is a JSON {root.ValueKind}, not an object.");
+            // A non-string value reads as absent, so it refuses below rather than throwing.
+            var repository = StringProperty(root, "repository");
+            var tag = StringProperty(root, "tag");
             if (string.IsNullOrWhiteSpace(repository) || string.IsNullOrWhiteSpace(tag))
                 throw new BackupReaderProvisioningException(BackupReaderProvisioningFailure.PinUnreadable,
                     "--test-data: the backup reader pin names no repository or no tag.");
@@ -49,8 +53,9 @@ internal sealed record BackupReaderPin(
             if (root.TryGetProperty("assets", out var a) && a.ValueKind == JsonValueKind.Object)
                 foreach (var p in a.EnumerateObject())
                 {
-                    var file = p.Value.TryGetProperty("file", out var f) ? f.GetString() : null;
-                    var sha = p.Value.TryGetProperty("sha256", out var s) ? s.GetString() : null;
+                    if (p.Value.ValueKind != JsonValueKind.Object) continue;
+                    var file = StringProperty(p.Value, "file");
+                    var sha = StringProperty(p.Value, "sha256");
                     if (!string.IsNullOrWhiteSpace(file))
                         assets[p.Name] = new BackupReaderAsset(file, string.IsNullOrWhiteSpace(sha) ? null : sha);
                 }
@@ -62,6 +67,9 @@ internal sealed record BackupReaderPin(
                 $"--test-data: the backup reader pin is not valid JSON ({ex.Message}).");
         }
     }
+
+    private static string? StringProperty(JsonElement obj, string name)
+        => obj.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
 
     internal string AssetUrl(BackupReaderAsset asset)
         => $"https://github.com/{Repository}/releases/download/{Tag}/{asset.File}";
@@ -182,7 +190,11 @@ internal static class BackupReaderProvisioning
             ? $"[provision] --test-data: replacing the backup reader at {managed}, which is not {pin.Tag}, with {pin.Tag} ({asset.File})..."
             : $"[provision] --test-data: downloading backup reader {pin.Tag} ({asset.File}) into {managed}...");
 
-        Directory.CreateDirectory(dir);
+        try { Directory.CreateDirectory(dir); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw InstallFailed(dir, managed, pin, ex);
+        }
         var partial = Path.Combine(dir, $".{Path.GetFileName(managed)}.{Guid.NewGuid():N}.partial");
         try
         {
@@ -204,11 +216,18 @@ internal static class BackupReaderProvisioning
                     $"--test-data: backup reader {asset.File} from {url} has SHA-256 {actual}, but the pin says "
                     + $"{expected}. Refusing to install it; nothing was changed.");
 
-            if (!OperatingSystem.IsWindows())
-                File.SetUnixFileMode(partial, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
-                    | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
-            // A rename within one directory: a concurrent run sees the old reader or the new one.
-            File.Move(partial, managed, overwrite: true);
+            try
+            {
+                if (!OperatingSystem.IsWindows())
+                    File.SetUnixFileMode(partial, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+                        | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+                // A rename within one directory: a concurrent run sees the old reader or the new one.
+                File.Move(partial, managed, overwrite: true);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                throw InstallFailed(managed, managed, pin, ex);
+            }
         }
         finally
         {
@@ -218,6 +237,13 @@ internal static class BackupReaderProvisioning
         report($"[provision] --test-data: installed backup reader {pin.Tag} at {managed}.");
         return replacing ? Outcome.Replaced : Outcome.Installed;
     }
+
+    private static BackupReaderProvisioningException InstallFailed(string path, string managed,
+        BackupReaderPin pin, Exception ex)
+        => new(BackupReaderProvisioningFailure.InstallFailed,
+            $"--test-data: could not install backup reader {pin.Tag} at {managed} ('{path}': {ex.GetType().Name}: "
+            + $"{ex.Message.ReplaceLineEndings(" ")}). The verified download was not installed; "
+            + $"free that path, or set {BackupReaderTool.ExecutableEnvVar} to a reader.");
 
     internal static string Sha256Of(string path)
     {
