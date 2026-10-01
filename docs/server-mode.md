@@ -129,7 +129,10 @@ every suite below it) is served as one bundle per app, so each app compiles unde
 `app.json` — its dependencies, `propagateDependencies`, `internalsVisibleTo` and
 `preprocessorSymbols` — as the CLI's per-app compile does (#5107). Loose `.al` files at such a
 container's root, next to the apps, are not compiled, which is what the CLI does with them too.
-A container holding a suite without an `app.json`, or with one that cannot be read, is still compiled as one module (#5119).
+A container that also holds suites without an `app.json`, or with one that cannot be read, is split the way the CLI's
+`BuildAppGroups` splits it: each suite with a readable `app.json` is its own bundle, and the container path itself is one
+further bundle (named after the container, listed last) holding only the remaining suites (#5119). A container with no
+readable `app.json` anywhere stays one bundle.
 `--dap` does not do this: a debug session serves one module, so a container stays one bundle
 there (#5121).
 

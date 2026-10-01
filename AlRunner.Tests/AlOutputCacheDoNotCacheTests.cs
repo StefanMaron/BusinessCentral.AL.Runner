@@ -375,13 +375,18 @@ public sealed class AlOutputCacheDoNotCacheTests : IDisposable
         // THE assertion the seven existing arms could not make: nothing was published into the
         // directory a later CLI run would read. Counting files, not comparing keys — a key
         // comparison cannot tell you whether a write happened.
+        //
+        // #5119: the container is served as the CLI splits it, so suiteA (a readable app.json, a
+        // closure that resolves) is its own bundle with its own, correct key and writes exactly
+        // its one entry; the fallback module holding suiteB is the bundle that cannot be keyed.
         var badWritten = Directory.GetFiles(badCache, "*.dll");
-        Assert.True(badWritten.Length == 0,
-            "a SERVER request that could not compute a cache identity still published "
+        Assert.True(badWritten.Length == 1,
+            "a SERVER request that could not compute a cache identity published "
+            + "an AL-output cache entry for it (more than suiteA's own) — "
             + $"{badWritten.Length} AL-output cache entr(y/ies) into a directory shared with CLI "
             + $"runs: {string.Join(", ", badWritten.Select(Path.GetFileName))}\n{bad.Diagnostics}");
         // A sidecar without its DLL would mean only half the write was refused.
-        Assert.Empty(Directory.GetFiles(badCache, "*.enum-registry.json"));
+        Assert.Equal(badWritten.Length, Directory.GetFiles(badCache, "*.enum-registry.json").Length);
 
         // Loud, naming the reason, and tagged as the SERVER line specifically: the CLI gate
         // emits "  [<rel>] [cache] NOKEY", so asserting the bare "[cache] NOKEY" text would
@@ -395,7 +400,7 @@ public sealed class AlOutputCacheDoNotCacheTests : IDisposable
         // nothing was written for a next run to find. Read from the phase log, so this is the
         // server's own recorded decision and not the absence of a line it never prints.
         Assert.Equal(0, bad.CacheHits);
-        Assert.Equal(0, bad.CacheMisses);
+        Assert.Equal(1, bad.CacheMisses); // suiteA's own bundle, and only that one
 
         // ── healthy half: the control, same fixture, valid sibling manifest ───────────────
         var (okBundle, okPkg, okCache) = Arrange("server-healthy-control", siblingManifestValid: true);
