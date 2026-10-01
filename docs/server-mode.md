@@ -717,20 +717,43 @@ private, or if it finds no reader or no writer. `GetLastErrorCallStack` in the b
 reads the runner's per-test capture (`AlCallStackCapture`, cleared before each test), which no
 test can leave for another.
 
-The last error differs from the other kinds in two ways, both because every write replaces it
-whole (BC sets it as each error is constructed, trapped or not):
+The last error differs from the other kinds because every write replaces it whole (BC sets it as
+each error is constructed, trapped or not):
 
 - **Only the nearest earlier writer is linked.** Where the rules above bring every earlier
-  writer, the last error brings, for each selected test, the nearest earlier test that wrote it
-  (passing any test with no record, and any test the request selected for a change, which may
-  have stopped writing). Every error raises a write, so "every earlier writer" would select
-  nearly every test before the last selected one. A bundle followed by another runs only its
-  last writer.
+  writer, the last error brings, for each selected test, the nearest earlier test that wrote it.
+  Every error raises a write, so "every earlier writer" would select nearly every test before the
+  last selected one. A bundle followed by another runs only its last writer. The walk back does
+  not stop at a test whose write may be gone, and selects it on the way:
+  - a test with no record;
+  - a test selected for a change;
+  - a test after the first change that reads any session state, since what it read may have
+    changed and with it whether it raises an error (review of #5080, first counterexample);
+  - a write only an earlier record of the test had. A re-recording keeps such a write as a
+    maybe-write (`st|m|`) rather than a write, because a stale write would end the walk early
+    (second counterexample).
 - **A failing test's write is not kept.** A test that fails leaves its own error as the last
   error, so its write is recorded under a separate `st|f|` key: a writer for this record, but not
-  carried into the next one the way the other keys are. A test that failed once and passes now
-  stops being a writer. A test that is failing now is still the writer before a changed test
-  after it, so editing a test runs the failing test declared just before it.
+  carried into the next one. A test that failed once and passes now stops being a writer. A test
+  that is failing now is still the writer before a changed test after it.
+- **A clear before the test links nothing.** Microsoft's Test Runner app clears the last error
+  in its `OnBeforeTestMethodRun` subscriber (130453 "ALTestRunner Reset Environment"). When the
+  last write before a test opens is such a clear, made outside any test, the test records
+  `st|c|` for the kind: it cannot inherit an earlier test's error, so no walk starts from it, and
+  a walk from a later test stops there. Where every test of a bundle starts cleared, its last
+  writer is not run for the next bundle. This is measured per test, not assumed from the
+  dependency list: without the Test Runner app (or in a run that does not raise its events) the
+  last error carries over, and the walk applies.
+
+What real BC does between test methods depends on the test runner, and corpus PR
+StefanMaron/BusinessCentral.AL.Language.Tests#520 asks it: under the 28.x legs' test hub the
+last error carried from one method to the next within a codeunit and was cleared at the next
+codeunit; under the 27.x legs' runner it was cleared.
+
+A test brought in through session state brings its codeunit (its bundle, under `disabled`), as
+in "affectedOnly and test isolation", except where nothing it reads can have changed: a test
+from before the first changed test, or any test when the request changed nothing. That test only
+has to reproduce its recorded run, so it brings the tests of its codeunit up to it, not after it.
 
 Not session state here, so not recorded:
 
