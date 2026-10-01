@@ -15,6 +15,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **server:** honor dependency visibility on cache reuse
 - **coverage:** attribute a packaged dependency's statements to sibling source only when the package was built from it
 - **reports:** bind a reportextension's report triggers and data items to the report
 - **server:** enforce dependency visibility (AL0185) on --server runTests as the CLI does
