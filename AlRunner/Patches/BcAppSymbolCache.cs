@@ -593,7 +593,11 @@ internal static partial class BcAppSymbolCache
         // The part control's SubPageView (#4968): the same sorting/order/where grammar as a page's
         // SourceTableView, so ParseSourceTableView reads both. Null when the part declares none.
         // Field names resolve against the PART's table later, in EmitPartControlXml.
-        PageTableViewSymbol? SubPageView = null);
+        PageTableViewSymbol? SubPageView = null,
+        // The part's Provider property (#5140): the control Id of the sibling part whose current
+        // row this part's FIELD links read. Null when the part states none, i.e. FIELD links
+        // read the host page's own row. Same-shape additions re-key the cache via PayloadShape.
+        int? ProviderId = null);
 
     /// <summary>
     /// One entry of a part's <c>SubPageLink</c> property, still as AL source text.
@@ -2179,6 +2183,8 @@ internal static partial class BcAppSymbolCache
                 props.TryGetValue("ApplicationArea", out var applicationArea);
                 props.TryGetValue("AboutTitle", out var aboutTitle);
                 props.TryGetValue("AboutText", out var aboutText);
+                props.TryGetValue("Provider", out var provider);
+                int? providerId = int.TryParse(provider, NumberStyles.Integer, CultureInfo.InvariantCulture, out var pid) && pid != 0 ? pid : null;
                 var links = ParseSubPageLink(subPageLink, out var unreadableLinks);
                 into.Add(new PagePartSymbol(id, name!, partPageId,
                     string.IsNullOrEmpty(caption) ? null : caption,
@@ -2190,7 +2196,8 @@ internal static partial class BcAppSymbolCache
                     string.IsNullOrEmpty(applicationArea) ? null : applicationArea,
                     string.IsNullOrEmpty(aboutTitle) ? null : aboutTitle,
                     string.IsNullOrEmpty(aboutText) ? null : aboutText,
-                    ParseSourceTableView($"page {hostPageId} part \"{name}\" SubPageView", subPageView)));
+                    ParseSourceTableView($"page {hostPageId} part \"{name}\" SubPageView", subPageView),
+                    providerId));
             }
         }
 

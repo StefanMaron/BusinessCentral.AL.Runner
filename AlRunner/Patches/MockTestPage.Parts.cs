@@ -41,6 +41,13 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
     private readonly NavRecord? _parentRecord;
     private readonly SubPageLinkEntry[] _links;
 
+    /// <summary>The sibling part this one's FIELD links read, or null when they read the host's row
+    /// (#5140). Set once by GetPart right after construction.</summary>
+    internal LiveNavTestPart? Provider { get; set; }
+
+    /// <summary>True once another part names this one as its Provider (#5140).</summary>
+    internal bool IsProvider { get; set; }
+
     /// <param name="record">The part page's own source-table cursor, or null when the part
     /// page declares NO SourceTable (issue #2195) — a CardPart bound to page globals, the
     /// info-box shape. Nothing in THIS class needs it in that case, and the reason is a
@@ -322,8 +329,11 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
 
         var found = PageInstance?.RaiseOnFindRecord("-")
                     ?? record.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult();
-        Loaded(found);
+        _suppressProviderNotify = true;
+        try { Loaded(found); }
+        finally { _suppressProviderNotify = false; }
         if (!found && !parentHasNoRow) EnterNewRowLine(record);
+        if (!found && IsProvider) BlankBufferWhenNoRowIsShown(record);
     }
 
     public override bool FindRowFromTableFieldValues(int[] fieldNos, object[] values, bool forward)

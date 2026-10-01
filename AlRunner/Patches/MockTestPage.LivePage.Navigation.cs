@@ -335,6 +335,24 @@ internal partial class LiveNavTestPage
     }
 
     /// <summary>
+    /// A Provider part (#5140) whose link matched no row shows no row, and a part showing no row
+    /// has no current record to read: blank the buffer so a dependent's FIELD link reads blank
+    /// rather than the row the cursor last stood on. Nothing to do on a draft line (its buffer is
+    /// already the started blank row). Same blanking as <see cref="EnterNewRowLine"/>'s
+    /// record-only branch: Init() keeps the primary key, so the key fields are cleared too, and
+    /// the filters stay (Clear() would drop the part's own link).
+    /// </summary>
+    private protected void BlankBufferWhenNoRowIsShown(NavRecord record)
+    {
+        if (_onNewRowLine) return;
+        record.ALInit();
+        var primaryKey = record.MetaTable?.PrimaryKey;
+        if (primaryKey == null) return;
+        for (var i = 0; i < primaryKey.KeyFieldCount; i++)
+            record.ClearFieldValue(primaryKey.KeyFieldsList[i].FieldNo);
+    }
+
+    /// <summary>
     /// Step off the new-row line, putting the record buffer back on the data row the cursor
     /// came from. Every cursor move that is not "advance onto the blank line" goes through
     /// here, so the blank buffer can never outlive the one position it is valid at.
@@ -466,9 +484,26 @@ internal partial class LiveNavTestPage
             // _suppressPartRefreshDuringScan's doc comment and that method's own explicit
             // refresh once a match is confirmed.
             if (!_suppressPartRefreshDuringScan)
+            {
                 RefreshLinkedParts();
+                // #5140: a part that is another part's Provider moved on its own — tell the host
+                // so the dependents re-read its row. Not when the host drove this reload.
+                if (!_suppressProviderNotify) _editabilityHost?.RefreshPartsProvidedBy(this);
+            }
         }
         return found;
+    }
+
+    /// <summary>Set while a host-driven <see cref="LiveNavTestPart.ReloadLinkedRow"/> loads the
+    /// row, because the host refreshes the dependents itself, in order (#5140).</summary>
+    private protected bool _suppressProviderNotify;
+
+    /// <summary>Re-point every part whose Provider is <paramref name="provider"/> at its new row.</summary>
+    private void RefreshPartsProvidedBy(LiveNavTestPage provider)
+    {
+        foreach (var part in _parts.Values.ToList())
+            if (part is LiveNavTestPart { HasLinks: true } dependent && ReferenceEquals(dependent.Provider, provider))
+                dependent.ReloadLinkedRow();
     }
 
     /// <summary>

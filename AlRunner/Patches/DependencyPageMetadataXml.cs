@@ -881,6 +881,10 @@ public static partial class RecordPatches
         w.WriteAttributeString("ID", part.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
         w.WriteAttributeString("Name", part.Name);
         w.WriteAttributeString("PagePartID", part.PagePartId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        // #5140: BC's InfopartPageDefinition.ProviderID is the Provider property's control id,
+        // which the compiler writes the same way for a source-compiled page; read by TestPage.
+        if (part.ProviderId is { } providerId)
+            w.WriteAttributeString("ProviderID", providerId.ToString(System.Globalization.CultureInfo.InvariantCulture));
         if (!string.IsNullOrEmpty(part.Caption)) w.WriteAttributeString("CaptionML", EnuMultiLanguage(part.Caption));
         // #4282. Observably equivalent: BC's emitter writes these on EVERY part — the stated
         // value, else the part's host-page ApplicationArea (absent when neither states one), and
@@ -960,8 +964,17 @@ public static partial class RecordPatches
         int? partFieldId = RecordPatches.TryResolveDependencyFieldId(partTableId, link.PartFieldName);
         var isFieldKind = string.Equals(link.Kind, "field", StringComparison.OrdinalIgnoreCase);
         var parentFieldName = isFieldKind ? link.Value.Trim('"') : null;
-        int? parentFieldId = isFieldKind
-            ? RecordPatches.TryResolveDependencyFieldId(hostPage.SourceTableId, parentFieldName!)
+        // #5140: a part with a Provider links FROM that sibling part's current row, so a FIELD
+        // name is a field of the PROVIDER part's source table, not of the host's. A Provider that
+        // names no part of this page leaves the name unresolved (refused, never host-resolved).
+        int parentTableId = hostPage.SourceTableId;
+        if (part.ProviderId is { } providerId)
+        {
+            var provider = hostPage.Parts?.FirstOrDefault(p => p.Id == providerId);
+            parentTableId = provider == null ? 0 : RecordPatches.ResolveSourceTableIdForAnyPage(provider.PagePartId);
+        }
+        int? parentFieldId = isFieldKind && parentTableId != 0
+            ? RecordPatches.TryResolveDependencyFieldId(parentTableId, parentFieldName!)
             : null;
 
         // #2978: an entry inside an AL `#if` block may or may not be in the compiled app, and
