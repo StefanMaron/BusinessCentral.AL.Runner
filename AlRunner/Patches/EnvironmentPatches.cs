@@ -39,6 +39,18 @@ public static partial class BcRuntime
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static string GetServiceAccountNameReplacement() => "SYSTEM";
 
+    /// <summary>The runner's one service instance. A service tier answers a positive id (corpus
+    /// <c>Test Session Identity Values</c>, 60023); BC's own body answers 0 here because a
+    /// standalone instance never starts the heartbeat that assigns one. Active Session keys its
+    /// row by this value, so it must stay the single source for both. #5144.</summary>
+    public const int SkeletonServiceInstanceId = 1;
+
+    // Replaces NavEnvironment.GetServiceInstanceId (Cecil, NclCecilRewrite.Runtime.cs).
+    // Observably equivalent: one live service instance with a stable positive id, which is what
+    // ServiceInstanceId() reports on a service tier (corpus 60023).
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static int GetServiceInstanceIdReplacement(object self) => SkeletonServiceInstanceId;
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void ExecutionListenerCctorReplacement()
     {

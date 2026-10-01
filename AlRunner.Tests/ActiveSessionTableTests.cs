@@ -84,6 +84,8 @@ public sealed class ActiveSessionTableTests
                 Assert.Contains("PASS  Codeunit70581.ActiveSession_Row_CarriesASessionUniqueId", stdout);
                 // Client Type is BC's own mapping of the (unset) skeleton connection type: a constant.
                 Assert.Contains("PASS  Codeunit70581.ActiveSession_Row_ClientTypeIsBcsMappingOfTheSkeletonConnectionType", stdout);
+                // #5144: the key is a positive (ServiceInstanceId(), SessionId()) pair, not 0/0.
+                Assert.Contains("PASS  Codeunit70581.ActiveSession_KeyIsThePositiveSessionIdentity", stdout);
                 // Negative; passes against an empty table too, so not sufficient alone.
                 Assert.Contains("PASS  Codeunit70581.ActiveSession_GetOnASessionIdThatIsNoSession_ReturnsFalse", stdout);
                 Assert.DoesNotContain("FAIL", stdout);
