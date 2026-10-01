@@ -3041,6 +3041,7 @@ internal static partial class BcAppSymbolCache
                         var field = fields.FirstOrDefault(f =>
                             string.Equals(f.FieldName, fieldName, StringComparison.OrdinalIgnoreCase));
                         if (field != null) ids.Add(field.FieldId);
+                        else if (RecordPatches.PlatformKeyFieldId(fieldName) is { } platformId) ids.Add(platformId);
                     }
                 }
                 // #3568 — the key's own properties, which BC propagates into the live
@@ -3057,7 +3058,10 @@ internal static partial class BcAppSymbolCache
                 var siftIds = keyProps.TryGetValue("SumIndexFields", out var sift)
                     ? ParseFieldIdList(sift)
                     : null;
-                var parsedKey = new ParsedKey(keyName, ids, clustered, unique, siftIds);
+                var parsedKey = new ParsedKey(keyName, ids, clustered, unique, siftIds,
+                    keyProps.TryGetValue("ObsoleteState", out var keyObsolete) && !string.IsNullOrWhiteSpace(keyObsolete)
+                        ? keyObsolete.Trim() : "No",
+                    keyProps.TryGetValue("ObsoleteReason", out var keyObsoleteReason) ? keyObsoleteReason : null);
                 if (first)
                 {
                     pkFieldIds.AddRange(ids);
