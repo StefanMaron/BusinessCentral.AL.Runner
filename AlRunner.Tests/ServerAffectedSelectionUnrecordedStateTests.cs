@@ -311,6 +311,75 @@ public class ServerAffectedSelectionUnrecordedStateTests
         await AssertWriterBrought(bundle, EnvChecker("ENVIRONMENT"));
     }
 
+    // A DotNet constructor does not go through the invoke path a method call takes and can reach
+    // static state, so it is recorded on its own. An enum member is the only static field AL can
+    // read (Guid.Empty is AL0132), and a constant holds no state, so it is not recorded.
+    private const string OtherDotNetUseTests = """
+        dotnet
+        {
+            assembly("mscorlib")
+            {
+                type("System.Text.StringBuilder"; "US SB")
+                {
+                }
+                type("System.DateTimeKind"; "US Kind")
+                {
+                }
+            }
+        }
+
+        codeunit 62488 "US Ctor Tests"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure F_ConstructsOnly()
+            var
+                SB: DotNet "US SB";
+            begin
+                SB := SB.StringBuilder();
+            end;
+        }
+        """;
+
+    private const string StaticFieldTests = """
+        codeunit 62489 "US Field Tests"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure G_ReadsAnEnumMemberOnly()
+            var
+                K: DotNet "US Kind";
+            begin
+                K := K.Utc;
+            end;
+        }
+        """;
+
+    /// <summary>A test whose only DotNet use is a constructor is selected when a DotNet writer before
+    /// it changes; one whose only use is an enum member is not.</summary>
+    [SkippableFact]
+    public async Task DotNetConstructorUse_IsRecorded_AndAnEnumMemberIsNot()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = Bundle("al-runner-server-affected-unrecorded-dotnet-other", "000000000007",
+            EnvWriter("one"), EnvChecker(), EnvWriter("other", "62487 \"US Overwriter\"", declare: false), onPrem: true);
+        File.WriteAllText(Path.Combine(bundle, "CtorTests.Codeunit.al"), OtherDotNetUseTests);
+        File.WriteAllText(Path.Combine(bundle, "FieldTests.Codeunit.al"), StaticFieldTests);
+        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+
+        var baseline = await Send(server, bundle);
+        Assert.True(baseline.ForcedFull, baseline.Raw);
+        Assert.True(baseline.Tests.Values.All(t => t.Status == "pass"), baseline.Raw);
+
+        File.WriteAllText(Path.Combine(bundle, "Writer.Codeunit.al"), EnvWriter("two"));
+        var edited = await Send(server, bundle);
+        Assert.False(edited.ForcedFull, edited.Raw);
+        AssertRan(edited, "writer edit", "A_Writes", "B_Reads", "F_ConstructsOnly");
+        Assert.False(edited.Tests.ContainsKey("G_ReadsAnEnumMemberOnly"), edited.Raw);
+    }
+
     // ── The Randomize seed: not carried between tests ──────────────────────────────────────────
 
     private static string SeedWriter(int seed, string obj = "62482 \"US Writer\"") => $$"""

@@ -1037,11 +1037,10 @@ public static partial class NclCecilRewrite
                         H(state, writes ? "NoteLastErrorWrite" : "NoteLastErrorRead"), argSlots: 0);
 
                 // #5057: static .NET state behind DotNet interop. Every method/property call funnels
-                // through Invoke<T>; static fields and constructors do not (bc284). Observer only.
+                // through Invoke<T>, constructors through CreateDotNet (bc284). Not InvokeStaticField:
+                // AL reaches it only for enum members (Guid.Empty and Math.PI are AL0132). Observer only.
                 PrependStaticCall(nclMod, ByParams(Rt + "NavDotNet", "Invoke",
                         "String", "UInt32", "BindingFlags", "ParameterModifier", "Type[]", "Object[]"),
-                    H(state, "NoteDotNetUse"), argSlots: 0);
-                PrependStaticCall(nclMod, ByParams(Rt + "NavDotNet", "InvokeStaticField", "String", "UInt32"),
                     H(state, "NoteDotNetUse"), argSlots: 0);
                 PrependStaticCall(nclMod, ByParams(Rt + "NavDotNet", "CreateDotNet", "Object[]"),
                     H(state, "NoteDotNetUse"), argSlots: 0);
