@@ -135,6 +135,8 @@ $SmokeBucket      = 'Tests-SMB'
 $SmokeMinTests    = 950
 $SmokeMaxTests    = 1150
 $SmokeMinPassed   = 500
+# Tests-SMB loaded 23,172 rows from 229 tables in #5127's Linux run of this script.
+$SmokeMinRowsLoaded = 10000
 # A bucket whose count is this far from its reference is flagged in the summary. The
 # reference is BC 28.4 and the run is 28.5, so small differences are expected.
 $CountDeviationFlagPct = 10
@@ -585,7 +587,8 @@ $CaveatRegexes = @(
     '^\s*NOT RUN:', '^\s*resume:', 'carried from earlier attempt'
 )
 
-function Get-ChildPids([int] $RootPid) {
+# pid -> parent pid for every process, read once per sample and shared by all buckets.
+function Get-ParentMap {
     $all = @{}
     if ($script:OnWindows) {
         foreach ($p in (Get-CimInstance -ClassName Win32_Process -Property ProcessId, ParentProcessId)) {
@@ -600,12 +603,16 @@ function Get-ChildPids([int] $RootPid) {
             } catch { }
         }
     }
+    return $all
+}
+
+function Get-ChildPids([int] $RootPid, [hashtable] $All) {
     $result = New-Object System.Collections.Generic.List[int]
     $result.Add($RootPid)
     $i = 0
     while ($i -lt $result.Count) {
         $parent = $result[$i]
-        foreach ($k in $all.Keys) { if ($all[$k] -eq $parent -and -not $result.Contains($k)) { $result.Add($k) } }
+        foreach ($k in $All.Keys) { if ($All[$k] -eq $parent -and -not $result.Contains($k)) { $result.Add($k) } }
         $i++
     }
     return $result
@@ -645,9 +652,9 @@ function Start-Bucket([string] $Bucket, [string] $Phase, [int] $JobsNow) {
     }
 }
 
-function Update-Memory($Run) {
+function Update-Memory($Run, [hashtable] $Map) {
     $tree = 0.0
-    foreach ($procId in (Get-ChildPids $Run.Process.Id)) {
+    foreach ($procId in (Get-ChildPids $Run.Process.Id $Map)) {
         try {
             $pr = [System.Diagnostics.Process]::GetProcessById($procId)
             $tree += $pr.WorkingSet64
@@ -676,10 +683,15 @@ function Complete-Bucket($Run) {
         wallSeconds = $wall; startedUtc = $Run.Started.ToUniversalTime().ToString('o'); finishedUtc = (Get-Date).ToUniversalTime().ToString('o')
         peakProcessTreeWorkingSetMB = $Run.PeakTreeMB; peakSingleProcessWorkingSetMB = $Run.PeakProcessMB
         workersAtLaunch = $Run.JobsAtLaunch; testTimeoutSeconds = $Run.TestTimeoutSec
-        testDataLoaded = [bool]($lines | Where-Object { $_ -match "from 'BusinessCentral-W1\.bak' company" } | Select-Object -First 1)
+        # The arm line says --test-data reached the runner with this company and backup;
+        # the rows line (printed when the run loaded anything) says rows actually arrived.
+        testDataArmed = [bool]($lines | Where-Object { $_ -match "^Test data: company '$([regex]::Escape($Company))' from BusinessCentral-W1\.bak" } | Select-Object -First 1)
+        testDataRowsLoaded = $null
         referenceTests = $null; countDeviationPct = $null
         caveats = $reasons
     }
+    $rowsLine = $lines | Where-Object { $_ -match '^Test data: (\d+) rows loaded from (\d+) tables' } | Select-Object -First 1
+    if ($rowsLine -and $rowsLine -match '^Test data: (\d+) rows loaded') { $rec.testDataRowsLoaded = [int]$Matches[1] }
     if ($Reference.Contains($Run.Bucket)) { $rec.referenceTests = $Reference[$Run.Bucket].Tests }
     if (Test-Path -LiteralPath $junitPath) {
         try {
@@ -716,12 +728,12 @@ $smokeJson = Join-Path $Dirs.Results "smoke/$(ConvertTo-Slug $SmokeBucket)/bucke
 $smoke = $null
 if (-not $Fresh -and (Test-Path -LiteralPath $smokeJson)) {
     $prev = Get-Content -LiteralPath $smokeJson -Raw | ConvertFrom-Json
-    if ($prev.status -eq 'measured' -and $prev.tests -ge $SmokeMinTests) { $smoke = $prev; Write-Log "Smoke bucket already measured in an earlier session: $($prev.tests) tests, $($prev.passed) passed." }
+    if ($prev.status -eq 'measured' -and $prev.tests -ge $SmokeMinTests -and ($prev.PSObject.Properties.Name -contains 'testDataRowsLoaded')) { $smoke = $prev; Write-Log "Smoke bucket already measured in an earlier session: $($prev.tests) tests, $($prev.passed) passed." }
 }
 if (-not $smoke) {
     Write-Log "Smoke run: $SmokeBucket alone, to prove the setup before spending hours (first run compiles a lot; expect 5-20 minutes)." 'Cyan'
     $run = Start-Bucket $SmokeBucket 'smoke' 1
-    while (-not $run.Process.HasExited) { Update-Memory $run; Start-Sleep -Seconds 5 }
+    while (-not $run.Process.HasExited) { Update-Memory $run (Get-ParentMap); Start-Sleep -Seconds 5 }
     $smoke = Complete-Bucket $run
     Write-Log ("Smoke: exit {0}, {1} tests, {2} passed, {3} failed, wall {4}, peak memory {5} MB" -f $smoke.exitCode, $smoke.tests, $smoke.passed, $smoke.failed, (Format-Duration $smoke.wallSeconds), $smoke.peakProcessTreeWorkingSetMB)
 }
@@ -729,7 +741,8 @@ $smokeProblems = @()
 if ($smoke.status -ne 'measured') { $smokeProblems += "the runner did not produce a clean number (exit $($smoke.exitCode), status $($smoke.status))" }
 if ($null -eq $smoke.tests -or $smoke.tests -lt $SmokeMinTests -or $smoke.tests -gt $SmokeMaxTests) { $smokeProblems += "it reported $($smoke.tests) tests; expected $SmokeMinTests-$SmokeMaxTests" }
 if ($null -eq $smoke.passed -or $smoke.passed -lt $SmokeMinPassed) { $smokeProblems += "only $($smoke.passed) passed; expected at least $SmokeMinPassed with the demo data loaded" }
-if (-not $smoke.testDataLoaded) { $smokeProblems += 'the log never confirms the demo company was read from the backup' }
+if (-not $smoke.testDataArmed) { $smokeProblems += "the log never says the runner armed --test-data for '$Company'" }
+if ($null -eq $smoke.testDataRowsLoaded -or $smoke.testDataRowsLoaded -lt $SmokeMinRowsLoaded) { $smokeProblems += "the runner loaded $($smoke.testDataRowsLoaded) rows from the backup; expected at least $SmokeMinRowsLoaded" }
 if ($smokeProblems.Count) {
     $todo = @("Read $($Dirs.Results)/smoke/$(ConvertTo-Slug $SmokeBucket)/stdout.log and stderr.log.")
     foreach ($c in @($smoke.caveats)) { $todo += "runner said: $c" }
@@ -761,7 +774,7 @@ $caps = [ordered]@{
 $derived = [int]($caps.Values | Measure-Object -Minimum).Minimum
 $binding = ($caps.Keys | Where-Object { $caps[$_] -eq $derived } | Select-Object -First 1)
 Write-Log ("Worker sizing: {0} GB available, {1} GB kept free, {2} GB per worker (smoke peak {3:N1} GB x 2.5, at least 4)" -f $freeMem, $reserveGB, $perWorkerGB, $smokePeakGB)
-Write-Log ("  caps: memory {0}, physical cores {1}, bucket count {2}, largest bucket {3} (no more than ceil({4:N0} / {5:N0} minutes) + 1 workers can shorten a run whose longest bucket cannot be split)" -f $byMemory, $cores, $runBuckets.Count, $byFloor, $sumMin, $maxMin)
+Write-Log ("  caps: memory {0}, physical cores {1}, bucket count {2}, largest bucket {3} (no more than ceil({4:N1} / {5:N1} reference minutes) + 1 workers can shorten a run whose longest bucket cannot be split)" -f $byMemory, $cores, $runBuckets.Count, $byFloor, $sumMin, $maxMin)
 if ($Jobs -gt 0) {
     $workers = $Jobs
     Write-Log "Workers: $workers (set with -Jobs; derived value would have been $derived, bound by $binding)" 'Yellow'
@@ -811,6 +824,7 @@ try {
         Start-Sleep -Seconds 10
         $avail = Get-FreeMemoryGB
         if ($avail -lt $minAvailGB) { $minAvailGB = $avail }
+        $parentMap = Get-ParentMap
         foreach ($job in $running.ToArray()) {
             if ($job.Process.HasExited) {
                 $rec = Complete-Bucket $job
@@ -819,7 +833,7 @@ try {
                 $color = 'Green'; if ($rec.status -eq 'partial') { $color = 'Yellow' } elseif ($rec.status -ne 'measured') { $color = 'Red' }
                 Write-Log ("done   {0}: {1}, exit {2}, {3} tests, {4} passed, {5} failed, {6}, peak {7} MB  [{8}/{9}]" -f $job.Bucket, $rec.status, $rec.exitCode, $rec.tests, $rec.passed, $rec.failed, (Format-Duration $rec.wallSeconds), $rec.peakProcessTreeWorkingSetMB, $done.Count, $runBuckets.Count) $color
                 foreach ($c in @($rec.caveats | Select-Object -First 3)) { Write-Log "         $c" $color }
-            } else { Update-Memory $job }
+            } else { Update-Memory $job $parentMap }
         }
         if (((Get-Date) - $lastBeat).TotalSeconds -ge 300 -and $running.Count) {
             $lastBeat = Get-Date
@@ -881,6 +895,10 @@ foreach ($row in $records) {
     $md.Add(('| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} | {8} | {9} |' -f $row.bucket, $row.status, $row.tests, $row.passed, $row.failed, $row.errors, $row.skipped, (Format-Duration $row.wallSeconds), $row.peakProcessTreeWorkingSetMB, $row.referenceTests))
 }
 $md.Add(('| **total** | | **{0}** | **{1}** | **{2}** | **{3}** | **{4}** | **{5}** | | {6} |' -f $summary.tests, $summary.passed, $summary.failed, $summary.errors, $summary.skipped, (Format-Duration $sessionWall), $summary.referenceTests))
+$md.Add('')
+$md.Add(('Workers: {0}, bound by {1}; {2} GB per worker, {3} GB kept free; lowest available memory during the run: {4} GB.' -f $workers, $summary.workersBoundBy, $perWorkerGB, $reserveGB, $summary.minAvailableMemoryGBDuringRun))
+$md.Add(('Smoke ({0}, alone, before the run): exit {1}, {2} tests, {3} passed, {4}, peak {5} MB.' -f $SmokeBucket, $smoke.exitCode, $smoke.tests, $smoke.passed, (Format-Duration $smoke.wallSeconds), $smoke.peakProcessTreeWorkingSetMB))
+$md.Add("Defender real-time protection: $(if ($machine.Contains('defenderRealTime')) { $machine.defenderRealTime } else { 'n/a' }).")
 $md.Add('')
 if ($resumed) { $md.Add('This run was resumed: the wall time above covers the last session only, not the whole surface.') }
 if ($missing.Count) { $md.Add("No number from: $($missing -join ', ')") }

@@ -127,7 +127,7 @@ jobs:
           foreach ($b in $s.perBucket) {
             if (-not $b.tests -or $b.tests -le 0) { Write-Host "::error::$($b.bucket) reported no tests"; $bad++ }
             if ($null -ne $b.countDeviationPct -and [math]::Abs($b.countDeviationPct) -gt 10) { Write-Host "::error::$($b.bucket) count $($b.tests) is $($b.countDeviationPct)% from its Linux reference $($b.referenceTests)"; $bad++ }
-            if (-not $b.testDataLoaded) { Write-Host "::error::$($b.bucket): no sign the demo data was loaded"; $bad++ }
+            if (-not $b.testDataArmed) { Write-Host "::error::$($b.bucket): the runner never armed --test-data"; $bad++ }
           }
           $zip = @(Get-ChildItem -LiteralPath $work -Filter 'al-runner-benchmark-*.zip')
           if ($zip.Count -ne 1) { Write-Host "::error::expected one result zip, found $($zip.Count)"; $bad++ }
