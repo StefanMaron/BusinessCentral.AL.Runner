@@ -440,10 +440,15 @@ public sealed class TestExecutor
     /// additive. So the #2710 term goes BEFORE CacheIdentity(), keeping that invariant
     /// intact; appending it instead breaks the prefix relation while changing nothing about
     /// what either term discriminates.
+    ///
+    /// #5068: the automatic event subscribers armed while the dependency triggers run write rows
+    /// into the snapshot too, so they are a term, also before CacheIdentity(). Call it only after
+    /// EventSubscriberPatches.InjectAllUsingStoredLookup, which arms that same set.
     /// </remarks>
     internal static string CurrentInstallBaselineCacheKey()
         => InstallTriggerRunner.CurrentDependencySetKey()
          + AlRunner.Patches.RecordPatches.RegisteredBcAppSymbolStateKey()
+         + "|subscribers=" + AlRunner.Patches.EventSubscriberPatches.AutomaticSubscriberAssemblyKey()
          + AlRunner.Infrastructure.TestDataOptions.CacheIdentity();
 
     // Kept out of Run: a loop inside a catch makes the JIT compile the whole caller FullOpts
