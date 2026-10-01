@@ -42,8 +42,10 @@ internal static class AffectedBaselineStore
     //    would link no test through them, so it is no baseline: one full run re-records it. (Reading
     //    it as "every test reads and writes both" would survive re-recording through
     //    AffectedSessionStateSelection.WithPreviousState and widen every later selection for good.)
-    internal const int SchemaVersion = 6;
-    internal const int OldestReadableSchema = 6;
+    // 7: #5167's quoted event names key on the AL name ("ev|…|On Quoted Work"), where a version-6
+    //    file holds the C# name ("On_Quoted_Work"); read, it would skip that event's raisers for good.
+    internal const int SchemaVersion = 7;
+    internal const int OldestReadableSchema = 7;
     internal const string CacheName = "affected-baseline";
 
     /// <summary>The file for one request's bundle set. Order and duplicates do not change the key.</summary>
