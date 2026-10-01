@@ -18,6 +18,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **session:** ServiceInstanceId() and SessionId() answer positive ids, as a service tier does
 - **dotnet:** System.Drawing statics and instance calls fail with a named platform refusal
 - **query:** Read() after a write to the query's table re-reads from the last row instead of casting NCLMetaQuery to NCLMetaTable
 - **record:** duplicate SystemId error names the field by its caption
