@@ -1183,7 +1183,10 @@ registry is null on the runner's skeleton tenant, because the tenant is manufact
 `GetUninitializedObject` and so never runs a constructor. `EventSubscriberPatches` constructs
 BC's own `NavEventSubscriptionMetadata`, installs it, and appends the same
 `NavEventSubscription` objects the dispatch path already builds — one scanned
-`[NavEventSubscriber]` inventory feeding two registries.
+`[NavEventSubscriber]` inventory feeding two registries. It does so on the first read of the
+table after each injection pass, not at startup: one BC constructor per subscriber costs several
+seconds once the Base Application is in scope, and a run that never reads the table never pays it
+([#5099](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/5099)).
 
 **A codeunit-published subscription registers but does not resolve.** BC's
 `NavEventSubscription` constructor resolves the publisher through `GetOriginalApplicationObject`,
