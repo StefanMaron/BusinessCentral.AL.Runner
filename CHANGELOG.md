@@ -57,6 +57,7 @@ All notable changes to this project are documented here. Format based on
 - **testpage:** New() on an empty linked part raises the part's OnNewRecord
 
 ### Changed
+- **perf:** share the content-keyed engine caches across the suite's private --cache roots
 - **event-subscription:** build the Event Subscription inventory lazily
 - **selection:** wait for the approximate-drift warning on stderr
 - **server:** wait for the tdd stderr line instead of reading it at once
