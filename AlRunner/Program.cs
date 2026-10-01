@@ -1666,6 +1666,21 @@ catch (Exception ex)
                 badRoot ?? "", ex.Message));
     return 2;
 }
+// #5109: the engine caches (ncl-cecil, ncl-shadow) may live apart from --cache/--no-cache.
+// Same placement constraint as the block above: before the first ncl-cecil consumer.
+{
+    var engineRootEnv = Environment.GetEnvironmentVariable(AlRunner.Infrastructure.CacheRoots.EngineCacheRootEnvVar);
+    try
+    {
+        AlRunner.Infrastructure.CacheRoots.SetEngineRoot(engineRootEnv);
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine(AlRunner.Infrastructure.CacheRoots.BuildUnusableCacheRootMessage(
+            AlRunner.Infrastructure.CacheRoots.EngineCacheRootEnvVar, engineRootEnv ?? "", ex.Message));
+        return 2;
+    }
+}
 // #2041/#2066: deferred — see `deferredStartupLines`' declaration above. This generation
 // may still hand off via either re-exec decision below, and touches no bundle work at all
 // before doing so — the flush after both decisions is what makes this print exactly once,

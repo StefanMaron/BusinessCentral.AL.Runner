@@ -109,6 +109,9 @@ public sealed class CleanRunStartupVerbosityTests
         // this class is specifically about the CLI --verbose flag's effect, so nothing
         // may leak in from outside either test.
         psi.Environment.Remove("AL_RUNNER_VERBOSE");
+        // A cold spawn includes the fresh-rewrite re-exec generation, whose startup output
+        // the default-run assertions cover too (#5109).
+        SharedEngineCaches.Isolate(psi);
         if (artifactsRoot != null)
             psi.Environment[AlRunner.Infrastructure.BcArtifacts.ArtifactsRootEnvVar] = artifactsRoot;
 

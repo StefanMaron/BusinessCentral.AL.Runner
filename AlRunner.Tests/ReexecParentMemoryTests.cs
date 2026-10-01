@@ -67,6 +67,7 @@ public sealed class ReexecParentMemoryTests : IDisposable
             WorkingDirectory = RepoRoot,
         };
         psi.Environment["AL_RUNNER_PHASE_LOG"] = log;
+        SharedEngineCaches.Isolate(psi);
         var output = new StringBuilder();
         using var p = Process.Start(psi)!;
         p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (output) output.AppendLine(e.Data); };

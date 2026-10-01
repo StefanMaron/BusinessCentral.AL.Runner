@@ -32,6 +32,8 @@ public sealed class NclShadowSteadyStateTests
             RedirectStandardOutput = true, RedirectStandardError = true,
             UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
         };
+        // This test edits the shadow dir's files, so it must own them (#5109).
+        SharedEngineCaches.Isolate(psi);
         var sb = new StringBuilder();
         using var p = Process.Start(psi)!;
         p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };

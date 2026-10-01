@@ -937,6 +937,13 @@ internal static partial class ProgramSupport
         w.WriteLine("                               value is resolved against the current directory once,");
         w.WriteLine("                               at startup; a DIR that cannot be created exits 2");
         w.WriteLine("                               naming the variable and the path.");
+        w.WriteLine("  AL_RUNNER_ENGINE_CACHE_ROOT=DIR");
+        w.WriteLine("                               Keep the engine caches (ncl-cecil, ncl-shadow) under");
+        w.WriteLine("                               DIR even when --cache or --no-cache moves every other");
+        w.WriteLine("                               cache, so runs with private caches share one engine");
+        w.WriteLine("                               build. Both are keyed by content and safe to share");
+        w.WriteLine("                               between concurrent runs. A DIR that cannot be created");
+        w.WriteLine("                               exits 2 naming the variable.");
         w.WriteLine("  AL_RUNNER_SYMBOLS_ROOT=DIR   Scan a curated symbols tree other than");
         w.WriteLine("                               ~/.local/share/al-runner/symbols. Same layout (one");
         w.WriteLine("                               subdirectory per BC version) and the same resolution");

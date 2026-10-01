@@ -83,4 +83,7 @@ home directory, which is useful when it has to live on another volume or on a CI
 runner's mounted path. `AL_RUNNER_CACHE_ROOT` does the same for the runner's cache
 tree (`~/.cache/al-runner`; `--cache` and `--no-cache` still take precedence), and
 `AL_RUNNER_SYMBOLS_ROOT` for the curated symbols tree
-(`~/.local/share/al-runner/symbols`).
+(`~/.local/share/al-runner/symbols`). `AL_RUNNER_ENGINE_CACHE_ROOT` keeps the two
+engine caches (`ncl-cecil` and `ncl-shadow`) in one directory even when `--cache` or
+`--no-cache` moves the rest, so many runs with private caches share one engine build
+instead of each rebuilding it.

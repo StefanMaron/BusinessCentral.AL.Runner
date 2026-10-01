@@ -73,6 +73,8 @@ public class NoCacheLastWinsIntegrationTests
             RedirectStandardOutput = true, RedirectStandardError = true,
             UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
         };
+        // The subject is which root ncl-cecil and ncl-shadow land under (#5109).
+        SharedEngineCaches.Isolate(psi);
         if (noCacheRoot != null)
             psi.Environment[AlRunner.Infrastructure.CacheRoots.NoCacheRootEnvVar] = noCacheRoot;
         var sb = new StringBuilder();

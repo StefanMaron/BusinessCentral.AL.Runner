@@ -57,6 +57,8 @@ public class CacheRootsIsolationTests
             RedirectStandardOutput = true, RedirectStandardError = true,
             UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
         };
+        // The subject is that every named cache, ncl-cecil included, lands under --cache (#5109).
+        SharedEngineCaches.Isolate(psi);
         var sb = new StringBuilder();
         using var p = Process.Start(psi)!;
         p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };

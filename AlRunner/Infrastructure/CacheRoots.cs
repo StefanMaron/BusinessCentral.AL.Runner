@@ -78,6 +78,36 @@ public static class CacheRoots
 
     private static string? _defaultRoot;
 
+    /// <summary>
+    /// Environment variable that moves the ENGINE caches (<see cref="EngineCacheNames"/>) out
+    /// from under <c>--cache</c> / <c>--no-cache</c> / the default root, so runs that each want
+    /// a private AL cache can still share one warm engine build (#5109). Both caches are keyed
+    /// by content and published atomically, so a shared directory is safe across concurrent
+    /// processes — the same sharing the default root already gets. Read once at startup by
+    /// Program.cs through <see cref="SetEngineRoot"/>; unset or blank changes nothing.
+    /// </summary>
+    public const string EngineCacheRootEnvVar = "AL_RUNNER_ENGINE_CACHE_ROOT";
+
+    /// <summary>The named caches <see cref="EngineCacheRootEnvVar"/> relocates: the
+    /// Cecil-rewritten Ncl (key: source Ncl bytes + runner content hash) and the shadow runtime
+    /// dir built around it (same key plus the install path).</summary>
+    public static readonly IReadOnlyList<string> EngineCacheNames = new[] { "ncl-cecil", "ncl-shadow" };
+
+    private static string? _engineRoot;
+
+    /// <summary>
+    /// Sets the root <see cref="Resolve"/> uses for <see cref="EngineCacheNames"/>. Null or blank
+    /// clears it. Rooted and created here, so a value this process cannot use fails at startup
+    /// naming the variable instead of during the Cecil rewrite.
+    /// </summary>
+    public static void SetEngineRoot(string? dir)
+    {
+        if (string.IsNullOrWhiteSpace(dir)) { _engineRoot = null; return; }
+        var rooted = Path.GetFullPath(dir);
+        Directory.CreateDirectory(rooted);
+        _engineRoot = rooted;
+    }
+
     internal static string ResolveDefaultRoot(string? envOverride, Func<string> userHome)
         => BcArtifacts.ResolveRoot(envOverride, userHome, Path.Combine(".cache", "al-runner"));
 
@@ -237,7 +267,9 @@ public static class CacheRoots
     {
         // AlRunnerPaths.UserHome throws loudly (issue #2114) rather than silently handing
         // back a relative path when $HOME names a directory that does not exist.
-        var root = _override ?? DefaultRoot;
+        var root = _engineRoot != null && EngineCacheNames.Contains(name, StringComparer.Ordinal)
+            ? _engineRoot
+            : _override ?? DefaultRoot;
         // #3084: the invariant, restated where it is consumed. Both writers of _override
         // root what they store, so this cannot fire through SetOverride/DisableForRun —
         // it fires for a THIRD writer added later that forgets to. Stated here, and not
@@ -376,6 +408,7 @@ public static class CacheRoots
         _override = null;
         _throwawayRoot = null;
         _defaultRoot = null;
+        _engineRoot = null;
     }
 
     /// <summary>
