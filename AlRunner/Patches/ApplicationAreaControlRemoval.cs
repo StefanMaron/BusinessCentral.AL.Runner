@@ -108,13 +108,30 @@ public static class ApplicationAreaControlRemoval
         var visibleType = (typeof(InfopartPageDefinition).GetProperty(nameof(InfopartPageDefinition.Visible))
             ?? throw Shape("InfopartPageDefinition.Visible")).PropertyType;
         var isFalseSignature = new[] { visibleType };
-        var propertyHelper = navNcl.GetTypes().Concat(typeof(MasterPage).Assembly.GetTypes())
-            .FirstOrDefault(t => t.Name == "PropertyHelper"
-                && BcShape.FindMethod(t, "PropertyIsFalse", S, Surface, "PropertyHelper.PropertyIsFalse",
-                    "binds the Visible test of MetadataProvider.RemoveControl", isFalseSignature) != null)
-            ?? throw Shape($"PropertyHelper.PropertyIsFalse({visibleType.Name})");
+        var propertyHelper = FindPropertyHelper(new[] { navNcl, typeof(MasterPage).Assembly }, isFalseSignature);
         var isFalse = Required(propertyHelper, "PropertyIsFalse", isFalseSignature);
         _propertyIsFalse = v => (bool)isFalse.Invoke(null, new[] { v })!;
+    }
+
+    /// <summary>
+    /// The first type named PropertyHelper, in assembly order, declaring
+    /// <c>PropertyIsFalse(isFalseSignature)</c>; throws when there is none. Read through
+    /// AssemblyTypeIndex, not Assembly.GetTypes(), which loaded every Ncl and Types type on every
+    /// boot (#5104).
+    /// </summary>
+    internal static Type FindPropertyHelper(IEnumerable<Assembly> assemblies, Type[] isFalseSignature)
+    {
+        const BindingFlags S = BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static;
+        // FindFirst treats a throwing predicate as "no match", so a type FindMethod refuses ends
+        // in the Shape throw below rather than a pass.
+        foreach (var assembly in assemblies)
+        {
+            var hit = AssemblyTypeIndex.For(assembly).FindFirst("PropertyHelper", t =>
+                BcShape.FindMethod(t, "PropertyIsFalse", S, Surface, "PropertyHelper.PropertyIsFalse",
+                    "binds the Visible test of MetadataProvider.RemoveControl", isFalseSignature) != null);
+            if (hit != null) return hit;
+        }
+        throw Shape($"PropertyHelper.PropertyIsFalse({string.Join(", ", isFalseSignature.Select(t => t.Name))})");
     }
 
     private const string Surface = "TestPage application-area control removal (#4750)";
