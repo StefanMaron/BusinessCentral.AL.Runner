@@ -16,12 +16,8 @@
 ///     ALUserSecurityId/ALTenantID field-poke seeding in BcRuntime.cs). ALSid("") reads
 ///     session.User.Sid (backed by an unpopulated `windowsSID` field → "", not a crash).
 ///     ALSessionID() reads session.Id after session.CheckConnectionIsOpen() (hasBeenOpened is
-///     seeded true elsewhere) — session.Id is an auto-property with `= -1` field initializer,
-///     but the skeleton session is built via RuntimeHelpers.GetUninitializedObject, which skips
-///     field initializers, so the CLR default 0 survives instead. 0 satisfies the corpus's own
-///     TestFinalCoverage.al SessionId_WithDatabasePrefix_ReturnsNonNegative /
-///     SessionId_IsCallable assertions (`>= 0`) — MORE faithful than the deleted hook's
-///     fabricated 42. Deleted outright, along with the now-unreferenced
+///     seeded true elsewhere); session.Id is seeded positive at boot (#5144). Deleted
+///     outright, along with the now-unreferenced
 ///     ALDatabasePatches.ALDatabase_ALSid / _ALSessionID stubs (the literal "S-1-0-0" silent
 ///     fake loud-failures.md itself cites as the anti-pattern to avoid reviving).
 ///
@@ -138,28 +134,29 @@ codeunit 60708 "ADC Tests"
         Result := Database.Sid(CopyStr(AccountName, 1, 208));
     end;
 
-    // ── ALDatabase.ALSessionID() — deleted hook, real body returns 0 (no crash) ──────────────
+    // ── ALDatabase.ALSessionID() — deleted hook, real body reads the seeded session id ───────
+    // The skeleton session's id is seeded positive at boot (#5144; a service tier's ids are
+    // positive, corpus 60023), so BC's real body answers that, not the uninitialized 0.
     [Test]
-    procedure SessionId_ReturnsZero_NonNegative()
+    procedure SessionId_ReturnsSeededPositiveId()
     var
         Id: Integer;
     begin
         Id := Database.SessionId();
-        if Id <> 0 then
-            Error('Expected Database.SessionId() to return the uninitialized-object default 0 '
-                + 'on the skeleton runtime, got: %1', Id);
-        if Id < 0 then
-            Error('Database.SessionId() must be non-negative, got: %1', Id);
+        if Id <= 0 then
+            Error('Expected Database.SessionId() to return the seeded positive session id, got: %1', Id);
     end;
 
     [Test]
-    procedure SessionIdGlobal_ReturnsZero_NonNegative()
+    procedure SessionIdGlobal_AgreesWithDatabaseSessionId()
     var
         Id: Integer;
     begin
         Id := SessionId();
-        if Id <> 0 then
-            Error('Expected the global SessionId() to return 0 on the skeleton runtime, got: %1', Id);
+        if Id <= 0 then
+            Error('Expected the global SessionId() to be positive, got: %1', Id);
+        if Id <> Database.SessionId() then
+            Error('SessionId() (%1) must agree with Database.SessionId() (%2)', Id, Database.SessionId());
     end;
 
     // ── ALDatabase.get_ALSerialNumber — genuinely NREs; now Cecil-owned ──────────────────────

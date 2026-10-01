@@ -325,8 +325,8 @@ public static partial class BcRuntime
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static CultureInfo NavSession_get_Culture(object? self) => RunnerSessionCulture;
 
-    // Monotonic fake session counter (>= 1) handed out to ALSession.ALStartSession callers.
-    // Faithful to the contract that StartSession assigns a fresh non-zero session id.
+    // Monotonic session counter (>= 1): the skeleton session takes the first id at boot, and
+    // ALSession.ALStartSession callers the following ones, so no two sessions share an id.
     private static int _alRunnerSessionCounter;
 
     /// <summary>

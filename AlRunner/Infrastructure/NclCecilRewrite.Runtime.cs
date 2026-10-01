@@ -268,6 +268,13 @@ public static partial class NclCecilRewrite
                 FindNclMethod(nclMod, "Microsoft.Dynamics.Nav.Runtime.NavEnvironment", "get_ServiceAccountName", 0),
                 nameof(AlRunner.BcRuntime.GetServiceAccountNameReplacement));
 
+            // 2c) NavEnvironment.GetServiceInstanceId → BcRuntime.GetServiceInstanceIdReplacement
+            //     (#5144). A standalone NavEnvironment never starts its heartbeat, so BC's body
+            //     answers `Heartbeat.Instance?.ServiceInstanceId ?? 0`.
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, "Microsoft.Dynamics.Nav.Runtime.NavEnvironment", "GetServiceInstanceId", 0),
+                nameof(AlRunner.BcRuntime.GetServiceInstanceIdReplacement));
+
             // 3) NavEnvironment.EmitServerStartupTraceEvents(NavDiagnostics, ServerUserSettings) → void no-op.
             //    Only the static 2-arg overload exists; it emits server-startup telemetry
             //    (no AL semantic effect). JmpHook routes it to NoOp2; the equivalent Cecil

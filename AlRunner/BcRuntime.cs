@@ -1518,6 +1518,16 @@ public static partial class BcRuntime
             if (hasBeenOpenedField != null)
                 FieldPoke.SetInstance(hasBeenOpenedField, _skeletonSession!, true);
 
+            // SessionId() reads NavSession.Id, which the uninitialized skeleton leaves at 0; a
+            // service tier hands a live session a positive id (corpus 60023, #5144). Drawn from
+            // the StartSession counter so a started session can never reuse it.
+            var sessionIdField = sessType.GetField("<Id>k__BackingField",
+                BindingFlags.NonPublic | BindingFlags.Instance)
+                ?? throw new BcShapeGapException("skeleton session id seed (#5144)", "NavSession.<Id>k__BackingField",
+                    "field not found, so SessionId() would answer 0");
+            FieldPoke.SetInstance(sessionIdField, _skeletonSession!,
+                System.Threading.Interlocked.Increment(ref _alRunnerSessionCounter));
+
             // NavSession.DocumentStorageService seed — `public IDocumentStorageService
             // DocumentStorageService { get; set; }` is a plain auto-property that a real BC
             // service tier populates lazily. BC's own DocumentServiceManagement.Reset(session)
@@ -2034,25 +2044,8 @@ public static partial class BcRuntime
         // NavReportSync.SyncStaticRun (see NclCecilRewrite.cs §NavReport block); no JmpHook
         // needed, same as instance Run()/RunModal() below.
 
-        // ALDatabase.ALSid / ALSessionID (#1883 follow-up) — the JmpHook registrations that
-        // used to live here were orphaned (JmpHook disabled by default) and their comments
-        // ("BC's real getter... NREs on the skeleton") turned out stale like the
-        // NavCurrentThread.Session / NavCancellationToken claims #2004/#2014 found in other
-        // clusters. Empirically verified (AL probe against the un-hooked build, not just
-        // reading the decompile): NavCurrentThread.Session is wired to the skeleton and
-        // ALSid(string) / ALSessionID() both return cleanly without an NRE —
-        // ALSid("") reads session.User.Sid (unpopulated windowsSID field → "", no crash);
-        // ALSessionID() reads session.Id (uninitialized-object default 0, not -1 — the
-        // GetUninitializedObject-built skeleton session skips the `= -1` field initializer)
-        // after session.CheckConnectionIsOpen() passes (hasBeenOpened is seeded true
-        // elsewhere in this method). 0 satisfies the corpus's own
-        // TestFinalCoverage.al SessionId_WithDatabasePrefix_ReturnsNonNegative /
-        // SessionId_IsCallable assertions (`I >= 0`), which is MORE faithful than the dead
-        // stub's fabricated 42. Deleted outright — see
-        // tests/runner-extras/standalone-suites/aldatabase-cluster-1883/ for the regression
-        // guard. ALDatabasePatches.ALDatabase_ALSid / _ALSessionID (the anti-pattern
-        // loud-failures.md itself cites — a fabricated "S-1-0-0" SID) are now unreferenced
-        // dead code, deleted from AlRunner/Patches/ALDatabasePatches.cs in the same change.
+        // ALDatabase.ALSid / ALSessionID run BC's real bodies on the skeleton session (#1883).
+        // ALSessionID() reads session.Id, seeded positive where hasBeenOpened is (#5144).
         var alDbType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ALDatabase");
         if (alDbType != null)
         {
@@ -2074,12 +2067,8 @@ public static partial class BcRuntime
             //     }
             // }
 
-            // ALDatabase.ALServiceInstanceID — NOT HOOKED. Probe-verified 2026-05-19:
-            // the JmpHook registration succeeds but the replacement body never fires;
-            // the call site is R2R-baked / inlined and returns the default 0. Per
-            // .claude/rules/loud-failures.md we do NOT silently install a hook that
-            // doesn't intercept. Faithfulness gap: Database.ServiceInstanceId returns 0
-            // on the skeleton runtime. Tracked separately.
+            // ALDatabase.ALServiceInstanceID — not hooked here: its callee
+            // NavEnvironment.GetServiceInstanceId is Cecil-owned (NclCecilRewrite.Runtime.cs, #5144).
 
             // DISABLED: Cecil rewrite in NclCecilRewrite.RewriteNcl() now replaces
             // ALCommit / ALRegisterTableConnection / ALUnregisterTableConnection bodies

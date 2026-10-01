@@ -12,15 +12,8 @@
 // them; a populator that inserted one row of per-field defaults fails at the very first
 // SetRange("My Session", true) because that column would be false.
 //
-// One qualification, measured rather than assumed, because the arms below would otherwise be
-// read as claiming more than they do: the runner's own SessionId() is 0. NavSession's `Id = -1`
-// field initializer never runs, because the skeleton session is built with
-// RuntimeHelpers.GetUninitializedObject. 0 is also an Integer column's default, so a populator
-// that set "My Session" = true and left every other column at its default WOULD pass the
-// "Connection ID" arm and the Get(SessionId()) arm. Those two are coupling assertions — the
-// column must be whatever SessionId() says, today and after SessionId() changes — not
-// discrimination assertions. The three that do discriminate such a row are User ID, Login
-// Date/Time and Host Name.
+// SessionId() is seeded positive at boot (#5144), so the "Connection ID" and Get(SessionId())
+// arms now discriminate a row of defaults too; User ID, Login Date/Time and Host Name still do.
 codeunit 70561 "SVT Fixture Tests"
 {
     Subtype = Test;
@@ -47,9 +40,7 @@ codeunit 70561 "SVT Fixture Tests"
         Sess: Record Session;
     begin
         // The read-it-back claim: a populator that fabricated a connection id fails here even
-        // though the row would exist and the count would be right. It does NOT rule out a row
-        // left at its column defaults — SessionId() is 0 in the runner and so is an Integer
-        // default; see the note at the top of this file, and the three arms that do.
+        // though the row would exist and the count would be right.
         Sess.SetRange("My Session", true);
         Assert.IsTrue(Sess.FindFirst(), 'the reading session must be a row.');
         Assert.AreEqual(SessionId(), Sess."Connection ID",
@@ -75,9 +66,7 @@ codeunit 70561 "SVT Fixture Tests"
         ByFind: Record Session;
     begin
         // Get() reaches the row by primary key, so a provider whose key columns disagree with
-        // the row's own "Connection ID" fails here while FindFirst still succeeds. Same
-        // qualification as the arm above: with SessionId() = 0 this is a coupling assertion,
-        // not a discrimination one.
+        // the row's own "Connection ID" fails here while FindFirst still succeeds.
         Assert.IsTrue(ByGet.Get(SessionId()), 'Get(SessionId()) must find the reading session.');
         Assert.IsTrue(ByGet."My Session", 'the row Get returns must be flagged as this session.');
 

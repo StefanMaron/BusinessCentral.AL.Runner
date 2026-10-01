@@ -2,9 +2,9 @@
 // seeds is read back from session state. What a real tier answers is adjudicated upstream by
 // "Test Active Session Table" (corpus codeunit 60976).
 //
-// The runner's ServiceInstanceId() and SessionId() are both 0, which is also an Integer's
-// default, so the key arms are coupling assertions only; User ID, User SID, Login Datetime and
-// Session Unique ID are what discriminate a row of defaults.
+// ServiceInstanceId() and SessionId() are seeded positive (#5144), so the key is no longer an
+// Integer's default; User ID, User SID, Login Datetime and Session Unique ID still discriminate
+// a row of defaults.
 codeunit 70581 "AST Fixture Tests"
 {
     Subtype = Test;
@@ -80,5 +80,19 @@ codeunit 70581 "AST Fixture Tests"
     begin
         Assert.IsFalse(ActiveSession.Get(ServiceInstanceId(), -987654),
             'a session id belonging to no session must not resolve to a row');
+    end;
+
+    [Test]
+    procedure ActiveSession_KeyIsThePositiveSessionIdentity()
+    // #5144: a service tier's ids are positive (corpus 60023), and the row carries the same pair.
+    var
+        ActiveSession: Record "Active Session";
+    begin
+        Assert.IsTrue(ServiceInstanceId() > 0, StrSubstNo('ServiceInstanceId() must be positive, got %1', ServiceInstanceId()));
+        Assert.IsTrue(SessionId() > 0, StrSubstNo('SessionId() must be positive, got %1', SessionId()));
+        Assert.IsTrue(ActiveSession.Get(ServiceInstanceId(), SessionId()), 'Active Session must hold the reading session');
+        Assert.AreEqual(ServiceInstanceId(), ActiveSession."Server Instance ID", 'row Server Instance ID');
+        Assert.AreEqual(SessionId(), ActiveSession."Session ID", 'row Session ID');
+        Assert.IsFalse(ActiveSession.Get(0, SessionId()), 'no row may sit under server instance id 0');
     end;
 }
