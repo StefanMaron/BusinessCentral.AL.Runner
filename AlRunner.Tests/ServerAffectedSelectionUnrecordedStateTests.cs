@@ -1,0 +1,364 @@
+// ServerAffectedSelectionUnrecordedStateTests — #5057: session state outside the three kinds #5050
+// recorded first: the last error and static .NET state reached through DotNet interop. Both
+// directions per kind: an edited writer selects the reader the full run fails, and an edited reader
+// brings the writer it reads from. The Randomize seed is pinned as NOT carried between tests.
+// Mechanism: docs/server-mode.md#affectedonly-and-session-state.
+using System.Text.Json;
+using Xunit;
+
+namespace AlRunner.Tests;
+
+public class ServerAffectedSelectionUnrecordedStateTests
+{
+    // Writer.Codeunit.al holds "US Writer" (62482) with Write(); Checker.Codeunit.al holds
+    // "US Checker" (62480) with Check(). Each test codeunit reaches only one of them, so an edit to
+    // one file changes exactly one test. One test per codeunit: under Codeunit isolation a codeunit
+    // with a selected test runs whole (#5048), which would select a test for the wrong reason.
+    private const string WriterTests = """
+        codeunit 62483 "US Writer Tests"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure A_Writes()
+            var
+                W: Codeunit "US Writer";
+            begin
+                W.Write();
+            end;
+        }
+        """;
+
+    private const string ReaderTests = """
+        codeunit 62484 "US Reader Tests"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure B_Reads()
+            var
+                C: Codeunit "US Checker";
+            begin
+                C.Check();
+            end;
+        }
+        """;
+
+    private const string ControlTests = """
+        codeunit 62485 "US Control Tests"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure D_ReadsNothing()
+            begin
+                if 2 + 2 <> 4 then
+                    Error('D failed');
+            end;
+        }
+        """;
+
+    // Runs after B and leaves the state at another value, so a narrowed run that skips A hands B
+    // what this test left rather than what A wrote.
+    private const string OverwriteTests = """
+        codeunit 62486 "US Overwrite Tests"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure E_Overwrites()
+            var
+                W: Codeunit "US Overwriter";
+            begin
+                W.Write();
+            end;
+        }
+        """;
+
+    private sealed record Observed(Dictionary<string, (string Status, string Line)> Tests, bool ForcedFull, string Raw)
+    {
+        public string[] Ran => Tests.Keys.OrderBy(k => k, StringComparer.Ordinal).ToArray();
+    }
+
+    private static string Bundle(string prefix, string suffix, string writer, string checker, string overwriter,
+        bool onPrem = false)
+    {
+        var dir = TestScratch.Dir(prefix);
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
+        {
+          "id": "c5057000-0000-4a11-9111-{{suffix}}",
+          "name": "Unrecorded State {{suffix}}",
+          "publisher": "AL Runner",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": 62480, "to": 62489 } ],
+          {{(onPrem ? "\"target\": \"OnPrem\"," : "")}}
+          "runtime": "14.0"
+        }
+        """);
+        File.WriteAllText(Path.Combine(dir, "Writer.Codeunit.al"), writer);
+        File.WriteAllText(Path.Combine(dir, "Checker.Codeunit.al"), checker);
+        File.WriteAllText(Path.Combine(dir, "WriterTests.Codeunit.al"), WriterTests);
+        File.WriteAllText(Path.Combine(dir, "ReaderTests.Codeunit.al"), ReaderTests);
+        File.WriteAllText(Path.Combine(dir, "ControlTests.Codeunit.al"), ControlTests);
+        File.WriteAllText(Path.Combine(dir, "Overwriter.Codeunit.al"), overwriter);
+        File.WriteAllText(Path.Combine(dir, "OverwriteTests.Codeunit.al"), OverwriteTests);
+        return dir;
+    }
+
+    private static async Task<Observed> Send(CliServer server, string bundle, bool affectedOnly = true)
+    {
+        var request = new Dictionary<string, object>
+        {
+            ["command"] = "runTests",
+            ["sourcePaths"] = new[] { bundle },
+            ["packagePaths"] = Array.Empty<string>(),
+            ["affectedOnly"] = affectedOnly,
+        };
+        var lines = await server.SendRequestStreamingAsync(JsonSerializer.Serialize(request), TimeSpan.FromSeconds(180));
+        var (events, summary) = ProtocolV2Streaming.Split(lines);
+        var raw = string.Join(" | ", lines) + "\n--- stderr ---\n" + server.StdErr;
+        var forced = summary.TryGetProperty("selection", out var selection) && selection.GetProperty("forcedFull").GetBoolean();
+        var tests = events.ToDictionary(
+            e => e.GetProperty("name").GetString()!.Split('.').Last(),
+            e => (e.GetProperty("status").GetString()!, e.GetRawText()), StringComparer.Ordinal);
+        return new Observed(tests, forced, raw);
+    }
+
+    // E may or may not run (it reads the kind too for DotNet), so the check is: these ran, D did not.
+    private static void AssertRan(Observed o, string step, params string[] expected)
+        => Assert.True(expected.All(o.Tests.ContainsKey) && !o.Tests.ContainsKey("D_ReadsNothing"),
+            $"{step}: ran [{string.Join(", ", o.Ran)}], expected [{string.Join(", ", expected)}] and not D_ReadsNothing:\n{o.Raw}");
+
+    private static void AssertStatus(Observed o, string test, string status, string? text = null)
+    {
+        Assert.True(o.Tests.TryGetValue(test, out var t) && t.Status == status, $"{test} must be {status}:\n{o.Raw}");
+        if (text != null) Assert.Contains(text, t.Line, StringComparison.Ordinal);
+    }
+
+    // An edit to the writer changes what B reads: the full run on the edited source fails B, and the
+    // narrowed run must have run B and failed it the same way. D, reading nothing, stays out.
+    private static async Task AssertReaderSelected(string bundle, string editedWriter, string failure, string writerStatus = "pass")
+    {
+        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+
+        var baseline = await Send(server, bundle);
+        Assert.True(baseline.ForcedFull, baseline.Raw);
+        AssertStatus(baseline, "A_Writes", writerStatus);
+        AssertStatus(baseline, "B_Reads", "pass");
+
+        File.WriteAllText(Path.Combine(bundle, "Writer.Codeunit.al"), editedWriter);
+        var edited = await Send(server, bundle);
+        Assert.False(edited.ForcedFull, edited.Raw);
+        AssertRan(edited, "writer edit", "A_Writes", "B_Reads");
+        AssertStatus(edited, "B_Reads", "fail", failure);
+
+        var full = await Send(server, bundle, affectedOnly: false);
+        AssertStatus(full, "B_Reads", "fail", failure);
+        AssertStatus(full, "D_ReadsNothing", "pass");
+    }
+
+    // An edit to the reader alone must bring the writer it reads from, so B sees what a full run
+    // gives it and passes. Without A, B would read what E left at the end of the previous request.
+    private static async Task AssertWriterBrought(string bundle, string editedChecker, string writerStatus = "pass")
+    {
+        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+
+        var baseline = await Send(server, bundle);
+        Assert.True(baseline.ForcedFull, baseline.Raw);
+        AssertStatus(baseline, "A_Writes", writerStatus);
+        AssertStatus(baseline, "B_Reads", "pass");
+
+        File.WriteAllText(Path.Combine(bundle, "Checker.Codeunit.al"), editedChecker);
+        var edited = await Send(server, bundle);
+        Assert.False(edited.ForcedFull, edited.Raw);
+        AssertRan(edited, "reader edit", "A_Writes", "B_Reads");
+        AssertStatus(edited, "B_Reads", "pass");
+    }
+
+    // ── The last error ──────────────────────────────────────────────────────────────────────────
+
+    private static string TrappedErrorWriter(string text, string obj = "62482 \"US Writer\"") => $$"""
+        codeunit {{obj}}
+        {
+            procedure Write()
+            begin
+                if not TryRaise() then;
+            end;
+
+            [TryFunction]
+            local procedure TryRaise()
+            begin
+                Error('{{text}}');
+            end;
+        }
+        """;
+
+    private static string UncaughtErrorWriter(string text) => $$"""
+        codeunit 62482 "US Writer"
+        {
+            procedure Write()
+            begin
+                Error('{{text}}');
+            end;
+        }
+        """;
+
+    private static string LastErrorChecker(string label = "LASTERR") => $$"""
+        codeunit 62480 "US Checker"
+        {
+            procedure Check()
+            begin
+                if GetLastErrorText() <> 'LE-ONE' then
+                    Error('{{label}}-%1', GetLastErrorText());
+            end;
+        }
+        """;
+
+    /// <summary>A trapped error's text survives the test boundary: editing the helper that raises it
+    /// selects the test reading GetLastErrorText, which fails as the full run fails it.</summary>
+    [SkippableFact]
+    public async Task LastErrorReader_IsSelectedWhenTheRaisingHelperChanges()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = Bundle("al-runner-server-affected-unrecorded-lasterror", "000000000001",
+            TrappedErrorWriter("LE-ONE"), LastErrorChecker(), TrappedErrorWriter("LE-OTHER", "62487 \"US Overwriter\""));
+        await AssertReaderSelected(bundle, TrappedErrorWriter("LE-TWO"), "LASTERR-LE-TWO");
+    }
+
+    /// <summary>The other direction: an edited GetLastErrorText reader brings the test that set it.</summary>
+    [SkippableFact]
+    public async Task LastErrorReaderEdit_BringsTheTestThatRaisedIt()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = Bundle("al-runner-server-affected-unrecorded-lasterror-rev", "000000000002",
+            TrappedErrorWriter("LE-ONE"), LastErrorChecker(), TrappedErrorWriter("LE-OTHER", "62487 \"US Overwriter\""));
+        await AssertWriterBrought(bundle, LastErrorChecker("LASTERROR"));
+    }
+
+    /// <summary>The same when the writer is a test that FAILS: its uncaught error is the last error
+    /// the next test reads, so it is recorded as written by that test, not lost at the boundary.</summary>
+    [SkippableFact]
+    public async Task LastErrorReaderEdit_BringsTheFailingTestWhoseErrorItReads()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = Bundle("al-runner-server-affected-unrecorded-lasterror-fail", "000000000003",
+            UncaughtErrorWriter("LE-ONE"), LastErrorChecker(), TrappedErrorWriter("LE-OTHER", "62487 \"US Overwriter\""));
+        await AssertWriterBrought(bundle, LastErrorChecker("LASTERROR"), writerStatus: "fail");
+    }
+
+    // ── Static .NET state through DotNet interop ───────────────────────────────────────────────
+
+    private const string EnvDeclaration = """
+        dotnet
+        {
+            assembly("mscorlib")
+            {
+                type("System.Environment"; "US Env")
+                {
+                }
+            }
+        }
+
+        """;
+
+    private static string EnvWriter(string value, string obj = "62482 \"US Writer\"", bool declare = true)
+        => (declare ? EnvDeclaration : "") + $$"""
+        codeunit {{obj}}
+        {
+            procedure Write()
+            var
+                E: DotNet "US Env";
+            begin
+                E.SetEnvironmentVariable('AL_RUNNER_5057_PROBE', '{{value}}');
+            end;
+        }
+        """;
+
+    private static string EnvChecker(string label = "ENV") => $$"""
+        codeunit 62480 "US Checker"
+        {
+            procedure Check()
+            var
+                E: DotNet "US Env";
+            begin
+                if E.GetEnvironmentVariable('AL_RUNNER_5057_PROBE') <> 'one' then
+                    Error('{{label}}-%1', E.GetEnvironmentVariable('AL_RUNNER_5057_PROBE'));
+            end;
+        }
+        """;
+
+    /// <summary>A process environment variable set through DotNet survives the test boundary: editing
+    /// the helper that sets it selects the test reading it.</summary>
+    [SkippableFact]
+    public async Task DotNetStaticStateReader_IsSelectedWhenTheWritingHelperChanges()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = Bundle("al-runner-server-affected-unrecorded-dotnet", "000000000004",
+            EnvWriter("one"), EnvChecker(), EnvWriter("other", "62487 \"US Overwriter\"", declare: false), onPrem: true);
+        await AssertReaderSelected(bundle, EnvWriter("two"), "ENV-two");
+    }
+
+    /// <summary>The other direction: an edited DotNet reader brings the DotNet writer before it.</summary>
+    [SkippableFact]
+    public async Task DotNetStaticStateReaderEdit_BringsTheWriter()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = Bundle("al-runner-server-affected-unrecorded-dotnet-rev", "000000000005",
+            EnvWriter("one"), EnvChecker(), EnvWriter("other", "62487 \"US Overwriter\"", declare: false), onPrem: true);
+        await AssertWriterBrought(bundle, EnvChecker("ENVIRONMENT"));
+    }
+
+    // ── The Randomize seed: not carried between tests ──────────────────────────────────────────
+
+    private static string SeedWriter(int seed, string obj = "62482 \"US Writer\"") => $$"""
+        codeunit {{obj}}
+        {
+            procedure Write()
+            begin
+                Randomize({{seed}});
+            end;
+        }
+        """;
+
+    // Passes only if the generator A seeded with 42 reached B.
+    private const string SeedChecker = """
+        codeunit 62480 "US Checker"
+        {
+            procedure Check()
+            var
+                V: Integer;
+            begin
+                V := Random(1000000);
+                Randomize(42);
+                if V <> Random(1000000) then
+                    Error('RANDOM-%1', V);
+            end;
+        }
+        """;
+
+    /// <summary>
+    /// Randomize(seed) does not need recording: every test starts from a generator the runner seeds
+    /// from the run seed and the test's own identity (RunSeed.BeginTest, #2502), so B draws the same
+    /// first value whatever A seeded. If this starts failing, the seed has become session state that
+    /// outlives a test and needs a kind in AlSessionStateTracker.
+    /// </summary>
+    [SkippableFact]
+    public async Task RandomizeSeed_DoesNotReachTheNextTest()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = Bundle("al-runner-server-affected-unrecorded-seed", "000000000006",
+            SeedWriter(42), SeedChecker, SeedWriter(7, "62487 \"US Overwriter\""));
+        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+
+        var seeded42 = await Send(server, bundle, affectedOnly: false);
+        AssertStatus(seeded42, "B_Reads", "fail", "RANDOM-");
+        File.WriteAllText(Path.Combine(bundle, "Writer.Codeunit.al"), SeedWriter(43));
+        var seeded43 = await Send(server, bundle, affectedOnly: false);
+        Assert.Equal(
+            JsonDocument.Parse(seeded42.Tests["B_Reads"].Line).RootElement.GetProperty("message").GetString(),
+            JsonDocument.Parse(seeded43.Tests["B_Reads"].Line).RootElement.GetProperty("message").GetString());
+    }
+}

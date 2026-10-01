@@ -1028,6 +1028,23 @@ public static partial class NclCecilRewrite
                     H(state, "NoteWorkDateRead"), argSlots: 0);
                 PrependStaticCall(nclMod, ByParams(Rt + "NavSession", "set_WorkDate", "NavDate"),
                     H(state, "NoteWorkDateWrite"), argSlots: 0);
+
+                // #5057: the last error, observed at its storage — every NavSession member (nested
+                // types included) touching the private fields below. Observer only; no args.
+                foreach (var (m, writes) in LastErrorAccessors(nclMod.GetType(Rt + "NavSession")
+                        ?? throw new InvalidOperationException("[Cecil] NavSession not found — do not commit")))
+                    PrependStaticCall(nclMod, m,
+                        H(state, writes ? "NoteLastErrorWrite" : "NoteLastErrorRead"), argSlots: 0);
+
+                // #5057: static .NET state behind DotNet interop. Every method/property call funnels
+                // through Invoke<T>; static fields and constructors do not (bc284). Observer only.
+                PrependStaticCall(nclMod, ByParams(Rt + "NavDotNet", "Invoke",
+                        "String", "UInt32", "BindingFlags", "ParameterModifier", "Type[]", "Object[]"),
+                    H(state, "NoteDotNetUse"), argSlots: 0);
+                PrependStaticCall(nclMod, ByParams(Rt + "NavDotNet", "InvokeStaticField", "String", "UInt32"),
+                    H(state, "NoteDotNetUse"), argSlots: 0);
+                PrependStaticCall(nclMod, ByParams(Rt + "NavDotNet", "CreateDotNet", "Object[]"),
+                    H(state, "NoteDotNetUse"), argSlots: 0);
             }
 
             // ── TempTableDataProvider.Find / FindFromPosition (query column projection) ──
@@ -2455,4 +2472,43 @@ public static partial class NclCecilRewrite
         set.Add("Microsoft.Dynamics.Nav.Runtime.ALSystemNumeric::ALRandomize/0");
     }
 
+    internal static readonly string[] LastErrorFields = { "lastException", "lastErrorCallstack" };
+
+    /// <summary>
+    /// #5057: every method of <paramref name="navSession"/> and its nested types that loads or
+    /// stores one of <see cref="LastErrorFields"/>, and whether it stores one. The fields are
+    /// private, so this is every accessor. Throws when the shape no longer matches, because a
+    /// missed reader would let affectedOnly skip a test whose result changed.
+    /// </summary>
+    internal static List<(MethodDefinition Method, bool Writes)> LastErrorAccessors(TypeDefinition navSession)
+    {
+        foreach (var name in LastErrorFields)
+            if (navSession.Fields.FirstOrDefault(f => f.Name == name) is not { IsPrivate: true, IsStatic: false })
+                throw new InvalidOperationException(
+                    $"[Cecil] NavSession.{name} is no longer a private instance field — Ncl shape changed; do not commit");
+
+        var found = new List<(MethodDefinition, bool)>();
+        void Scan(TypeDefinition t)
+        {
+            foreach (var m in t.Methods)
+            {
+                if (!m.HasBody) continue;
+                bool reads = false, writes = false;
+                foreach (var ins in m.Body.Instructions)
+                {
+                    if (ins.Operand is not FieldReference f || !LastErrorFields.Contains(f.Name)
+                        || f.DeclaringType.FullName != navSession.FullName) continue;
+                    if (ins.OpCode == OpCodes.Stfld) writes = true;
+                    else reads = true;
+                }
+                if (reads || writes) found.Add((m, writes));
+            }
+            foreach (var n in t.NestedTypes) Scan(n);
+        }
+        Scan(navSession);
+        if (!found.Any(x => x.Item2) || !found.Any(x => !x.Item2))
+            throw new InvalidOperationException(
+                "[Cecil] NavSession last-error fields: expected both readers and writers — Ncl shape changed; do not commit");
+        return found;
+    }
 }

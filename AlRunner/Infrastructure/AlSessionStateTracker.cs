@@ -95,6 +95,27 @@ public static class AlSessionStateTracker
         NoteReadWrite(SingleInstanceKind(codeunitId));
     }
 
+    /// <summary>The session's last error (#5057): GetLastErrorText/Code/Object/CallStack read it;
+    /// any trapped error and ClearLastError write it.</summary>
+    internal const string LastErrorKind = "LastError";
+
+    /// <summary>Prepended to every NavSession member that reads its last-error fields.</summary>
+    public static void NoteLastErrorRead() => NoteRead(LastErrorKind);
+
+    /// <summary>Prepended to every NavSession member that writes its last-error fields.</summary>
+    public static void NoteLastErrorWrite() => NoteWrite(LastErrorKind);
+
+    /// <summary>Static .NET state reached through DotNet interop (#5057). It cannot be told apart
+    /// per field, so any DotNet invocation is both a read and a write of one kind.</summary>
+    internal const string DotNetKind = "DotNet";
+
+    /// <summary>Prepended to NavDotNet's invoke, static-field and constructor entry points.</summary>
+    public static void NoteDotNetUse()
+    {
+        if (!AlCoverageTracker.PerTestEnabled || AlCoverageTracker.CurrentTestKey == null) return;
+        NoteReadWrite(DotNetKind);
+    }
+
     /// <summary>A key in a test's recorded set: it wrote <paramref name="kind"/>.</summary>
     internal static string WriteKey(string kind) => "st|w|" + kind;
 
