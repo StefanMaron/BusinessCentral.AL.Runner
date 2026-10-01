@@ -68,6 +68,7 @@ All notable changes to this project are documented here. Format based on
 - **testpage:** New() on an empty linked part raises the part's OnNewRecord
 
 ### Changed
+- **cli:** run pass/fail CLI test classes through a shared server
 - **perf:** one shared --server per server test class instead of one per test
 - **patches:** find PropertyHelper through AssemblyTypeIndex instead of scanning every Ncl and Types type at boot
 - **perf:** share the content-keyed engine caches across the suite's private --cache roots
